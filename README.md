@@ -8,11 +8,17 @@ of a sound** with unusual depth and targeting.
 
 ## Status
 
-Planning complete. V1 effect implementation is queued behind
-[`danielraffel/pulp#625`](https://github.com/danielraffel/pulp/issues/625),
-which adds the supplemental plugin-state capability Spectr uses for
-host/session recall of variable band layouts and snapshot banks. Route-
-agnostic foundation work is in progress while `#625` lands.
+**Audio + state layer working** (M1–M4). `pulp#625` landed as PR#628 and Spectr's
+supplemental plugin-state blob is live.
+
+**Editor UI is parked** behind
+[`danielraffel/pulp#651`](https://github.com/danielraffel/pulp/issues/651).
+The plan is to embed the prototype HTML verbatim via `WebViewPanel` for
+pixel-perfect visual parity; the blocker is that `View` subclasses inside
+a plugin editor can't reach the `PluginViewHost`'s native NSView handle.
+The full attempt lives on branch
+[`feature/webview-editor-parked`](https://github.com/danielraffel/spectr/tree/feature/webview-editor-parked)
+ready to resume once `#651` ships an accessor.
 
 See [`planning/`](planning/) for the full design package:
 

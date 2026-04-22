@@ -18,6 +18,7 @@ agent, and the developer can all work from a single source of truth.
 - `Spectr-Build-Signoff.md` — **current build-clearance status (2026-04-22): V1 effect implementation is cleared to start.** Summarizes B1/B2/B3 resolutions and lists the day-one punch list.
 - `Spectr-Build-Blockers.md` — historical blocker record; superseded by the signoff above.
 - `Spectr-Sampler-Phase-Spec.md` — hardened Phase 4/5/6 sampler spec (Capture → Freeze → Play); replaces the thin seam-preservation language in V2 §13 with a concrete product contract.
+- `Spectr-UI-Park-Notes.md` — why the V1 editor UI is parked, the `danielraffel/pulp#651` framework gap, and the resume checklist.
 
 ## Source Inputs
 
