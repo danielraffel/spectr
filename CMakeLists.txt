@@ -14,7 +14,7 @@ find_package(Pulp 0.33.0 REQUIRED)
 
 set(SPECTR_SOURCES
     src/spectr.cpp
-    src/engine_factory.cpp
+    src/block_fft_engine.cpp
 )
 
 set(SPECTR_HEADERS
@@ -42,6 +42,7 @@ add_executable(Spectr-test
     test/test_band_state.cpp
     test/test_viewport.cpp
     test/test_engine_factory.cpp
+    test/test_block_fft_engine.cpp
     ${SPECTR_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE Pulp::format Catch2::Catch2WithMain)
