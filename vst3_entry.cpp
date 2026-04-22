@@ -1,4 +1,4 @@
-#include "spectr.hpp"
+#include "spectr/spectr.hpp"
 #include <pulp/format/vst3_entry.hpp>
 
 PULP_VST3_PLUGIN(

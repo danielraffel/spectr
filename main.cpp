@@ -1,4 +1,4 @@
-#include "spectr.hpp"
+#include "spectr/spectr.hpp"
 #include <pulp/format/standalone.hpp>
 
 int main() {

@@ -1,0 +1,86 @@
+#pragma once
+
+// Spectr — zoomable frequency-slicer audio effect.
+//
+// See README.md for a product summary and planning/ for the full design
+// package. Milestone 1 (Foundation) layered the project; real DSP arrives in
+// Milestone 2 (DSP truth spike). State registration (#625 gated) is
+// Milestone 4.
+
+#include <pulp/format/processor.hpp>
+#include <memory>
+
+#include "spectr/band_state.hpp"
+#include "spectr/edit_modes.hpp"
+#include "spectr/engine.hpp"
+#include "spectr/viewport.hpp"
+
+namespace spectr {
+
+enum ParamIDs : pulp::state::ParamID {
+    kMix = 1,
+};
+
+inline pulp::format::PluginDescriptor make_descriptor() {
+    return {
+        .name         = "Spectr",
+        .manufacturer = "Pulp",
+        .bundle_id    = "com.pulp.spectr",
+        .version      = "1.0.0",
+        .category     = pulp::format::PluginCategory::Effect,
+    };
+}
+
+/// Top-level Spectr plugin. Owns the BandField, Viewport, and the active
+/// SpectralEngine. Milestones 2+ fill in the engine impls and state
+/// registration.
+class Spectr : public pulp::format::Processor {
+public:
+    Spectr();
+    ~Spectr() override;
+
+    pulp::format::PluginDescriptor descriptor() const override;
+    void define_parameters(pulp::state::StateStore& store) override;
+    void prepare(const pulp::format::PrepareContext& ctx) override;
+    void release() override;
+
+    void process(
+        pulp::audio::BufferView<float>& output,
+        const pulp::audio::BufferView<const float>& input,
+        pulp::midi::MidiBuffer& midi_in,
+        pulp::midi::MidiBuffer& midi_out,
+        const pulp::format::ProcessContext& ctx) override;
+
+    // ── Accessors — primarily for tests and the UI layer ───────────────
+
+    const BandField&  field()     const noexcept { return field_; }
+    BandField&        field()           noexcept { return field_; }
+    const Viewport&   viewport()  const noexcept { return viewport_; }
+    Viewport&         viewport()        noexcept { return viewport_; }
+    Layout            layout()    const noexcept { return layout_; }
+    ResponseMode      response()  const noexcept { return response_mode_; }
+    EngineKind        engine_kind() const noexcept { return engine_kind_; }
+
+    void set_layout(Layout L);
+    void set_response_mode(ResponseMode m) noexcept { response_mode_ = m; }
+    void set_engine_kind(EngineKind k);
+
+private:
+    double sample_rate_ = 48000.0;
+    int    max_block_   = 512;
+
+    BandField                        field_{};
+    Viewport                         viewport_{};
+    Layout                           layout_       = Layout::Bands32;
+    ResponseMode                     response_mode_= ResponseMode::Precision;
+    EngineKind                       engine_kind_  = EngineKind::Fft;
+    std::unique_ptr<SpectralEngine>  engine_{};
+
+    void rebuild_engine_();
+};
+
+inline std::unique_ptr<pulp::format::Processor> create_spectr() {
+    return std::make_unique<Spectr>();
+}
+
+} // namespace spectr

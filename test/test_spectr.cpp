@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <pulp/format/headless.hpp>
-#include "spectr.hpp"
+#include "spectr/spectr.hpp"
 
 using Catch::Approx;
 
