@@ -19,7 +19,11 @@
 namespace spectr {
 
 enum ParamIDs : pulp::state::ParamID {
-    kMix = 1,
+    kMix          = 1,
+    kOutputTrim   = 2,   ///< dB, [-24, +24]
+    kResponseMode = 3,   ///< 0=Live, 1=Precision
+    kEngineMode   = 4,   ///< 0=IIR, 1=FFT, 2=Hybrid
+    kBandCount    = 5,   ///< 0=32, 1=40, 2=48, 3=56, 4=64
 };
 
 inline pulp::format::PluginDescriptor make_descriptor() {
@@ -51,6 +55,20 @@ public:
         pulp::midi::MidiBuffer& midi_in,
         pulp::midi::MidiBuffer& midi_out,
         const pulp::format::ProcessContext& ctx) override;
+
+    // ── Supplemental plugin state (pulp#625 / PR#628 hooks) ─────────────
+    //
+    // Under V2 handoff §5.4, Spectr's richer state (canonical band field,
+    // viewport bounds, analyzer/edit mode) rides through the host adapters
+    // as an opaque versioned JSON payload alongside StateStore's flat
+    // parameter blob. See planning/Spectr-V2-Pulp-Handoff.md §5.4.
+    std::vector<uint8_t> serialize_plugin_state() const override;
+    bool deserialize_plugin_state(std::span<const uint8_t> bytes) override;
+
+    /// Supplemental-state schema version. Bump when the JSON shape changes
+    /// in a non-backward-compatible way; deserialize rejects unknown
+    /// versions.
+    static constexpr int kPluginStateVersion = 1;
 
     // ── Accessors — primarily for tests and the UI layer ───────────────
 

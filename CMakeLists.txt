@@ -4,7 +4,7 @@ project(Spectr VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Pulp 0.33.0 REQUIRED)
+find_package(Pulp 0.34.0 REQUIRED)
 
 # ── Core Spectr sources ────────────────────────────────────────────────
 #
@@ -44,6 +44,7 @@ add_executable(Spectr-test
     test/test_engine_factory.cpp
     test/test_block_fft_engine.cpp
     test/test_analyzer_bridge.cpp
+    test/test_m4_state.cpp
     ${SPECTR_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE Pulp::view)
