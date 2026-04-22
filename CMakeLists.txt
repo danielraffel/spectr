@@ -43,8 +43,10 @@ add_executable(Spectr-test
     test/test_viewport.cpp
     test/test_engine_factory.cpp
     test/test_block_fft_engine.cpp
+    test/test_analyzer_bridge.cpp
     ${SPECTR_SOURCES}
 )
+target_link_libraries(Spectr-test PRIVATE Pulp::view)
 target_link_libraries(Spectr-test PRIVATE Pulp::format Catch2::Catch2WithMain)
 target_include_directories(Spectr-test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

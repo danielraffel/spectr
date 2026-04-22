@@ -8,6 +8,7 @@
 // Milestone 4.
 
 #include <pulp/format/processor.hpp>
+#include <pulp/view/visualization_bridge.hpp>
 #include <memory>
 
 #include "spectr/band_state.hpp"
@@ -65,6 +66,17 @@ public:
     void set_response_mode(ResponseMode m) noexcept { response_mode_ = m; }
     void set_engine_kind(EngineKind k);
 
+    // ── Analyzer bridge — UI-thread read path ───────────────────────────
+    //
+    // Spectr publishes STFT + meter + waveform snapshots from the audio
+    // thread through VisualizationBridge's TripleBuffers. UI/tests read
+    // via these accessors; the reads are lock-free and always see the
+    // latest complete frame.
+    pulp::view::VisualizationBridge& bridge() noexcept { return bridge_; }
+    const pulp::view::SpectrumData& read_spectrum() { return bridge_.read_spectrum(); }
+    const pulp::view::WaveformData& read_waveform() { return bridge_.read_waveform(); }
+    const pulp::signal::MultiChannelMeterData& read_meter() { return bridge_.read_meter(); }
+
 private:
     double sample_rate_ = 48000.0;
     int    max_block_   = 512;
@@ -76,7 +88,10 @@ private:
     EngineKind                       engine_kind_  = EngineKind::Fft;
     std::unique_ptr<SpectralEngine>  engine_{};
 
+    pulp::view::VisualizationBridge  bridge_{};
+
     void rebuild_engine_();
+    void configure_bridge_(int num_channels);
 };
 
 inline std::unique_ptr<pulp::format::Processor> create_spectr() {

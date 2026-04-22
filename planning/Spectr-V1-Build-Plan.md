@@ -252,9 +252,24 @@ Not `PresetManager`'s default format.
 ### Scope
 
 - CPU profile under `pulp-demo` and representative material.
+- Replace block-FFT engine with windowed STFT + overlap-add to hit the
+  product spec's -80 dB mute-depth target on non-aligned tones.
 - Tune engine FFT sizes, window lengths, smoothing constants.
 - Click / zipper audit under rapid edits.
 - Final DAW smoke: Logic, Ableton Live, Reaper, Bitwig.
+
+### FFT backend swap (conditional)
+
+If M11 CPU profiling on **non-Apple platforms** shows `pulp::signal::Fft`'s
+Cooley-Tukey fallback is a bottleneck, swap to pffft. Candidate fork:
+`https://github.com/marton78/pffft` — modern CMake, double-precision
+support, NEON / Apple Silicon / WASM SIMD, BSD-like license (compatible
+with Pulp's policy), active maintenance, ~327 stars. It also ships
+`pffastconv` for fast convolution and `pfdsp` for signal helpers.
+
+**Do not swap on Apple** — `pulp::signal::Fft` wraps vDSP there, which
+is competitive with or faster than pffft on Apple silicon. The swap
+value is Windows / Linux / Android / WebAssembly.
 
 ### Exit criteria
 
