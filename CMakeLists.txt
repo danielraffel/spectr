@@ -15,6 +15,7 @@ find_package(Pulp 0.34.0 REQUIRED)
 set(SPECTR_SOURCES
     src/spectr.cpp
     src/block_fft_engine.cpp
+    src/ui/band_field_view.cpp
 )
 
 set(SPECTR_HEADERS

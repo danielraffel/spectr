@@ -70,6 +70,9 @@ public:
     /// versions.
     static constexpr int kPluginStateVersion = 1;
 
+    // ── Editor view ────────────────────────────────────────────────────
+    std::unique_ptr<pulp::view::View> create_view() override;
+
     // ── Accessors — primarily for tests and the UI layer ───────────────
 
     const BandField&  field()     const noexcept { return field_; }
