@@ -1,8 +1,5 @@
 #include "spectr/spectr.hpp"
-#include "spectr/ui/band_field_view.hpp"
-
-#include <pulp/view/auto_ui.hpp>
-#include <pulp/view/geometry.hpp>
+#include "spectr/ui/editor_view.hpp"
 
 #include <choc/containers/choc_Value.h>
 #include <choc/text/choc_JSON.h>
@@ -85,24 +82,22 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
 }
 
 std::unique_ptr<pulp::view::View> Spectr::create_view() {
-    // Two-pane editor: band field canvas on top, auto-generated knobs for
-    // the flat params on the bottom. Skeleton level for M5 — pattern
-    // manager modal / A-B rail / edit mode pills arrive in M7+ / M8.
-    auto root = std::make_unique<pulp::view::View>();
-    root->set_bounds({0, 0, 720, 420});
+    // The editor is the prototype HTML embedded verbatim through Pulp's
+    // WebView bridge. Pixel-perfect visual match by construction; JS↔C++
+    // state sync flows through EditorView's message handler. See
+    // include/spectr/ui/editor_view.hpp.
+    auto editor = std::make_unique<EditorView>(*this);
+    editor->set_bounds({0, 0, 1320, 860});
+    return editor;
+}
 
-    auto field_view = std::make_unique<BandFieldView>(*this);
-    field_view->set_bounds({12, 12, 696, 320});
-    root->add_child(std::move(field_view));
-
-    if (auto& s = state(); true) {
-        auto knobs = pulp::view::AutoUi::build(s);
-        if (knobs) {
-            knobs->set_bounds({12, 340, 696, 72});
-            root->add_child(std::move(knobs));
-        }
+void Spectr::on_view_opened(pulp::view::View& view) {
+    // Fires after the framework has attached the View to a WindowHost, so
+    // window_host() is valid here — unlike View::on_attached() which runs
+    // before the window is hooked up.
+    if (auto* editor = dynamic_cast<EditorView*>(&view)) {
+        editor->attach_now();
     }
-    return root;
 }
 
 void Spectr::configure_bridge_(int num_channels) {

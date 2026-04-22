@@ -72,6 +72,14 @@ public:
 
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
+    void on_view_opened(pulp::view::View& view) override;
+    pulp::format::ViewSize view_size() const override {
+        // Matches the prototype's natural canvas size from screenshots.
+        return {/*pref_w*/1320, /*pref_h*/860,
+                /*min_w*/800,  /*min_h*/480,
+                /*max_w*/0,    /*max_h*/0,
+                /*aspect*/0.0};
+    }
 
     // ── Accessors — primarily for tests and the UI layer ───────────────
 
