@@ -3,6 +3,7 @@
 
 #include <pulp/runtime/log.hpp>
 #include <pulp/view/asset_manager.hpp>
+#include <pulp/view/plugin_view_host.hpp>
 #include <pulp/view/window_host.hpp>
 
 #include "spectr_editor_assets_data.hpp"
@@ -37,28 +38,50 @@ EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
 }
 
 EditorView::~EditorView() {
-    if (panel_ && window_host() && attached_) {
-        window_host()->detach_native_child_view(panel_->native_handle());
-    }
+    // Detach is handled by PluginViewHost teardown; nothing to do here.
 }
+
+namespace {
+
+// Walk up the view tree collecting whichever host is set. Pulp uses two
+// distinct host types depending on the deployment:
+//   - PluginViewHost: plugin editor (VST3/AU/CLAP), via pulp#651
+//   - WindowHost:     standalone app window
+// Both expose the same attach_native_child_view signature, so we take
+// whichever is non-null on this view or an ancestor and route through it
+// via a small adapter.
+struct NativeChildHost {
+    pulp::view::PluginViewHost* plugin_host = nullptr;
+    pulp::view::WindowHost*     window_host = nullptr;
+
+    bool attach(void* child, float x, float y, float w, float h) const {
+        if (plugin_host) return plugin_host->attach_native_child_view(child, x, y, w, h);
+        if (window_host) return window_host->attach_native_child_view(child, x, y, w, h);
+        return false;
+    }
+    explicit operator bool() const noexcept { return plugin_host || window_host; }
+};
+
+NativeChildHost find_native_child_host(const pulp::view::View* v) {
+    NativeChildHost out{};
+    const pulp::view::View* cur = v;
+    while (cur) {
+        if (!out.plugin_host) out.plugin_host = cur->plugin_view_host();
+        if (!out.window_host) out.window_host = cur->window_host();
+        if (out) break;
+        cur = cur->parent();
+    }
+    return out;
+}
+
+} // namespace
 
 void EditorView::attach_now() {
     if (attached_ || panel_) return;
 
-    // Walk up to find a window host; log the chain so we can see what
-    // the standalone wraps us in.
-    auto* host = window_host();
-    const pulp::view::View* cur = this;
-    int depth = 0;
-    while (!host && cur->parent()) {
-        cur = cur->parent();
-        ++depth;
-        host = cur->window_host();
-    }
-    pulp::runtime::log_info("[Spectr] attach_now: depth={} host={}",
-                            depth, (void*)host);
+    auto host = find_native_child_host(this);
     if (!host) {
-        pulp::runtime::log_error("[Spectr] EditorView::attach_now — no window_host (walked {} levels)", depth);
+        pulp::runtime::log_error("[Spectr] EditorView::attach_now — no PluginViewHost or WindowHost on the view tree");
         return;
     }
 
@@ -89,9 +112,14 @@ void EditorView::attach_now() {
     const auto r = bounds();
     const auto w = static_cast<uint32_t>(r.width  > 0 ? r.width  : 1320);
     const auto h = static_cast<uint32_t>(r.height > 0 ? r.height : 860);
-    if (host->attach_native_child_view(panel_->native_handle(), 0, 0, w, h)) {
+    if (host.attach(panel_->native_handle(),
+                    0.0f, 0.0f,
+                    static_cast<float>(w),
+                    static_cast<float>(h))) {
         attached_ = true;
-        pulp::runtime::log_info("[Spectr] WebView editor attached {}x{}", w, h);
+        pulp::runtime::log_info("[Spectr] WebView editor attached {}x{} via {}",
+                                w, h,
+                                host.plugin_host ? "PluginViewHost" : "WindowHost");
     } else {
         pulp::runtime::log_error("[Spectr] attach_native_child_view failed");
     }
