@@ -1,0 +1,28 @@
+# Build artifacts
+build/
+cmake-build-*/
+
+# macOS / Finder
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# User-specific Pulp config (paths differ per user)
+pulp.toml
+
+# SDK caches if any appear inside project
+.pulp/
+
+# Generated plugin metadata
+Spectr_Info.plist.au
+*.vst3/
+*.component/
+*.clap/
+
+# Logs / traces
+*.log

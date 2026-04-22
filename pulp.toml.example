@@ -1,0 +1,14 @@
+# Spectr — Pulp project config
+#
+# Copy this file to `pulp.toml` and adjust paths for your local environment.
+# Generated automatically by `pulp create`; regenerate with `pulp doctor` if
+# your SDK location changes.
+
+[pulp]
+sdk_version = "0.33.0"
+# Absolute path to your local Pulp SDK install. Typical value:
+#   ~/.pulp/sdk-local/<platform>/<version>
+sdk_path = "/path/to/.pulp/sdk-local/<platform>/<sdk_version>"
+# Optional: absolute path to a Pulp source checkout. Needed only if you are
+# co-developing Spectr with Pulp itself.
+sdk_checkout = "/path/to/pulp"
