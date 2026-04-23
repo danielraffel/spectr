@@ -72,6 +72,39 @@ void Spectr::define_parameters(pulp::state::StateStore& store) {
         .unit  = "",
         .range = {0.0f, 4.0f, 0.0f},   // default 32-band layout
     });
+    store.add_parameter({
+        .id    = kMorph,
+        .name  = "Morph",
+        .unit  = "",
+        .range = {0.0f, 1.0f, 0.0f},   // default A (no morph)
+    });
+
+    // Wire ABCompare now that the store reference is live. Keeps the
+    // StateStore-side A/B under pulp::view::ABCompare and the band-field
+    // side under SnapshotBank — UI drives both together.
+    ab_ = std::make_unique<pulp::view::ABCompare>(&store);
+}
+
+// ── Snapshot A/B (Milestone 8) ─────────────────────────────────────────
+
+void Spectr::capture_snapshot(SnapshotBank::Slot slot) noexcept {
+    snapshots_.capture_into(slot, field_, viewport_, layout_);
+}
+
+void Spectr::apply_morph_to_live(float t) noexcept {
+    const bool has_a = snapshots_.has(SnapshotBank::Slot::A);
+    const bool has_b = snapshots_.has(SnapshotBank::Slot::B);
+    if (!has_a && !has_b) return;
+    if (!has_a) { field_ = snapshots_.b.field; return; }
+    if (!has_b) { field_ = snapshots_.a.field; return; }
+    morph_fields(field_, snapshots_.a.field, snapshots_.b.field, t);
+}
+
+pulp::view::ABCompare* Spectr::ab_compare() noexcept {
+    // Constructed in define_parameters once the StateStore reference is
+    // live. Callers that invoke this before define_parameters get a
+    // nullptr — don't dereference without checking.
+    return ab_.get();
 }
 
 void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
@@ -213,6 +246,33 @@ void Spectr::process(
 
 // ── Supplemental plugin state (pulp#625) ──────────────────────────────
 
+namespace {
+
+// Turn a FieldSnapshot into a JSON object. Symmetric with
+// read_snapshot_() below.
+choc::value::Value write_snapshot_(const FieldSnapshot& s) {
+    using choc::value::createObject;
+    using choc::value::createEmptyArray;
+
+    auto obj = createObject("FieldSnapshot");
+    obj.addMember("populated", s.populated);
+
+    auto gains = createEmptyArray();
+    auto mutes = createEmptyArray();
+    for (const auto& b : s.field.bands) {
+        gains.addArrayElement(static_cast<double>(b.gain_db));
+        mutes.addArrayElement(b.muted);
+    }
+    obj.addMember("band_gain", gains);
+    obj.addMember("band_mute", mutes);
+    obj.addMember("view_min_hz", static_cast<double>(s.viewport.min_hz));
+    obj.addMember("view_max_hz", static_cast<double>(s.viewport.max_hz));
+    obj.addMember("layout_index", static_cast<int32_t>(layout_to_index(s.layout)));
+    return obj;
+}
+
+} // namespace
+
 std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     using choc::value::createObject;
     using choc::value::createEmptyArray;
@@ -244,16 +304,88 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     root.addMember("analyzer_mode", static_cast<int32_t>(0));
     root.addMember("edit_mode",     static_cast<int32_t>(0));
 
+    // M8 — snapshot bank. Absent or empty on a v1 blob; new v2 writers
+    // always include it so a round-trip preserves the A/B selection
+    // across session reloads.
+    auto snaps = createObject("SnapshotBank");
+    snaps.addMember("active", static_cast<int32_t>(snapshots_.active));
+    snaps.addMember("a", write_snapshot_(snapshots_.a));
+    snaps.addMember("b", write_snapshot_(snapshots_.b));
+    root.addMember("snapshots", snaps);
+
     auto json = choc::json::toString(root, /*useLineBreaks=*/false);
     return {json.begin(), json.end()};
 }
 
 namespace {
 
-void reset_supplemental_state_(BandField& f, Viewport& v, Layout& l) {
+void reset_supplemental_state_(BandField& f, Viewport& v, Layout& l,
+                               SnapshotBank& bank) {
     f.reset();
     v = Viewport{};
     l = Layout::Bands32;
+    bank = SnapshotBank{};
+}
+
+// Symmetric with write_snapshot_(). Returns true if `obj` was read
+// into `dst` without error. An unpopulated slot (empty object, or
+// `populated == false`) resets dst to default.
+//
+// Takes a ValueView (what `parent["key"]` returns) rather than a Value
+// so callers don't have to copy the subtree out of the parent.
+bool read_snapshot_(const choc::value::ValueView& obj, FieldSnapshot& dst) {
+    if (!obj.isObject()) { dst = FieldSnapshot{}; return true; }
+
+    FieldSnapshot staged{};
+    staged.populated = false;
+
+    if (obj.hasObjectMember("populated")) {
+        const auto e = obj["populated"];
+        staged.populated = e.isBool() ? e.getBool() : false;
+    }
+    if (obj.hasObjectMember("band_gain") && obj["band_gain"].isArray()) {
+        auto arr = obj["band_gain"];
+        const auto n = std::min<std::uint32_t>(arr.size(), kMaxBands);
+        for (std::uint32_t i = 0; i < n; ++i) {
+            const auto e = arr[i];
+            float g = 0.0f;
+            if      (e.isFloat64()) g = static_cast<float>(e.getFloat64());
+            else if (e.isInt64())   g = static_cast<float>(e.getInt64());
+            else if (e.isInt32())   g = static_cast<float>(e.getInt32());
+            staged.field.bands[i].gain_db = g;
+        }
+    }
+    if (obj.hasObjectMember("band_mute") && obj["band_mute"].isArray()) {
+        auto arr = obj["band_mute"];
+        const auto n = std::min<std::uint32_t>(arr.size(), kMaxBands);
+        for (std::uint32_t i = 0; i < n; ++i) {
+            const auto e = arr[i];
+            staged.field.bands[i].muted = e.isBool() ? e.getBool() : false;
+        }
+    }
+    if (obj.hasObjectMember("view_min_hz")) {
+        const auto e = obj["view_min_hz"];
+        if      (e.isFloat64()) staged.viewport.min_hz = static_cast<float>(e.getFloat64());
+        else if (e.isInt64())   staged.viewport.min_hz = static_cast<float>(e.getInt64());
+    }
+    if (obj.hasObjectMember("view_max_hz")) {
+        const auto e = obj["view_max_hz"];
+        if      (e.isFloat64()) staged.viewport.max_hz = static_cast<float>(e.getFloat64());
+        else if (e.isInt64())   staged.viewport.max_hz = static_cast<float>(e.getInt64());
+    }
+    if (!staged.viewport.valid()) staged.viewport = Viewport{};
+    if (obj.hasObjectMember("layout_index")) {
+        const auto e = obj["layout_index"];
+        int idx = 0;
+        if      (e.isInt32())   idx = e.getInt32();
+        else if (e.isInt64())   idx = static_cast<int>(e.getInt64());
+        else if (e.isFloat64()) idx = static_cast<int>(e.getFloat64());
+        idx = std::clamp(idx, 0, static_cast<int>(kLayoutCount) - 1);
+        staged.layout = kLayoutValues[static_cast<std::size_t>(idx)];
+    }
+
+    dst = staged;
+    return true;
 }
 
 } // namespace
@@ -262,7 +394,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     // Empty span = legacy blob or caller signalling "reset to defaults"
     // per the pulp#625 hook contract.
     if (bytes.empty()) {
-        reset_supplemental_state_(field_, viewport_, layout_);
+        reset_supplemental_state_(field_, viewport_, layout_, snapshots_);
         return true;
     }
 
@@ -275,7 +407,8 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     }
     if (!root.isObject()) return false;
 
-    // Version gate — reject anything we don't know how to read.
+    // Version gate — accept v1 (legacy pre-M8) and v2 (with snapshots).
+    // Reject anything else we don't know how to read.
     if (!root.hasObjectMember("version")) return false;
     const auto v = root["version"];
     int version = 0;
@@ -283,7 +416,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     else if (v.isInt64())    version = static_cast<int>(v.getInt64());
     else if (v.isFloat64())  version = static_cast<int>(v.getFloat64());
     else                     return false;
-    if (version != kPluginStateVersion) return false;
+    if (version < 1 || version > kPluginStateVersion) return false;
 
     // Apply in a staging copy so a malformed payload leaves live state alone.
     BandField new_field;
@@ -333,8 +466,26 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     // Viewport sanity — fall back to defaults on garbage values.
     if (!new_view.valid()) new_view = Viewport{};
 
-    field_    = new_field;
-    viewport_ = new_view;
+    // M8 — snapshot bank (version 2+). Absent or malformed resets the
+    // bank to empty; a well-formed block round-trips exactly.
+    SnapshotBank new_bank{};
+    if (version >= 2 && root.hasObjectMember("snapshots") && root["snapshots"].isObject()) {
+        const auto snaps = root["snapshots"];
+        if (snaps.hasObjectMember("active")) {
+            const auto e = snaps["active"];
+            int a = 0;
+            if      (e.isInt32())   a = e.getInt32();
+            else if (e.isInt64())   a = static_cast<int>(e.getInt64());
+            else if (e.isFloat64()) a = static_cast<int>(e.getFloat64());
+            new_bank.active = (a == 1) ? SnapshotBank::Slot::B : SnapshotBank::Slot::A;
+        }
+        if (snaps.hasObjectMember("a")) read_snapshot_(snaps["a"], new_bank.a);
+        if (snaps.hasObjectMember("b")) read_snapshot_(snaps["b"], new_bank.b);
+    }
+
+    field_     = new_field;
+    viewport_  = new_view;
+    snapshots_ = new_bank;
     if (new_layout != layout_) set_layout(new_layout);
     return true;
 }

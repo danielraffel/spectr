@@ -8,12 +8,14 @@
 // Milestone 4.
 
 #include <pulp/format/processor.hpp>
+#include <pulp/view/ab_compare.hpp>
 #include <pulp/view/visualization_bridge.hpp>
 #include <memory>
 
 #include "spectr/band_state.hpp"
 #include "spectr/edit_modes.hpp"
 #include "spectr/engine.hpp"
+#include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
 
 namespace spectr {
@@ -24,6 +26,7 @@ enum ParamIDs : pulp::state::ParamID {
     kResponseMode = 3,   ///< 0=Live, 1=Precision
     kEngineMode   = 4,   ///< 0=IIR, 1=FFT, 2=Hybrid
     kBandCount    = 5,   ///< 0=32, 1=40, 2=48, 3=56, 4=64
+    kMorph        = 6,   ///< [0, 1], 0=A, 1=B (Milestone 8)
 };
 
 inline pulp::format::PluginDescriptor make_descriptor() {
@@ -68,7 +71,11 @@ public:
     /// Supplemental-state schema version. Bump when the JSON shape changes
     /// in a non-backward-compatible way; deserialize rejects unknown
     /// versions.
-    static constexpr int kPluginStateVersion = 1;
+    ///
+    /// v2 (M8) extends v1 with an optional `snapshots` object holding the
+    /// A/B snapshot bank. Absent `snapshots` is legal — reading a v1 blob
+    /// is always a reset-to-default for the bank.
+    static constexpr int kPluginStateVersion = 2;
 
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
@@ -97,6 +104,37 @@ public:
     void set_response_mode(ResponseMode m) noexcept { response_mode_ = m; }
     void set_engine_kind(EngineKind k);
 
+    // ── Snapshot A/B + morph (Milestone 8) ──────────────────────────────
+    //
+    // Spectr tracks two kinds of A/B state:
+    //
+    //   - Flat StateStore params (Mix, Output, Response, Engine, Bands,
+    //     Morph itself): handled by pulp::view::ABCompare over the
+    //     StateStore. Access via ab_compare().
+    //   - Band-field + viewport + layout: held in snapshots_ below, with
+    //     per-band morph via morph_fields(). Serialized in the plugin
+    //     state blob so it survives session reload.
+    //
+    // UI drives both in lockstep for the full A/B experience.
+
+    const SnapshotBank& snapshots() const noexcept { return snapshots_; }
+    SnapshotBank&       snapshots()       noexcept { return snapshots_; }
+
+    /// Copy the current field + viewport + layout into the named slot.
+    /// Marks the slot populated.
+    void capture_snapshot(SnapshotBank::Slot slot) noexcept;
+
+    /// Write the morph of A and B at t into `field_`. If either slot is
+    /// unpopulated, falls back to the populated side (or leaves field_
+    /// alone if neither slot has been captured). Does NOT touch viewport
+    /// or layout — those aren't continuously morphed.
+    void apply_morph_to_live(float t) noexcept;
+
+    /// Accessor for the StateStore-level ABCompare. Lazily constructed
+    /// the first time it's requested (after define_parameters has wired
+    /// the store). Returns nullptr if the store isn't available yet.
+    pulp::view::ABCompare* ab_compare() noexcept;
+
     // ── Analyzer bridge — UI-thread read path ───────────────────────────
     //
     // Spectr publishes STFT + meter + waveform snapshots from the audio
@@ -119,7 +157,9 @@ private:
     EngineKind                       engine_kind_  = EngineKind::Fft;
     std::unique_ptr<SpectralEngine>  engine_{};
 
-    pulp::view::VisualizationBridge  bridge_{};
+    pulp::view::VisualizationBridge       bridge_{};
+    SnapshotBank                          snapshots_{};
+    std::unique_ptr<pulp::view::ABCompare> ab_{};
 
     void rebuild_engine_();
     void configure_bridge_(int num_channels);
