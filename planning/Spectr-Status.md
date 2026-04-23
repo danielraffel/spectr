@@ -122,6 +122,26 @@ layer, headless-testable, and set up the bridge the webview will bind to.
 6. If all four are CLOSED: run Task #32 playbook above.
 7. Otherwise: pick up the next unchecked milestone above.
 
+## CI direction (when we get to M10)
+
+**No CI is set up yet.** All testing so far is local macOS via
+`pulp test`. When I add `.github/workflows/` (natural trigger is M10
+format validation):
+
+- **Namespace runners first** (`namespace-actions/*`). Faster than
+  GitHub-hosted, no queue wait for matrix jobs. Follow the same
+  pattern Pulp uses — see `~/Code/pulp/.github/workflows/build.yml`
+  for `runs-on: namespace-profile-...` references.
+- **Local macOS** runs in parallel via the `shipyard` CLI / `ci`
+  skill — that's the primary ship path for any branch.
+- **GitHub-hosted runners** are a last-resort fallback, not the
+  default. Don't write workflows that assume `ubuntu-latest` or
+  `macos-latest` when Namespace profiles are available.
+
+Reason: Pulp's own CI convention (recorded in Pulp `CLAUDE.md` under
+"Runner priority") and my auto-memory note. Spectr inherits that
+convention.
+
 ## Quick reference — file paths
 
 - Status doc: `planning/Spectr-Status.md` (this file)
