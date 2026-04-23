@@ -1,0 +1,42 @@
+# Spectr's pinned Shipyard release.
+#
+# Shipyard is the CI controller Spectr uses for PR validation and
+# merge gating. Spectr pins a specific Shipyard release here so every
+# checkout uses the same version.
+#
+# To install or upgrade:
+#   ./tools/install-shipyard.sh
+#
+# To check what's installed vs what's pinned:
+#   ./tools/install-shipyard.sh --status
+#
+# To bump the pin:
+#   1. Edit `version` below.
+#   2. Run `./tools/install-shipyard.sh` to download the new binary.
+#   3. Run `shipyard run` on a feature branch to verify.
+#   4. Open a PR with the version change + verification notes.
+#
+# This pin tracks pulp's pinned Shipyard version so the same ship
+# muscle memory works in both repos. See pulp/tools/shipyard.toml for
+# the cumulative release-note history.
+
+[shipyard]
+# v0.29.0 — tracks pulp's pin as of 2026-04-23. See pulp's
+# tools/shipyard.toml for the cumulative release-note history of each
+# version on the v0.2x line.
+version = "v0.29.0"
+
+# Public release source. The bootstrap script downloads from
+# https://github.com/{repo}/releases/download/{version}/{asset}
+repo = "danielraffel/Shipyard"
+
+# SHA-256 verification asset name (downloaded alongside the binary).
+checksums_asset = "checksums.sha256"
+
+# Per-platform binary asset names.
+[shipyard.assets]
+darwin-arm64  = "shipyard-macos-arm64"
+darwin-x64    = "shipyard-macos-x64"
+linux-arm64   = "shipyard-linux-arm64"
+linux-x64     = "shipyard-linux-x64"
+windows-x64   = "shipyard-windows-x64.exe"
