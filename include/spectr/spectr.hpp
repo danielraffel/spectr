@@ -73,6 +73,8 @@ public:
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
     void on_view_opened(pulp::view::View& view) override;
+    void on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) override;
+    void on_view_closed(pulp::view::View& view) override;
     pulp::format::ViewSize view_size() const override {
         // Matches the prototype's natural canvas size from screenshots.
         return {/*pref_w*/1320, /*pref_h*/860,

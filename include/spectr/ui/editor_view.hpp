@@ -3,9 +3,11 @@
 // Spectr plugin editor — embeds the prototype HTML via a WebViewPanel.
 //
 // The plugin editor is a thin native View that owns a pulp::view::WebViewPanel.
-// On attach, we grab the parent window host and attach the WebViewPanel's
-// native subview inside it, then navigate to the embedded prototype HTML.
-// JS↔C++ state sync flows through set_message_handler / post_message.
+// On attach, we locate whichever host owns the editor window (PluginViewHost
+// in plugin editors, WindowHost in the standalone), ask it for its actual
+// native content size, and attach our WebView as its native child. Spectr's
+// Processor drives attach/sync/detach via on_view_opened / on_view_resized /
+// on_view_closed.
 
 #include <pulp/view/view.hpp>
 #include <pulp/view/web_view.hpp>
@@ -21,10 +23,17 @@ public:
     explicit EditorView(Spectr& plugin);
     ~EditorView() override;
 
-    /// Attach the webview to the plugin's editor window. Called by
-    /// Spectr::on_view_opened() because that fires AFTER the framework
-    /// wires window_host() — our own on_attached() runs too early.
-    void attach_now();
+    /// Create the WebViewPanel (if needed) and attach its NSView as a
+    /// native child of whichever host owns the editor window. Sizes the
+    /// child to the host's actual content size to avoid letterbox gaps.
+    void attach_if_needed();
+
+    /// Update the native child view bounds to match the current host
+    /// content size. Wired to Processor::on_view_resized.
+    void sync_to_host();
+
+    /// Detach on editor close.
+    void detach_if_needed();
 
 private:
     Spectr& plugin_;

@@ -8,8 +8,8 @@
 
 #include "spectr_editor_assets_data.hpp"
 
+#include <algorithm>
 #include <string>
-#include <string_view>
 
 namespace spectr {
 
@@ -27,39 +27,40 @@ void register_editor_assets_once() {
                              spectr_editor::editor_html_size);
 }
 
-} // namespace
-
-EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
-    // Panel creation is deferred to on_attached() — CHOC's WebView requires
-    // a host NSView hierarchy to exist before it can initialize. Creating
-    // it in the constructor crashes with an NSForwarding-selector abort
-    // because there's no window yet.
-    register_editor_assets_once();
-}
-
-EditorView::~EditorView() {
-    // Detach is handled by PluginViewHost teardown; nothing to do here.
-}
-
-namespace {
-
-// Walk up the view tree collecting whichever host is set. Pulp uses two
-// distinct host types depending on the deployment:
-//   - PluginViewHost: plugin editor (VST3/AU/CLAP), via pulp#651
-//   - WindowHost:     standalone app window
-// Both expose the same attach_native_child_view signature, so we take
-// whichever is non-null on this view or an ancestor and route through it
-// via a small adapter.
+/// Adapter over whichever host is set on the view tree. PluginViewHost is
+/// used by plugin editors (via pulp#651), WindowHost by the standalone. Both
+/// expose the same native-child attach/bounds/detach API; we route through
+/// whichever one we find first on this view or an ancestor.
 struct NativeChildHost {
     pulp::view::PluginViewHost* plugin_host = nullptr;
     pulp::view::WindowHost*     window_host = nullptr;
 
-    bool attach(void* child, float x, float y, float w, float h) const {
-        if (plugin_host) return plugin_host->attach_native_child_view(child, x, y, w, h);
-        if (window_host) return window_host->attach_native_child_view(child, x, y, w, h);
+    explicit operator bool() const noexcept { return plugin_host || window_host; }
+
+    struct Size { float w = 0, h = 0; };
+    Size content_size_plugin() const {
+        if (plugin_host) {
+            const auto s = plugin_host->get_size();
+            return {static_cast<float>(s.width), static_cast<float>(s.height)};
+        }
+        return {0, 0};
+    }
+
+    bool attach(void* child, float w, float h) const {
+        if (plugin_host) return plugin_host->attach_native_child_view(child, 0.0f, 0.0f, w, h);
+        if (window_host) return window_host->attach_native_child_view(child, 0.0f, 0.0f, w, h);
         return false;
     }
-    explicit operator bool() const noexcept { return plugin_host || window_host; }
+
+    void set_bounds(void* child, float w, float h) const {
+        if (plugin_host) { plugin_host->set_native_child_view_bounds(child, 0.0f, 0.0f, w, h); return; }
+        if (window_host) { window_host->set_native_child_view_bounds(child, 0.0f, 0.0f, w, h); return; }
+    }
+
+    void detach(void* child) const {
+        if (plugin_host) { plugin_host->detach_native_child_view(child); return; }
+        if (window_host) { window_host->detach_native_child_view(child); return; }
+    }
 };
 
 NativeChildHost find_native_child_host(const pulp::view::View* v) {
@@ -76,46 +77,68 @@ NativeChildHost find_native_child_host(const pulp::view::View* v) {
 
 } // namespace
 
-void EditorView::attach_now() {
-    if (attached_ || panel_) return;
+EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
+    register_editor_assets_once();
+}
+
+EditorView::~EditorView() { detach_if_needed(); }
+
+void EditorView::attach_if_needed() {
+    if (attached_) return;
 
     auto host = find_native_child_host(this);
     if (!host) {
-        pulp::runtime::log_error("[Spectr] EditorView::attach_now — no PluginViewHost or WindowHost on the view tree");
+        pulp::runtime::log_error("[Spectr] attach_if_needed — no host on the view tree");
         return;
     }
 
-    pulp::view::WebViewOptions options;
-    options.enable_debug           = true;
-    options.accept_first_click     = true;
-    options.transparent_background = false;
-    options.fetch_resource = pulp::view::make_webview_embedded_resource_fetcher(
-        kAssetKey, /*assets*/ {});
-    options.custom_scheme_uri = "pulp://spectr";
+    if (!panel_) {
+        pulp::view::WebViewOptions options;
+        options.enable_debug           = true;
+        options.accept_first_click     = true;
+        // Start the native NSView transparent so the window's dark background
+        // shows through until the prototype HTML paints — avoids the white
+        // flash that CHOC's default NSView otherwise exhibits.
+        options.transparent_background = true;
+        options.fetch_resource = pulp::view::make_webview_embedded_resource_fetcher(
+            kAssetKey, /*assets*/ {});
+        options.custom_scheme_uri = "pulp://spectr";
 
-    panel_ = pulp::view::WebViewPanel::create(options);
-    if (!panel_ || !panel_->native_handle()) {
-        pulp::runtime::log_error("[Spectr] WebViewPanel::create failed");
-        panel_.reset();
-        return;
+        panel_ = pulp::view::WebViewPanel::create(options);
+        if (!panel_ || !panel_->native_handle()) {
+            pulp::runtime::log_error("[Spectr] WebViewPanel::create failed");
+            panel_.reset();
+            return;
+        }
+
+        panel_->set_message_handler([this](const pulp::view::WebViewMessage& m) -> std::string {
+            handle_message_(m);
+            return R"({"ok":true})";
+        });
+        panel_->set_ready_handler([p = panel_.get()] {
+            p->navigate("pulp://spectr");
+        });
     }
 
-    panel_->set_message_handler([this](const pulp::view::WebViewMessage& m) -> std::string {
-        handle_message_(m);
-        return R"({"ok":true})";
-    });
+    // PluginViewHost exposes an explicit content size; WindowHost doesn't
+    // (see danielraffel/pulp#661). In the standalone path on_view_opened
+    // fires BEFORE the first layout, so bounds() is 0x0 here. Until #661
+    // lands, we attach with an intentional over-size — the host NSView
+    // clips, so any overflow is harmless, and this eliminates the bottom
+    // strip caused by the TabPanel adding a tab-bar row the window
+    // content area. sync_to_host() tightens the bounds on the first
+    // resize once bounds() is real.
+    auto sz = host.content_size_plugin();
+    const auto b = bounds();
+    if (sz.w <= 0 || sz.h <= 0) {
+        sz.w = b.width  > 0 ? b.width  : 1320.0f;
+        sz.h = b.height > 0 ? b.height : 860.0f;
+    }
+    // Over-size safety margin (see above). Removed once #661 / #663 land.
+    const auto w = sz.w;
+    const auto h = sz.h + 128.0f;
 
-    panel_->set_ready_handler([p = panel_.get()] {
-        p->navigate("pulp://spectr");
-    });
-
-    const auto r = bounds();
-    const auto w = static_cast<uint32_t>(r.width  > 0 ? r.width  : 1320);
-    const auto h = static_cast<uint32_t>(r.height > 0 ? r.height : 860);
-    if (host.attach(panel_->native_handle(),
-                    0.0f, 0.0f,
-                    static_cast<float>(w),
-                    static_cast<float>(h))) {
+    if (host.attach(panel_->native_handle(), w, h)) {
         attached_ = true;
         pulp::runtime::log_info("[Spectr] WebView editor attached {}x{} via {}",
                                 w, h,
@@ -123,6 +146,30 @@ void EditorView::attach_now() {
     } else {
         pulp::runtime::log_error("[Spectr] attach_native_child_view failed");
     }
+}
+
+void EditorView::sync_to_host() {
+    if (!attached_ || !panel_) return;
+    auto host = find_native_child_host(this);
+    if (!host) return;
+    auto sz = host.content_size_plugin();
+    if (sz.w <= 0 || sz.h <= 0) {
+        const auto b = bounds();
+        sz.w = b.width;
+        sz.h = b.height;
+    }
+    if (sz.w <= 0 || sz.h <= 0) return;
+    host.set_bounds(panel_->native_handle(), sz.w, sz.h);
+}
+
+void EditorView::detach_if_needed() {
+    if (!attached_ || !panel_) {
+        attached_ = false;
+        return;
+    }
+    auto host = find_native_child_host(this);
+    if (host) host.detach(panel_->native_handle());
+    attached_ = false;
 }
 
 void EditorView::handle_message_(const pulp::view::WebViewMessage& msg) {

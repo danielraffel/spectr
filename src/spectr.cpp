@@ -86,17 +86,29 @@ std::unique_ptr<pulp::view::View> Spectr::create_view() {
     // WebView bridge. Pixel-perfect visual match by construction; JS↔C++
     // state sync flows through EditorView's message handler. See
     // include/spectr/ui/editor_view.hpp.
-    auto editor = std::make_unique<EditorView>(*this);
-    editor->set_bounds({0, 0, 1320, 860});
-    return editor;
+    // No explicit set_bounds — the framework lays us out to the window's
+    // content area. EditorView attaches the native child view to that
+    // actual laid-out size (or PluginViewHost::get_size() in plugins), so
+    // we don't leave a gap if window chrome differs from our preferred
+    // size.
+    return std::make_unique<EditorView>(*this);
 }
 
 void Spectr::on_view_opened(pulp::view::View& view) {
-    // Fires after the framework has attached the View to a WindowHost, so
-    // window_host() is valid here — unlike View::on_attached() which runs
-    // before the window is hooked up.
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
-        editor->attach_now();
+        editor->attach_if_needed();
+    }
+}
+
+void Spectr::on_view_resized(pulp::view::View& view, uint32_t /*w*/, uint32_t /*h*/) {
+    if (auto* editor = dynamic_cast<EditorView*>(&view)) {
+        editor->sync_to_host();
+    }
+}
+
+void Spectr::on_view_closed(pulp::view::View& view) {
+    if (auto* editor = dynamic_cast<EditorView*>(&view)) {
+        editor->detach_if_needed();
     }
 }
 
