@@ -121,22 +121,24 @@ void EditorView::attach_if_needed() {
     }
 
     // PluginViewHost exposes an explicit content size; WindowHost doesn't
-    // (see danielraffel/pulp#661). In the standalone path on_view_opened
-    // fires BEFORE the first layout, so bounds() is 0x0 here. Until #661
-    // lands, we attach with an intentional over-size — the host NSView
-    // clips, so any overflow is harmless, and this eliminates the bottom
-    // strip caused by the TabPanel adding a tab-bar row the window
-    // content area. sync_to_host() tightens the bounds on the first
-    // resize once bounds() is real.
+    // yet (see danielraffel/pulp#661). In the standalone path
+    // on_view_opened fires BEFORE the first layout, so bounds() is 0x0
+    // here and we fall back to the view_size() preferred dimensions.
+    //
+    // There's a cosmetic artifact: the standalone's TabPanel eats ~32pt
+    // at the top of the window content, which leaves a thin strip below
+    // our WebView. The right fix is pulp#661 + pulp#663; we deliberately
+    // avoid the "just over-size the attach" band-aid because getting the
+    // number wrong clips the bottom rail off the bottom of the window.
+    // Accepting the strip until the upstream fixes land.
     auto sz = host.content_size_plugin();
     const auto b = bounds();
     if (sz.w <= 0 || sz.h <= 0) {
         sz.w = b.width  > 0 ? b.width  : 1320.0f;
         sz.h = b.height > 0 ? b.height : 860.0f;
     }
-    // Over-size safety margin (see above). Removed once #661 / #663 land.
     const auto w = sz.w;
-    const auto h = sz.h + 128.0f;
+    const auto h = sz.h;
 
     if (host.attach(panel_->native_handle(), w, h)) {
         attached_ = true;
