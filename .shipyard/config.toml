@@ -1,0 +1,60 @@
+# Shipyard configuration for Spectr.
+#
+# Spectr is a single-person, macOS-first Pulp-based plugin. This config
+# keeps Shipyard as lightweight as a single-platform project needs: one
+# target (mac-local), no version-bump or skill-sync gates (Spectr has no
+# CLI or skills to enforce). Namespace dispatch is wired up for
+# `shipyard cloud run` / failover when/if a cloud path is preferred.
+#
+# To use this config:
+#   ./tools/install-shipyard.sh   # install pinned Shipyard binary
+#   shipyard doctor               # verify reachability + config sanity
+#   shipyard run                  # validate the current branch locally
+#   shipyard ship                 # PR + validate + merge on green
+
+[project]
+name      = "spectr"
+type      = "cmake"
+platforms = ["macos"]
+
+# ── Validation pipeline ────────────────────────────────────────────────────
+# Canonical stages only: configure, build, test. The SDK prefix path is
+# read from pulp.toml's sdk_path when running locally; CI-dispatched
+# lanes set CMAKE_PREFIX_PATH via the runner's env.
+
+[validation.default]
+stages    = ["configure", "build", "test"]
+configure = "cmake -S . -B build -DCMAKE_PREFIX_PATH=$HOME/.pulp/sdk-local/darwin-arm64/0.38.0 -DCMAKE_BUILD_TYPE=Debug"
+build     = "cmake --build build --parallel"
+test      = "ctest --test-dir build --output-on-failure"
+
+# ── Targets ────────────────────────────────────────────────────────────────
+# One target for now: the developer's macOS-arm64 laptop. If Spectr ever
+# grows Windows/Linux surface area (M10 format validation is the natural
+# trigger), add them here alongside.
+
+[targets.mac]
+backend  = "local"
+platform = "macos-arm64"
+
+# ── Cloud dispatch (Namespace) ─────────────────────────────────────────────
+# Enables `shipyard cloud run build <branch>` against Namespace-hosted
+# runners. Not strictly required for `shipyard ship` (which uses the
+# local mac target), but wired up so the option exists without a later
+# config change.
+
+[cloud]
+provider   = "namespace"
+workflow   = "build"
+repository = "danielraffel/spectr"
+
+# ── Merge gating ───────────────────────────────────────────────────────────
+# Ship blocks until the macOS target passes on the merge-candidate SHA.
+
+[merge]
+require_platforms = ["macos"]
+
+# ── Ship defaults ──────────────────────────────────────────────────────────
+
+[ship]
+base_branch = "main"
