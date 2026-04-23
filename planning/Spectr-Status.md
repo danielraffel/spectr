@@ -1,6 +1,6 @@
 # Spectr Status — Live Handoff Dashboard
 
-_Last updated: 2026-04-22 (M6 complete) — read this first if resuming work in a new session._
+_Last updated: 2026-04-22 (M7 complete) — read this first if resuming work in a new session._
 
 This doc is the single-page state-of-the-world for Spectr. Every commit
 to `main` should refresh the dates + "what landed" bullets at the top.
@@ -84,12 +84,16 @@ layer, headless-testable, and set up the bridge the webview will bind to.
   Snapshot-at-drag-start for Boost / Flare / Glide preserved across
   multi-step gestures. 52/52 tests green. UI bindings (keybindings
   S/L/B/F/G → EditMode) ready for JS bridge to call.
-- [ ] **M7 — Pattern library data model.** Factory patterns (Flat,
-  Harmonic series, Alternating, Comb, Vocal formants, Sub only,
-  Downward tilt, Air lift). User-pattern CRUD (save, rename, duplicate,
-  delete, update-from-current). Default pattern. JSON import/export
-  envelope. All persisted via `serialize_plugin_state` supplemental
-  blob.
+- [x] **M7 — Pattern library data model.** ✅ Landed on main. All eight
+  factory patterns implemented (Flat, Harmonic series, Alternating,
+  Comb, Vocal formants, Sub only, Downward tilt, Air lift — prototype
+  generators ported from `patterns.js`). `PatternLibrary` class with
+  user-pattern CRUD (save_current, rename, duplicate,
+  update_from_current, remove), default-id management, JSON
+  import/export with version gate + name-clash (N) suffixing.
+  Prototype→dB mapping (`[-1, +1]` / -Infinity → Spectr's `[-60, +12]`
+  / muted) preserved. 68/68 tests green. Ready for JS bridge to wire
+  pattern-manager modal actions to these methods.
 - [ ] **M8 — Snapshot A/B + morph** at the data layer. `ABCompare`
   slots + morph interpolation on canonical band gains.
 - [ ] **M9 — Spectr-owned preset file format** per handoff §7. Schema

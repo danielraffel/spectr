@@ -16,6 +16,7 @@ set(SPECTR_SOURCES
     src/spectr.cpp
     src/block_fft_engine.cpp
     src/edit_engine.cpp
+    src/pattern.cpp
     src/ui/band_field_view.cpp
 )
 
@@ -48,6 +49,7 @@ add_executable(Spectr-test
     test/test_analyzer_bridge.cpp
     test/test_m4_state.cpp
     test/test_edit_engine.cpp
+    test/test_pattern.cpp
     ${SPECTR_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE Pulp::view)
