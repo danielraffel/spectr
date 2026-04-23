@@ -1,6 +1,6 @@
 # Spectr Status — Live Handoff Dashboard
 
-_Last updated: 2026-04-22 — read this first if resuming work in a new session._
+_Last updated: 2026-04-22 (M6 complete) — read this first if resuming work in a new session._
 
 This doc is the single-page state-of-the-world for Spectr. Every commit
 to `main` should refresh the dates + "what landed" bullets at the top.
@@ -78,9 +78,12 @@ When **#661 AND #663 merge** (in either order):
 The editor chrome being parked does not block these — they're all data
 layer, headless-testable, and set up the bridge the webview will bind to.
 
-- [ ] **M6 — Edit modes.** Sculpt / Level / Boost / Flare / Glide
-  dispatch that operates on `BandField`. Snapshot-at-drag-start for
-  Boost / Flare / Glide. Keybindings S / L / B / F / G. Tests.
+- [x] **M6 — Edit modes.** ✅ Landed on main at a6affd9 + followup. All
+  five modes (Sculpt / Level / Boost / Flare / Glide) dispatch through
+  `spectr::dispatch_edit()` in `include/spectr/edit_engine.hpp`.
+  Snapshot-at-drag-start for Boost / Flare / Glide preserved across
+  multi-step gestures. 52/52 tests green. UI bindings (keybindings
+  S/L/B/F/G → EditMode) ready for JS bridge to call.
 - [ ] **M7 — Pattern library data model.** Factory patterns (Flat,
   Harmonic series, Alternating, Comb, Vocal formants, Sub only,
   Downward tilt, Air lift). User-pattern CRUD (save, rename, duplicate,
