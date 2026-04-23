@@ -36,6 +36,14 @@ test      = "ctest --test-dir build --output-on-failure"
 [targets.mac]
 backend  = "local"
 platform = "macos-arm64"
+# First shipyard run burns ~10-15 min in `configure` because Catch2's
+# FetchContent clones from scratch into a fresh `_deps/` directory.
+# Spectr has no pre-fetch setup stage (unlike pulp's ./setup.sh), so
+# the whole clone happens inside configure itself. Default 1800s is
+# too tight; 3600s gives cold runs enough room and stays well short
+# of the ssh-windows-style hour we use on other projects. Warm runs
+# (after the first successful build) finish in under 2 minutes.
+timeout_secs = 3600
 
 # ── Cloud dispatch (Namespace) ─────────────────────────────────────────────
 # Enables `shipyard cloud run build <branch>` against Namespace-hosted
