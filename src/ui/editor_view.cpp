@@ -96,10 +96,14 @@ void EditorView::attach_if_needed() {
         pulp::view::WebViewOptions options;
         options.enable_debug           = true;
         options.accept_first_click     = true;
-        // Start the native NSView transparent so the window's dark background
-        // shows through until the prototype HTML paints — avoids the white
-        // flash that CHOC's default NSView otherwise exhibits.
-        options.transparent_background = true;
+        options.transparent_background = false;
+        // Pre-paint placeholder shown before navigate() completes —
+        // matches the prototype's background so the user never sees a
+        // white flash or any intermediate chrome. Needs Pulp v0.38.0+
+        // (pulp#662 / PR#673).
+        options.initial_html = R"(<!doctype html><html><head><meta charset="utf-8">
+<style>html,body{margin:0;height:100%;background:#05070a;}</style>
+</head><body></body></html>)";
         options.fetch_resource = pulp::view::make_webview_embedded_resource_fetcher(
             kAssetKey, /*assets*/ {});
         options.custom_scheme_uri = "pulp://spectr";
