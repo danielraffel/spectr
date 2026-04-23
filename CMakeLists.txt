@@ -4,7 +4,7 @@ project(Spectr VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Pulp 0.34.0 REQUIRED)
+find_package(Pulp 0.38.0 REQUIRED)
 
 # ── Core Spectr sources ────────────────────────────────────────────────
 #
@@ -17,7 +17,7 @@ set(SPECTR_SOURCES
     src/block_fft_engine.cpp
     src/edit_engine.cpp
     src/pattern.cpp
-    src/ui/band_field_view.cpp
+    src/ui/editor_view.cpp
 )
 
 set(SPECTR_HEADERS
@@ -26,6 +26,13 @@ set(SPECTR_HEADERS
     include/spectr/viewport.hpp
     include/spectr/engine.hpp
     include/spectr/edit_modes.hpp
+    include/spectr/ui/editor_view.hpp
+)
+
+# ── Editor HTML (prototype) embedded as a C++ binary blob ──────────────
+pulp_add_binary_data(spectr_editor_assets
+    SOURCES resources/editor.html
+    NAMESPACE spectr_editor
 )
 
 # ── Tests ──────────────────────────────────────────────────────────────
@@ -52,8 +59,11 @@ add_executable(Spectr-test
     test/test_pattern.cpp
     ${SPECTR_SOURCES}
 )
-target_link_libraries(Spectr-test PRIVATE Pulp::view)
-target_link_libraries(Spectr-test PRIVATE Pulp::format Catch2::Catch2WithMain)
+target_link_libraries(Spectr-test PRIVATE
+    Pulp::format Pulp::view
+    Catch2::Catch2WithMain
+    spectr_editor_assets
+)
 target_include_directories(Spectr-test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
@@ -84,5 +94,6 @@ foreach(fmt VST3 AU CLAP Standalone)
         target_include_directories(${tgt} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
+        target_link_libraries(${tgt} PRIVATE spectr_editor_assets)
     endif()
 endforeach()
