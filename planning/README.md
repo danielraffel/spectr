@@ -5,6 +5,10 @@ Working planning package for Spectr — a zoomable frequency slicer built on Pul
 This package lives inside the Spectr project so the review agent, the build
 agent, and the developer can all work from a single source of truth.
 
+## Read this first if resuming work
+
+**`Spectr-Status.md`** — live handoff dashboard. Branch state, in-flight upstream Pulp issues, open cosmetic debt, in-progress milestones, and the "fix it right" plan for the parked editor work. Refreshed after every commit to `main`.
+
 ## Documents
 
 - `Spectr-V1-Product-Spec.md` — original v1 product spec.
@@ -19,6 +23,7 @@ agent, and the developer can all work from a single source of truth.
 - `Spectr-Build-Blockers.md` — historical blocker record; superseded by the signoff above.
 - `Spectr-Sampler-Phase-Spec.md` — hardened Phase 4/5/6 sampler spec (Capture → Freeze → Play); replaces the thin seam-preservation language in V2 §13 with a concrete product contract.
 - `Spectr-UI-Park-Notes.md` — why the V1 editor UI is parked, the `danielraffel/pulp#651` framework gap, and the resume checklist.
+- `Spectr-Status.md` — live handoff dashboard (read this first).
 
 ## Source Inputs
 
