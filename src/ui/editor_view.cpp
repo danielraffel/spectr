@@ -28,9 +28,10 @@ void register_editor_assets_once() {
 }
 
 /// Adapter over whichever host is set on the view tree. PluginViewHost is
-/// used by plugin editors (via pulp#651), WindowHost by the standalone. Both
-/// expose the same native-child attach/bounds/detach API; we route through
-/// whichever one we find first on this view or an ancestor.
+/// used by plugin editors (via pulp#651), WindowHost by the standalone.
+/// Both expose equivalent native-child attach/bounds/detach APIs and, as of
+/// pulp#670, both expose a content-size accessor — so we no longer need a
+/// fallback-number dance for the standalone path.
 struct NativeChildHost {
     pulp::view::PluginViewHost* plugin_host = nullptr;
     pulp::view::WindowHost*     window_host = nullptr;
@@ -38,9 +39,19 @@ struct NativeChildHost {
     explicit operator bool() const noexcept { return plugin_host || window_host; }
 
     struct Size { float w = 0, h = 0; };
-    Size content_size_plugin() const {
+
+    /// Host-reported content area. PluginViewHost exposes `get_size()`;
+    /// WindowHost exposes `get_content_size()` (pulp#670, Pulp v0.40.0+).
+    /// We prefer plugin_host when both are present since plugin editors
+    /// embed inside a host-owned window and only the plugin-side dimensions
+    /// track the embed area.
+    Size content_size() const {
         if (plugin_host) {
             const auto s = plugin_host->get_size();
+            return {static_cast<float>(s.width), static_cast<float>(s.height)};
+        }
+        if (window_host) {
+            const auto s = window_host->get_content_size();
             return {static_cast<float>(s.width), static_cast<float>(s.height)};
         }
         return {0, 0};
@@ -124,30 +135,19 @@ void EditorView::attach_if_needed() {
         });
     }
 
-    // PluginViewHost exposes an explicit content size; WindowHost doesn't
-    // yet (see danielraffel/pulp#661). In the standalone path
-    // on_view_opened fires BEFORE the first layout, so bounds() is 0x0
-    // here and we fall back to the view_size() preferred dimensions.
-    //
-    // There's a cosmetic artifact: the standalone's TabPanel eats ~32pt
-    // at the top of the window content, which leaves a thin strip below
-    // our WebView. The right fix is pulp#661 + pulp#663; we deliberately
-    // avoid the "just over-size the attach" band-aid because getting the
-    // number wrong clips the bottom rail off the bottom of the window.
-    // Accepting the strip until the upstream fixes land.
-    auto sz = host.content_size_plugin();
-    const auto b = bounds();
+    // Both hosts now report a real content size (pulp#651 for plugin
+    // editors, pulp#670 for the standalone). No more fallback dance or
+    // magic 1320x860 numbers; we trust whichever host we resolved.
+    const auto sz = host.content_size();
     if (sz.w <= 0 || sz.h <= 0) {
-        sz.w = b.width  > 0 ? b.width  : 1320.0f;
-        sz.h = b.height > 0 ? b.height : 860.0f;
+        pulp::runtime::log_error("[Spectr] attach_if_needed — host reports 0x0 content size");
+        return;
     }
-    const auto w = sz.w;
-    const auto h = sz.h;
 
-    if (host.attach(panel_->native_handle(), w, h)) {
+    if (host.attach(panel_->native_handle(), sz.w, sz.h)) {
         attached_ = true;
         pulp::runtime::log_info("[Spectr] WebView editor attached {}x{} via {}",
-                                w, h,
+                                sz.w, sz.h,
                                 host.plugin_host ? "PluginViewHost" : "WindowHost");
     } else {
         pulp::runtime::log_error("[Spectr] attach_native_child_view failed");
@@ -158,12 +158,7 @@ void EditorView::sync_to_host() {
     if (!attached_ || !panel_) return;
     auto host = find_native_child_host(this);
     if (!host) return;
-    auto sz = host.content_size_plugin();
-    if (sz.w <= 0 || sz.h <= 0) {
-        const auto b = bounds();
-        sz.w = b.width;
-        sz.h = b.height;
-    }
+    const auto sz = host.content_size();
     if (sz.w <= 0 || sz.h <= 0) return;
     host.set_bounds(panel_->native_handle(), sz.w, sz.h);
 }
