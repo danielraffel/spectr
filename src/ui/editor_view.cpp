@@ -174,6 +174,13 @@ void EditorView::detach_if_needed() {
         attached_ = false;
         return;
     }
+    // Explicit teardown order: clear the bridge's WebView handler
+    // BEFORE the native child view comes off the host. This closes
+    // the residual race where the panel's last in-flight WebView
+    // callback could dispatch through the bridge after panel_
+    // destruction started. Symmetric partner of attach_webview(),
+    // added in pulp#728 (fixes #726).
+    bridge_.detach_webview(*panel_);
     auto host = find_native_child_host(this);
     if (host) host.detach(panel_->native_handle());
     attached_ = false;
