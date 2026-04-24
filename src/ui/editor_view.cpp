@@ -91,6 +91,12 @@ NativeChildHost find_native_child_host(const pulp::view::View* v) {
 
 EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
     register_editor_assets_once();
+    // Populate the bridge with Spectr's 10 handlers. Closures capture
+    // `plugin_`, `plugin_.patterns()`, and `drag_` by reference — all
+    // live as long as `this` does, so the bridge's non-movable
+    // guarantee plus EditorView being heap-allocated via create_view()
+    // covers lifetime.
+    register_spectr_editor_handlers(bridge_, plugin_, plugin_.patterns(), drag_);
 }
 
 EditorView::~EditorView() { detach_if_needed(); }
@@ -127,9 +133,9 @@ void EditorView::attach_if_needed() {
             return;
         }
 
-        panel_->set_message_handler([this](const pulp::view::WebViewMessage& m) -> std::string {
-            return handle_message_(m);
-        });
+        // Route WebView messages through the EditorBridge. attach_webview
+        // installs panel_->set_message_handler under the hood.
+        bridge_.attach_webview(*panel_);
         panel_->set_ready_handler([p = panel_.get()] {
             p->navigate("pulp://spectr");
         });
@@ -171,28 +177,6 @@ void EditorView::detach_if_needed() {
     auto host = find_native_child_host(this);
     if (host) host.detach(panel_->native_handle());
     attached_ = false;
-}
-
-std::string EditorView::handle_message_(const pulp::view::WebViewMessage& msg) {
-    pulp::runtime::log_info("[Spectr] webview msg type='{}' payload='{}'",
-                            msg.type, msg.payload_json);
-
-    // The pulp WebViewMessage surfaces `type` as its own field and
-    // `payload_json` as the payload object. Rebuild the envelope
-    // shape the bridge expects so we can reuse one dispatcher for
-    // both in-WebView and unit-test entry points. Inner JSON is
-    // trusted — any parse error is surfaced through the bridge's
-    // normal error response.
-    std::string envelope;
-    envelope.reserve(msg.type.size() + msg.payload_json.size() + 32);
-    envelope += R"({"type":")";
-    envelope += msg.type;
-    envelope += R"(","payload":)";
-    envelope += msg.payload_json.empty() ? std::string("{}") : msg.payload_json;
-    envelope += "}";
-
-    return dispatch_editor_message_json(plugin_, &plugin_.patterns(),
-                                        bridge_state_, envelope);
 }
 
 } // namespace spectr

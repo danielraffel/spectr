@@ -8,7 +8,13 @@
 // native content size, and attach our WebView as its native child. Spectr's
 // Processor drives attach/sync/detach via on_view_opened / on_view_resized /
 // on_view_closed.
+//
+// Message routing: the EditorView owns a pulp::view::EditorBridge (pulp#711
+// framework, Pulp v0.41.0+). Handlers are registered at construction via
+// register_spectr_editor_handlers(); attach_webview() on the panel routes
+// inbound JSON envelopes through the bridge to those handlers.
 
+#include <pulp/view/editor_bridge.hpp>
 #include <pulp/view/view.hpp>
 #include <pulp/view/web_view.hpp>
 
@@ -19,7 +25,6 @@
 namespace spectr {
 
 class Spectr;
-class PatternLibrary;
 
 class EditorView : public pulp::view::View {
 public:
@@ -39,14 +44,28 @@ public:
     void detach_if_needed();
 
 private:
-    Spectr& plugin_;
+    // ── Member order matters for destruction ───────────────────────────
+    //
+    // C++ destroys members in REVERSE declaration order. `panel_` must
+    // tear down BEFORE `bridge_` so any in-flight WebView callbacks
+    // that route through bridge_ don't reference a dead bridge. So:
+    //   plugin_  (reference — doesn't destruct)
+    //   drag_    (destroyed second-to-last — still alive while
+    //             handlers are draining)
+    //   bridge_  (destroyed third — handler closures stop firing)
+    //   attached_
+    //   panel_   (destroyed FIRST — tears down set_message_handler
+    //             before bridge_ goes away)
+    //
+    // EditorBridge is non-movable + non-copyable by design (pulp#711
+    // makes it a compile-error to put it in a moveable container),
+    // so we construct it in place as a direct member.
+
+    Spectr&                                   plugin_;
+    EditorDragState                           drag_{};
+    pulp::view::EditorBridge                  bridge_{};
+    bool                                      attached_ = false;
     std::unique_ptr<pulp::view::WebViewPanel> panel_;
-    bool attached_ = false;
-
-    // Bridge state for paint-drag snapshot capture — see editor_bridge.hpp.
-    EditorBridgeState bridge_state_{};
-
-    std::string handle_message_(const pulp::view::WebViewMessage& msg);
 };
 
 } // namespace spectr
