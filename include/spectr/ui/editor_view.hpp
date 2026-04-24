@@ -63,12 +63,12 @@ private:
     // makes it a compile-error to put it in a moveable container),
     // so we construct it in place as a direct member.
     //
-    // Remaining race window: between `set_message_handler` clearing
-    // on panel_ destruction and the native WebView's last in-flight
-    // callback completing. The WebViewPanel impl may or may not
-    // synchronously cancel — no `bridge_.detach_webview()` exists in
-    // Pulp v0.41.1 to make this explicit. See [pulp FR] for the
-    // symmetric `detach_webview()` we'd use here.
+    // Teardown order is now explicit: detach_if_needed() calls
+    // bridge_.detach_webview(*panel_) before the native child view
+    // comes off the host, so the race window that existed in
+    // Pulp v0.41.1 (between set_message_handler clearing and the
+    // WebView's last in-flight callback) is closed. Symmetric
+    // teardown landed in pulp#728 (fixes #726).
 
     Spectr&                                   plugin_;
     EditorDragState                           drag_{};
