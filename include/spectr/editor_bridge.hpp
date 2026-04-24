@@ -88,13 +88,43 @@
 //    (Payload future-compat: optional "library" field for non-default
 //    libraries; ignored in this slice.)
 //
+//  type="save_preset"
+//    payload: {
+//      "name":        string,        // optional; all metadata optional
+//      "author":      string,
+//      "description": string,
+//      "created_at":  string,        // ISO-8601
+//      "modified_at": string
+//    }
+//    Effect: build a preset JSON string from the current processor
+//    state + the provided metadata and return it in the response:
+//      {"ok": true, "preset_json": "<serialized>"}
+//    The bridge does not touch the filesystem — JS is responsible
+//    for prompting the user and writing the blob wherever the host
+//    OS allows. Mirrors how the prototype's pattern-manager modal
+//    handles export.
+//
+//  type="load_preset"
+//    payload: { "preset_json": "<serialized>" }
+//    Effect: parse the JSON and apply to StateStore + plugin state.
+//    Response includes the metadata from the preset on success:
+//      {"ok": true, "name": "…", "author": "…", … }
+//    On schema mismatch returns {"ok": false, "error": "…"} with
+//    a message describing the mismatch (see PresetLoadError).
+//
+//  type="param_set"
+//    payload: { "id": int, "value": float }
+//    Effect: StateStore::set_value(id, value). No range checking —
+//    the StateStore enforces the parameter's declared range.
+//    Hosts automate through their own channels; this is for
+//    editor-driven changes that should loop through the StateStore
+//    (so undo groups + snapshot capture see the write).
+//
 // ── Not yet in this slice ─────────────────────────────────────────────
 //
-//  save_preset / load_preset / param_set / state_push (C++ → JS)
-//
-// These are planned for follow-up slices so this first commit stays
-// bounded. The schema header reserves their names; the dispatch
-// function returns "unknown type" for them today.
+//  state_push (C++ → JS, for automation-to-UI sync). Requires
+//  panel_->execute_script() wiring that doesn't fight the prototype's
+//  render loop. Planned for M9.5 slice 4.
 
 #include <choc/containers/choc_Value.h>
 

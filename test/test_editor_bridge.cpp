@@ -10,10 +10,14 @@
 
 #include "spectr/editor_bridge.hpp"
 #include "spectr/pattern.hpp"
+#include "spectr/preset_format.hpp"
 #include "spectr/snapshot.hpp"
 #include "spectr/spectr.hpp"
 
 #include <pulp/state/store.hpp>
+
+#include <choc/containers/choc_Value.h>
+#include <choc/text/choc_JSON.h>
 
 #include <memory>
 #include <string>
@@ -75,16 +79,6 @@ TEST_CASE("M9.5 bridge: unknown type returns error") {
     const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
                                                    R"({"type":"not_a_message"})");
     CHECK(response_has_error(resp, "unknown message type"));
-}
-
-TEST_CASE("M9.5 bridge: reserved-for-future types return 'not implemented'") {
-    Rig r;
-    for (const auto* t : {"save_preset", "load_preset", "param_set"}) {
-        const auto msg = std::string(R"({"type":")") + t + R"("})";
-        const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge, msg);
-        INFO("type=" << t);
-        CHECK(response_has_error(resp, "not implemented"));
-    }
 }
 
 TEST_CASE("M9.5 bridge paint: paint without paint_start is rejected") {
@@ -212,4 +206,119 @@ TEST_CASE("M9.5 bridge load_pattern: without a library attached errors") {
     const auto resp = spectr::dispatch_editor_message_json(*r.proc, /*library*/nullptr,
         r.bridge, R"({"type":"load_pattern","payload":{"id":"factory:flat"}})");
     CHECK(response_has_error(resp, "pattern library"));
+}
+
+// ── M9.5 slice 2 — save_preset / load_preset / param_set ─────────────
+
+TEST_CASE("M9.5 bridge save_preset: returns the preset JSON in the response") {
+    Rig r;
+    r.store.set_value(spectr::kMix, 42.0f);
+    r.proc->field().bands[3].gain_db = -9.0f;
+
+    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+        R"({"type":"save_preset","payload":{"name":"Bridge Save","author":"Daniel"}})");
+    REQUIRE(response_ok(resp));
+    // Response embeds the preset JSON under "preset_json".
+    CHECK(resp.find("preset_json") != std::string::npos);
+    CHECK(resp.find("spectr.preset") != std::string::npos);  // format tag
+    CHECK(resp.find("Bridge Save") != std::string::npos);    // metadata round-trips
+}
+
+TEST_CASE("M9.5 bridge load_preset: applies and echoes metadata") {
+    // Build a preset from one rig, load it into another.
+    Rig a;
+    a.store.set_value(spectr::kMix, 18.0f);
+    a.proc->field().bands[10].gain_db = -3.0f;
+    spectr::PresetMetadata meta;
+    meta.name = "Bridge Load";
+    meta.author = "Test";
+    const auto preset = spectr::save_preset_to_string(*a.proc, meta);
+
+    Rig b;
+    // Escape the preset JSON inline via choc so the test doesn't have to
+    // hand-escape quotes in a raw string.
+    auto payload = choc::value::createObject("LoadPayload");
+    payload.addMember("preset_json", preset);
+    auto envelope = choc::value::createObject("Envelope");
+    envelope.addMember("type", "load_preset");
+    envelope.addMember("payload", payload);
+    const auto envelope_json = choc::json::toString(envelope, /*useLineBreaks=*/false);
+
+    const auto resp = dispatch_editor_message_json(*b.proc, &b.library, b.bridge,
+                                                   envelope_json);
+    REQUIRE(response_ok(resp));
+    CHECK(resp.find("Bridge Load") != std::string::npos);
+    CHECK(resp.find("\"author\": \"Test\"") != std::string::npos);
+    CHECK(b.store.get_value(spectr::kMix) == Approx(18.0f));
+    CHECK(b.proc->field().bands[10].gain_db == Approx(-3.0f));
+}
+
+TEST_CASE("M9.5 bridge load_preset: missing preset_json errors") {
+    Rig r;
+    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+        R"({"type":"load_preset","payload":{}})");
+    CHECK(response_has_error(resp, "preset_json missing"));
+}
+
+TEST_CASE("M9.5 bridge load_preset: malformed preset surfaces the load error") {
+    Rig r;
+    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+        R"({"type":"load_preset","payload":{"preset_json":"not valid"}})");
+    CHECK(response_has_error(resp, "JSON"));
+}
+
+TEST_CASE("M9.5 bridge param_set: writes to the StateStore") {
+    Rig r;
+    CHECK(r.store.get_value(spectr::kMix) == Approx(100.0f));   // default
+    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+        R"({"type":"param_set","payload":{"id":1,"value":73.5}})");
+    REQUIRE(response_ok(resp));
+    CHECK(r.store.get_value(spectr::kMix) == Approx(73.5f));
+}
+
+TEST_CASE("M9.5 bridge param_set: missing id or value errors") {
+    Rig r;
+    const auto no_id = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+        R"({"type":"param_set","payload":{"value":0}})");
+    CHECK(response_has_error(no_id, "param id missing"));
+
+    const auto no_val = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+        R"({"type":"param_set","payload":{"id":1}})");
+    CHECK(response_has_error(no_val, "param value missing"));
+}
+
+// ── M9.5 slice 2 — PatternLibrary persistence through plugin_state ──
+
+TEST_CASE("M9.5 plugin_state: user patterns round-trip through serialize") {
+    Rig a;
+    // Save a user pattern with distinctive state.
+    a.proc->field().bands[5].gain_db = -7.0f;
+    a.proc->field().bands[6].gain_db = +2.0f;
+    const auto p = a.proc->patterns().save_current(a.proc->field(), "BridgeRoundTrip");
+    REQUIRE_FALSE(p.id.empty());
+
+    const auto blob = a.proc->serialize_plugin_state();
+
+    Rig b;
+    // Fresh rig starts with only factory patterns.
+    REQUIRE(b.proc->patterns().user().empty());
+    REQUIRE(b.proc->deserialize_plugin_state(blob));
+    // After load, the user pattern is back and factory presets are
+    // still there (rebuilt at PatternLibrary construction).
+    CHECK(b.proc->patterns().factory().size() == a.proc->patterns().factory().size());
+    CHECK(b.proc->patterns().user().size() == 1);
+    CHECK(b.proc->patterns().user().front().name == "BridgeRoundTrip");
+    CHECK(b.proc->patterns().user().front().gain_db[5] == Approx(-7.0f));
+    CHECK(b.proc->patterns().user().front().gain_db[6] == Approx(+2.0f));
+}
+
+TEST_CASE("M9.5 plugin_state: empty-span reset clears user patterns") {
+    Rig r;
+    r.proc->patterns().save_current(r.proc->field(), "Temp");
+    REQUIRE_FALSE(r.proc->patterns().user().empty());
+    // pulp#625 contract: empty span means "reset to defaults".
+    REQUIRE(r.proc->deserialize_plugin_state({}));
+    CHECK(r.proc->patterns().user().empty());
+    // Factories still present (reconstructed by PatternLibrary()).
+    CHECK_FALSE(r.proc->patterns().factory().empty());
 }

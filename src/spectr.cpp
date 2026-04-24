@@ -313,6 +313,15 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     snaps.addMember("b", write_snapshot_(snapshots_.b));
     root.addMember("snapshots", snaps);
 
+    // M9.5 — user patterns. PatternLibrary::export_json() emits only
+    // user patterns (factory presets are rebuilt at construction) so
+    // the blob stays compact and a session reload rebuilds factories
+    // from code, not from the stored state. Embedded as a string
+    // because the library owns its own envelope shape and versioning
+    // — keeps the two serializers decoupled. Absent on a pre-9.5
+    // writer; readers treat absence as "no user patterns".
+    root.addMember("patterns_json", patterns_.export_json());
+
     auto json = choc::json::toString(root, /*useLineBreaks=*/false);
     return {json.begin(), json.end()};
 }
@@ -320,11 +329,12 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
 namespace {
 
 void reset_supplemental_state_(BandField& f, Viewport& v, Layout& l,
-                               SnapshotBank& bank) {
+                               SnapshotBank& bank, PatternLibrary& patterns) {
     f.reset();
     v = Viewport{};
     l = Layout::Bands32;
     bank = SnapshotBank{};
+    patterns = PatternLibrary{};  // restores factories, drops user patterns
 }
 
 // Symmetric with write_snapshot_(). Returns true if `obj` was read
@@ -394,7 +404,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     // Empty span = legacy blob or caller signalling "reset to defaults"
     // per the pulp#625 hook contract.
     if (bytes.empty()) {
-        reset_supplemental_state_(field_, viewport_, layout_, snapshots_);
+        reset_supplemental_state_(field_, viewport_, layout_, snapshots_, patterns_);
         return true;
     }
 
@@ -483,9 +493,19 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         if (snaps.hasObjectMember("b")) read_snapshot_(snaps["b"], new_bank.b);
     }
 
+    // M9.5 — user patterns. Apply into a fresh library so the factory
+    // presets are present regardless of what the blob carried; import
+    // appends the stored user patterns + default_id. Swap-on-success.
+    PatternLibrary new_patterns{};
+    if (root.hasObjectMember("patterns_json") && root["patterns_json"].isString()) {
+        const auto s = root["patterns_json"].getString();
+        new_patterns.import_json(std::string_view(s));
+    }
+
     field_     = new_field;
     viewport_  = new_view;
     snapshots_ = new_bank;
+    patterns_  = std::move(new_patterns);
     if (new_layout != layout_) set_layout(new_layout);
     return true;
 }
