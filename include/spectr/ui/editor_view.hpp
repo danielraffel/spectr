@@ -14,9 +14,12 @@
 
 #include <memory>
 
+#include "spectr/editor_bridge.hpp"
+
 namespace spectr {
 
 class Spectr;
+class PatternLibrary;
 
 class EditorView : public pulp::view::View {
 public:
@@ -40,7 +43,10 @@ private:
     std::unique_ptr<pulp::view::WebViewPanel> panel_;
     bool attached_ = false;
 
-    void handle_message_(const pulp::view::WebViewMessage& msg);
+    // Bridge state for paint-drag snapshot capture — see editor_bridge.hpp.
+    EditorBridgeState bridge_state_{};
+
+    std::string handle_message_(const pulp::view::WebViewMessage& msg);
 };
 
 } // namespace spectr
