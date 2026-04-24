@@ -21,10 +21,19 @@
 # the cumulative release-note history.
 
 [shipyard]
-# v0.29.0 — tracks pulp's pin as of 2026-04-23. See pulp's
-# tools/shipyard.toml for the cumulative release-note history of each
-# version on the v0.2x line.
-version = "v0.29.0"
+# v0.42.0 — tracks pulp's pin. Jump from v0.29.0 covers the
+# notarization-preserve install fix (v0.36.0, Shipyard #203) that
+# ends the silent-no-op / SIGKILL failure mode this repo hit on
+# 2026-04-23: the pre-v0.36 install.sh ad-hoc-resigned over the
+# Developer-ID signature, and Gatekeeper eventually killed the
+# binary after a background-scan window, which is exactly what
+# happened when `shipyard ship` on Spectr PR #8 degraded to exit 137
+# with zero output. v0.41.0 adds a rich-bundle doctor check
+# (Shipyard #181) and v0.42.0 adds a Gatekeeper / quarantine /
+# codesign doctor check (Shipyard #216) so a future recurrence
+# surfaces with a named error instead of silent binary death.
+# See pulp's tools/shipyard.toml for the full per-release history.
+version = "v0.42.0"
 
 # Public release source. The bootstrap script downloads from
 # https://github.com/{repo}/releases/download/{version}/{asset}
