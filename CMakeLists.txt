@@ -17,6 +17,7 @@ set(SPECTR_SOURCES
     src/block_fft_engine.cpp
     src/edit_engine.cpp
     src/editor_bridge.cpp
+    src/host_bridge.cpp
     src/pattern.cpp
     src/preset_format.cpp
     src/snapshot.cpp
@@ -31,6 +32,7 @@ set(SPECTR_HEADERS
     include/spectr/engine.hpp
     include/spectr/edit_modes.hpp
     include/spectr/editor_bridge.hpp
+    include/spectr/host_bridge.hpp
     include/spectr/preset_format.hpp
     include/spectr/snapshot.hpp
     include/spectr/windowed_stft_engine.hpp
