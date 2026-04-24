@@ -1,4 +1,5 @@
 #include "spectr/ui/editor_view.hpp"
+#include "spectr/editor_bridge.hpp"
 #include "spectr/spectr.hpp"
 
 #include <pulp/runtime/log.hpp>
@@ -127,8 +128,7 @@ void EditorView::attach_if_needed() {
         }
 
         panel_->set_message_handler([this](const pulp::view::WebViewMessage& m) -> std::string {
-            handle_message_(m);
-            return R"({"ok":true})";
+            return handle_message_(m);
         });
         panel_->set_ready_handler([p = panel_.get()] {
             p->navigate("pulp://spectr");
@@ -173,10 +173,26 @@ void EditorView::detach_if_needed() {
     attached_ = false;
 }
 
-void EditorView::handle_message_(const pulp::view::WebViewMessage& msg) {
+std::string EditorView::handle_message_(const pulp::view::WebViewMessage& msg) {
     pulp::runtime::log_info("[Spectr] webview msg type='{}' payload='{}'",
                             msg.type, msg.payload_json);
-    (void)plugin_;
+
+    // The pulp WebViewMessage surfaces `type` as its own field and
+    // `payload_json` as the payload object. Rebuild the envelope
+    // shape the bridge expects so we can reuse one dispatcher for
+    // both in-WebView and unit-test entry points. Inner JSON is
+    // trusted — any parse error is surfaced through the bridge's
+    // normal error response.
+    std::string envelope;
+    envelope.reserve(msg.type.size() + msg.payload_json.size() + 32);
+    envelope += R"({"type":")";
+    envelope += msg.type;
+    envelope += R"(","payload":)";
+    envelope += msg.payload_json.empty() ? std::string("{}") : msg.payload_json;
+    envelope += "}";
+
+    return dispatch_editor_message_json(plugin_, &plugin_.patterns(),
+                                        bridge_state_, envelope);
 }
 
 } // namespace spectr

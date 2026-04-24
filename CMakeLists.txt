@@ -16,6 +16,7 @@ set(SPECTR_SOURCES
     src/spectr.cpp
     src/block_fft_engine.cpp
     src/edit_engine.cpp
+    src/editor_bridge.cpp
     src/pattern.cpp
     src/preset_format.cpp
     src/snapshot.cpp
@@ -29,6 +30,7 @@ set(SPECTR_HEADERS
     include/spectr/viewport.hpp
     include/spectr/engine.hpp
     include/spectr/edit_modes.hpp
+    include/spectr/editor_bridge.hpp
     include/spectr/preset_format.hpp
     include/spectr/snapshot.hpp
     include/spectr/windowed_stft_engine.hpp
@@ -63,6 +65,7 @@ add_executable(Spectr-test
     test/test_m4_state.cpp
     test/test_edit_engine.cpp
     test/test_pattern.cpp
+    test/test_editor_bridge.cpp
     test/test_preset.cpp
     test/test_snapshot.cpp
     test/test_windowed_stft_engine.cpp

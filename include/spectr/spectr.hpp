@@ -15,6 +15,7 @@
 #include "spectr/band_state.hpp"
 #include "spectr/edit_modes.hpp"
 #include "spectr/engine.hpp"
+#include "spectr/pattern.hpp"
 #include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
 
@@ -135,6 +136,17 @@ public:
     /// the store). Returns nullptr if the store isn't available yet.
     pulp::view::ABCompare* ab_compare() noexcept;
 
+    // ── Pattern library ────────────────────────────────────────────────
+    //
+    // Each Spectr owns a PatternLibrary pre-populated with the factory
+    // presets. User patterns come and go through the editor bridge's
+    // load_pattern / (future) save_current paths. Persistence for
+    // user patterns is a M9 follow-up — the library lives in memory
+    // only for now; serialize_plugin_state doesn't yet pack it into
+    // the supplemental blob.
+    PatternLibrary&       patterns()       noexcept { return patterns_; }
+    const PatternLibrary& patterns() const noexcept { return patterns_; }
+
     // ── Analyzer bridge — UI-thread read path ───────────────────────────
     //
     // Spectr publishes STFT + meter + waveform snapshots from the audio
@@ -159,6 +171,7 @@ private:
 
     pulp::view::VisualizationBridge       bridge_{};
     SnapshotBank                          snapshots_{};
+    PatternLibrary                        patterns_{};
     std::unique_ptr<pulp::view::ABCompare> ab_{};
 
     void rebuild_engine_();
