@@ -34,14 +34,25 @@ needs to change during the cutover — only the generic framework
 moves from in-repo (`spectr::HostBridge`) to Pulp SDK
 (`pulp::view::EditorBridge`).
 
-## Integration Plan: pulp#711 cutover diff
+## ~~Integration Plan: pulp#711 cutover diff~~ ✅ Executed 2026-04-24
 
-[pulp#711](https://github.com/danielraffel/pulp/pull/711) lifts
-`spectr::HostBridge` into Pulp as `pulp::view::EditorBridge`. Design
-verified against Spectr's fixture; the pulp-side agent audited all
-11 message types and confirmed cutover is mechanical.
+**Executed in Spectr PR #17, merged at 14:51 UTC on 2026-04-24.** Kept
+below for historical reference + as a template for the next cutover
+(pulp#468).
 
-When pulp#711 merges **and** a Pulp SDK release ships with it:
+Outcome:
+- Spectr now uses `pulp::view::EditorBridge` (Pulp v0.41.1+)
+- `host_bridge.{hpp,cpp}` deleted (~250 LOC)
+- 109/109 tests pass
+- Net LOC: -125 (matched the prediction)
+- Follow-up gap identified: no symmetric `detach_webview()` on
+  `EditorBridge` — a defensive teardown step would close the race
+  between panel_'s destructor and bridge_'s destructor. Filed as a
+  pulp FR; cross-linked as `Open Gaps` row below.
+
+---
+
+Original runbook (pulp#711 prediction):
 
 ### Branch setup
 
@@ -257,6 +268,60 @@ reaches Phase 1 implementation)_
 ## Closed Gaps
 
 _(none yet)_
+
+## Learnings (from the pulp#711 cutover)
+
+Durable patterns surfaced during this integration. Each one saved me or
+will save a future agent hours next time.
+
+1. **Stand-in-then-cutover is safer than waiting.** Writing
+   `spectr::HostBridge` as a local implementation that mirrored the
+   proposed Pulp API let me (a) validate the upstream design against a
+   real consumer before it landed, and (b) made the eventual cutover a
+   mechanical rename instead of a design exercise under time pressure.
+   Cost: ~1 hour of stand-in code that got deleted. Benefit: caught the
+   `get_int` missing helper in upstream review, pre-wrote the Integration
+   Plan as a runbook, absorbed a failed design before it shipped.
+
+2. **Framework fixes live upstream; plugins don't hack around them.**
+   Code reviewer flagged the missing `bridge_.detach_webview()` as a
+   tear-down race window. Did NOT add a local workaround. Filed as
+   pulp#726 for the symmetric API and documented the current state
+   as a comment in `editor_view.hpp` so the gap is visible. This is
+   how the downstream/upstream contract stays clean.
+
+3. **Don't edit source during `shipyard run`.** The configure stage
+   reads the live working tree. Deleting or renaming files during a
+   30+ minute run produces non-deterministic failures that look like
+   regressions but are just races (see
+   [Shipyard#238](https://github.com/danielraffel/Shipyard/issues/238)).
+   Mitigation until that lands: park edits until a run settles, or
+   use a separate worktree for the in-progress work.
+
+4. **Member destruction order is load-bearing around bridges.** A
+   `pulp::view::EditorBridge` must outlive its `WebViewPanel` or
+   in-flight messages teardown into a dead bridge. Declare
+   `EditorBridge` BEFORE the `unique_ptr<WebViewPanel>` in the
+   owning class so reverse-declaration-order destruction runs the
+   panel first. Non-movable/non-copyable is load-bearing too — it's
+   a pulp#711 compile-time guarantee against accidentally landing
+   in a moveable container. See comment block at the top of the
+   `EditorView` private section.
+
+5. **Pin to downloadable SDK as soon as a release lands.** Every
+   time a local-built SDK gets baked into a `pulp.toml` or shipyard
+   config, it's a hidden cross-machine portability break. As soon
+   as the release-cli pipeline catches up, flip back to
+   `~/.pulp/sdk/<version>` (downloaded) so anyone checking out the
+   repo can reproduce the build without custom Pulp setup.
+
+6. **Async-via-GitHub is the actual agent IPC.** Cross-session
+   agent coordination worked best as checkpoint comments on the
+   tracking issue (pulp#709 / #468 / #711). The pulp-side agent
+   posted "API frozen", "tests green", "PR opened"; I responded
+   with the consumer-side divergence audit. No native Claude
+   agent-to-agent channel was needed — GitHub queues the back-and-forth
+   and gives a durable audit trail.
 
 ## Related issues and PRs
 
