@@ -24,23 +24,29 @@
 
 using Catch::Approx;
 using spectr::BandField;
-using spectr::EditorBridgeState;
+using spectr::EditorDragState;
 using spectr::PatternLibrary;
 using spectr::SnapshotBank;
 using spectr::Spectr;
-using spectr::dispatch_editor_message_json;
+using spectr::register_spectr_editor_handlers;
 
 namespace {
 
 struct Rig {
-    pulp::state::StateStore   store;
-    std::unique_ptr<Spectr>   proc;
-    PatternLibrary            library;
-    EditorBridgeState         bridge;
+    pulp::state::StateStore       store;
+    std::unique_ptr<Spectr>       proc;
+    PatternLibrary                library;
+    EditorDragState               drag;
+    pulp::view::EditorBridge      bridge;
 
     Rig() : proc(std::make_unique<Spectr>()) {
         proc->set_state_store(&store);
         proc->define_parameters(store);
+        register_spectr_editor_handlers(bridge, *proc, library, drag);
+    }
+
+    std::string dispatch(std::string_view envelope_json) {
+        return bridge.dispatch_json(envelope_json);
     }
 };
 
@@ -62,28 +68,28 @@ bool response_has_error(const std::string& r, std::string_view substr) {
 
 TEST_CASE("M9.5 bridge: malformed JSON returns error") {
     Rig r;
-    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto resp = r.dispatch(
                                                    "not json");
     CHECK(response_has_error(resp, "malformed JSON"));
 }
 
 TEST_CASE("M9.5 bridge: missing 'type' returns error") {
     Rig r;
-    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto resp = r.dispatch(
                                                    R"({"payload":{}})");
     CHECK(response_has_error(resp, "'type'"));
 }
 
 TEST_CASE("M9.5 bridge: unknown type returns error") {
     Rig r;
-    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto resp = r.dispatch(
                                                    R"({"type":"not_a_message"})");
     CHECK(response_has_error(resp, "unknown message type"));
 }
 
 TEST_CASE("M9.5 bridge paint: paint without paint_start is rejected") {
     Rig r;
-    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto resp = r.dispatch(
         R"({"type":"paint","payload":{"mode":"Sculpt","start_band":0,"start_value":0,
             "current_band":3,"current_value":-6,"n_visible":32}})");
     CHECK(response_has_error(resp, "paint without paint_start"));
@@ -94,11 +100,11 @@ TEST_CASE("M9.5 bridge paint: start → paint → end mutates the field") {
     // Start with a neutral field.
     r.proc->field() = BandField{};
 
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"paint_start"})")));
 
     // Sculpt drag from band 2 (0 dB) to band 5 (-6 dB).
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"paint","payload":{"mode":"Sculpt","start_band":2,"start_value":0,
                 "current_band":5,"current_value":-6,"n_visible":32}})")));
 
@@ -109,11 +115,11 @@ TEST_CASE("M9.5 bridge paint: start → paint → end mutates the field") {
     // Bands outside the drag untouched.
     CHECK(r.proc->field().bands[0].gain_db == Approx(0.0f));
 
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"paint_end"})")));
 
     // After end, a paint without a new start fails.
-    const auto after = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto after = r.dispatch(
         R"({"type":"paint","payload":{"mode":"Sculpt","start_band":0,"start_value":0,
             "current_band":0,"current_value":-3,"n_visible":32}})");
     CHECK(response_has_error(after, "paint without paint_start"));
@@ -122,9 +128,9 @@ TEST_CASE("M9.5 bridge paint: start → paint → end mutates the field") {
 TEST_CASE("M9.5 bridge paint: unknown mode returns error without mutating") {
     Rig r;
     const auto before = r.proc->field().bands[0].gain_db;
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"paint_start"})")));
-    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto resp = r.dispatch(
         R"({"type":"paint","payload":{"mode":"Blaster","start_band":0,"start_value":0,
             "current_band":3,"current_value":-6,"n_visible":32}})");
     CHECK(response_has_error(resp, "unknown edit mode"));
@@ -139,16 +145,16 @@ TEST_CASE("M9.5 bridge morph: clamps t and applies to live field") {
     for (auto& b : r.proc->field().bands) b.gain_db = +10.0f;
     r.proc->capture_snapshot(SnapshotBank::Slot::B);
 
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"morph","payload":{"t":0.5}})")));
     CHECK(r.proc->field().bands[0].gain_db == Approx(0.0f));
 
     // Out-of-range t clamps rather than erroring.
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"morph","payload":{"t":5.0}})")));
     CHECK(r.proc->field().bands[0].gain_db == Approx(+10.0f));
 
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"morph","payload":{"t":-2.0}})")));
     CHECK(r.proc->field().bands[0].gain_db == Approx(-10.0f));
 }
@@ -157,16 +163,16 @@ TEST_CASE("M9.5 bridge capture_snapshot: slot string is required") {
     Rig r;
     r.proc->field().bands[10].gain_db = -4.0f;
 
-    const auto bad = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto bad = r.dispatch(
         R"({"type":"capture_snapshot"})");
     CHECK(response_has_error(bad, "'A' or 'B'"));
 
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"capture_snapshot","payload":{"slot":"A"}})")));
     CHECK(r.proc->snapshots().has(SnapshotBank::Slot::A));
     CHECK(r.proc->snapshots().a.field.bands[10].gain_db == Approx(-4.0f));
 
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"capture_snapshot","payload":{"slot":"B"}})")));
     CHECK(r.proc->snapshots().has(SnapshotBank::Slot::B));
 }
@@ -174,10 +180,10 @@ TEST_CASE("M9.5 bridge capture_snapshot: slot string is required") {
 TEST_CASE("M9.5 bridge ab_toggle: flips active slot") {
     Rig r;
     CHECK(r.proc->snapshots().active == SnapshotBank::Slot::A);
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"ab_toggle"})")));
     CHECK(r.proc->snapshots().active == SnapshotBank::Slot::B);
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"ab_toggle"})")));
     CHECK(r.proc->snapshots().active == SnapshotBank::Slot::A);
 }
@@ -187,26 +193,24 @@ TEST_CASE("M9.5 bridge load_pattern: applies by id, errors on unknown") {
     // Flat factory pattern should land every band at 0 dB.
     for (auto& b : r.proc->field().bands) b.gain_db = -12.0f;
 
-    REQUIRE(response_ok(dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    REQUIRE(response_ok(r.dispatch(
             R"({"type":"load_pattern","payload":{"id":"factory:flat"}})")));
     CHECK(r.proc->field().bands[0].gain_db == Approx(0.0f));
     CHECK(r.proc->field().bands[63].gain_db == Approx(0.0f));
 
-    const auto bad = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto bad = r.dispatch(
         R"({"type":"load_pattern","payload":{"id":"factory:bogus"}})");
     CHECK(response_has_error(bad, "unknown pattern id"));
 
-    const auto empty = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto empty = r.dispatch(
         R"({"type":"load_pattern","payload":{}})");
     CHECK(response_has_error(empty, "pattern id missing"));
 }
 
-TEST_CASE("M9.5 bridge load_pattern: without a library attached errors") {
-    Rig r;
-    const auto resp = spectr::dispatch_editor_message_json(*r.proc, /*library*/nullptr,
-        r.bridge, R"({"type":"load_pattern","payload":{"id":"factory:flat"}})");
-    CHECK(response_has_error(resp, "pattern library"));
-}
+// Obsolete under pulp#711: the EditorBridge framework takes the
+// library by reference at handler registration, so there's no
+// "nullptr library" code path to exercise. Unknown-pattern-id is
+// the remaining error surface and it's covered by the test above.
 
 // ── M9.5 slice 2 — save_preset / load_preset / param_set ─────────────
 
@@ -215,7 +219,7 @@ TEST_CASE("M9.5 bridge save_preset: returns the preset JSON in the response") {
     r.store.set_value(spectr::kMix, 42.0f);
     r.proc->field().bands[3].gain_db = -9.0f;
 
-    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto resp = r.dispatch(
         R"({"type":"save_preset","payload":{"name":"Bridge Save","author":"Daniel"}})");
     REQUIRE(response_ok(resp));
     // Response embeds the preset JSON under "preset_json".
@@ -244,7 +248,7 @@ TEST_CASE("M9.5 bridge load_preset: applies and echoes metadata") {
     envelope.addMember("payload", payload);
     const auto envelope_json = choc::json::toString(envelope, /*useLineBreaks=*/false);
 
-    const auto resp = dispatch_editor_message_json(*b.proc, &b.library, b.bridge,
+    const auto resp = b.dispatch(
                                                    envelope_json);
     REQUIRE(response_ok(resp));
     CHECK(resp.find("Bridge Load") != std::string::npos);
@@ -255,14 +259,14 @@ TEST_CASE("M9.5 bridge load_preset: applies and echoes metadata") {
 
 TEST_CASE("M9.5 bridge load_preset: missing preset_json errors") {
     Rig r;
-    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto resp = r.dispatch(
         R"({"type":"load_preset","payload":{}})");
     CHECK(response_has_error(resp, "preset_json missing"));
 }
 
 TEST_CASE("M9.5 bridge load_preset: malformed preset surfaces the load error") {
     Rig r;
-    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto resp = r.dispatch(
         R"({"type":"load_preset","payload":{"preset_json":"not valid"}})");
     CHECK(response_has_error(resp, "JSON"));
 }
@@ -270,7 +274,7 @@ TEST_CASE("M9.5 bridge load_preset: malformed preset surfaces the load error") {
 TEST_CASE("M9.5 bridge param_set: writes to the StateStore") {
     Rig r;
     CHECK(r.store.get_value(spectr::kMix) == Approx(100.0f));   // default
-    const auto resp = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto resp = r.dispatch(
         R"({"type":"param_set","payload":{"id":1,"value":73.5}})");
     REQUIRE(response_ok(resp));
     CHECK(r.store.get_value(spectr::kMix) == Approx(73.5f));
@@ -278,11 +282,11 @@ TEST_CASE("M9.5 bridge param_set: writes to the StateStore") {
 
 TEST_CASE("M9.5 bridge param_set: missing id or value errors") {
     Rig r;
-    const auto no_id = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto no_id = r.dispatch(
         R"({"type":"param_set","payload":{"value":0}})");
     CHECK(response_has_error(no_id, "param id missing"));
 
-    const auto no_val = dispatch_editor_message_json(*r.proc, &r.library, r.bridge,
+    const auto no_val = r.dispatch(
         R"({"type":"param_set","payload":{"id":1}})");
     CHECK(response_has_error(no_val, "param value missing"));
 }

@@ -24,7 +24,7 @@ platforms = ["macos"]
 
 [validation.default]
 stages    = ["configure", "build", "test"]
-configure = "cmake -S . -B build -DCMAKE_PREFIX_PATH=$HOME/.pulp/sdk-local/darwin-arm64/0.40.0 -DCMAKE_BUILD_TYPE=Debug"
+configure = "cmake -S . -B build -DCMAKE_PREFIX_PATH=$HOME/.pulp/sdk/0.41.1 -DCMAKE_BUILD_TYPE=Debug"
 build     = "cmake --build build --parallel"
 test      = "ctest --test-dir build --output-on-failure"
 
