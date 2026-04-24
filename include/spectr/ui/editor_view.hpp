@@ -48,18 +48,27 @@ private:
     //
     // C++ destroys members in REVERSE declaration order. `panel_` must
     // tear down BEFORE `bridge_` so any in-flight WebView callbacks
-    // that route through bridge_ don't reference a dead bridge. So:
-    //   plugin_  (reference — doesn't destruct)
-    //   drag_    (destroyed second-to-last — still alive while
-    //             handlers are draining)
-    //   bridge_  (destroyed third — handler closures stop firing)
-    //   attached_
-    //   panel_   (destroyed FIRST — tears down set_message_handler
-    //             before bridge_ goes away)
+    // that route through bridge_ don't reference a dead bridge.
+    // Destruction order (last declared → first destroyed):
+    //
+    //   panel_      → destroyed FIRST — stops WebView inbound messages
+    //   attached_   → pod, trivially destroyed
+    //   bridge_     → destroyed AFTER panel_ — handler closures safe
+    //                 to drain
+    //   drag_       → destroyed AFTER bridge_ — closures that captured
+    //                 &drag_ have stopped firing by now
+    //   plugin_     → reference, no destructor
     //
     // EditorBridge is non-movable + non-copyable by design (pulp#711
     // makes it a compile-error to put it in a moveable container),
     // so we construct it in place as a direct member.
+    //
+    // Remaining race window: between `set_message_handler` clearing
+    // on panel_ destruction and the native WebView's last in-flight
+    // callback completing. The WebViewPanel impl may or may not
+    // synchronously cancel — no `bridge_.detach_webview()` exists in
+    // Pulp v0.41.1 to make this explicit. See [pulp FR] for the
+    // symmetric `detach_webview()` we'd use here.
 
     Spectr&                                   plugin_;
     EditorDragState                           drag_{};
