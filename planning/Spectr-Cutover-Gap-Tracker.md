@@ -267,7 +267,9 @@ reaches Phase 1 implementation)_
 
 ## Closed Gaps
 
-_(none yet)_
+| Gap | Pulp issue | Filed | Closed | Consumer PR | Notes |
+|-----|-----------|-------|--------|-------------|-------|
+| No symmetric `EditorBridge::detach_webview()` — teardown-race window between `set_message_handler` clear and last in-flight WebView callback | [pulp#726](https://github.com/danielraffel/pulp/issues/726) | 2026-04-24 | 2026-04-24 (pulp#728 → v0.42.0) | [Spectr PR #21](https://github.com/danielraffel/spectr/pull/21) | Consumer calls `bridge_.detach_webview(*panel_)` in `EditorView::detach_if_needed()` before native child-view detach. Closed within hours of filing — fastest framework-fix cycle recorded to date. |
 
 ## Learnings (from the pulp#711 cutover)
 
