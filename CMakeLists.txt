@@ -19,6 +19,7 @@ set(SPECTR_SOURCES
     src/pattern.cpp
     src/preset_format.cpp
     src/snapshot.cpp
+    src/windowed_stft_engine.cpp
     src/ui/editor_view.cpp
 )
 
@@ -30,6 +31,7 @@ set(SPECTR_HEADERS
     include/spectr/edit_modes.hpp
     include/spectr/preset_format.hpp
     include/spectr/snapshot.hpp
+    include/spectr/windowed_stft_engine.hpp
     include/spectr/ui/editor_view.hpp
 )
 
@@ -63,6 +65,7 @@ add_executable(Spectr-test
     test/test_pattern.cpp
     test/test_preset.cpp
     test/test_snapshot.cpp
+    test/test_windowed_stft_engine.cpp
     ${SPECTR_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
