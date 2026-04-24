@@ -4,7 +4,10 @@
 #include "spectr/edit_engine.hpp"
 #include "spectr/edit_modes.hpp"
 #include "spectr/pattern.hpp"
+#include "spectr/preset_format.hpp"
 #include "spectr/snapshot.hpp"
+
+#include <pulp/state/store.hpp>
 
 #include <choc/text/choc_JSON.h>
 
@@ -151,6 +154,64 @@ std::string on_load_pattern_(Spectr& plugin, PatternLibrary* library,
     return ok_response();
 }
 
+// ── Preset handlers ────────────────────────────────────────────────────
+
+std::string on_save_preset_(Spectr& plugin, const choc::value::ValueView& payload) {
+    PresetMetadata meta;
+    meta.name        = get_string_(payload, "name");
+    meta.author      = get_string_(payload, "author");
+    meta.description = get_string_(payload, "description");
+    meta.created_at  = get_string_(payload, "created_at");
+    meta.modified_at = get_string_(payload, "modified_at");
+    const auto preset_json = save_preset_to_string(plugin, meta);
+
+    auto obj = choc::value::createObject("BridgeOk");
+    obj.addMember("ok",          true);
+    obj.addMember("preset_json", preset_json);
+    return choc::json::toString(obj, /*useLineBreaks=*/false);
+}
+
+std::string on_load_preset_(Spectr& plugin, const choc::value::ValueView& payload) {
+    const auto preset_json = get_string_(payload, "preset_json");
+    if (preset_json.empty()) return err_response("preset_json missing");
+
+    const auto result = load_preset_from_string(plugin, preset_json);
+    if (!result) {
+        return err_response(describe(result.error));
+    }
+    // Success — echo the metadata the preset carried so JS can refresh
+    // whatever UI labels its preset browser, without needing to
+    // re-parse the full envelope on its side.
+    auto obj = choc::value::createObject("BridgeOk");
+    obj.addMember("ok",             true);
+    obj.addMember("name",           result.metadata.name);
+    obj.addMember("author",         result.metadata.author);
+    obj.addMember("description",    result.metadata.description);
+    obj.addMember("created_at",     result.metadata.created_at);
+    obj.addMember("modified_at",    result.metadata.modified_at);
+    obj.addMember("plugin_version", result.plugin_version);
+    return choc::json::toString(obj, /*useLineBreaks=*/false);
+}
+
+std::string on_param_set_(Spectr& plugin, const choc::value::ValueView& payload) {
+    if (!payload.isObject() || !payload.hasObjectMember("id"))
+        return err_response("param id missing");
+    const auto id_v = payload["id"];
+    pulp::state::ParamID id{};
+    if      (id_v.isInt32()) id = static_cast<pulp::state::ParamID>(id_v.getInt32());
+    else if (id_v.isInt64()) id = static_cast<pulp::state::ParamID>(id_v.getInt64());
+    else                     return err_response("param id must be integer");
+
+    if (!payload.hasObjectMember("value"))
+        return err_response("param value missing");
+    const float value = get_float_(payload, "value", 0.0f);
+
+    // StateStore::set_value returns a bool in some versions; in ours
+    // the write is unconditional and the store range-clamps as needed.
+    plugin.state().set_value(id, value);
+    return ok_response();
+}
+
 } // namespace
 
 // ── Dispatch ───────────────────────────────────────────────────────────
@@ -169,12 +230,9 @@ std::string dispatch_editor_message(Spectr& plugin,
         if (type == "capture_snapshot")  return on_capture_snapshot_(plugin, state, payload);
         if (type == "ab_toggle")         return on_ab_toggle_(plugin, state, payload);
         if (type == "load_pattern")      return on_load_pattern_(plugin, library, payload);
-        // Reserved-for-future types return a distinguishable error so a
-        // JS caller sending these during development gets a clear
-        // signal rather than a silent drop.
-        if (type == "save_preset" ||
-            type == "load_preset" ||
-            type == "param_set")         return err_response("not implemented in this slice");
+        if (type == "save_preset")       return on_save_preset_(plugin, payload);
+        if (type == "load_preset")       return on_load_preset_(plugin, payload);
+        if (type == "param_set")         return on_param_set_(plugin, payload);
         return err_response("unknown message type");
     } catch (...) {
         return err_response("internal error");
