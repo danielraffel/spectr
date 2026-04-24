@@ -21,10 +21,24 @@
 # the cumulative release-note history.
 
 [shipyard]
-# v0.29.0 — tracks pulp's pin as of 2026-04-23. See pulp's
-# tools/shipyard.toml for the cumulative release-note history of each
-# version on the v0.2x line.
-version = "v0.29.0"
+# v0.44.0 — tracks pulp's pin. Jump from v0.29.0 covers the full chain
+# of fixes Shipyard shipped after the 2026-04-23 SIGKILL incident:
+#
+#   - v0.36.0 / Shipyard #203 — install.sh notarization-preserve (the
+#     pre-v0.36 installer ad-hoc-resigned over the Dev-ID signature,
+#     which Gatekeeper killed after a background-scan window).
+#   - v0.41.0 / Shipyard #181 — rich-bundle `shipyard doctor` check.
+#   - v0.43.0 / Shipyard #216 — Gatekeeper/quarantine/codesign doctor
+#     check + post-install `shipyard --version` smoke test.
+#   - v0.44.0 / Shipyard #219 — macOS ships as a **stapled .dmg** so
+#     Gatekeeper can verify offline. Ends the taskgated-cache
+#     flakiness the earlier v0.42.0 / v0.43.0 binary builds hit on
+#     this account (silent exit 137, "Taskgated Invalid Signature"
+#     crash reports). install.sh handles the dmg → extract step
+#     transparently.
+#
+# See pulp's tools/shipyard.toml for the full per-release history.
+version = "v0.44.0"
 
 # Public release source. The bootstrap script downloads from
 # https://github.com/{repo}/releases/download/{version}/{asset}
