@@ -297,7 +297,17 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // Layout — also exposed as a flat param, but persist here too so the
     // full restore is self-contained if a host replays only the plugin
     // blob (defensive against adapter-edge bugs).
-    root.addMember("layout_index", static_cast<int32_t>(layout_to_index(layout_)));
+    //
+    // Read directly from StateStore rather than the cached `layout_`
+    // member. `layout_` is materialized from `kBandCount` during
+    // process(); a host that writes the param via the CLAP flush path
+    // (or VST3 setParamNormalized, or AU kAudioUnitSetProperty) and
+    // then calls state-save without an intervening process() block
+    // would otherwise see a stale cached value. This was caught by
+    // clap-validator's `state-reproducibility-flush` test.
+    const auto band_count_idx = static_cast<int32_t>(
+        layout_to_index(layout_from_index(state().get_value(kBandCount))));
+    root.addMember("layout_index", band_count_idx);
 
     // Editor state placeholders — analyzer / edit mode UI selection. Not
     // sound-defining for V1; M5+ fills them in.
