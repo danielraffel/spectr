@@ -23,12 +23,176 @@ bridge:
 
 - Schema: `include/spectr/editor_bridge.hpp`
 - Dispatcher: `src/editor_bridge.cpp` — `dispatch_editor_message_json()`
+- Generic framework (stand-in for pulp#709): `include/spectr/host_bridge.hpp`
+  + `src/host_bridge.cpp`
 - Tests: `test/test_editor_bridge.cpp`
 
 The bridge is **renderer-agnostic by construction**. WebView JS issues
 messages today; the native-imported JS will issue the same messages
-tomorrow. Nothing in `editor_bridge.cpp` needs to change during the
-cutover.
+tomorrow. Nothing in `editor_bridge.cpp`'s Spectr-specific handlers
+needs to change during the cutover — only the generic framework
+moves from in-repo (`spectr::HostBridge`) to Pulp SDK
+(`pulp::view::EditorBridge`).
+
+## Integration Plan: pulp#711 cutover diff
+
+[pulp#711](https://github.com/danielraffel/pulp/pull/711) lifts
+`spectr::HostBridge` into Pulp as `pulp::view::EditorBridge`. Design
+verified against Spectr's fixture; the pulp-side agent audited all
+11 message types and confirmed cutover is mechanical.
+
+When pulp#711 merges **and** a Pulp SDK release ships with it:
+
+### Branch setup
+
+```
+git checkout main && git pull
+git checkout -b feature/editor-bridge-cutover
+```
+
+### Pin bump
+
+```diff
+# pulp.toml (gitignored, local-only)
+-sdk_version = "0.40.0"
+-sdk_path = "/Users/danielraffel/.pulp/sdk-local/darwin-arm64/0.40.0"
++sdk_version = "0.41.0"   # or whichever Pulp SDK release ships #711
++sdk_path = "/Users/danielraffel/.pulp/sdk/0.41.0"
+
+# CMakeLists.txt
+-find_package(Pulp 0.40.0 REQUIRED)
++find_package(Pulp 0.41.0 REQUIRED)
+
+# .shipyard/config.toml
+-  -DCMAKE_PREFIX_PATH=$HOME/.pulp/sdk-local/darwin-arm64/0.40.0
++  -DCMAKE_PREFIX_PATH=$HOME/.pulp/sdk/0.41.0
+```
+
+### Delete the stand-in (2 files, ~250 LOC removed)
+
+```
+rm include/spectr/host_bridge.hpp
+rm src/host_bridge.cpp
+```
+
+### CMakeLists.txt — drop stand-in from sources
+
+```diff
+ set(SPECTR_SOURCES
+     src/spectr.cpp
+     src/block_fft_engine.cpp
+     src/edit_engine.cpp
+     src/editor_bridge.cpp
+-    src/host_bridge.cpp
+     src/pattern.cpp
+     src/preset_format.cpp
+     src/snapshot.cpp
+     src/windowed_stft_engine.cpp
+     src/ui/editor_view.cpp
+ )
+
+ set(SPECTR_HEADERS
+     include/spectr/spectr.hpp
+     ...
+     include/spectr/editor_bridge.hpp
+-    include/spectr/host_bridge.hpp
+     include/spectr/preset_format.hpp
+     ...
+ )
+```
+
+### `include/spectr/editor_bridge.hpp` — drop `EditorBridgeState`
+
+The struct held a single `std::optional<BandSnapshot> drag_snap`.
+Pulp#711's `pulp::view::EditorBridge` explicitly keeps drag state on
+the consumer. Move the field onto `EditorView` (or wherever the
+handler closures capture from). Drop the struct + its param on the
+public dispatch functions; callers no longer pass it.
+
+### `src/editor_bridge.cpp` — mechanical rename
+
+```diff
+-#include "spectr/host_bridge.hpp"
++#include <pulp/view/editor_bridge.hpp>
+```
+
+Then search-and-replace across the file:
+
+```
+spectr::HostBridge → pulp::view::EditorBridge
+```
+
+…and drop the envelope-rebuilding path in `dispatch_editor_message`
+(framework takes the envelope JSON string directly via
+`dispatch_json()`). The handler bodies stay **identical**. Example
+`paint` handler diff:
+
+```diff
+ bridge.add_handler("paint",
+-    [&state, &plugin](const choc::value::ValueView& p) -> std::string {
+-        if (!state.drag_snap) return HostBridge::err_response("paint without paint_start");
++    [this](const choc::value::ValueView& p) -> std::string {
++        if (!drag_snap_) return pulp::view::EditorBridge::err_response("paint without paint_start");
+         const auto mode = parse_edit_mode_(
+-            HostBridge::get_string(p, "mode"));
++            pulp::view::EditorBridge::get_string(p, "mode"));
+         if (!mode) return
+-            HostBridge::err_response("unknown edit mode");
++            pulp::view::EditorBridge::err_response("unknown edit mode");
+         // ... rest of the handler unchanged ...
+     });
+```
+
+### `src/ui/editor_view.cpp` — replace `set_message_handler` with `attach_webview`
+
+```diff
+-panel_->set_message_handler([this](const pulp::view::WebViewMessage& m) -> std::string {
+-    return handle_message_(m);
+-});
++bridge_.attach_webview(*panel_);
++// bridge_ is an EditorView member, owns the lifetime of the handlers
++// registered at EditorView construction.
+```
+
+### Drop `dispatch_editor_message` / `dispatch_editor_message_json` free functions
+
+These are no-ops once the `attach_webview` path routes through the
+framework directly. Tests that called them go through
+`bridge_.dispatch_json(envelope)` on a `pulp::view::EditorBridge`
+instance built in the test setup.
+
+### Test delta
+
+`test/test_editor_bridge.cpp` — minor changes:
+
+- `Rig` struct builds a `pulp::view::EditorBridge` instead of
+  `EditorBridgeState bridge`.
+- Test assertions against response substrings (`"malformed JSON"`,
+  `"unknown message type"`, etc.) stay **identical** — the pulp agent
+  confirmed substring compatibility in [pulp#709 checkpoint
+  comment](https://github.com/danielraffel/pulp/issues/709#issuecomment-4311373819).
+
+All 12 bridge test cases + the plugin-state persistence cases should
+pass verbatim.
+
+### Expected diff magnitude
+
+| Files | Delta |
+|---|---|
+| Deleted | 2 (`host_bridge.hpp`, `host_bridge.cpp`) |
+| Modified | 5 (`editor_bridge.hpp/cpp`, `editor_view.hpp/cpp`, `CMakeLists.txt`) |
+| Net LOC | ~−200 (stand-in goes away; handlers stay) |
+| Tests | 110/110 pass without modification |
+| Pin bump | `pulp.toml` + `CMakeLists.txt` + `.shipyard/config.toml` |
+
+### `get_int` follow-up
+
+Pulp#711 doesn't ship `get_int` (I asked on #709, agent deferred). My
+current `param_set` handler uses `get_uint` which works since
+`pulp::state::ParamID` is `uint32_t`. No cutover-blocking issue;
+revisit if a signed-integer payload field ever appears. Flagged in
+[pulp#711 comment](https://github.com/danielraffel/pulp/pull/711#issuecomment-4311702341)
+for a follow-up PR.
 
 ## Integration driver
 
