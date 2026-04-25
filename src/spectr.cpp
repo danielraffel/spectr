@@ -164,6 +164,14 @@ void Spectr::release() {
 
 void Spectr::set_layout(Layout L) {
     layout_ = L;
+    // Mirror the layout selection back to the kBandCount param so any
+    // path that observes the param (host automation reads, CLAP flush
+    // probes, serialize_plugin_state in this file, etc.) stays in sync
+    // with the cached `layout_` member. Without this, two state sources
+    // (the cache + the StateStore param) drift independently and
+    // round-trip serialization fails — caught by clap-validator's
+    // `state-reproducibility-flush` test on 2026-04-25.
+    state().set_value(kBandCount, static_cast<float>(layout_to_index(L)));
     rebuild_engine_();
 }
 
@@ -297,7 +305,17 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // Layout — also exposed as a flat param, but persist here too so the
     // full restore is self-contained if a host replays only the plugin
     // blob (defensive against adapter-edge bugs).
-    root.addMember("layout_index", static_cast<int32_t>(layout_to_index(layout_)));
+    //
+    // Read directly from StateStore rather than the cached `layout_`
+    // member. `layout_` is materialized from `kBandCount` during
+    // process(); a host that writes the param via the CLAP flush path
+    // (or VST3 setParamNormalized, or AU kAudioUnitSetProperty) and
+    // then calls state-save without an intervening process() block
+    // would otherwise see a stale cached value. This was caught by
+    // clap-validator's `state-reproducibility-flush` test.
+    const auto band_count_idx = static_cast<int32_t>(
+        layout_to_index(layout_from_index(state().get_value(kBandCount))));
+    root.addMember("layout_index", band_count_idx);
 
     // Editor state placeholders — analyzer / edit mode UI selection. Not
     // sound-defining for V1; M5+ fills them in.
