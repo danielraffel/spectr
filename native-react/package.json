@@ -1,0 +1,20 @@
+{
+  "name": "spectr-native-editor",
+  "version": "0.1.0",
+  "description": "Spectr's editor implemented natively via @pulp/react — pulp #772 / spectr #25",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild editor.tsx --bundle --format=iife --platform=neutral --target=es2020 --jsx-factory=createElement --jsx-fragment=Fragment --define:process.env.NODE_ENV='\"production\"' --outfile=dist/editor.body.js && cat shim.js dist/editor.body.js > dist/editor.js && rm dist/editor.body.js",
+    "smoke": "npm run build && /Users/danielraffel/Code/pulp/build/tools/screenshot/pulp-screenshot --script dist/editor.js --output /tmp/spectr-native-editor.png --width 1200 --height 800"
+  },
+  "dependencies": {
+    "@pulp/react": "file:/tmp/pulp-react/packages/pulp-react/pulp-react-0.0.1.tgz",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.4.0"
+  }
+}
