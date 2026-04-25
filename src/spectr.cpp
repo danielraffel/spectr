@@ -164,6 +164,14 @@ void Spectr::release() {
 
 void Spectr::set_layout(Layout L) {
     layout_ = L;
+    // Mirror the layout selection back to the kBandCount param so any
+    // path that observes the param (host automation reads, CLAP flush
+    // probes, serialize_plugin_state in this file, etc.) stays in sync
+    // with the cached `layout_` member. Without this, two state sources
+    // (the cache + the StateStore param) drift independently and
+    // round-trip serialization fails — caught by clap-validator's
+    // `state-reproducibility-flush` test on 2026-04-25.
+    state().set_value(kBandCount, static_cast<float>(layout_to_index(L)));
     rebuild_engine_();
 }
 
