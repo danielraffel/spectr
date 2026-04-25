@@ -46,6 +46,13 @@ public:
     /// owns the buffer; we copy on the way through to JS.
     void update_spectrum(const float* magnitudes, std::size_t n);
 
+    /// UI-thread tick — call at ~30–60 Hz from a Timer or from the
+    /// host's per-frame UI callback. Pulls the latest spectrum frame
+    /// from Spectr's VisualizationBridge, normalizes to 0..1 for the
+    /// React Spectrum widget, and forwards via update_spectrum().
+    /// Cheap when nothing has changed (TripleBuffer's atomic load).
+    void tick();
+
 private:
     // Member order matters for destruction. The bridge holds references
     // into engine_ and uses *this as its widget root, so the bridge must

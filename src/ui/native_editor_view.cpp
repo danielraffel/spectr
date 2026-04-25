@@ -5,6 +5,8 @@
 
 #include "spectr_editor_assets_data.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -83,6 +85,29 @@ void NativeEditorView::update_params() {
     js += "setValue('morph', " + js_number(morph) + ");";
     js += "void 0;";  // CHOC QuickJS circular-ref guard — see auto-memory feedback_choc_quickjs_circular_refs.md
     engine_.evaluate(js);
+}
+
+void NativeEditorView::tick() {
+    if (!bridge_) return;
+    // Pull latest spectrum frame (TripleBuffer atomic read; lock-free).
+    const auto& sd = plugin_.read_spectrum();
+    if (sd.num_bins <= 0) return;
+
+    // Spectr's analyzer reports magnitudes in dB. Map to a [0,1] display
+    // band: dynamic range -90 dB (silent) → 0 dB (full scale). The
+    // React Spectrum widget expects 0..1 normalized magnitudes per the
+    // intrinsic prop type.
+    constexpr float kMinDb = -90.0f;
+    constexpr float kMaxDb = 0.0f;
+    constexpr int   kMaxOutBins = 256;  // keep JS payload bounded
+    const int n = std::min(sd.num_bins, kMaxOutBins);
+    std::array<float, kMaxOutBins> normalized{};
+    for (int i = 0; i < n; ++i) {
+        const float db = sd.magnitude_db[static_cast<std::size_t>(i)];
+        const float t  = (db - kMinDb) / (kMaxDb - kMinDb);
+        normalized[static_cast<std::size_t>(i)] = std::clamp(t, 0.0f, 1.0f);
+    }
+    update_spectrum(normalized.data(), static_cast<std::size_t>(n));
 }
 
 void NativeEditorView::update_spectrum(const float* magnitudes, std::size_t n) {
