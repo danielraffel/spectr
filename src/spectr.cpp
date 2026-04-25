@@ -214,7 +214,19 @@ void Spectr::process(
 
     if (rm != response_mode_) response_mode_ = rm;
     if (ek != engine_kind_)  set_engine_kind(ek);
-    if (desired_layout != layout_) set_layout(desired_layout);
+    if (desired_layout != layout_) {
+        // Sync the cached layout_ from the host-driven kBandCount value
+        // without calling set_layout() — that path writes the quantized
+        // index back to kBandCount, which makes the param value diverge
+        // between the process and flush paths (clap_plugin_params::flush
+        // doesn't run process and so wouldn't see the writeback). The
+        // StateStore-side raw float must stay byte-equal across both
+        // paths for clap-validator's state-reproducibility-flush test.
+        // Direct UI calls to set_layout() still writeback for the
+        // serialize-from-cache path covered by test_m4_state.cpp.
+        layout_ = desired_layout;
+        rebuild_engine_();
+    }
 
     if (engine_) {
         engine_->process(output, input, field_, viewport_, layout_, response_mode_);
@@ -524,7 +536,16 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     viewport_  = new_view;
     snapshots_ = new_bank;
     patterns_  = std::move(new_patterns);
-    if (new_layout != layout_) set_layout(new_layout);
+    // Sync layout_ from the deserialized JSON without going through
+    // set_layout() — that path writes the quantized index back to
+    // kBandCount, which would clobber the raw float just loaded by the
+    // CLAP/VST3/AU param-map restore. Both halves of state must stay
+    // byte-equal across save→load round-trips for clap-validator's
+    // state-reproducibility-* checks.
+    if (new_layout != layout_) {
+        layout_ = new_layout;
+        rebuild_engine_();
+    }
     return true;
 }
 
