@@ -32,15 +32,28 @@ is in pulp-import-design's translation. Tracked in pulp #764.
 
 ### 3. `spectr-editor-native-handcrafted.png` — what the renderer can do
 
-Hand-crafted `ui.js` that uses the same WidgetBridge primitives the
-walker has access to (`createRow`, `createPanel`, `setBackground`,
-`setFlex(..., 'flex_grow', N)`) — what the walker SHOULD emit after
-pulp #764 lands. Same `pulp-screenshot` command, same render stack.
+Hand-crafted `ui.js` (source: `spectr-editor-native-handcrafted.ui.js`
+in this folder) using the WidgetBridge's actual flex API — `createRow`,
+`createPanel`, `setBackground`, `setFlex(id, 'gap', …)`, `setFlex(id,
+'padding_left', …)`, `setFlex(id, 'align_items', 'center')`, `setBorder`
+with corner radius, `setTextColor`, `setOpacity`. Same `pulp-screenshot`
+command, same render stack as #2.
 
-Result: the actual Spectr layout — top header bar with logo + mode
-toggles, central area placeholder for the analyzer, bottom action
-rail with all the chrome buttons. **No browser. No QuickJS-React
-fragility. Just Pulp's native primitives.**
+Result: top header bar with brand + LIVE/PRECISION + IIR/FFT/HYBRID
+segmented controls + 64 bands + zoom indicator; central area for the
+analyzer (placeholder); bottom action rail with CLEAR / ⋯ / SCULPT▾ /
+PEAK▾ / PRESETS▾ / SNAPSHOT / A / B / ▸A / ▸B / morph slider track /
+settings / help. Vertical centering, rounded button corners, subtle
+borders, proper text colors all rendered by Skia via WidgetBridge.
+
+**No browser. No QuickJS-React fragility. Just Pulp's native
+primitives.** The remaining gap vs. the Chrome target: the analyzer
+isn't actually painted (a real `<canvas>` is runtime DSP-driven —
+needs the `pulp::view::VisualizationBridge` wiring already published
+by Spectr's M3), some text overflows the brand container ("ZOOMABLE
+FILTER" truncates), border weights are slightly heavier than Chrome's,
+and there's no font-family override (the rendered text uses Pulp's
+default font, not the editor's monospace).
 
 ## What this proves
 
