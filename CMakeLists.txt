@@ -12,6 +12,14 @@ find_package(Pulp 0.47.0 REQUIRED)
 # Implementation lives under src/.
 # See planning/Spectr-V1-Build-Plan.md for the milestone sequence.
 
+# ── Native React editor (opt-in) ───────────────────────────────────────
+# When SPECTR_NATIVE_EDITOR is ON, Spectr's create_view() returns a
+# NativeEditorView that renders an @pulp/react-built editor through the
+# WidgetBridge directly (no WebView). Requires native-react/dist/editor.js
+# to exist at configure time — produce it with `cd native-react && npm
+# run build`. Default OFF — the WebView path remains the released editor.
+option(SPECTR_NATIVE_EDITOR "Use the @pulp/react native editor instead of the WebView path" OFF)
+
 set(SPECTR_SOURCES
     src/spectr.cpp
     src/block_fft_engine.cpp
@@ -22,6 +30,7 @@ set(SPECTR_SOURCES
     src/snapshot.cpp
     src/windowed_stft_engine.cpp
     src/ui/editor_view.cpp
+    src/ui/native_editor_view.cpp
 )
 
 set(SPECTR_HEADERS
@@ -35,13 +44,31 @@ set(SPECTR_HEADERS
     include/spectr/snapshot.hpp
     include/spectr/windowed_stft_engine.hpp
     include/spectr/ui/editor_view.hpp
+    include/spectr/ui/native_editor_view.hpp
 )
 
-# ── Editor HTML (prototype) embedded as a C++ binary blob ──────────────
+# ── Editor assets embedded as C++ binary blobs ─────────────────────────
+# editor.html is always embedded (used by the WebView path).
+# editor.js is embedded only when SPECTR_NATIVE_EDITOR=ON; the file must
+# exist at configure time.
+set(SPECTR_EDITOR_ASSET_SOURCES resources/editor.html)
+if(SPECTR_NATIVE_EDITOR)
+    set(SPECTR_NATIVE_EDITOR_JS ${CMAKE_CURRENT_SOURCE_DIR}/native-react/dist/editor.js)
+    if(NOT EXISTS ${SPECTR_NATIVE_EDITOR_JS})
+        message(FATAL_ERROR
+            "SPECTR_NATIVE_EDITOR=ON but ${SPECTR_NATIVE_EDITOR_JS} not found. "
+            "Run: cd native-react && npm install && npm run build")
+    endif()
+    list(APPEND SPECTR_EDITOR_ASSET_SOURCES ${SPECTR_NATIVE_EDITOR_JS})
+endif()
 pulp_add_binary_data(spectr_editor_assets
-    SOURCES resources/editor.html
+    SOURCES ${SPECTR_EDITOR_ASSET_SOURCES}
     NAMESPACE spectr_editor
 )
+if(SPECTR_NATIVE_EDITOR)
+    target_compile_definitions(spectr_editor_assets INTERFACE SPECTR_NATIVE_EDITOR=1)
+    target_compile_definitions(spectr_editor_assets INTERFACE SPECTR_NATIVE_EDITOR_JS_EMBEDDED=1)
+endif()
 
 # ── Tests ──────────────────────────────────────────────────────────────
 
