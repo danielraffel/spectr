@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <string>
 
+#include <choc/javascript/choc_javascript.h>
+
 namespace spectr {
 
 namespace {
@@ -39,6 +41,17 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
     // Bands, Morph) directly via setValue / __dispatch__.
     bridge_ = std::make_unique<pulp::view::WidgetBridge>(
         engine_, *this, plugin_.state());
+
+    // Register a JS-callable "__spectrumTick" that invokes our C++ tick().
+    // Combined with editor.tsx's requestAnimationFrame loop, this makes
+    // the analyzer push driven by Pulp's host frame clock — no separate
+    // Timer thread required. service_frame_callbacks() is already pumped
+    // by the framework's per-frame UI loop (see threejs-native-demo).
+    engine_.register_function("__spectrumTick",
+        [this](choc::javascript::ArgumentList) {
+            tick();
+            return choc::value::Value();
+        });
 
 #ifdef SPECTR_NATIVE_EDITOR_JS_EMBEDDED
     // editor.js is built by `cd native-react && npm run build` and

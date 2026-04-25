@@ -121,3 +121,21 @@ function App({
 
 // Pulp's WidgetBridge runs this script directly — boot React at load.
 render(createElement(App, {}));
+
+// Per-frame analyzer push. NativeEditorView (C++) registers a global
+// __spectrumTick that pulls the latest spectrum frame from
+// VisualizationBridge and pushes via setSpectrumData('spectrum', ...).
+// We just need to keep calling it — Pulp's host frame loop pumps
+// requestAnimationFrame via service_frame_callbacks().
+const g = globalThis as unknown as {
+    __spectrumTick?: () => void;
+    requestAnimationFrame?: (cb: () => void) => number;
+};
+if (typeof g.requestAnimationFrame === 'function' &&
+    typeof g.__spectrumTick === 'function') {
+    const loop = () => {
+        try { g.__spectrumTick!(); } catch (_e) { /* swallow per-frame */ }
+        g.requestAnimationFrame!(loop);
+    };
+    g.requestAnimationFrame(loop);
+}
