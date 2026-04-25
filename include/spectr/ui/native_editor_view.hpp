@@ -32,6 +32,20 @@ public:
     explicit NativeEditorView(Spectr& plugin);
     ~NativeEditorView() override;
 
+    /// Push the current StateStore param values into the editor's
+    /// widget tree. Each Knob/Fader in editor.tsx has a stable id
+    /// matching its StateStore param name (mix, output, response,
+    /// engine, bands, morph) so the bridge can address them by
+    /// setValue('mix', 0.42). Call from Spectr::on_view_opened
+    /// (one-shot) and from a UI-thread tick once we add automation
+    /// reflection.
+    void update_params();
+
+    /// Push an FFT spectrum frame into the analyzer band's <Spectrum>
+    /// widget. The widget id is "spectrum" (see editor.tsx). Caller
+    /// owns the buffer; we copy on the way through to JS.
+    void update_spectrum(const float* magnitudes, std::size_t n);
+
 private:
     // Member order matters for destruction. The bridge holds references
     // into engine_ and uses *this as its widget root, so the bridge must

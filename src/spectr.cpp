@@ -139,18 +139,27 @@ void Spectr::on_view_opened(pulp::view::View& view) {
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->attach_if_needed();
     }
+    if (auto* editor = dynamic_cast<NativeEditorView*>(&view)) {
+        // Push the current StateStore param values so the editor's
+        // Knobs/Faders open with the right starting positions.
+        // Per-frame analyzer push wires through a UI-thread tick in
+        // a follow-up commit.
+        editor->update_params();
+    }
 }
 
 void Spectr::on_view_resized(pulp::view::View& view, uint32_t /*w*/, uint32_t /*h*/) {
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->sync_to_host();
     }
+    // Native editor: bridge owns layout; nothing to do on resize.
 }
 
 void Spectr::on_view_closed(pulp::view::View& view) {
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->detach_if_needed();
     }
+    // Native editor: destructor handles bridge teardown.
 }
 
 void Spectr::configure_bridge_(int num_channels) {

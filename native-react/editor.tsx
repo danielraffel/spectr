@@ -71,9 +71,11 @@ function App({
                 <Label textColor="#6b7380">— zoomable filter bank</Label>
             </Row>
 
-            {/* Spectrum analyzer band */}
+            {/* Spectrum analyzer band — stable id "spectrum" so the
+                C++ side can call setSpectrumData('spectrum', [...])
+                from VisualizationBridge per audio block. */}
             <View width={1200} height={220} background="#070a0e" paddingLeft={20} paddingRight={20} paddingTop={12} paddingBottom={12}>
-                <Spectrum data={spectrumData} width={1160} height={196} />
+                <Spectrum id="spectrum" data={spectrumData} width={1160} height={196} />
             </View>
 
             {/* Filter bank visualization area (placeholder for the band-field UI) */}
@@ -81,7 +83,11 @@ function App({
                 <Label textColor="#6b7380">filter bank — band field, viewport, edit modes (S/L/B/F/G)</Label>
             </View>
 
-            {/* Transport / parameter row — Knobs for the six top-level Spectr params */}
+            {/* Transport / parameter row — Knobs for the six top-level
+                Spectr params. Stable IDs match StateStore param names so
+                C++ pushes via setValue('mix', 0.42) etc. The bridge's
+                __dispatch__ routes user gestures back through onChange
+                once the bridge wires the click → param-set path. */}
             <Row
                 width={1200}
                 height={92}
@@ -91,22 +97,22 @@ function App({
                 gap={20}
                 background="#0a0e14"
             >
-                <Knob value={mix} width={56} height={56} />
+                <Knob id="mix" value={mix} width={56} height={56} />
                 <Label textColor="#a3a8b5">MIX</Label>
 
-                <Knob value={output} width={56} height={56} />
+                <Knob id="output" value={output} width={56} height={56} />
                 <Label textColor="#a3a8b5">OUTPUT</Label>
 
-                <Knob value={response} width={56} height={56} />
+                <Knob id="response" value={response} width={56} height={56} />
                 <Label textColor="#a3a8b5">RESPONSE</Label>
 
-                <Knob value={engine} width={56} height={56} />
+                <Knob id="engine" value={engine} width={56} height={56} />
                 <Label textColor="#a3a8b5">ENGINE</Label>
 
-                <Knob value={bands} width={56} height={56} />
+                <Knob id="bands" value={bands} width={56} height={56} />
                 <Label textColor="#a3a8b5">BANDS</Label>
 
-                <Fader value={morph} orientation="horizontal" width={160} height={28} />
+                <Fader id="morph" value={morph} orientation="horizontal" width={160} height={28} />
                 <Label textColor="#a3a8b5">A / B / MORPH</Label>
             </Row>
         </View>

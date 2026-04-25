@@ -5,7 +5,25 @@
 
 #include "spectr_editor_assets_data.hpp"
 
+#include <cmath>
+#include <cstdio>
+#include <string>
+
 namespace spectr {
+
+namespace {
+
+// Format a float into the JS source as a finite literal. NaN / Inf
+// would otherwise serialize as the bare word "nan" / "inf" which is
+// a syntax error in JS.
+std::string js_number(float v) {
+    if (!std::isfinite(v)) v = 0.0f;
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.6g", v);
+    return buf;
+}
+
+} // namespace
 
 NativeEditorView::NativeEditorView(Spectr& plugin)
     : plugin_(plugin) {
@@ -41,5 +59,49 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
 }
 
 NativeEditorView::~NativeEditorView() = default;
+
+void NativeEditorView::update_params() {
+    if (!bridge_) return;
+    auto& s = plugin_.state();
+    // Normalize each param to 0..1 for the Knob/Fader value prop. Using
+    // ParamRange::normalize would be cleaner but we'd have to look up
+    // each ParamInfo by id; for v0 we hand-normalize since we know the
+    // ranges from spectr.cpp::define_parameters().
+    const float mix      = s.get_value(kMix) / 100.0f;          // 0..100 → 0..1
+    const float output   = (s.get_value(kOutputTrim) + 24.0f) / 48.0f; // -24..24 → 0..1
+    const float response = s.get_value(kResponseMode) / 1.0f;   // 0..1
+    const float engine   = s.get_value(kEngineMode) / 2.0f;     // 0..2 → 0..1
+    const float bands    = s.get_value(kBandCount) / 4.0f;      // 0..4 → 0..1
+    const float morph    = s.get_value(kMorph);                  // already 0..1
+
+    std::string js;
+    js += "setValue('mix', " + js_number(mix) + ");";
+    js += "setValue('output', " + js_number(output) + ");";
+    js += "setValue('response', " + js_number(response) + ");";
+    js += "setValue('engine', " + js_number(engine) + ");";
+    js += "setValue('bands', " + js_number(bands) + ");";
+    js += "setValue('morph', " + js_number(morph) + ");";
+    js += "void 0;";  // CHOC QuickJS circular-ref guard — see auto-memory feedback_choc_quickjs_circular_refs.md
+    engine_.evaluate(js);
+}
+
+void NativeEditorView::update_spectrum(const float* magnitudes, std::size_t n) {
+    if (!bridge_ || magnitudes == nullptr || n == 0) return;
+    // Build a JS array literal from the magnitudes. For a 64-band frame
+    // this is ~600 bytes of JS source per call — fine for the typical
+    // 30–60 Hz UI update rate. If we ever push wider frames per video
+    // frame, switch to a typed-array transfer or a native buffer
+    // shared via setSpectrumDataNative (which the bridge would need
+    // a new register_function for).
+    std::string js;
+    js.reserve(16 + n * 10);
+    js += "setSpectrumData('spectrum', [";
+    for (std::size_t i = 0; i < n; ++i) {
+        if (i) js += ',';
+        js += js_number(magnitudes[i]);
+    }
+    js += "]);void 0;";
+    engine_.evaluate(js);
+}
 
 } // namespace spectr
