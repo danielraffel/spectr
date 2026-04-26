@@ -86,25 +86,33 @@ function adaptStyle(style: CSSProperties | undefined): Record<string, unknown> {
     } else if (style.flexDirection === 'column' || style.flexDirection === 'column-reverse') {
         out.direction = 'column';
     }
-    // The HTML editor uses `position: absolute, inset: 0` to mean
-    // "fill the parent". On the bridge there's no real positioning
-    // primitive yet, so we approximate that semantic by forcing the
-    // container to grow + take the full available width. Without
-    // this the entire app collapses to 0×0 because the outer
-    // App-level div has no explicit dims.
-    const pos = (style as { position?: string; inset?: number | string }).position;
-    if (pos === 'absolute' || pos === 'fixed') {
-        const inset = (style as { inset?: number | string }).inset;
-        if (inset === 0 || inset === '0' || inset === '0px') {
-            if (out.flexGrow === undefined) out.flexGrow = 1;
-            // Window-fill heuristic: outer-most container at the App level.
-            // pulp-screenshot uses 1320x860 by convention; the real plugin
-            // editor is 1320x860 too. Hard-coding here is a v0.x band-aid
-            // until <View positionFill> lands or we read host content size.
-            if (out.width === undefined)  out.width  = 1320;
-            if (out.height === undefined) out.height = 860;
-        }
+    // Forward CSS positioning through the bridge — Pulp exposes setPosition
+    // (static/relative/absolute/fixed/sticky) + setTop/setLeft/setRight/setBottom.
+    // We hoist them into bridge-prop names that prop-applier already knows
+    // about, falling back where no equivalent exists yet.
+    const styleAny = style as Record<string, unknown>;
+    const pos = styleAny.position as string | undefined;
+    if (pos) {
+        // No "position" prop in @pulp/react yet; route through __position
+        // so a future host-config tweak can pick it up. For now, fall back
+        // to setting width/height when inset:0 (fill parent).
+        out.position = pos;
     }
+    const inset = styleAny.inset;
+    if (inset === 0 || inset === '0' || inset === '0px') {
+        // "fill parent" idiom. Without a real abs-position renderer we
+        // hard-code the editor's known dims (1320x860) so the App roots
+        // get a size. Inner absolute children fall through to inset/top/left
+        // setters below.
+        if (out.flexGrow === undefined) out.flexGrow = 1;
+        if (out.width === undefined)  out.width  = 1320;
+        if (out.height === undefined) out.height = 860;
+    }
+    if (styleAny.top !== undefined)    out.top    = parseLen(styleAny.top);
+    if (styleAny.left !== undefined)   out.left   = parseLen(styleAny.left);
+    if (styleAny.right !== undefined)  out.right  = parseLen(styleAny.right);
+    if (styleAny.bottom !== undefined) out.bottom = parseLen(styleAny.bottom);
+
     return out;
 }
 
