@@ -18,6 +18,7 @@ import {
 import {
     View, Row, Label, Button, Canvas, TextEditor,
 } from '@pulp/react';
+import { wrapCanvasInstance } from './canvas2d-shim.js';
 
 // HTML tags we map to @pulp/react components. Anything not in this
 // table falls through to View (so unknown tags render their children).
@@ -150,7 +151,26 @@ export function createElement(
     if (typeof inProps.onChange === 'function') adapted.onChange = inProps.onChange;
     if (typeof inProps.onMouseEnter === 'function') adapted.onMouseEnter = inProps.onMouseEnter;
     if (typeof inProps.onMouseLeave === 'function') adapted.onMouseLeave = inProps.onMouseLeave;
-    if (inProps.ref !== undefined) (adapted as { ref?: unknown }).ref = inProps.ref;
+    // ref handling: for <canvas>, wrap the underlying instance with a
+    // Canvas2D-compatible shim before forwarding to the caller's ref so
+    // their `canvasRef.current.getContext('2d').fillRect(...)` works.
+    if (inProps.ref !== undefined) {
+        const userRef = inProps.ref as
+            | ((v: unknown) => void)
+            | { current: unknown };
+        if (tag === 'canvas') {
+            const callback = (instance: unknown) => {
+                const wrapped = instance && (instance as { id?: string }).id
+                    ? wrapCanvasInstance(instance as { id: string })
+                    : instance;
+                if (typeof userRef === 'function') userRef(wrapped);
+                else if (userRef) (userRef as { current: unknown }).current = wrapped;
+            };
+            (adapted as { ref?: unknown }).ref = callback;
+        } else {
+            (adapted as { ref?: unknown }).ref = inProps.ref;
+        }
+    }
     if (typeof inProps.value === 'string' || typeof inProps.value === 'number') {
         adapted.value = inProps.value;
     }

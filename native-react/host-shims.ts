@@ -40,40 +40,45 @@ g.createElement = adaptedCreateElement;
 g.Fragment = Fragment;
 
 if (typeof g.window === 'undefined') g.window = g;
-if (typeof g.document === 'undefined') {
-    g.document = {
-        getElementById(id: string) {
-            if (id === 'tweak-defaults') {
-                // The extracted App() reads this and JSON.parses the
-                // textContent. Provide a sensible default settings blob.
-                return {
-                    textContent: JSON.stringify({
-                        bandCount: 32,
-                        metaphor: 'spectrum',
-                        bloom: 0.4,
-                        spectrumIntensity: 0.7,
-                        muteStyle: 'cross',
-                        motionMode: 'precision',
-                        showMinimap: true,
-                        showRulers: true,
-                        theme: 'dark',
-                    }),
-                };
-            }
-            return null;
-        },
-        createElement(_tag: string) {
-            // Unused at runtime — the extracted code only calls this from
-            // a couple of utility paths; return a no-op stub.
-            return {
-                style: {}, classList: { add() {}, remove() {} },
-                appendChild() {}, addEventListener() {}, removeEventListener() {},
-            };
-        },
-        addEventListener() { /* no global keyboard yet */ },
-        removeEventListener() { /* no global keyboard yet */ },
-    };
+
+// Pulp's bridge installs its own `document` polyfill via kDomOpsInit
+// before our user script runs (see widget_bridge.cpp::load_script).
+// Its getElementById doesn't know about 'tweak-defaults' — the
+// extracted App() reads that node's textContent for its initial
+// settings. We override getElementById to short-circuit the
+// tweak-defaults lookup, falling through to the bridge's polyfill
+// for everything else.
+const TWEAK_DEFAULTS = JSON.stringify({
+    bandCount: 32,
+    metaphor: 'spectrum',
+    bloom: 0.4,
+    spectrumIntensity: 0.7,
+    muteStyle: 'cross',
+    motionMode: 'precision',
+    showMinimap: true,
+    showRulers: true,
+    theme: 'dark',
+});
+const _doc = (g.document as { getElementById?: (id: string) => unknown } | undefined) ?? {};
+const _origGetById = _doc.getElementById?.bind(_doc);
+const docAny = _doc as Record<string, unknown>;
+docAny.getElementById = (id: string) => {
+    if (id === 'tweak-defaults') {
+        return { textContent: TWEAK_DEFAULTS };
+    }
+    return _origGetById ? _origGetById(id) : null;
+};
+if (typeof docAny.createElement !== 'function') {
+    docAny.createElement = (_tag: string) => ({
+        style: {}, classList: { add() {}, remove() {} },
+        appendChild() {}, addEventListener() {}, removeEventListener() {},
+    });
 }
+if (typeof docAny.addEventListener !== 'function') {
+    docAny.addEventListener = () => { /* no global keyboard yet */ };
+    docAny.removeEventListener = () => { /* no global keyboard yet */ };
+}
+g.document = _doc;
 
 const winAny = g.window as Record<string, unknown>;
 if (winAny.devicePixelRatio === undefined) winAny.devicePixelRatio = 2;
@@ -84,6 +89,33 @@ if (typeof winAny.addEventListener !== 'function') {
 winAny.innerWidth = 1320;
 winAny.innerHeight = 860;
 winAny.parent = winAny;
+
+// requestAnimationFrame: in the standalone Spectr the bridge's
+// service_frame_callbacks() pumps these, but pulp-screenshot is
+// one-shot and never ticks. Provide a fallback that fires the
+// callback synchronously a few times so initial draw passes happen.
+// In standalone, the bridge-installed rAF takes precedence (we
+// don't override if one already exists).
+if (typeof winAny.requestAnimationFrame !== 'function') {
+    let _frameId = 0;
+    let _ticks = 0;
+    winAny.requestAnimationFrame = (cb: (t: number) => void) => {
+        _frameId++;
+        // Fire a bounded number of "frames" synchronously so any
+        // RAF-driven loop completes a few iterations during the
+        // one-shot eval. Cap at 3 to avoid infinite loops in
+        // self-rearming animations.
+        if (_ticks < 3) {
+            _ticks++;
+            try { cb(performance ? performance.now() : Date.now()); } catch (_e) { /* swallow */ }
+        }
+        return _frameId;
+    };
+    winAny.cancelAnimationFrame = () => { /* noop */ };
+}
+if (typeof (g.performance) === 'undefined') {
+    g.performance = { now: () => Date.now() };
+}
 
 // In-memory stand-ins for window.Spectr, .SpectrFreq, .SpectrSignal,
 // .SpectrMetaphors, .SpectrThemes. Used by the extracted code's pattern
