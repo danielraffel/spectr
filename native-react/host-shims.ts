@@ -1,0 +1,136 @@
+// host-shims.ts — bare-minimum stubs of window / document / window.Spectr
+// + global React / ReactDOM bindings, for the extracted
+// spectr-editor-extracted.js to evaluate inside Pulp's QuickJS
+// environment. Real persistence / pattern library will move into
+// Spectr's StateStore via the C++ bridge later; for v0 these are
+// in-memory so the React app can boot and render structure.
+//
+// Ordering matters: this file is imported BEFORE
+// spectr-editor-extracted.js, and side-effects at module-init time set
+// the globals so the extracted code's top-level
+//   const { useRef, ... } = React;
+// resolves to our @pulp/react-routed implementation.
+
+import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { render } from '@pulp/react';
+import { createElement as adaptedCreateElement } from './dom-adapter.js';
+
+const g = globalThis as unknown as Record<string, unknown>;
+
+// React global — what the extracted code destructures hooks off of.
+g.React = {
+    createElement: adaptedCreateElement,
+    Fragment,
+    useState,
+    useEffect,
+    useRef,
+    useCallback,
+    useMemo,
+};
+// ReactDOM global — extracted code calls ReactDOM.createRoot(...).render(<App/>).
+g.ReactDOM = {
+    createRoot: (_container: unknown) => ({
+        render: (element: unknown) => render(element as never),
+    }),
+};
+// esbuild compiles JSX to bare createElement(...)/Fragment refs per the
+// build script's --jsx-factory / --jsx-fragment flags, so put those on
+// the global too.
+g.createElement = adaptedCreateElement;
+g.Fragment = Fragment;
+
+if (typeof g.window === 'undefined') g.window = g;
+if (typeof g.document === 'undefined') {
+    g.document = {
+        getElementById(id: string) {
+            if (id === 'tweak-defaults') {
+                // The extracted App() reads this and JSON.parses the
+                // textContent. Provide a sensible default settings blob.
+                return {
+                    textContent: JSON.stringify({
+                        bandCount: 32,
+                        metaphor: 'spectrum',
+                        bloom: 0.4,
+                        spectrumIntensity: 0.7,
+                        muteStyle: 'cross',
+                        motionMode: 'precision',
+                        showMinimap: true,
+                        showRulers: true,
+                        theme: 'dark',
+                    }),
+                };
+            }
+            return null;
+        },
+        createElement(_tag: string) {
+            // Unused at runtime — the extracted code only calls this from
+            // a couple of utility paths; return a no-op stub.
+            return {
+                style: {}, classList: { add() {}, remove() {} },
+                appendChild() {}, addEventListener() {}, removeEventListener() {},
+            };
+        },
+        addEventListener() { /* no global keyboard yet */ },
+        removeEventListener() { /* no global keyboard yet */ },
+    };
+}
+
+const winAny = g.window as Record<string, unknown>;
+if (winAny.devicePixelRatio === undefined) winAny.devicePixelRatio = 2;
+if (typeof winAny.addEventListener !== 'function') {
+    winAny.addEventListener = () => { /* no global keyboard yet */ };
+    winAny.removeEventListener = () => { /* no global keyboard yet */ };
+}
+winAny.innerWidth = 1320;
+winAny.innerHeight = 860;
+winAny.parent = winAny;
+
+// In-memory stand-ins for window.Spectr, .SpectrFreq, .SpectrSignal,
+// .SpectrMetaphors, .SpectrThemes. Used by the extracted code's pattern
+// helpers and themed visuals. Real implementations will follow once the
+// native lane reaches feature parity worth persisting.
+winAny.Spectr = winAny.Spectr ?? {
+    FACTORY_PATTERNS: [
+        { id: 'factory:flat',       name: 'FLAT',       gains: [] },
+        { id: 'factory:gentle-low', name: 'GENTLE LOW', gains: [] },
+        { id: 'factory:bright',     name: 'BRIGHT',     gains: [] },
+    ],
+    PATTERN_SCHEMA_VERSION: 1,
+    CANONICAL_RES: 64,
+    factoryGains() { return []; },
+    resolveGains(_pattern: unknown, n: number) { return new Array(n).fill(0); },
+    remapGains(arr: number[], n: number) {
+        const out = new Array(n).fill(0);
+        for (let i = 0; i < n; i++) {
+            const j = Math.floor(i / n * arr.length);
+            out[i] = arr[j] ?? 0;
+        }
+        return out;
+    },
+    toCanonical(_arr: number[]) { return _arr; },
+    fromCanonical(_arr: number[], _n: number) { return _arr; },
+    makeUserPattern(name: string, gains: number[]) {
+        return { id: 'user:' + Date.now(), name, gains };
+    },
+    exportEnvelope(p: unknown) { return JSON.stringify(p); },
+    parseEnvelope(s: string) { try { return JSON.parse(s); } catch { return null; } },
+    loadStore() { return []; },
+    saveStore(_s: unknown[]) { /* no-op */ },
+    loadDefaultId() { return null; },
+    saveDefaultId(_id: unknown) { /* no-op */ },
+};
+winAny.SpectrFreq = winAny.SpectrFreq ?? {
+    bandFrequencyHz(i: number, n: number) {
+        // log-spaced 20 Hz → 20 kHz
+        const fmin = 20, fmax = 20000;
+        const t = i / Math.max(1, n - 1);
+        return fmin * Math.pow(fmax / fmin, t);
+    },
+};
+winAny.SpectrSignal = winAny.SpectrSignal ?? {};
+winAny.SpectrMetaphors = winAny.SpectrMetaphors ?? {
+    spectrum: { label: 'spectrum' },
+};
+winAny.SpectrThemes = winAny.SpectrThemes ?? {
+    dark: { bg: '#05070a', fg: '#e8edf2', dim: '#6b7380' },
+};
