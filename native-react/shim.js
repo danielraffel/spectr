@@ -63,6 +63,29 @@ var __spectrTweakDefaults = JSON.stringify({
         };
     }
     if (typeof g.clearTimeout !== 'function') g.clearTimeout = function () {};
+    // setInterval — QuickJS doesn't have it. The extracted Spectr bundle
+    // calls setInterval(fn, 250) for poll-style effects (mute mirror,
+    // status drainage). A ReferenceError inside a useEffect propagates
+    // through React's commit phase and triggers a full root unmount,
+    // which is exactly the spectr#28 unmount bug. Implement via the
+    // same frame-pumped setTimeout queue, but reschedule on each fire.
+    if (typeof g.setInterval !== 'function') {
+        g.__intervalCancelled__ = g.__intervalCancelled__ || {};
+        g.__intervalNextId__ = g.__intervalNextId__ || 1;
+        g.setInterval = function (fn, delay) {
+            var id = g.__intervalNextId__++;
+            var tick = function () {
+                if (g.__intervalCancelled__[id]) return;
+                try { fn(); } catch (e) {
+                    if (g.__spectrLog) g.__spectrLog('[setInterval-error] ' + (e && e.message || e));
+                }
+                if (!g.__intervalCancelled__[id]) g.setTimeout(tick, delay);
+            };
+            g.setTimeout(tick, delay);
+            return id;
+        };
+        g.clearInterval = function (id) { g.__intervalCancelled__[id] = true; };
+    }
     if (typeof g.queueMicrotask !== 'function') {
         g.queueMicrotask = function (fn) { try { fn(); } catch (e) {} };
     }

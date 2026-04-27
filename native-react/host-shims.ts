@@ -18,11 +18,49 @@ import { createElement as adaptedCreateElement } from './dom-adapter.js';
 const g = globalThis as unknown as Record<string, unknown>;
 
 // React global — what the extracted code destructures hooks off of.
+let _effectId = 0;
+const _wrappedEffect = (fn: () => unknown, deps?: unknown) => {
+    const myId = ++_effectId;
+    const fp = (fn.toString() || '').slice(0, 100).replace(/\s+/g, ' ');
+    return useEffect(() => {
+        const lg = (globalThis as unknown as Record<string, unknown>).__spectrLog as
+            ((s: string) => void) | undefined;
+        if (lg) lg('[useEffect#' + myId + '] mount fn=' + fp);
+        let result: unknown;
+        try {
+            result = fn();
+        } catch (err) {
+            if (lg) lg('[useEffect#' + myId + '] THREW: ' +
+                ((err as { message?: string })?.message ?? String(err)));
+            throw err;
+        }
+        if (typeof result === 'function') {
+            const cleanup = result as () => unknown;
+            return () => {
+                if (lg) lg('[useEffect#' + myId + '] cleanup');
+                try { cleanup(); } catch (e) {
+                    if (lg) lg('[useEffect#' + myId + '] cleanup THREW: ' +
+                        ((e as { message?: string })?.message ?? String(e)));
+                    throw e;
+                }
+            };
+        }
+        return undefined;
+    }, deps as unknown as React.DependencyList);
+};
+const _wrappedSetState = <T>(initial: T | (() => T)) => {
+    const tup = useState(initial);
+    const myId = ++_effectId;
+    const lg = (globalThis as unknown as Record<string, unknown>).__spectrLog as
+        ((s: string) => void) | undefined;
+    if (lg) lg('[useState#' + myId + '] init=' + (typeof tup[0] === 'function' ? '[fn]' : String(tup[0]).slice(0, 40)));
+    return tup;
+};
 g.React = {
     createElement: adaptedCreateElement,
     Fragment,
-    useState,
-    useEffect,
+    useState: _wrappedSetState,
+    useEffect: _wrappedEffect,
     useRef,
     useCallback,
     useMemo,
@@ -113,6 +151,16 @@ if (typeof winAny.requestAnimationFrame !== 'function') {
     };
     winAny.cancelAnimationFrame = () => { /* noop */ };
 }
+// Mirror onto globalThis so bare references work too. esbuild compiles
+// modules to function scopes, and bare `requestAnimationFrame` inside
+// extracted code resolves through the global lookup chain — assigning
+// only to window.x doesn't put x on globalThis on every engine.
+g.requestAnimationFrame = winAny.requestAnimationFrame;
+g.cancelAnimationFrame = winAny.cancelAnimationFrame;
+g.setTimeout = (winAny.setTimeout ?? g.setTimeout);
+g.clearTimeout = (winAny.clearTimeout ?? g.clearTimeout);
+g.setInterval = (winAny.setInterval ?? g.setInterval);
+g.clearInterval = (winAny.clearInterval ?? g.clearInterval);
 if (typeof (g.performance) === 'undefined') {
     g.performance = { now: () => Date.now() };
 }
