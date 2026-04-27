@@ -94,10 +94,47 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
 NativeEditorView::~NativeEditorView() = default;
 
 void NativeEditorView::paint(pulp::canvas::Canvas& canvas) {
+    // Diagnostic — log first few paint passes to confirm framework
+    // is calling us. If silent, NativeEditorView isn't getting
+    // attached/painted by the standalone window. Without paint()
+    // running, nothing pumps service_frame_callbacks, so rAF
+    // callbacks queue but never drain.
+    static int paint_count = 0;
+    paint_count++;
+    if (paint_count <= 5 || paint_count % 60 == 0) {
+        std::fprintf(stderr, "[NativeEditorView::paint] #%d bounds=(%d,%d) "
+                     "children=%zu\n",
+                     paint_count, static_cast<int>(bounds().width),
+                     static_cast<int>(bounds().height), child_count());
+        // Probe first child's bounds to see if Yoga laid them out.
+        if (child_count() > 0) {
+            auto* c = child_at(0);
+            if (c) {
+                auto cb = c->bounds();
+                std::fprintf(stderr, "    child[0] bounds=(%d,%d,%dx%d) "
+                             "children=%zu\n",
+                             static_cast<int>(cb.x), static_cast<int>(cb.y),
+                             static_cast<int>(cb.width),
+                             static_cast<int>(cb.height), c->child_count());
+            }
+        }
+    }
     // Pump JS-side requestAnimationFrame callbacks so loops driven
     // through the bridge actually fire (FilterBank's draw RAF, our
     // spectrum-tick RAF, etc.). Without this they queue but never run.
-    if (bridge_) bridge_->service_frame_callbacks();
+    if (bridge_) {
+        bridge_->service_frame_callbacks();
+        // Self-perpetuating frame loop. Any work the JS side queued
+        // during service_frame_callbacks (effects firing, rAF
+        // callbacks) needs ANOTHER paint to drain. Call the JS-side
+        // `layout()` global which internally triggers
+        // WidgetBridge::request_repaint (which is private to C++).
+        // Without this loop, useEffect's MessageChannel → setTimeout
+        // → __requestFrame__ chain stalls after one frame and React
+        // effects never fire.
+        // TODO(spectr#28): make conditional on actual pending work.
+        engine_.evaluate("if (typeof layout === 'function') layout();void 0");
+    }
     pulp::view::View::paint(canvas);
 }
 

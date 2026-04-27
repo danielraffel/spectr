@@ -99,6 +99,7 @@ var __spectrTweakDefaults = JSON.stringify({
                 postMessage: function (data) {
                     var p1 = this.port1; void p1;
                     var port = this; // ref
+                    if (g.__spectrLog) g.__spectrLog('[mc.port2.postMessage]');
                     g.setTimeout(function () {
                         // React reads `onmessage` directly. Fire whatever's set.
                         // The scheduler attaches via `port1.onmessage = handler`
