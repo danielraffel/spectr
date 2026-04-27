@@ -151,23 +151,26 @@ export class Canvas2DShim {
 
     // ── setTransform / transform matrix ────────────────────────────────
     // The extracted FilterBank uses ctx.setTransform(scale, 0, 0, scale, 0, 0)
-    // on every resize to apply devicePixelRatio. Without it, the very first
-    // frame aborts silently — no try/catch in FilterBank's RAF loop.
+    // on every resize to apply devicePixelRatio. Native bridge support
+    // landed in pulp#896 / v0.48.0 — call('canvasSetTransform') replaces
+    // the current transform with the affine matrix [a b c d e f].
     private _matrix: [number, number, number, number, number, number] = [1, 0, 0, 1, 0, 0];
     setTransform(a: number, b: number, c: number, d: number, e: number, f: number): void {
         this._matrix = [a, b, c, d, e, f];
-        // Bridge has canvasSave/Restore + canvasTranslate/Scale/Rotate
-        // but no direct setTransform. Approximate by reset (save/restore
-        // via fresh state) + scale + translate. For the common
-        // setTransform(s,0,0,s,0,0) DPR case this is exactly right.
-        // canvasResetTransform isn't available either — emulate via
-        // restore-to-identity by issuing inverse operations.
-        // Pragma: rely on the bridge already applying DPR globally;
-        // spectr#28 only needs the no-throw.
-        // Future: file pulp issue for canvasSetTransform native.
+        call('canvasSetTransform', this.canvasId, a, b, c, d, e, f);
     }
     transform(a: number, b: number, c: number, d: number, e: number, f: number): void {
-        this.setTransform(a, b, c, d, e, f);  // approximate (multiply not implemented)
+        // Multiply current * incoming. Pre-multiply the cached matrix and
+        // push the product. For the FilterBank DPR-only path the cached
+        // matrix is identity so this collapses to setTransform.
+        const [ma, mb, mc, md, me, mf] = this._matrix;
+        const na = ma * a + mc * b;
+        const nb = mb * a + md * b;
+        const nc = ma * c + mc * d;
+        const nd = mb * c + md * d;
+        const ne = ma * e + mc * f + me;
+        const nf = mb * e + md * f + mf;
+        this.setTransform(na, nb, nc, nd, ne, nf);
     }
     resetTransform(): void { this.setTransform(1, 0, 0, 1, 0, 0); }
     getTransform(): { a: number; b: number; c: number; d: number; e: number; f: number } {
@@ -190,18 +193,22 @@ export class Canvas2DShim {
         call('canvasClosePath', this.canvasId);
     }
     clip(): void {
-        // Bridge has no clip primitive. NO-OP; subsequent draws will
-        // not be clipped. Rendered content may bleed beyond intended
-        // areas, but the draw loop completes. Track for a follow-up
-        // pulp issue (canvasClip).
+        // Native canvasClip landed in pulp#896 / v0.48.0; intersects
+        // the clip region with the current path.
+        call('canvasClip', this.canvasId);
     }
 
     // ── globalCompositeOperation ───────────────────────────────────────
     // FilterBank uses 'destination-out' / 'multiply' for blending.
-    // Bridge doesn't expose composite ops; track + drop.
+    // Native bridge support landed in pulp#896 / v0.48.0 — accepts every
+    // standard CSS composite-op string and falls back to a graceful no-op
+    // on unknown values.
     private _gco = 'source-over';
     get globalCompositeOperation(): string { return this._gco; }
-    set globalCompositeOperation(v: string) { this._gco = v; }
+    set globalCompositeOperation(v: string) {
+        this._gco = v;
+        call('canvasGlobalCompositeOperation', this.canvasId, v);
+    }
 
     // ── shadow* ────────────────────────────────────────────────────────
     private _shadowBlur = 0;

@@ -187,6 +187,41 @@ var __spectrTweakDefaults = JSON.stringify({
     if (typeof g.performance === 'undefined') g.performance = { now: function () { return Date.now(); } };
     if (typeof g.window === 'undefined') g.window = g;
 
+    // localStorage — backed by Pulp's storageGetItem / storageSetItem /
+    // storageRemoveItem (file-based KV in plugin data dir, landed
+    // pulp#896 / v0.48.0 alongside the canvas2d additions). Falls back
+    // to an in-memory Map when the bridge isn't present (older SDK or
+    // pulp-screenshot one-shot eval).
+    if (typeof g.localStorage === 'undefined') {
+        var hasStorageBridge =
+            typeof g.storageGetItem === 'function' &&
+            typeof g.storageSetItem === 'function' &&
+            typeof g.storageRemoveItem === 'function';
+        if (hasStorageBridge) {
+            g.localStorage = {
+                getItem: function (k) {
+                    var v = g.storageGetItem(String(k));
+                    return v === '' ? null : v;
+                },
+                setItem: function (k, v) { g.storageSetItem(String(k), String(v)); },
+                removeItem: function (k) { g.storageRemoveItem(String(k)); },
+                clear: function () { /* no bridge equivalent yet */ },
+                key: function () { return null; },
+                get length() { return 0; },
+            };
+        } else {
+            var _mem = {};
+            g.localStorage = {
+                getItem: function (k) { return Object.prototype.hasOwnProperty.call(_mem, k) ? _mem[k] : null; },
+                setItem: function (k, v) { _mem[String(k)] = String(v); },
+                removeItem: function (k) { delete _mem[k]; },
+                clear: function () { _mem = {}; },
+                key: function (i) { return Object.keys(_mem)[i] || null; },
+                get length() { return Object.keys(_mem).length; },
+            };
+        }
+    }
+
     // Document polyfill — wrap any existing one and short-circuit
     // 'tweak-defaults' to a known JSON blob so App() can boot.
     var origDoc = g.document;
