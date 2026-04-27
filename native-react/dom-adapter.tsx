@@ -55,85 +55,242 @@ const TAG_MAP: Record<string, Mapped | null> = {
     text: Label as unknown as Mapped,
 };
 
-/// Convert a React DOM-style style object into @pulp/react style props.
-/// CSS properties we know how to translate get hoisted; the rest are dropped.
+/// Table-driven CSS-key → bridge-prop translation. Each row is
+/// {cssKey, hostKey, parser}. Lets us stay declarative + extend
+/// in one place. Pattern from R3F's applyProps and Ink's styles.ts
+/// whitelist (per spectr#28 codex review).
+const STYLE_MAP: Array<{
+    css: string;
+    host: string;
+    parse?: (v: unknown) => unknown;
+}> = [
+    // Visual
+    { css: 'background',         host: 'background' },
+    { css: 'backgroundColor',    host: 'background' },
+    { css: 'backgroundImage',    host: 'background' },
+    { css: 'color',              host: 'textColor' },
+    { css: 'opacity',            host: 'opacity', parse: Number },
+    // Box
+    { css: 'width',              host: 'width', parse: parseLen },
+    { css: 'height',             host: 'height', parse: parseLen },
+    { css: 'minWidth',           host: 'minWidth', parse: parseLen },
+    { css: 'minHeight',          host: 'minHeight', parse: parseLen },
+    { css: 'maxWidth',           host: 'maxWidth', parse: parseLen },
+    { css: 'maxHeight',          host: 'maxHeight', parse: parseLen },
+    // Padding
+    { css: 'padding',            host: 'padding', parse: parseLen },
+    { css: 'paddingLeft',        host: 'paddingLeft', parse: parseLen },
+    { css: 'paddingRight',       host: 'paddingRight', parse: parseLen },
+    { css: 'paddingTop',         host: 'paddingTop', parse: parseLen },
+    { css: 'paddingBottom',      host: 'paddingBottom', parse: parseLen },
+    // Margin (full set — was missing marginLeft/Right per dropped-style telemetry)
+    { css: 'margin',             host: 'margin', parse: parseLen },
+    { css: 'marginLeft',         host: 'marginLeft', parse: parseLen },
+    { css: 'marginRight',        host: 'marginRight', parse: parseLen },
+    { css: 'marginTop',          host: 'marginTop', parse: parseLen },
+    { css: 'marginBottom',       host: 'marginBottom', parse: parseLen },
+    // Flex
+    { css: 'gap',                host: 'gap', parse: parseLen },
+    { css: 'rowGap',             host: 'rowGap', parse: parseLen },
+    { css: 'columnGap',          host: 'columnGap', parse: parseLen },
+    { css: 'flexGrow',           host: 'flexGrow', parse: Number },
+    { css: 'flexShrink',         host: 'flexShrink', parse: Number },
+    { css: 'flexBasis',          host: 'flexBasis', parse: parseLen },
+    { css: 'alignItems',         host: 'alignItems', parse: String },
+    { css: 'alignSelf',          host: 'alignSelf', parse: String },
+    { css: 'alignContent',       host: 'alignContent', parse: String },
+    { css: 'justifyContent',     host: 'justifyContent', parse: String },
+    { css: 'flexWrap',           host: 'flexWrap', parse: String },
+    // Borders
+    { css: 'borderRadius',       host: 'borderRadius', parse: parseLen },
+    // Text
+    { css: 'fontSize',           host: 'fontSize', parse: parseLen },
+    { css: 'fontFamily',         host: 'fontFamily', parse: String },
+    { css: 'fontWeight',         host: 'fontWeight', parse: (v) => typeof v === 'number' ? v : String(v) },
+    { css: 'letterSpacing',      host: 'letterSpacing', parse: parseLen },
+    { css: 'lineHeight',         host: 'lineHeight', parse: parseLen },
+    { css: 'textAlign',          host: 'textAlign', parse: String },
+];
+
 function adaptStyle(style: CSSProperties | undefined): Record<string, unknown> {
     if (!style) return {};
     const out: Record<string, unknown> = {};
-    if (style.background)        out.background       = style.background as string;
-    if (style.backgroundColor)   out.background       = style.backgroundColor as string;
-    if (style.color)             out.textColor        = style.color as string;
-    if (style.opacity !== undefined)  out.opacity     = Number(style.opacity);
-    if (style.width !== undefined)    out.width       = parseLen(style.width);
-    if (style.height !== undefined)   out.height      = parseLen(style.height);
-    if (style.minWidth !== undefined) out.minWidth    = parseLen(style.minWidth);
-    if (style.minHeight !== undefined)out.minHeight   = parseLen(style.minHeight);
-    if (style.maxWidth !== undefined) out.maxWidth    = parseLen(style.maxWidth);
-    if (style.maxHeight !== undefined)out.maxHeight   = parseLen(style.maxHeight);
-    if (style.padding !== undefined)  out.padding     = parseLen(style.padding);
-    if (style.paddingLeft !== undefined)   out.paddingLeft   = parseLen(style.paddingLeft);
-    if (style.paddingRight !== undefined)  out.paddingRight  = parseLen(style.paddingRight);
-    if (style.paddingTop !== undefined)    out.paddingTop    = parseLen(style.paddingTop);
-    if (style.paddingBottom !== undefined) out.paddingBottom = parseLen(style.paddingBottom);
-    if (style.margin !== undefined)        out.margin        = parseLen(style.margin);
-    if (style.gap !== undefined)           out.gap           = parseLen(style.gap);
-    if (style.flexGrow !== undefined)      out.flexGrow      = Number(style.flexGrow);
-    if (style.flexShrink !== undefined)    out.flexShrink    = Number(style.flexShrink);
-    if (style.flexBasis !== undefined)     out.flexBasis     = parseLen(style.flexBasis);
-    if (style.alignItems)                  out.alignItems    = String(style.alignItems);
-    if (style.justifyContent)              out.justifyContent= String(style.justifyContent);
+    const styleObj = style as Record<string, unknown>;
+
+    // Walk the table — CSS keys we know about.
+    for (const { css, host, parse } of STYLE_MAP) {
+        const v = styleObj[css];
+        if (v === undefined || v === null) continue;
+        const p = parse ? parse(v) : v;
+        if (p !== undefined) out[host] = p;
+    }
+
+    // flexDirection: collapse row-reverse/column-reverse to row/column.
     if (style.flexDirection === 'row' || style.flexDirection === 'row-reverse') {
         out.direction = 'row';
     } else if (style.flexDirection === 'column' || style.flexDirection === 'column-reverse') {
         out.direction = 'column';
     }
-    // Forward CSS positioning through the bridge — Pulp exposes setPosition
-    // (static/relative/absolute/fixed/sticky) + setTop/setLeft/setRight/setBottom.
-    // We hoist them into bridge-prop names that prop-applier already knows
-    // about, falling back where no equivalent exists yet.
+
+    // border shorthand → setBorder({color, width}). CSS form:
+    // "1px solid rgba(...)" / "1px solid #fff"
+    const parseBorder = (val: unknown): { color: string; width: number } | undefined => {
+        if (typeof val !== 'string') return undefined;
+        const m = val.match(/^\s*(\d+(?:\.\d+)?)px\s+\w+\s+(.+)$/);
+        if (!m) return undefined;
+        return { width: parseFloat(m[1]!), color: m[2]!.trim() };
+    };
+    if (styleObj.border !== undefined) {
+        const b = parseBorder(styleObj.border);
+        if (b) out.border = b;
+    }
+    if (styleObj.borderTop !== undefined) {
+        const b = parseBorder(styleObj.borderTop);
+        if (b) out.borderTop = b;
+    }
+    if (styleObj.borderRight !== undefined) {
+        const b = parseBorder(styleObj.borderRight);
+        if (b) out.borderRight = b;
+    }
+    if (styleObj.borderBottom !== undefined) {
+        const b = parseBorder(styleObj.borderBottom);
+        if (b) out.borderBottom = b;
+    }
+    if (styleObj.borderLeft !== undefined) {
+        const b = parseBorder(styleObj.borderLeft);
+        if (b) out.borderLeft = b;
+    }
+
+    // display: 'none' → setVisible(false). 'flex'/'block' default.
+    if (styleObj.display === 'none') {
+        out.visible = false;
+    }
+
+    // overflow: 'hidden' → bridge clip. (No bridge support yet; warn-only.)
+    if (styleObj.overflow === 'hidden') {
+        // Drop silently — known unsupported. Bridge needs setClip.
+    }
+
+    // pointerEvents: 'none' → bridge equivalent (?). Drop for now;
+    // overlays with pointerEvents:none should pass clicks through.
+    if (styleObj.pointerEvents === 'none') {
+        // setHitTest equivalent not in bridge yet; track separately.
+        out.__pointerEventsNone = true;
+    }
+
+    // transform: parse translateX(N%)/translateY(N%) so common
+    // centering idiom (left:50% + transform:translateX(-50%)) works.
+    // General CSS transform unsupported.
+    if (typeof styleObj.transform === 'string') {
+        const tx = styleObj.transform.match(/translateX\(([-\d.]+)%\)/);
+        const ty = styleObj.transform.match(/translateY\(([-\d.]+)%\)/);
+        if (tx) out.__translateXPercent = parseFloat(tx[1]!);
+        if (ty) out.__translateYPercent = parseFloat(ty[1]!);
+    }
+    // CSS positioning. Pulp exposes setPosition + setTop/Left/Right/Bottom.
+    // The HTML editor uses `position: absolute, inset: 0` as a "fill
+    // parent" idiom for stacked overlays (header + FilterBank + Chrome
+    // all want to occupy the App's container, layered). Converting to
+    // flex-grow:1 broke that — siblings competed for the same axis
+    // space, only the first survived. The right translation is Yoga's
+    // absolute-with-4-zero-edges, which gives "fill parent" via
+    // positioning, leaving each sibling fully sized at (0,0).
     const styleAny = style as Record<string, unknown>;
     const pos = styleAny.position as string | undefined;
-    if (pos) {
-        // No "position" prop in @pulp/react yet; route through __position
-        // so a future host-config tweak can pick it up. For now, fall back
-        // to setting width/height when inset:0 (fill parent).
+    const inset = styleAny.inset;
+    const isInsetZero = inset === 0 || inset === '0' || inset === '0px';
+    if (pos === 'absolute' || pos === 'fixed') {
+        out.position = 'absolute';
+        if (isInsetZero) {
+            // Yoga: absolute + 4 zero edges = fill parent. No width/height.
+            out.top = 0; out.left = 0; out.right = 0; out.bottom = 0;
+        }
+    } else if (pos) {
         out.position = pos;
     }
-    const inset = styleAny.inset;
-    if (inset === 0 || inset === '0' || inset === '0px') {
-        // "fill parent" idiom. Without a real abs-position renderer we
-        // hard-code the editor's known dims (1320x860) so the App roots
-        // get a size. Inner absolute children fall through to inset/top/left
-        // setters below.
-        if (out.flexGrow === undefined) out.flexGrow = 1;
-        if (out.width === undefined)  out.width  = 1320;
-        if (out.height === undefined) out.height = 860;
-    }
+    // Explicit edge overrides (after inset-fill so they can override)
     if (styleAny.top !== undefined)    out.top    = parseLen(styleAny.top);
     if (styleAny.left !== undefined)   out.left   = parseLen(styleAny.left);
     if (styleAny.right !== undefined)  out.right  = parseLen(styleAny.right);
     if (styleAny.bottom !== undefined) out.bottom = parseLen(styleAny.bottom);
+    // CSS z-index → bridge setZIndex (Pulp supports it; needed for
+    // overlays/menus per spectr#28 codex review).
+    if (styleAny.zIndex !== undefined) out.zIndex = Number(styleAny.zIndex);
 
+    // Telemetry — log any style key we DIDN'T translate. Once-per-key.
+    // Lets us see what the editor wants but we're silently dropping
+    // (the next-iteration prioritization signal). Enumerated keys above
+    // count as "handled" for this set.
+    const HANDLED = new Set<string>([
+        'background', 'backgroundColor', 'backgroundImage', 'color', 'opacity',
+        'width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight',
+        'padding', 'paddingLeft', 'paddingRight', 'paddingTop', 'paddingBottom',
+        'margin', 'marginLeft', 'marginRight', 'marginTop', 'marginBottom',
+        'gap', 'rowGap', 'columnGap',
+        'flexGrow', 'flexShrink', 'flexBasis', 'flexWrap', 'flex',
+        'alignItems', 'alignSelf', 'alignContent', 'justifyContent', 'flexDirection',
+        'position', 'inset', 'top', 'left', 'right', 'bottom', 'zIndex',
+        'border', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'borderRadius',
+        'fontSize', 'fontFamily', 'fontWeight', 'letterSpacing', 'lineHeight', 'textAlign',
+        'display', 'overflow', 'pointerEvents', 'transform',
+        // Drop-quietly (known visual polish, no bridge support yet)
+        'cursor', 'touchAction', 'transition', 'boxShadow', 'backdropFilter',
+        'accentColor', 'verticalAlign', 'whiteSpace', 'textOverflow', 'userSelect',
+    ]);
+    for (const key of Object.keys(styleAny)) {
+        if (!HANDLED.has(key)) warnDropped(key);
+    }
     return out;
 }
 
-function parseLen(v: unknown): number | undefined {
+function parseLen(v: unknown): number | string | undefined {
     if (typeof v === 'number') return v;
     if (typeof v !== 'string') return undefined;
     if (v.endsWith('px')) return parseFloat(v);
     if (v === '0') return 0;
-    if (v.endsWith('%')) return undefined; // bridge wants px; drop %
+    // Yoga supports percent on positions/dimensions — pass through as
+    // string so prop-applier / bridge can recognize the unit.
+    if (v.endsWith('%')) return v;
+    // Targeted calc(100% + Npx) — common centering offset; resolve to
+    // a percent + px pair we forward as-is. General calc() is unsupported.
+    const calcM = v.match(/^calc\(\s*100%\s*([+-])\s*(\d+(?:\.\d+)?)px\s*\)$/);
+    if (calcM) {
+        // For now drop and warn; the bridge can't represent compound calc.
+        warnDropped('calc:' + v);
+        return undefined;
+    }
+    if (v.endsWith('em') || v.endsWith('rem')) return undefined;  // unsupported
     return undefined;
+}
+
+// Once-per-prop telemetry for dropped style keys. Lets us see what the
+// editor wants but we're silently ignoring — major signal for next-fix
+// prioritization. Logs through __spectrLog (NativeEditorView, stderr).
+const _droppedSeen = new Set<string>();
+function warnDropped(key: string): void {
+    if (_droppedSeen.has(key)) return;
+    _droppedSeen.add(key);
+    const lg = (globalThis as { __spectrLog?: (...a: unknown[]) => void }).__spectrLog;
+    if (lg) lg('[adapter:dropped-style] ' + key);
 }
 
 /// Replacement for React.createElement that intercepts string tag names
 /// and dispatches to @pulp/react components. Function components fall
 /// through unchanged.
+let __ce_count = 0;
 export function createElement(
     type: unknown,
     props: Record<string, unknown> | null,
     ...children: ReactNode[]
 ): ReactNode {
+    __ce_count++;
+    if (__ce_count <= 12) {
+        const desc = typeof type === 'string' ? type
+            : typeof type === 'function' ? '<' + ((type as { name?: string }).name || 'fn') + '>'
+            : String(type);
+        const log = (globalThis as { console?: { log?: (...a: unknown[]) => void } }).console?.log;
+        if (log) log('[adapter] #' + __ce_count + ' ce(' + desc + ')  children=' + children.length);
+    }
     if (typeof type !== 'string') {
         // Function/class component — pass through.
         return pulpCreateElement(type as never, props as never, ...children);
@@ -147,10 +304,18 @@ export function createElement(
 
     // Forward common DOM attrs to bridge props
     if (typeof inProps.id === 'string') adapted.id = inProps.id;
-    if (typeof inProps.onClick === 'function') adapted.onClick = inProps.onClick;
-    if (typeof inProps.onChange === 'function') adapted.onChange = inProps.onChange;
-    if (typeof inProps.onMouseEnter === 'function') adapted.onMouseEnter = inProps.onMouseEnter;
-    if (typeof inProps.onMouseLeave === 'function') adapted.onMouseLeave = inProps.onMouseLeave;
+    // Event handler forwarding. Pulp's bridge `on(id, eventName, fn)`
+    // routes events to JS, so any DOM-style on* handler the editor
+    // attaches gets forwarded with its eventName lowercased. This
+    // supports onClick / onChange / onPointerDown / onPointerMove /
+    // onPointerUp / onPointerLeave / onWheel / onContextMenu — all of
+    // which the FilterBank/Chrome use for canvas editing.
+    for (const key of Object.keys(inProps)) {
+        if (key.length > 2 && key.startsWith('on') && key[2] !== undefined && key[2] === key[2].toUpperCase()) {
+            const v = inProps[key];
+            if (typeof v === 'function') adapted[key] = v;
+        }
+    }
     // ref handling: for <canvas>, wrap the underlying instance with a
     // Canvas2D-compatible shim before forwarding to the caller's ref so
     // their `canvasRef.current.getContext('2d').fillRect(...)` works.
