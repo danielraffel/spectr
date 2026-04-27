@@ -42,6 +42,24 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
     bridge_ = std::make_unique<pulp::view::WidgetBridge>(
         engine_, *this, plugin_.state());
 
+    // Diagnostic logger so JS-side console.log lands on stderr. Pulp's
+    // QuickJS path doesn't ship a console binding by default; without
+    // this the bundle's diagnostic logging is silent.
+    engine_.register_function("__spectrLog",
+        [](choc::javascript::ArgumentList args) {
+            std::string line;
+            for (size_t i = 0; i < args.numArgs; ++i) {
+                if (i) line += ' ';
+                if (args[i] && args[i]->isString()) {
+                    line += args[i]->getString();
+                } else if (args[i]) {
+                    line += choc::json::toString(*args[i]);
+                }
+            }
+            std::fprintf(stderr, "[spectr-js] %s\n", line.c_str());
+            return choc::value::Value();
+        });
+
     // Register a JS-callable "__spectrumTick" that invokes our C++ tick().
     // Combined with editor.tsx's requestAnimationFrame loop, this makes
     // the analyzer push driven by Pulp's host frame clock — no separate
@@ -74,6 +92,14 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
 }
 
 NativeEditorView::~NativeEditorView() = default;
+
+void NativeEditorView::paint(pulp::canvas::Canvas& canvas) {
+    // Pump JS-side requestAnimationFrame callbacks so loops driven
+    // through the bridge actually fire (FilterBank's draw RAF, our
+    // spectrum-tick RAF, etc.). Without this they queue but never run.
+    if (bridge_) bridge_->service_frame_callbacks();
+    pulp::view::View::paint(canvas);
+}
 
 void NativeEditorView::update_params() {
     if (!bridge_) return;

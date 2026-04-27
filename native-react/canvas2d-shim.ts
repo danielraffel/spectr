@@ -149,9 +149,85 @@ export class Canvas2DShim {
         return new GradientShim(this.canvasId, 'radial', [x0, y0, r0, x1, y1, r1]);
     }
 
+    // ── setTransform / transform matrix ────────────────────────────────
+    // The extracted FilterBank uses ctx.setTransform(scale, 0, 0, scale, 0, 0)
+    // on every resize to apply devicePixelRatio. Without it, the very first
+    // frame aborts silently — no try/catch in FilterBank's RAF loop.
+    private _matrix: [number, number, number, number, number, number] = [1, 0, 0, 1, 0, 0];
+    setTransform(a: number, b: number, c: number, d: number, e: number, f: number): void {
+        this._matrix = [a, b, c, d, e, f];
+        // Bridge has canvasSave/Restore + canvasTranslate/Scale/Rotate
+        // but no direct setTransform. Approximate by reset (save/restore
+        // via fresh state) + scale + translate. For the common
+        // setTransform(s,0,0,s,0,0) DPR case this is exactly right.
+        // canvasResetTransform isn't available either — emulate via
+        // restore-to-identity by issuing inverse operations.
+        // Pragma: rely on the bridge already applying DPR globally;
+        // spectr#28 only needs the no-throw.
+        // Future: file pulp issue for canvasSetTransform native.
+    }
+    transform(a: number, b: number, c: number, d: number, e: number, f: number): void {
+        this.setTransform(a, b, c, d, e, f);  // approximate (multiply not implemented)
+    }
+    resetTransform(): void { this.setTransform(1, 0, 0, 1, 0, 0); }
+    getTransform(): { a: number; b: number; c: number; d: number; e: number; f: number } {
+        const [a, b, c, d, e, f] = this._matrix;
+        return { a, b, c, d, e, f };
+    }
+
+    // ── rect / clip ────────────────────────────────────────────────────
+    // ctx.rect(x,y,w,h) adds a rectangular subpath; ctx.clip() clips
+    // subsequent draws to the current path. FilterBank uses both in
+    // its draw setup. Without these the draw aborts.
+    rect(x: number, y: number, w: number, h: number): void {
+        // Add rect subpath via four moveTo/lineTo. closePath finishes
+        // the rectangle. canvas* bridge fns don't have a one-shot
+        // "addRectToPath", so we synthesize.
+        call('canvasMoveTo', this.canvasId, x, y);
+        call('canvasLineTo', this.canvasId, x + w, y);
+        call('canvasLineTo', this.canvasId, x + w, y + h);
+        call('canvasLineTo', this.canvasId, x, y + h);
+        call('canvasClosePath', this.canvasId);
+    }
+    clip(): void {
+        // Bridge has no clip primitive. NO-OP; subsequent draws will
+        // not be clipped. Rendered content may bleed beyond intended
+        // areas, but the draw loop completes. Track for a follow-up
+        // pulp issue (canvasClip).
+    }
+
+    // ── globalCompositeOperation ───────────────────────────────────────
+    // FilterBank uses 'destination-out' / 'multiply' for blending.
+    // Bridge doesn't expose composite ops; track + drop.
+    private _gco = 'source-over';
+    get globalCompositeOperation(): string { return this._gco; }
+    set globalCompositeOperation(v: string) { this._gco = v; }
+
+    // ── shadow* ────────────────────────────────────────────────────────
+    private _shadowBlur = 0;
+    private _shadowColor = 'transparent';
+    private _shadowOffsetX = 0;
+    private _shadowOffsetY = 0;
+    get shadowBlur(): number { return this._shadowBlur; }
+    set shadowBlur(v: number) { this._shadowBlur = v; }
+    get shadowColor(): string { return this._shadowColor; }
+    set shadowColor(v: string) { this._shadowColor = v; }
+    get shadowOffsetX(): number { return this._shadowOffsetX; }
+    set shadowOffsetX(v: number) { this._shadowOffsetX = v; }
+    get shadowOffsetY(): number { return this._shadowOffsetY; }
+    set shadowOffsetY(v: number) { this._shadowOffsetY = v; }
+
     // ── No-op stubs for things the bridge doesn't have yet ────────────
     setLineDash(_segments: number[]): void { /* TODO */ }
+    getLineDash(): number[] { return []; }
     drawImage(): void { /* TODO */ }
+    isPointInPath(): boolean { return false; }
+    isPointInStroke(): boolean { return false; }
+    createImageData(): unknown { return { data: new Uint8ClampedArray(4), width: 1, height: 1 }; }
+    getImageData(): unknown { return { data: new Uint8ClampedArray(4), width: 1, height: 1 }; }
+    putImageData(): void { /* no-op */ }
+    createPattern(): unknown { return null; }
+    drawFocusIfNeeded(): void { /* no-op */ }
 }
 
 /// Wrap a PulpInstance descriptor (returned from createInstance) into

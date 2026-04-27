@@ -53,6 +53,13 @@ public:
     /// Cheap when nothing has changed (TripleBuffer's atomic load).
     void tick();
 
+    /// Per-frame paint hook — Pulp calls this on every paint pass.
+    /// We use it to pump WidgetBridge::service_frame_callbacks so
+    /// the JS-side requestAnimationFrame loop (FilterBank's draw
+    /// loop, our spectrum tick, etc.) actually fires. Without this,
+    /// JS-rAF callbacks queue but never run.
+    void paint(pulp::canvas::Canvas& canvas) override;
+
 private:
     // Member order matters for destruction. The bridge holds references
     // into engine_ and uses *this as its widget root, so the bridge must
