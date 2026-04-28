@@ -125,6 +125,30 @@ function adaptStyle(style: CSSProperties | undefined): Record<string, unknown> {
         if (p !== undefined) out[host] = p;
     }
 
+    // Background gradient → first-color-stop fallback. The bridge's
+    // setBackground claims to parse linear-gradient strings but in
+    // practice (verified spectr#28 v0.48.0) the toolbar/footer end up
+    // rendered with the default View background (white). Until the
+    // upstream parser is verified end-to-end, extract the first
+    // recognizable color from the gradient and use that as a solid
+    // background. Picks the dominant top-of-gradient color so dark
+    // surfaces stay dark and light text is readable.
+    const bg = out.background;
+    if (typeof bg === 'string' && bg.includes('gradient(')) {
+        // Find the first rgba(...) / rgb(...) / #hex / oklch(...) inside.
+        const m =
+            bg.match(/(rgba?\([^)]+\))/i) ||
+            bg.match(/(#[0-9a-f]{3,8})/i) ||
+            bg.match(/(oklch\([^)]+\))/i);
+        if (m) {
+            out.background = m[1];
+        } else {
+            // Truly unparseable — drop the gradient entirely (don't pass
+            // a string the bridge will silently reject).
+            delete out.background;
+        }
+    }
+
     // flexDirection: collapse row-reverse/column-reverse to row/column.
     if (style.flexDirection === 'row' || style.flexDirection === 'row-reverse') {
         out.direction = 'row';

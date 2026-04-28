@@ -2,6 +2,7 @@
 #include "spectr/spectr.hpp"
 
 #include <pulp/runtime/log.hpp>
+#include <pulp/view/window_host.hpp>
 
 #include "spectr_editor_assets_data.hpp"
 
@@ -41,6 +42,15 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
     // Bands, Morph) directly via setValue / __dispatch__.
     bridge_ = std::make_unique<pulp::view::WidgetBridge>(
         engine_, *this, plugin_.state());
+
+    // Paint pump (spectr#28 / pulp#899). Wiring set_repaint_callback to
+    // host->repaint() recurses inside paint() — service_frame_callbacks
+    // drains the rAF queue, each rAF re-arms via __requestFrame__ which
+    // calls back through to repaint(), which is invoked synchronously
+    // and tight-loops. Until upstream gives us either a deferred-repaint
+    // contract (post to event loop) or a paint-loop driver, we let the
+    // first paint stand. Spectr remains stable; FilterBank canvas
+    // doesn't animate. Tracked: pulp #899.
 
     // Diagnostic logger so JS-side console.log lands on stderr. Pulp's
     // QuickJS path doesn't ship a console binding by default; without
@@ -119,22 +129,15 @@ void NativeEditorView::paint(pulp::canvas::Canvas& canvas) {
             }
         }
     }
-    // Pump JS-side requestAnimationFrame callbacks so loops driven
-    // through the bridge actually fire (FilterBank's draw RAF, our
-    // spectrum-tick RAF, etc.). Without this they queue but never run.
-    if (bridge_) {
-        bridge_->service_frame_callbacks();
-        // Self-perpetuating frame loop. Any work the JS side queued
-        // during service_frame_callbacks (effects firing, rAF
-        // callbacks) needs ANOTHER paint to drain. Call the JS-side
-        // `layout()` global which internally triggers
-        // WidgetBridge::request_repaint (which is private to C++).
-        // Without this loop, useEffect's MessageChannel → setTimeout
-        // → __requestFrame__ chain stalls after one frame and React
-        // effects never fire.
-        // TODO(spectr#28): make conditional on actual pending work.
-        engine_.evaluate("if (typeof layout === 'function') layout();void 0");
-    }
+    // Note: do NOT call bridge_->service_frame_callbacks() here.
+    // Spectr's React app self-arms rAF + layout() in a tight chain
+    // (FilterBank draw, useEffect-driven retries, setState re-renders).
+    // Inside paint() the drain recurses (each callback can enqueue new
+    // ones) and pegs CPU at 90%. Until pulp #899 lands a deferred /
+    // event-loop-driven pump, leaving the queue undrained keeps the
+    // standalone stable. Visible result: structural mount paints once
+    // (toolbar / footer / canvas containers), FilterBank canvas does
+    // not animate. Tracked: spectr#28.
     pulp::view::View::paint(canvas);
 }
 
