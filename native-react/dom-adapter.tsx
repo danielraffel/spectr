@@ -56,9 +56,8 @@ const TAG_MAP: Record<string, Mapped | null> = {
 };
 
 /// Table-driven CSS-key → bridge-prop translation. Each row is
-/// {cssKey, hostKey, parser}. Lets us stay declarative + extend
-/// in one place. Pattern from R3F's applyProps and Ink's styles.ts
-/// whitelist (per spectr#28 codex review).
+/// {cssKey, hostKey, parser}. Lets us stay declarative and extend
+/// in one place rather than scattering switch statements.
 const STYLE_MAP: Array<{
     css: string;
     host: string;
