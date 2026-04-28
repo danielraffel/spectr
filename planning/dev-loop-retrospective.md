@@ -257,6 +257,31 @@ That framing is what makes "native by default" actually stick. WebView
 is fine for prototypes and demos; it's not free for plugins meant to
 ship.
 
+## Caveat: the "great" screenshot is real but not yet reproducible
+
+`planning/screenshots/native-editor-sdk-0.56.0-five-of-six-fixes.png`
+shows what Spectr CAN render at SDK 0.56.0 — full labels in JetBrains
+Mono, spectrum gradient in FilterBank, polished chrome. That capture
+is genuine; it came from a running Spectr standalone at the moment.
+
+**But the state is not reliably reproducible from current source + clean
+SDK.** Over multiple rebuild cycles afterward, the same source against
+the same SDK version renders truncated labels ("SPECTR" → "SF",
+"ZOOMABLE FILTER BANK" → "ZOOMA"). I haven't isolated whether that's:
+
+- A nondeterminism in pulp#935's Label auto-grow measure callback at
+  first vs. subsequent paint
+- A macOS-side cache (Skia font cache, app saved state, framebuffer
+  init) that was favorable on the captured run and not later
+- A subtle interaction between the bundle build state and the
+  reconciler's prop-application order
+
+Until that's understood, treat the "great" screenshot as **proof that
+the framework can render this**, not as **the canonical rendering of
+this build**. The tooling work in this loop is sound; the visual
+parity baseline needs another clean test against v0.57.0 (when it
+publishes — pulp#944) to confirm reproducibility.
+
 ## Closing
 
 This pattern delivered ~5 framework primitives + a visible parity
