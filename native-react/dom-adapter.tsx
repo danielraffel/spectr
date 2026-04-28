@@ -108,12 +108,56 @@ const STYLE_MAP: Array<{
     { css: 'borderRadius',       host: 'borderRadius', parse: parseLen },
     // Text
     { css: 'fontSize',           host: 'fontSize', parse: parseLen },
-    { css: 'fontFamily',         host: 'fontFamily', parse: String },
+    { css: 'fontFamily',         host: 'fontFamily', parse: (v) => resolveTokens(String(v)) },
     { css: 'fontWeight',         host: 'fontWeight', parse: (v) => typeof v === 'number' ? v : String(v) },
     { css: 'letterSpacing',      host: 'letterSpacing', parse: parseLen },
     { css: 'lineHeight',         host: 'lineHeight', parse: parseLen },
     { css: 'textAlign',          host: 'textAlign', parse: String },
 ];
+
+// Design tokens lifted from the original Spectr-standalone.html template's
+// :root block. These are CSS custom properties the bundle references via
+// var(--mono) / var(--sans) etc. but that don't exist in our QuickJS env
+// because we're not parsing the original stylesheet. Resolving them here
+// is a stop-gap until @pulp/css-adapt + the HTML extractor land — at that
+// point this table will be auto-generated from the HTML's :root block.
+const DESIGN_TOKENS: Record<string, string> = {
+    '--mono': "'JetBrains Mono', ui-monospace, monospace",
+    '--sans': "'Inter', ui-sans-serif, system-ui, sans-serif",
+    '--bg':   '#05070a',
+    '--ink':  '#e8edf2',
+    '--dim':  '#6b7380',
+    '--hair':   'rgba(232,237,242,0.06)',
+    '--hair-2': 'rgba(232,237,242,0.12)',
+    '--accent': 'oklch(0.78 0.14 220)',
+    '--danger': 'oklch(0.68 0.19 25)',
+    '--warm':   'oklch(0.80 0.16 60)',
+    '--cool':   'oklch(0.78 0.14 220)',
+    '--green':  'oklch(0.78 0.14 150)',
+    '--violet': 'oklch(0.70 0.18 290)',
+    '--grid':        'rgba(255,255,255,0.06)',
+    '--grid-strong': 'rgba(255,255,255,0.14)',
+    '--glow-1': 'rgba(40,90,140,0.08)',
+    '--glow-2': 'rgba(140,40,120,0.05)',
+    '--panel':         'rgba(12,16,22,0.92)',
+    '--panel-border':  'rgba(255,255,255,0.08)',
+    '--chip-bg':           'rgba(255,255,255,0.03)',
+    '--chip-bg-active':    'rgba(120,180,255,0.14)',
+    '--chip-border':       'rgba(255,255,255,0.1)',
+    '--chip-border-active':'rgba(180,210,255,0.4)',
+};
+
+/// Replace var(--name) and var(--name, fallback) substrings inline.
+/// Idempotent — non-var strings pass through unchanged.
+function resolveTokens(value: string): string {
+    if (!value.includes('var(')) return value;
+    return value.replace(/var\((--[a-zA-Z0-9_-]+)(?:\s*,\s*([^)]+))?\)/g,
+        (_match, name: string, fallback?: string) => {
+            const v = DESIGN_TOKENS[name];
+            if (v !== undefined) return v;
+            return (fallback ?? '').trim() || _match;
+        });
+}
 
 // Expand CSS shorthand for padding/margin: "2px 7px" → {top:2,right:7,bottom:2,left:7}.
 // Returns {top, right, bottom, left} numbers, or null if the value is a single
