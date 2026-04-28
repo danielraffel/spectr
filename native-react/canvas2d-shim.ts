@@ -295,9 +295,19 @@ export function wrapCanvasInstance(instance: { id: string }): {
     return {
         id: instance.id,
         get width() { return pendingW; },
-        set width(v: number) { pendingW = v; /* No-op in Pulp — canvas size is set via setFlex(width) */ },
+        set width(v: number) {
+            pendingW = v;
+            // Forward to bridge's setFlex so the canvas widget actually
+            // resizes. Without this, c.width = ... in the bundle is a
+            // pure no-op and downstream math (rect dimensions, hit
+            // tests) operates on stale 0 values causing NaN.
+            call('setFlex', instance.id, 'width', v);
+        },
         get height() { return pendingH; },
-        set height(v: number) { pendingH = v; },
+        set height(v: number) {
+            pendingH = v;
+            call('setFlex', instance.id, 'height', v);
+        },
         getContext(_t: string) { return shim; },
         getBoundingClientRect(): DOMRect {
             // Best-effort — we don't have layout-resolved bounds via the
