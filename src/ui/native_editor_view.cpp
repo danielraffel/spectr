@@ -129,15 +129,20 @@ void NativeEditorView::paint(pulp::canvas::Canvas& canvas) {
             }
         }
     }
-    // Note: do NOT call bridge_->service_frame_callbacks() here.
-    // Spectr's React app self-arms rAF + layout() in a tight chain
-    // (FilterBank draw, useEffect-driven retries, setState re-renders).
-    // Inside paint() the drain recurses (each callback can enqueue new
-    // ones) and pegs CPU at 90%. Until pulp #899 lands a deferred /
-    // event-loop-driven pump, leaving the queue undrained keeps the
-    // standalone stable. Visible result: structural mount paints once
-    // (toolbar / footer / canvas containers), FilterBank canvas does
-    // not animate. Tracked: spectr#28.
+    // Drain rAF / setTimeout / setInterval callbacks queued since the
+    // last paint. With pulp v0.52.0's auto-wired set_repaint_callback
+    // (#913) and native timer/rAF globals (#918), this is the standard
+    // drive point — the bridge snapshots the queue at start, processes
+    // exactly that snapshot, and any new callbacks queued during
+    // processing land in the next paint's batch.
+    //
+    // Note: until pulp #921 lands, requestAnimationFrame() doesn't
+    // actually trigger follow-up paints (its `__requestFrame__` adds
+    // to the queue but never calls request_repaint). FilterBank's
+    // canvas draw therefore never animates. Structural mount works.
+    if (bridge_) {
+        bridge_->service_frame_callbacks();
+    }
     pulp::view::View::paint(canvas);
 }
 

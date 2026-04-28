@@ -281,20 +281,19 @@ var __spectrTweakDefaults = JSON.stringify({
     w.innerHeight = 860;
     w.parent = w;
 
-    // requestAnimationFrame wiring. Pulp's bridge already exposes
-    // __requestFrame__ (C++) + __frameCallbacks__/__invokeFrame__ (JS
-    // preamble loaded on first load_script). We just need to
-    // register the standard rAF API on top: enqueue cb in
-    // __frameCallbacks__, queue via __requestFrame__, and let
-    // bridge.service_frame_callbacks() (called from
-    // NativeEditorView::paint) drive the pump.
+    // requestAnimationFrame wiring. Pulp v0.52.0+ (#918) registers
+    // requestAnimationFrame / cancelAnimationFrame natively; if those
+    // are present, defer entirely. Falls back to the legacy
+    // __requestFrame__ + __frameCallbacks__ shim path on older SDKs.
     var _rafCount = 0;
+    // If any rAF is already set up (Pulp v0.52.0+ ships one in
+    // web-compat-scheduler.js, older SDKs don't), defer entirely. Only
+    // install a shim when nothing exists.
+    var hasExistingRaf = typeof w.requestAnimationFrame === 'function';
     try { if (g.__spectrLog) g.__spectrLog('shim: rAF was=' + typeof w.requestAnimationFrame +
-                                           ' reqFrame=' + typeof g.__requestFrame__ +
-                                           ' frameCB=' + typeof g.__frameCallbacks__); } catch (_e) {}
-    // Always re-wire — even if a previous synthetic rAF was set up,
-    // we want the bridge-driven one for spectr#28.
-    {
+                                           ' existing=' + hasExistingRaf +
+                                           ' reqFrame=' + typeof g.__requestFrame__); } catch (_e) {}
+    if (!hasExistingRaf) {
         var hasFP = typeof g.__requestFrame__ === 'function' &&
                     typeof g.__frameCallbacks__ === 'object' &&
                     typeof g.__frameNextId__ === 'number';
@@ -336,5 +335,5 @@ var __spectrTweakDefaults = JSON.stringify({
             };
             w.cancelAnimationFrame = function () {};
         }
-    }
+    } // end !hasNativeRaf
 })();
