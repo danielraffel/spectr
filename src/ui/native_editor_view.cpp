@@ -43,14 +43,20 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
     bridge_ = std::make_unique<pulp::view::WidgetBridge>(
         engine_, *this, plugin_.state());
 
-    // Paint pump (spectr#28 / pulp#899). Wiring set_repaint_callback to
-    // host->repaint() recurses inside paint() — service_frame_callbacks
-    // drains the rAF queue, each rAF re-arms via __requestFrame__ which
-    // calls back through to repaint(), which is invoked synchronously
-    // and tight-loops. Until upstream gives us either a deferred-repaint
-    // contract (post to event loop) or a paint-loop driver, we let the
-    // first paint stand. Spectr remains stable; FilterBank canvas
-    // doesn't animate. Tracked: pulp #899.
+    // 60Hz pump thread (THROWAWAY — macOS only — local validation).
+    // The standalone WindowHost::repaint() doesn't reliably trigger
+    // paints when called from inside a draw cycle or from JS-callback
+    // context. A separate thread sleeping ~16ms and calling repaint()
+    // forces NSView setNeedsDisplay from outside the draw context,
+    // which DOES drive the next display cycle. Will be removed when
+    // pulp ships an autonomous paint-pump driver.
+    pump_running_ = true;
+    pump_thread_ = std::thread([this] {
+        while (pump_running_.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            if (auto* host = window_host()) host->repaint();
+        }
+    });
 
     // Diagnostic logger so JS-side console.log lands on stderr. Pulp's
     // QuickJS path doesn't ship a console binding by default; without
@@ -101,7 +107,10 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
 #endif
 }
 
-NativeEditorView::~NativeEditorView() = default;
+NativeEditorView::~NativeEditorView() {
+    pump_running_ = false;
+    if (pump_thread_.joinable()) pump_thread_.join();
+}
 
 void NativeEditorView::paint(pulp::canvas::Canvas& canvas) {
     // Diagnostic — log first few paint passes to confirm framework

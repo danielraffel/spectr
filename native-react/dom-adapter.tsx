@@ -20,39 +20,43 @@ import {
 } from '@pulp/react';
 import { wrapCanvasInstance } from './canvas2d-shim.js';
 
-// HTML tags we map to @pulp/react components. Anything not in this
-// table falls through to View (so unknown tags render their children).
-type Mapped = typeof View;
+// HTML tags we map to @pulp/react bridge type strings. Using strings
+// directly (rather than the @pulp/react React-component wrappers)
+// because the wrappers are plain function components without
+// forwardRef — React silently drops ref props passed to them, so
+// `<div ref={wrapRef}>` never fires the ref callback. With raw
+// strings, React's reconciler routes refs through getPublicInstance.
+type Mapped = string;
 const TAG_MAP: Record<string, Mapped | null> = {
-    div: View as Mapped,
-    section: View as Mapped,
-    main: View as Mapped,
-    header: View as Mapped,
-    footer: View as Mapped,
-    nav: View as Mapped,
-    aside: View as Mapped,
-    article: View as Mapped,
-    p: View as Mapped,
-    span: Label as unknown as Mapped,
-    h1: Label as unknown as Mapped,
-    h2: Label as unknown as Mapped,
-    h3: Label as unknown as Mapped,
-    h4: Label as unknown as Mapped,
-    h5: Label as unknown as Mapped,
-    h6: Label as unknown as Mapped,
-    label: Label as unknown as Mapped,
-    button: Button as unknown as Mapped,
-    canvas: Canvas as unknown as Mapped,
-    input: TextEditor as unknown as Mapped,
-    textarea: TextEditor as unknown as Mapped,
+    div: 'View',
+    section: 'View',
+    main: 'View',
+    header: 'View',
+    footer: 'View',
+    nav: 'View',
+    aside: 'View',
+    article: 'View',
+    p: 'View',
+    span: 'Label',
+    h1: 'Label',
+    h2: 'Label',
+    h3: 'Label',
+    h4: 'Label',
+    h5: 'Label',
+    h6: 'Label',
+    label: 'Label',
+    button: 'Button',
+    canvas: 'Canvas',
+    input: 'TextEditor',
+    textarea: 'TextEditor',
     // Phase-1 SVG elements: render as containers so layout stays valid.
-    svg: View as Mapped,
-    g: View as Mapped,
-    rect: View as Mapped,
-    line: View as Mapped,
-    path: View as Mapped,
-    circle: View as Mapped,
-    text: Label as unknown as Mapped,
+    svg: 'View',
+    g: 'View',
+    rect: 'View',
+    line: 'View',
+    path: 'View',
+    circle: 'View',
+    text: 'Label',
 };
 
 /// Table-driven CSS-key → bridge-prop translation. Each row is
@@ -327,7 +331,7 @@ export function createElement(
         return pulpCreateElement(type as never, props as never, ...children);
     }
     const tag = type.toLowerCase();
-    const target = TAG_MAP[tag] ?? View as Mapped;
+    const target = TAG_MAP[tag] ?? 'View';
 
     const inProps = (props ?? {}) as Record<string, unknown>;
     const styleObj = inProps.style as CSSProperties | undefined;
@@ -356,6 +360,8 @@ export function createElement(
             | { current: unknown };
         if (tag === 'canvas') {
             const callback = (instance: unknown) => {
+                const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
+                if (lg) lg('[ref-cb-canvas] inst=' + (instance ? 'object' : 'null'));
                 const wrapped = instance && (instance as { id?: string }).id
                     ? wrapCanvasInstance(instance as { id: string })
                     : instance;
@@ -364,7 +370,37 @@ export function createElement(
             };
             (adapted as { ref?: unknown }).ref = callback;
         } else {
-            (adapted as { ref?: unknown }).ref = inProps.ref;
+            // Non-canvas refs: extracted code (FilterBank's wrapRef etc.)
+            // calls `wrap.getBoundingClientRect()` for layout. Bridge
+            // instances don't ship that method, so the call throws and
+            // silently kills the rAF chain. Augment the instance with
+            // HTMLElement-ish methods returning sensible bounds.
+            const callback = (instance: unknown) => {
+                const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
+                if (lg) lg('[ref-cb] tag=' + tag + ' inst=' + (instance ? 'object' : 'null'));
+                if (instance && typeof instance === 'object') {
+                    const inst = instance as Record<string, unknown>;
+                    if (typeof inst.getBoundingClientRect !== 'function') {
+                        inst.getBoundingClientRect = () => {
+                            const r = {
+                                x: 0, y: 44, left: 0, top: 44,
+                                width: 1320, height: 860 - 44 - 56,
+                                right: 1320, bottom: 860 - 56,
+                            };
+                            const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
+                            if (lg) lg('[ref:getBoundingClientRect] ' + JSON.stringify(r));
+                            return { ...r, toJSON: () => r };
+                        };
+                        inst.clientWidth = 1320;
+                        inst.clientHeight = 860 - 44 - 56;
+                        inst.offsetWidth = 1320;
+                        inst.offsetHeight = 860 - 44 - 56;
+                    }
+                }
+                if (typeof userRef === 'function') userRef(instance);
+                else if (userRef) (userRef as { current: unknown }).current = instance;
+            };
+            (adapted as { ref?: unknown }).ref = callback;
         }
     }
     if (typeof inProps.value === 'string' || typeof inProps.value === 'number') {

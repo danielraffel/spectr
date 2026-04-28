@@ -21,7 +21,9 @@
 #include <pulp/view/view.hpp>
 #include <pulp/view/widget_bridge.hpp>
 
+#include <atomic>
 #include <memory>
+#include <thread>
 
 namespace spectr {
 
@@ -60,6 +62,7 @@ public:
     /// JS-rAF callbacks queue but never run.
     void paint(pulp::canvas::Canvas& canvas) override;
 
+
 private:
     // Member order matters for destruction. The bridge holds references
     // into engine_ and uses *this as its widget root, so the bridge must
@@ -72,6 +75,11 @@ private:
     Spectr&                                       plugin_;
     pulp::view::ScriptEngine                      engine_;
     std::unique_ptr<pulp::view::WidgetBridge>     bridge_;
+
+    // Throwaway 60Hz pump thread (macOS only; tracked locally until a
+    // proper paint-pump driver lands upstream).
+    std::atomic<bool>                             pump_running_{false};
+    std::thread                                   pump_thread_;
 };
 
 } // namespace spectr

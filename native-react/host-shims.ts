@@ -18,11 +18,29 @@ import { createElement as adaptedCreateElement } from './dom-adapter.js';
 const g = globalThis as unknown as Record<string, unknown>;
 
 // React global — what the extracted code destructures hooks off of.
+let _effId = 0;
+const _logEffect = (fn: () => unknown, deps?: unknown) => {
+    const id = ++_effId;
+    const fp = String(fn).slice(0, 80).replace(/\s+/g, ' ');
+    return useEffect(() => {
+        const lg = (globalThis as unknown as Record<string, unknown>).__spectrLog as
+            ((s: string) => void) | undefined;
+        if (lg) lg('[useEff#' + id + '] ' + fp);
+        try {
+            const r = fn();
+            return typeof r === 'function' ? r as () => unknown : undefined;
+        } catch (e) {
+            if (lg) lg('[useEff#' + id + '] THREW: ' +
+                ((e as { message?: string })?.message ?? String(e)));
+            throw e;
+        }
+    }, deps as unknown as React.DependencyList);
+};
 g.React = {
     createElement: adaptedCreateElement,
     Fragment,
     useState,
-    useEffect,
+    useEffect: _logEffect,
     useRef,
     useCallback,
     useMemo,
@@ -40,6 +58,29 @@ g.createElement = adaptedCreateElement;
 g.Fragment = Fragment;
 
 if (typeof g.window === 'undefined') g.window = g;
+
+// DIAGNOSTIC: probe whether __invokeFrame__ is actually being called.
+// If draws aren't happening, this tells us where the chain breaks.
+{
+    const origInvoke = (g as Record<string, unknown>).__invokeFrame__ as
+        ((id: number) => void) | undefined;
+    if (typeof origInvoke === 'function') {
+        let n = 0;
+        (g as Record<string, unknown>).__invokeFrame__ = (id: number) => {
+            n++;
+            const lg = (g as Record<string, unknown>).__spectrLog as
+                ((s: string) => void) | undefined;
+            if (lg && (n <= 5 || n % 60 === 0)) {
+                lg('[__invokeFrame__#' + n + '] id=' + id);
+            }
+            try { origInvoke(id); } catch (e) {
+                if (lg) lg('[__invokeFrame__#' + n + '] THREW: ' +
+                    ((e as { message?: string })?.message ?? String(e)));
+                throw e;
+            }
+        };
+    }
+}
 
 // Pulp's bridge installs its own `document` polyfill via kDomOpsInit
 // before our user script runs (see widget_bridge.cpp::load_script).
