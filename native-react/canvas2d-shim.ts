@@ -16,6 +16,8 @@ type AnyFn = (...args: unknown[]) => unknown;
 const g = globalThis as unknown as Record<string, AnyFn | undefined>;
 let _callN = 0;
 const _missing: Set<string> = new Set();
+let _nanReports = 0;
+const _nanByName: Record<string, number> = {};
 function call(name: string, ...args: unknown[]): unknown {
     const fn = g[name];
     if (typeof fn !== 'function') {
@@ -27,13 +29,31 @@ function call(name: string, ...args: unknown[]): unknown {
         return undefined;
     }
     _callN++;
-    if (_callN <= 8 || _callN % 200 === 0) {
+    let nanIdx = -1;
+    for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (typeof a === 'number' && a !== a) { nanIdx = i; break; }
+    }
+    const trigger = _callN <= 8 || _callN % 200 === 0 || (nanIdx >= 0 && _nanReports < 24);
+    if (trigger) {
         const lg = (g as Record<string, AnyFn | undefined>).__spectrLog;
-        if (lg) lg('[canvas#' + _callN + '] ' + name + '(' +
-            args.slice(0, 3).map(a => typeof a === 'string' ? a.slice(0, 30) : String(a)).join(',') +
-            (args.length > 3 ? ',...' : '') + ')');
+        if (lg) {
+            if (nanIdx >= 0) {
+                _nanReports++;
+                _nanByName[name] = (_nanByName[name] ?? 0) + 1;
+            }
+            const tag = nanIdx >= 0 ? '[NaN#' + _nanReports + '|n=' + _callN + ']'
+                                    : '[canvas#' + _callN + ']';
+            lg(tag + ' ' + name + '(' +
+                args.slice(0, 6).map(a => typeof a === 'string' ? a.slice(0, 30) : String(a)).join(',') +
+                (args.length > 6 ? ',...' : '') + ')' +
+                (nanIdx >= 0 ? ' nanIdx=' + nanIdx : ''));
+        }
     }
     return fn(...args);
+}
+export function _canvasNanSummary(): string {
+    return JSON.stringify(_nanByName);
 }
 
 interface GradientStop { offset: number; color: string; }

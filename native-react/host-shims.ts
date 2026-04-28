@@ -59,26 +59,48 @@ g.Fragment = Fragment;
 
 if (typeof g.window === 'undefined') g.window = g;
 
-// DIAGNOSTIC: probe whether __invokeFrame__ is actually being called.
-// If draws aren't happening, this tells us where the chain breaks.
+// Wrap the bridge-installed `requestAnimationFrame` so user callbacks
+// always receive a finite high-resolution timestamp. Pulp v0.52.0 ships
+// rAF via web-compat-scheduler.js, but the bridge's `__invokeFrame__(id)`
+// path doesn't propagate a timestamp argument — it just calls the stored
+// callback with no args. FilterBank's draw(now) does
+//   const dt = Math.min(0.05, (now - last) / 1e3);
+// so when `now === undefined`, dt becomes NaN, timeRef.current accumulates
+// NaN, and every downstream `Math.sin(NaN * ...)` cascades into 337+ NaN
+// canvas y-coordinates that silently no-op the spectrum draw.
+//
+// Fix: intercept rAF, wrap the user callback so it always sees
+// performance.now(). Track via diagnostic counter to keep our existing
+// __invokeFrame__ probe path useful.
 {
-    const origInvoke = (g as Record<string, unknown>).__invokeFrame__ as
-        ((id: number) => void) | undefined;
-    if (typeof origInvoke === 'function') {
-        let n = 0;
-        (g as Record<string, unknown>).__invokeFrame__ = (id: number) => {
-            n++;
-            const lg = (g as Record<string, unknown>).__spectrLog as
-                ((s: string) => void) | undefined;
-            if (lg && (n <= 5 || n % 60 === 0)) {
-                lg('[__invokeFrame__#' + n + '] id=' + id);
-            }
-            try { origInvoke(id); } catch (e) {
-                if (lg) lg('[__invokeFrame__#' + n + '] THREW: ' +
-                    ((e as { message?: string })?.message ?? String(e)));
-                throw e;
-            }
+    const winAny0 = g.window as Record<string, unknown>;
+    const origRaf = winAny0.requestAnimationFrame as
+        ((cb: (t: number) => void) => number) | undefined;
+    if (typeof origRaf === 'function') {
+        let invokeN = 0;
+        const wrapped = (cb: (t: number) => void): number => {
+            return origRaf((maybe?: number) => {
+                invokeN++;
+                const lg = (g as Record<string, unknown>).__spectrLog as
+                    ((s: string) => void) | undefined;
+                const perf = (g as { performance?: { now?: () => number } })
+                    .performance;
+                const ts = (typeof maybe === 'number' && Number.isFinite(maybe))
+                    ? maybe
+                    : (perf?.now?.() ?? Date.now());
+                if (lg && (invokeN <= 5 || invokeN % 60 === 0)) {
+                    lg('[rAF-cb#' + invokeN + '] ts=' + ts.toFixed(2) +
+                        ' (orig=' + maybe + ')');
+                }
+                try { cb(ts); } catch (e) {
+                    if (lg) lg('[rAF-cb#' + invokeN + '] THREW: ' +
+                        ((e as { message?: string })?.message ?? String(e)));
+                    throw e;
+                }
+            });
         };
+        winAny0.requestAnimationFrame = wrapped;
+        g.requestAnimationFrame = wrapped;
     }
 }
 
