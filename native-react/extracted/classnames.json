@@ -1,0 +1,9 @@
+{
+  "mono": {
+    "fontFamily": "var(--mono)",
+    "fontFeatureSettings": "\"ss01\",\"tnum\""
+  },
+  "tnum": {
+    "fontVariantNumeric": "tabular-nums"
+  }
+}
