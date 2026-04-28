@@ -115,6 +115,24 @@ const STYLE_MAP: Array<{
     { css: 'textAlign',          host: 'textAlign', parse: String },
 ];
 
+// Expand CSS shorthand for padding/margin: "2px 7px" → {top:2,right:7,bottom:2,left:7}.
+// Returns {top, right, bottom, left} numbers, or null if the value is a single
+// scalar that should be set on the shorthand prop directly.
+function expandBoxShorthand(v: unknown):
+    | { top: number; right: number; bottom: number; left: number }
+    | null {
+    if (typeof v !== 'string') return null;
+    const tokens = v.trim().split(/\s+/).map(t => {
+        if (t.endsWith('px')) return parseFloat(t);
+        if (t === '0') return 0;
+        const n = Number(t);
+        return Number.isFinite(n) ? n : NaN;
+    });
+    if (tokens.length < 2 || tokens.some(t => !Number.isFinite(t))) return null;
+    const [t, r = t, b = t, l = r] = tokens;
+    return { top: t!, right: r!, bottom: b!, left: l! };
+}
+
 function adaptStyle(style: CSSProperties | undefined): Record<string, unknown> {
     if (!style) return {};
     const out: Record<string, unknown> = {};
@@ -126,6 +144,56 @@ function adaptStyle(style: CSSProperties | undefined): Record<string, unknown> {
         if (v === undefined || v === null) continue;
         const p = parse ? parse(v) : v;
         if (p !== undefined) out[host] = p;
+    }
+
+    // Padding/margin shorthand expansion. The bundle uses "2px 7px" form
+    // heavily (button padding, panel insets); without expansion these
+    // drop, and buttons collapse to text-height with no inset.
+    for (const k of ['padding', 'margin'] as const) {
+        const v = styleObj[k];
+        if (typeof v === 'string' && v.includes(' ')) {
+            const box = expandBoxShorthand(v);
+            if (box) {
+                out[k + 'Top'] = box.top;
+                out[k + 'Right'] = box.right;
+                out[k + 'Bottom'] = box.bottom;
+                out[k + 'Left'] = box.left;
+                delete out[k];
+            }
+        }
+    }
+
+    // CSS `flex` shorthand. Most-common forms in the bundle:
+    //   flex: 1         → grow:1, shrink:1, basis:0%
+    //   flex: 1 1 auto  → grow:1, shrink:1, basis:auto
+    //   flex: 0 0 200px → grow:0, shrink:0, basis:200px
+    // Spacers like `<div style={{ flex: 1 }} />` are crucial — without
+    // this expansion the chrome's spacer collapses and right-aligned
+    // toolbar groups overlap with text on the left.
+    const flexV = styleObj.flex;
+    if (flexV !== undefined && out.flexGrow === undefined) {
+        if (typeof flexV === 'number') {
+            out.flexGrow = flexV;
+            out.flexShrink = 1;
+            out.flexBasis = 0;
+        } else if (typeof flexV === 'string') {
+            const parts = flexV.trim().split(/\s+/);
+            if (parts.length === 1) {
+                const n = Number(parts[0]);
+                if (Number.isFinite(n)) {
+                    out.flexGrow = n;
+                    out.flexShrink = 1;
+                    out.flexBasis = 0;
+                }
+            } else if (parts.length === 3) {
+                const g = Number(parts[0]);
+                const s = Number(parts[1]);
+                const b = parseLen(parts[2]!);
+                if (Number.isFinite(g)) out.flexGrow = g;
+                if (Number.isFinite(s)) out.flexShrink = s;
+                if (b !== undefined) out.flexBasis = b;
+            }
+        }
     }
 
     // Background gradient → first-color-stop fallback. The bridge's
