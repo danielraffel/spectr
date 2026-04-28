@@ -342,11 +342,34 @@ function adaptStyle(style: CSSProperties | undefined): Record<string, unknown> {
     if (pos === 'absolute' || pos === 'fixed') {
         out.position = 'absolute';
         if (isInsetZero) {
-            // Yoga: absolute + 4 zero edges = fill parent. No width/height.
+            // Yoga: absolute + 4 zero edges = fill parent.
             out.top = 0; out.left = 0; out.right = 0; out.bottom = 0;
+            if (out.width === undefined && out.height === undefined) {
+                out.width = 1320;
+                out.height = 860;
+            }
         }
     } else if (pos) {
         out.position = pos;
+    }
+    // Pulp's Yoga doesn't reliably compute width/height from 3-edge
+    // absolute pinning (e.g. top+left+right with explicit height) — leaves
+    // the element with 0 measured width, which collapses every Label
+    // descendant. Mimic CSS by injecting an explicit dimension when a
+    // 3-edge pin defines a stretch axis.
+    const hasTop = (styleAny.top !== undefined) || (pos === 'absolute' && isInsetZero);
+    const hasLeft = (styleAny.left !== undefined) || (pos === 'absolute' && isInsetZero);
+    const hasRight = (styleAny.right !== undefined) || (pos === 'absolute' && isInsetZero);
+    const hasBottom = (styleAny.bottom !== undefined) || (pos === 'absolute' && isInsetZero);
+    if (out.position === 'absolute') {
+        // Stretch-X: top + left + right pinned, height explicit, no width
+        if (hasLeft && hasRight && out.width === undefined) {
+            out.width = 1320;
+        }
+        // Stretch-Y: top + bottom pinned, width explicit, no height
+        if (hasTop && hasBottom && out.height === undefined) {
+            out.height = 860;
+        }
     }
     // Explicit edge overrides (after inset-fill so they can override)
     if (styleAny.top !== undefined)    out.top    = parseLen(styleAny.top);
@@ -446,6 +469,37 @@ export function createElement(
     const inlineStyle = (inProps.style ?? {}) as Record<string, unknown>;
     const styleObj = { ...classStyle, ...inlineStyle } as CSSProperties;
     const adapted: Record<string, unknown> = { ...adaptStyle(styleObj) };
+
+    // Workaround for Pulp Label measure-callback returning 0 width in
+    // nested flex containers without explicit parent width: estimate
+    // text width via charlen × fontSize and force minWidth so Yoga
+    // can't collapse the Label below readable size. Stop-gap until
+    // upstream measure-callback fix lands (currently #945's actual
+    // root cause is in this layer, not Pulp's framework — see G3-G7
+    // gate tests).
+    if (target === 'Label') {
+        // Text is in the varargs `children` (jsx-runtime-shim destructures
+        // it out of props), or rarely as inProps.children when raw
+        // createElement is used. Check both.
+        const childText = (() => {
+            for (const c of children) {
+                if (typeof c === 'string' && c.length > 0) return c;
+                if (typeof c === 'number') return String(c);
+            }
+            const c = (inProps as { children?: unknown }).children;
+            if (typeof c === 'string') return c;
+            if (typeof c === 'number') return String(c);
+            return '';
+        })();
+        if (childText.length > 0 && adapted.minWidth === undefined && adapted.width === undefined) {
+            const fontSize = (adapted.fontSize as number) ?? 14;
+            const ls = (adapted.letterSpacing as number) ?? 0;
+            const mw = Math.ceil(childText.length * (fontSize * 0.65 + ls));
+            adapted.minWidth = mw;
+            const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
+            if (lg) lg('[label-minw] text="' + childText.slice(0, 20) + '" → minWidth=' + mw);
+        }
+    }
 
     // Forward common DOM attrs to bridge props
     if (typeof inProps.id === 'string') adapted.id = inProps.id;
