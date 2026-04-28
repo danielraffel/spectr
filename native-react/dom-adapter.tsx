@@ -150,10 +150,18 @@ function adaptStyle(style: CSSProperties | undefined): Record<string, unknown> {
     }
 
     // flexDirection: collapse row-reverse/column-reverse to row/column.
+    // In HTML/CSS, `display: flex` defaults to `flex-direction: row`. Pulp's
+    // createCol creates a column container by default, so `<div style={{
+    // display: 'flex' }}>` (without an explicit flexDirection) ends up as
+    // a column when it should be a row — children stack vertically and
+    // overflow the parent's height. Bridge to HTML semantics: when display
+    // is flex without an explicit direction, default to row.
     if (style.flexDirection === 'row' || style.flexDirection === 'row-reverse') {
         out.direction = 'row';
     } else if (style.flexDirection === 'column' || style.flexDirection === 'column-reverse') {
         out.direction = 'column';
+    } else if (style.display === 'flex' || style.display === 'inline-flex') {
+        out.direction = 'row';
     }
 
     // border shorthand → setBorder({color, width}). CSS form:
