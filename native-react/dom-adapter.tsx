@@ -651,17 +651,30 @@ export function createElement(
     if (target !== 'Label' && target !== 'Button' && target !== 'TextEditor') {
         const wrapped: ReactNode[] = [];
         let txtIdx = 0;
+        // Inherit parent's typography to wrapped Labels — Pulp doesn't
+        // propagate textColor/fontSize/letterSpacing from parent View
+        // to child Label widgets (CSS-style inheritance gap), so we have
+        // to push it down at adapt time.
+        const inheritedColor = adapted.textColor as string | undefined;
+        const inheritedFontSize = (adapted.fontSize as number | undefined);
+        const inheritedLetterSpacing = (adapted.letterSpacing as number | undefined);
+        const fs = inheritedFontSize ?? 14;
+        const ls = inheritedLetterSpacing ?? 0;
         for (const c of children) {
             if (typeof c === 'string' || typeof c === 'number') {
                 const txt = String(c);
                 if (txt.length === 0) continue;
-                const mw = Math.ceil(txt.length * 14 * 0.65);
+                const mw = Math.ceil(txt.length * (fs * 0.65 + ls));
+                const labelProps: Record<string, unknown> = {
+                    minWidth: mw,
+                    flexShrink: 0,
+                    key: '__txt_' + txtIdx++,
+                };
+                if (inheritedColor !== undefined) labelProps.textColor = inheritedColor;
+                if (inheritedFontSize !== undefined) labelProps.fontSize = inheritedFontSize;
+                if (inheritedLetterSpacing !== undefined) labelProps.letterSpacing = inheritedLetterSpacing;
                 wrapped.push(
-                    pulpCreateElement(
-                        'Label' as never,
-                        { minWidth: mw, flexShrink: 0, key: '__txt_' + txtIdx++ } as never,
-                        txt,
-                    ),
+                    pulpCreateElement('Label' as never, labelProps as never, txt),
                 );
             } else {
                 wrapped.push(c);
