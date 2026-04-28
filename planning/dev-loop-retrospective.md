@@ -209,6 +209,54 @@ $ shipyard pr                    # land the consumer change with full CI
 
 The mode is *iteration*; landing always requires cross-platform CI.
 
+## Design imports — native is the default, WebView is the fallback
+
+(Filed as pulp#941; captured here so the policy lives next to the
+playbook that produced it.)
+
+When importing a design (Figma, Stitch, v0, Pencil, Claude Design HTML,
+plain HTML) into a Pulp project, the renderer should default to **native**
+(Dawn / Skia / Yoga via @pulp/react). WebView is the fallback. The
+framework's job is to make native the path of least resistance, not to
+silently fall back. Three concrete behaviors codify this:
+
+### 1. Analyzer-first import
+
+`pulp import-design <html>` runs `pulp-css-analyze` against the bundle
+BEFORE creating the project. Reports what % of CSS is mappable. If <80%,
+it warns:
+
+> *"This design uses N unsupported CSS features; native render will
+> degrade. Recommend filing them as Pulp framework issues OR using
+> `--renderer=webview` as fallback."*
+
+This is the same loop we ran today, just made into a one-command
+workflow: the developer sees the gap up front and knows whether they're
+filing framework issues or accepting WebView's tradeoffs.
+
+### 2. Token-first
+
+Even if there's no React (plain HTML, Pencil export), the extractor
+lifts CSS custom properties → `tokens.json`. The runtime's `var()`
+resolver applies them at adapter time. **Tokens > inline-style is a 2×
+fidelity multiplier with zero runtime cost.** The 25 default tokens we
+extracted from Spectr's HTML drove every color and font reference in
+the chrome — without token resolution they all silently dropped.
+
+### 3. Eject path is one-way
+
+Switching native → WebView is fine: stop using @pulp/react, point Pulp
+at a WebView host, ship the original HTML. Switching WebView → native
+requires the @pulp/react port + adapter work — the migration we just
+did for Spectr. The CLI should make the cost asymmetry explicit:
+
+> *Choosing WebView at import time = choosing to do the migration
+> later if you want native parity.*
+
+That framing is what makes "native by default" actually stick. WebView
+is fine for prototypes and demos; it's not free for plugins meant to
+ship.
+
 ## Closing
 
 This pattern delivered ~5 framework primitives + a visible parity
