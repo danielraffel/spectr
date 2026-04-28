@@ -45,7 +45,13 @@ const TAG_MAP: Record<string, Mapped | null> = {
     h5: 'Label',
     h6: 'Label',
     label: 'Label',
-    button: 'Button',
+    // Map <button> to View so mixed children (svg + span etc.) render
+    // as the button's contents. @pulp/react's Button widget collapses
+    // multi-child to its first text via asText() which returns '' for
+    // mixed arrays, leaving the visual button label empty. Click
+    // handlers still route via dom-adapter's on* forwarding regardless
+    // of widget type, so View-as-button doesn't lose interactivity.
+    button: 'View',
     canvas: 'Canvas',
     input: 'TextEditor',
     textarea: 'TextEditor',
