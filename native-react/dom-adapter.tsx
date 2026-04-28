@@ -490,6 +490,16 @@ export function createElement(
         adapted.flexShrink = 0;
     }
 
+    // <button>-as-View defaults to Yoga's column direction, but browsers
+    // flow inline-button children horizontally. Without this default,
+    // an svg-glyph + text span inside a button stack vertically, busting
+    // the toolbar row height (26px) — bottom-toolbar items disappear
+    // because content overflows in y. Mirror browser inline-flex.
+    if (tag === 'button' && adapted.direction === undefined) {
+        adapted.direction = 'row';
+        if (adapted.alignItems === undefined) adapted.alignItems = 'center';
+    }
+
     // SVG / IMG: read width/height as HTML attributes too (not just style).
     // Bundles set `<svg width="18" height="13">` — without this they
     // collapse to 0×0 inside flex rows, dragging the row's measured width
@@ -606,6 +616,35 @@ export function createElement(
 
     // Drop className entirely — no global stylesheet on this lane.
     // (data-* attributes also get dropped.)
+
+    // String/number children of a non-text-bearing parent (View, Row,
+    // Col, Panel, etc.) get auto-wrapped by @pulp/react's host config
+    // into synthetic Labels with NO minWidth — and those Labels collapse
+    // to 0 width in v0.59.0's TextShaper (#957 fix is on main but not
+    // in any released SDK yet). Wrap them here instead so they go
+    // through our minWidth path. Only fires when target is not Label /
+    // Button / TextEditor, which already accept string children directly.
+    if (target !== 'Label' && target !== 'Button' && target !== 'TextEditor') {
+        const wrapped: ReactNode[] = [];
+        let txtIdx = 0;
+        for (const c of children) {
+            if (typeof c === 'string' || typeof c === 'number') {
+                const txt = String(c);
+                if (txt.length === 0) continue;
+                const mw = Math.ceil(txt.length * 14 * 0.65);
+                wrapped.push(
+                    pulpCreateElement(
+                        'Label' as never,
+                        { minWidth: mw, flexShrink: 0, key: '__txt_' + txtIdx++ } as never,
+                        txt,
+                    ),
+                );
+            } else {
+                wrapped.push(c);
+            }
+        }
+        return pulpCreateElement(target as never, adapted as never, ...wrapped);
+    }
 
     return pulpCreateElement(target as never, adapted as never, ...children);
 }
