@@ -490,6 +490,23 @@ export function createElement(
         adapted.flexShrink = 0;
     }
 
+    // SVG / IMG: read width/height as HTML attributes too (not just style).
+    // Bundles set `<svg width="18" height="13">` — without this they
+    // collapse to 0×0 inside flex rows, dragging the row's measured width
+    // down even though every Label child has a minWidth.
+    if (tag === 'svg' || tag === 'img' || tag === 'image' || tag === 'rect' || tag === 'circle') {
+        const w = (inProps as { width?: unknown }).width;
+        const h = (inProps as { height?: unknown }).height;
+        if (adapted.width === undefined && (typeof w === 'number' || typeof w === 'string')) {
+            const n = typeof w === 'number' ? w : parseFloat(String(w));
+            if (Number.isFinite(n)) adapted.width = n;
+        }
+        if (adapted.height === undefined && (typeof h === 'number' || typeof h === 'string')) {
+            const n = typeof h === 'number' ? h : parseFloat(String(h));
+            if (Number.isFinite(n)) adapted.height = n;
+        }
+    }
+
     if (target === 'Label') {
         // Text is in the varargs `children` (jsx-runtime-shim destructures
         // it out of props), or rarely as inProps.children when raw
