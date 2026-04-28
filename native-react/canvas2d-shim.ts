@@ -14,9 +14,25 @@
 
 type AnyFn = (...args: unknown[]) => unknown;
 const g = globalThis as unknown as Record<string, AnyFn | undefined>;
+let _callN = 0;
+const _missing: Set<string> = new Set();
 function call(name: string, ...args: unknown[]): unknown {
     const fn = g[name];
-    if (typeof fn !== 'function') return undefined;
+    if (typeof fn !== 'function') {
+        if (!_missing.has(name)) {
+            _missing.add(name);
+            const lg = (g as Record<string, AnyFn | undefined>).__spectrLog;
+            if (lg) lg('[canvas:MISSING] ' + name);
+        }
+        return undefined;
+    }
+    _callN++;
+    if (_callN <= 8 || _callN % 200 === 0) {
+        const lg = (g as Record<string, AnyFn | undefined>).__spectrLog;
+        if (lg) lg('[canvas#' + _callN + '] ' + name + '(' +
+            args.slice(0, 3).map(a => typeof a === 'string' ? a.slice(0, 30) : String(a)).join(',') +
+            (args.length > 3 ? ',...' : '') + ')');
+    }
     return fn(...args);
 }
 
