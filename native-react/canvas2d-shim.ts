@@ -285,8 +285,13 @@ export class Canvas2DShim {
     set shadowOffsetY(v: number) { this._shadowOffsetY = v; }
 
     // ── No-op stubs for things the bridge doesn't have yet ────────────
-    setLineDash(_segments: number[]): void { /* TODO */ }
-    getLineDash(): number[] { return []; }
+    private _lineDash: number[] = [];
+    setLineDash(segments: number[]): void {
+        this._lineDash = segments.slice();
+        // Bridge fn shipped in pulp v0.x via #920/#916; wired up here per #952.
+        call('canvasSetLineDash', this.canvasId, segments);
+    }
+    getLineDash(): number[] { return this._lineDash.slice(); }
     drawImage(): void { /* TODO */ }
     isPointInPath(): boolean { return false; }
     isPointInStroke(): boolean { return false; }

@@ -477,6 +477,13 @@ export function createElement(
     // upstream measure-callback fix lands (currently #945's actual
     // root cause is in this layer, not Pulp's framework — see G3-G7
     // gate tests).
+    // Default flexShrink to 0 globally so non-spacer items don't shrink
+    // below their content. Spacers in the bundle use `flex: 1` which
+    // sets flexGrow=1 + flexShrink=1 explicitly — they remain shrinkable.
+    if (adapted.flexShrink === undefined && adapted.flexGrow === undefined) {
+        adapted.flexShrink = 0;
+    }
+
     if (target === 'Label') {
         // Text is in the varargs `children` (jsx-runtime-shim destructures
         // it out of props), or rarely as inProps.children when raw
@@ -496,8 +503,11 @@ export function createElement(
             const ls = (adapted.letterSpacing as number) ?? 0;
             const mw = Math.ceil(childText.length * (fontSize * 0.65 + ls));
             adapted.minWidth = mw;
-            const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
-            if (lg) lg('[label-minw] text="' + childText.slice(0, 20) + '" → minWidth=' + mw);
+            // Critical: prevent Yoga from shrinking the Label below its
+            // intrinsic width when parent's allocated space is smaller.
+            // Default Yoga flexShrink is 1 (shrinkable). Pinning to 0
+            // matches CSS `white-space: nowrap` for chrome labels.
+            if (adapted.flexShrink === undefined) adapted.flexShrink = 0;
         }
     }
 
