@@ -124,17 +124,35 @@ export class Canvas2DShim {
 
     // ── Rect / clear ───────────────────────────────────────────────────
     fillRect(x: number, y: number, w: number, h: number): void {
-        // canvasRect(id, x, y, w, h, color) — color arg defaults to '#fff'
-        // in the bridge if omitted. Always pass the current fillStyle (or
-        // a transparent sentinel for gradients, which were already pushed
-        // via canvasSetLinearGradient/Radial) so the rect renders in the
-        // intended color, not white-on-white.
-        const color = typeof this._fillStyle === 'string' ? this._fillStyle : 'transparent';
-        call('canvasRect', this.canvasId, x, y, w, h, color);
+        // Pulp's `canvasRect` is an immediate-mode fill_rect using its
+        // own color arg — it ignores the active linear/radial gradient
+        // installed by canvasSetLinearGradient. So when fillStyle is a
+        // gradient we have to route through the path-based fill path:
+        // path-based fill_current_path DOES honor the active gradient.
+        if (typeof this._fillStyle === 'string') {
+            call('canvasRect', this.canvasId, x, y, w, h, this._fillStyle);
+        } else {
+            call('canvasBeginPath', this.canvasId);
+            call('canvasMoveTo', this.canvasId, x, y);
+            call('canvasLineTo', this.canvasId, x + w, y);
+            call('canvasLineTo', this.canvasId, x + w, y + h);
+            call('canvasLineTo', this.canvasId, x, y + h);
+            call('canvasClosePath', this.canvasId);
+            call('canvasFillPath', this.canvasId);
+        }
     }
     strokeRect(x: number, y: number, w: number, h: number): void {
-        const color = typeof this._strokeStyle === 'string' ? this._strokeStyle : 'transparent';
-        call('canvasStrokeRect', this.canvasId, x, y, w, h, color, this._lineWidth);
+        if (typeof this._strokeStyle === 'string') {
+            call('canvasStrokeRect', this.canvasId, x, y, w, h, this._strokeStyle, this._lineWidth);
+        } else {
+            call('canvasBeginPath', this.canvasId);
+            call('canvasMoveTo', this.canvasId, x, y);
+            call('canvasLineTo', this.canvasId, x + w, y);
+            call('canvasLineTo', this.canvasId, x + w, y + h);
+            call('canvasLineTo', this.canvasId, x, y + h);
+            call('canvasClosePath', this.canvasId);
+            call('canvasStrokePath', this.canvasId);
+        }
     }
     clearRect(x: number, y: number, w: number, h: number): void {
         call('canvasClearRect', this.canvasId, x, y, w, h);
@@ -327,17 +345,19 @@ export function wrapCanvasInstance(instance: { id: string }): {
         id: instance.id,
         get width() { return pendingW; },
         set width(v: number) {
+            // HTML5 semantics: canvas.width sets the BACKING BUFFER
+            // resolution, NOT the widget's layout/CSS width. Spectr
+            // sets canvas.width = 2640 (2× DPI) for crisp rendering;
+            // we mustn't propagate that to setFlex or the widget
+            // becomes 2640px wide in its 1320px parent and overflows.
+            // The DPI scale is already applied via canvasSetTransform
+            // on the bridge side, so just store the value for any
+            // bundle code that reads it back (e.g. inner.w math).
             pendingW = v;
-            // Forward to bridge's setFlex so the canvas widget actually
-            // resizes. Without this, c.width = ... in the bundle is a
-            // pure no-op and downstream math (rect dimensions, hit
-            // tests) operates on stale 0 values causing NaN.
-            call('setFlex', instance.id, 'width', v);
         },
         get height() { return pendingH; },
         set height(v: number) {
             pendingH = v;
-            call('setFlex', instance.id, 'height', v);
         },
         getContext(_t: string) { return shim; },
         getBoundingClientRect(): DOMRect {
