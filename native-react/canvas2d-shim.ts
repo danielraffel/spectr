@@ -124,11 +124,17 @@ export class Canvas2DShim {
 
     // ── Rect / clear ───────────────────────────────────────────────────
     fillRect(x: number, y: number, w: number, h: number): void {
-        // canvasRect(id, x, y, w, h) is the fill primitive.
-        call('canvasRect', this.canvasId, x, y, w, h);
+        // canvasRect(id, x, y, w, h, color) — color arg defaults to '#fff'
+        // in the bridge if omitted. Always pass the current fillStyle (or
+        // a transparent sentinel for gradients, which were already pushed
+        // via canvasSetLinearGradient/Radial) so the rect renders in the
+        // intended color, not white-on-white.
+        const color = typeof this._fillStyle === 'string' ? this._fillStyle : 'transparent';
+        call('canvasRect', this.canvasId, x, y, w, h, color);
     }
     strokeRect(x: number, y: number, w: number, h: number): void {
-        call('canvasStrokeRect', this.canvasId, x, y, w, h);
+        const color = typeof this._strokeStyle === 'string' ? this._strokeStyle : 'transparent';
+        call('canvasStrokeRect', this.canvasId, x, y, w, h, color, this._lineWidth);
     }
     clearRect(x: number, y: number, w: number, h: number): void {
         call('canvasClearRect', this.canvasId, x, y, w, h);
