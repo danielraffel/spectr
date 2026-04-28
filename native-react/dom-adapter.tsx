@@ -617,6 +617,30 @@ export function createElement(
     // Drop className entirely — no global stylesheet on this lane.
     // (data-* attributes also get dropped.)
 
+    // Text-bearing widgets (Label/Button/TextEditor): @pulp/react's asText
+    // only handles a SINGLE string/number child — multi-fragment JSX like
+    // `<span>{label} ▾</span>` becomes children=[label, ' ▾'] which asText
+    // can't read, so it falls back to '' and the widget renders blank.
+    // Concatenate string/number fragments so asText sees one string.
+    if (target === 'Label' || target === 'Button' || target === 'TextEditor') {
+        let allStrings = true;
+        let combined = '';
+        for (const c of children) {
+            if (typeof c === 'string' || typeof c === 'number') combined += String(c);
+            else { allStrings = false; break; }
+        }
+        if (allStrings && children.length > 1 && combined.length > 0) {
+            // Re-run minWidth calc on combined text so Label sizes correctly.
+            if (target === 'Label' && adapted.minWidth === undefined && adapted.width === undefined) {
+                const fontSize = (adapted.fontSize as number) ?? 14;
+                const ls = (adapted.letterSpacing as number) ?? 0;
+                adapted.minWidth = Math.ceil(combined.length * (fontSize * 0.65 + ls));
+                if (adapted.flexShrink === undefined) adapted.flexShrink = 0;
+            }
+            return pulpCreateElement(target as never, adapted as never, combined);
+        }
+    }
+
     // String/number children of a non-text-bearing parent (View, Row,
     // Col, Panel, etc.) get auto-wrapped by @pulp/react's host config
     // into synthetic Labels with NO minWidth — and those Labels collapse
