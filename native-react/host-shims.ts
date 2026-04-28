@@ -210,7 +210,21 @@ winAny.SpectrFreq = winAny.SpectrFreq ?? {
         return fmin * Math.pow(fmax / fmin, t);
     },
 };
-winAny.SpectrSignal = winAny.SpectrSignal ?? {};
+winAny.SpectrSignal = winAny.SpectrSignal ?? {
+    // Stub spectrum sampler. drawSpectrum() in the bundle calls this
+    // for each frequency bin. Return a synthesized envelope that gives
+    // a visible spectrum shape (mid-bumped, decaying at extremes) so
+    // the analyzer renders something instead of NaN-everywhere. Real
+    // implementation hooks Spectr's analyzer ring-buffer (Phase 4).
+    sample: (lf: number, t: number) => {
+        // lf is log-frequency (typically 0..14ish for 20Hz..20kHz log scale).
+        // Return value in roughly [-1, 1] dB-ish normalized.
+        const f = (lf - 4) / 6;            // center mid-band
+        const env = Math.exp(-f * f * 0.6); // gaussian bump
+        const lfo = 0.05 * Math.sin(t * 1.3 + lf * 0.7);
+        return Math.max(-1, Math.min(1, env * 0.6 + lfo - 0.2));
+    },
+};
 winAny.SpectrMetaphors = winAny.SpectrMetaphors ?? {
     spectrum: { label: 'spectrum' },
 };
