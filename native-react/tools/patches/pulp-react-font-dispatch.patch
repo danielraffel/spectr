@@ -1,0 +1,26 @@
+diff --git a/packages/pulp-react/src/prop-applier.ts b/packages/pulp-react/src/prop-applier.ts
+index 0da08f07..e7607570 100644
+--- a/packages/pulp-react/src/prop-applier.ts
++++ b/packages/pulp-react/src/prop-applier.ts
+@@ -142,9 +142,18 @@ function applyOne(id: string, type: string, key: string, value: unknown): void {
+         case 'zIndex':       return call('setZIndex', id, value as number);
+ 
+         // Text
+-        case 'text':       return call('setText', id, String(value));
+-        case 'textColor':  return call('setTextColor', id, value as string);
+-        case 'textAlign':  return call('setTextAlign', id, value as 'left' | 'center' | 'right');
++        case 'text':            return call('setText', id, String(value));
++        case 'textColor':       return call('setTextColor', id, value as string);
++        case 'textAlign':       return call('setTextAlign', id, value as 'left' | 'center' | 'right');
++        // Typography — Label widgets honor these via setX bridge fns.
++        case 'fontFamily':      return call('setFontFamily', id, value as string);
++        case 'fontSize':        return call('setFontSize', id, value as number);
++        case 'fontWeight':      return call('setFontWeight', id, typeof value === 'number' ? value : Number(value));
++        case 'fontStyle':       return call('setFontStyle', id, value as string);
++        case 'letterSpacing':   return call('setLetterSpacing', id, value as number);
++        case 'lineHeight':      return call('setLineHeight', id, value as number);
++        case 'textTransform':   return call('setTextTransform', id, value as string);
++        case 'textDecoration':  return call('setTextDecoration', id, value as string);
+ 
+         // Widget-specific data
+         case 'data':
