@@ -312,10 +312,9 @@ function adaptStyle(style: CSSProperties | undefined): Record<string, unknown> {
         out.visible = false;
     }
 
-    // overflow: 'hidden' → bridge clip. (No bridge support yet; warn-only.)
-    if (styleObj.overflow === 'hidden') {
-        // Drop silently — known unsupported. Bridge needs setClip.
-    }
+    // overflow: 'hidden' is silently dropped (Pulp default). 'visible' is
+    // routed via a ref-callback in createElement (see _buildOverflowRef);
+    // the prop-applier in @pulp/react doesn't have a case for overflow.
 
     // pointerEvents: 'none' → bridge equivalent (?). Drop for now;
     // overlays with pointerEvents:none should pass clicks through.
@@ -474,6 +473,63 @@ function _sortByZIndex(children: ReactNode[]): ReactNode[] {
     }
     if (!needsSort) return children;
     return [...children].sort((a, b) => _zIndexOf(a) - _zIndexOf(b));
+}
+
+/// Workaround for pulp #972 (Pulp View default `overflow: hidden`, CSS default
+/// `visible`). When a child has `position: absolute`, popovers / dropdowns /
+/// tooltips need to escape the parent's content bounds (CSS default behavior).
+/// We can't fix this at the adapter level for the parent's parent, so we
+/// detect at createElement time whether ANY direct child has `position:
+/// absolute` and force the parent's `overflow` to `visible` to match CSS.
+/// Recursively check whether any descendant has position:absolute.
+/// Walks via `.props.children` since React elements expose them there.
+function _hasAbsoluteDescendant(node: unknown, depth = 0): boolean {
+    if (node == null || depth > 8) return false;
+    if (typeof node !== 'object') return false;
+    if (Array.isArray(node)) {
+        for (const c of node) if (_hasAbsoluteDescendant(c, depth + 1)) return true;
+        return false;
+    }
+    const elem = node as { props?: { style?: { position?: string }, position?: string, children?: unknown } };
+    if (elem.props?.style?.position === 'absolute') return true;
+    if (elem.props?.position === 'absolute') return true;
+    const kids = elem.props?.children;
+    if (kids !== undefined && _hasAbsoluteDescendant(kids, depth + 1)) return true;
+    return false;
+}
+
+function _hasAbsoluteChild(children: ReactNode[]): boolean {
+    for (const c of children) {
+        if (_hasAbsoluteDescendant(c)) return true;
+    }
+    return false;
+}
+
+/// Build a ref callback that calls `setOverflow(id, mode)` on the bridge
+/// when the element mounts. Composes with any existing user ref so we
+/// don't break refs the JSX author already attached.
+///
+/// Workaround for pulp #972 — Pulp's View defaults `overflow: hidden`
+/// (CSS default is `visible`), which clips popovers / dropdowns / tooltips
+/// to parent bounds. @pulp/react's prop-applier doesn't have a case for
+/// the `overflow` prop, so we route via a ref callback instead.
+function _buildOverflowRef(
+    mode: 'visible' | 'hidden',
+    existingRef: unknown,
+): (instance: unknown) => void {
+    return (instance: unknown) => {
+        if (instance && typeof instance === 'object') {
+            const id = (instance as { id?: unknown }).id;
+            const setOverflow = (globalThis as { setOverflow?: (id: string, mode: string) => unknown }).setOverflow;
+            if (typeof id === 'string' && typeof setOverflow === 'function') {
+                try { setOverflow(id, mode); } catch { /* swallow */ }
+            }
+        }
+        if (typeof existingRef === 'function') (existingRef as (i: unknown) => void)(instance);
+        else if (existingRef && typeof existingRef === 'object') {
+            (existingRef as { current: unknown }).current = instance;
+        }
+    };
 }
 
 /// Replacement for React.createElement that intercepts string tag names
@@ -751,9 +807,15 @@ export function createElement(
                 wrapped.push(c);
             }
         }
+        if (_hasAbsoluteChild(wrapped)) {
+            (adapted as { ref?: unknown }).ref = _buildOverflowRef('visible', (adapted as { ref?: unknown }).ref);
+        }
         return pulpCreateElement(target as never, adapted as never, ..._sortByZIndex(wrapped));
     }
 
+    if (_hasAbsoluteChild(children)) {
+        (adapted as { ref?: unknown }).ref = _buildOverflowRef('visible', (adapted as { ref?: unknown }).ref);
+    }
     return pulpCreateElement(target as never, adapted as never, ..._sortByZIndex(children));
 }
 
