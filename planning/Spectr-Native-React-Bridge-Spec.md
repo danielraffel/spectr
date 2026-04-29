@@ -339,6 +339,73 @@ User-memory hits that matter for this spec (re-read before resuming):
 - `feedback_codex_alignment.md` — Frequent /codex consults for direction validation; reference Ink + R3F + RNS
 - `feedback_pulp_add_binary_data_configure.md` — Embedded assets baked at cmake configure time
 
+## CI
+
+`.github/workflows/native-bridge-smoke.yml` runs on every push and pull
+request that touches `native-react/**`, `src/**`, `include/**`, or
+`CMakeLists.txt`. It is the gate that catches Spectr-side regressions
+in the native-bridge build before merge.
+
+**What it does today (macos-latest, arm64):**
+
+1. Reads the pinned Pulp SDK version from
+   `find_package(Pulp X.Y.Z REQUIRED)` in `CMakeLists.txt`.
+2. Downloads the matching `pulp-darwin-arm64.tar.gz` CLI tarball from
+   the corresponding `danielraffel/pulp` GitHub release (the same
+   artifact `release-cli.yml` publishes), and runs
+   `pulp sdk install --version <X.Y.Z>` to fetch the SDK into
+   `~/.pulp/sdk/<X.Y.Z>`.
+3. Configures + builds `Spectr_Standalone` with
+   `-DSPECTR_NATIVE_EDITOR=OFF` (default). With OFF the new C++ files
+   under `src/ui/native_editor_view.cpp` still compile — only the
+   embedded `editor.js` asset is gated off — so any C++ regression in
+   the native-bridge surface blocks merge.
+4. Briefly launches the built `Spectr.app` to confirm the process
+   doesn't crash on startup. This is a stand-in for a real render +
+   screencap step (see "Known gaps" below).
+5. Uploads `Spectr.app` and the smoke-launch logs as artifacts for
+   inspection.
+
+The Pulp CLI binary and SDK install are cached per pinned version
+(`pulp-sdk-<os>-<arch>-<version>`), so re-runs against the same SDK
+skip the download + install entirely.
+
+**Known gaps (tracked in spectr#29):**
+
+- The `npm run build:port` step is **not** run because `@pulp/react`
+  is not yet published to npm or vendored as a tarball in this repo
+  (`native-react/package.json` references
+  `file:/tmp/pulp-react/...` which only exists on the original dev
+  machine). When `@pulp/react` is fetchable, swap the
+  `SPECTR_NATIVE_EDITOR=OFF` configure for `ON` and run `npm ci` +
+  `npm run build:port` ahead of the cmake step.
+- No real screencap or pixel-diff yet. The current launch step only
+  proves the binary boots; it does not render the editor or capture
+  a screenshot. Wire `pulp-screenshot` (or a plain
+  `screencapture`-based shell script) once a stable headless launch
+  path lands — block on pulp #964 / #965 first.
+
+**Running the same checks locally:**
+
+```bash
+# Same configure + build the workflow runs.
+PULP_VERSION="$(grep -E 'find_package\(Pulp' CMakeLists.txt \
+  | sed -E 's/.*Pulp ([0-9.]+).*/\1/')"
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$HOME/.pulp/sdk/$PULP_VERSION" \
+  -DSPECTR_NATIVE_EDITOR=OFF
+cmake --build build --target Spectr_Standalone --parallel
+
+# Smoke-launch the .app (boot only, like CI does).
+./build/Standalone/Spectr.app/Contents/MacOS/Spectr &
+pid=$!; sleep 5; kill "$pid"
+```
+
+When CI fails, the most useful artifacts in the job output are
+`Spectr-Standalone-macos-arm64` (the actual built bundle) and
+`smoke-launch-logs` (stdout / stderr from the boot probe).
+
 ## Appendix C — Maintenance
 
 This doc is the recovery point. Update it when:

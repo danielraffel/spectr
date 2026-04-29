@@ -1,0 +1,252 @@
+name: Native Bridge Smoke
+
+# First-cut CI smoke for the Spectr native-bridge build (Task #12 in
+# planning/Spectr-Native-React-Bridge-Spec.md). Catches regressions in
+# Spectr's C++ sources and CMake plumbing against the pinned Pulp SDK
+# before merge.
+#
+# What this workflow covers today
+#   - Downloads the pulp CLI release tarball matching the SDK version
+#     pinned in CMakeLists.txt (`find_package(Pulp X.Y.Z REQUIRED)`).
+#   - Runs `pulp sdk install --version <X.Y.Z>` to fetch the SDK from
+#     the matching GitHub release into ~/.pulp/sdk/<X.Y.Z>.
+#   - Configures + builds Spectr_Standalone with `SPECTR_NATIVE_EDITOR=OFF`
+#     (the always-runnable, default configuration) so any C++ regression
+#     in src/ — including new files like src/ui/native_editor_view.cpp —
+#     blocks merge. With OFF, native_editor_view.cpp still compiles; only
+#     the embedded editor.js path is gated off.
+#   - Briefly launches the standalone binary to confirm it doesn't crash
+#     on startup (stand-in for a real screencap step).
+#   - Uploads the built binary as a build artifact for inspection.
+#
+# Known gaps (tracked in spectr#29):
+#   - The `npm run build:port` step is NOT run because @pulp/react is not
+#     yet published to npm or vendored as a tarball in this repo
+#     (package.json references file:/tmp/pulp-react/... which only exists
+#     on the original dev machine). When @pulp/react is fetchable, swap
+#     the SPECTR_NATIVE_EDITOR=OFF configure for ON and run npm.
+#   - No real screencap / pixel diff yet. The current launch step only
+#     proves the binary starts; it doesn't render the editor and capture
+#     a screenshot. Wire pulp-screenshot or `screencapture` once a
+#     stable headless launch path lands (pulp #964 / #965 first).
+#
+# How to run this locally
+#   - `cmake -S . -B build -DCMAKE_PREFIX_PATH=$HOME/.pulp/sdk/<X.Y.Z> \
+#       -DCMAKE_BUILD_TYPE=Release -DSPECTR_NATIVE_EDITOR=OFF`
+#   - `cmake --build build --target Spectr_Standalone`
+#   - The binary lands at build/Standalone/Spectr.app on macOS.
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+      - 'ci/**'
+    paths:
+      - 'native-react/**'
+      - 'src/**'
+      - 'include/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/native-bridge-smoke.yml'
+  pull_request:
+    paths:
+      - 'native-react/**'
+      - 'src/**'
+      - 'include/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/native-bridge-smoke.yml'
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref so a fixup commit doesn't
+# burn runner minutes on a now-stale build.
+concurrency:
+  group: native-bridge-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Native bridge smoke (macOS arm64)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Spectr
+        uses: actions/checkout@v5
+
+      - name: Resolve pinned Pulp SDK version
+        id: pulp_version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Read X.Y.Z from `find_package(Pulp X.Y.Z REQUIRED)` in
+          # CMakeLists.txt — matches what the dev machine builds against.
+          version="$(python3 - <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          text = Path("CMakeLists.txt").read_text(encoding="utf-8")
+          match = re.search(r"find_package\(Pulp\s+([0-9]+\.[0-9]+\.[0-9]+)\s+REQUIRED\)", text)
+          if not match:
+              print("ERROR: could not find find_package(Pulp X.Y.Z REQUIRED)", file=sys.stderr)
+              sys.exit(1)
+          print(match.group(1))
+          PY
+          )"
+          echo "Pinned Pulp SDK: ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Pulp CLI + SDK install
+        id: pulp_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pulp/bin
+            ~/.pulp/sdk/${{ steps.pulp_version.outputs.version }}
+          key: pulp-sdk-${{ runner.os }}-${{ runner.arch }}-${{ steps.pulp_version.outputs.version }}
+
+      - name: Download Pulp CLI release tarball
+        if: steps.pulp_cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PULP_TAG: ${{ steps.pulp_version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.pulp/bin
+          # macos-latest is arm64. Use the darwin-arm64 CLI tarball
+          # published by pulp's release-cli.yml workflow.
+          asset="pulp-darwin-arm64.tar.gz"
+          echo "Downloading ${asset} from danielraffel/pulp@${PULP_TAG}"
+          gh release download "$PULP_TAG" \
+            --repo danielraffel/pulp \
+            --pattern "$asset" \
+            --output /tmp/pulp-cli.tar.gz
+          tar -xzf /tmp/pulp-cli.tar.gz -C ~/.pulp/bin --strip-components=0
+          # The tarball contains `pulp` (binary) + bundled libs at the
+          # top level. Surface the binary path for later steps.
+          ls -la ~/.pulp/bin
+          chmod +x ~/.pulp/bin/pulp
+
+      - name: Add pulp CLI to PATH
+        shell: bash
+        run: echo "${HOME}/.pulp/bin" >> "$GITHUB_PATH"
+
+      - name: Install Pulp SDK
+        if: steps.pulp_cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          PULP_VERSION: ${{ steps.pulp_version.outputs.version }}
+        run: |
+          set -euo pipefail
+          pulp sdk install --version "$PULP_VERSION"
+          test -d "$HOME/.pulp/sdk/$PULP_VERSION/lib/cmake/Pulp"
+          test -f "$HOME/.pulp/sdk/$PULP_VERSION/version.txt"
+
+      # TODO(spectr#29): build native-react/dist/editor.js via
+      # `npm ci && npm run build:port` once @pulp/react is fetchable
+      # in CI (currently a file:/tmp/pulp-react/... reference). When
+      # unblocked, replace the SPECTR_NATIVE_EDITOR=OFF configure
+      # below with ON.
+
+      - name: Configure Spectr (SPECTR_NATIVE_EDITOR=OFF)
+        shell: bash
+        env:
+          PULP_VERSION: ${{ steps.pulp_version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Note: SPECTR_NATIVE_EDITOR is OFF (default). The native
+          # editor C++ sources still compile; only the embedded
+          # editor.js asset is gated. See spectr#29 for the path to
+          # turning ON in CI.
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$HOME/.pulp/sdk/$PULP_VERSION" \
+            -DSPECTR_NATIVE_EDITOR=OFF
+
+      - name: Build Spectr_Standalone
+        shell: bash
+        run: cmake --build build --config Release --target Spectr_Standalone --parallel
+
+      - name: Locate built standalone bundle
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Pulp's standalone format on macOS is a .app bundle. The
+          # exact path depends on Pulp's CMake module; probe the
+          # likely locations and surface the first hit.
+          candidates=(
+            "build/Standalone/Spectr.app"
+            "build/Spectr_artefacts/Release/Standalone/Spectr.app"
+            "build/Spectr_artefacts/Standalone/Spectr.app"
+          )
+          for c in "${candidates[@]}"; do
+            if [ -d "$c" ]; then
+              echo "found=$c" >> "$GITHUB_OUTPUT"
+              echo "Located: $c"
+              exit 0
+            fi
+          done
+          echo "Spectr_Standalone .app not found at known paths." >&2
+          echo "Build directory layout:" >&2
+          find build -maxdepth 4 -name "Spectr.app" -type d >&2 || true
+          exit 1
+
+      # Stand-in for a real screencap step (TODO spectr#29):
+      # launch the standalone binary inside the .app long enough to
+      # prove the process boots without crashing, then kill it. A real
+      # render-and-screenshot step requires headless launch infra
+      # that doesn't yet exist in this repo.
+      - name: Smoke-launch standalone (boot only)
+        shell: bash
+        env:
+          BUNDLE: ${{ steps.locate.outputs.found }}
+        run: |
+          set -euo pipefail
+          binary="${BUNDLE}/Contents/MacOS/Spectr"
+          if [ ! -x "$binary" ]; then
+            echo "Standalone binary missing or not executable: $binary" >&2
+            ls -la "${BUNDLE}/Contents/MacOS" >&2 || true
+            exit 1
+          fi
+          echo "Launching $binary for boot smoke (5s window)"
+          # Run headless-ish: redirect stdout/stderr, background the
+          # process, give it 5s to crash on startup, then kill.
+          "$binary" >/tmp/spectr-stdout.log 2>/tmp/spectr-stderr.log &
+          pid=$!
+          sleep 5
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "FAIL: standalone exited within 5s of launch." >&2
+            echo "--- stdout ---" >&2
+            cat /tmp/spectr-stdout.log >&2 || true
+            echo "--- stderr ---" >&2
+            cat /tmp/spectr-stderr.log >&2 || true
+            wait "$pid" || true
+            exit 1
+          fi
+          echo "Standalone is alive after 5s — boot smoke OK."
+          kill "$pid" 2>/dev/null || true
+          # Give the process a moment to exit cleanly before the job ends.
+          sleep 1
+          kill -9 "$pid" 2>/dev/null || true
+
+      - name: Upload Spectr_Standalone bundle
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: Spectr-Standalone-macos-arm64
+          path: ${{ steps.locate.outputs.found }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload smoke-launch logs
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: smoke-launch-logs
+          path: |
+            /tmp/spectr-stdout.log
+            /tmp/spectr-stderr.log
+          if-no-files-found: ignore
+          retention-days: 7
