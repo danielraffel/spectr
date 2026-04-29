@@ -475,6 +475,56 @@ function _sortByZIndex(children: ReactNode[]): ReactNode[] {
     return [...children].sort((a, b) => _zIndexOf(a) - _zIndexOf(b));
 }
 
+/// Workaround for pulp #994 (`@pulp/react` doesn't have an `SvgPath` intrinsic
+/// yet). Once #991 lands the C++ widget + JS bridge in v0.61.0, we route inline
+/// `<svg><path d="...">` icon JSX to the new bridge functions via a ref
+/// callback — same pattern as the overflow workaround. Activates only when
+/// `globalThis.createSvgPath` exists (v0.61.0+); otherwise no-op.
+function _buildSvgPathRef(
+    pathD: string,
+    fill: string | undefined,
+    stroke: string | undefined,
+    strokeWidth: number | undefined,
+    viewBoxW: number | undefined,
+    viewBoxH: number | undefined,
+    existingRef: unknown,
+): (instance: unknown) => void {
+    return (instance: unknown) => {
+        if (instance && typeof instance === 'object') {
+            const id = (instance as { id?: unknown }).id;
+            const parentId = (instance as { parent?: { id?: unknown } }).parent?.id;
+            const g = globalThis as Record<string, unknown>;
+            if (typeof id === 'string' && typeof g.createSvgPath === 'function') {
+                try {
+                    // The widget is already mounted as a View placeholder.
+                    // Upgrade in-place: create the SvgPath beside it OR
+                    // reconfigure via setSvgPath. The framework PR #991 likely
+                    // requires a fresh widget — for now, set the path on the
+                    // current id and rely on host-config future support.
+                    (g.setSvgPath as (id: string, d: string) => unknown)(id, pathD);
+                    if (viewBoxW !== undefined && viewBoxH !== undefined && typeof g.setSvgViewBox === 'function') {
+                        (g.setSvgViewBox as (id: string, w: number, h: number) => unknown)(id, viewBoxW, viewBoxH);
+                    }
+                    if (fill !== undefined && typeof g.setSvgFill === 'function') {
+                        (g.setSvgFill as (id: string, c: string) => unknown)(id, fill);
+                    }
+                    if (stroke !== undefined && typeof g.setSvgStroke === 'function') {
+                        (g.setSvgStroke as (id: string, c: string) => unknown)(id, stroke);
+                    }
+                    if (strokeWidth !== undefined && typeof g.setSvgStrokeWidth === 'function') {
+                        (g.setSvgStrokeWidth as (id: string, n: number) => unknown)(id, strokeWidth);
+                    }
+                    void parentId; // reserved for future createSvgPath(id, parentId) re-creation path
+                } catch { /* swallow — pre-v0.61.0 bridges silently no-op */ }
+            }
+        }
+        if (typeof existingRef === 'function') (existingRef as (i: unknown) => void)(instance);
+        else if (existingRef && typeof existingRef === 'object') {
+            (existingRef as { current: unknown }).current = instance;
+        }
+    };
+}
+
 /// Workaround for pulp #972 (Pulp View default `overflow: hidden`, CSS default
 /// `visible`). When a child has `position: absolute`, popovers / dropdowns /
 /// tooltips need to escape the parent's content bounds (CSS default behavior).
@@ -616,6 +666,29 @@ export function createElement(
     }
 
     // SVG / IMG: read width/height as HTML attributes too (not just style).
+    // <path d="..." stroke fill strokeWidth>: route to SvgPath bridge functions
+    // via a ref-callback. Workaround for pulp #994 — @pulp/react doesn't have
+    // an SvgPath intrinsic yet, so we call the v0.61.0 bridge functions
+    // directly. Activates only when the bridge has the functions registered;
+    // otherwise no-op (pre-v0.61.0 SDK).
+    if (tag === 'path') {
+        const d = (inProps as { d?: unknown }).d;
+        if (typeof d === 'string' && d.length > 0) {
+            const stroke = (inProps as { stroke?: unknown }).stroke;
+            const fill = (inProps as { fill?: unknown }).fill;
+            const strokeW = (inProps as { strokeWidth?: unknown }).strokeWidth;
+            const swNum = typeof strokeW === 'number' ? strokeW : (typeof strokeW === 'string' ? parseFloat(strokeW) : undefined);
+            (adapted as { ref?: unknown }).ref = _buildSvgPathRef(
+                d,
+                typeof fill === 'string' ? fill : undefined,
+                typeof stroke === 'string' ? stroke : undefined,
+                Number.isFinite(swNum) ? (swNum as number) : undefined,
+                undefined, undefined,  // viewBox not on <path>; comes from parent <svg>
+                (adapted as { ref?: unknown }).ref,
+            );
+        }
+    }
+
     // Bundles set `<svg width="18" height="13">` — without this they
     // collapse to 0×0 inside flex rows, dragging the row's measured width
     // down even though every Label child has a minWidth.
