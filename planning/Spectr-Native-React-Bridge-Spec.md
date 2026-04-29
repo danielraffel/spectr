@@ -4,6 +4,16 @@ _Created 2026-04-29. Single-page state-of-the-world for the WebView-to-native br
 
 > **Tooling north star:** Use **RepoPrompt** for all code analysis on this project (cross-repo investigation, framework diagnosis, reference-pattern lookups). See **Appendix A** for the recommended workflow. Use `/codex` for second-opinion review of plans, designs, and tricky diagnoses. Default to these over ad-hoc Read/Grep.
 
+### Commits & branches at write-time
+
+| Surface | State |
+|---|---|
+| Spec doc commit | `b66befb` (this file) on `feature/native-react-editor` |
+| Spectr HEAD (sources) | `8f1df47` on `feature/native-react-editor` |
+| Pulp SDK pin | `v0.60.0` (`Pulp_DIR=$HOME/.pulp/sdk/0.60.0/lib/cmake/Pulp`) |
+| Pulp working branch | `fix/cg-canvas-concat-transform-933-takeover` (incidental — not edited) |
+| Standalone binary mtime | rebuilt 2026-04-29 00:46 from current `dist/editor.js` |
+
 ## Context in one paragraph
 
 Spectr's editor today is a Claude-Design-exported React HTML bundle (1.86 MB, self-bundling) rendered inside Pulp's WebView (Chromium-class embedded browser). **WebView works great.** The replacement target is the same React bundle running natively through Pulp — JavaScript via QuickJS (later V8/JSC), React 18 reconciler via `@pulp/react`, layout via Yoga, GPU rendering via Skia + Dawn/WebGPU. **No browser engine, no DOM, no CSS engine.** The native path closes ~72% of styling today; the visible center FilterBank is empty (canvas2D draws fire but don't reach the visible surface — see #964 retitle below). The general-purpose import pipeline (`pulp import-design`) is the long-term home for this work; Spectr is the consumer-zero validating the pipeline.
@@ -42,42 +52,52 @@ Non-goals (for v1): exact pixel-level binary equality, WebView's specific font m
 - `Spectr Sampler.html` — 177 KB — sampler variant (separate workstream, not in this spec's scope)
 - `Spectr.html` — 169 KB — duplicate of source variant
 
-## Architecture (8 layers, 3 build-time tools)
+## Architecture (9 layers, 3 build-time tools)
 
-**The bridge stack** (memory: `project_pulp_react_architecture.md`):
+**The bridge stack** — adopted verbatim from `/codex` review (memory: `project_pulp_react_architecture.md` is partial; this is the corrected ordering):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ 1. JavaScript engine (QuickJS today; V8 / JSC follow)        │
+│ 1. QuickJS / ScriptEngine                                    │
 │    └─ from @pulp/runtime, embedded in every Pulp plugin      │
+│    └─ V8 / JSC are next engine targets                       │
 ├─────────────────────────────────────────────────────────────┤
-│ 2. React 18 reconciler (@pulp/react custom renderer)         │
-│    └─ Hosts function components, hooks, context, refs        │
+│ 2. Web-compat shims                                          │
+│    └─ document, Element, requestAnimationFrame,              │
+│       MessageChannel, canvas-shim                            │
+│    └─ Why this layer matters: it's why unmodified            │
+│       React + canvas2D bundles run at all                    │
 ├─────────────────────────────────────────────────────────────┤
-│ 3. Yoga layout                                               │
-│    └─ Flexbox/box-model; no browser cascade                  │
+│ 3. React 18 + @pulp/react reconciler                         │
+│    └─ Function components, hooks, context, refs              │
 ├─────────────────────────────────────────────────────────────┤
-│ 4. CSS adapter (@pulp/css-adapt, 100 vitest tests)           │
-│    └─ ~200 CSS props → bridge setX calls                     │
-│    └─ Shorthand expansion, color/length parsers              │
-│    └─ registerProperty/registerShorthand extension API       │
-├─────────────────────────────────────────────────────────────┤
-│ 5. dom-adapter (Spectr-side, native-react/dom-adapter.tsx)   │
+│ 4. dom-adapter + @pulp/css-adapt                             │
 │    └─ DOM-tag → bridge-widget mapping                         │
 │    └─ var() resolution, className → style object             │
-│    └─ position:absolute + inset:0 → "fill parent" Yoga       │
+│    └─ ~200 CSS props → setX bridge calls                     │
+│    └─ Shorthand expansion, color/length parsers              │
 ├─────────────────────────────────────────────────────────────┤
-│ 6. WidgetBridge (Pulp framework, JS-side handle)             │
+│ 5. WidgetBridge (Pulp framework, JS-side handle)             │
 │    └─ View, Row, Label, Spectrum, Knob, Fader, ...           │
 │    └─ canvas2d ctx surface (setLineWidth, beginPath, ...)    │
 ├─────────────────────────────────────────────────────────────┤
-│ 7. C++ widget impl (core/view/, core/canvas/)                │
-│    └─ Yoga layout pass, Skia paint pass                      │
+│ 6. C++ View / CanvasWidget tree                              │
+│    └─ core/view/, core/canvas/                                │
+│    └─ paint_all() recursion, command queue                    │
 ├─────────────────────────────────────────────────────────────┤
-│ 8. Skia + Dawn/WebGPU                                        │
-│    └─ GPU rasterization                                       │
+│ 7. Yoga layout + Canvas command replay                       │
+│    └─ View::layout_children() invokes Yoga                    │
+│    └─ CanvasWidget replays queued draw commands               │
+├─────────────────────────────────────────────────────────────┤
+│ 8. SkiaCanvas                                                │
+│    └─ Skia rasterization primitives                          │
+├─────────────────────────────────────────────────────────────┤
+│ 9. Dawn / WebGPU surface                                     │
+│    └─ GPU presentation                                        │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**Key correction from prior version:** Yoga is NOT a separate layer between React and CSS-adapt — it lives inside the C++ View/layout layer (`View::layout_children()` and `yoga_layout.cpp`). The web-compat shim layer was missing entirely; it's load-bearing for "unmodified bundle runs."
 
 **Three build-time tools** (`native-react/tools/`):
 
@@ -101,13 +121,14 @@ The 1.86 MB HTML carries:
 
 **W3C-shaped runtime ≠ CSS engine.** Pulp exposes W3C-shaped JS APIs (`ctx.fillRect`, `requestAnimationFrame`, `MessageChannel`, `document` / `Element` polyfills) so unmodified React + canvas2D code runs. But there's no parser, cascade, specificity, inheritance, `@media`, or `:hover`. CSS support means "translate each prop to a per-View `setX` bridge call" — that's `@pulp/css-adapt`'s job (200-ish props, shorthand expanders, value parsers, effect lowering).
 
-**The seam:** `@pulp/css-adapt` between the design's CSS intent and Pulp's primitives. Coverage today is **72% mapped** of 60 unique props (160 inline style objects). Remaining 13% (8 unmapped props) are filed as framework gaps under umbrella **#924**.
+**The seam:** `@pulp/css-adapt` between the design's CSS intent and Pulp's primitives. Coverage today is **72% mapped** of 60 unique props (160 inline style objects), per `planning/spectr-style-coverage-report.md` snapshot dated 2026-04-29 (re-run on every editor.js bump). Remaining 13% (8 unmapped props) are filed as framework gaps under umbrella **#924**.
 
-W3C surface integrated:
-- Canvas 2D — full spec list at `native-react/tools/pulp-bridge-coverage/src/known-canvas2d.ts`
-- DOM Element / Document polyfills — partial
-- SVG — `<svg>` + path-d via #965 (in flight)
-- Form controls — `<input type=range>` via #966 (workaround in place)
+**W3C surface — what's a "spec-driven coverage list" vs. what's actually integrated:**
+
+- **Canvas 2D** — `native-react/tools/pulp-bridge-coverage/src/known-canvas2d.ts` is a **spec-driven coverage checklist**, not a full integration. Covers the most-common `CanvasRenderingContext2D` methods and properties our bundle uses. Known gaps in the checklist itself: `Path2D`, `DOMMatrix`, `ImageBitmap`, `OffscreenCanvas`, newer text/style attributes. We add to the list as the bundle accesses something new.
+- **DOM Element / Document polyfills** — partial; enough for React's reconciliation needs (`getBoundingClientRect`, refs, attributes).
+- **SVG** — **planned** via #965 (no widget yet; inline `<svg><path>` icons currently render nothing).
+- **Form controls** — `<input type=range>` mapped to Fader as a workaround (`8f1df47`); proper widget via #966.
 
 ## Build, test, and screenshot loop
 
@@ -125,8 +146,11 @@ npm run build:port           # → dist/editor.js (445K-ish)
 cd /Users/danielraffel/Code/spectr
 cmake --build build --target Spectr_Standalone
 # This re-runs `pulp_add_binary_data` to embed the new editor.js.
-# Important: bare `cmake --build build` won't pick up asset edits — must
-# rebuild the standalone target.
+# Important: don't assume a bare `cmake --build build` rebakes the asset.
+# Use the `Spectr_Standalone` target explicitly, OR run
+# `python3 native-react/regen-asset.py` if you only need the asset
+# regenerated without re-linking. Asset rebuild behavior is finicky;
+# verify the binary mtime advanced before launching.
 
 # 4. Launch + screencap
 pkill -f Spectr; sleep 2
@@ -173,10 +197,11 @@ cd /Users/danielraffel/Code/spectr/native-react && npm run smoke
 - Canvas2D draw calls fire and reach the bridge (logged: `canvasTranslate`, `canvasLineTo`, `canvasBeginPath`, `canvasSetRadialGradient` — every frame)
 
 **Doesn't work ❌:**
-- **Empty FilterBank center** — canvas2D commands fire on `pr_1`/`pr_2` (the two `<canvas position:absolute inset:0>` at `extracted.js:2181-2182`) but output never reaches the visible Skia surface. **Three live hypotheses**: (1) wrong target surface — CanvasWidget's Skia surface not composited into parent View's layer; (2) drawn-but-obscured by sibling layer; (3) coordinate-frame mismatch.
+- **Empty FilterBank center** — canvas2D commands fire on `pr_1`/`pr_2` (the two `<canvas position:absolute inset:0>` at `extracted.js:2181-2182`) but output never reaches the visible Skia surface. **Three live hypotheses**: (1) wrong target surface — CanvasWidget's Skia surface not composited into parent View's layer; (2) drawn-but-obscured by sibling layer; (3) coordinate-frame mismatch. **Decisive next probe:** see Task list item #1 below.
 - **Inline `<svg><path>` icons** in PRESETS / SCULPT / PEAK / etc — blocked on framework #965 (no SVG-path widget). 8+ usage sites in extracted bundle.
-- **Dropdown/popover panels** — `bandsMenu` at line 2847 (`position:absolute; top:28; right:0; zIndex:20; backdropFilter:blur(10px)`) likely hidden behind canvas. Probably the same compositing class as the FilterBank issue.
-- **Settings + manage-plugin views** — never validated; reachable only via PRESETS dropdown's "MANAGE…" menu, blocked by dropdowns.
+- **Dropdown/popover panels** — `bandsMenu` at line 2847 declares `position:absolute; top:28; right:0; zIndex:20; backdropFilter:blur(10px)` but renders behind sibling content. **Codex spot-check confirmed root cause:** `View::paint_all()` paints children in insertion order and does not honor `z_index()`. Filed as **#972** under umbrella #924 — separate class from #964, do not bundle.
+- **`zIndex` (CSS prop)** — accepted by `@pulp/css-adapt` and reaches `setZIndex` on the View, but **paint order does not honor it**. Same root cause as the dropdown gap above.
+- **Settings + manage-plugin views** — never validated; reachable only via PRESETS dropdown's "MANAGE…" menu, blocked by dropdowns / z-index gap.
 
 **Spectr-side workarounds in place (revert when upstream fix lands):**
 
@@ -196,31 +221,63 @@ cd /Users/danielraffel/Code/spectr/native-react && npm run smoke
 | **967** | P0 | View widget default background should be transparent | OPEN — premise stale per other agent's regression-test finding | `fa74d5f` |
 | **968** | P2 | `canvasRect` falls back to active set_fill_color when no color arg | OPEN | partial via `def0c9c` |
 | **969** | P2 | CSS-style typography inheritance (parent View → child Label) | OPEN | none |
+| **972** | P1 | View::paint_all() does not honor z_index() — children paint in insertion order | OPEN (filed 2026-04-29) | none — blocks all dropdowns/popovers |
 
 **Closed earlier in this push** (do not re-open): #925 boxShadow · #926 backdropFilter · #927 Label fonts · #928 Label auto-grow · #929 Canvas visibility · #930 setTransform · #932 SkFontMgr font registration.
 
-**Cron polling** active in this session: `7,37 * * * *` (job ID `ce66f381`) — checks #964-#969 every 30 min, integrates each merged PR (SDK pin bump, workaround revert, rebuild, re-screenshot). Stops after 6 hours OR when all 6 close.
+**Cron polling — SESSION-ONLY, vanishes when Claude exits.** Active job: `7,37 * * * *` ID `ce66f381`. Checks #964-#969 every 30 min, integrates each merged PR (SDK pin bump, workaround revert, rebuild, re-screenshot). Stops after 6 hours OR when all 6 close. **This is not durable recovery state** — a new session must re-arm via `/loop 30m <prompt>` if needed.
 
 ## CLI integration goal
 
-The long-term home for this pipeline is the Pulp CLI. Two commands relevant:
+The long-term home for this pipeline is the Pulp CLI. Two commands today:
 
-- `pulp import-design --from claude` — Ingest a Claude-Design HTML export. Today routes to `tools/import-design/pulp-import-design`. Should accept `Spectr (standalone).html` and produce a compiled native bundle equivalent to what Spectr's `native-react/` does by hand. Linked: pulp #468, #729.
+- `pulp import-design --from claude` — Ingest a Claude-Design HTML export. Routes to `tools/import-design/pulp-import-design`. Should accept `Spectr (standalone).html` and produce a compiled native bundle equivalent to what Spectr's `native-react/` does by hand. Linked: pulp #468, #729.
 - `pulp export-tokens` — Export theme tokens as W3C Design Tokens. Already works.
 
-**Goal:** every step the Spectr-side `native-react/` directory does by hand should be reachable through `pulp import-design`. When that's true, `native-react/` becomes deprecated machinery and a fresh consumer (next plugin) just runs:
+**Goal:** every step the Spectr-side `native-react/` directory does by hand should be reachable through `pulp import-design`. When that's true, `native-react/` becomes deprecated machinery; a fresh consumer (next plugin) runs:
 
 ```bash
-pulp import-design --from claude --input "MyPlugin (standalone).html" --execute-bundle
+pulp import-design --from claude --file "MyPlugin (standalone).html" --execute-bundle
 ```
 
-…and gets a buildable native UI. **Spectr is the proof; we should design every Spectr fix asking "would this generalize?".**
+…and gets a buildable native UI.
+
+### CLI parity checklist — concrete artifacts
+
+For each artifact `native-react/` produces by hand, mark whether `pulp import-design` already covers it. Each `partial`/`missing` row is a candidate sub-issue under umbrella #924 (or its own umbrella).
+
+| # | Artifact / step | Native-react does | CLI today | Gap |
+|---|---|---|---|---|
+| 1 | Decode `<script type="__bundler/template">` JSON-encoded HTML | `tools/extract-html-bundle/extract.mjs` | unknown — need to check `pulp-import-design` | TBD |
+| 2 | Lift `<style>` blocks → `tokens.json` (CSS custom properties × themes) | `extract-html-bundle` | partial via `pulp export-tokens` | TBD |
+| 3 | Lift class rules → `classnames.json` (flattened JSX style objects) | `extract-html-bundle` | unknown | TBD |
+| 4 | Lift `<script>` → `main.js` (the React bundle) | `extract-html-bundle` | unknown | TBD |
+| 5 | Generate web-compat shims (document, Element, RAF, MessageChannel, canvas) | `host-shims.ts` (hand-written) | none — should generate or template | missing |
+| 6 | Generate dom-adapter (DOM-tag → bridge-widget mapping) | `dom-adapter.tsx` (hand-written) | none — should be a generated scaffold | missing |
+| 7 | Generate bridge-call adapter (CSS prop → setX) | `@pulp/css-adapt` (npm package, reusable) | unknown | TBD |
+| 8 | Build the React bundle (esbuild with our jsx-runtime shim) | `npm run build:port` | none — should be a CLI step | missing |
+| 9 | Embed bundle into the plugin binary (`pulp_add_binary_data`) | `CMakeLists.txt` (`SPECTR_NATIVE_EDITOR=ON`) | covered by `pulp_add_binary_data` macro | OK |
+| 10 | Run W3C / CSS coverage report and fail on regression | `npm run smoke` + `pulp-css-analyze` + `pulp-bridge-coverage` | none — should be `pulp design check` | missing |
+| 11 | Visual screenshot validation against a reference | `screencap-spectr.sh` (hand-written) | partial via `pulp-screenshot --script` | TBD |
+| 12 | Failure modes: no `<script type="...">`, multiple themes, oklch, vendor prefixes | extract-html-bundle errors out / silently drops | unknown | TBD |
+
+**Spectr is the proof; we should design every Spectr fix asking "would this generalize?".** Each row marked `missing` or `TBD` should become a concrete sub-issue once we audit `tools/import-design/pulp-import-design`'s current coverage.
 
 ## Task list (concrete next actions)
 
 Ranked by impact:
 
-1. **Drop a sentinel `clearRect` red-fill probe** at the start of FilterBank's canvas2d render fn → re-screencap → if red is visible, #964 is draw-call ordering (canvas2D issue inside Spectr's React tree); if red is also invisible, #964 is surface-composition (Pulp framework, narrow audit to `canvas_widget.cpp` + `view.cpp::paint_all` + `native_gpu_texture_provider`). **This is the next experiment.**
+1. **Decisive #964 bisect probe** — drop a real opaque red `fillRect` at the start of FilterBank's canvas2d render fn (NOT `clearRect` — `clearRect` clears transparent and won't prove anything in Pulp). Exact JS:
+   ```js
+   ctx.save();
+   ctx.setTransform(1, 0, 0, 1, 0, 0);
+   ctx.globalAlpha = 1;
+   ctx.globalCompositeOperation = 'source-over';
+   ctx.fillStyle = 'red';
+   ctx.fillRect(0, 0, canvas.width || 1000, canvas.height || 1000);
+   ctx.restore();
+   ```
+   Re-build standalone, screencap. **Even sharper:** add a temporary magenta full-bounds rect at the top of `CanvasWidget::paint()` (C++) — bypasses every JS-side state hypothesis. If red-from-JS visible → JS state / coordinates / transforms; if magenta-from-C++ visible but red-from-JS not → command queue / replay; if both invisible → surface composition / paint ordering / obscuring. Three-way bisect in one experiment.
 2. **Coordinate with the other agent** on #964 retitle + #967 close per "premise stale" finding. Tests-only contract PR on `framework/spectr-parity-967`. Other agent then pivots to additive #965.
 3. **File new umbrella sub-issue** for popover/dropdown overlay compositing if (1) confirms it's a separate class from #964.
 4. **Add CI smoke test** on the Spectr side: every commit runs `npm run build:port` + standalone-rebuild + screencap, posts diff to PR. Catches visual regressions before merge.
@@ -238,6 +295,7 @@ The cron loop (`ce66f381`) handles each framework-PR landing automatically.
 - **2026-04-28** — split build into stub (`editor.tsx` for primitive validation) and port (`editor-port.tsx` for full app validation). Both compile to `dist/editor.js`. Standardize on `:port` for "is the app working?" checks.
 - **2026-04-29** — chose to do the standalone screencap loop instead of `pulp-screenshot --script`; standalone exercises the full bridge plumbing including C++ side of CanvasWidget.
 - **2026-04-29** — empirical finding: canvas2D draws fire but don't surface. Updated #964 framing. Pivoted other agent to additive #965.
+- **2026-04-29** — Codex review of v1 spec produced 7-item punch list. Adopted Codex's 9-layer architecture (added web-compat shims layer, moved Yoga into C++ layout layer). Replaced `clearRect` probe with proper opaque-red `fillRect` + C++ magenta probe. Filed z-index/paint-order as separate framework gap (do not bury under #964). Softened W3C wording from "full spec list" to "spec-driven coverage checklist." Fixed CLI flag from `--input` to `--file`. Marked cron polling as session-only.
 
 ## Appendix A — Reference repos to study (RepoPrompt-eligible)
 
