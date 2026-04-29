@@ -517,6 +517,18 @@ export function createElement(
         }
     }
 
+    // <canvas>: default the View widget background to transparent so the
+    // parent shows through where the canvas commands don't paint. Pulp's
+    // canvas widget is transparent at the surface level (#929), but the
+    // setBackground we don't call leaves the View parent's bg paint
+    // unchanged — and Pulp's default View bg paints opaque white. Without
+    // this, every <canvas> covers its parent like a white sheet. Tracked
+    // as pulp#964 — fix at the framework layer; this is the ports-side
+    // workaround that unblocks bundle ports today.
+    if (tag === 'canvas' && adapted.background === undefined) {
+        adapted.background = 'transparent';
+    }
+
     if (target === 'Label') {
         // Text is in the varargs `children` (jsx-runtime-shim destructures
         // it out of props), or rarely as inProps.children when raw
