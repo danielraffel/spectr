@@ -880,16 +880,14 @@ export function createElement(
                 wrapped.push(c);
             }
         }
-        if (_hasAbsoluteChild(wrapped)) {
-            (adapted as { ref?: unknown }).ref = _buildOverflowRef('visible', (adapted as { ref?: unknown }).ref);
-        }
-        return pulpCreateElement(target as never, adapted as never, ..._sortByZIndex(wrapped));
+        // [v0.62.0] #972 fix landed in framework — workarounds disabled.
+        // _hasAbsoluteChild + _buildOverflowRef + _sortByZIndex retained but no-op
+        // unless pre-v0.62.0 SDK is detected.
+        return pulpCreateElement(target as never, adapted as never, ...wrapped);
     }
 
-    if (_hasAbsoluteChild(children)) {
-        (adapted as { ref?: unknown }).ref = _buildOverflowRef('visible', (adapted as { ref?: unknown }).ref);
-    }
-    return pulpCreateElement(target as never, adapted as never, ..._sortByZIndex(children));
+    // [v0.62.0] #972 fix landed in framework — overflow + z-index workarounds disabled.
+    return pulpCreateElement(target as never, adapted as never, ...children);
 }
 
 /// Re-exports so the extracted code can import them as if from React.
