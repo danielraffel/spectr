@@ -443,6 +443,39 @@ function warnDropped(key: string): void {
     if (lg) lg('[adapter:dropped-style] ' + key);
 }
 
+/// Workaround for pulp #972 (View::paint_all() doesn't honor z_index()).
+/// Today, paint order = child insertion order. Stable-sort children by
+/// their style.zIndex ascending so higher-zIndex elements paint LAST and
+/// appear on top. Children without zIndex stay in original order
+/// (default zIndex=0). This makes dropdowns/popovers (zIndex=20+) elevate
+/// over their siblings even though the framework ignores setZIndex().
+///
+/// Safe because:
+/// - Stable sort: equal-zIndex siblings keep insertion order
+/// - In modern JS engines (QuickJS, V8) Array.prototype.sort is stable
+/// - Most children have zIndex=undefined → 0 → no movement
+/// - Only the few popovers with explicit zIndex move to end, preserving
+///   flex layout for the normal-flow majority
+function _zIndexOf(child: ReactNode): number {
+    if (child == null || typeof child !== 'object') return 0;
+    if (Array.isArray(child)) return 0; // fragment / array: leave alone
+    const c = child as { props?: { style?: { zIndex?: unknown } } };
+    const z = c.props?.style?.zIndex;
+    if (z === undefined || z === null) return 0;
+    const n = typeof z === 'number' ? z : Number(z);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function _sortByZIndex(children: ReactNode[]): ReactNode[] {
+    // Quick path: skip allocation if no child has a non-zero zIndex.
+    let needsSort = false;
+    for (const c of children) {
+        if (_zIndexOf(c) !== 0) { needsSort = true; break; }
+    }
+    if (!needsSort) return children;
+    return [...children].sort((a, b) => _zIndexOf(a) - _zIndexOf(b));
+}
+
 /// Replacement for React.createElement that intercepts string tag names
 /// and dispatches to @pulp/react components. Function components fall
 /// through unchanged.
@@ -718,10 +751,10 @@ export function createElement(
                 wrapped.push(c);
             }
         }
-        return pulpCreateElement(target as never, adapted as never, ...wrapped);
+        return pulpCreateElement(target as never, adapted as never, ..._sortByZIndex(wrapped));
     }
 
-    return pulpCreateElement(target as never, adapted as never, ...children);
+    return pulpCreateElement(target as never, adapted as never, ..._sortByZIndex(children));
 }
 
 /// Re-exports so the extracted code can import them as if from React.
