@@ -465,9 +465,17 @@ export function createElement(
         return pulpCreateElement(type as never, props as never, ...children);
     }
     const tag = type.toLowerCase();
-    const target = TAG_MAP[tag] ?? 'View';
+    let target = TAG_MAP[tag] ?? 'View';
 
     const inProps = (props ?? {}) as Record<string, unknown>;
+    // <input type="range"> → Fader (Pulp's linear control). Plain HTML
+    // ranges have no DSP-style decoration; Fader handles the geometry +
+    // drag interaction we need until pulp#966 lands a dedicated range
+    // slider widget. Default orientation horizontal — matches the
+    // overwhelming majority of <input type=range> usage in the wild.
+    if (tag === 'input' && (inProps.type as string | undefined) === 'range') {
+        target = 'Fader';
+    }
     // className → style merge. CSS class rules from the original HTML's
     // <style> blocks are pre-flattened (see extracted/classnames.json);
     // merge them under the user's inline style so inline still wins.
@@ -498,6 +506,24 @@ export function createElement(
     if (tag === 'button' && adapted.direction === undefined) {
         adapted.direction = 'row';
         if (adapted.alignItems === undefined) adapted.alignItems = 'center';
+    }
+
+    // <input type="range"> → Fader: forward min/max/step/value as direct
+    // bridge props, default horizontal orientation, ensure a reasonable
+    // height (Fader's default vertical assumption gives 0 height in a row
+    // flex parent without it).
+    if (tag === 'input' && (inProps.type as string | undefined) === 'range') {
+        adapted.orientation = adapted.orientation ?? 'horizontal';
+        if (adapted.height === undefined) adapted.height = 12;
+        if (adapted.flexShrink === undefined) adapted.flexShrink = 0;
+        const minP = (inProps as { min?: unknown }).min;
+        const maxP = (inProps as { max?: unknown }).max;
+        const stepP = (inProps as { step?: unknown }).step;
+        const valueP = (inProps as { value?: unknown }).value;
+        if (minP !== undefined) adapted.min = Number(minP);
+        if (maxP !== undefined) adapted.max = Number(maxP);
+        if (stepP !== undefined) adapted.step = Number(stepP);
+        if (valueP !== undefined) adapted.value = Number(valueP);
     }
 
     // SVG / IMG: read width/height as HTML attributes too (not just style).
