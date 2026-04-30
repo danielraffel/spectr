@@ -4,15 +4,29 @@ _Created 2026-04-29. Single-page state-of-the-world for the WebView-to-native br
 
 > **Tooling north star:** Use **RepoPrompt** for all code analysis on this project (cross-repo investigation, framework diagnosis, reference-pattern lookups). See **Appendix A** for the recommended workflow. Use `/codex` for second-opinion review of plans, designs, and tricky diagnoses. Default to these over ad-hoc Read/Grep.
 
-### Commits & branches at write-time
+### Commits & branches at write-time _(updated 2026-04-30)_
 
 | Surface | State |
 |---|---|
-| Spec doc commit | `b66befb` (this file) on `feature/native-react-editor` |
-| Spectr HEAD (sources) | `8f1df47` on `feature/native-react-editor` |
-| Pulp SDK pin | `v0.60.0` (`Pulp_DIR=$HOME/.pulp/sdk/0.60.0/lib/cmake/Pulp`) |
-| Pulp working branch | `fix/cg-canvas-concat-transform-933-takeover` (incidental — not edited) |
-| Standalone binary mtime | rebuilt 2026-04-29 00:46 from current `dist/editor.js` |
+| Spectr HEAD | `fdf6f88` on `feature/native-react-editor` |
+| Pulp SDK pin | **`v0.65.0`** (`Pulp_DIR=$HOME/.pulp/sdk/0.65.0/lib/cmake/Pulp`) |
+| Spectr CI branch | `ci/native-bridge-smoke` @ `f8f4ebd` (parented from `feature/native-react-editor`; not yet PR'd) |
+
+### Spectr-side commits log _(reverse-chronological)_
+
+| Commit | What | Status |
+|---|---|---|
+| `fdf6f88` | chore: delete now-unused #972 workaround helpers (~120 LOC dead code removed) | landed |
+| `346eb64` | fix: App root explicit size workaround for pulp#998 | **active** — will revert when #998 lands |
+| `b0d2705` | chore: bump SDK pin v0.64.0 → v0.65.0 | landed |
+| `80a15e2` | chore: bump SDK pin v0.62.0 → v0.64.0 | landed |
+| `a205b01` | feat: integrate Pulp v0.62.0; disable #972/#992 workarounds | landed |
+| `0897c38` | feat: pre-stage SVG path widget bridge route (pulp#994 workaround) | **active** — until #994 lands |
+| `75e0407` | feat: ref-callback overflow workaround for pulp#972 | **disabled** in a205b01; helpers deleted in fdf6f88 |
+| `5fc9052` | feat: stable-sort children by zIndex (pulp#972 workaround) | **disabled** in a205b01; helpers deleted in fdf6f88 |
+| `8f1df47` | feat: map `<input type=range>` to Fader (pulp#966 workaround) | **active** — Fader still rendering; will switch to RangeSlider when @pulp/react has the intrinsic |
+| `fa74d5f` | fix: default `<canvas>` View bg to transparent (pulp#967 workaround) | **active** — closed framework-side per #973 contract; not yet reverted in dom-adapter |
+| `def0c9c` | fix: canvas size + gradient fillRect semantics (pulp#968 partial workaround) | **active** — closed framework-side via #1003; not yet reverted |
 
 ## Context in one paragraph
 
@@ -181,6 +195,23 @@ cd /Users/danielraffel/Code/spectr/native-react && npm run smoke
 
 **Latest committed state:** `planning/screenshots/native-editor-v0.60.0-fader.png` — current native render at v0.60.0 with all today's workarounds in place.
 
+## What's testable today (2026-04-30, v0.65.0)
+
+If you `open ./build/Spectr.app` right now, here's what you'll see and what won't yet work:
+
+| Surface | Today |
+|---|---|
+| Top toolbar (SPECTR / ZOOMABLE FILTER BANK / LIVE / PRECISION / IIR / FFT / HYBRID / 32 bands ▾ / 1.00× zoom) | ✅ renders |
+| Bottom toolbar (CLEAR / ⋯ / SCULPT ▼ / PEAK ▼ / PRESETS ▼ / SNAPSHOT / A / B / morph slider / ?) | ✅ renders |
+| Dark navy background throughout | ✅ (after `346eb64` workaround for #998) |
+| Morph slider (cyan-bordered Fader at center-bottom) | ✅ renders |
+| FilterBank center (spectrum / dB axis / frequency markers / grid / 0 dB reference line) | ❌ empty — unblocks at v0.66.0 (#1012 + #1020) |
+| `<svg><path>` icons inside SCULPT / PEAK / PRESETS / etc | ❌ missing — unblocks at v0.66.0+ (#1042 → #994) |
+| **Tapping toolbar tabs / dropdowns / buttons** | ❌ **does nothing** — clicks reach the bridge without crashing (#992 fixed) but onClick handlers don't fire (#1006 closed by #1008, **unreleased**). Unblocks at v0.66.0. |
+| App doesn't crash on click | ✅ (#992 fix in v0.62.0) |
+
+**Bottom line:** the editor is **render-correct** for everything not gated on canvas2D content or click interaction. Once v0.66.0 ships (#1012 merges → version bump → tag), both unlock together and you'll have a fully interactive editor with the spectrum waveform.
+
 ## Current state — what works, what doesn't (Apr 29 2026, v0.60.0)
 
 **Works ✅:**
@@ -197,31 +228,51 @@ cd /Users/danielraffel/Code/spectr/native-react && npm run smoke
 - Canvas2D draw calls fire and reach the bridge (logged: `canvasTranslate`, `canvasLineTo`, `canvasBeginPath`, `canvasSetRadialGradient` — every frame)
 
 **Doesn't work ❌:**
-- **Empty FilterBank center** — canvas2D commands fire on `pr_1`/`pr_2` (the two `<canvas position:absolute inset:0>` at `extracted.js:2181-2182`) but output never reaches the visible Skia surface. **Three live hypotheses**: (1) wrong target surface — CanvasWidget's Skia surface not composited into parent View's layer; (2) drawn-but-obscured by sibling layer; (3) coordinate-frame mismatch. **Decisive next probe:** see Task list item #1 below.
-- **Inline `<svg><path>` icons** in PRESETS / SCULPT / PEAK / etc — blocked on framework #965 (no SVG-path widget). 8+ usage sites in extracted bundle.
-- **Dropdown/popover panels** — `bandsMenu` at line 2847 declares `position:absolute; top:28; right:0; zIndex:20; backdropFilter:blur(10px)` but renders behind sibling content. **Codex spot-check confirmed root cause:** `View::paint_all()` paints children in insertion order and does not honor `z_index()`. Filed as **#972** under umbrella #924 — separate class from #964, do not bundle.
-- **`zIndex` (CSS prop)** — accepted by `@pulp/css-adapt` and reaches `setZIndex` on the View, but **paint order does not honor it**. Same root cause as the dropdown gap above.
-- **Settings + manage-plugin views** — never validated; reachable only via PRESETS dropdown's "MANAGE…" menu, blocked by dropdowns / z-index gap.
+- **Empty FilterBank center** — root cause was missing `CanvasRenderingContext2D` shim methods (`ctx.save()` threw, React swallowed, frame draw aborted) PLUS a `canvasFillRect` typo. **Closing via #1012 (typo fix) + #1020 (full shim surface)** — both in CI now. v0.66.0 will ship them.
+- **Inline `<svg><path>` icons** in PRESETS / SCULPT / PEAK / etc — `0897c38` ref-callback workaround pre-staged; activates when #1042 → #994 lands and `@pulp/react` knows the SvgPath intrinsic.
+- **Click interaction (tabs, dropdowns, buttons, settings, manage)** — clicks reach the bridge without crashing (#992 fixed in v0.62.0) but **onClick handlers don't fire yet**. #1008 (auto-wire fix) is in main but unreleased. v0.66.0 unlocks. Until then, render-correct, interaction-dead.
+- **Settings + manage-plugin views** — gated on click interaction (above).
+- **Dropdowns / popovers** — render-correct now (no clipping). Need clicks to actually open them.
 
-**Spectr-side workarounds in place (revert when upstream fix lands):**
+**Spectr-side workarounds in place** _(see Spectr-side commits log above for the full set)_:
 
-| Commit | What | Will revert when |
+| Commit | Status | Notes |
 |---|---|---|
-| `8f1df47` | `<input type=range>` → Fader widget mapping | #966 lands (range-slider widget) |
-| `fa74d5f` | Default `<canvas>` View bg transparent | #967 lands (View transparent default) |
-| `def0c9c` | Canvas size + gradient fillRect semantics | If #968 (canvasRect color fallback) lands clean |
+| `0897c38` | active — needed | `<path>` ref-callback; awaiting #994 (and prereq #1042) |
+| `346eb64` | active — needed | App root explicit size for #998 |
+| `8f1df47` | active but redundant | #966 closed; could switch to RangeSlider widget when @pulp/react has the intrinsic |
+| `fa74d5f` | active but redundant | #967 closed via #973 contract; safe to revert |
+| `def0c9c` | active but redundant | #968 closed via #1003 in v0.65.0; safe to revert |
 
-## Framework gaps (Pulp umbrella #924)
+## Framework gaps (Pulp umbrella #924) _(state 2026-04-30)_
 
-| # | Pri | Title | State | Spectr workaround |
+### Closed
+- **#925** boxShadow • **#926** backdropFilter • **#927** Label fonts • **#928** Label auto-grow • **#929** Canvas visibility • **#930** setTransform • **#932** SkFontMgr (closed earlier in the umbrella)
+- **#965** Standalone SVG-path widget — closed by #991 in v0.61.0
+- **#966** Range-slider widget — closed by #1004 in v0.64.0
+- **#967** View transparent default — closed by #973 contract tests in v0.61.0 (premise was stale)
+- **#968** canvasRect fillStyle fallback — closed by #1003 in v0.65.0
+- **#969** Typography inheritance — closed by #1002 in v0.63.0
+- **#972** View::paint_all() honors z-index + overflow defaults visible — closed by #996 in v0.62.0
+- **#992** PulpView::mouseUp SIGSEGV — closed by #1001 in v0.62.0
+
+### Open
+
+| # | Pri | Title | State | Spectr-side mitigation |
 |---|---|---|---|---|
-| **964** | P0 | FilterBank canvas content not reaching visible surface (re-titled, premise updated 2026-04-29 — was "child Views opaque-white over canvas") | OPEN | none — investigating |
-| **965** | P1 | Standalone SVG-path widget for inline `<svg><path>` icons | OPEN | none — 8+ icons missing |
-| **966** | P1 | Range-slider widget for HTML `<input type="range">` | OPEN | `8f1df47` |
-| **967** | P0 | View widget default background should be transparent | OPEN — premise stale per other agent's regression-test finding | `fa74d5f` |
-| **968** | P2 | `canvasRect` falls back to active set_fill_color when no color arg | OPEN | partial via `def0c9c` |
-| **969** | P2 | CSS-style typography inheritance (parent View → child Label) | OPEN | none |
-| **972** | P1 | View::paint_all() does not honor z_index() — children paint in insertion order | OPEN (filed 2026-04-29) | none — blocks all dropdowns/popovers |
+| **964** | P0 | FilterBank canvas2D draw output not reaching visible surface (root cause: missing CanvasRenderingContext2D shim methods; #1012 fixed canvasFillRect typo, #1020 adds the full prototype) | OPEN — #1012 + #1020 in CI | none — when #1012 merges, v0.66.0 ships fix |
+| **994** | P1 | `@pulp/react` SvgPath intrinsic — wires #991 widget through React JSX | OPEN — blocked on **#1042** (import @pulp/react source into pulp/packages/pulp-react/) | `0897c38` ref-callback pre-stage |
+| **995** | P1 | `pulp import-design` should emit a buildable React project (CLI parity end-state) | OPEN — broken into 7 sub-issues (#1035–#1041); 2 wave-2 agents in flight | n/a |
+| **998** | P0 | v0.61.0+ layout regression — `position:absolute; inset:0` no longer fills parent | OPEN — proven via App-root magenta probe | `346eb64` (explicit width/height + bg) |
+| **1006** | P0 | Real clicks don't dispatch React onClick handlers (post-#1001 follow-up) | **CLOSED by #1008** — but unreleased; #1012 will catch up to v0.66.0+ | none — interaction unlocks at v0.66.0 |
+| **1009** | P1 | Release-pipeline three-layer guard (catch fix/feat merges without version bump) | OPEN — #1013 in CI | n/a |
+| **1015** | P1 | Phase 8 Rust CLI soak window | OPEN — pending #1005 merge | n/a |
+| **1026** | P1 | RN style-prop alignment (View / Text / Image) | OPEN — agent in flight | n/a |
+| **1027** | P1 | Compat matrix (CSS / RN / Yoga / React / HTML / Canvas2D) + CI gate + docs (meta) | OPEN | n/a |
+| **1029** | P1 | Compat-sync hook (per-edit guardrail) — DELEGATED AGENT | OPEN — partial blocker on #1027; agent landing infrastructure against stub `compat.json` | n/a |
+| **1031** | P1 | Versioned source detection (parser-version + format-version + compat-schema-version + confirm-flow) — DELEGATED AGENT | OPEN — partial blocker on #995; agent landing schema + `--detect-only` / `--report-new-format` scaffolding | n/a |
+| **1042** | P1 | Import @pulp/react source into pulp/packages/pulp-react/ as monorepo package | OPEN — prerequisite for #994 | n/a |
+| **#995 sub-issues** | mixed | #1035 classnames.json, #1036 main.js extract, #1037 web-compat shims, #1038 DOM adapter, #1039 css-adapt wiring, #1040 esbuild config, #1041 `pulp design check` | OPEN — #1035 + #1039 (wave 2) in flight | n/a |
 
 **Closed earlier in this push** (do not re-open): #925 boxShadow · #926 backdropFilter · #927 Label fonts · #928 Label auto-grow · #929 Canvas visibility · #930 setTransform · #932 SkFontMgr font registration.
 
