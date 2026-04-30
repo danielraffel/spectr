@@ -455,26 +455,6 @@ function warnDropped(key: string): void {
 /// - Most children have zIndex=undefined → 0 → no movement
 /// - Only the few popovers with explicit zIndex move to end, preserving
 ///   flex layout for the normal-flow majority
-function _zIndexOf(child: ReactNode): number {
-    if (child == null || typeof child !== 'object') return 0;
-    if (Array.isArray(child)) return 0; // fragment / array: leave alone
-    const c = child as { props?: { style?: { zIndex?: unknown } } };
-    const z = c.props?.style?.zIndex;
-    if (z === undefined || z === null) return 0;
-    const n = typeof z === 'number' ? z : Number(z);
-    return Number.isFinite(n) ? n : 0;
-}
-
-function _sortByZIndex(children: ReactNode[]): ReactNode[] {
-    // Quick path: skip allocation if no child has a non-zero zIndex.
-    let needsSort = false;
-    for (const c of children) {
-        if (_zIndexOf(c) !== 0) { needsSort = true; break; }
-    }
-    if (!needsSort) return children;
-    return [...children].sort((a, b) => _zIndexOf(a) - _zIndexOf(b));
-}
-
 /// Workaround for pulp #994 (`@pulp/react` doesn't have an `SvgPath` intrinsic
 /// yet). Once #991 lands the C++ widget + JS bridge in v0.61.0, we route inline
 /// `<svg><path d="...">` icon JSX to the new bridge functions via a ref
@@ -516,63 +496,6 @@ function _buildSvgPathRef(
                     }
                     void parentId; // reserved for future createSvgPath(id, parentId) re-creation path
                 } catch { /* swallow — pre-v0.61.0 bridges silently no-op */ }
-            }
-        }
-        if (typeof existingRef === 'function') (existingRef as (i: unknown) => void)(instance);
-        else if (existingRef && typeof existingRef === 'object') {
-            (existingRef as { current: unknown }).current = instance;
-        }
-    };
-}
-
-/// Workaround for pulp #972 (Pulp View default `overflow: hidden`, CSS default
-/// `visible`). When a child has `position: absolute`, popovers / dropdowns /
-/// tooltips need to escape the parent's content bounds (CSS default behavior).
-/// We can't fix this at the adapter level for the parent's parent, so we
-/// detect at createElement time whether ANY direct child has `position:
-/// absolute` and force the parent's `overflow` to `visible` to match CSS.
-/// Recursively check whether any descendant has position:absolute.
-/// Walks via `.props.children` since React elements expose them there.
-function _hasAbsoluteDescendant(node: unknown, depth = 0): boolean {
-    if (node == null || depth > 8) return false;
-    if (typeof node !== 'object') return false;
-    if (Array.isArray(node)) {
-        for (const c of node) if (_hasAbsoluteDescendant(c, depth + 1)) return true;
-        return false;
-    }
-    const elem = node as { props?: { style?: { position?: string }, position?: string, children?: unknown } };
-    if (elem.props?.style?.position === 'absolute') return true;
-    if (elem.props?.position === 'absolute') return true;
-    const kids = elem.props?.children;
-    if (kids !== undefined && _hasAbsoluteDescendant(kids, depth + 1)) return true;
-    return false;
-}
-
-function _hasAbsoluteChild(children: ReactNode[]): boolean {
-    for (const c of children) {
-        if (_hasAbsoluteDescendant(c)) return true;
-    }
-    return false;
-}
-
-/// Build a ref callback that calls `setOverflow(id, mode)` on the bridge
-/// when the element mounts. Composes with any existing user ref so we
-/// don't break refs the JSX author already attached.
-///
-/// Workaround for pulp #972 — Pulp's View defaults `overflow: hidden`
-/// (CSS default is `visible`), which clips popovers / dropdowns / tooltips
-/// to parent bounds. @pulp/react's prop-applier doesn't have a case for
-/// the `overflow` prop, so we route via a ref callback instead.
-function _buildOverflowRef(
-    mode: 'visible' | 'hidden',
-    existingRef: unknown,
-): (instance: unknown) => void {
-    return (instance: unknown) => {
-        if (instance && typeof instance === 'object') {
-            const id = (instance as { id?: unknown }).id;
-            const setOverflow = (globalThis as { setOverflow?: (id: string, mode: string) => unknown }).setOverflow;
-            if (typeof id === 'string' && typeof setOverflow === 'function') {
-                try { setOverflow(id, mode); } catch { /* swallow */ }
             }
         }
         if (typeof existingRef === 'function') (existingRef as (i: unknown) => void)(instance);
@@ -880,13 +803,9 @@ export function createElement(
                 wrapped.push(c);
             }
         }
-        // [v0.62.0] #972 fix landed in framework — workarounds disabled.
-        // _hasAbsoluteChild + _buildOverflowRef + _sortByZIndex retained but no-op
-        // unless pre-v0.62.0 SDK is detected.
         return pulpCreateElement(target as never, adapted as never, ...wrapped);
     }
 
-    // [v0.62.0] #972 fix landed in framework — overflow + z-index workarounds disabled.
     return pulpCreateElement(target as never, adapted as never, ...children);
 }
 
