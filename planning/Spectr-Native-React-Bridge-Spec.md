@@ -265,7 +265,13 @@ Each row is a **specific user-visible difference** between the WebView build and
 | `<input type=range>` (faders) | native range UI | now uses RangeSlider widget (#1004 v0.64.0) | n/a | `8f1df47` (range→Fader) — can drop when @pulp/react adds `<input type=range>` intrinsic |
 | Canvas background | transparent | transparent ✓ | **#967** closed v0.61.0 | `fa74d5f` was added but is now redundant — **deferred drop** until next worktree pass |
 | Top-bar tabs (LIVE / PRECISION / 8R / FFT / HYBRID) | clickable, active-tinted | clickable ✓ (post-#1073), but active-state styling differs slightly (cursor/hover-state not propagated) | **#1148** related (active-state + hover) | none |
-| Bands picker dropdown ("32 40 48 56 64") | clickable picks | opens but selecting a number does nothing | **#1148** | none |
+| Bands picker dropdown ("32 40 48 56 64") | clickable picks | opens; **64 (rightmost) selects ✓; 32/40 (leftmost) silently no-op** — confirms one-directional `overflow:visible` hit-test bounds (Codex root-cause for #1148, dropdown extends leftward past trigger's x-range) | **#1148** | none |
+| IR / FFT / HYBRID Segmented control (top toolbar) | three pills inline horizontally | pills stack **vertically** (left-aligned, "randomly placed") — direct symptom of `display:flex` defaulting to column not row in Pulp (Codex root-cause for #1147) | **#1147** | none — would be unblocked if `display:flex` defaulted to `flex-direction: row` |
+| LIVE / PRECISION Segmented control | inline pills | same column-default symptom | **#1147** | none |
+| PRESETS dropdown → MANAGE… item | opens PatternManager modal | clicking MANAGE doesn't open the modal (click in overlay item silently no-ops) | **#1148** | none |
+| PRESETS dropdown → Apply pattern (FACTORY items) | applies preset, closes menu | dropdown closes but **gain values don't visibly change** in canvas (could be #964 canvas + #1148 click both contributing — needs isolation after #964 lands) | **#964** + **#1148** | none |
+| Settings modal sliders | drag to set value | mouse down inside modal doesn't reach slider widgets — same hit-test overflow-bounds issue | **#1148** | none |
+| Tabs (LIVE/PRECISION/8R/FFT/HYBRID) clicking | reliable selection | inconsistent — some clicks register, some don't, depending on whether the pill's hit-bounds escaped the toolbar parent | **#1148** | none |
 
 ### Resolved (closed framework issues — full audit list)
 - **#925** boxShadow • **#926** backdropFilter • **#927** Label fonts • **#928** Label auto-grow • **#929** Canvas visibility • **#930** setTransform • **#932** SkFontMgr (initial registration — but typography fidelity has regressed; tracking via #1070)
