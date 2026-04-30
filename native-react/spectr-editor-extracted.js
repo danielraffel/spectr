@@ -4001,7 +4001,7 @@ function App() {
   }, [fireStatus]);
 
   return (
-    <div style={{ position: 'absolute', inset: 0 }} data-screen-label="Spectr main">
+    <div style={{ position: 'absolute', top: 0, left: 0, width: 1320, height: 860, background: '#0a0e14' }} data-screen-label="Spectr main">
       <FilterBank settings={settings} sharedState={bankRef} onStatus={fireStatus} dspMode={dspMode} editMode={editMode} analyzerMode={analyzerMode} onEditModeChange={(v) => { setEditMode(v); fireStatus(`EDIT → ${v.toUpperCase()}`); }} />
       <Chrome
         settings={settings}
