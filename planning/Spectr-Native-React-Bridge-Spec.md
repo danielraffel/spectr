@@ -244,10 +244,32 @@ If you `open ./build/Spectr.app` right now, here's what you'll see and what won'
 | `fa74d5f` | active but redundant | #967 closed via #973 contract; safe to revert |
 | `def0c9c` | active but redundant | #968 closed via #1003 in v0.65.0; safe to revert |
 
-## Framework gaps (Pulp umbrella #924) _(state 2026-04-30)_
+## Framework gaps (Pulp umbrella #924) _(state 2026-04-30, v0.68.0)_
 
-### Closed
-- **#925** boxShadow • **#926** backdropFilter • **#927** Label fonts • **#928** Label auto-grow • **#929** Canvas visibility • **#930** setTransform • **#932** SkFontMgr (closed earlier in the umbrella)
+### UX-parity inventory — WebView reference vs native v0.68.0
+
+Each row is a **specific user-visible difference** between the WebView build and the native build. **Resolved requires double-confirm** — agent must claim fix, then user must verify against the WebView reference and explicitly say "yes confirmed". Do not move a row to "Resolved" without that.
+
+| Surface | WebView | Native v0.68.0 | Open framework issue | Spectr-side mitigation |
+|---|---|---|---|---|
+| FilterBank canvas | full spectrum, 32-band cells | empty white area | **#964** (Canvas2D shim) | none — wait for #1020 |
+| App-root layout | fills 1320×860 | only fills bottom strip without explicit size | **#998** (position:absolute regression) | `346eb64` explicit w/h + bg |
+| PRESETS dropdown | dark panel, FACTORY label, ★ items | renders content but letter-spacing wrong | **#1070** (letter-spacing) | none |
+| PEAK / ANALYZER popover | 4 rows with color-pill + label + description | header only; description text escapes panel to the right; SVG missing; inactive rows invisible | **#1147** (popover render) | none |
+| SCULPT / EDIT MODE popover | 5 rows with SVG icon + label/tagline/desc | header + 1 empty active-row outline; everything else missing | **#1147** (popover render) | none |
+| Click on dropdown item (BANDS, SCULPT row, PRESET) | selects + closes | nothing happens | **#1148** (overlay click dispatch) | none |
+| Click outside dropdown | closes menu | stays open | **#1148** (outside-click affordance) | none |
+| ESC with dropdown open | closes menu | nothing happens | **#1148** (keyboard handling) | none |
+| Inline `<svg><path>` (icons) | renders | not rendered | **#994** (SvgPath intrinsic, blocked on #1042 — merged via #1050 but issue still OPEN) | `_buildSvgPathRef` for some cases |
+| Typography (`var(--mono)` / `var(--sans)`) | Inter / IBM Plex Mono shipped | falls back to system font (TextShaper landed via #957 but Spectr's `external/fonts/*.ttf` not registered with SkFontMgr) | **#932** (SkFontMgr registration — REOPENED scope per #1070 typography drift) | none — needs `pulp register-font` or asset embed |
+| `<input type=range>` (faders) | native range UI | now uses RangeSlider widget (#1004 v0.64.0) | n/a | `8f1df47` (range→Fader) — can drop when @pulp/react adds `<input type=range>` intrinsic |
+| Canvas background | transparent | transparent ✓ | **#967** closed v0.61.0 | `fa74d5f` was added but is now redundant — **deferred drop** until next worktree pass |
+| Top-bar tabs (LIVE / PRECISION / 8R / FFT / HYBRID) | clickable, active-tinted | clickable ✓ (post-#1073), but active-state styling differs slightly (cursor/hover-state not propagated) | **#1148** related (active-state + hover) | none |
+| Bands picker dropdown ("32 40 48 56 64") | clickable picks | opens but selecting a number does nothing | **#1148** | none |
+
+### Resolved (closed framework issues — full audit list)
+- **#925** boxShadow • **#926** backdropFilter • **#927** Label fonts • **#928** Label auto-grow • **#929** Canvas visibility • **#930** setTransform • **#932** SkFontMgr (initial registration — but typography fidelity has regressed; tracking via #1070)
+- **#945** TextShaper platform font manager wired (closed via #957, v0.59.0)
 - **#965** Standalone SVG-path widget — closed by #991 in v0.61.0
 - **#966** Range-slider widget — closed by #1004 in v0.64.0
 - **#967** View transparent default — closed by #973 contract tests in v0.61.0 (premise was stale)
@@ -255,6 +277,15 @@ If you `open ./build/Spectr.app` right now, here's what you'll see and what won'
 - **#969** Typography inheritance — closed by #1002 in v0.63.0
 - **#972** View::paint_all() honors z-index + overflow defaults visible — closed by #996 in v0.62.0
 - **#992** PulpView::mouseUp SIGSEGV — closed by #1001 in v0.62.0
+- **#1006 / #1067** click-event dispatch (top-level only) — closed by #1008 + #1073 in v0.68.0
+
+### Resolution gate
+
+> **Double-confirmation rule** — for any row in "UX-parity inventory" to move to "Resolved", BOTH conditions must hold:
+> 1. The agent has rebuilt Spectr against the SDK that includes the fix and captured a side-by-side WebView vs native screenshot showing parity.
+> 2. The user has explicitly confirmed against the running build, e.g. "yes the PEAK dropdown matches the WebView now."
+>
+> No row moves on agent self-attest alone.
 
 ### Open
 
