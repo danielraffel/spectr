@@ -60,10 +60,37 @@ const TAG_MAP: Record<string, Mapped | null> = {
     g: 'View',
     rect: 'View',
     line: 'View',
+    // <path> prefers the @pulp/react SvgPath intrinsic (pulp #994 /
+    // #1291, shipped in v0.69.2). Detected at runtime — falls back to
+    // 'View' + ref-callback (`_buildSvgPathRef`) on older SDKs that
+    // don't expose the bridge primitive. The actual selection happens
+    // in `tagToWidget` below since we need to inspect globalThis.
     path: 'View',
     circle: 'View',
     text: 'Label',
 };
+
+/// Returns the host-element type for a given HTML tag, with runtime
+/// upgrade for `<path>` to the SvgPath intrinsic when @pulp/react +
+/// the bridge support it (v0.69.2+). Falls back to the static map for
+/// every other tag.
+function tagToWidget(tag: string): string {
+    if (tag === 'path') {
+        const g = globalThis as Record<string, unknown>;
+        // SvgPath JSX intrinsic landed via #1291 — bridge fns
+        // createSvgPath/setSvgPath/setSvgViewBox/setSvgFill/
+        // setSvgStroke/setSvgStrokeWidth all need to be registered.
+        // When all present, render as the intrinsic and let prop-applier
+        // wire `d` / `viewBox` / `fill` / `stroke` / `strokeWidth`.
+        // The legacy ref-callback workaround stays as a fallback for
+        // pre-v0.69.2 SDKs (still fires below in the SvgPath code path).
+        if (typeof g.createSvgPath === 'function' &&
+            typeof g.setSvgPath === 'function') {
+            return 'SvgPath';
+        }
+    }
+    return TAG_MAP[tag] ?? 'View';
+}
 
 /// Table-driven CSS-key → bridge-prop translation. Each row is
 /// {cssKey, hostKey, parser}. Lets us stay declarative and extend
@@ -354,6 +381,20 @@ function adaptStyle(style: CSSProperties | undefined): Record<string, unknown> {
                 out.height = 860;
             }
         }
+        // Overlay click-routing opt-in (pulp #1148 / #1297). Any
+        // position:absolute element that ISN'T fill-parent (so
+        // pop-overs / dropdowns / modals — not 4-edge-pinned overlays
+        // like the FilterBank canvas backplate) is a candidate for
+        // first-crack click routing via View::active_overlay_. Activates
+        // when @pulp/react has the `overlay` prop AND the bridge has
+        // claimOverlay/releaseOverlay registered (v0.71.0+ via #1297);
+        // no-op pre-v0.71.0.
+        if (!isInsetZero) {
+            const g = globalThis as Record<string, unknown>;
+            if (typeof g.claimOverlay === 'function') {
+                out.overlay = true;
+            }
+        }
     } else if (pos) {
         out.position = pos;
     }
@@ -527,7 +568,7 @@ export function createElement(
         return pulpCreateElement(type as never, props as never, ...children);
     }
     const tag = type.toLowerCase();
-    let target = TAG_MAP[tag] ?? 'View';
+    let target = tagToWidget(tag);
 
     const inProps = (props ?? {}) as Record<string, unknown>;
     // <input type="range"> → Fader (Pulp's linear control). Plain HTML
