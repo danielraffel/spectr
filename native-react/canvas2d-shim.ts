@@ -346,18 +346,33 @@ export function wrapCanvasInstance(instance: { id: string }): {
         get width() { return pendingW; },
         set width(v: number) {
             // HTML5 semantics: canvas.width sets the BACKING BUFFER
-            // resolution, NOT the widget's layout/CSS width. Spectr
-            // sets canvas.width = 2640 (2× DPI) for crisp rendering;
-            // we mustn't propagate that to setFlex or the widget
-            // becomes 2640px wide in its 1320px parent and overflows.
-            // The DPI scale is already applied via canvasSetTransform
-            // on the bridge side, so just store the value for any
-            // bundle code that reads it back (e.g. inner.w math).
+            // resolution. Spectr sets canvas.width = 2640 (2× DPI)
+            // for crisp rendering; canvasSetTransform on the bridge
+            // side handles the DPI scale for drawing. But the
+            // widget itself ALSO needs a logical layout size or
+            // Yoga sees 0×0 bounds and the canvas is invisible
+            // (regression from def0c9c — see pulp #1322). Divide
+            // by DPR so the widget is sized in CSS pixels (1320)
+            // while the backing buffer keeps the 2× resolution.
             pendingW = v;
+            const dpr = (typeof globalThis !== 'undefined' &&
+                        ((globalThis as { devicePixelRatio?: number }).devicePixelRatio ?? 2)) || 2;
+            const g = globalThis as Record<string, unknown>;
+            const setFlex = g.setFlex as ((id: string, key: string, val: number) => void) | undefined;
+            if (typeof setFlex === 'function') {
+                setFlex(instance.id, 'width', v / dpr);
+            }
         },
         get height() { return pendingH; },
         set height(v: number) {
             pendingH = v;
+            const dpr = (typeof globalThis !== 'undefined' &&
+                        ((globalThis as { devicePixelRatio?: number }).devicePixelRatio ?? 2)) || 2;
+            const g = globalThis as Record<string, unknown>;
+            const setFlex = g.setFlex as ((id: string, key: string, val: number) => void) | undefined;
+            if (typeof setFlex === 'function') {
+                setFlex(instance.id, 'height', v / dpr);
+            }
         },
         getContext(_t: string) { return shim; },
         getBoundingClientRect(): DOMRect {
