@@ -244,7 +244,9 @@ If you `open ./build/Spectr.app` right now, here's what you'll see and what won'
 | `fa74d5f` | active but redundant | #967 closed via #973 contract; safe to revert |
 | `def0c9c` | active but redundant | #968 closed via #1003 in v0.65.0; safe to revert |
 
-## Framework gaps (Pulp umbrella #924) _(state 2026-04-30, v0.68.0)_
+## Framework gaps (Pulp umbrella #924) _(state 2026-05-03, v0.69.1)_
+
+> **2026-05-03 update.** v0.69.0 + v0.69.1 closed 4 of the most-visible v0.68.0 audit symptoms (segmented-control vertical stacking #1147-partial via #1167; FilterBank canvas #964; App-root layout-bottom-strip #998-partial; click-bubble dispatch fully via #1008/#1073). Idle WebView↔Native parity is essentially achieved at v0.69.1 — see `planning/audit-2026-05-03-webview-vs-native-v0.69.1.md` for the side-by-side diff. Interactive surfaces (popovers, settings, drag) are blocked on **#1295** (in CI — root-cause fix for #1292 React-instance dedup) before they can be re-audited; the launch race makes Spectr crash on direct exec ~100% of cold starts pre-fix. New Spectr-impacting issues filed during this audit pass: **#1290** (CLI main 0% diff-cov blocking #1060), **#1292** (React dispatcher race — fix at #1295), and a design pointer on **#1148** mirroring April-18 ComboBox overlay-click-routing pattern (subagent implementing in `feature/overlay-click-routing-1148`).
 
 ### UX-parity inventory — WebView reference vs native v0.68.0
 
