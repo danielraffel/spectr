@@ -147,6 +147,49 @@ pulp's — Namespace runners as the default (pulp flipped the default on
 2026-04-24 per the `ci/namespace-default` PR in flight), with local
 macOS in parallel via `shipyard ship`.
 
+## Post-UX-parity work queue (2026-05-03)
+
+Sequencing of the next three Spectr-relevant phases, in priority order.
+
+### Active phase — close WebView↔Native UX parity
+
+The single gating phase. Until this closes, no design-loop / reimport / open-design work begins.
+
+| pulp # | Title | State |
+|---|---|---|
+| #1147 | Popover render parity | OPEN |
+| #1148 | Overlay click dispatch | PR #1297 in flight (subagent landed 2026-05-03) |
+| #1070 | Typography drift | OPEN |
+| #1292 | @pulp/react useState=null crash | CLOSED via #1295 (root-cause React-dedup), shipping in v0.69.3 (PR #1309) |
+| #998 | Layout regression Spectr workaround removal | OPEN |
+
+When all five close: umbrella **#1307** (reimport-safe design loop) unblocks.
+
+### Unblocked next phase — reimport-safe design loop (umbrella #1307)
+
+Filed 2026-05-03 by the reimport-investigation subagent. Spec at `planning/Spectr-Reimport-Safe-Loop-Spec.md`; assessment artifacts in `planning/reimport/`. Sub-issues, in suggested implementation order:
+
+| pulp # | Title | Notes |
+|---|---|---|
+| #1299 | Stable IR node IDs (path × tag × role × ordinal × text-tie-break) | Foundational seam |
+| #1300 | Lockfile + 3-way merge for reimport (`.pulp-import.json`) | Foundational seam |
+| #1301 | DSP binding ledger keyed by stable id | Foundational seam |
+| #1303 | Generated-vs-owned file boundary + `@generated` banners | Foundational seam |
+| #1302 | Load `compat.json` at runtime, classify props, emit `import-report.json` | Parallel slice |
+| #1304 | `--from open-design` adapter (parser-only) | Parallel slice — narrowed (see #1311) |
+| #1305 | `pulp diff` + `pulp ui validate` agent-friendly verbs | Parallel slice |
+| #1306 | Emit `assets/` directory + asset-sha256 lockfile entries | Parallel slice |
+
+### Subsequent phase — open-design CLI/plugin extension
+
+Filed 2026-05-03 as **#1311** (companion to #1304's parser slice). Adds the multi-type artifact dispatch surface (`--type <kind>` orthogonal to `--from`), stdin streaming (`--file -`), manifest-based artifact selection (`--manifest` + `--artifact-id`), and plugin slash-command + skill updates. Borrows 4 additional patterns from open-design (anti-slop linter, manifest-version field, skill front-matter `pulp:` block, multi-CLI agent detection probe) — captured as a comment on #1307, not filed as separate issues.
+
+### Future phases (placeholders)
+
+- **Sampler Phase 4** — binary-asset-drop API + sampler-specific bridge handlers, file when triggered (`spectr/planning/Spectr-Sampler-Phase-Spec.md`, links pulp #709)
+- **Spectr CI** — Namespace-first wiring once M10 closes (per `feedback_spectr_ci_namespace`)
+- **WebView → Native editor migration** — pending pulp v0.44.x / native-runtime harness validation (per the v1 plan and pulp #729)
+
 ## Quick reference — file paths
 
 - Status doc: `planning/Spectr-Status.md` (this file)
