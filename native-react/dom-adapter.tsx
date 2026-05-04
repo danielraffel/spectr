@@ -102,10 +102,19 @@ function tagToWidget(tag: string): string {
 /// unmount-remount cycles).
 const __pointerArmed: Set<string> = new Set();
 function armPointerOnce(id: string): void {
-    if (__pointerArmed.has(id)) return;
+    const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
+    if (__pointerArmed.has(id)) { if (lg) lg('[armPtr] ' + id + ' already-armed'); return; }
     const rp = (globalThis as { registerPointer?: (s: string) => void }).registerPointer;
-    if (typeof rp === 'function') {
-        try { rp(id); __pointerArmed.add(id); } catch (_e) {}
+    if (typeof rp !== 'function') {
+        if (lg) lg('[armPtr] ' + id + ' MISSING registerPointer (typeof=' + typeof rp + ')');
+        return;
+    }
+    try {
+        rp(id);
+        __pointerArmed.add(id);
+        if (lg) lg('[armPtr] ' + id + ' OK');
+    } catch (e) {
+        if (lg) lg('[armPtr] ' + id + ' THREW ' + (e && (e as Error).message));
     }
 }
 

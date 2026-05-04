@@ -1301,7 +1301,13 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
         ctx.closePath();
         ctx.fill();
       } else {
-        ctx.fillRect(G.cx - G.innerW / 2, Math.min(G.topY, G.botY), G.innerW, Math.abs(G.botY - G.topY) + 0.5);
+        // Minimum 2px visible height even at gain=0 so each band column is
+        // always identifiable as a baseline marker (matches WebView, where
+        // sub-pixel +0.5 height rounds to a visible line; CG canvas rounds
+        // to zero pixels = invisible). Spectr issue B-1 / pulp #1382 followup.
+        const h = Math.max(2, Math.abs(G.botY - G.topY) + 0.5);
+        const yTop = (G.botY === G.topY) ? G.topY - h / 2 : Math.min(G.topY, G.botY);
+        ctx.fillRect(G.cx - G.innerW / 2, yTop, G.innerW, h);
       }
 
       // Razor edges (sharp) — skip for non-column metaphors (shape itself carries the edge)
@@ -1757,10 +1763,12 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
   };
 
   const onPointerDown = (e) => {
+    try { if (window.__spectrLog) window.__spectrLog('[pdown] cx=' + e.clientX + ' cy=' + e.clientY + ' tgt=' + (e.target && e.target.tagName)); } catch(_){}
     const g = getGeom();
-    if (!g) return;
+    if (!g) { try { if (window.__spectrLog) window.__spectrLog('[pdown] NO-GEOM'); } catch(_){} return; }
     const rect = wrapRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    try { if (window.__spectrLog) window.__spectrLog('[pdown] inner-x=' + x.toFixed(0) + ' inner-y=' + y.toFixed(0) + ' rect=' + rect.left + ',' + rect.top); } catch(_){}
     const shift = e.shiftKey, alt = e.altKey, meta = e.metaKey || e.ctrlKey;
     // Pulp's bridge view instances ship without setPointerCapture; guard so a
     // missing-method call doesn't kill the rest of the handler.

@@ -29,33 +29,40 @@ function call(name: string, ...args: unknown[]): unknown {
         return undefined;
     }
     _callN++;
-    let nanIdx = -1;
+    // Detect any non-finite numeric arg (NaN OR ±Infinity). Pulp's
+    // CG canvas does NOT defensively reject non-finite coords — and
+    // unlike NaN (which collapses to "no draw"), Infinity dimensions
+    // render as "fill the entire clip region", producing a solid
+    // single-color block inside the band area on band-drag (Spectr
+    // issue B / pulp #1382 follow-up — green-screen bug).
+    let badIdx = -1;
+    let badKind = '';
     for (let i = 0; i < args.length; i++) {
         const a = args[i];
-        if (typeof a === 'number' && a !== a) { nanIdx = i; break; }
+        if (typeof a === 'number' && !Number.isFinite(a)) {
+            badIdx = i;
+            badKind = (a !== a) ? 'NaN' : (a > 0 ? '+Inf' : '-Inf');
+            break;
+        }
     }
-    const trigger = _callN <= 8 || _callN % 200 === 0 || (nanIdx >= 0 && _nanReports < 24);
+    const trigger = _callN <= 8 || _callN % 200 === 0 || (badIdx >= 0 && _nanReports < 48);
     if (trigger) {
         const lg = (g as Record<string, AnyFn | undefined>).__spectrLog;
         if (lg) {
-            if (nanIdx >= 0) {
+            if (badIdx >= 0) {
                 _nanReports++;
                 _nanByName[name] = (_nanByName[name] ?? 0) + 1;
             }
-            const tag = nanIdx >= 0 ? '[NaN#' + _nanReports + '|n=' + _callN + ']'
-                                    : '[canvas#' + _callN + ']';
+            const tag = badIdx >= 0
+                ? '[' + badKind + '#' + _nanReports + '|n=' + _callN + ']'
+                : '[canvas#' + _callN + ']';
             lg(tag + ' ' + name + '(' +
                 args.slice(0, 6).map(a => typeof a === 'string' ? a.slice(0, 30) : String(a)).join(',') +
                 (args.length > 6 ? ',...' : '') + ')' +
-                (nanIdx >= 0 ? ' nanIdx=' + nanIdx : ''));
+                (badIdx >= 0 ? ' badIdx=' + badIdx : ''));
         }
     }
-    // Skip the bridge call entirely if any numeric arg is NaN. Pulp's
-    // canvas pipeline DOES NOT defensively reject NaN — a single NaN x
-    // / y / w / h corrupts the CGContext / Skia surface for the rest
-    // of the frame and produces a blank canvas. Drop the bad call,
-    // log it (above), keep painting. spectr #32 / #1382 follow-up.
-    if (nanIdx >= 0) return undefined;
+    if (badIdx >= 0) return undefined;
     return fn(...args);
 }
 export function _canvasNanSummary(): string {
