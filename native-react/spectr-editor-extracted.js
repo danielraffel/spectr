@@ -2178,10 +2178,6 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
         position: 'absolute', inset: 0,
         cursor: 'crosshair',
         touchAction: 'none',
-        // pulp #1322 / #1370 — main canvas (pr_1) draws are pushed above
-        // the visible region (Y-flip-like fingerprint) so paint dark from
-        // this regular View widget which renders correctly.
-        background: '#0a0e14',
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -2202,8 +2198,18 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
         });
       }}
     >
-      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
+      {/* pulp #1368 workaround — pulp's per-canvas-sibling paint pipeline
+          discards the FIRST canvas-widget child of a parent View. We need
+          the MAIN canvas (with the analyzer) to be the SECOND sibling so
+          its paint survives. Original order was main → overlay (overlay
+          was painted-on-top in browsers). Native bridge's first-sibling-
+          wipe accidentally inverts this: putting overlay first, main
+          second produces the right z-order AND keeps main visible. The
+          overlay's own draws (selection, marquee, hover) are sparse and
+          high-alpha enough that being clipped is mostly cosmetic until
+          the framework fix lands. */}
       <canvas ref={overlayRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
       {ctxMenu && (
         <ContextMenu
           x={ctxMenu.x} y={ctxMenu.y} band={ctxMenu.band} N={N}
