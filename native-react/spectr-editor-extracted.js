@@ -2178,12 +2178,9 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
         position: 'absolute', inset: 0,
         cursor: 'crosshair',
         touchAction: 'none',
-        // pulp #1322 — paint dark bg from FilterBank wrap (a regular
-        // View widget, where View::paint correctly fills bg). The
-        // canvas widgets above are transparent — their alpha-low
-        // analyzer overlays composite over this dark, matching the
-        // WebView behavior where the parent <div>'s CSS bg shows
-        // through transparent canvas regions.
+        // pulp #1322 / #1370 — main canvas (pr_1) draws are pushed above
+        // the visible region (Y-flip-like fingerprint) so paint dark from
+        // this regular View widget which renders correctly.
         background: '#0a0e14',
       }}
       onPointerDown={onPointerDown}
