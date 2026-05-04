@@ -889,13 +889,19 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     // ---- Fill under instantaneous curve with spectral gradient (subtle, under everything) ----
     if (mode === 'peak' || mode === 'both') {
       const grad = ctx.createLinearGradient(inner.x, 0, inner.x + inner.w, 0);
-      grad.addColorStop(0.00, `hsla(240, 80%, 55%, ${0.18 * spectrumIntensity})`);
-      grad.addColorStop(0.25, `hsla(200, 85%, 55%, ${0.18 * spectrumIntensity})`);
-      grad.addColorStop(0.50, `hsla(150, 85%, 55%, ${0.18 * spectrumIntensity})`);
-      grad.addColorStop(0.75, `hsla( 60, 90%, 60%, ${0.18 * spectrumIntensity})`);
-      grad.addColorStop(1.00, `hsla(  0, 85%, 60%, ${0.18 * spectrumIntensity})`);
+      // pulp #1371 — CoreGraphicsCanvas::set_blend_mode is a silent no-op
+      // in CPU mode, so 'lighter' (additive) doesn't produce the vivid
+      // additive blend WebView shows. Bump base alpha 0.18 → 0.50 so the
+      // SrcOver fallback still shows visible color. Drop 'lighter' to
+      // avoid the no-op call. After #1371 lands, restore alpha 0.18 +
+      // 'lighter' for proper additive blending.
+      grad.addColorStop(0.00, `hsla(240, 80%, 55%, ${0.50 * spectrumIntensity})`);
+      grad.addColorStop(0.25, `hsla(200, 85%, 55%, ${0.50 * spectrumIntensity})`);
+      grad.addColorStop(0.50, `hsla(150, 85%, 55%, ${0.50 * spectrumIntensity})`);
+      grad.addColorStop(0.75, `hsla( 60, 90%, 60%, ${0.50 * spectrumIntensity})`);
+      grad.addColorStop(1.00, `hsla(  0, 85%, 60%, ${0.50 * spectrumIntensity})`);
 
-      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalCompositeOperation = 'source-over';
       ctx.beginPath();
       ctx.moveTo(inner.x, zeroY);
       for (let i = 0; i <= steps; i++) {
@@ -2198,18 +2204,13 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
         });
       }}
     >
-      {/* pulp #1368 workaround — pulp's per-canvas-sibling paint pipeline
-          discards the FIRST canvas-widget child of a parent View. We need
-          the MAIN canvas (with the analyzer) to be the SECOND sibling so
-          its paint survives. Original order was main → overlay (overlay
-          was painted-on-top in browsers). Native bridge's first-sibling-
-          wipe accidentally inverts this: putting overlay first, main
-          second produces the right z-order AND keeps main visible. The
-          overlay's own draws (selection, marquee, hover) are sparse and
-          high-alpha enough that being clipped is mostly cosmetic until
-          the framework fix lands. */}
-      <canvas ref={overlayRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+      {/* Native order matches WebView: main canvas (analyzer) drawn first,
+          overlay canvas (selection / marquee / hover) drawn on top. Pulp
+          v0.74.1 (#1372) wraps each CanvasWidget's JS replay in its own
+          save_layer, so sibling clearRect / kClear no longer erases the
+          parent surface. */}
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
+      <canvas ref={overlayRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
       {ctxMenu && (
         <ContextMenu
           x={ctxMenu.x} y={ctxMenu.y} band={ctxMenu.band} N={N}

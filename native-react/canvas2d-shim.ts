@@ -71,13 +71,21 @@ class GradientShim {
     /// Push to bridge as the active gradient. Caller should clear
     /// before the next solid-color fill.
     install(): void {
-        // canvasSetLinearGradient(id, x0, y0, x1, y1, stops_json)
-        // canvasSetRadialGradient(id, x0, y0, r0, x1, y1, r1, stops_json)
-        const stopsJson = JSON.stringify(this.stops);
+        // pulp #1348 bridge contract:
+        //   canvasSetLinearGradient(id, x0, y0, x1, y1, color1, pos1, color2, pos2, ...)
+        //   canvasSetRadialGradient(id, cx, cy, radius, color1, pos1, color2, pos2, ...)
+        // Stops are passed as alternating (color, position) args, NOT as a JSON
+        // string. The bridge reads each pair via args.get(i)/args.get(i+1).
+        const stopArgs: (string | number)[] = [];
+        for (const s of this.stops) { stopArgs.push(s.color, s.offset); }
         if (this.type === 'linear') {
-            call('canvasSetLinearGradient', this.canvasId, ...this.args, stopsJson);
+            // type 'linear' args = [x0, y0, x1, y1]
+            call('canvasSetLinearGradient', this.canvasId, ...this.args, ...stopArgs);
         } else {
-            call('canvasSetRadialGradient', this.canvasId, ...this.args, stopsJson);
+            // type 'radial' args = [x0, y0, r0, x1, y1, r1] — bridge accepts only
+            // single-circle radial today, so use the OUTER circle (x1, y1, r1).
+            const [, , , x1, y1, r1] = this.args;
+            call('canvasSetRadialGradient', this.canvasId, x1, y1, r1, ...stopArgs);
         }
     }
 }

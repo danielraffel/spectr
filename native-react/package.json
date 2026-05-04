@@ -14,7 +14,7 @@
     "build:repro-1148": "esbuild repros/repro-1148-overlay-clicks.tsx --bundle --format=iife --platform=neutral --target=es2020 --loader:.js=jsx --jsx-factory=createElement --jsx-fragment=Fragment --alias:react/jsx-runtime=./jsx-runtime-shim.ts --alias:react/jsx-dev-runtime=./jsx-runtime-shim.ts --define:process.env.NODE_ENV='\"production\"' --outfile=dist/repro-1148.body.js && cat shim.js dist/repro-1148.body.js > dist/repro-1148.js && rm dist/repro-1148.body.js"
   },
   "dependencies": {
-    "@pulp/react": "file:/tmp/pulp-react/packages/pulp-react/pulp-react-0.0.1.tgz",
+    "@pulp/react": "file:../../../../../tmp/pulp-react/packages/pulp-react/pulp-react-0.0.1.tgz",
     "react": "^18.3.1"
   },
   "devDependencies": {
