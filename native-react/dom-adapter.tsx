@@ -92,6 +92,23 @@ function tagToWidget(tag: string): string {
     return TAG_MAP[tag] ?? 'View';
 }
 
+/// Spectr #32 — pulp gates pointer dispatch behind registerPointer(id).
+/// @pulp/react's prop-applier only wires registerHover, so onPointerDown
+/// listeners install in the JS dispatch table but never fire. We arm
+/// pointer dispatch from the dom-adapter when an instance is mounted —
+/// but ONLY ONCE per id. Calling registerPointer on every ref-mount
+/// re-creates the bridge lambda each time and starves the canvas paint
+/// pump (manifests as a blank canvas with constantly-flickering
+/// unmount-remount cycles).
+const __pointerArmed: Set<string> = new Set();
+function armPointerOnce(id: string): void {
+    if (__pointerArmed.has(id)) return;
+    const rp = (globalThis as { registerPointer?: (s: string) => void }).registerPointer;
+    if (typeof rp === 'function') {
+        try { rp(id); __pointerArmed.add(id); } catch (_e) {}
+    }
+}
+
 /// Table-driven CSS-key → bridge-prop translation. Each row is
 /// {cssKey, hostKey, parser}. Lets us stay declarative and extend
 /// in one place rather than scattering switch statements.
@@ -731,17 +748,12 @@ export function createElement(
             const callback = (instance: unknown) => {
                 const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
                 if (lg) lg('[ref-cb-canvas] inst=' + (instance ? 'object' : 'null'));
-                // Spectr #32 — register pointer dispatch on canvas widgets too,
-                // so clicks landing on a canvas (which sits ON TOP of the wrap
-                // visually) get dispatched up through React's synthetic event
-                // system to the wrap's onPointerDown handler.
+                // Spectr #32 — register pointer dispatch ONCE per canvas widget
+                // id. Calling registerPointer on every ref-mount creates a new
+                // dispatch lambda on the bridge, which churns and starves the
+                // canvas paint pump. Track per-id idempotently.
                 const cId = instance && (instance as { id?: string }).id;
-                if (cId) {
-                    const rp = (globalThis as { registerPointer?: (s: string) => void }).registerPointer;
-                    if (typeof rp === 'function') {
-                        try { rp(cId); } catch (_e) {}
-                    }
-                }
+                if (cId) armPointerOnce(cId as string);
                 const wrapped = instance && (instance as { id?: string }).id
                     ? wrapCanvasInstance(instance as { id: string })
                     : instance;
@@ -772,12 +784,7 @@ export function createElement(
                     // bridge side and keeps pointer-driven UX (FilterBank
                     // gain drag, dropdown overlay-click routing) alive.
                     const id = inst.id as string | undefined;
-                    if (id) {
-                        const rp = (globalThis as { registerPointer?: (s: string) => void }).registerPointer;
-                        if (typeof rp === 'function') {
-                            try { rp(id); } catch (_e) {}
-                        }
-                    }
+                    if (id) armPointerOnce(id);
                     if (typeof inst.getBoundingClientRect !== 'function') {
                         // The wrap div is App's main 1320×860 viewport (FilterBank
                         // fills it via position:absolute, inset:0). Earlier this
