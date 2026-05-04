@@ -2045,6 +2045,24 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     setView({ lmin, lmax });
   };
 
+  // Stable handlers — inline lambdas in JSX would create a new function
+  // every render, which the dom-adapter sees as a prop change and
+  // re-binds to the bridge each frame. Re-binding event handlers churns
+  // the bridge's dispatch table and causes a layout pass per frame,
+  // which manifests as the canvas flashing blank. Using stable refs
+  // means the bridge gets the same function identity across renders.
+  const onPointerLeaveStable = useCallback(() => setHover(null), []);
+  const onContextMenuStable = useCallback((e) => {
+    e.preventDefault();
+    const g = getGeom();
+    if (!g) return;
+    const rect = wrapRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    const band = findBand(x, g);
+    const inPlot = x >= g.inner.x && x <= g.inner.x + g.inner.w && y >= g.inner.y && y <= g.inner.y + g.inner.h;
+    setCtxMenu({ x: e.clientX, y: e.clientY, band: inPlot ? band : -1 });
+  }, [getGeom, findBand, N]);
+
   // ---- public methods (via sharedState ref) ----
   useEffect(() => {
     if (!sharedState) return;
@@ -2190,21 +2208,9 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerLeave={() => setHover(null)}
+      onPointerLeave={onPointerLeaveStable}
       onWheel={onWheel}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        const g = getGeom();
-        if (!g) return;
-        const rect = wrapRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left, y = e.clientY - rect.top;
-        const band = findBand(x, g);
-        const inPlot = x >= g.inner.x && x <= g.inner.x + g.inner.w && y >= g.inner.y && y <= g.inner.y + g.inner.h;
-        setCtxMenu({
-          x: e.clientX, y: e.clientY,
-          band: inPlot ? band : -1,
-        });
-      }}
+      onContextMenu={onContextMenuStable}
     >
       {/* Native order matches WebView: main canvas (analyzer) drawn first,
           overlay canvas (selection / marquee / hover) drawn on top. Pulp
@@ -2226,7 +2232,7 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={() => setHover(null)}
+        onPointerLeave={onPointerLeaveStable}
         onWheel={onWheel}
       />
       <canvas
@@ -2235,7 +2241,7 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={() => setHover(null)}
+        onPointerLeave={onPointerLeaveStable}
         onWheel={onWheel}
       />
       {ctxMenu && (
