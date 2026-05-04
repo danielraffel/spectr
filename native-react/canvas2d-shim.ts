@@ -179,11 +179,35 @@ export class Canvas2DShim {
     closePath(): void { call('canvasClosePath', this.canvasId); }
     fill(): void { call('canvasFillPath', this.canvasId); }
     stroke(): void { call('canvasStrokePath', this.canvasId); }
-    arc(x: number, y: number, r: number, sa: number, ea: number, _ccw?: boolean): void {
-        // Bridge canvasArc: (id, x, y, r, startAngle, endAngle, fillColor)
-        // We pass the current fillStyle if any, else empty string.
-        const color = typeof this._fillStyle === 'string' ? this._fillStyle : '';
-        call('canvasArc', this.canvasId, x, y, r, sa, ea, color);
+    arc(x: number, y: number, r: number, sa: number, ea: number, ccw?: boolean): void {
+        // HTML5 Canvas2D spec: arc() ADDS to the current sub-path. The next
+        // ctx.fill() / ctx.stroke() acts on that path — including any
+        // active gradient set via fillStyle.
+        //
+        // Pulp's bridge has no canvasArcPath; canvasArc would stroke
+        // immediately and bypass beginPath/fill. So synthesize the arc
+        // as a polyline of canvasLineTo segments. ~32 segments gives a
+        // visually smooth circle at FilterBank's typical radii (≤30px).
+        // Step count scales with radius so larger circles stay smooth.
+        const segs = Math.max(8, Math.min(64, Math.ceil(r * 1.2)));
+        let s = sa, e = ea;
+        if (ccw) {
+            // sweep from sa down to ea
+            if (e > s) e -= Math.PI * 2;
+        } else {
+            // sweep from sa up to ea
+            if (e < s) e += Math.PI * 2;
+        }
+        const sweep = e - s;
+        for (let i = 0; i <= segs; i++) {
+            const t = i / segs;
+            const a = s + sweep * t;
+            const px = x + Math.cos(a) * r;
+            const py = y + Math.sin(a) * r;
+            // First segment: lineTo from current pen position to arc start.
+            // (HTML5 spec actually says implicit line-to from current point.)
+            call('canvasLineTo', this.canvasId, px, py);
+        }
     }
     /// arcTo(x1, y1, x2, y2, radius) — adds an arc tangent to two
     /// lines defined by (current, p1) and (p1, p2). Bridge has no
