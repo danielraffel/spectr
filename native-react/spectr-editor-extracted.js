@@ -1722,7 +1722,9 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     const rect = wrapRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
     const shift = e.shiftKey, alt = e.altKey, meta = e.metaKey || e.ctrlKey;
-    wrapRef.current.setPointerCapture(e.pointerId);
+    // Pulp's bridge view instances ship without setPointerCapture; guard so a
+    // missing-method call doesn't kill the rest of the handler.
+    try { if (typeof wrapRef.current.setPointerCapture === 'function') wrapRef.current.setPointerCapture(e.pointerId); } catch (_e) {}
 
     // Minimap interaction
     const mm = minimapHit(x, y, g);

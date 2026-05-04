@@ -750,20 +750,28 @@ export function createElement(
                 if (instance && typeof instance === 'object') {
                     const inst = instance as Record<string, unknown>;
                     if (typeof inst.getBoundingClientRect !== 'function') {
+                        // The wrap div is App's main 1320×860 viewport (FilterBank
+                        // fills it via position:absolute, inset:0). Earlier this
+                        // shim returned h = 860 − 44 (header) − 56 (rail) = 760
+                        // to "match" the squeezed area, but FilterBank's own
+                        // canvases overlay the chrome via z-order, so the wrap
+                        // really IS the full 1320×860. Returning 760 caused
+                        // FilterBank's getGeom() to compute the minimap at
+                        // canvas-y=700 instead of 800 and clipped its band-area
+                        // calculations. Match the App's outer-div size so JS
+                        // geometry and the native canvas widget agree.
                         inst.getBoundingClientRect = () => {
                             const r = {
-                                x: 0, y: 44, left: 0, top: 44,
-                                width: 1320, height: 860 - 44 - 56,
-                                right: 1320, bottom: 860 - 56,
+                                x: 0, y: 0, left: 0, top: 0,
+                                width: 1320, height: 860,
+                                right: 1320, bottom: 860,
                             };
-                            const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
-                            if (lg) lg('[ref:getBoundingClientRect] ' + JSON.stringify(r));
                             return { ...r, toJSON: () => r };
                         };
                         inst.clientWidth = 1320;
-                        inst.clientHeight = 860 - 44 - 56;
+                        inst.clientHeight = 860;
                         inst.offsetWidth = 1320;
-                        inst.offsetHeight = 860 - 44 - 56;
+                        inst.offsetHeight = 860;
                     }
                 }
                 if (typeof userRef === 'function') userRef(instance);
