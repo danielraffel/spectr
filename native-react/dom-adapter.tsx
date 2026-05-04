@@ -109,6 +109,27 @@ function armPointerOnce(id: string): void {
     }
 }
 
+/// Spectr #32 — flash-on-hover root cause: dom-adapter is invoked on
+/// every render, and previously created a NEW ref callback function
+/// each call. React's reconciler sees a different ref function and
+/// detaches (calls old with null) + re-attaches (calls new with the
+/// instance) — which the dom-adapter logs as `ref-cb` null/object
+/// pairs. Each detach/re-attach churns the bridge's widget bookkeeping
+/// and starves the rAF paint pump → canvas flashes blank during any
+/// re-render-triggering event (mouse move via setHover, etc.).
+///
+/// Fix: cache the ref callback per (userRef × tag) so we hand React
+/// the SAME function identity across renders. Use a WeakMap keyed on
+/// the user's ref so the cache entry is collected when the user's
+/// component unmounts.
+const __canvasRefCache: WeakMap<object, (inst: unknown) => void> = new WeakMap();
+const __nonCanvasRefCache: WeakMap<object, (inst: unknown) => void> = new WeakMap();
+function refCacheKey(userRef: unknown): object | null {
+    if (typeof userRef === 'function') return userRef as unknown as object;
+    if (userRef && typeof userRef === 'object') return userRef as object;
+    return null;
+}
+
 /// Table-driven CSS-key → bridge-prop translation. Each row is
 /// {cssKey, hostKey, parser}. Lets us stay declarative and extend
 /// in one place rather than scattering switch statements.
@@ -744,14 +765,12 @@ export function createElement(
         const userRef = inProps.ref as
             | ((v: unknown) => void)
             | { current: unknown };
+        const cacheKey = refCacheKey(userRef);
         if (tag === 'canvas') {
-            const callback = (instance: unknown) => {
+            const cached = cacheKey ? __canvasRefCache.get(cacheKey) : undefined;
+            const callback = cached ?? ((instance: unknown) => {
                 const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
                 if (lg) lg('[ref-cb-canvas] inst=' + (instance ? 'object' : 'null'));
-                // Spectr #32 — register pointer dispatch ONCE per canvas widget
-                // id. Calling registerPointer on every ref-mount creates a new
-                // dispatch lambda on the bridge, which churns and starves the
-                // canvas paint pump. Track per-id idempotently.
                 const cId = instance && (instance as { id?: string }).id;
                 if (cId) armPointerOnce(cId as string);
                 const wrapped = instance && (instance as { id?: string }).id
@@ -759,7 +778,8 @@ export function createElement(
                     : instance;
                 if (typeof userRef === 'function') userRef(wrapped);
                 else if (userRef) (userRef as { current: unknown }).current = wrapped;
-            };
+            });
+            if (cacheKey && !cached) __canvasRefCache.set(cacheKey, callback);
             (adapted as { ref?: unknown }).ref = callback;
         } else {
             // Non-canvas refs: extracted code (FilterBank's wrapRef etc.)
@@ -767,7 +787,8 @@ export function createElement(
             // instances don't ship that method, so the call throws and
             // silently kills the rAF chain. Augment the instance with
             // HTMLElement-ish methods returning sensible bounds.
-            const callback = (instance: unknown) => {
+            const cached = cacheKey ? __nonCanvasRefCache.get(cacheKey) : undefined;
+            const callback = cached ?? ((instance: unknown) => {
                 const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
                 if (lg) lg('[ref-cb] tag=' + tag + ' inst=' + (instance ? 'object' : 'null'));
                 if (instance && typeof instance === 'object') {
@@ -812,7 +833,8 @@ export function createElement(
                 }
                 if (typeof userRef === 'function') userRef(instance);
                 else if (userRef) (userRef as { current: unknown }).current = instance;
-            };
+            });
+            if (cacheKey && !cached) __nonCanvasRefCache.set(cacheKey, callback);
             (adapted as { ref?: unknown }).ref = callback;
         }
     }
