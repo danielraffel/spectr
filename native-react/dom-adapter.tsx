@@ -731,6 +731,17 @@ export function createElement(
             const callback = (instance: unknown) => {
                 const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
                 if (lg) lg('[ref-cb-canvas] inst=' + (instance ? 'object' : 'null'));
+                // Spectr #32 — register pointer dispatch on canvas widgets too,
+                // so clicks landing on a canvas (which sits ON TOP of the wrap
+                // visually) get dispatched up through React's synthetic event
+                // system to the wrap's onPointerDown handler.
+                const cId = instance && (instance as { id?: string }).id;
+                if (cId) {
+                    const rp = (globalThis as { registerPointer?: (s: string) => void }).registerPointer;
+                    if (typeof rp === 'function') {
+                        try { rp(cId); } catch (_e) {}
+                    }
+                }
                 const wrapped = instance && (instance as { id?: string }).id
                     ? wrapCanvasInstance(instance as { id: string })
                     : instance;
@@ -749,6 +760,24 @@ export function createElement(
                 if (lg) lg('[ref-cb] tag=' + tag + ' inst=' + (instance ? 'object' : 'null'));
                 if (instance && typeof instance === 'object') {
                     const inst = instance as Record<string, unknown>;
+                    // Spectr #32 — pulp gates pointer-event dispatch behind an
+                    // explicit registerPointer(id) call (parallel to
+                    // registerHover for mouseenter/leave and registerClick for
+                    // click). @pulp/react's prop-applier wires registerHover
+                    // for hover events but never calls registerPointer, so
+                    // onPointerDown/Move/Up handlers on a wrap div are
+                    // installed in the JS dispatch table but never fired by
+                    // the native View. Arm pointer dispatch here on every
+                    // ref-mounted non-canvas instance — idempotent on the
+                    // bridge side and keeps pointer-driven UX (FilterBank
+                    // gain drag, dropdown overlay-click routing) alive.
+                    const id = inst.id as string | undefined;
+                    if (id) {
+                        const rp = (globalThis as { registerPointer?: (s: string) => void }).registerPointer;
+                        if (typeof rp === 'function') {
+                            try { rp(id); } catch (_e) {}
+                        }
+                    }
                     if (typeof inst.getBoundingClientRect !== 'function') {
                         // The wrap div is App's main 1320×860 viewport (FilterBank
                         // fills it via position:absolute, inset:0). Earlier this

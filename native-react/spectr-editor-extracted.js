@@ -2210,9 +2210,34 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
           overlay canvas (selection / marquee / hover) drawn on top. Pulp
           v0.74.1 (#1372) wraps each CanvasWidget's JS replay in its own
           save_layer, so sibling clearRect / kClear no longer erases the
-          parent surface. */}
-      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
-      <canvas ref={overlayRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+          parent surface.
+
+          spectr #32 — pulp's bridge does NOT bubble pointer events the
+          way React's synthetic event system does. Each widget either
+          has the handler bound directly OR the click goes nowhere.
+          Binding onPointerDown/Move/Up/Wheel on the wrap div doesn't
+          fire when the click lands on the canvas widgets, so we mirror
+          the same handlers onto BOTH canvases. The handlers themselves
+          use wrapRef.getBoundingClientRect() for coord math, so they
+          work identically regardless of which element actually fires. */}
+      <canvas
+        ref={canvasRef}
+        style={{ position: 'absolute', inset: 0 }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerLeave={() => setHover(null)}
+        onWheel={onWheel}
+      />
+      <canvas
+        ref={overlayRef}
+        style={{ position: 'absolute', inset: 0 }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerLeave={() => setHover(null)}
+        onWheel={onWheel}
+      />
       {ctxMenu && (
         <ContextMenu
           x={ctxMenu.x} y={ctxMenu.y} band={ctxMenu.band} N={N}
