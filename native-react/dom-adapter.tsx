@@ -677,20 +677,7 @@ export function createElement(
     // this, every <canvas> covers its parent like a white sheet. Tracked
     // as pulp#964 — fix at the framework layer; this is the ports-side
     // workaround that unblocks bundle ports today.
-    // <canvas>: pulp's CGContextClearRect (used by Canvas2D ctx.clearRect)
-    // zeroes pixels in the SHARED CGContext, blasting through the parent
-    // View's bg paint. That exposes the underlying NSWindow buffer color
-    // (white on macOS by default) — visible as a "white canvas" symptom
-    // even when the canvas widget's setBackground was set to dark.
-    //
-    // Workaround: paint the canvas widget's own bg dark via View::paint.
-    // After every `ctx.clearRect`, the next paint cycle re-runs from
-    // View::paint which re-fills the bg before JS commands execute, so
-    // dark stays visible. Tracked upstream as pulp #1322 (and now spectr
-    // root cause confirmed via empirical bg=#0000ff test).
-    if (tag === 'canvas' && adapted.background === undefined) {
-        adapted.background = '#0a0e14';
-    }
+    // No canvas bg — let parent's bg show through transparent regions
 
     if (target === 'Label') {
         // Text is in the varargs `children` (jsx-runtime-shim destructures

@@ -736,17 +736,29 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     const { w, h, pad, inner, zeroY, halfH, bandW, bandGap } = g;
 
     // --- background ---
-    // pulp #1322 / spectr#28 — pulp's CGContextClearRect (used by
-    // ctx.clearRect) zeroes pixels in the SHARED CGContext, blasting
-    // through the View::paint background that ran moments earlier in
-    // the same frame. This produces the "white filterbank" symptom
-    // (alpha-zero region exposes the underlying NSWindow buffer).
-    // The canvas widget's setBackground re-paints the bg every frame
-    // via View::paint, so clearRect is redundant — and harmful here
-    // because it strips the bg that View::paint just laid down.
-    // Skipping clearRect; subsequent fillStyle assignments will
-    // overpaint the bg with the analyzer's intentional draws.
-    // ctx.clearRect(0, 0, w, h);
+    // pulp #1322 — Spectr's original bg gradient has stops at alpha 0.0
+    // → 0.35. In a browser, the alpha-0 region composites with the
+    // parent <div>'s dark theme color (web's layered rendering model).
+    // In pulp's single-buffer CG/Skia model, the alpha-0 region zeroes
+    // pixels which expose the underlying NSWindow buffer (WHITE on
+    // macOS by default), producing the "white filterbank" symptom.
+    // Fix: paint a solid dark fillRect BEFORE the gradient so the
+    // gradient blends over a known dark backdrop instead of relying
+    // on the parent layer to provide one. The visible result matches
+    // the WebView reference: dark filterbank with subtle gradient
+    // shading near the bottom.
+    // pulp #1322 — paint solid dark backdrop BEFORE the gradient.
+    // Spectr's gradient stops at alpha 0.0 → 0.35 are designed to
+    // composite over a dark <div>'s CSS background in browsers.
+    // Pulp's CG/Skia single-buffer renderer doesn't have a separate
+    // compositing layer for the canvas widget, so an alpha-0 region
+    // exposes the underlying NSWindow buffer (white on macOS).
+    // Workaround: paint solid dark over an extra-wide region first
+    // (the (-2k, -2k) → (3k, 3k) rect ensures full canvas-widget
+    // coverage regardless of any internal coordinate offset/clip).
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0a0e14';
+    ctx.fillRect(-2000, -2000, 6000, 6000);
     // very subtle horizontal scanline gradient bg
     const bg = ctx.createLinearGradient(0, 0, 0, h);
     bg.addColorStop(0, 'rgba(8,12,18,0.0)');
@@ -767,7 +779,7 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     drawBands(ctx, g);
 
     // --- marquee + selection + overlays ---
-    // octx.clearRect(0, 0, w, h);  // pulp #1322 — see ctx.clearRect comment above.
+    octx.clearRect(0, 0, w, h);
     drawSelection(octx, g);
     drawMarquee(octx, g);
     drawEdgeWalls(octx, g);
