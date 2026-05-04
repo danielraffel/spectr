@@ -757,8 +757,6 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     // (the (-2k, -2k) → (3k, 3k) rect ensures full canvas-widget
     // coverage regardless of any internal coordinate offset/clip).
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#0a0e14';
-    ctx.fillRect(-2000, -2000, 6000, 6000);
     // very subtle horizontal scanline gradient bg
     const bg = ctx.createLinearGradient(0, 0, 0, h);
     bg.addColorStop(0, 'rgba(8,12,18,0.0)');
@@ -2180,6 +2178,13 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
         position: 'absolute', inset: 0,
         cursor: 'crosshair',
         touchAction: 'none',
+        // pulp #1322 — paint dark bg from FilterBank wrap (a regular
+        // View widget, where View::paint correctly fills bg). The
+        // canvas widgets above are transparent — their alpha-low
+        // analyzer overlays composite over this dark, matching the
+        // WebView behavior where the parent <div>'s CSS bg shows
+        // through transparent canvas regions.
+        background: '#0a0e14',
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
