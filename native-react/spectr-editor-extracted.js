@@ -556,6 +556,16 @@ const METAPHORS = [
 ];
 if (typeof window !== 'undefined') window.SpectrMetaphors = METAPHORS;
 
+// Module-level stable style references — JSX `style={{...}}` literals
+// would create a new object every render, which the dom-adapter sees as
+// a prop change and re-applies via setFlex/setPosition/etc. on every
+// pointer move. That re-application clobbers the canvas paint surface
+// (resets to the View widget's default white background), causing the
+// rainbow spectrum to vanish on hover. Hoisting the literal out keeps
+// the object identity stable across renders so the dom-adapter's prop
+// diff stays a no-op.
+const CANVAS_FILL_STYLE = { position: 'absolute', inset: 0 };
+
 function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, onEditModeChange }) {
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
@@ -1824,15 +1834,24 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     // hover
     const mm = minimapHit(x, y, g);
     const bandH = findBand(x, g);
+    // setCursor — pulp's bridge ref instances don't ship a `.style`
+    // object, so the literal `wrapRef.current.style.cursor = ...` lookup
+    // throws on the native bridge and aborts the rest of onPointerMove.
+    // Guard with a try/catch so the canvas paint pump keeps running.
+    const setCursor = (c) => {
+      try {
+        if (wrapRef.current && wrapRef.current.style) wrapRef.current.style.cursor = c;
+      } catch (_e) { /* native bridge ref has no .style */ }
+    };
     if (mm) {
       setHover({ mini: mm, x, y, band: -1 });
-      wrapRef.current.style.cursor = (mm === 'left' || mm === 'right') ? 'ew-resize' : (mm === 'window' ? 'grab' : 'pointer');
+      setCursor((mm === 'left' || mm === 'right') ? 'ew-resize' : (mm === 'window' ? 'grab' : 'pointer'));
     } else if (bandH >= 0 && y >= g.inner.y && y <= g.inner.y + g.inner.h) {
       setHover({ band: bandH, x, y });
-      wrapRef.current.style.cursor = 'crosshair';
+      setCursor('crosshair');
     } else {
       setHover(null);
-      wrapRef.current.style.cursor = 'default';
+      setCursor('default');
     }
 
     const p = pointerRef.current;
@@ -2228,7 +2247,7 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
           work identically regardless of which element actually fires. */}
       <canvas
         ref={canvasRef}
-        style={{ position: 'absolute', inset: 0 }}
+        style={CANVAS_FILL_STYLE}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -2237,7 +2256,7 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
       />
       <canvas
         ref={overlayRef}
-        style={{ position: 'absolute', inset: 0 }}
+        style={CANVAS_FILL_STYLE}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
