@@ -608,6 +608,45 @@ export function createElement(
     const tag = type.toLowerCase();
     let target = tagToWidget(tag);
 
+    // <span> structural-vs-leaf disambiguation. The static map sends every
+    // <span> to Label, but React UIs use <span> as a styled inline-block
+    // container at least as often as a text leaf — e.g. dropdown rows in
+    // EditModePopover wrap their label/description in `<span style={{ flex: 1 }}>
+    //   <span>{m.label}</span><span>{m.desc}</span></span>`. Mapping the
+    // outer span to Label produces a Label widget whose children are two
+    // element nodes; @pulp/react's asText() returns '' for that, the Label
+    // ends up empty, and the row paints as a highlighted-but-blank rectangle.
+    // Promote span (and h1-h6/label) to View whenever its children are
+    // anything other than pure string/number — the wrap-string-as-Label
+    // path below then synthesizes Labels for any direct text children with
+    // proper textColor/font inheritance. Leaf <span>{text}</span> stays
+    // mapped to Label so existing minWidth + multi-fragment concatenation
+    // paths keep working.
+    if (target === 'Label' && tag !== 'text') {
+        let hasElementChild = false;
+        for (const c of children) {
+            if (c == null || c === false || c === true) continue;
+            if (typeof c === 'string' || typeof c === 'number') continue;
+            hasElementChild = true;
+            break;
+        }
+        if (!hasElementChild) {
+            const ic = (props as { children?: unknown } | null)?.children;
+            if (Array.isArray(ic)) {
+                for (const c of ic) {
+                    if (c == null || c === false || c === true) continue;
+                    if (typeof c === 'string' || typeof c === 'number') continue;
+                    hasElementChild = true;
+                    break;
+                }
+            } else if (ic != null && typeof ic !== 'string' && typeof ic !== 'number'
+                       && ic !== false && ic !== true) {
+                hasElementChild = true;
+            }
+        }
+        if (hasElementChild) target = 'View';
+    }
+
     const inProps = (props ?? {}) as Record<string, unknown>;
     // <input type="range"> → Fader (Pulp's linear control). Plain HTML
     // ranges have no DSP-style decoration; Fader handles the geometry +
@@ -741,6 +780,22 @@ export function createElement(
             // Default Yoga flexShrink is 1 (shrinkable). Pinning to 0
             // matches CSS `white-space: nowrap` for chrome labels.
             if (adapted.flexShrink === undefined) adapted.flexShrink = 0;
+        }
+        // CSS color-inheritance gap: a nested <span>{m.label}</span> inside
+        // a coloured button (`<button style={{color:'#fff'}}>`) inherits in
+        // CSS but not through dom-adapter — the inner span maps to its own
+        // Label widget, dom-adapter sees no `color` style on the span, and
+        // the Label paints with Pulp's default text colour, which on a dark
+        // popover background reads as invisible. The parent button's
+        // textColor lives on a different widget and Pulp doesn't propagate
+        // it. Default any text-bearing Label without an explicit textColor
+        // to the chrome-text colour the rest of the editor uses (matches
+        // the `color: 'rgba(255,255,255,0.85)'` default on every chrome
+        // button and popover row in spectr-editor-extracted.js). Tracked
+        // alongside spectr#61 / pulp#1323 (CSS :hover translation gap) —
+        // same root issue, different CSS property.
+        if (childText.length > 0 && adapted.textColor === undefined) {
+            adapted.textColor = 'rgba(255,255,255,0.85)';
         }
     }
 

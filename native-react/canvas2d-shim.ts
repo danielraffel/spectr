@@ -50,6 +50,12 @@ function call(name: string, ...args: unknown[]): unknown {
                 (nanIdx >= 0 ? ' nanIdx=' + nanIdx : ''));
         }
     }
+    // Skip the bridge call entirely if any numeric arg is NaN. Pulp's
+    // canvas pipeline DOES NOT defensively reject NaN — a single NaN x
+    // / y / w / h corrupts the CGContext / Skia surface for the rest
+    // of the frame and produces a blank canvas. Drop the bad call,
+    // log it (above), keep painting. spectr #32 / #1382 follow-up.
+    if (nanIdx >= 0) return undefined;
     return fn(...args);
 }
 export function _canvasNanSummary(): string {

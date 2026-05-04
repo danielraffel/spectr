@@ -594,7 +594,20 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
   // Selection set (Set<number>)
   const [selection, setSelection] = useState(() => new Set());
   // Viewport: logFreq min/max visible
-  const [view, setView] = useState({ lmin: Math.log10(20), lmax: Math.log10(20000) });
+  const [view, _setView] = useState({ lmin: Math.log10(20), lmax: Math.log10(20000) });
+  // Drag handlers can compute NaN view bounds when getGeom returns
+  // inner.w=0 during transient layout (divide-by-zero in span/dx
+  // arithmetic). NaN in view propagates to view.lmin/lmax → SpectrSignal
+  // sample receives NaN log-frequency → returns NaN → drawSpectrum's
+  // lineTo Y is NaN → drawBands' geometry is NaN → canvas paint corrupts.
+  // Wrap setView so NaN/Inf bounds never reach React state.
+  const FULL_LMIN = Math.log10(20), FULL_LMAX = Math.log10(20000);
+  const setView = (next) => {
+    const lmin = Number.isFinite(next?.lmin) ? next.lmin : FULL_LMIN;
+    const lmax = Number.isFinite(next?.lmax) ? next.lmax : FULL_LMAX;
+    if (lmin >= lmax) { _setView({ lmin: FULL_LMIN, lmax: FULL_LMAX }); return; }
+    _setView({ lmin, lmax });
+  };
   // Snapshots A/B + morph
   const [snapshots, setSnapshots] = useState({ A: null, B: null });
   const snapshotsRef = useRef({ A: null, B: null });
@@ -652,9 +665,13 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
   useEffect(() => {
     let last = performance.now();
     const draw = (now) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
+      let dt = Math.min(0.05, (now - last) / 1000);
       last = now;
+      // Guard against NaN/Infinity dt — propagates to timeRef →
+      // SpectrSignal samples → entire drawSpectrum path goes NaN.
+      if (!Number.isFinite(dt)) dt = 0;
       timeRef.current += dt;
+      if (!Number.isFinite(timeRef.current)) timeRef.current = 0;
       // smooth gains toward target
       const tg = targetGainsRef.current;
       const rg = renderGainsRef.current;
@@ -1691,11 +1708,23 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
   };
   const pxToGain = (y, g) => clamp((g.zeroY - y) / g.halfH, -1, 1);
 
+  // Guard against NaN/non-finite values that could leak in from a
+  // pointer event with a NaN clientY or a divide-by-zero (e.g. when
+  // getGeom returns inner.h=0 during a transient layout state). A
+  // single NaN gain corrupts ALL downstream drawing — drawBands' path
+  // becomes a NaN-laced lineTo chain, save_layer composites empty,
+  // and the user sees a black canvas. Sanitize at the write boundary.
+  const sanitizeGain = (v) => {
+    if (v === -Infinity) return v;  // legitimate "muted" sentinel
+    if (typeof v !== 'number' || !Number.isFinite(v)) return 0;
+    return Math.max(-1, Math.min(1, v));
+  };
   const commitGain = (idx, value) => {
-    targetGainsRef.current[idx] = value;
+    const v = sanitizeGain(value);
+    targetGainsRef.current[idx] = v;
     setGains(prev => {
       const nxt = prev.slice();
-      nxt[idx] = value;
+      nxt[idx] = v;
       return nxt;
     });
   };
@@ -1703,8 +1732,9 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     setGains(prev => {
       const nxt = prev.slice();
       for (const [k, v] of map) {
-        nxt[k] = v;
-        targetGainsRef.current[k] = v;
+        const sv = sanitizeGain(v);
+        nxt[k] = sv;
+        targetGainsRef.current[k] = sv;
       }
       return nxt;
     });
