@@ -767,23 +767,7 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     // (the (-2k, -2k) → (3k, 3k) rect ensures full canvas-widget
     // coverage regardless of any internal coordinate offset/clip).
     ctx.clearRect(0, 0, w, h);
-    // pulp #1382 — pulp-screenshot headless paints the canvas as
-    // transparent (parent's dark bg shows through) but the live
-    // standalone app shows OPAQUE WHITE in the canvas area. Difference
-    // must be the standalone window-host backing buffer initializing
-    // opaque-white; save_layer composites the JS layer back into a
-    // white surface. Spectr's gradient bg starts at alpha 0.0, so the
-    // top half of the canvas leaves the layer transparent → reveals
-    // the white window backing → spectrum invisible.
-    //
-    // Defensive fix: paint OPAQUE dark across the full canvas first.
-    // Makes the recorded paint produce dark pixels regardless of the
-    // window-host backing color, matching WebView visual parity (the
-    // gradient cosmetic stays as a subtle overlay on top).
-    ctx.fillStyle = '#0a0e14';
-    ctx.fillRect(0, 0, w, h);
-    // very subtle horizontal scanline gradient bg (overlay on the
-    // opaque dark fill above)
+    // very subtle horizontal scanline gradient bg
     const bg = ctx.createLinearGradient(0, 0, 0, h);
     bg.addColorStop(0, 'rgba(8,12,18,0.0)');
     bg.addColorStop(1, 'rgba(0,0,0,0.35)');

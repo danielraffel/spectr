@@ -163,7 +163,30 @@ export class Canvas2DShim {
         }
     }
     clearRect(x: number, y: number, w: number, h: number): void {
-        call('canvasClearRect', this.canvasId, x, y, w, h);
+        // Pulp's CanvasWidget keeps an append-only commands_ list — every
+        // canvas* bridge call (clearRect, fillRect, fill_path, etc.) is
+        // RECORDED into commands_ and replayed in full on every paint. JS
+        // calling clearRect every rAF tick adds a clear_rect command but
+        // does NOT reset commands_, so commands_ grows unbounded (Spectr
+        // accumulates ~2k commands/frame; after a minute, replay must
+        // process ~120k+ ops per paint). Pulp #1382 surfaces here as
+        // "canvas disappears on hover" because the long replay accumulates
+        // state errors (transform stacking, clip-region rounding, etc.)
+        // that produce empty output.
+        //
+        // Fix: when JS calls clearRect over the FULL canvas (the standard
+        // start-of-frame pattern), use canvasClear to RESET commands_
+        // entirely — equivalent semantics (the canvas is empty) but
+        // bounded memory + bounded replay cost. Falls back to canvasClearRect
+        // for partial clears.
+        if (x === 0 && y === 0) {
+            // Full-canvas clear — reset commands_. The bridge's canvasClear
+            // empties the entire command buffer; subsequent draws this frame
+            // start from a clean slate.
+            call('canvasClear', this.canvasId);
+        } else {
+            call('canvasClearRect', this.canvasId, x, y, w, h);
+        }
     }
 
     // ── Path API ───────────────────────────────────────────────────────
