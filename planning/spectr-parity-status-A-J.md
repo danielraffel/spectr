@@ -39,6 +39,9 @@
   3. `target` is non-canvas → hit_test miss; canvas bounds wrong
 
 ### C — Mouse-move drives waveform animation (should be procedural-only)
+**Likely closed by:** pulp #1400 (per pulp-side agent audit 2026-05-04). Re-test once #1400 merges + lands in a release.
+
+
 - **Symptom:** Cursor movement over the filterbank changes the waveform output. Per user: mouse should ONLY zoom + adjust bands.
 - **Suspected root:** Same as D — rAF chain doesn't self-sustain, so the only thing forcing renderAll() to run is input events. Mouse moves trigger repaint via state change, which advances `timeRef.current` and re-samples the spectrum.
 - **Status:** open
@@ -46,6 +49,9 @@
 - **Next:** fix D first; if symptom remains, gate the spectrum sampling so it only advances on real time-tick events (not state-change repaints).
 
 ### D — Spectrum doesn't auto-animate on idle
+**Likely closed by:** pulp #1400 (per pulp-side agent audit 2026-05-04). Same root as C. Re-test once #1400 merges + lands in a release.
+
+
 - **Symptom:** Procedural SpectrSignal time evolution should animate the spectrum continuously. Doesn't — only ticks on input events. `rAF-cb` count = 1 in 12s of idle.
 - **Suspected root:** Spectr's `NativeEditorView::pump_thread` calls `host->repaint()` every 16ms, and `paint()` calls `bridge_->service_frame_callbacks()`, but `pending_frame_ids_` doesn't drain. Either (a) the JS rAF callback throws and breaks the recursive arming, or (b) `service_frame_callbacks` doesn't see the queued ID, or (c) `__flushFrames__` isn't actually called when expected.
 - **Status:** open
