@@ -736,7 +736,17 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     const { w, h, pad, inner, zeroY, halfH, bandW, bandGap } = g;
 
     // --- background ---
-    ctx.clearRect(0, 0, w, h);
+    // pulp #1322 / spectr#28 — pulp's CGContextClearRect (used by
+    // ctx.clearRect) zeroes pixels in the SHARED CGContext, blasting
+    // through the View::paint background that ran moments earlier in
+    // the same frame. This produces the "white filterbank" symptom
+    // (alpha-zero region exposes the underlying NSWindow buffer).
+    // The canvas widget's setBackground re-paints the bg every frame
+    // via View::paint, so clearRect is redundant — and harmful here
+    // because it strips the bg that View::paint just laid down.
+    // Skipping clearRect; subsequent fillStyle assignments will
+    // overpaint the bg with the analyzer's intentional draws.
+    // ctx.clearRect(0, 0, w, h);
     // very subtle horizontal scanline gradient bg
     const bg = ctx.createLinearGradient(0, 0, 0, h);
     bg.addColorStop(0, 'rgba(8,12,18,0.0)');
@@ -757,7 +767,7 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     drawBands(ctx, g);
 
     // --- marquee + selection + overlays ---
-    octx.clearRect(0, 0, w, h);
+    // octx.clearRect(0, 0, w, h);  // pulp #1322 — see ctx.clearRect comment above.
     drawSelection(octx, g);
     drawMarquee(octx, g);
     drawEdgeWalls(octx, g);
