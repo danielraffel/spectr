@@ -3241,7 +3241,13 @@ function EditModePopover({ value, onChange, onClose }) {
       border: '1px solid rgba(255,255,255,0.1)',
       borderRadius: 4, padding: 6,
       display: 'flex', flexDirection: 'column', gap: 2,
-      width: 280, backdropFilter: 'blur(10px)',
+      width: 280,
+      // pulp's Yoga doesn't propagate flex-chain widths through nested
+      // spans the way browsers do, so inner text overflows the panel.
+      // Clip at the container boundary; description spans below carry
+      // explicit width so they wrap within the panel.
+      overflow: 'hidden',
+      backdropFilter: 'blur(10px)',
       boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
     }}>
       <div style={{ fontSize: 8.5, letterSpacing: 2, opacity: 0.45, padding: '4px 8px 6px' }}>EDIT MODE · how dragging affects bands</div>
@@ -3278,6 +3284,10 @@ function EditModePopover({ value, onChange, onClose }) {
                 display: 'block', fontSize: 9.5, opacity: 0.6,
                 lineHeight: 1.5, fontFamily: 'var(--sans)',
                 textTransform: 'none', letterSpacing: 0.1,
+                // Explicit width so pulp's Yoga wraps text instead of
+                // overflowing the panel. 230 = panel 280 − padding 16
+                // − icon 28 − gap 10 − a few px slack.
+                width: 230,
               }}>{m.desc}</span>
             </span>
           </button>
@@ -3295,7 +3305,9 @@ function AnalyzerPopover({ value, onChange }) {
       border: '1px solid rgba(255,255,255,0.1)',
       borderRadius: 4, padding: 6,
       display: 'flex', flexDirection: 'column', gap: 2,
-      width: 260, backdropFilter: 'blur(10px)',
+      width: 260,
+      overflow: 'hidden',
+      backdropFilter: 'blur(10px)',
       boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
     }}>
       <div style={{ fontSize: 8.5, letterSpacing: 2, opacity: 0.45, padding: '4px 8px 6px' }}>ANALYZER · A to cycle</div>
@@ -3322,6 +3334,9 @@ function AnalyzerPopover({ value, onChange }) {
             <span style={{
               display: 'block', fontSize: 9.5, opacity: 0.6, marginTop: 3,
               fontFamily: 'var(--sans)', letterSpacing: 0.1,
+              // Explicit width so pulp's Yoga wraps text within panel.
+              // 240 = panel 260 − padding 20 (left+right).
+              width: 240,
             }}>{a.desc}</span>
           </button>
         );

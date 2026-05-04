@@ -109,6 +109,20 @@ function armPointerOnce(id: string): void {
     }
 }
 
+/// Pulp also gates wheel-event dispatch behind a separate registerWheel(id)
+/// (parallel to registerPointer for pointerdown/move/up and registerHover for
+/// mouseenter/leave). Without this call, `onWheel` JSX handlers never fire
+/// — Spectr's spectrum zoom (which is wheel-driven) was dead until we wired
+/// this. Idempotent on the bridge; arm once per widget.
+const __wheelArmed: Set<string> = new Set();
+function armWheelOnce(id: string): void {
+    if (__wheelArmed.has(id)) return;
+    const rw = (globalThis as { registerWheel?: (s: string) => void }).registerWheel;
+    if (typeof rw === 'function') {
+        try { rw(id); __wheelArmed.add(id); } catch (_e) {}
+    }
+}
+
 /// Spectr #32 — flash-on-hover root cause: dom-adapter is invoked on
 /// every render, and previously created a NEW ref callback function
 /// each call. React's reconciler sees a different ref function and
@@ -683,9 +697,21 @@ export function createElement(
     // an svg-glyph + text span inside a button stack vertically, busting
     // the toolbar row height (26px) — bottom-toolbar items disappear
     // because content overflows in y. Mirror browser inline-flex.
+    //
+    // Guard: only force row when CSS `display` is unset OR is one of the
+    // flex variants. Buttons with `display: 'block'` (e.g. AnalyzerPopover
+    // rows whose two child <span>s should stack vertically — label-row on
+    // top, description on bottom) MUST stay column. Forcing row there made
+    // the label row collapse to 0 width while the description's
+    // text-estimate minWidth ate the whole button — that's the "ANALYZER
+    // dropdown labels missing" bug.
     if (tag === 'button' && adapted.direction === undefined) {
-        adapted.direction = 'row';
-        if (adapted.alignItems === undefined) adapted.alignItems = 'center';
+        const buttonDisplay = (styleObj as { display?: unknown }).display;
+        const isBlock = buttonDisplay === 'block' || buttonDisplay === 'inline-block';
+        if (!isBlock) {
+            adapted.direction = 'row';
+            if (adapted.alignItems === undefined) adapted.alignItems = 'center';
+        }
     }
 
     // <input type="range"> → Fader: forward min/max/step/value as direct
@@ -773,13 +799,54 @@ export function createElement(
         if (childText.length > 0 && adapted.minWidth === undefined && adapted.width === undefined) {
             const fontSize = (adapted.fontSize as number) ?? 14;
             const ls = (adapted.letterSpacing as number) ?? 0;
-            const mw = Math.ceil(childText.length * (fontSize * 0.65 + ls));
-            adapted.minWidth = mw;
-            // Critical: prevent Yoga from shrinking the Label below its
-            // intrinsic width when parent's allocated space is smaller.
-            // Default Yoga flexShrink is 1 (shrinkable). Pinning to 0
-            // matches CSS `white-space: nowrap` for chrome labels.
-            if (adapted.flexShrink === undefined) adapted.flexShrink = 0;
+            const intrinsic = Math.ceil(childText.length * (fontSize * 0.65 + ls));
+            // Heuristic split: short labels (<= 40 chars) are chrome strings
+            // that must NOT wrap (toolbar buttons, dropdown row labels) —
+            // pin minWidth to intrinsic + flexShrink:0, matching CSS
+            // `white-space: nowrap`. Longer text is paragraph copy
+            // (popover descriptions, help text) — capping minWidth at 80px
+            // and leaving flexShrink default (1) lets Yoga fit it inside
+            // the parent's allocated width, AND a ref-callback below
+            // calls setWhiteSpace(id,'normal') so Pulp's Label widget
+            // wraps the text instead of single-lining it past the panel.
+            // Without the cap, a 250-char description heuristics out to
+            // ~1500px minWidth, blowing the dropdown panel apart (the
+            // "EDIT MODE overflow" bug).
+            const isParagraph = childText.length > 40;
+            if (isParagraph) {
+                adapted.minWidth = Math.min(80, intrinsic);
+                // Leave flexShrink to default (1) so the Label compresses
+                // into its allocated width.
+            } else {
+                adapted.minWidth = intrinsic;
+                if (adapted.flexShrink === undefined) adapted.flexShrink = 0;
+            }
+        }
+        // For paragraph-length text on a Label, attach a ref callback
+        // that calls globalThis.setWhiteSpace(id,'normal') — this maps to
+        // Label::set_multi_line(true) on the C++ side (widget_bridge.cpp:1881).
+        // Without this, Pulp's Label paints text on a single line and
+        // truncates/overflows; with it, the Label wraps inside its allocated
+        // width. pulp-react's prop-applier doesn't translate CSS whiteSpace
+        // through (no entry in prop-applier.ts), so we route directly to the
+        // bridge global the same way SvgPath does.
+        if (childText.length > 40) {
+            const existingRef = (adapted as { ref?: unknown }).ref;
+            (adapted as { ref?: unknown }).ref = (instance: unknown) => {
+                if (instance && typeof instance === 'object') {
+                    const id = (instance as { id?: unknown }).id;
+                    const g = globalThis as Record<string, unknown>;
+                    if (typeof id === 'string' && typeof g.setWhiteSpace === 'function') {
+                        try {
+                            (g.setWhiteSpace as (id: string, ws: string) => unknown)(id, 'normal');
+                        } catch { /* pre-v? bridges silently no-op */ }
+                    }
+                }
+                if (typeof existingRef === 'function') (existingRef as (i: unknown) => void)(instance);
+                else if (existingRef && typeof existingRef === 'object') {
+                    (existingRef as { current: unknown }).current = instance;
+                }
+            };
         }
         // CSS color-inheritance gap: a nested <span>{m.label}</span> inside
         // a coloured button (`<button style={{color:'#fff'}}>`) inherits in
@@ -827,7 +894,10 @@ export function createElement(
                 const lg = (globalThis as { __spectrLog?: (s: string) => void }).__spectrLog;
                 if (lg) lg('[ref-cb-canvas] inst=' + (instance ? 'object' : 'null'));
                 const cId = instance && (instance as { id?: string }).id;
-                if (cId) armPointerOnce(cId as string);
+                if (cId) {
+                    armPointerOnce(cId as string);
+                    armWheelOnce(cId as string);
+                }
                 const wrapped = instance && (instance as { id?: string }).id
                     ? wrapCanvasInstance(instance as { id: string })
                     : instance;
@@ -860,7 +930,10 @@ export function createElement(
                     // bridge side and keeps pointer-driven UX (FilterBank
                     // gain drag, dropdown overlay-click routing) alive.
                     const id = inst.id as string | undefined;
-                    if (id) armPointerOnce(id);
+                    if (id) {
+                        armPointerOnce(id);
+                        armWheelOnce(id);
+                    }
                     if (typeof inst.getBoundingClientRect !== 'function') {
                         // The wrap div is App's main 1320×860 viewport (FilterBank
                         // fills it via position:absolute, inset:0). Earlier this
