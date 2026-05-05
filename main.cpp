@@ -14,5 +14,5 @@ int main() {
     config.show_settings_tab = false;
     app.set_config(config);
     // Second arg is `use_gpu`, not an editor toggle.
-    return app.run_with_editor(/*use_gpu=*/false) ? 0 : 1;
+    return app.run_with_editor(/*use_gpu=*/true) ? 0 : 1;
 }
