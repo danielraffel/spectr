@@ -1,6 +1,6 @@
 # Spectr Native Bridge Hardening Status - 2026-05-08
 
-Last updated: 2026-05-08 14:22 PDT.
+Last updated: 2026-05-08 15:10 PDT.
 
 ## Current status
 
@@ -9,13 +9,87 @@ This work is not done yet. The native bridge is now launching the real Spectr Cl
 Most important current blockers:
 
 - Native bridge cannot draw/edit bands with the mouse, while the WebView version can draw smoothly.
-- The analyzer/waveform appears to advance only when the mouse moves. The intended behavior is continuous motion on its own, eventually driven by real-time audio input.
-- Native bridge is sluggish. Prior sampling showed the main thread spending significant time in `WidgetBridge::service_frame_callbacks()` and QuickJS while the canvas bridge sends a high volume of drawing commands.
+- User still sees a black rectangular layer over the graph on mouse movement. This may be the status/minimap layer being materialized or hit-tested incorrectly, but it is not proven yet.
+- The analyzer/waveform continuous animation is now better supported by evidence: debug logs show rAF callbacks and canvas drawing advancing without mouse movement. Keep watching this, but the main current blocker is pointer/hit-test/edit behavior.
+- Native bridge sluggishness is still open for interaction. Idle CPU after the latest non-debug launch settled around `1.4-2.5%`, but debug logging and interaction can spike; do not mark performance fixed until drag/popup flows are sampled.
 - Preset/pattern manager popup is missing the shape previews that are visible in WebView.
 - Some SVG/icon graphics are missing in native, including the settings gear.
 - Some popup/dropdown layout is still off versus WebView.
 
 The goal remains: import the Spectr Claude Design HTML and run it through the native Pulp GPU bridge, not WebView, with visual and behavioral parity against the WebView/original HTML.
+
+## Active pass - 2026-05-08 14:57 PDT
+
+User reports installed Pulp CLI is `v0.78.4`. The current Spectr `build-gpu` cache still points at `/tmp/pulp-sdk-gpu-test/lib/cmake/Pulp`, not the installed CLI SDK path:
+
+```text
+Pulp_DIR=/tmp/pulp-sdk-gpu-test/lib/cmake/Pulp
+```
+
+Do not assume the running Spectr app is using the newly installed CLI. For this pass, validate against the staged SDK first, then decide whether to reconfigure Spectr to the installed SDK or reinstall the Pulp worktree into `/tmp/pulp-sdk-gpu-test`.
+
+Current merge stance:
+
+- Do not merge the Spectr native-editor code until the real-port validation has been rerun against the current staged SDK and the remaining blockers are either fixed or explicitly filed as Pulp issues.
+- Do not merge the broad Pulp import/runtime diff as one opaque change. Split and validate at least the focused pointer/rAF/event fixes separately from import-design CLI/harness/docs work.
+- The planning/status doc is safe to merge independently; commit `4177247` already landed it in this worktree.
+
+## Active pass - 2026-05-08 15:10 PDT
+
+Latest user-visible state:
+
+- User still cannot draw/edit bands in native. After the latest relaunch, moving the mouse still shows a black rectangular bar over the graph and band editing does not visibly happen.
+- The latest normal native app launch still proved the native GPU path: Metal surface, Dawn initialized, Skia Graphite initialized, and `gpu=true`. It also launched without the previous wheel exception spam until user interaction.
+- A debug run with `SPECTR_NATIVE_DEBUG_LOG=1` showed continuous `[rAF-cb#...]` callbacks and ongoing canvas drawing without relying on mouse movement. That suggests the earlier "waveform only updates on mouse move" issue is at least partly resolved by the current Pulp/Spectr staged build.
+- The debug process was no longer running when status was updated. Next step is to relaunch debug mode and have the user perform one short drag, then inspect `/tmp/spectr-native-debug.log` for `[pdown]` / `[pmove]` traces.
+
+New focused Pulp fixes added in this pass:
+
+- macOS `scrollWheel:` now populates `MouseEvent.window_position` and modifiers so wheel zoom can know `clientX/clientY`.
+- macOS `mouseUp:` now dispatches a bridge `MouseEvent` before legacy `on_mouse_up`, so JS receives `pointerup`.
+- `registerWheel` now dispatches deltas plus client/offset coordinates and modifier keys.
+- The low-level `__dispatch__` path now synthesizes a wheel event object for one-argument callbacks such as React-style `onWheel(e)`, while preserving the legacy `on(id, "wheel", fn(dx, dy))` contract.
+- DOM `addEventListener("wheel", fn)` now receives `deltaX/deltaY`, `clientX/clientY`, offsets, and modifiers.
+
+New focused Spectr port fix added in this pass:
+
+- `native-react/dom-adapter.tsx` now forwards `pointerEvents: 'none'` to Pulp via `setPointerEvents(id, 'none')` using a ref callback. This is intended to prevent noninteractive overlays such as the status banner from stealing graph hits.
+- This is not yet proven by user validation because the black rectangle and no-draw behavior still reproduce.
+
+Validation completed in this pass:
+
+```bash
+cmake --build build-gpu --target pulp-test-widget-bridge -j 8
+./build-gpu/test/pulp-test-widget-bridge "[view][bridge][events]"
+./build-gpu/test/pulp-test-widget-bridge
+./build-gpu/test/pulp-test-view-host-bridge "PulpView NSEvent mouseUp dispatches JS pointerup subscriber"
+cmake --install build-gpu --prefix /tmp/pulp-sdk-gpu-test
+npm --prefix native-react run build:port
+cmake --build build-gpu --target Spectr-test Spectr_Standalone -j 8
+ctest --test-dir build-gpu --output-on-failure
+```
+
+Results:
+
+- Pulp focused bridge event test passed: `38 assertions in 1 test case`.
+- Pulp full `pulp-test-widget-bridge` passed: `1780 assertions in 309 test cases`.
+- Pulp macOS pointer-up integration test passed: `8 assertions in 1 test case`.
+- Spectr passed: `109/109` tests.
+
+Current merge stance:
+
+- Do not merge Spectr native-editor parity as complete. Drawing/editing is still user-broken.
+- The focused Pulp event fixes are plausible PR material after splitting from the broad import/runtime diff and running the relevant Pulp CI/test set. They address concrete regressions with tests.
+- The Spectr `pointerEvents: none` adapter workaround is useful but should stay in the parity branch until the black rectangle / no-draw behavior is explained.
+- The broad Pulp import/runtime/harness diff still should not merge as one opaque PR.
+
+Most likely next debugging path:
+
+- Relaunch with `SPECTR_NATIVE_DEBUG_LOG=1`.
+- Have the user drag once over the graph.
+- If no `[pdown]`/`[pmove]` logs appear, debug native hit-testing and overlay/pointer-events routing. Add temporary macOS hit-test logs around `_dragTarget->id()`.
+- If `[pdown]`/`[pmove]` logs appear, debug Spectr coordinate math and state commits (`findBand`, `pxToGain`, `commitGain`, and canvas redraw).
+- Separately inspect the black rectangle source by logging the status banner/minimap layer bounds and by confirming `setPointerEvents('none')` actually hits the expected view id.
 
 ## Correction from this session
 
