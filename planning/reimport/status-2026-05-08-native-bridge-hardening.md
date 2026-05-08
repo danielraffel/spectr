@@ -1,6 +1,6 @@
 # Spectr Native Bridge Hardening Status - 2026-05-08
 
-Last updated: 2026-05-08 16:03 PDT.
+Last updated: 2026-05-08 16:25 PDT.
 
 ## Current status
 
@@ -301,6 +301,52 @@ Next checks:
 - Run `ps` and `sample` again.
 - Record JS engine, frame callback count, canvas command count, and frame pacing.
 - Try JSC or V8 build only after confirming the current QuickJS baseline; do not silently change engines.
+
+## Final push status - 2026-05-08 16:25 PDT
+
+All outstanding work committed and pushed:
+
+- **Spectr** (`fix/native-editor-no-pump-33`): 4 commits pushed — 2 planning doc commits + 1 code commit removing the local pump thread, gating debug logging behind `SPECTR_NATIVE_DEBUG_LOG`, excluding WebView sources when `SPECTR_NATIVE_EDITOR=ON`, and forwarding `pointerEvents: 'none'` to the Pulp bridge.
+- **Pulp** (`fix/spectr-import-native-bridge-regressions`): 5 focused commits pushed:
+  1. `fix(bridge)`: pointer/wheel event hardening and WindowHost GPU reporting
+  2. `feat(import)`: expand CSS parsing, add validation renderer modes
+  3. `feat(runtime)`: harden import runtime execution and web-compat shims
+  4. `feat(sdk)`: include Skia cache in install/release, GPU standalone reporting
+  5. `docs`: Claude import runtime JS DOM review notes
+
+The Pulp SDK was reinstalled into `/tmp/pulp-sdk-gpu-test` and Spectr was rebuilt against it. 109/109 Spectr tests pass.
+
+### Band drawing root cause
+
+The black rectangle on mouse movement is the **hover tooltip** drawn by `drawHover()` in `spectr-editor-extracted.js` (line 1577). It draws `rgba(10,14,20,0.88)` at the mouse position. The overlay canvas's `clearRect` is isolated from sibling canvases by `save_layer` in `canvas_widget.cpp` (lines 196-199), so the main canvas bands should not be erased. However:
+
+- The hover tooltip text may not render in native (possible font fallback or `fillText` bridge issue).
+- Pointer events may still not route correctly for band editing even after the `clientX/clientY` and `pointerEvents:'none'` fixes.
+
+### Next validation steps
+
+1. Rebuild against the updated SDK:
+   ```bash
+   cd /tmp/spectr-native-pump-fix
+   cmake --install /tmp/pulp-spectr-import-fix/build-gpu --prefix /tmp/pulp-sdk-gpu-test
+   cmake --build build-gpu --target Spectr-test Spectr_Standalone -j 8
+   ctest --test-dir build-gpu --output-on-failure
+   ```
+2. Launch with debug logging:
+   ```bash
+   SPECTR_NATIVE_DEBUG_LOG=1 open -n build-gpu/Spectr.app
+   ```
+3. Test band drawing: click and drag over the filter bank canvas.
+4. Check `/tmp/spectr-native-debug.log` for `[pdown]`/`[pmove]` traces.
+5. If pointer events arrive but drawing still fails, the next suspects are the hover tooltip font rendering and coordinate math in `findBand`/`pxToGain`/`commitGain`.
+
+### Remaining open items (not blockable from this session)
+
+- **Band drawing**: blocked on user validation with updated SDK + pointer event fixes. Hover tooltip text rendering (Inter font in native bridge) may also need fixing.
+- **Waveform/analyzer animation**: debug logs show rAF callbacks running continuously; user verification needed.
+- **Popup previews and SVG/icon graphics**: still open.
+- **Layout parity**: still open.
+- **Sluggishness**: needs fresh sample after non-debug relaunch.
 
 ## Current runnable commands
 
