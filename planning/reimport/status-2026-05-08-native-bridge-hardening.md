@@ -1,6 +1,6 @@
 # Spectr Native Bridge Hardening Status - 2026-05-08
 
-Last updated: 2026-05-08 15:10 PDT.
+Last updated: 2026-05-08 16:03 PDT.
 
 ## Current status
 
@@ -113,10 +113,43 @@ That path bundles `native-react/editor-port.tsx`, `dom-adapter.tsx`, `canvas2d-s
 - Pulp: `/tmp/pulp-spectr-import-fix`
   - Branch: `fix/spectr-import-native-bridge-regressions`
   - Purpose: import runtime, native bridge materialization, GPU validation, event/canvas bridge hardening, and validation harness work.
+  - Commit/landing state: no local commits on this branch as of 2026-05-08 16:03 PDT; the branch is currently `origin/main` plus a broad dirty worktree.
+  - Main state: none of the Pulp fixes from this worktree should be assumed merged to `main`.
 - Spectr: `/tmp/spectr-native-pump-fix`
   - Branch: `fix/native-editor-no-pump-33`
   - Purpose: native standalone validation against a staged Pulp GPU SDK.
+  - Commit/landing state: only the planning/status doc commits are committed on this branch: `4177247` and `9257166`. The Spectr native-editor code changes are still uncommitted.
+  - Main state: these commits are not on `origin/main`; they sit on top of `origin/feature/native-react-editor`.
 - Staged Pulp SDK used by Spectr: `/tmp/pulp-sdk-gpu-test`
+
+## Landing / main status
+
+Nothing in this hardening pass should be described as "landed on main" yet.
+
+Committed locally:
+
+- Spectr planning doc commit `4177247` — `Document Spectr native bridge hardening status`.
+- Spectr planning doc commit `9257166` — `Update native bridge hardening status`.
+
+Uncommitted locally:
+
+- Pulp event/import/runtime/native bridge changes in `/tmp/pulp-spectr-import-fix`.
+- Spectr native-editor build/bridge changes in `/tmp/spectr-native-pump-fix`.
+
+Do not close GitHub issues based only on this worktree state. Close or mark fixed only after the relevant focused PR is merged and the stated validation is rerun against the merged branch or released SDK.
+
+## Issue close matrix
+
+| Issue | Current local state | Close when |
+| --- | --- | --- |
+| `pulp#1687` darwin-arm64 SDK omits `MacGpuWindowHost` / `use_gpu=true` silently CG-fallbacks | Likely addressed by local Pulp SDK install/release/skia-cache work, but still uncommitted and not on main. | A Pulp PR lands and a packaged SDK/release is verified to include the GPU host/Skia cache; a downstream Spectr build logs actual Dawn/Skia `gpu=true` from the resolved host. |
+| `pulp#1689` SDK ships no `pulp-import-design` binary | Local Pulp diff includes import-design tool/install work, but it is uncommitted and not on main. | SDK install/release artifact includes `pulp-import-design`, and install-layout/release smoke tests pass from the packaged SDK. |
+| `pulp#1690` `--execute-bundle` stops at loader shell, misses post-`replaceWith` React tree | Local Pulp diff includes runtime/import execution hardening and tests, but it is uncommitted and not on main. | Focused import-design/runtime PR lands with tests proving bundled React output materializes past the loader shell. |
+| `pulp#1688` standalone `gpu=true` log reflects requested flag, not resolved host | Local Pulp diff includes `WindowHost::is_gpu()` and host reporting work, but it is uncommitted and not on main. | Pulp PR lands and standalone logs/reporting are verified to reflect the resolved host, including fallback cases. |
+| `pulp#1691` static-lane import slurps `<script>` source as `createLabel` text | Local Pulp diff includes native generated-output filtering for script/style/head noise, but it is uncommitted and not on main. | Import PR lands with regression tests proving inert script/style/head content is not emitted as visible native labels while useful JSON script data remains preserved. |
+| `spectr#33` native bridge ANR / obsolete 60 Hz pump thread | Spectr worktree has uncommitted code removing the local pump thread and relying on Pulp host/frame pumping. Planning docs are committed, code is not. | Spectr PR lands the native-editor code change and a native standalone launch confirms no ANR. If `spectr#33` scope is only the ANR/pump thread, it can close then; keep separate parity issues open for drawing, black rectangle, SVG/icons, popup previews/layout, and performance. |
+
+Newer follow-up Pulp issues also remain open unless their focused PRs land: `pulp#1693` native GPU materialization loses live canvas/click behavior, `pulp#1694` import-design native GPU parity/perf validation, `pulp#1695` Claude import async/parser hardening, and `pulp#1696` frontend ecosystem semantics.
 
 ## GPU/native evidence
 
