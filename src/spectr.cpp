@@ -1,5 +1,7 @@
 #include "spectr/spectr.hpp"
+#if !SPECTR_NATIVE_EDITOR
 #include "spectr/ui/editor_view.hpp"
+#endif
 #include "spectr/ui/native_editor_view.hpp"
 
 #include <choc/containers/choc_Value.h>
@@ -136,9 +138,11 @@ std::unique_ptr<pulp::view::View> Spectr::create_view() {
 }
 
 void Spectr::on_view_opened(pulp::view::View& view) {
+#if !SPECTR_NATIVE_EDITOR
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->attach_if_needed();
     }
+#endif
     if (auto* editor = dynamic_cast<NativeEditorView*>(&view)) {
         // Push the current StateStore param values so the editor's
         // Knobs/Faders open with the right starting positions.
@@ -149,16 +153,24 @@ void Spectr::on_view_opened(pulp::view::View& view) {
 }
 
 void Spectr::on_view_resized(pulp::view::View& view, uint32_t /*w*/, uint32_t /*h*/) {
+#if !SPECTR_NATIVE_EDITOR
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->sync_to_host();
     }
+#else
+    (void)view;
+#endif
     // Native editor: bridge owns layout; nothing to do on resize.
 }
 
 void Spectr::on_view_closed(pulp::view::View& view) {
+#if !SPECTR_NATIVE_EDITOR
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->detach_if_needed();
     }
+#else
+    (void)view;
+#endif
     // Native editor: destructor handles bridge teardown.
 }
 

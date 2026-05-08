@@ -21,9 +21,7 @@
 #include <pulp/view/view.hpp>
 #include <pulp/view/widget_bridge.hpp>
 
-#include <atomic>
 #include <memory>
-#include <thread>
 
 namespace spectr {
 
@@ -76,10 +74,6 @@ private:
     pulp::view::ScriptEngine                      engine_;
     std::unique_ptr<pulp::view::WidgetBridge>     bridge_;
 
-    // Throwaway 60Hz pump thread (macOS only; tracked locally until a
-    // proper paint-pump driver lands upstream).
-    std::atomic<bool>                             pump_running_{false};
-    std::thread                                   pump_thread_;
 };
 
 } // namespace spectr

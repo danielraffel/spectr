@@ -29,7 +29,6 @@ set(SPECTR_SOURCES
     src/preset_format.cpp
     src/snapshot.cpp
     src/windowed_stft_engine.cpp
-    src/ui/editor_view.cpp
     src/ui/native_editor_view.cpp
 )
 
@@ -43,9 +42,13 @@ set(SPECTR_HEADERS
     include/spectr/preset_format.hpp
     include/spectr/snapshot.hpp
     include/spectr/windowed_stft_engine.hpp
-    include/spectr/ui/editor_view.hpp
     include/spectr/ui/native_editor_view.hpp
 )
+
+if(NOT SPECTR_NATIVE_EDITOR)
+    list(APPEND SPECTR_SOURCES src/ui/editor_view.cpp)
+    list(APPEND SPECTR_HEADERS include/spectr/ui/editor_view.hpp)
+endif()
 
 # ── Editor assets embedded as C++ binary blobs ─────────────────────────
 # editor.html is always embedded (used by the WebView path).

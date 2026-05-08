@@ -2,12 +2,12 @@
 #include "spectr/spectr.hpp"
 
 #include <pulp/runtime/log.hpp>
-#include <pulp/view/window_host.hpp>
 
 #include "spectr_editor_assets_data.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -28,6 +28,11 @@ std::string js_number(float v) {
     return buf;
 }
 
+bool native_debug_enabled() {
+    const char* env = std::getenv("SPECTR_NATIVE_DEBUG_LOG");
+    return env && env[0] != '\0' && std::string(env) != "0";
+}
+
 } // namespace
 
 NativeEditorView::NativeEditorView(Spectr& plugin)
@@ -43,44 +48,30 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
     bridge_ = std::make_unique<pulp::view::WidgetBridge>(
         engine_, *this, plugin_.state());
 
-    // 60Hz pump thread (THROWAWAY — macOS only — local validation).
-    // The standalone WindowHost::repaint() doesn't reliably trigger
-    // paints when called from inside a draw cycle or from JS-callback
-    // context. A separate thread sleeping ~16ms and calling repaint()
-    // forces NSView setNeedsDisplay from outside the draw context,
-    // which DOES drive the next display cycle. Will be removed when
-    // pulp ships an autonomous paint-pump driver.
-    pump_running_ = true;
-    pump_thread_ = std::thread([this] {
-        while (pump_running_.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(16));
-            if (auto* host = window_host()) host->repaint();
-        }
-    });
-
-    // Diagnostic logger so JS-side console.log lands on stderr. Pulp's
-    // QuickJS path doesn't ship a console binding by default; without
-    // this the bundle's diagnostic logging is silent.
-    engine_.register_function("__spectrLog",
-        [](choc::javascript::ArgumentList args) {
-            std::string line;
-            for (size_t i = 0; i < args.numArgs; ++i) {
-                if (i) line += ' ';
-                if (args[i] && args[i]->isString()) {
-                    line += args[i]->getString();
-                } else if (args[i]) {
-                    line += choc::json::toString(*args[i]);
+    if (native_debug_enabled()) {
+        // Optional diagnostic logger so JS-side console.log lands on stderr
+        // during bridge bring-up without taxing normal plugin/editor runs.
+        engine_.register_function("__spectrLog",
+            [](choc::javascript::ArgumentList args) {
+                std::string line;
+                for (size_t i = 0; i < args.numArgs; ++i) {
+                    if (i) line += ' ';
+                    if (args[i] && args[i]->isString()) {
+                        line += args[i]->getString();
+                    } else if (args[i]) {
+                        line += choc::json::toString(*args[i]);
+                    }
                 }
-            }
-            std::fprintf(stderr, "[spectr-js] %s\n", line.c_str());
-            return choc::value::Value();
-        });
+                std::fprintf(stderr, "[spectr-js] %s\n", line.c_str());
+                return choc::value::Value();
+            });
+    }
 
     // Register a JS-callable "__spectrumTick" that invokes our C++ tick().
     // Combined with editor.tsx's requestAnimationFrame loop, this makes
     // the analyzer push driven by Pulp's host frame clock — no separate
-    // Timer thread required. service_frame_callbacks() is already pumped
-    // by the framework's per-frame UI loop (see threejs-native-demo).
+    // local repaint thread required. service_frame_callbacks() is already
+    // pumped by the framework's per-frame UI loop (see threejs-native-demo).
     engine_.register_function("__spectrumTick",
         [this](choc::javascript::ArgumentList) {
             tick();
@@ -107,10 +98,7 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
 #endif
 }
 
-NativeEditorView::~NativeEditorView() {
-    pump_running_ = false;
-    if (pump_thread_.joinable()) pump_thread_.join();
-}
+NativeEditorView::~NativeEditorView() = default;
 
 void NativeEditorView::paint(pulp::canvas::Canvas& canvas) {
     // Diagnostic — log first few paint passes to confirm framework
@@ -120,7 +108,7 @@ void NativeEditorView::paint(pulp::canvas::Canvas& canvas) {
     // callbacks queue but never drain.
     static int paint_count = 0;
     paint_count++;
-    if (paint_count <= 5 || paint_count % 60 == 0) {
+    if (native_debug_enabled() && (paint_count <= 5 || paint_count % 60 == 0)) {
         std::fprintf(stderr, "[NativeEditorView::paint] #%d bounds=(%d,%d) "
                      "children=%zu\n",
                      paint_count, static_cast<int>(bounds().width),
@@ -145,10 +133,8 @@ void NativeEditorView::paint(pulp::canvas::Canvas& canvas) {
     // exactly that snapshot, and any new callbacks queued during
     // processing land in the next paint's batch.
     //
-    // Note: until pulp #921 lands, requestAnimationFrame() doesn't
-    // actually trigger follow-up paints (its `__requestFrame__` adds
-    // to the queue but never calls request_repaint). FilterBank's
-    // canvas draw therefore never animates. Structural mount works.
+    // Repaint scheduling is owned by Pulp's WindowHost / WidgetBridge
+    // layer; Spectr should not run its own thread to force paints.
     if (bridge_) {
         bridge_->service_frame_callbacks();
     }

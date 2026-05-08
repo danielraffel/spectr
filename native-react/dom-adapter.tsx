@@ -404,10 +404,9 @@ function adaptStyle(style: CSSProperties | undefined): Record<string, unknown> {
     // routed via a ref-callback in createElement (see _buildOverflowRef);
     // the prop-applier in @pulp/react doesn't have a case for overflow.
 
-    // pointerEvents: 'none' → bridge equivalent (?). Drop for now;
-    // overlays with pointerEvents:none should pass clicks through.
+    // pointerEvents: 'none' needs a bridge ref callback below. Keep the
+    // marker out of @pulp/react props; prop-applier does not translate it.
     if (styleObj.pointerEvents === 'none') {
-        // setHitTest equivalent not in bridge yet; track separately.
         out.__pointerEventsNone = true;
     }
 
@@ -604,6 +603,28 @@ function _buildSvgPathRef(
         else if (existingRef && typeof existingRef === 'object') {
             (existingRef as { current: unknown }).current = instance;
         }
+    };
+}
+
+function _forwardRef(existingRef: unknown, instance: unknown): void {
+    if (typeof existingRef === 'function') (existingRef as (i: unknown) => void)(instance);
+    else if (existingRef && typeof existingRef === 'object') {
+        (existingRef as { current: unknown }).current = instance;
+    }
+}
+
+function _buildPointerEventsRef(mode: 'none' | 'auto', existingRef: unknown): (instance: unknown) => void {
+    return (instance: unknown) => {
+        if (instance && typeof instance === 'object') {
+            const id = (instance as { id?: unknown }).id;
+            const g = globalThis as Record<string, unknown>;
+            if (typeof id === 'string' && typeof g.setPointerEvents === 'function') {
+                try {
+                    (g.setPointerEvents as (id: string, mode: string) => unknown)(id, mode);
+                } catch { /* pre-v? bridges silently no-op */ }
+            }
+        }
+        _forwardRef(existingRef, instance);
     };
 }
 
@@ -977,6 +998,13 @@ export function createElement(
     }
     if (typeof inProps.value === 'string' || typeof inProps.value === 'number') {
         adapted.value = inProps.value;
+    }
+    if (adapted.__pointerEventsNone === true) {
+        delete adapted.__pointerEventsNone;
+        (adapted as { ref?: unknown }).ref = _buildPointerEventsRef(
+            'none',
+            (adapted as { ref?: unknown }).ref,
+        );
     }
 
     // Drop className entirely — no global stylesheet on this lane.
