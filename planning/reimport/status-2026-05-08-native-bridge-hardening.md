@@ -1,0 +1,266 @@
+# Spectr Native Bridge Hardening Status - 2026-05-08
+
+Last updated: 2026-05-08 14:22 PDT.
+
+## Current status
+
+This work is not done yet. The native bridge is now launching the real Spectr Claude Design / HTML editor path and it is clearly closer than the earlier placeholder UI, but it is not yet a one-to-one import/runtime match with the WebView/original HTML.
+
+Most important current blockers:
+
+- Native bridge cannot draw/edit bands with the mouse, while the WebView version can draw smoothly.
+- The analyzer/waveform appears to advance only when the mouse moves. The intended behavior is continuous motion on its own, eventually driven by real-time audio input.
+- Native bridge is sluggish. Prior sampling showed the main thread spending significant time in `WidgetBridge::service_frame_callbacks()` and QuickJS while the canvas bridge sends a high volume of drawing commands.
+- Preset/pattern manager popup is missing the shape previews that are visible in WebView.
+- Some SVG/icon graphics are missing in native, including the settings gear.
+- Some popup/dropdown layout is still off versus WebView.
+
+The goal remains: import the Spectr Claude Design HTML and run it through the native Pulp GPU bridge, not WebView, with visual and behavioral parity against the WebView/original HTML.
+
+## Correction from this session
+
+The original `resources/editor.html` / Claude Design export is the real Spectr editor: canvas-driven `FilterBank`, `Chrome`, `TweaksPanel`, `PatternManager`, dropdowns, sliders, modal surfaces, SVG icons, and small canvas previews.
+
+It is not the knob-row UI. The knob-row UI is the older hand-authored `native-react/editor.tsx` skeleton / placeholder path. Do not use that placeholder as evidence for import parity.
+
+The real validation target is:
+
+```bash
+npm --prefix native-react run build:port
+cmake --build build-gpu --target Spectr-test Spectr_Standalone -j 8
+ctest --test-dir build-gpu --output-on-failure
+open -n build-gpu/Spectr.app
+```
+
+That path bundles `native-react/editor-port.tsx`, `dom-adapter.tsx`, `canvas2d-shim.ts`, and `spectr-editor-extracted.js`.
+
+## Active worktrees
+
+- Pulp: `/tmp/pulp-spectr-import-fix`
+  - Branch: `fix/spectr-import-native-bridge-regressions`
+  - Purpose: import runtime, native bridge materialization, GPU validation, event/canvas bridge hardening, and validation harness work.
+- Spectr: `/tmp/spectr-native-pump-fix`
+  - Branch: `fix/native-editor-no-pump-33`
+  - Purpose: native standalone validation against a staged Pulp GPU SDK.
+- Staged Pulp SDK used by Spectr: `/tmp/pulp-sdk-gpu-test`
+
+## GPU/native evidence
+
+The latest successful real-port launch proved the native GPU path, not WebView:
+
+- `Spectr native editor: loaded editor.js (459462 bytes)`
+- `GpuSurface: created Metal surface from CAMetalLayer`
+- `GpuSurface: Dawn initialized (surface: presentable)`
+- `SkiaSurface: Graphite initialized on shared Dawn device (presentable: yes)`
+- `Standalone: editor window open (... gpu=true, mode=autoui, chrome=editor-only, inspector=ready)`
+- Visible real editor labels included `SPECTR`, `ZOOMABLE FILTER BANK`, `LIVE`, `PRECISION`, `IIR`, `FFT`, `HYBRID`, `32 bands`, `CLEAR`, `SCULPT`, `PEAK`, `PRESETS`, and `SNAPSHOT`.
+
+Pulp capability state for the user-facing stack:
+
+- WebGPU Native via Dawn: supported as native GPU infrastructure and in the native Three.js/WebGPU bridge lane. This is not yet a drop-in browser `navigator.gpu` surface for arbitrary imported apps.
+- WGSL: supported in native bridge/custom GPU paths where those bridge APIs are used.
+- Skia Graphite: supported and used for GPU 2D rendering over Dawn/Metal in this build.
+- SDL3: present for cross-platform windowing/input, with Apple native hosts currently the most validated path.
+- JS engine abstraction: supported across QuickJS/JSC/V8. Current staged SDK is QuickJS, which is likely a major contributor to sluggishness for this large React/canvas bundle.
+- Flexible assets/resources: supported through Pulp's asset/resource system, but the Spectr import still has SVG/icon/canvas-preview materialization gaps.
+
+## What changed in Pulp
+
+The Pulp worktree contains the broader import/runtime hardening slice:
+
+- Claude import runtime can execute bundled React exports instead of only capturing the loader shell.
+- Runtime settling was expanded for React-style async/event/lifecycle assumptions.
+- Web-compat shims were expanded around `window`, `document`, `EventTarget`, `createElementNS`, namespace attrs, event listener behavior, and scheduler diagnostics.
+- Native generated output skips inert script/style/head noise while preserving useful JSON script data.
+- Native common style emission improved for inline CSS mapped into Pulp primitives.
+- `pulp import-design --validate` now defaults toward native GPU validation and records native bridge/webview/timing/click diff metadata.
+- `WindowHost::is_gpu()` exists and macOS/iOS hosts report GPU when backed by Skia/Dawn surfaces.
+- SDK install/release flow now includes the Skia cache needed by downstream native bridge consumers.
+- Repo-reference review notes from `htmlparser2`, `react-testing-library`, `jsdom`, and `happy-dom` are captured in `docs/reports/claude-import-runtime-js-dom-review-2026-05-08.md`.
+
+Additional focused Pulp fix in this pass:
+
+- `core/view/src/widget_bridge.cpp` now sends `clientX` and `clientY` on pointer drag/move events, not only `offsetX` and `offsetY`.
+- `test/test_widget_bridge.cpp` now asserts pointer move payloads include `clientX/clientY`.
+- Targeted validation passed:
+
+```bash
+cmake --build build-gpu --target pulp-test-widget-bridge -j 8
+./build-gpu/test/pulp-test-widget-bridge "[view][bridge][events]"
+```
+
+Important: this fix has not yet been manually confirmed against a relaunched native Spectr app. If drawing still fails after relaunching against the updated SDK, next suspects are pointer capture, event target/bubbling across the two canvas overlays, `document`-level pointerup listeners, `getBoundingClientRect()`, `buttons/button` fields, and coordinate basis mismatches.
+
+## What changed in Spectr
+
+The Spectr worktree now has a native standalone build that avoids WebView symbols when `SPECTR_NATIVE_EDITOR=ON`:
+
+- `CMakeLists.txt` only includes the WebView `EditorView` sources when native editor mode is off.
+- `src/spectr.cpp` gates WebView includes and casts behind `!SPECTR_NATIVE_EDITOR`.
+- `NativeEditorView` no longer runs its own local repaint thread. Repaint/frame pumping is owned by Pulp's `WindowHost` and `WidgetBridge`.
+- `NativeEditorView` debug JS logging is now gated behind `SPECTR_NATIVE_DEBUG_LOG`, so normal runs do not flood the console/log file.
+
+Current local validation after removing the placeholder-knob path:
+
+```bash
+cmake --build build-gpu --target Spectr-test Spectr_Standalone -j 8
+ctest --test-dir build-gpu --output-on-failure
+```
+
+Result: `109/109` Spectr tests passed.
+
+## GitHub tracking
+
+Filed in `danielraffel/pulp`:
+
+- `#1693` Claude import native GPU materialization loses live canvas/click behavior.
+- `#1694` import-design validation should enforce native GPU parity/perf budgets.
+- `#1695` harden Claude import runtime with async quiescence/parser coverage.
+- `#1696` Design import metadata: track frontend ecosystem semantics beyond React.
+
+Potential follow-up issues to file if not folded into the above:
+
+- Native bridge pointer parity for canvas editing: pointer capture, `clientX/clientY`, `buttons`, document-level pointer routing, and overlay canvas hit-testing.
+- Native bridge rAF/invalidation parity: continuous animation must not depend on mouse movement.
+- Native bridge SVG materialization parity: imported `svg/path/circle/rect/line`, `currentColor`, stroke/fill inheritance, and icon sizing.
+- Native canvas preview parity: small canvas previews inside popups/dropdowns must paint after mount and repaint when opened.
+- Native bridge performance budget for large imported React/canvas bundles: record JS engine, frame time, CPU sample, command count, and whether V8/JSC is required.
+
+## Open work
+
+### 1. Band drawing
+
+WebView can draw bands smoothly. Native currently cannot draw bands at all from the user's latest manual test.
+
+Required behavior:
+
+- Drag on the filter bank to edit bands in `SCULPT` and other edit modes.
+- Mouse wheel zooms the frequency viewport.
+- Pointer interaction should not corrupt or pause the analyzer/waveform.
+
+Likely contracts to validate:
+
+- `pointerdown`, `pointermove`, `pointerup`, `pointercancel`
+- `clientX/clientY`, `offsetX/offsetY`, `buttons`, `button`, `pointerId`, `pointerType`
+- `setPointerCapture` / `releasePointerCapture`
+- `getBoundingClientRect()` on the wrapper and both canvas layers
+- event routing when the pointer lands on either of the two overlay canvases
+- document/window listeners used for outside click and pointer-up completion
+
+### 2. Waveform/analyzer animation
+
+The original/WebView editor renders a live simulated analyzer/waveform even without mouse input. Native currently appears to update only in response to mouse movement.
+
+Next checks:
+
+- Instrument `requestAnimationFrame` scheduling and callback execution in the real port.
+- Verify `__requestFrame__` asks the native host for another frame even when there is no input.
+- Verify `WindowHost` invalidation actually schedules repaint continuously while rAF callbacks are queued.
+- Confirm the draw loop remains active after the first frame and after opening popups.
+
+### 3. Popup previews and SVG/icon graphics
+
+WebView shows pattern/metaphor shape previews in popups. Native does not.
+
+Likely gaps:
+
+- `MetaphorPreview` uses tiny `<canvas>` elements inside dropdown rows; those may not paint after mount/open.
+- Inline SVG icons rely on `svg`, `path`, `circle`, stroke/fill inheritance, `currentColor`, and viewBox sizing. The current adapter maps some SVG tags to placeholders and only partially upgrades `path`.
+- Gear icon specifically includes both a `<path>` and a `<circle>`, so missing `circle` support or inherited stroke color can make it incomplete or invisible.
+
+### 4. Layout parity
+
+Popup/dropdown layout still differs from WebView.
+
+Next checks:
+
+- Screenshot compare WebView/original HTML against native at 1320x860 and one smaller size.
+- Focus on PatternManager, edit-mode popover, analyzer popover, settings modal, and bottom toolbar overflow.
+- Attribute mismatches to either Yoga layout limitations, missing CSS property mapping, or adapter translation bugs.
+
+### 5. Sluggishness
+
+Performance is a blocker.
+
+Current evidence:
+
+- Prior sample showed roughly 60% CPU while running the native real port.
+- Hot path was primarily `MacGpuWindowHost::render_frame` -> `NativeEditorView::paint` -> `WidgetBridge::service_frame_callbacks()` -> QuickJS evaluation, with heavy canvas bridge traffic.
+- Debug logging has since been gated off, but the app needs a fresh sample after relaunch.
+
+Next checks:
+
+- Relaunch native without `SPECTR_NATIVE_DEBUG_LOG`.
+- Run `ps` and `sample` again.
+- Record JS engine, frame callback count, canvas command count, and frame pacing.
+- Try JSC or V8 build only after confirming the current QuickJS baseline; do not silently change engines.
+
+## Current runnable commands
+
+Rebuild and launch the real native bridge editor:
+
+```bash
+cd /tmp/spectr-native-pump-fix
+npm --prefix native-react run build:port
+cmake --build build-gpu --target Spectr-test Spectr_Standalone -j 8
+ctest --test-dir build-gpu --output-on-failure
+open -n build-gpu/Spectr.app
+```
+
+Capture logs:
+
+```bash
+rm -f /tmp/spectr-native-port.log
+open -F -n -o /tmp/spectr-native-port.log --stderr /tmp/spectr-native-port.log build-gpu/Spectr.app
+tail -120 /tmp/spectr-native-port.log
+```
+
+Sample CPU after launch:
+
+```bash
+pgrep -fl '/tmp/spectr-native-pump-fix/build-gpu/Spectr.app/Contents/MacOS/Spectr'
+ps -p <pid> -o pid,%cpu,%mem,time,command
+sample <pid> 3 -file /tmp/spectr-native-port-sample-after-pointer.txt
+```
+
+## Recommended next-agent path
+
+1. Start from the two worktrees above.
+2. Reinstall the updated Pulp SDK if the Spectr app is not linked against the latest Pulp pointer-event fix:
+   ```bash
+   cd /tmp/pulp-spectr-import-fix
+   cmake --install build-gpu --prefix /tmp/pulp-sdk-gpu-test
+   ```
+3. Rebuild the real Spectr port with `npm --prefix native-react run build:port`.
+4. Launch native and manually validate the exact user blockers:
+   - band drawing
+   - wheel zoom
+   - continuous waveform/analyzer motion without mouse movement
+   - preset/pattern popup previews
+   - settings gear and other SVG icons
+   - popup/dropdown layout
+   - sluggishness
+5. For each mismatch, decide whether it is:
+   - a Pulp bridge/materialization gap, to fix in `/tmp/pulp-spectr-import-fix`;
+   - a Spectr adapter issue, to fix in `/tmp/spectr-native-pump-fix`;
+   - an expected design-import limitation, to record against a Pulp issue.
+6. Keep commits split by repo and purpose:
+   - Pulp PR: import runtime/GPU validation/harness/event/canvas bridge work.
+   - Spectr PR: native-editor build/wiring/real-port validation work.
+
+## Commit status
+
+No commits have been created yet in either worktree.
+
+Current local dirty state:
+
+- Pulp has the broad import/runtime hardening diff plus the pointer-move `clientX/clientY` fix and repo review report.
+- Spectr has native-editor build/wiring changes, debug-log gating, and this status document.
+- `/tmp/spectr-native-pump-fix/build-gpu/` is untracked build output and should not be committed.
+
+Before committing, run:
+
+```bash
+git -C /tmp/pulp-spectr-import-fix diff --check
+git -C /tmp/spectr-native-pump-fix diff --check
+```
