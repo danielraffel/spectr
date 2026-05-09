@@ -2917,13 +2917,13 @@ function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspM
         color: 'rgba(255,255,255,0.75)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 1, height: 16, flex: 'none' }}>
-            <div style={{ width: 2, height: '40%', background: 'hsl(240,80%,65%)', borderRadius: 0 }} />
-            <div style={{ width: 2, height: '67%', background: 'hsl(200,85%,60%)', borderRadius: 0 }} />
-            <div style={{ width: 2, height: '93%', background: 'hsl(150,85%,60%)', borderRadius: 0 }} />
-            <div style={{ width: 2, height: '53%', background: 'hsl(60,90%,60%)', borderRadius: 0 }} />
-            <div style={{ width: 2, height: '13%', background: 'hsl(0,85%,60%)', borderRadius: 0 }} />
-          </div>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M1,6 h2 v4 h-2 Z" fill="hsl(240,80%,65%)" />
+            <path d="M4,3 h2 v10 h-2 Z" fill="hsl(200,85%,60%)" />
+            <path d="M7,1 h2 v14 h-2 Z" fill="hsl(150,85%,60%)" />
+            <path d="M10,4 h2 v8 h-2 Z" fill="hsl(60,90%,60%)" />
+            <path d="M13,7 h2 v2 h-2 Z" fill="hsl(0,85%,60%)" />
+          </svg>
           <span style={{ fontWeight: 600, letterSpacing: 1.5, color: '#fff' }}>SPECTR</span>
           <span style={{ opacity: 0.4 }}>·</span>
           <span style={{ opacity: 0.55 }}>ZOOMABLE FILTER BANK</span>
@@ -3076,7 +3076,15 @@ function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspM
 
         <div style={{ position: 'relative' }}>
           <RailBtn onClick={() => setPatternMenu(v => !v)} active={patternMenu}>
-            <span style={{ color: 'currentColor', fontSize: 13, lineHeight: '13px', flex: 'none', opacity: 0.85, fontWeight: 900 }}>~~~</span>
+            <svg width="18" height="13" viewBox="0 0 24 16" style={{ flex: 'none', verticalAlign: 'middle' }}>
+              {/* Three stacked response curves — "a library of shapes" */}
+              <path d="M 2 13 Q 7 13 10 9 Q 13 5 17 5 Q 20 5 22 7"
+                stroke="currentColor" strokeWidth="1.3" fill="none" opacity="0.45" />
+              <path d="M 2 11 Q 6 11 9 7 Q 13 3 17 7 Q 20 10 22 10"
+                stroke="currentColor" strokeWidth="1.3" fill="none" opacity="0.7" />
+              <path d="M 2 9 Q 5 4 9 10 Q 13 15 17 9 Q 20 5 22 6"
+                stroke="currentColor" strokeWidth="1.4" fill="none" />
+            </svg>
             <span style={{ marginLeft: 6 }}>PRESETS ▾</span>
           </RailBtn>
           {patternMenu && (
@@ -3141,7 +3149,19 @@ function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspM
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             marginRight: 6,
           }}>
-          <span style={{ fontSize: 16, lineHeight: 1, fontWeight: 900 }}>*</span>
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
+            {/* Proper gear: 8 rectangular teeth around a ring with a center hole */}
+            <path d="M 8 1.3 L 9 1.3 L 9 3.0
+                     L 11.0 3.7 L 12.2 2.5 L 13.5 3.8 L 12.3 5.0
+                     L 13.0 7.0 L 14.7 7.0 L 14.7 9.0 L 13.0 9.0
+                     L 12.3 11.0 L 13.5 12.2 L 12.2 13.5 L 11.0 12.3
+                     L 9 13.0 L 9 14.7 L 7 14.7 L 7 13.0
+                     L 5.0 12.3 L 3.8 13.5 L 2.5 12.2 L 3.7 11.0
+                     L 3.0 9.0 L 1.3 9.0 L 1.3 7.0 L 3.0 7.0
+                     L 3.7 5.0 L 2.5 3.8 L 3.8 2.5 L 5.0 3.7
+                     L 7 3.0 L 7 1.3 Z" />
+            <path d="M5.9,8 a2.1,2.1 0 1,0 4.2,0 a2.1,2.1 0 1,0 -4.2,0" />
+          </svg>
         </button>
 
         {/* Help affordance */}
@@ -3202,14 +3222,20 @@ const ANALYZER_OPTS = [
 
 function EditModeGlyph({ mode }) {
   const m = EDIT_MODES.find(x => x.k === mode) || EDIT_MODES[0];
-  const label = ({ sculpt: '~', level: '--', boost: '^', flare: '*', glide: '~' })[m.k] || '~';
-  return <span style={{ color: 'currentColor', fontSize: 13, lineHeight: '16px', flex: 'none', fontWeight: 900 }}>{label}</span>;
+  return (
+    <svg width="22" height="16" viewBox="0 0 24 24" style={{ flex: 'none', verticalAlign: 'middle' }}>
+      <path d={m.icon} stroke="currentColor" strokeWidth="1.4" fill="none" />
+    </svg>
+  );
 }
 
 function AnalyzerGlyph({ mode }) {
   const m = ANALYZER_OPTS.find(x => x.k === mode) || ANALYZER_OPTS[0];
-  const label = ({ peak: '|||', avg: '~', both: '|~', off: 'o' })[m.k] || '||';
-  return <span style={{ color: 'currentColor', fontSize: 11, lineHeight: '16px', flex: 'none', letterSpacing: -1, fontWeight: 900 }}>{label}</span>;
+  return (
+    <svg width="22" height="16" viewBox="0 0 24 24" style={{ flex: 'none', verticalAlign: 'middle' }}>
+      <path d={m.icon} stroke="currentColor" strokeWidth="1.3" fill="none" />
+    </svg>
+  );
 }
 
 function EditModePopover({ value, onChange, onClose }) {
@@ -3244,10 +3270,11 @@ function EditModePopover({ value, onChange, onClose }) {
               fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.5,
               textAlign: 'left',
             }}>
-            <span style={{ flex: 'none', fontSize: 18, lineHeight: '20px', marginTop: 2, fontWeight: 900,
-              color: active ? 'hsl(200,85%,75%)' : 'rgba(255,255,255,0.55)' }}>
-              {{ sculpt: '~', level: '--', boost: '^', flare: '*', glide: '~' }[m.k] || '~'}
-            </span>
+            <svg width="28" height="20" viewBox="0 0 24 24" style={{ flex: 'none', marginTop: 2 }}>
+              <path d={m.icon}
+                stroke={active ? 'hsl(200,85%,75%)' : 'rgba(255,255,255,0.55)'}
+                strokeWidth="1.4" fill="none" />
+            </svg>
             <span style={{ flex: 1 }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                 <span style={{ letterSpacing: 1.5, fontWeight: 600 }}>{m.label}</span>
