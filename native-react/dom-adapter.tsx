@@ -92,7 +92,57 @@ function tagToWidget(tag: string): string {
     return TAG_MAP[tag] ?? 'View';
 }
 
-/// Spectr #32 — pulp gates pointer dispatch behind registerPointer(id).
+function _serializeSvg(
+    svgAttrs: Record<string, unknown>,
+    children: unknown[],
+): string {
+    var parts: string[] = [];
+    // Build opening <svg> tag
+    parts.push('<svg');
+    var keys = Object.keys(svgAttrs);
+    for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (k === 'children' || k === 'ref' || k === 'key' || k === 'style') continue;
+        var v = svgAttrs[k];
+        if (v != null) parts.push(' ' + k + '="' + String(v).replace(/"/g, '&quot;') + '"');
+    }
+    parts.push('>');
+    // Serialize children
+    _serializeSvgChildren(children, parts);
+    parts.push('</svg>');
+    return parts.join('');
+}
+
+function _serializeSvgChildren(
+    children: unknown[],
+    parts: string[],
+): void {
+    for (var i = 0; i < children.length; i++) {
+        var child = children[i];
+        if (child == null || typeof child !== 'object') continue;
+        var c = child as Record<string, unknown>;
+        var tag = c.type as string;
+        if (typeof tag !== 'string') continue;
+        var props = (c.props || {}) as Record<string, unknown>;
+        parts.push('<' + tag);
+        var pkeys = Object.keys(props);
+        for (var j = 0; j < pkeys.length; j++) {
+            var pk = pkeys[j];
+            if (pk === 'children' || pk === 'ref' || pk === 'key' || pk === 'style') continue;
+            var pv = props[pk];
+            if (pv != null) parts.push(' ' + pk + '="' + String(pv).replace(/"/g, '&quot;') + '"');
+        }
+        var grandkids = props.children;
+        if (grandkids != null && (Array.isArray(grandkids) || typeof grandkids === 'object')) {
+            parts.push('>');
+            var gk = Array.isArray(grandkids) ? grandkids as unknown[] : [grandkids];
+            _serializeSvgChildren(gk, parts);
+            parts.push('</' + tag + '>');
+        } else {
+            parts.push('/>');
+        }
+    }
+}
 /// @pulp/react's prop-applier only wires registerHover, so onPointerDown
 /// listeners install in the JS dispatch table but never fire. We arm
 /// pointer dispatch from the dom-adapter when an instance is mounted —
@@ -707,6 +757,34 @@ export function createElement(
     const inlineStyle = (inProps.style ?? {}) as Record<string, unknown>;
     const styleObj = { ...classStyle, ...inlineStyle } as CSSProperties;
     const adapted: Record<string, unknown> = { ...adaptStyle(styleObj) };
+
+    // Static SVG icon → whole-SVG bridge (pulp commit 52f0452c)
+    if (tag === 'svg' && children.length > 0) {
+        var gx = globalThis as Record<string, unknown>;
+        if (typeof gx.createSvgIcon === 'function') {
+            var svgAttrs = (inProps as Record<string, unknown>);
+            var svgKids = children.slice(0);
+            var existingRef = adapted.ref;
+            adapted.ref = function (instance: unknown) {
+                if (instance && typeof instance === 'object') {
+                    var id = (instance as { id?: string }).id;
+                    var parentId = (instance as { parent?: { id?: string } }).parent?.id;
+                    var g = globalThis as Record<string, unknown>;
+                    if (typeof id === 'string' && typeof g.createSvgIcon === 'function') {
+                        try {
+                            var xml = _serializeSvg(svgAttrs, svgKids);
+                            (g.createSvgIcon as (id: string, parent: string, xml: string) => unknown)(
+                                id, parentId || '', xml
+                            );
+                        } catch (e3) { /* best effort */ }
+                    }
+                }
+                if (typeof existingRef === 'function') (existingRef as (i: unknown) => void)(instance);
+            };
+            // Prevent per-path children from mounting alongside the icon
+            for (var ci = 0; ci < children.length; ci++) children[ci] = null;
+        }
+    }
 
     // Workaround for Pulp Label measure-callback returning 0 width in
     // nested flex containers without explicit parent width: estimate
