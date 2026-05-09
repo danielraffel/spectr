@@ -2041,6 +2041,7 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
   const onPointerUp = (e) => {
     const p = pointerRef.current;
     pointerRef.current = { mode: null };
+    setHover(null);
     if (!p || !p.mode) { setMarquee(null); return; }
     if (p.mode === 'marquee') { setMarquee(null); return; }
     if (p.mode === 'gain') {
