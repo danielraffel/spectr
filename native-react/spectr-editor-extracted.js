@@ -3076,7 +3076,7 @@ function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspM
 
         <div style={{ position: 'relative' }}>
           <RailBtn onClick={() => setPatternMenu(v => !v)} active={patternMenu}>
-            <span style={{ color: 'currentColor', fontSize: 13, lineHeight: '13px', flex: 'none', opacity: 0.85 }}>∿∿∿</span>
+            <span style={{ color: 'currentColor', fontSize: 13, lineHeight: '13px', flex: 'none', opacity: 0.85, fontWeight: 900 }}>~~~</span>
             <span style={{ marginLeft: 6 }}>PRESETS ▾</span>
           </RailBtn>
           {patternMenu && (
@@ -3141,7 +3141,7 @@ function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspM
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             marginRight: 6,
           }}>
-          <span style={{ fontSize: 14, lineHeight: 1 }}>&#9881;</span>
+          <span style={{ fontSize: 16, lineHeight: 1, fontWeight: 900 }}>*</span>
         </button>
 
         {/* Help affordance */}
@@ -3202,14 +3202,14 @@ const ANALYZER_OPTS = [
 
 function EditModeGlyph({ mode }) {
   const m = EDIT_MODES.find(x => x.k === mode) || EDIT_MODES[0];
-  const label = ({ sculpt: '∿', level: '─', boost: '⬆', flare: '✦', glide: '∿' })[m.k] || '∿';
-  return <span style={{ color: 'currentColor', fontSize: 14, lineHeight: '16px', flex: 'none' }}>{label}</span>;
+  const label = ({ sculpt: '~', level: '--', boost: '^', flare: '*', glide: '~' })[m.k] || '~';
+  return <span style={{ color: 'currentColor', fontSize: 13, lineHeight: '16px', flex: 'none', fontWeight: 900 }}>{label}</span>;
 }
 
 function AnalyzerGlyph({ mode }) {
   const m = ANALYZER_OPTS.find(x => x.k === mode) || ANALYZER_OPTS[0];
-  const label = ({ peak: '▅▆▇', avg: '∿', both: '▅∿', off: '○' })[m.k] || '▅';
-  return <span style={{ color: 'currentColor', fontSize: 11, lineHeight: '16px', flex: 'none', letterSpacing: -1 }}>{label}</span>;
+  const label = ({ peak: '|||', avg: '~', both: '|~', off: 'o' })[m.k] || '||';
+  return <span style={{ color: 'currentColor', fontSize: 11, lineHeight: '16px', flex: 'none', letterSpacing: -1, fontWeight: 900 }}>{label}</span>;
 }
 
 function EditModePopover({ value, onChange, onClose }) {
@@ -3244,9 +3244,9 @@ function EditModePopover({ value, onChange, onClose }) {
               fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.5,
               textAlign: 'left',
             }}>
-            <span style={{ flex: 'none', fontSize: 20, lineHeight: '20px', marginTop: 2,
+            <span style={{ flex: 'none', fontSize: 18, lineHeight: '20px', marginTop: 2, fontWeight: 900,
               color: active ? 'hsl(200,85%,75%)' : 'rgba(255,255,255,0.55)' }}>
-              {{ sculpt: '∿', level: '─', boost: '⬆', flare: '✦', glide: '∿' }[m.k] || '∿'}
+              {{ sculpt: '~', level: '--', boost: '^', flare: '*', glide: '~' }[m.k] || '~'}
             </span>
             <span style={{ flex: 1 }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
