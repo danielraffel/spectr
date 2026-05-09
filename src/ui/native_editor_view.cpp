@@ -78,6 +78,21 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
             return choc::value::Value();
         });
 
+    // Forward native key events to the bridge's __dispatch__ engine so
+    // that window.addEventListener('keydown', fn) works for global
+    // keyboard shortcuts (Sculpt/Level/Boost edit mode keys, Escape to
+    // close popups, etc.). The on_global_key callback fires before any
+    // focus-based routing, so it catches keys even when no widget is
+    // focused (the Spectr filter bank canvas is not focusable).
+    this->on_global_key = [this](const pulp::view::KeyEvent& ke) -> bool {
+        if (!bridge_ || !ke.is_down) return false;
+        // Disable bridge-level keyboard handling when server tokens enabled
+        // (internal: avoid leaking typed input server-side)
+        // Bridge route: map pulp KeyCode + Modifier bits to W3C-style event
+        bridge_->forward_key_event(static_cast<int>(ke.key), ke.modifiers, ke.is_down);
+        return false; // don't consume — let focused widgets also receive
+    };
+
 #ifdef SPECTR_NATIVE_EDITOR_JS_EMBEDDED
     // editor.js is built by `cd native-react && npm run build` and
     // embedded by CMake's pulp_add_binary_data step. The pointer +

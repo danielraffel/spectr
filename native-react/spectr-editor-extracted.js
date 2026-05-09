@@ -1452,24 +1452,21 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
         ctx.fillStyle = 'rgba(180,210,255,0.05)';
         ctx.beginPath();
         let filling = false;
+        // Extend fill from left edge through all band centers to right edge
+        const firstY = pts[0] ? pts[0].y : zeroY;
+        const lastY  = pts[N - 1] ? pts[N - 1].y : zeroY;
+        ctx.moveTo(g.inner.x, zeroY);
+        ctx.lineTo(g.inner.x, firstY);
         for (let i = 0; i < N; i++) {
           const p = pts[i];
           if (!p) continue;
-          // Sample 3 neighbors each side, gaussian weighted — shows "skirt" under the curve
-          if (!filling) { ctx.moveTo(p.cx, zeroY); filling = true; }
+          if (!filling) { filling = true; }
           ctx.lineTo(p.cx, p.y);
         }
-        if (filling) {
-          // Close back along zero line
-          for (let i = N - 1; i >= 0; i--) {
-            const p = pts[i];
-            if (!p) continue;
-            ctx.lineTo(p.cx, zeroY);
-            break;
-          }
-          ctx.closePath();
-          ctx.fill();
-        }
+        ctx.lineTo(g.inner.x + g.inner.w, lastY);
+        ctx.lineTo(g.inner.x + g.inner.w, zeroY);
+        ctx.closePath();
+        ctx.fill();
       }
 
       // Spline curve through centers
@@ -1492,6 +1489,23 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
         prevPrevP = prevP; prevP = p;
       }
       ctx.stroke();
+
+      // Extend flat from first/last band to plot edges so the curve
+      // spans the full band area instead of ending at band centers.
+      const firstPt = pts[0];
+      const lastPt = pts[N - 1];
+      if (firstPt) {
+        ctx.beginPath();
+        ctx.moveTo(g.inner.x, firstPt.y);
+        ctx.lineTo(firstPt.cx, firstPt.y);
+        ctx.stroke();
+      }
+      if (lastPt) {
+        ctx.beginPath();
+        ctx.moveTo(lastPt.cx, lastPt.y);
+        ctx.lineTo(g.inner.x + g.inner.w, lastPt.y);
+        ctx.stroke();
+      }
 
       // Hybrid: overlay faint brick-wall strokes at the band tops to hint at digital nature
       if (dspM === 'hybrid') {
@@ -2754,20 +2768,20 @@ function PatternRow({ pattern, selected, isDefault, onClick, onDblClick, N }) {
 function MiniPreview({ gains, w = 56, h = 22 }) {
   const N = gains.length;
   const bw = w / N;
+  const centerY = h / 2;
   return (
-    <svg width={w} height={h} style={{ opacity: 0.9 }}>
+    <div style={{ width: w, height: h, position: 'relative', overflow: 'hidden', opacity: 0.9, borderRadius: 1, background: 'rgba(0,0,0,0.35)' }}>
       {gains.map((g, i) => {
         if (g === -Infinity) {
-          return <rect key={i} x={i * bw} y={h - 2} width={Math.max(1, bw - 0.5)} height={2} fill="rgba(255,100,100,0.3)" />;
+          return <div key={i} style={{ position: 'absolute', left: i * bw, bottom: 0, width: Math.max(1, bw - 0.5), height: 2, background: 'rgba(255,100,100,0.3)' }} />;
         }
         const gh = Math.max(1, Math.abs(g) * (h - 2));
-        const y = g >= 0 ? h / 2 - gh : h / 2;
+        const top = g >= 0 ? centerY - gh : centerY;
         const hue = 240 - (i / N) * 300;
-        return <rect key={i} x={i * bw} y={y} width={Math.max(1, bw - 0.5)} height={gh}
-          fill={`hsl(${hue}, 75%, 60%)`} opacity={0.85} />;
+        return <div key={i} style={{ position: 'absolute', left: i * bw, top: top, width: Math.max(1, bw - 0.5), height: gh, background: 'hsl(' + hue + ',75%,60%)', opacity: 0.85 }} />;
       })}
-      <line x1={0} y1={h / 2} x2={w} y2={h / 2} stroke="rgba(255,255,255,0.15)" strokeWidth={0.5} />
-    </svg>
+      <div style={{ position: 'absolute', left: 0, top: centerY - 0.5, width: '100%', height: 1, background: 'rgba(255,255,255,0.15)' }} />
+    </div>
   );
 }
 
