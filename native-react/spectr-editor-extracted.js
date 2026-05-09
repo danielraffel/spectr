@@ -1374,24 +1374,6 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
         ctx.fillRect(Math.round(G.cx - G.innerW / 2), Math.round(G.topY) - 1, Math.round(G.innerW), 2);
       }
 
-      // Edge band wall treatment
-      if (G.edge) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.38)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([2, 2]);
-        ctx.strokeRect(
-          Math.round(G.cx - G.innerW / 2) - 1.5,
-          Math.round(Math.min(G.topY, G.botY)) - 1.5,
-          Math.round(G.innerW) + 3,
-          Math.round(Math.abs(G.botY - G.topY)) + 3
-        );
-        ctx.setLineDash([]);
-        ctx.fillStyle = 'rgba(255,255,255,0.55)';
-        ctx.font = '9px JetBrains Mono, monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(i === 0 ? 'HPF' : 'LPF', G.cx, g.inner.y + g.inner.h + 14);
-      }
-
       // Selection ring (white, not glow)
       if (G.isSel) {
         ctx.strokeStyle = 'rgba(255,255,255,0.85)';
