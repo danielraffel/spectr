@@ -4,13 +4,271 @@ project(Spectr VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Pulp 0.47.0 REQUIRED)
+find_package(Pulp 0.87.0 REQUIRED)
 
 # ── Core Spectr sources ────────────────────────────────────────────────
 #
 # Public headers live under include/spectr/.
 # Implementation lives under src/.
 # See planning/Spectr-V1-Build-Plan.md for the milestone sequence.
+
+# ── Native React editor (opt-in) ───────────────────────────────────────
+# When SPECTR_NATIVE_EDITOR is ON, Spectr's create_view() returns a
+# NativeEditorView that renders an @pulp/react-built editor through the
+# WidgetBridge directly (no WebView). Requires native-react/dist/editor.js
+# to exist at configure time — produce it with `cd native-react && npm
+# run build`. Default OFF — the WebView path remains the released editor.
+option(SPECTR_NATIVE_EDITOR "Use the @pulp/react native editor instead of the WebView path" OFF)
+
+# ── Design-importer opt-in (Phase 3 of import-validation roadmap) ──────
+#
+# When ON, the native-react editor bundle is produced from a freshly-
+# imported design (via `pulp import-design --emit jsx`) rather than the
+# hand-built editor.tsx. The build runs the importer over
+# `resources/editor.html` → `native-react/editor.generated.tsx`, then
+# bundles that with esbuild and embeds it the same way as the hand-built
+# bundle. Requires SPECTR_NATIVE_EDITOR=ON, a `pulp` binary on PATH or
+# at sdk_path/bin/pulp (parsed from pulp.toml), and the pulp SDK source
+# tree (workaround for pulp issue #76 — `pulp import-design` requires
+# its CWD to be a Pulp source root).
+#
+# See planning/spectr-import-execution-plan.md (in the Pulp repo) and
+# pulp #1307 for the longer-term shape. Default OFF — only enable when
+# validating the importer round-trip.
+option(SPECTR_USE_IMPORTER
+    "Re-generate native-react/editor.generated.tsx via pulp import-design before bundling (requires SPECTR_NATIVE_EDITOR=ON; see pulp issue #76)"
+    OFF)
+
+# ── Runtime design-import (SPECTR_RUNTIME_IMPORT, opt-in) ──────────────
+#
+# Third mode — parallel to SPECTR_USE_IMPORTER, mutually exclusive.
+# When ON, the editor is loaded AT RUNTIME via @pulp/react/runtime-import
+# from resources/editor.html. No offline `pulp import-design` shellout,
+# no editor.generated.tsx step — the bridge installs
+# install_runtime_import_handlers() at view-construct time, then the JS
+# loader calls renderFromDesign(html, ...) which evaluates the Claude
+# bundle inside the live engine and captures the ReactDOM root.
+#
+# Requires SPECTR_NATIVE_EDITOR=ON (uses the same NativeEditorView host
+# path) and pulp SDK ≥ the build that exposes
+# pulp::view::WidgetBridge::install_runtime_import_handlers() +
+# @pulp/react/runtime-import. The bundling step (esbuild of
+# runtime-import-loader.tsx → dist/runtime-import-bundle.js) is a CMake
+# custom_command and runs at build time, so configure can succeed
+# against a stale SDK install — the actual build will surface any
+# missing @pulp/react/runtime-import export then.
+option(SPECTR_RUNTIME_IMPORT
+    "Runtime-load resources/editor.html via @pulp/react/runtime-import instead of offline import+bundle (requires SPECTR_NATIVE_EDITOR=ON)"
+    OFF)
+
+if(SPECTR_RUNTIME_IMPORT AND SPECTR_USE_IMPORTER)
+    message(FATAL_ERROR
+        "SPECTR_RUNTIME_IMPORT and SPECTR_USE_IMPORTER are mutually exclusive.\n"
+        "Pick one: runtime-load via @pulp/react/runtime-import, OR\n"
+        "          offline `pulp import-design` + esbuild bundle.")
+endif()
+
+if(SPECTR_RUNTIME_IMPORT)
+    if(NOT SPECTR_NATIVE_EDITOR)
+        message(FATAL_ERROR
+            "SPECTR_RUNTIME_IMPORT=ON requires SPECTR_NATIVE_EDITOR=ON.\n"
+            "Re-run cmake with -DSPECTR_NATIVE_EDITOR=ON -DSPECTR_RUNTIME_IMPORT=ON.")
+    endif()
+
+    set(_NATIVE_REACT_DIR_RI   "${CMAKE_CURRENT_SOURCE_DIR}/native-react")
+    set(_ESBUILD_RI            "${_NATIVE_REACT_DIR_RI}/node_modules/.bin/esbuild")
+    set(_LOADER_SRC            "${_NATIVE_REACT_DIR_RI}/runtime-import-loader.tsx")
+    set(_LOADER_BODY           "${_NATIVE_REACT_DIR_RI}/dist/runtime-import-bundle.body.js")
+    set(_LOADER_OUT            "${_NATIVE_REACT_DIR_RI}/dist/runtime-import-bundle.js")
+    set(_SHIM_JS_RI            "${_NATIVE_REACT_DIR_RI}/shim.js")
+
+    if(NOT EXISTS "${_ESBUILD_RI}")
+        message(FATAL_ERROR
+            "SPECTR_RUNTIME_IMPORT=ON but esbuild not found at\n  ${_ESBUILD_RI}\n"
+            "Run: cd native-react && npm install")
+    endif()
+    if(NOT EXISTS "${_LOADER_SRC}")
+        message(FATAL_ERROR
+            "SPECTR_RUNTIME_IMPORT=ON but loader missing:\n  ${_LOADER_SRC}")
+    endif()
+
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+    # Bundle the tiny loader (re-uses host-shims.ts side-effects + calls
+    # renderFromDesign from @pulp/react/runtime-import). Same esbuild
+    # flags as the existing editor bundle to keep the QuickJS surface
+    # identical; prepended with shim.js for the document/window
+    # bootstrap the bridge expects.
+    add_custom_command(
+        OUTPUT  "${_LOADER_OUT}"
+        COMMAND "${_ESBUILD_RI}"
+                "${_LOADER_SRC}"
+                --bundle
+                --format=iife
+                --platform=neutral
+                --target=es2020
+                --loader:.js=jsx
+                --jsx-factory=createElement
+                --jsx-fragment=Fragment
+                --alias:react/jsx-runtime=./jsx-runtime-shim.ts
+                --alias:react/jsx-dev-runtime=./jsx-runtime-shim.ts
+                "--define:process.env.NODE_ENV=\"production\""
+                "--outfile=${_LOADER_BODY}"
+        COMMAND "${Python3_EXECUTABLE}" -c
+                "open('${_LOADER_OUT}','wb').write(open('${_SHIM_JS_RI}','rb').read()+open('${_LOADER_BODY}','rb').read())"
+        COMMAND "${CMAKE_COMMAND}" -E rm -f "${_LOADER_BODY}"
+        DEPENDS "${_LOADER_SRC}"
+                "${_SHIM_JS_RI}"
+                "${_NATIVE_REACT_DIR_RI}/host-shims.ts"
+        WORKING_DIRECTORY "${_NATIVE_REACT_DIR_RI}"
+        COMMENT "esbuild: runtime-import-loader.tsx → dist/runtime-import-bundle.js"
+        VERBATIM)
+
+    add_custom_target(spectr_runtime_import_bundle
+        DEPENDS "${_LOADER_OUT}")
+
+    # pulp_add_binary_data() requires its SOURCES to exist at configure
+    # time (the encoder is scheduled as a build-time custom_command, but
+    # the existence check fires at configure). Drop a 1-byte placeholder
+    # if the real bundle hasn't been built yet — the spectr_runtime_import_bundle
+    # custom_target dependency below ensures the placeholder is overwritten
+    # with the real bundle before the encoder runs.
+    if(NOT EXISTS "${_LOADER_OUT}")
+        file(MAKE_DIRECTORY "${_NATIVE_REACT_DIR_RI}/dist")
+        file(WRITE "${_LOADER_OUT}"
+             "// placeholder — overwritten by spectr_runtime_import_bundle target\n")
+    endif()
+
+    message(STATUS "SPECTR_RUNTIME_IMPORT=ON; bundle output: ${_LOADER_OUT}")
+endif()
+
+# When SPECTR_USE_IMPORTER=ON, resolve the pulp binary + source tree
+# and wire the import + bundle steps before the embed.
+if(SPECTR_USE_IMPORTER)
+    if(NOT SPECTR_NATIVE_EDITOR)
+        message(FATAL_ERROR
+            "SPECTR_USE_IMPORTER=ON requires SPECTR_NATIVE_EDITOR=ON.\n"
+            "Re-run cmake with -DSPECTR_NATIVE_EDITOR=ON -DSPECTR_USE_IMPORTER=ON.")
+    endif()
+
+    # Locate the `pulp-import-design` binary. We invoke it directly
+    # rather than going through the Rust `pulp import-design` shim
+    # because the Rust shim has been observed to dispatch to an older
+    # cached delegate that doesn't honor --emit jsx (#1814 stale-cache
+    # bug). pulp-import-design is the actual C++ implementation and
+    # carries the full --emit jsx + --jsx-out support.
+    find_program(PULP_EXECUTABLE pulp-import-design)
+    if(NOT PULP_EXECUTABLE)
+        file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/pulp.toml" _pulp_toml_lines)
+        foreach(_line ${_pulp_toml_lines})
+            if(_line MATCHES "^[ \t]*sdk_path[ \t]*=[ \t]*\"([^\"]+)\"")
+                set(_PULP_SDK_PATH "${CMAKE_MATCH_1}")
+            endif()
+        endforeach()
+        if(_PULP_SDK_PATH AND EXISTS "${_PULP_SDK_PATH}/bin/pulp-import-design")
+            set(PULP_EXECUTABLE "${_PULP_SDK_PATH}/bin/pulp-import-design")
+        endif()
+    endif()
+    if(NOT PULP_EXECUTABLE OR NOT EXISTS "${PULP_EXECUTABLE}")
+        message(FATAL_ERROR
+            "SPECTR_USE_IMPORTER=ON but 'pulp-import-design' executable not found.\n"
+            "Add Pulp's bin/ to PATH, or set sdk_path correctly in pulp.toml.")
+    endif()
+    message(STATUS "SPECTR_USE_IMPORTER=ON; pulp-import-design: ${PULP_EXECUTABLE}")
+
+    # Workaround for pulp issue #76: `pulp import-design` requires its
+    # CWD to contain CMakeLists.txt + core/. Spectr doesn't satisfy
+    # that. Resolve a Pulp source tree to use as WORKING_DIRECTORY.
+    if(NOT DEFINED PULP_SDK_SRC_DIR)
+        # Heuristic 1: sdk_path in pulp.toml is sometimes already the
+        # source root.
+        if(_PULP_SDK_PATH AND EXISTS "${_PULP_SDK_PATH}/core")
+            set(PULP_SDK_SRC_DIR "${_PULP_SDK_PATH}")
+        else()
+            # Heuristic 2: well-known dev location.
+            if(EXISTS "/Users/danielraffel/Code/pulp/core")
+                set(PULP_SDK_SRC_DIR "/Users/danielraffel/Code/pulp")
+            endif()
+        endif()
+    endif()
+    if(NOT DEFINED PULP_SDK_SRC_DIR OR NOT EXISTS "${PULP_SDK_SRC_DIR}/core")
+        message(FATAL_ERROR
+            "SPECTR_USE_IMPORTER=ON: cannot find a Pulp source root with core/.\n"
+            "Set -DPULP_SDK_SRC_DIR=/path/to/pulp/source on the cmake command line.\n"
+            "Workaround for pulp issue #76; removable once that fix lands upstream.")
+    endif()
+    message(STATUS "SPECTR_USE_IMPORTER: Pulp source root: ${PULP_SDK_SRC_DIR}")
+
+    set(SPECTR_IMPORT_INPUT  "${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html")
+    set(SPECTR_IMPORT_OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/native-react/editor.generated.tsx")
+
+    # --emit jsx-passthrough preserves the original Babel/JSX source so
+    # runtime behavior (hooks, effects, event handlers, canvas drawing)
+    # is faithfully reproduced. Was --emit jsx (DOM snapshot, no
+    # behavior). The DOM-snapshot mode remains useful for structural
+    # checks but cannot reconstruct a dynamic React app — see
+    # planning/spectr-import-execution-plan.md Phase 5.
+    add_custom_command(
+        OUTPUT  "${SPECTR_IMPORT_OUTPUT}"
+        COMMAND "${PULP_EXECUTABLE}"
+                --from claude
+                --file "${SPECTR_IMPORT_INPUT}"
+                --execute-bundle
+                --emit jsx-passthrough
+                --jsx-out "${SPECTR_IMPORT_OUTPUT}"
+                --prelude-import "./host-shims"
+        DEPENDS "${SPECTR_IMPORT_INPUT}"
+                "${PULP_EXECUTABLE}"
+        WORKING_DIRECTORY "${PULP_SDK_SRC_DIR}"
+        COMMENT "pulp import-design --emit jsx-passthrough: editor.html → editor.generated.tsx"
+        VERBATIM)
+
+    add_custom_target(spectr_import_design
+        DEPENDS "${SPECTR_IMPORT_OUTPUT}")
+
+    # Replicate `npm run build` from native-react/package.json directly
+    # in CMake, with editor.generated.tsx as the entry instead of
+    # editor.tsx. Avoids modifying package.json (which is a tracked source
+    # file). Falls back to FATAL_ERROR if npm install hasn't been run.
+    set(_NATIVE_REACT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/native-react")
+    set(_ESBUILD     "${_NATIVE_REACT_DIR}/node_modules/.bin/esbuild")
+    set(_SHIM_JS     "${_NATIVE_REACT_DIR}/shim.js")
+    set(_DIST_BODY   "${_NATIVE_REACT_DIR}/dist/editor.body.js")
+    set(_DIST_EDITOR "${_NATIVE_REACT_DIR}/dist/editor.js")
+
+    if(NOT EXISTS "${_ESBUILD}")
+        message(FATAL_ERROR
+            "SPECTR_USE_IMPORTER=ON but esbuild not found at\n  ${_ESBUILD}\n"
+            "Run: cd native-react && npm install")
+    endif()
+
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+    add_custom_command(
+        OUTPUT  "${_DIST_EDITOR}"
+        COMMAND "${_ESBUILD}"
+                "${SPECTR_IMPORT_OUTPUT}"
+                --bundle
+                --format=iife
+                --platform=neutral
+                --target=es2020
+                --jsx-factory=createElement
+                --jsx-fragment=Fragment
+                "--define:process.env.NODE_ENV=\"production\""
+                "--outfile=${_DIST_BODY}"
+        COMMAND "${Python3_EXECUTABLE}" -c
+                "open('${_DIST_EDITOR}','wb').write(open('${_SHIM_JS}','rb').read()+open('${_DIST_BODY}','rb').read())"
+        COMMAND "${CMAKE_COMMAND}" -E rm -f "${_DIST_BODY}"
+        DEPENDS "${SPECTR_IMPORT_OUTPUT}"
+                spectr_import_design
+                "${_SHIM_JS}"
+        WORKING_DIRECTORY "${_NATIVE_REACT_DIR}"
+        COMMENT "esbuild: editor.generated.tsx → dist/editor.js (importer path)"
+        VERBATIM)
+
+    add_custom_target(spectr_native_bundle_importer
+        DEPENDS "${_DIST_EDITOR}")
+endif()
 
 set(SPECTR_SOURCES
     src/spectr.cpp
@@ -22,6 +280,7 @@ set(SPECTR_SOURCES
     src/snapshot.cpp
     src/windowed_stft_engine.cpp
     src/ui/editor_view.cpp
+    src/ui/native_editor_view.cpp
 )
 
 set(SPECTR_HEADERS
@@ -35,13 +294,58 @@ set(SPECTR_HEADERS
     include/spectr/snapshot.hpp
     include/spectr/windowed_stft_engine.hpp
     include/spectr/ui/editor_view.hpp
+    include/spectr/ui/native_editor_view.hpp
 )
 
-# ── Editor HTML (prototype) embedded as a C++ binary blob ──────────────
+# ── Editor assets embedded as C++ binary blobs ─────────────────────────
+# editor.html is always embedded (used by the WebView path).
+# editor.js is embedded only when SPECTR_NATIVE_EDITOR=ON; the file must
+# exist at configure time.
+set(SPECTR_EDITOR_ASSET_SOURCES resources/editor.html)
+if(SPECTR_NATIVE_EDITOR AND NOT SPECTR_RUNTIME_IMPORT)
+    # Hand-built or offline-imported editor.js path. The runtime-import
+    # path skips this entirely — editor.html alone (already embedded via
+    # SPECTR_EDITOR_ASSET_SOURCES above) plus the runtime-import bundle
+    # is enough.
+    set(SPECTR_NATIVE_EDITOR_JS ${CMAKE_CURRENT_SOURCE_DIR}/native-react/dist/editor.js)
+    if(NOT EXISTS ${SPECTR_NATIVE_EDITOR_JS})
+        message(FATAL_ERROR
+            "SPECTR_NATIVE_EDITOR=ON but ${SPECTR_NATIVE_EDITOR_JS} not found. "
+            "Run: cd native-react && npm install && npm run build")
+    endif()
+    list(APPEND SPECTR_EDITOR_ASSET_SOURCES ${SPECTR_NATIVE_EDITOR_JS})
+endif()
+if(SPECTR_RUNTIME_IMPORT)
+    # Runtime-import path: embed the loader bundle (built by esbuild
+    # under spectr_runtime_import_bundle) instead of editor.js. The
+    # source file does not exist at configure time; pulp_add_binary_data
+    # is called with the expected path and we wire a target dependency
+    # below so the bundle is produced before the embedding step runs.
+    list(APPEND SPECTR_EDITOR_ASSET_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/native-react/dist/runtime-import-bundle.js)
+endif()
 pulp_add_binary_data(spectr_editor_assets
-    SOURCES resources/editor.html
+    SOURCES ${SPECTR_EDITOR_ASSET_SOURCES}
     NAMESPACE spectr_editor
 )
+if(SPECTR_NATIVE_EDITOR)
+    target_compile_definitions(spectr_editor_assets INTERFACE SPECTR_NATIVE_EDITOR=1)
+    if(NOT SPECTR_RUNTIME_IMPORT)
+        target_compile_definitions(spectr_editor_assets INTERFACE SPECTR_NATIVE_EDITOR_JS_EMBEDDED=1)
+    endif()
+endif()
+if(SPECTR_RUNTIME_IMPORT)
+    target_compile_definitions(spectr_editor_assets INTERFACE SPECTR_RUNTIME_IMPORT_EMBEDDED=1)
+endif()
+
+# When importer-path is active, make the asset-embedding step depend on
+# the freshly-generated bundle. Hand-built path (default) is unaffected.
+if(SPECTR_USE_IMPORTER)
+    add_dependencies(spectr_editor_assets spectr_native_bundle_importer)
+endif()
+if(SPECTR_RUNTIME_IMPORT)
+    add_dependencies(spectr_editor_assets spectr_runtime_import_bundle)
+endif()
 
 # ── Tests ──────────────────────────────────────────────────────────────
 

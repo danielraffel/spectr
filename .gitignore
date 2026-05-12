@@ -26,3 +26,6 @@ Spectr_Info.plist.au
 
 # Logs / traces
 *.log
+
+# pulp import-design output (SPECTR_USE_IMPORTER=ON build artifact)
+native-react/editor.generated.tsx

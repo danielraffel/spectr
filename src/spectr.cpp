@@ -1,5 +1,6 @@
 #include "spectr/spectr.hpp"
 #include "spectr/ui/editor_view.hpp"
+#include "spectr/ui/native_editor_view.hpp"
 
 #include <choc/containers/choc_Value.h>
 #include <choc/text/choc_JSON.h>
@@ -115,21 +116,35 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
 }
 
 std::unique_ptr<pulp::view::View> Spectr::create_view() {
-    // The editor is the prototype HTML embedded verbatim through Pulp's
-    // WebView bridge. Pixel-perfect visual match by construction; JS↔C++
-    // state sync flows through EditorView's message handler. See
-    // include/spectr/ui/editor_view.hpp.
+#if SPECTR_NATIVE_EDITOR
+    // Native React editor — pulp #772 / spectr #28. Renders directly via
+    // pulp::view::WidgetBridge (Yoga + Skia + Dawn) with no WebView in
+    // the path. Build with `-DSPECTR_NATIVE_EDITOR=ON`; the editor.js
+    // IIFE bundle gets embedded by the CMake binary-data step.
+    return std::make_unique<NativeEditorView>(*this);
+#else
+    // Default WebView-embedded editor.html. Pixel-perfect visual match
+    // by construction; JS↔C++ state sync flows through EditorView's
+    // message handler. See include/spectr/ui/editor_view.hpp.
     // No explicit set_bounds — the framework lays us out to the window's
     // content area. EditorView attaches the native child view to that
-    // actual laid-out size (or PluginViewHost::get_size() in plugins), so
-    // we don't leave a gap if window chrome differs from our preferred
-    // size.
+    // actual laid-out size (or PluginViewHost::get_size() in plugins),
+    // so we don't leave a gap if window chrome differs from our
+    // preferred size.
     return std::make_unique<EditorView>(*this);
+#endif
 }
 
 void Spectr::on_view_opened(pulp::view::View& view) {
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->attach_if_needed();
+    }
+    if (auto* editor = dynamic_cast<NativeEditorView*>(&view)) {
+        // Push the current StateStore param values so the editor's
+        // Knobs/Faders open with the right starting positions.
+        // Per-frame analyzer push wires through a UI-thread tick in
+        // a follow-up commit.
+        editor->update_params();
     }
 }
 
@@ -137,12 +152,14 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t /*w*/, uint32_t /*
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->sync_to_host();
     }
+    // Native editor: bridge owns layout; nothing to do on resize.
 }
 
 void Spectr::on_view_closed(pulp::view::View& view) {
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->detach_if_needed();
     }
+    // Native editor: destructor handles bridge teardown.
 }
 
 void Spectr::configure_bridge_(int num_channels) {

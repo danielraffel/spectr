@@ -1,0 +1,37 @@
+# Pulp issues being monitored every 30 min for closure → triggers Spectr spec/audit update
+# Format: <issue-id> <category> <title>
+#
+# Spectr-impacting (parent issues):
+994  spectr-blocker   @pulp/react: SvgPath intrinsic
+1070 spectr-blocker   view: PRESETS dropdown letter-spacing
+1147 spectr-blocker   @pulp/react: popover nested flex + inline SVG render
+1148 spectr-blocker   @pulp/react: overlay click dispatch
+964  spectr-blocker   view: FilterBank canvas2D path (may already be fixed at v0.68.1+)
+998  spectr-blocker   view: position:absolute layout regression
+#
+# #1049 audit (parent + children) — NOT direct Spectr blockers but tracking per request:
+1049 audit-parent     audit other config-driven surfaces for silent-no-op
+1052 audit-child      coverage_config filters/exclude_filters
+1053 audit-child      skill_path_map.json no-match
+1054 audit-child      versioning.json bypass-trailer
+1055 audit-child      codecov.yml component classification
+1056 audit-child      ci/coverage-targets.yaml tier gaps
+1057 audit-child      skill requires: arrays runtime check
+1058 audit-child      LCOV_EXCL → diff-cover propagation
+#
+# Pre-push gate enforcement:
+1144 audit-child      flip pre-push gates from advisory to enforcing
+#
+# In-flight PRs + Codex follow-ups (added 2026-05-03):
+1060 in-flight-pr     #1039 css-adapt wire (PR open, diff-cov gating)
+1170 codex-followup   P1 ScrollView::hit_test ignores pointer_events
+1171 codex-followup   P2 sweep — 4 Codex follow-ups bundled
+1178 codex-followup   P2 empty fontFamily reset deferred from #1174
+1180 codex-followup   flaky #1060 tests follow-up
+#
+# Coverage gap blocker (filed 2026-05-03):
+1290 audit-child      tools/import-design CLI main 0% diff-cov (blocks #1060)
+#
+# In-flight PRs (active CI):
+1289 in-flight-pr     fix(view): ScrollView::hit_test honors pointer_events (closes #1170)
+1291 in-flight-pr     feat(view): @pulp/react SvgPath intrinsic (closes #994)

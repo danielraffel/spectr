@@ -147,6 +147,102 @@ pulp's — Namespace runners as the default (pulp flipped the default on
 2026-04-24 per the `ci/namespace-default` PR in flight), with local
 macOS in parallel via `shipyard ship`.
 
+## Post-UX-parity work queue (2026-05-03)
+
+Sequencing of the next three Spectr-relevant phases, in priority order.
+
+### Active phase — close WebView↔Native UX parity
+
+The single gating phase. Until this closes, no design-loop / reimport / open-design work begins.
+
+| pulp # | Title | State |
+|---|---|---|
+| #1147 | Popover render parity | OPEN |
+| #1148 | Overlay click dispatch | PR #1297 in flight (subagent landed 2026-05-03) |
+| #1070 | Typography drift | OPEN |
+| #1292 | @pulp/react useState=null crash | CLOSED via #1295 (root-cause React-dedup), shipping in v0.69.3 (PR #1309) |
+| #998 | Layout regression Spectr workaround removal | OPEN |
+
+When all five close: umbrella **#1307** (reimport-safe design loop) unblocks.
+
+### Unblocked next phase — reimport-safe design loop (umbrella #1307)
+
+Filed 2026-05-03 by the reimport-investigation subagent. Spec at `planning/Spectr-Reimport-Safe-Loop-Spec.md`; assessment artifacts in `planning/reimport/`. Sub-issues, in suggested implementation order:
+
+| pulp # | Title | Notes |
+|---|---|---|
+| #1299 | Stable IR node IDs (path × tag × role × ordinal × text-tie-break) | Foundational seam |
+| #1300 | Lockfile + 3-way merge for reimport (`.pulp-import.json`) | Foundational seam |
+| #1301 | DSP binding ledger keyed by stable id | Foundational seam |
+| #1303 | Generated-vs-owned file boundary + `@generated` banners | Foundational seam |
+| #1302 | Load `compat.json` at runtime, classify props, emit `import-report.json` | Parallel slice |
+| #1304 | `--from open-design` adapter (parser-only) | Parallel slice — narrowed (see #1311) |
+| #1305 | `pulp diff` + `pulp ui validate` agent-friendly verbs | Parallel slice |
+| #1306 | Emit `assets/` directory + asset-sha256 lockfile entries | Parallel slice |
+
+### Subsequent phase — open-design CLI/plugin extension
+
+Filed 2026-05-03 as **#1311** (companion to #1304's parser slice). Adds the multi-type artifact dispatch surface (`--type <kind>` orthogonal to `--from`), stdin streaming (`--file -`), manifest-based artifact selection (`--manifest` + `--artifact-id`), and plugin slash-command + skill updates. Borrows 4 additional patterns from open-design (anti-slop linter, manifest-version field, skill front-matter `pulp:` block, multi-CLI agent detection probe) — captured as a comment on #1307, not filed as separate issues.
+
+### Future phases (placeholders)
+
+- **Sampler Phase 4** — binary-asset-drop API + sampler-specific bridge handlers, file when triggered (`spectr/planning/Spectr-Sampler-Phase-Spec.md`, links pulp #709)
+- **Spectr CI** — Namespace-first wiring once M10 closes (per `feedback_spectr_ci_namespace`)
+- **WebView → Native editor migration** — pending pulp v0.44.x / native-runtime harness validation (per the v1 plan and pulp #729)
+
+## compat.json — claim every supported prop, plan every missing one (2026-05-03)
+
+**Goal:** For every CSS / RN / Yoga / React / HTML / Canvas2D property our consumers might use, make the support claim AND keep it provably synced with code. The pulp `compat.json` matrix is the single source of truth — but only if (a) it stays current with main, (b) every claim has a test, and (c) docs that link from prop → mapsTo → code stay in sync automatically.
+
+### Current state (snapshot 2026-05-03)
+
+| Section | Total | supported | partial | missing | wontfix |
+|---|---|---|---|---|---|
+| **CSS** | 194 | 70 (36%) | 30 | 63 | 31 |
+| **RN** | 114 | 39 (34%) | 3 | 69 | 3 |
+| **Yoga** | 53 | 28 (53%) | 7 | 18 | — |
+| **TOTAL** | **361** | 137 (38%) | 40 | **150** | 34 |
+
+The directive: aim for support of everything possible; prove each support claim with a linked test; treat `wontfix` as last-resort, not default.
+
+### Enforcement state (where compat.json is consumed)
+
+- ✅ **Edit-time gate** — `tools/scripts/compat_sync_check.py` invoked from `.githooks/pre-push:27-64` AND `.github/workflows/version-skill-check.yml`. Catches when bridge / view / @pulp/react source files are touched without compat.json updates. Bypass trailer: `Compat-Update: skip prefix=<...> reason="..."`.
+- ❌ **Import-time runtime load** — pulp #1302 OPEN. `pulp import-design` does NOT load compat.json today, so plugin authors don't get warned at import time about props that will silently no-op. The runtime should classify imported props by status and emit `import-report.json`.
+- ❌ **Per-prop `tests` field is empty** — every entry has `"tests": []`. Should link the Catch2 / vitest case that pinned each `supported` claim. Refresh agent in flight (2026-05-03) to populate.
+- ❌ **`mapsTo` → docs link** — the original plan was to surface each entry's `mapsTo` string as a clickable link to the specific source line in `core/view/src/widget_bridge.cpp` / `core/view/js/web-compat-style-decl.js` etc., so doc readers can drill into the actual implementation. NOT yet implemented. Track under #1302's import-report or as a `pulp docs build` step (#1027 follow-up).
+
+### Active triage (2026-05-03 — agents in flight)
+
+Two agents are working compat.json proactively (gated on UX parity #924):
+
+1. **Refresh agent** (`/tmp/pulp-compat-refresh/`) — re-validates all 361 entries against `origin/main`, populates `tests` field with real test refs, bumps schema 0.1 → 0.2, comments on #1029.
+2. **Triage agent** (`/tmp/pulp-compat-triage/`) — turns the 40 partial / 150 missing / 34 wontfix into 4-6 actionable batches under one umbrella issue. Each batch gets specific props + completion recipe + test plan. Wontfix re-evaluated for "wontfix-by-omission" (default to flip back to missing unless there's a hard architectural reason).
+
+When those agents complete: their umbrella + sub-issues become the long-running queue for "support everything possible".
+
+### Sync rules
+
+To prevent compat.json from falling out of sync again:
+
+- Compat-sync gate (#1029) is now in pre-push + CI, advisory mode → flip to hard-fail once the triage agent completes the schema 0.2 + tests-field populate
+- Schema bump (0.1 → 0.2) lands with the refresh PR — locks the new richer entry shape
+- Tests field MUST be populated for every `supported` claim (refresh agent enforces)
+- Docs build (`mkdocs` or `docs/reference/compat/<prefix>.md`) should auto-generate from compat.json so every prop has a public doc page with mapsTo + test link — pulp #1027 follow-up
+
+### Reference specs (sources of truth)
+
+- Yoga: https://www.yogalayout.dev/docs/styling
+- React Native: https://reactnative.dev/docs/view-style-props
+- CSS: https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties
+
+### Cross-refs
+
+- Umbrella: pulp #1027 (compat matrix + CI gate + docs)
+- Per-PR gate: pulp #1029 (the script lives at `tools/scripts/compat_sync_check.py`; the issue tracks finishing the hard-fail flip + per-section hardening)
+- Runtime load: pulp #1302 (gated on UX parity #924 via #1307 umbrella)
+- Versioned schema: pulp #1031 (closed via #1047, schema 0.2 wire)
+
 ## Quick reference — file paths
 
 - Status doc: `planning/Spectr-Status.md` (this file)
