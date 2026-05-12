@@ -87,7 +87,36 @@ NativeEditorView::NativeEditorView(Spectr& plugin)
             return choc::value::Value();
         });
 
-#ifdef SPECTR_NATIVE_EDITOR_JS_EMBEDDED
+#if defined(SPECTR_RUNTIME_IMPORT_EMBEDDED)
+    // Runtime design-import path (SPECTR_RUNTIME_IMPORT=ON).
+    //
+    // The bridge registers __pulpRuntimeImport__ + __pulpRuntimeSettle__,
+    // we expose the raw editor.html bytes as __spectrLoadEditorHtml(),
+    // then evaluate the bundled loader (runtime-import-loader.tsx) which
+    // calls @pulp/react/runtime-import → renderFromDesign() against that
+    // HTML inside this engine. No offline `pulp import-design` step.
+    bridge_->install_runtime_import_handlers();
+
+    // Snapshot editor.html as a std::string owned by `this` so the
+    // closure below can hand it back to JS each time it's asked.
+    editor_html_cache_.assign(
+        reinterpret_cast<const char*>(spectr_editor::editor_html),
+        spectr_editor::editor_html_size);
+
+    engine_.register_function("__spectrLoadEditorHtml",
+        [this](choc::javascript::ArgumentList) {
+            return choc::value::createString(editor_html_cache_);
+        });
+
+    const std::string loader_source(
+        reinterpret_cast<const char*>(spectr_editor::runtime_import_bundle_js),
+        spectr_editor::runtime_import_bundle_js_size);
+    bridge_->load_script(loader_source);
+    pulp::runtime::log_info("Spectr native editor: runtime-import loader "
+                            "({} bytes); editor.html: {} bytes",
+                            loader_source.size(),
+                            editor_html_cache_.size());
+#elif defined(SPECTR_NATIVE_EDITOR_JS_EMBEDDED)
     // editor.js is built by `cd native-react && npm run build` and
     // embedded by CMake's pulp_add_binary_data step. The pointer +
     // size are exposed in spectr_editor_assets_data.hpp as

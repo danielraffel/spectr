@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <memory>
+#include <string>
 #include <thread>
 
 namespace spectr {
@@ -80,6 +81,12 @@ private:
     // proper paint-pump driver lands upstream).
     std::atomic<bool>                             pump_running_{false};
     std::thread                                   pump_thread_;
+
+    // SPECTR_RUNTIME_IMPORT path only: cached copy of resources/editor.html
+    // (sourced from the embedded spectr_editor::editor_html blob) used by
+    // the __spectrLoadEditorHtml() native callback so the JS loader can
+    // pull the HTML at boot without us escaping it into the source.
+    std::string                                   editor_html_cache_;
 };
 
 } // namespace spectr
