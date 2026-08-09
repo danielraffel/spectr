@@ -163,3 +163,16 @@ foreach(fmt VST3 AU CLAP Standalone)
         target_link_libraries(${tgt} PRIVATE spectr_editor_assets)
     endif()
 endforeach()
+
+# Artifact-level host proof: load the built CLAP through Pulp::host and run
+# real audio across the binary boundary. This is deliberately separate from
+# Spectr-test's in-process Processor fixtures.
+if(TARGET Spectr_CLAP AND TARGET Pulp::host)
+    add_executable(Spectr-artifact-test test/test_built_clap.cpp)
+    target_link_libraries(Spectr-artifact-test PRIVATE
+        Pulp::host Catch2::Catch2WithMain)
+    target_compile_definitions(Spectr-artifact-test PRIVATE
+        SPECTR_TEST_CLAP_PATH="${CMAKE_BINARY_DIR}/CLAP/Spectr.clap")
+    add_dependencies(Spectr-artifact-test Spectr_CLAP)
+    catch_discover_tests(Spectr-artifact-test)
+endif()
