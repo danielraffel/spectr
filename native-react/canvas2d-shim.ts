@@ -219,12 +219,17 @@ export class Canvas2DShim {
         // HTML5 Canvas2D spec: arc() ADDS to the current sub-path. The next
         // ctx.fill() / ctx.stroke() acts on that path — including any
         // active gradient set via fillStyle.
-        //
-        // Pulp's bridge has no canvasArcPath; canvasArc would stroke
-        // immediately and bypass beginPath/fill. So synthesize the arc
-        // as a polyline of canvasLineTo segments. ~32 segments gives a
-        // visually smooth circle at FilterBank's typical radii (≤30px).
-        // Step count scales with radius so larger circles stay smooth.
+        // Current Pulp exposes a native arc-subpath command, so one bridge
+        // call retains the exact curve in CanvasWidget's display list. This
+        // matters for Spectr: the old polyline fallback expanded every glow
+        // and icon circle into 8–64 separate QuickJS -> C++ calls, accounting
+        // for well over a thousand calls in a busy 56-band frame.
+        if (typeof g.canvasPathArc === 'function') {
+            call('canvasPathArc', this.canvasId, x, y, r, sa, ea, ccw ? 1 : 0);
+            return;
+        }
+
+        // Compatibility fallback for SDKs predating canvasPathArc.
         const segs = Math.max(8, Math.min(64, Math.ceil(r * 1.2)));
         let s = sa, e = ea;
         if (ccw) {
@@ -246,19 +251,16 @@ export class Canvas2DShim {
         }
     }
     /// arcTo(x1, y1, x2, y2, radius) — adds an arc tangent to two
-    /// lines defined by (current, p1) and (p1, p2). Bridge has no
-    /// direct canvasArcTo, so synthesize as line+arc. Approximation:
-    /// for the rounded-rect corners FilterBank uses (Spectr#28's
-    /// drawMinimap, status pill, etc.), the radii are small (3-4px)
-    /// and the lines are axis-aligned, so a lineTo to the tangent
-    /// point + arc approximates well enough at typical sizes.
+    /// lines defined by (current, p1) and (p1, p2).
     arcTo(x1: number, y1: number, x2: number, y2: number, radius: number): void {
-        // Naive: lineTo(x1, y1) — drops the rounded corner. Fast,
-        // visually softer corners look square but layout is correct.
-        // Good-enough for v1; track a follow-up to render proper arc.
+        if (typeof g.canvasPathArcTo === 'function') {
+            call('canvasPathArcTo', this.canvasId, x1, y1, x2, y2, radius);
+            return;
+        }
+
+        // Compatibility fallback. It preserves the path topology but not the
+        // authored corner curvature on an older SDK.
         call('canvasLineTo', this.canvasId, x1, y1);
-        // Use the radius as a hint for a subtle arc; if zero, just
-        // line through.
         if (radius > 0) {
             call('canvasLineTo', this.canvasId, x2, y2);
         }
@@ -338,10 +340,19 @@ export class Canvas2DShim {
         call('canvasLineTo', this.canvasId, x, y + h);
         call('canvasClosePath', this.canvasId);
     }
-    /// roundRect(x, y, w, h, radii) — adds a rounded rect subpath.
-    /// Simplified: ignore radii (corner rounding) and emit a regular
-    /// rect path. Visual softness loss only, no crash.
-    roundRect(x: number, y: number, w: number, h: number, _radii?: unknown): void {
+    /// roundRect(x, y, w, h, radii) — adds a rounded rect subpath. Spectr
+    /// currently authors scalar radii; accept the common one-value array too.
+    roundRect(x: number, y: number, w: number, h: number, radii?: unknown): void {
+        const first = Array.isArray(radii) ? radii[0] : radii;
+        const radius = typeof first === 'number' && Number.isFinite(first)
+            ? Math.max(0, first)
+            : 0;
+        if (typeof g.canvasPathRoundRect === 'function') {
+            call('canvasPathRoundRect', this.canvasId, x, y, w, h,
+                radius, radius, radius, radius,
+                radius, radius, radius, radius);
+            return;
+        }
         this.rect(x, y, w, h);
     }
     clip(): void {

@@ -17,11 +17,14 @@
 // pulp #772 / spectr #25 / spectr #28.
 
 #include <pulp/state/store.hpp>
+#include <pulp/view/editor_bridge.hpp>
 #include <pulp/view/script_engine.hpp>
 #include <pulp/view/view.hpp>
 #include <pulp/view/widget_bridge.hpp>
 
 #include <memory>
+
+#include "spectr/editor_bridge.hpp"
 
 namespace spectr {
 
@@ -68,10 +71,15 @@ private:
     // torn down by the base class. Declare in this order:
     //   plugin_   → reference, no destructor
     //   engine_   → must outlive bridge_ (destroyed last)
-    //   bridge_   → owns the JS-created widgets attached to *this;
-    //               destroyed before engine_, after plugin_
+    //   editor_bridge_ → native JSON dispatch callbacks reference this;
+    //   bridge_   → owns the JS-created widgets attached to *this.
+    // Reverse destruction therefore tears down bridge_, editor_bridge_, then
+    // engine_, keeping every registered native callback owner alive while JS
+    // can still run.
     Spectr&                                       plugin_;
     pulp::view::ScriptEngine                      engine_;
+    EditorDragState                               drag_;
+    pulp::view::EditorBridge                      editor_bridge_;
     std::unique_ptr<pulp::view::WidgetBridge>     bridge_;
 
 };

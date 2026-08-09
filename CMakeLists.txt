@@ -4,6 +4,16 @@ project(Spectr VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# One authoritative imported-design viewport contract. The minimum preserves
+# the 1320:860 aspect ratio (rounded to whole logical pixels); the maximum is
+# exactly 2x the authored canvas.
+set(SPECTR_DESIGN_WIDTH 1320)
+set(SPECTR_DESIGN_HEIGHT 860)
+set(SPECTR_DESIGN_MIN_WIDTH 800)
+set(SPECTR_DESIGN_MIN_HEIGHT 521)
+set(SPECTR_DESIGN_MAX_WIDTH 2640)
+set(SPECTR_DESIGN_MAX_HEIGHT 1720)
+
 find_package(Pulp 0.75.0 REQUIRED)
 
 # ── Core Spectr sources ────────────────────────────────────────────────
@@ -109,6 +119,14 @@ target_link_libraries(Spectr-test PRIVATE
 target_include_directories(Spectr-test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+target_compile_definitions(Spectr-test PRIVATE
+    PULP_PLUGIN_DESIGN_W=${SPECTR_DESIGN_WIDTH}
+    PULP_PLUGIN_DESIGN_H=${SPECTR_DESIGN_HEIGHT}
+    PULP_PLUGIN_DESIGN_MIN_W=${SPECTR_DESIGN_MIN_WIDTH}
+    PULP_PLUGIN_DESIGN_MIN_H=${SPECTR_DESIGN_MIN_HEIGHT}
+    PULP_PLUGIN_DESIGN_MAX_W=${SPECTR_DESIGN_MAX_WIDTH}
+    PULP_PLUGIN_DESIGN_MAX_H=${SPECTR_DESIGN_MAX_HEIGHT}
+)
 catch_discover_tests(Spectr-test)
 
 # ── Plugin targets ─────────────────────────────────────────────────────
@@ -124,6 +142,12 @@ pulp_add_plugin(Spectr
     MANUFACTURER_CODE "Pulp"
     AAX_PRODUCT_CODE "SpeP"
     AAX_NATIVE_CODE "Spec"
+    DESIGN_WIDTH      ${SPECTR_DESIGN_WIDTH}
+    DESIGN_HEIGHT     ${SPECTR_DESIGN_HEIGHT}
+    DESIGN_MIN_WIDTH  ${SPECTR_DESIGN_MIN_WIDTH}
+    DESIGN_MIN_HEIGHT ${SPECTR_DESIGN_MIN_HEIGHT}
+    DESIGN_MAX_WIDTH  ${SPECTR_DESIGN_MAX_WIDTH}
+    DESIGN_MAX_HEIGHT ${SPECTR_DESIGN_MAX_HEIGHT}
 )
 
 # Attach our sources + include path to each Spectr plugin target that pulp

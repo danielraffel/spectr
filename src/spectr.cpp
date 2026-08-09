@@ -98,9 +98,53 @@ void Spectr::apply_morph_to_live(float t) noexcept {
     const bool has_a = snapshots_.has(SnapshotBank::Slot::A);
     const bool has_b = snapshots_.has(SnapshotBank::Slot::B);
     if (!has_a && !has_b) return;
-    if (!has_a) { field_ = snapshots_.b.field; return; }
-    if (!has_b) { field_ = snapshots_.a.field; return; }
+    if (!has_a) { replace_field(snapshots_.b.field); return; }
+    if (!has_b) { replace_field(snapshots_.a.field); return; }
     morph_fields(field_, snapshots_.a.field, snapshots_.b.field, t);
+    publish_field();
+}
+
+void Spectr::replace_field(const BandField& field) noexcept {
+    field_ = field;
+    publish_field();
+}
+
+void Spectr::publish_field() noexcept {
+    publish_processing_state_();
+}
+
+void Spectr::publish_processing_state_() noexcept {
+    ProcessingState next;
+    next.field = field_;
+    next.viewport = viewport_;
+    next.layout = layout_;
+
+    pulp::signal::SpectralBandLayout mask_layout;
+    mask_layout.active_bands = static_cast<std::uint32_t>(visible_count(layout_));
+    mask_layout.min_hz = viewport_.min_hz;
+    mask_layout.max_hz = viewport_.max_hz;
+    mask_layout.spacing = pulp::signal::SpectralBandSpacing::logarithmic;
+    mask_layout.edge_policy = pulp::signal::SpectralBandEdgePolicy::extend_edge_band;
+    mask_layout.boundary_kernel = pulp::signal::SpectralMaskBoundaryKernel::hard;
+    mask_layout.transition_fraction = 0.0f;
+    mask_layout.transition_frames = 0;
+    for (std::size_t i = 0; i < mask_layout.active_bands; ++i) {
+        mask_layout.bands[i].gain_db = field_.bands[i].gain_db;
+        mask_layout.bands[i].muted = field_.bands[i].muted;
+    }
+
+    if (!pulp::signal::build_spectral_mask(mask_layout, 1024,
+            static_cast<float>(sample_rate_), next.mask)) {
+        // Invalid control state fails closed; never pair new geometry with a
+        // stale gain table.
+        for (auto& band : mask_layout.bands) band.muted = true;
+        mask_layout.min_hz = 20.0f;
+        mask_layout.max_hz = std::min(20000.0f,
+                                     static_cast<float>(sample_rate_ * 0.5));
+        (void)pulp::signal::build_spectral_mask(mask_layout, 1024,
+                static_cast<float>(sample_rate_), next.mask);
+    }
+    processing_for_audio_.write(next);
 }
 
 pulp::view::ABCompare* Spectr::ab_compare() noexcept {
@@ -113,6 +157,8 @@ pulp::view::ABCompare* Spectr::ab_compare() noexcept {
 void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     sample_rate_ = ctx.sample_rate;
     max_block_   = ctx.max_buffer_size;
+    channels_    = std::max(1, ctx.output_channels);
+    publish_processing_state_();
     rebuild_engine_();
     configure_bridge_(ctx.output_channels);
 }
@@ -191,6 +237,13 @@ void Spectr::release() {
     bridge_.reset();
 }
 
+int Spectr::latency_samples() const {
+    // Release 1's production FFT engine has fixed 1024/256 WOLA geometry.
+    // Return the prepared engine's exact value when available and the same
+    // deterministic contract before prepare so adapters can query early.
+    return engine_ ? engine_->latency_samples() : 1280;
+}
+
 void Spectr::set_layout(Layout L) {
     layout_ = L;
     // Mirror the layout selection back to the kBandCount param so any
@@ -201,7 +254,7 @@ void Spectr::set_layout(Layout L) {
     // round-trip serialization fails — caught by clap-validator's
     // `state-reproducibility-flush` test on 2026-04-25.
     state().set_value(kBandCount, static_cast<float>(layout_to_index(L)));
-    rebuild_engine_();
+    publish_processing_state_();
 }
 
 void Spectr::set_engine_kind(EngineKind k) {
@@ -215,6 +268,7 @@ void Spectr::rebuild_engine_() {
         EnginePrepare p;
         p.sample_rate = sample_rate_;
         p.max_block   = max_block_;
+        p.channels    = channels_;
         p.layout      = layout_;
         p.viewport    = viewport_;
         engine_->prepare(p);
@@ -237,28 +291,17 @@ void Spectr::process(
     const float out_trim_db= state().get_value(kOutputTrim);
     const auto  rm         = static_cast<ResponseMode>(static_cast<int>(
         std::clamp(state().get_value(kResponseMode) + 0.5f, 0.0f, 1.0f)));
-    const auto  ek         = static_cast<EngineKind>(static_cast<int>(
-        std::clamp(state().get_value(kEngineMode) + 0.5f, 0.0f, 2.0f)));
-    const Layout desired_layout = layout_from_index(state().get_value(kBandCount));
-
     if (rm != response_mode_) response_mode_ = rm;
-    if (ek != engine_kind_)  set_engine_kind(ek);
-    if (desired_layout != layout_) {
-        // Sync the cached layout_ from the host-driven kBandCount value
-        // without calling set_layout() — that path writes the quantized
-        // index back to kBandCount, which makes the param value diverge
-        // between the process and flush paths (clap_plugin_params::flush
-        // doesn't run process and so wouldn't see the writeback). The
-        // StateStore-side raw float must stay byte-equal across both
-        // paths for clap-validator's state-reproducibility-flush test.
-        // Direct UI calls to set_layout() still writeback for the
-        // serialize-from-cache path covered by test_m4_state.cpp.
-        layout_ = desired_layout;
-        rebuild_engine_();
-    }
+
+    // Engine and band-count changes are configuration operations. They are
+    // intentionally not materialized from host parameters on the audio
+    // thread: rebuilding allocates, and compiling a logarithmic mask performs
+    // control-side math. UI/state restore paths publish one immutable state.
 
     if (engine_) {
-        engine_->process(output, input, field_, viewport_, layout_, response_mode_);
+        const auto& processing = processing_for_audio_.read();
+        engine_->process(output, input, processing.field, processing.viewport,
+                         processing.layout, response_mode_, processing.mask);
 
         // Apply output trim (dB → linear) and dry/wet mix in one pass.
         const float out_gain = std::pow(10.0f, out_trim_db * 0.05f);
@@ -464,6 +507,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     // per the pulp#625 hook contract.
     if (bytes.empty()) {
         reset_supplemental_state_(field_, viewport_, layout_, snapshots_, patterns_);
+        publish_processing_state_();
         return true;
     }
 
@@ -561,7 +605,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_patterns.import_json(std::string_view(s));
     }
 
-    field_     = new_field;
+    field_ = new_field;
     viewport_  = new_view;
     snapshots_ = new_bank;
     patterns_  = std::move(new_patterns);
@@ -573,8 +617,8 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     // state-reproducibility-* checks.
     if (new_layout != layout_) {
         layout_ = new_layout;
-        rebuild_engine_();
     }
+    publish_processing_state_();
     return true;
 }
 

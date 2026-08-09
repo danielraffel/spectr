@@ -13,6 +13,8 @@
 
 import {
     createElement as pulpCreateElement,
+    cloneElement,
+    isValidElement,
     type ReactNode, type CSSProperties,
 } from 'react';
 import {
@@ -75,18 +77,18 @@ const TAG_MAP: Record<string, Mapped | null> = {
 /// the bridge support it (v0.69.2+). Falls back to the static map for
 /// every other tag.
 function tagToWidget(tag: string): string {
-    if (tag === 'path') {
+    if (tag === 'svg' || tag === 'path' || tag === 'circle'
+        || tag === 'rect' || tag === 'line') {
         const g = globalThis as Record<string, unknown>;
-        // SvgPath JSX intrinsic landed via #1291 — bridge fns
-        // createSvgPath/setSvgPath/setSvgViewBox/setSvgFill/
-        // setSvgStroke/setSvgStrokeWidth all need to be registered.
-        // When all present, render as the intrinsic and let prop-applier
-        // wire `d` / `viewBox` / `fill` / `stroke` / `strokeWidth`.
-        // The legacy ref-callback workaround stays as a fallback for
-        // pre-v0.69.2 SDKs (still fires below in the SvgPath code path).
+        // Current @pulp/react supports the lowercase SVG DOM aliases
+        // directly. In particular, its lowercase `path` host config pins
+        // SvgPathWidget to all four parent edges; routing it through the old
+        // capitalized placeholder leaves the glyph at 0x0. Preserve the raw
+        // tag whenever the bridge surface is present, and keep the legacy
+        // View/ref fallback only for older SDKs.
         if (typeof g.createSvgPath === 'function' &&
             typeof g.setSvgPath === 'function') {
-            return 'SvgPath';
+            return tag;
         }
     }
     return TAG_MAP[tag] ?? 'View';
@@ -257,6 +259,7 @@ const STYLE_MAP: Array<{
     { css: 'letterSpacing',      host: 'letterSpacing', parse: parseLen },
     { css: 'lineHeight',         host: 'lineHeight', parse: parseLen },
     { css: 'textAlign',          host: 'textAlign', parse: String },
+    { css: 'verticalAlign',      host: 'verticalAlign', parse: String },
 ];
 
 // Design tokens auto-extracted from the original Spectr-standalone.html
@@ -511,24 +514,39 @@ function adaptStyle(style: CSSProperties | undefined): Record<string, unknown> {
     // Pulp's Yoga doesn't reliably compute width/height from 3-edge
     // absolute pinning (e.g. top+left+right with explicit height) — leaves
     // the element with 0 measured width, which collapses every Label
-    // descendant. Mimic CSS by injecting an explicit dimension when a
-    // 3-edge pin defines a stretch axis.
+    // descendant. Mimic CSS by injecting a containing-block-relative
+    // dimension when zero-valued opposing edges define a stretch axis.
+    //
+    // Do not use the 1320x860 design viewport here. A dropdown commonly has
+    // `left: 0; right: 0` inside a 260px picker; assigning 1320px makes the
+    // popup escape its containing block. `100%` preserves the CSS ownership
+    // boundary and continues to scale when the design viewport is resized.
     const hasTop = (styleAny.top !== undefined) || (pos === 'absolute' && isInsetZero);
     const hasLeft = (styleAny.left !== undefined) || (pos === 'absolute' && isInsetZero);
     const hasRight = (styleAny.right !== undefined) || (pos === 'absolute' && isInsetZero);
     const hasBottom = (styleAny.bottom !== undefined) || (pos === 'absolute' && isInsetZero);
     if (out.position === 'absolute') {
         // Stretch-X: top + left + right pinned, height explicit, no width
-        if (hasLeft && hasRight && out.width === undefined) {
-            out.width = 1320;
+        if (hasLeft && hasRight && out.width === undefined
+            && isZeroLength(styleAny.left) && isZeroLength(styleAny.right)) {
+            out.width = '100%';
         }
         // Stretch-Y: top + bottom pinned, width explicit, no height
-        if (hasTop && hasBottom && out.height === undefined) {
-            out.height = 860;
+        if (hasTop && hasBottom && out.height === undefined
+            && isZeroLength(styleAny.top) && isZeroLength(styleAny.bottom)) {
+            out.height = '100%';
         }
     }
     // Explicit edge overrides (after inset-fill so they can override)
-    if (styleAny.top !== undefined)    out.top    = parseLen(styleAny.top);
+    if (styleAny.top !== undefined) {
+        const calc = parsePercentPixelCalc(styleAny.top);
+        if (calc) {
+            out.top = calc.percent + '%';
+            if (calc.pixels !== 0) out.marginTop = addLength(out.marginTop, calc.pixels);
+        } else {
+            out.top = parseLen(styleAny.top);
+        }
+    }
     if (styleAny.left !== undefined)   out.left   = parseLen(styleAny.left);
     if (styleAny.right !== undefined)  out.right  = parseLen(styleAny.right);
     if (styleAny.bottom !== undefined) out.bottom = parseLen(styleAny.bottom);
@@ -570,16 +588,30 @@ function parseLen(v: unknown): number | string | undefined {
     // Yoga supports percent on positions/dimensions — pass through as
     // string so prop-applier / bridge can recognize the unit.
     if (v.endsWith('%')) return v;
-    // Targeted calc(100% + Npx) — common centering offset; resolve to
-    // a percent + px pair we forward as-is. General calc() is unsupported.
-    const calcM = v.match(/^calc\(\s*100%\s*([+-])\s*(\d+(?:\.\d+)?)px\s*\)$/);
-    if (calcM) {
-        // For now drop and warn; the bridge can't represent compound calc.
-        warnDropped('calc:' + v);
-        return undefined;
-    }
+    // Compound percent/pixel calc() is handled for positional edges by
+    // adaptStyle(), where it can be represented as edge-percent + margin.
+    if (parsePercentPixelCalc(v)) return undefined;
     if (v.endsWith('em') || v.endsWith('rem')) return undefined;  // unsupported
     return undefined;
+}
+
+function isZeroLength(v: unknown): boolean {
+    return v === 0 || v === '0' || v === '0px';
+}
+
+function parsePercentPixelCalc(v: unknown): { percent: number; pixels: number } | undefined {
+    if (typeof v !== 'string') return undefined;
+    const match = v.match(/^calc\(\s*(-?\d+(?:\.\d+)?)%\s*([+-])\s*(\d+(?:\.\d+)?)px\s*\)$/);
+    if (!match) return undefined;
+    const pixels = parseFloat(match[3]!);
+    return {
+        percent: parseFloat(match[1]!),
+        pixels: match[2] === '-' ? -pixels : pixels,
+    };
+}
+
+function addLength(existing: unknown, delta: number): number {
+    return (typeof existing === 'number' ? existing : 0) + delta;
 }
 
 // Once-per-prop telemetry for dropped style keys. Lets us see what the
@@ -661,6 +693,24 @@ function _forwardRef(existingRef: unknown, instance: unknown): void {
     else if (existingRef && typeof existingRef === 'object') {
         (existingRef as { current: unknown }).current = instance;
     }
+}
+
+function _resolveCurrentColor(node: ReactNode, color: string): ReactNode {
+    if (!isValidElement(node)) return node;
+    const props = (node as { props?: Record<string, unknown> }).props ?? {};
+    const patch: Record<string, unknown> = {};
+    if (props.stroke === 'currentColor') patch.stroke = color;
+    if (props.fill === 'currentColor') patch.fill = color;
+    const nested = props.children;
+    if (nested !== undefined) {
+        const mapped = Array.isArray(nested)
+            ? nested.map(child => _resolveCurrentColor(child as ReactNode, color))
+            : _resolveCurrentColor(nested as ReactNode, color);
+        patch.children = mapped;
+    }
+    return Object.keys(patch).length > 0
+        ? cloneElement(node as never, patch as never)
+        : node;
 }
 
 function _buildPointerEventsRef(mode: 'none' | 'auto', existingRef: unknown): (instance: unknown) => void {
@@ -756,6 +806,10 @@ export function createElement(
     const classStyle = classNameToStyle(inProps.className as string | undefined);
     const inlineStyle = (inProps.style ?? {}) as Record<string, unknown>;
     const styleObj = { ...classStyle, ...inlineStyle } as CSSProperties;
+    if (typeof (styleObj as { color?: unknown }).color === 'string') {
+        const inherited = resolveTokens(String((styleObj as { color?: unknown }).color));
+        children = children.map(child => _resolveCurrentColor(child, inherited));
+    }
     const adapted: Record<string, unknown> = { ...adaptStyle(styleObj) };
 
     // Static SVG icon → whole-SVG bridge (pulp commit 52f0452c)
@@ -846,7 +900,7 @@ export function createElement(
     // an SvgPath intrinsic yet, so we call the v0.61.0 bridge functions
     // directly. Activates only when the bridge has the functions registered;
     // otherwise no-op (pre-v0.61.0 SDK).
-    if (tag === 'path') {
+    if (tag === 'path' && target !== 'path') {
         const d = (inProps as { d?: unknown }).d;
         if (typeof d === 'string' && d.length > 0) {
             const stroke = (inProps as { stroke?: unknown }).stroke;
@@ -862,6 +916,53 @@ export function createElement(
                 (adapted as { ref?: unknown }).ref,
             );
         }
+    }
+
+    // Modern lowercase SVG primitives are real @pulp/react host elements.
+    // Unlike HTML style, their geometry/paint lives in element attributes;
+    // carry those through to prop-applier rather than leaving a correctly
+    // sized but empty SvgPathWidget behind.
+    if (target === 'path' || target === 'circle' || target === 'rect' || target === 'line') {
+        const svgAttrs = [
+            'd', 'fill', 'fillRule', 'stroke', 'strokeWidth', 'strokeGradient',
+            'cx', 'cy', 'r', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'width', 'height',
+            'rx', 'ry',
+        ];
+        for (const key of svgAttrs) {
+            if (inProps[key] !== undefined) adapted[key] = inProps[key];
+        }
+    }
+
+    // SVG's viewBox belongs to the container in DOM, while Pulp's current
+    // SvgPathWidget consumes it on each primitive. Propagate the authored
+    // viewport into direct children so path coordinates scale into the
+    // explicit SVG width/height instead of being clipped in raw pixels.
+    if (tag === 'svg' && target === 'svg') {
+        const viewBox = (inProps as { viewBox?: unknown }).viewBox;
+        const parsed = typeof viewBox === 'string'
+            ? viewBox.trim().split(/[\s,]+/).map(Number)
+            : [];
+        const childViewBox: [number, number] | undefined =
+            parsed.length === 4 && parsed.every(Number.isFinite)
+                ? [parsed[2]!, parsed[3]!]
+                : undefined;
+        const inheritedFill = inProps.fill;
+        const inheritedStroke = inProps.stroke;
+        const inheritedStrokeWidth = inProps.strokeWidth;
+        children = children.map(child => {
+            if (!isValidElement(child)) return child;
+            const childProps = (child as { props?: Record<string, unknown> }).props ?? {};
+            const patch: Record<string, unknown> = {};
+            if (childViewBox !== undefined && childProps.viewBox === undefined) patch.viewBox = childViewBox;
+            if (inheritedFill !== undefined && childProps.fill === undefined) patch.fill = inheritedFill;
+            if (inheritedStroke !== undefined && childProps.stroke === undefined) patch.stroke = inheritedStroke;
+            if (inheritedStrokeWidth !== undefined && childProps.strokeWidth === undefined) {
+                patch.strokeWidth = inheritedStrokeWidth;
+            }
+            return Object.keys(patch).length > 0
+                ? cloneElement(child as never, patch as never)
+                : child;
+        });
     }
 
     // Bundles set `<svg width="18" height="13">` — without this they
@@ -971,6 +1072,22 @@ export function createElement(
         // same root issue, different CSS property.
         if (childText.length > 0 && adapted.textColor === undefined) {
             adapted.textColor = 'rgba(255,255,255,0.85)';
+        }
+
+        // Browser inline layout naturally centers a short keycap glyph inside
+        // its bordered line box. A native Label otherwise paints on its top
+        // baseline even though Yoga correctly reserves the padding. Mirror the
+        // import codegen's single-line-in-a-reserved-box rule for this common
+        // semantic shape (shortcut badges, compact status keys).
+        const compactText = childText.trim();
+        const borderedKeycap = compactText.length > 0 && compactText.length <= 2
+            && (styleObj as { border?: unknown }).border !== undefined
+            && ((styleObj as { padding?: unknown }).padding !== undefined
+                || (styleObj as { paddingTop?: unknown }).paddingTop !== undefined
+                || (styleObj as { height?: unknown }).height !== undefined);
+        if (borderedKeycap) {
+            if (adapted.textAlign === undefined) adapted.textAlign = 'center';
+            if (adapted.verticalAlign === undefined) adapted.verticalAlign = 'middle';
         }
     }
 
@@ -1131,6 +1248,10 @@ export function createElement(
         const inheritedLetterSpacing = (adapted.letterSpacing as number | undefined);
         const fs = inheritedFontSize ?? 14;
         const ls = inheritedLetterSpacing ?? 0;
+        const centerDirectText = adapted.alignItems === 'center'
+            && adapted.justifyContent === 'center'
+            && adapted.width !== undefined
+            && adapted.height !== undefined;
         for (const c of children) {
             if (typeof c === 'string' || typeof c === 'number') {
                 const txt = String(c);
@@ -1141,6 +1262,12 @@ export function createElement(
                     flexShrink: 0,
                     key: '__txt_' + txtIdx++,
                 };
+                if (centerDirectText) {
+                    labelProps.width = '100%';
+                    labelProps.height = '100%';
+                    labelProps.textAlign = 'center';
+                    labelProps.verticalAlign = 'middle';
+                }
                 if (inheritedColor !== undefined) labelProps.textColor = inheritedColor;
                 if (inheritedFontSize !== undefined) labelProps.fontSize = inheritedFontSize;
                 if (inheritedLetterSpacing !== undefined) labelProps.letterSpacing = inheritedLetterSpacing;

@@ -22,11 +22,13 @@ TEST_CASE("Viewport rejects inverted or zero bounds") {
     CHECK_FALSE(v.valid());
 }
 
-TEST_CASE("band_center_hz anchors first and last bands at the viewport bounds") {
+TEST_CASE("band centers occupy equal log partitions inside viewport bounds") {
     Viewport v;  // 20 Hz .. 20 kHz
     for (std::size_t n : {32u, 40u, 48u, 56u, 64u}) {
-        CHECK(v.band_center_hz(0, n)     == Approx(20.0f).epsilon(1e-4));
-        CHECK(v.band_center_hz(n - 1, n) == Approx(20000.0f).epsilon(1e-4));
+        CHECK(v.band_center_hz(0, n) > 20.0f);
+        CHECK(v.band_center_hz(n - 1, n) < 20000.0f);
+        CHECK(v.band_for_hz(v.band_center_hz(0, n), n) == 0);
+        CHECK(v.band_for_hz(v.band_center_hz(n - 1, n), n) == n - 1);
     }
 }
 

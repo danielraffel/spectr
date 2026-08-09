@@ -15,6 +15,7 @@ using spectr::Layout;
 using spectr::ResponseMode;
 using spectr::Viewport;
 using spectr::make_engine;
+using spectr::make_block_fft_engine;
 
 namespace {
 
@@ -49,7 +50,7 @@ TEST_CASE("make_engine returns a non-null engine for every kind") {
     }
 }
 
-TEST_CASE("Fft engine round-trips audio under a flat mask (float tolerance)") {
+TEST_CASE("Legacy block FFT test seam round-trips audio under a flat mask") {
     constexpr std::size_t N = 64;
     TestBuffers in(N), out(N);
     for (std::size_t i = 0; i < N; ++i) {
@@ -57,7 +58,7 @@ TEST_CASE("Fft engine round-trips audio under a flat mask (float tolerance)") {
         in.ch1[i] = -0.10f * static_cast<float>(i);
     }
 
-    auto engine = make_engine(EngineKind::Fft);
+    auto engine = make_block_fft_engine();
     EnginePrepare p;
     p.sample_rate = 48000.0;
     p.max_block   = N;
@@ -105,9 +106,9 @@ TEST_CASE("Iir / Hybrid stub engines still pass audio through bit-exact") {
     }
 }
 
-TEST_CASE("Fft engine reports zero latency (block-synchronous)") {
+TEST_CASE("Production Fft engine reports its overlap-add latency") {
     auto engine = make_engine(EngineKind::Fft);
-    CHECK(engine->latency_samples() == 0);
+    CHECK(engine->latency_samples() == 1280);
 }
 
 TEST_CASE("EngineKind round-trips through the factory") {
@@ -118,6 +119,7 @@ TEST_CASE("EngineKind round-trips through the factory") {
         EnginePrepare p;
         p.sample_rate = 44100.0;
         p.max_block   = 128;
+        p.channels    = 2;
         p.layout      = Layout::Bands48;
         e->prepare(p);
         TestBuffers in(128), out(128);

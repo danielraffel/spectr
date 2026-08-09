@@ -2,6 +2,8 @@
 #include <catch2/catch_approx.hpp>
 #include <pulp/format/headless.hpp>
 #include "spectr/spectr.hpp"
+#include <algorithm>
+#include <cmath>
 
 using Catch::Approx;
 
@@ -11,19 +13,26 @@ TEST_CASE("Spectr processes audio") {
 
     pulp::audio::Buffer<float> in(2, 512), out(2, 512);
 
-    // Fill input with a test signal
-    for (std::size_t i = 0; i < 512; ++i) {
-        in.channel(0)[i] = 0.5f;
-        in.channel(1)[i] = 0.5f;
-    }
-
     const float* in_ptrs[] = {in.channel(0).data(), in.channel(1).data()};
     pulp::audio::BufferView<const float> iv(in_ptrs, 2, 512);
     auto ov = out.view();
-    host.process(ov, iv);
+    for (std::size_t block = 0; block < 8; ++block) {
+        for (std::size_t i = 0; i < 512; ++i) {
+            const auto sample = block * 512 + i;
+            const float value = 0.5f * std::sin(
+                2.0 * 3.14159265358979323846 * 997.0
+                * static_cast<double>(sample) / 48000.0);
+            in.channel(0)[i] = value;
+            in.channel(1)[i] = value;
+        }
+        host.process(ov, iv);
+    }
 
-    // With Mix at 100%, output should equal processed signal
-    REQUIRE(out.channel(0)[0] != 0.0f);
+    // The production WOLA path has startup latency; after eight blocks the
+    // in-band signal must have emerged.
+    float peak = 0.0f;
+    for (const auto sample : out.channel(0)) peak = std::max(peak, std::abs(sample));
+    REQUIRE(peak > 0.1f);
 }
 
 TEST_CASE("Spectr has correct descriptor") {
@@ -33,6 +42,26 @@ TEST_CASE("Spectr has correct descriptor") {
     REQUIRE(desc.name == "Spectr");
     REQUIRE(desc.manufacturer == "Pulp");
     REQUIRE(desc.category == pulp::format::PluginCategory::Effect);
+}
+
+TEST_CASE("Spectr reports production WOLA latency for host PDC") {
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    CHECK(host.processor()->latency_samples() == 1280);
+    host.prepare(48000, 512);
+    CHECK(host.processor()->latency_samples() == 1280);
+}
+
+TEST_CASE("Spectr imported editor has bounded proportional sizing") {
+    spectr::Spectr plugin;
+    const auto size = plugin.view_size();
+
+    CHECK(size.preferred_width == 1320);
+    CHECK(size.preferred_height == 860);
+    CHECK(size.min_width == 800);
+    CHECK(size.min_height == 521);
+    CHECK(size.max_width == 2640);
+    CHECK(size.max_height == 1720);
+    CHECK(size.aspect_ratio == Approx(1320.0 / 860.0));
 }
 
 TEST_CASE("Spectr state round-trip") {

@@ -8,6 +8,7 @@
 // Milestone 4.
 
 #include <pulp/format/processor.hpp>
+#include <pulp/runtime/triple_buffer.hpp>
 #include <pulp/view/ab_compare.hpp>
 #include <pulp/view/visualization_bridge.hpp>
 #include <memory>
@@ -52,6 +53,7 @@ public:
     void define_parameters(pulp::state::StateStore& store) override;
     void prepare(const pulp::format::PrepareContext& ctx) override;
     void release() override;
+    int latency_samples() const override;
 
     void process(
         pulp::audio::BufferView<float>& output,
@@ -83,18 +85,12 @@ public:
     void on_view_opened(pulp::view::View& view) override;
     void on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) override;
     void on_view_closed(pulp::view::View& view) override;
-    pulp::format::ViewSize view_size() const override {
-        // Matches the prototype's natural canvas size from screenshots.
-        return {/*pref_w*/1320, /*pref_h*/860,
-                /*min_w*/800,  /*min_h*/480,
-                /*max_w*/0,    /*max_h*/0,
-                /*aspect*/0.0};
-    }
-
     // ── Accessors — primarily for tests and the UI layer ───────────────
 
     const BandField&  field()     const noexcept { return field_; }
     BandField&        field()           noexcept { return field_; }
+    void replace_field(const BandField& field) noexcept;
+    void publish_field() noexcept;
     const Viewport&   viewport()  const noexcept { return viewport_; }
     Viewport&         viewport()        noexcept { return viewport_; }
     Layout            layout()    const noexcept { return layout_; }
@@ -159,10 +155,19 @@ public:
     const pulp::signal::MultiChannelMeterData& read_meter() { return bridge_.read_meter(); }
 
 private:
+    struct ProcessingState {
+        BandField field{};
+        Viewport viewport{};
+        Layout layout = Layout::Bands32;
+        pulp::signal::SpectralMaskTable mask{};
+    };
+
     double sample_rate_ = 48000.0;
     int    max_block_   = 512;
+    int    channels_    = 1;
 
     BandField                        field_{};
+    pulp::runtime::TripleBuffer<ProcessingState> processing_for_audio_{ProcessingState{}};
     Viewport                         viewport_{};
     Layout                           layout_       = Layout::Bands32;
     ResponseMode                     response_mode_= ResponseMode::Precision;
@@ -175,6 +180,7 @@ private:
     std::unique_ptr<pulp::view::ABCompare> ab_{};
 
     void rebuild_engine_();
+    void publish_processing_state_() noexcept;
     void configure_bridge_(int num_channels);
 };
 

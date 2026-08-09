@@ -28,6 +28,7 @@
 // job is to prove Spectr's product truths, not to ship this code as-is.
 
 #include "spectr/engine.hpp"
+#include "spectr/windowed_stft_engine.hpp"
 
 #include <pulp/signal/fft.hpp>
 
@@ -84,7 +85,8 @@ public:
         const BandField& field,
         const Viewport& view,
         Layout layout,
-        ResponseMode /*mode*/) override
+        ResponseMode /*mode*/,
+        const pulp::signal::SpectralMaskTable& /*mask*/) override
     {
         const auto chans   = std::min(output.num_channels(), input.num_channels());
         const auto n_in    = input.num_samples();
@@ -173,7 +175,8 @@ public:
     void process(
         pulp::audio::BufferView<float>& output,
         const pulp::audio::BufferView<const float>& input,
-        const BandField&, const Viewport&, Layout, ResponseMode) override
+        const BandField&, const Viewport&, Layout, ResponseMode,
+        const pulp::signal::SpectralMaskTable&) override
     {
         const auto chans = std::min(output.num_channels(), input.num_channels());
         const auto n = std::min(output.num_samples(), input.num_samples());
@@ -196,12 +199,16 @@ private:
 std::unique_ptr<SpectralEngine> make_engine(EngineKind kind) {
     switch (kind) {
         case EngineKind::Fft:
-            return std::make_unique<BlockFftEngine>(kind);
+            return make_windowed_stft_engine();
         case EngineKind::Iir:
         case EngineKind::Hybrid:
         default:
             return std::make_unique<PassThroughEngine>(kind);
     }
+}
+
+std::unique_ptr<SpectralEngine> make_block_fft_engine() {
+    return std::make_unique<BlockFftEngine>(EngineKind::Fft);
 }
 
 } // namespace spectr

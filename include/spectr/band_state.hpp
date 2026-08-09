@@ -17,10 +17,12 @@
 namespace spectr {
 
 constexpr std::size_t kMaxBands = 64;
+constexpr float kBandGainMinDb = -24.0f;
+constexpr float kBandGainMaxDb = +24.0f;
 
 /// Per-band working state.
 struct Band {
-    float gain_db = 0.0f;   ///< in [-60, +12]
+    float gain_db = 0.0f;   ///< in [kBandGainMinDb, kBandGainMaxDb]
     bool  muted   = false;  ///< explicit; never "gain == -inf"
 };
 

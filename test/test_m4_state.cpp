@@ -156,9 +156,9 @@ TEST_CASE("M4: deserialize_plugin_state on empty span resets to defaults") {
     CHECK(w.proc->viewport().min_hz == Approx(20.0f));
 }
 
-TEST_CASE("M4: host param automation reaches the engine on process()") {
-    // Wire a fresh Spectr and drive it by setting store params, then
-    // verifying that process() picks up the new layout / mode.
+TEST_CASE("M4: band-count configuration publishes before process()") {
+    // Layout changes compile and publish their mask on the control side;
+    // process() only consumes the immutable snapshot.
     Wired w;
     pulp::format::PrepareContext pc;
     pc.sample_rate     = 48000.0;
@@ -167,9 +167,7 @@ TEST_CASE("M4: host param automation reaches the engine on process()") {
     pc.output_channels = 2;
     w.proc->prepare(pc);
 
-    // Default layout is 32-band (Layout::Bands32). Switch param to 64-band
-    // and confirm process() picks it up.
-    w.store.set_value(spectr::kBandCount, 4.0f);  // index 4 = Bands64
+    w.proc->set_layout(spectr::Layout::Bands64);
 
     // Minimal buffers.
     std::vector<float> in0(256), in1(256), out0(256), out1(256);
@@ -184,4 +182,5 @@ TEST_CASE("M4: host param automation reaches the engine on process()") {
 
     w.proc->process(ov, iv, midi_in, midi_out, ctx);
     CHECK(w.proc->layout() == spectr::Layout::Bands64);
+    CHECK(w.store.get_value(spectr::kBandCount) == Approx(4.0f));
 }

@@ -25,7 +25,7 @@ using spectr::EnginePrepare;
 using spectr::Layout;
 using spectr::ResponseMode;
 using spectr::Viewport;
-using spectr::make_engine;
+using spectr::make_block_fft_engine;
 
 namespace {
 
@@ -87,7 +87,7 @@ float bin_energy(const std::vector<float>& v, double hz, double sr = kSampleRate
 }
 
 auto make_ready_engine(int block) {
-    auto e = make_engine(EngineKind::Fft);
+    auto e = make_block_fft_engine();
     EnginePrepare p;
     p.sample_rate = kSampleRate;
     p.max_block   = block;

@@ -635,6 +635,28 @@ function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, e
     targetGainsRef.current = gains.slice();
   }, [gains]);
 
+  // Publish the complete visible field through Pulp's renderer-agnostic
+  // EditorBridge. JSON cannot represent -Infinity, so mute is categorical and
+  // travels in a separate boolean table; every gain remains finite dB.
+  useEffect(() => {
+    const dispatch = globalThis.__spectrDispatch;
+    if (typeof dispatch !== 'function') return;
+    const gain_db = gains.map(v => isMuted(v) ? 0 : sanitizeGain(v) * 24);
+    const muted = gains.map(v => isMuted(v));
+    const response = dispatch(JSON.stringify({
+      type: 'band_field_set',
+      payload: { n_visible: N, gain_db, muted },
+    }));
+    try {
+      const parsed = JSON.parse(response);
+      if (!parsed.ok && window.__spectrLog) {
+        window.__spectrLog('[band_field_set] ' + parsed.error);
+      }
+    } catch (_) {
+      if (window.__spectrLog) window.__spectrLog('[band_field_set] malformed response');
+    }
+  }, [gains, N]);
+
   // ---- hover readout ----
   const [hover, setHover] = useState(null); // { band, freq, db, x, y }
   const [ctxMenu, setCtxMenu] = useState(null); // { x, y, band }
@@ -3247,11 +3269,6 @@ function EditModePopover({ value, onChange, onClose }) {
       borderRadius: 4, padding: 6,
       display: 'flex', flexDirection: 'column', gap: 2,
       width: 280,
-      // pulp's Yoga doesn't propagate flex-chain widths through nested
-      // spans the way browsers do, so inner text overflows the panel.
-      // Clip at the container boundary; description spans below carry
-      // explicit width so they wrap within the panel.
-      overflow: 'hidden',
       backdropFilter: 'blur(10px)',
       boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
     }}>
@@ -3289,10 +3306,6 @@ function EditModePopover({ value, onChange, onClose }) {
                 display: 'block', fontSize: 9.5, opacity: 0.6,
                 lineHeight: 1.5, fontFamily: 'var(--sans)',
                 textTransform: 'none', letterSpacing: 0.1,
-                // Explicit width so pulp's Yoga wraps text instead of
-                // overflowing the panel. 230 = panel 280 − padding 16
-                // − icon 28 − gap 10 − a few px slack.
-                width: 230,
               }}>{m.desc}</span>
             </span>
           </button>
@@ -3311,7 +3324,6 @@ function AnalyzerPopover({ value, onChange }) {
       borderRadius: 4, padding: 6,
       display: 'flex', flexDirection: 'column', gap: 2,
       width: 260,
-      overflow: 'hidden',
       backdropFilter: 'blur(10px)',
       boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
     }}>
@@ -3339,9 +3351,6 @@ function AnalyzerPopover({ value, onChange }) {
             <span style={{
               display: 'block', fontSize: 9.5, opacity: 0.6, marginTop: 3,
               fontFamily: 'var(--sans)', letterSpacing: 0.1,
-              // Explicit width so pulp's Yoga wraps text within panel.
-              // 240 = panel 260 − padding 20 (left+right).
-              width: 240,
             }}>{a.desc}</span>
           </button>
         );
@@ -4174,5 +4183,3 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-
-

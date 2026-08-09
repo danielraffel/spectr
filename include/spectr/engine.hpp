@@ -8,6 +8,7 @@
 // plan implements the first real engines behind this interface.
 
 #include <pulp/audio/buffer.hpp>
+#include <pulp/signal/spectral_band_mask.hpp>
 #include <cstddef>
 #include <memory>
 
@@ -31,6 +32,7 @@ enum class ResponseMode : int {
 struct EnginePrepare {
     double   sample_rate  = 48000.0;
     int      max_block    = 512;
+    int      channels     = 1;
     Layout   layout       = Layout::Bands32;
     Viewport viewport{};
 };
@@ -67,11 +69,16 @@ public:
         const BandField& field,
         const Viewport& view,
         Layout layout,
-        ResponseMode mode) = 0;
+        ResponseMode mode,
+        const pulp::signal::SpectralMaskTable& mask = {}) = 0;
 };
 
 /// Factory for the three engine kinds. Returns nullptr for unknown kinds.
 /// Milestone 2 will replace the IIR/FFT/Hybrid stubs with real impls.
 std::unique_ptr<SpectralEngine> make_engine(EngineKind kind);
+
+/// Legacy block-synchronous FFT retained only as a deterministic test seam.
+/// Production EngineKind::Fft uses the overlap-add engine.
+std::unique_ptr<SpectralEngine> make_block_fft_engine();
 
 } // namespace spectr

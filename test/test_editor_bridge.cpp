@@ -15,12 +15,15 @@
 #include "spectr/spectr.hpp"
 
 #include <pulp/state/store.hpp>
+#include <pulp/view/script_engine.hpp>
 
 #include <choc/containers/choc_Value.h>
 #include <choc/text/choc_JSON.h>
 
 #include <memory>
+#include <cmath>
 #include <string>
+#include <vector>
 
 using Catch::Approx;
 using spectr::BandField;
@@ -64,7 +67,121 @@ bool response_has_error(const std::string& r, std::string_view substr) {
     return not_ok && r.find(substr) != std::string::npos;
 }
 
+std::string field_envelope(std::uint32_t n,
+                           std::uint32_t special_band = 0,
+                           float special_gain = 0.0f,
+                           bool special_muted = false,
+                           bool all_muted = false) {
+    auto gains = choc::value::createEmptyArray();
+    auto mutes = choc::value::createEmptyArray();
+    for (std::uint32_t i = 0; i < n; ++i) {
+        gains.addArrayElement(static_cast<double>(i == special_band ? special_gain : 0.0f));
+        mutes.addArrayElement(all_muted || (i == special_band && special_muted));
+    }
+    auto payload = choc::value::createObject("BandFieldPayload");
+    payload.addMember("n_visible", static_cast<std::int32_t>(n));
+    payload.addMember("gain_db", gains);
+    payload.addMember("muted", mutes);
+    auto envelope = choc::value::createObject("Envelope");
+    envelope.addMember("type", "band_field_set");
+    envelope.addMember("payload", payload);
+    return choc::json::toString(envelope, false);
+}
+
 } // namespace
+
+TEST_CASE("native editor bridge: complete field preserves exact mute and layout") {
+    Rig r;
+    r.proc->field().bands[63].gain_db = 7.0f;
+
+    const auto response = r.dispatch(field_envelope(40, 7, -13.5f, true));
+    REQUIRE(response_ok(response));
+    CHECK(r.proc->layout() == spectr::Layout::Bands40);
+    CHECK(r.proc->field().bands[7].gain_db == Approx(-13.5f));
+    CHECK(r.proc->field().bands[7].muted);
+    CHECK(r.proc->field().linear_gain(7) == 0.0f);
+    CHECK(r.proc->field().bands[63].gain_db == Approx(7.0f));
+}
+
+TEST_CASE("native editor bridge: field contract rejects malformed values atomically") {
+    Rig r;
+    const auto before = r.proc->field();
+
+    CHECK(response_has_error(r.dispatch(
+        R"({"type":"band_field_set","payload":{"n_visible":31,"gain_db":[],"muted":[]}})"),
+        "n_visible"));
+    CHECK(response_has_error(r.dispatch(
+        R"({"type":"band_field_set","payload":{"n_visible":32,"gain_db":[0],"muted":[false]}})"),
+        "lengths"));
+
+    auto out_of_range = field_envelope(32, 3, 24.01f, false);
+    CHECK(response_has_error(r.dispatch(out_of_range), "within -24 and +24"));
+    CHECK(r.proc->field().bands[3].gain_db == Approx(before.bands[3].gain_db));
+
+    CHECK(response_has_error(r.dispatch(
+        R"({"type":"band_field_set","payload":{"n_visible":32,"gain_db":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"muted":[false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,0]}})"),
+        "boolean"));
+}
+
+TEST_CASE("native ScriptEngine calls the same Spectr field contract") {
+    Rig r;
+    pulp::view::ScriptEngine engine;
+    r.bridge.attach_native_runtime(engine, "__spectrDispatch");
+
+    const auto envelope = field_envelope(32, 11, 6.25f, true);
+    const auto result = engine.evaluate(
+        "__spectrDispatch(JSON.stringify(" + envelope + "))");
+
+    REQUIRE(result.isString());
+    CHECK(response_ok(std::string(result.getString())));
+    CHECK(r.proc->field().bands[11].gain_db == Approx(6.25f));
+    CHECK(r.proc->field().bands[11].muted);
+}
+
+TEST_CASE("CLI proof: JS field dispatch reaches C++ DSP and produces digital silence") {
+    Rig r;
+    pulp::format::PrepareContext prepare;
+    prepare.sample_rate = 48000.0;
+    prepare.max_buffer_size = 512;
+    prepare.input_channels = 1;
+    prepare.output_channels = 1;
+    r.proc->prepare(prepare);
+
+    pulp::view::ScriptEngine engine;
+    r.bridge.attach_native_runtime(engine, "__spectrDispatch");
+    const auto envelope = field_envelope(32, 0, 0.0f, false, true);
+    const auto response = engine.evaluate(
+        "__spectrDispatch(JSON.stringify(" + envelope + "))");
+    REQUIRE(response.isString());
+    REQUIRE(response_ok(std::string(response.getString())));
+
+    constexpr std::size_t block_size = 512;
+    constexpr std::size_t total = 4096; // > 3x production WOLA latency
+    std::vector<float> input(total), output(total, 1.0f);
+    for (std::size_t i = 0; i < total; ++i) {
+        input[i] = 0.5f * std::sin(2.0 * 3.14159265358979323846 * 997.0
+                                  * static_cast<double>(i) / 48000.0);
+    }
+    pulp::midi::MidiBuffer midi_in, midi_out;
+    pulp::format::ProcessContext context;
+    context.sample_rate = 48000.0;
+    context.num_samples = static_cast<std::uint32_t>(block_size);
+
+    for (std::size_t offset = 0; offset < total; offset += block_size) {
+        const float* input_channels[] = {input.data() + offset};
+        float* output_channels[] = {output.data() + offset};
+        pulp::audio::BufferView<const float> input_view(input_channels, 1, block_size);
+        pulp::audio::BufferView<float> output_view(output_channels, 1, block_size);
+        r.proc->process(output_view, input_view, midi_in, midi_out, context);
+    }
+
+    double output_energy = 0.0;
+    // Ignore startup latency so this cannot pass merely because WOLA has not
+    // emitted a frame yet.
+    for (std::size_t i = 2048; i < output.size(); ++i)
+        output_energy += output[i] * output[i];
+    CHECK(output_energy == Approx(0.0).margin(1.0e-12));
+}
 
 TEST_CASE("M9.5 bridge: malformed JSON returns error") {
     Rig r;
