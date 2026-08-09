@@ -10,15 +10,17 @@
 #include <string_view>
 #include <vector>
 
-TEST_CASE("Pulp host loads and processes the built Spectr CLAP artifact") {
+namespace {
+
+void check_built_artifact(const std::filesystem::path& bundle,
+                          pulp::host::PluginFormat format) {
     namespace fs = std::filesystem;
-    const fs::path bundle = SPECTR_TEST_CLAP_PATH;
     REQUIRE(fs::exists(bundle));
 
     pulp::host::PluginInfo info;
     info.name = "Spectr";
     info.path = bundle.string();
-    info.format = pulp::host::PluginFormat::CLAP;
+    info.format = format;
     auto slot = pulp::host::PluginSlot::load(info);
     REQUIRE(slot != nullptr);
     REQUIRE(slot->is_loaded());
@@ -66,4 +68,16 @@ TEST_CASE("Pulp host loads and processes the built Spectr CLAP artifact") {
     REQUIRE_FALSE(state.empty());
     CHECK(slot->restore_state(state));
     slot->release();
+}
+
+} // namespace
+
+TEST_CASE("Pulp host loads and processes the built Spectr CLAP artifact") {
+    check_built_artifact(SPECTR_TEST_CLAP_PATH,
+                         pulp::host::PluginFormat::CLAP);
+}
+
+TEST_CASE("Pulp host loads and processes the built Spectr VST3 artifact") {
+    check_built_artifact(SPECTR_TEST_VST3_PATH,
+                         pulp::host::PluginFormat::VST3);
 }

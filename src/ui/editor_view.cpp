@@ -4,8 +4,6 @@
 
 #include <pulp/runtime/log.hpp>
 #include <pulp/view/asset_manager.hpp>
-#include <pulp/view/plugin_view_host.hpp>
-#include <pulp/view/window_host.hpp>
 
 #include "spectr_editor_assets_data.hpp"
 
@@ -28,65 +26,6 @@ void register_editor_assets_once() {
                              spectr_editor::editor_html_size);
 }
 
-/// Adapter over whichever host is set on the view tree. PluginViewHost is
-/// used by plugin editors (via pulp#651), WindowHost by the standalone.
-/// Both expose equivalent native-child attach/bounds/detach APIs and, as of
-/// pulp#670, both expose a content-size accessor — so we no longer need a
-/// fallback-number dance for the standalone path.
-struct NativeChildHost {
-    pulp::view::PluginViewHost* plugin_host = nullptr;
-    pulp::view::WindowHost*     window_host = nullptr;
-
-    explicit operator bool() const noexcept { return plugin_host || window_host; }
-
-    struct Size { float w = 0, h = 0; };
-
-    /// Host-reported content area. PluginViewHost exposes `get_size()`;
-    /// WindowHost exposes `get_content_size()` (pulp#670, Pulp v0.40.0+).
-    /// We prefer plugin_host when both are present since plugin editors
-    /// embed inside a host-owned window and only the plugin-side dimensions
-    /// track the embed area.
-    Size content_size() const {
-        if (plugin_host) {
-            const auto s = plugin_host->get_size();
-            return {static_cast<float>(s.width), static_cast<float>(s.height)};
-        }
-        if (window_host) {
-            const auto s = window_host->get_content_size();
-            return {static_cast<float>(s.width), static_cast<float>(s.height)};
-        }
-        return {0, 0};
-    }
-
-    bool attach(void* child, float w, float h) const {
-        if (plugin_host) return plugin_host->attach_native_child_view(child, 0.0f, 0.0f, w, h);
-        if (window_host) return window_host->attach_native_child_view(child, 0.0f, 0.0f, w, h);
-        return false;
-    }
-
-    void set_bounds(void* child, float w, float h) const {
-        if (plugin_host) { plugin_host->set_native_child_view_bounds(child, 0.0f, 0.0f, w, h); return; }
-        if (window_host) { window_host->set_native_child_view_bounds(child, 0.0f, 0.0f, w, h); return; }
-    }
-
-    void detach(void* child) const {
-        if (plugin_host) { plugin_host->detach_native_child_view(child); return; }
-        if (window_host) { window_host->detach_native_child_view(child); return; }
-    }
-};
-
-NativeChildHost find_native_child_host(const pulp::view::View* v) {
-    NativeChildHost out{};
-    const pulp::view::View* cur = v;
-    while (cur) {
-        if (!out.plugin_host) out.plugin_host = cur->plugin_view_host();
-        if (!out.window_host) out.window_host = cur->window_host();
-        if (out) break;
-        cur = cur->parent();
-    }
-    return out;
-}
-
 } // namespace
 
 EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
@@ -102,14 +41,6 @@ EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
 EditorView::~EditorView() { detach_if_needed(); }
 
 void EditorView::attach_if_needed() {
-    if (attached_) return;
-
-    auto host = find_native_child_host(this);
-    if (!host) {
-        pulp::runtime::log_error("[Spectr] attach_if_needed — no host on the view tree");
-        return;
-    }
-
     if (!panel_) {
         pulp::view::WebViewOptions options;
         options.enable_debug           = true;
@@ -136,54 +67,37 @@ void EditorView::attach_if_needed() {
         // Route WebView messages through the EditorBridge. attach_webview
         // installs panel_->set_message_handler under the hood.
         bridge_.attach_webview(*panel_);
+        bridge_attached_ = true;
         panel_->set_ready_handler([p = panel_.get()] {
             p->navigate("pulp://spectr");
         });
-    }
 
-    // Both hosts now report a real content size (pulp#651 for plugin
-    // editors, pulp#670 for the standalone). No more fallback dance or
-    // magic 1320x860 numbers; we trust whichever host we resolved.
-    const auto sz = host.content_size();
-    if (sz.w <= 0 || sz.h <= 0) {
-        pulp::runtime::log_error("[Spectr] attach_if_needed — host reports 0x0 content size");
-        return;
+        auto* panel = panel_.get();
+        set_native_child(panel->native_handle(),
+                         [panel](uint32_t /*width*/, uint32_t /*height*/) {
+                             return panel->snapshot_png();
+                         });
     }
-
-    if (host.attach(panel_->native_handle(), sz.w, sz.h)) {
-        attached_ = true;
-        pulp::runtime::log_info("[Spectr] WebView editor attached {}x{} via {}",
-                                sz.w, sz.h,
-                                host.plugin_host ? "PluginViewHost" : "WindowHost");
-    } else {
-        pulp::runtime::log_error("[Spectr] attach_native_child_view failed");
-    }
+    update_native_layout();
 }
 
 void EditorView::sync_to_host() {
-    if (!attached_ || !panel_) return;
-    auto host = find_native_child_host(this);
-    if (!host) return;
-    const auto sz = host.content_size();
-    if (sz.w <= 0 || sz.h <= 0) return;
-    host.set_bounds(panel_->native_handle(), sz.w, sz.h);
+    if (panel_) update_native_layout();
 }
 
 void EditorView::detach_if_needed() {
-    if (!attached_ || !panel_) {
-        attached_ = false;
-        return;
-    }
+    if (!panel_) return;
     // Explicit teardown order: clear the bridge's WebView handler
     // BEFORE the native child view comes off the host. This closes
     // the residual race where the panel's last in-flight WebView
     // callback could dispatch through the bridge after panel_
     // destruction started. Symmetric partner of attach_webview(),
     // added in pulp#728 (fixes #726).
-    bridge_.detach_webview(*panel_);
-    auto host = find_native_child_host(this);
-    if (host) host.detach(panel_->native_handle());
-    attached_ = false;
+    if (bridge_attached_) {
+        bridge_.detach_webview(*panel_);
+        bridge_attached_ = false;
+    }
+    clear_native_child();
 }
 
 } // namespace spectr
