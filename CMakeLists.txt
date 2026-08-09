@@ -176,3 +176,17 @@ if(TARGET Spectr_CLAP AND TARGET Pulp::host)
     add_dependencies(Spectr-artifact-test Spectr_CLAP)
     catch_discover_tests(Spectr-artifact-test)
 endif()
+
+# Standalone artifact proof: launch the exact packaged executable headlessly,
+# capture its real GPU back buffer, and verify screenshot-only mode stays clear
+# of the audio device. This is intentionally downstream of the CLI/DSP suite.
+if(TARGET Spectr_Standalone AND TARGET Pulp::platform AND TARGET Pulp::view)
+    add_executable(Spectr-standalone-artifact-test
+        test/test_built_standalone.cpp)
+    target_link_libraries(Spectr-standalone-artifact-test PRIVATE
+        Pulp::platform Pulp::view Catch2::Catch2WithMain)
+    target_compile_definitions(Spectr-standalone-artifact-test PRIVATE
+        SPECTR_TEST_STANDALONE_PATH="$<TARGET_FILE:Spectr_Standalone>")
+    add_dependencies(Spectr-standalone-artifact-test Spectr_Standalone)
+    catch_discover_tests(Spectr-standalone-artifact-test)
+endif()
