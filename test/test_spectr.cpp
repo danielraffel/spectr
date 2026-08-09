@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <pulp/format/headless.hpp>
+#include <pulp/format/validation_harness.hpp>
 #include "spectr/spectr.hpp"
 #include <algorithm>
 #include <cmath>
@@ -49,6 +50,45 @@ TEST_CASE("Spectr reports production WOLA latency for host PDC") {
     CHECK(host.processor()->latency_samples() == 1280);
     host.prepare(48000, 512);
     CHECK(host.processor()->latency_samples() == 1280);
+}
+
+TEST_CASE("Pulp ValidationHarness proves Spectr pass and exact mute audio") {
+    pulp::format::ValidationHarness harness(spectr::create_spectr);
+    harness.configure({.sample_rate = 48000.0,
+                       .buffer_size = 512,
+                       .input_channels = 2,
+                       .output_channels = 2});
+    harness.prepare();
+
+    auto render_blocks = [&](int first_block) {
+        std::vector<float> output;
+        for (int block = first_block; block < first_block + 8; ++block) {
+            std::vector<float> input(512 * 2);
+            for (int sample = 0; sample < 512; ++sample) {
+                const auto absolute = block * 512 + sample;
+                const float value = 0.4f * std::sin(
+                    2.0 * 3.14159265358979323846 * 997.0
+                    * static_cast<double>(absolute) / 48000.0);
+                input[static_cast<std::size_t>(sample * 2)] = value;
+                input[static_cast<std::size_t>(sample * 2 + 1)] = -value;
+            }
+            output = harness.process_buffer(input, 2, 512);
+        }
+        return output;
+    };
+
+    const auto passed = render_blocks(0);
+    float pass_peak = 0.0f;
+    for (const auto sample : passed) pass_peak = std::max(pass_peak, std::abs(sample));
+    REQUIRE(pass_peak > 0.1f);
+
+    auto* processor = dynamic_cast<spectr::Spectr*>(harness.host().processor());
+    REQUIRE(processor != nullptr);
+    spectr::BandField muted;
+    for (auto& band : muted.bands) band.muted = true;
+    processor->replace_field(muted);
+    const auto silenced = render_blocks(8);
+    for (const auto sample : silenced) CHECK(sample == 0.0f);
 }
 
 TEST_CASE("Spectr imported editor has bounded proportional sizing") {
