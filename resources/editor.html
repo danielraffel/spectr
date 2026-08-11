@@ -290,6 +290,12 @@ document.addEventListener('DOMContentLoaded', async function() {
           ? nativeAnalyzerFrame.overview : nativeAnalyzerFrame.visible;
         return sampleAnalyzerTrace(trace, logFrequency, nativeAnalyzerFrame);
       },
+      scale() {
+        return nativeAnalyzerFrame
+          ? { floor: nativeAnalyzerFrame.floor_db,
+              ceiling: nativeAnalyzerFrame.ceiling_db }
+          : { floor: -120, ceiling: 24 };
+      },
       debugSnapshot() { return nativeAnalyzerFrame; },
     };
     if (nativeAnalyzerAvailable) {
@@ -319,7 +325,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       'native hydration publication gate');
     replaceSpectrSource(
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
-      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const resolutionGeometryRef = useRef(\'\');',
+      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const resolutionGeometryRef = useRef(\'\');',
       'independent muted gain hydration');
     replaceSpectrSource(
       String.raw`      const next = new Array(N).fill(0);
@@ -341,7 +347,8 @@ document.addEventListener('DOMContentLoaded', async function() {
       }
       targetGainsRef.current = next.slice();
       renderGainsRef.current = next.slice();
-      mutedGainDbRef.current = nextMutedGainDb;`,
+      mutedGainDbRef.current = nextMutedGainDb;
+      unmutePulseRef.current = new Float32Array(N);`,
       'muted gain layout remap');
     replaceSpectrSource(
       String.raw`  const commitGain = (idx, value) => {
@@ -363,8 +370,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
   };`,
       String.raw`  const commitGain = (idx, value) => {
-    if (isMuted(value) && !isMuted(targetGainsRef.current[idx]))
+    const wasMuted = isMuted(targetGainsRef.current[idx]);
+    if (isMuted(value) && !wasMuted)
       mutedGainDbRef.current[idx] = clamp(targetGainsRef.current[idx], -1, 1) * 24;
+    if (wasMuted && !isMuted(value)) unmutePulseRef.current[idx] = 1;
     targetGainsRef.current[idx] = value;
     setGains(prev => {
       const nxt = prev.slice();
@@ -376,8 +385,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     setGains(prev => {
       const nxt = prev.slice();
       for (const [k, v] of map) {
-        if (isMuted(v) && !isMuted(targetGainsRef.current[k]))
+        const wasMuted = isMuted(targetGainsRef.current[k]);
+        if (isMuted(v) && !wasMuted)
           mutedGainDbRef.current[k] = clamp(targetGainsRef.current[k], -1, 1) * 24;
+        if (wasMuted && !isMuted(v)) unmutePulseRef.current[k] = 1;
         nxt[k] = v;
         targetGainsRef.current[k] = v;
       }
@@ -409,13 +420,36 @@ document.addEventListener('DOMContentLoaded', async function() {
             if (!Number.isFinite(rg[i]) || rg[i] < -1.01) rg[i] = -Infinity;
           }
         } else {
-          // Recover from either the mute sentinel or stale non-finite render state.
-          if (isMuted(rg[i]) || !Number.isFinite(rg[i])) rg[i] = -1.02;
+          // Unmute expands from the neutral 0 dB line toward the preserved
+          // authored gain; it never pretends to sweep up from the floor.
+          if (isMuted(rg[i]) || !Number.isFinite(rg[i])) rg[i] = 0;
           const target = Number.isFinite(tg[i]) ? tg[i] : 0;
           rg[i] = smooth(rg[i], target, dt * k);
         }
+        unmutePulseRef.current[i] = Math.max(0,
+          unmutePulseRef.current[i] - dt * 3.5);
       }`,
       'categorical mute render transition');
+    replaceSpectrSource(
+      '    // --- Layer B: cap emission (signal-gated, narrow, localized) ---',
+      String.raw`    // A flat band has no height animation when it becomes audible,
+    // so give every unmute a short center-origin acknowledgement pulse.
+    ctx.save();
+    for (let i = 0; i < N; i++) {
+      const pulse = unmutePulseRef.current[i] || 0;
+      if (pulse <= 0 || isMuted(tg[i])) continue;
+      const G = geom[i];
+      ctx.strokeStyle = specColor(G.pos, 0.25 + pulse * 0.7, theme);
+      ctx.lineWidth = 1 + pulse * 1.5;
+      ctx.beginPath();
+      ctx.moveTo(G.cx - G.innerW * (0.5 + pulse * 0.2), zeroY);
+      ctx.lineTo(G.cx + G.innerW * (0.5 + pulse * 0.2), zeroY);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // --- Layer B: cap emission (signal-gated, narrow, localized) ---`,
+      'center-origin unmute pulse');
     replaceSpectrSource(
       [
         "    if (p.mode === 'gain') {",
@@ -650,6 +684,21 @@ document.addEventListener('DOMContentLoaded', async function() {
       "options={[['iir', 'IIR'], ['fft', 'FFT'], ['hybrid', 'HYBRID']]}",
       "options={[['fft', 'SPECTRAL']]}",
       'DSP pill choices');
+    replaceSpectrSource(
+      String.raw`        <Segmented
+          value={dspMode}
+          onChange={setDspMode}
+          options={[['fft', 'SPECTRAL']]}
+        />`,
+      String.raw`        <div aria-label="Spectral mask engine" title="Spectral mask engine · FFT" style={{
+          height: 24, display: 'flex', alignItems: 'center',
+          padding: '0 10px', borderRadius: 3,
+          border: '1px solid rgba(255,255,255,0.1)',
+          background: 'rgba(255,255,255,0.10)',
+          color: '#fff', fontSize: 10, letterSpacing: 1,
+          cursor: 'default', userSelect: 'none',
+        }}>SPECTRAL</div>`,
+      'static engine identity badge');
     replaceSpectrSource(
       "const [dspMode, setDspMode] = useAppS('iir');",
       "const [dspMode, setDspMode] = useAppS('fft');",
@@ -914,6 +963,120 @@ document.addEventListener('DOMContentLoaded', async function() {
       '<div data-spectr-overlay="true" role="dialog" aria-modal="true" aria-label="Settings" onClick={onClose} style={{\n      position: \'absolute\', inset: 0, zIndex: 50,',
       'settings modal semantics');
     replaceSpectrSource(
+      'function SettingsModal({ settings, setSettings, onClose }) {',
+      String.raw`function SpectrSettingsGroup({ title, subtitle, children }) {
+  return <div style={{ marginBottom: 22 }}>
+    <div style={{ fontSize: 9, letterSpacing: 2, opacity: 0.5, marginBottom: 4 }}>{title}</div>
+    {subtitle && <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 10, fontFamily: 'var(--sans)' }}>{subtitle}</div>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
+  </div>;
+}
+function SpectrSettingsField({ label, hint, children }) {
+  return <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+    <div style={{ width: 110, flexShrink: 0 }}>
+      <div style={{ fontSize: 11, color: '#fff', letterSpacing: 0.5 }}>{label}</div>
+      {hint && <div style={{ fontSize: 9.5, opacity: 0.45, marginTop: 2, fontFamily: 'var(--sans)', letterSpacing: 0.1 }}>{hint}</div>}
+    </div>
+    <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>{children}</div>
+  </div>;
+}
+function SpectrSettingsChips({ value, onChange, opts }) {
+  return <div style={{ display: 'flex', gap: 3 }}>
+    {opts.map(([k, label]) => <button key={k} data-spectr-setting-option={k}
+      aria-pressed={value === k} onClick={() => onChange(k)} style={{
+        background: value === k ? 'rgba(120,180,255,0.18)' : 'rgba(255,255,255,0.03)',
+        color: value === k ? '#fff' : 'rgba(255,255,255,0.7)',
+        border: '1px solid ' + (value === k ? 'rgba(180,210,255,0.4)' : 'rgba(255,255,255,0.1)'),
+        padding: '5px 10px', fontSize: 10, letterSpacing: 0.8,
+        fontFamily: 'var(--mono)', cursor: 'pointer', borderRadius: 3,
+      }}>{label}</button>)}
+  </div>;
+}
+function SpectrSettingsSlider({ value, min, max, step, onChange, fmt }) {
+  return <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 200 }}>
+    <input data-spectr-setting-slider type="range" min={min} max={max} step={step} value={value}
+      onInput={event => onChange(parseFloat(event.currentTarget.value))}
+      style={{ flex: 1, accentColor: 'hsl(200,80%,60%)' }} />
+    <span className="tnum" style={{ width: 36, textAlign: 'right', fontSize: 10, opacity: 0.75 }}>
+      {fmt ? fmt(value) : value.toFixed(2)}
+    </span>
+  </div>;
+}
+function SpectrSettingsToggle({ value, onChange }) {
+  return <button data-spectr-setting-toggle role="switch" aria-checked={value}
+    onClick={() => onChange(!value)} style={{
+      width: 40, height: 20, borderRadius: 11,
+      background: value ? 'hsl(200,70%,45%)' : 'rgba(255,255,255,0.1)',
+      border: '1px solid rgba(255,255,255,0.12)',
+      position: 'relative', cursor: 'pointer', padding: 0,
+    }}><span style={{
+      position: 'absolute', top: 1, left: value ? 21 : 1,
+      width: 16, height: 16, borderRadius: 8,
+      background: '#fff', transition: 'left 0.15s',
+    }} /></button>;
+}
+
+function SettingsModal({ settings, setSettings, onClose }) {`,
+      'stable settings controls');
+    replaceAllSpectrSource('<Group ', '<SpectrSettingsGroup ', 3,
+      'stable settings groups open');
+    replaceAllSpectrSource('</Group>', '</SpectrSettingsGroup>', 3,
+      'stable settings groups close');
+    replaceAllSpectrSource('<Field ', '<SpectrSettingsField ', 9,
+      'stable settings fields open');
+    replaceAllSpectrSource('</Field>', '</SpectrSettingsField>', 9,
+      'stable settings fields close');
+    replaceAllSpectrSource('<SChips ', '<SpectrSettingsChips ', 5,
+      'stable settings chips');
+    replaceAllSpectrSource('<SSlider ', '<SpectrSettingsSlider ', 2,
+      'stable settings sliders');
+    replaceAllSpectrSource('<STog ', '<SpectrSettingsToggle ', 2,
+      'stable settings toggles');
+    replaceSpectrSource(
+      '<div onClick={e => e.stopPropagation()} style={{\n        width: 520, maxHeight: \'90vh\', overflowY: \'auto\',',
+      '<div data-spectr-settings-panel onClick={e => e.stopPropagation()} style={{\n        width: 520, maxHeight: \'90vh\', overflowY: \'auto\',',
+      'settings panel hit target');
+    replaceSpectrSource(
+      '<button onClick={onClose} style={{\n            background: \'transparent\', border: \'none\', color: \'rgba(255,255,255,0.6)\',\n            cursor: \'pointer\', fontSize: 20, padding: 0, lineHeight: 1,',
+      '<button data-spectr-settings-close aria-label="Close settings" onClick={event => { event.stopPropagation(); onClose(); }} style={{\n            background: \'transparent\', border: \'none\', color: \'rgba(255,255,255,0.6)\',\n            cursor: \'pointer\', fontSize: 20, padding: 0, lineHeight: 1, width: 32, height: 32,',
+      'settings close hit target');
+    replaceSpectrSource(
+      '<button onClick={() => setSettingsOpen(true)}\n          title="Settings"',
+      '<button data-spectr-settings-open onClick={() => setSettingsOpen(true)}\n          title="Settings"',
+      'settings open hit target');
+    replaceSpectrSource(
+      [
+        '        if (onStatus) onStatus(`SNAPSHOT ${slot} CAPTURED`);',
+        '      },',
+        '      recallSnap:',
+      ].join('\n'),
+      [
+        "        if (window.pulp && typeof window.pulp.postMessage === 'function') {",
+        "          Promise.resolve(window.pulp.postMessage('capture_snapshot', { slot },",
+        "            'spectr-capture-' + slot)).catch(() => {});",
+        '        }',
+        '        if (onStatus) onStatus(`SNAPSHOT ${slot} CAPTURED`);',
+        '      },',
+        '      recallSnap:',
+      ].join('\n'),
+      'native snapshot capture');
+    replaceSpectrSource(
+      String.raw`      setMorph: (v) => {
+        setMorph(v);
+        const s = snapshotsRef.current;`,
+      String.raw`      setMorph: (v) => {
+        setMorph(v);
+        if (window.pulp && typeof window.pulp.postMessage === 'function') {
+          Promise.resolve(window.pulp.postMessage('morph', { t: v },
+            'spectr-morph')).catch(() => {});
+        }
+        const s = snapshotsRef.current;`,
+      'native morph publication');
+    replaceSpectrSource(
+      '<input type="range" min="0" max="1" step="0.001" value={v}\n        disabled={!hasBoth}\n        onChange={e => {',
+      '<input data-spectr-morph aria-label="Morph A to B" type="range" min="0" max="1" step="0.001" value={v}\n        disabled={!hasBoth}\n        onInput={e => {',
+      'morph slider input contract');
+    replaceSpectrSource(
       '  const [showImport, setShowImport] = usePM(false);\n\n  const factory = window.Spectr.FACTORY_PATTERNS;',
       String.raw`  const [showImport, setShowImport] = usePM(false);
 
@@ -1031,6 +1194,52 @@ document.addEventListener('DOMContentLoaded', async function() {
       'const r = { width: wrap.clientWidth, height: wrap.clientHeight };',
       2,
       'fixed-design canvas geometry');
+    replaceSpectrSource(
+      'const pad = { l: 56, r: 56, t: 56, b: 88 };',
+      'const pad = { l: 56, r: 56, t: 56, b: 120 };',
+      'minimap clears bottom action rail');
+    replaceSpectrSource(
+      String.raw`    ctx.fillStyle = 'rgba(255,255,255,0.30)';
+    ctx.fillText('dB', inner.x - 8, g.inner.y - 8);`,
+      String.raw`    ctx.fillStyle = 'rgba(255,255,255,0.30)';
+    ctx.fillText('dB', inner.x - 8, g.inner.y - 8);
+
+    // The live analyzer is absolute magnitude, not signed EQ gain. Give it a
+    // separate dBFS ruler on the right while retaining the shared plot area.
+    const analyzerScale = window.SpectrAnalyzer.scale();
+    const analyzerTicks = [-120, -90, -60, -30, 0, 24]
+      .filter(value => value >= analyzerScale.floor
+        && value <= analyzerScale.ceiling);
+    ctx.textAlign = 'left';
+    for (const dbfs of analyzerTicks) {
+      const amount = (dbfs - analyzerScale.floor)
+        / (analyzerScale.ceiling - analyzerScale.floor);
+      const y = g.zeroY - amount * g.halfH * 0.95;
+      ctx.fillStyle = dbfs === 0
+        ? 'rgba(130,220,180,0.62)' : 'rgba(130,220,180,0.30)';
+      ctx.fillText((dbfs > 0 ? '+' : '') + dbfs,
+        inner.x + inner.w + 8, y);
+    }
+    ctx.fillStyle = 'rgba(130,220,180,0.38)';
+    ctx.fillText('dBFS', inner.x + inner.w + 8, g.inner.y - 8);`,
+      'independent analyzer dBFS ruler');
+    replaceSpectrSource(
+      '  const onPointerDown = (e) => {',
+      String.raw`  // Optional executed-browser oracle seam; absent in production hosts.
+  if (window.__spectrTestHooks) {
+    window.__spectrTestHooks.minimapHit = (x, y) => minimapHit(x, y, getGeom());
+    window.__spectrTestHooks.renderState = () => ({
+      gains: Array.from(renderGainsRef.current),
+      unmutePulse: Array.from(unmutePulseRef.current),
+    });
+  }
+
+  const onPointerDown = (e) => {`,
+      'minimap behavior oracle seam');
+    replaceSpectrSource(
+      "        cursor: 'crosshair',\n        touchAction: 'none',",
+      "        cursor: 'crosshair',\n        touchAction: 'none',\n        userSelect: 'none', WebkitUserSelect: 'none',",
+      'canvas interaction does not select text');
     replaceAllSpectrSource(
       'const x = e.clientX - rect.left, y = e.clientY - rect.top;',
       'const x = (e.clientX - rect.left) * wrapRef.current.clientWidth / rect.width, y = (e.clientY - rect.top) * wrapRef.current.clientHeight / rect.height;',

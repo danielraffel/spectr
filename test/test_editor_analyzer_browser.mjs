@@ -13,6 +13,13 @@ try {
   const mock = `<script>
 window.__spectrHandlers = Object.create(null);
 window.__spectrPosts = [];
+window.__spectrTestHooks = Object.create(null);
+window.__spectrCanvasLabels = [];
+const spectrOriginalFillText = CanvasRenderingContext2D.prototype.fillText;
+CanvasRenderingContext2D.prototype.fillText = function(text, ...args) {
+  window.__spectrCanvasLabels.push(String(text));
+  return spectrOriginalFillText.call(this, text, ...args);
+};
 // Headless --dump-dom may throttle RAF after first paint. A timer-backed RAF
 // keeps the production animation/effect callbacks ordered and deterministic.
 window.requestAnimationFrame = callback => setTimeout(
@@ -26,8 +33,8 @@ window.__spectrHydration = {
   n_visible: 32,
   gain_db: Array.from({ length: 32 }, (_, index) => -15 + index * 0.5),
   muted: new Array(32).fill(true),
-  min_hz: 20,
-  max_hz: 20000,
+  min_hz: 100,
+  max_hz: 10000,
 };
 window.pulp = {
   on(type, callback) {
@@ -108,6 +115,14 @@ const spectrKey = (key, code) => {
   document.body.dispatchEvent(event);
   return event;
 };
+const spectrClick = async target => {
+  target.dispatchEvent(new MouseEvent('click', {
+    bubbles: true, cancelable: true, button: 0,
+  }));
+  await spectrFrames(2);
+};
+const spectrButton = label => Array.from(document.querySelectorAll('button'))
+  .find(candidate => candidate.textContent.trim() === label);
 
 setTimeout(() => {
   const result = document.createElement('pre');
@@ -118,6 +133,13 @@ setTimeout(() => {
       const step = value => { result.dataset.step = value; };
       const reopened = new URL(location.href).searchParams.has('reopened');
       step(reopened ? 'reopened-start' : 'initial-start');
+      const bodyRect = document.body.getBoundingClientRect();
+      if (document.body.clientWidth !== 1320 || document.body.clientHeight !== 860)
+        throw new Error('fixed editor design space changed');
+      if (Math.abs(bodyRect.width / bodyRect.height - 1320 / 860) > 0.002)
+        throw new Error('editor did not scale proportionally');
+      if (bodyRect.width > innerWidth + 0.5 || bodyRect.height > innerHeight + 0.5)
+        throw new Error('editor overflowed its host viewport');
       const hydrated = await spectrWaitFor(() => {
         const state = spectrLatestState();
         return spectrFiniteState(state) && state.muted.every(Boolean) && state;
@@ -125,6 +147,9 @@ setTimeout(() => {
       step(reopened ? 'reopened-hydrated' : 'initial-hydrated');
       await spectrFrames(5);
       if (!spectrBundleClean()) throw new Error('bundle error after hydrated RAFs');
+      if (!window.__spectrCanvasLabels.includes('dBFS')
+          || !window.__spectrCanvasLabels.some(label => /^-(30|60|90|120)$/.test(label)))
+        throw new Error('independent negative dBFS ruler was not drawn');
       if (!hydrated.gain_db.every((gain, index) =>
         gain === window.__spectrHydration.gain_db[index]))
         throw new Error('hydration changed authored dB');
@@ -195,6 +220,12 @@ setTimeout(() => {
       if (state.gain_db[restoredBand]
           !== window.__spectrHydration.gain_db[restoredBand])
         throw new Error('tap did not restore exact authored dB');
+      const unmuteRender = window.__spectrTestHooks.renderState?.();
+      const normalizedTarget = state.gain_db[restoredBand] / 24;
+      if (!unmuteRender || unmuteRender.unmutePulse[restoredBand] <= 0
+          || Math.sign(unmuteRender.gains[restoredBand]) !== Math.sign(normalizedTarget)
+          || Math.abs(unmuteRender.gains[restoredBand]) > Math.abs(normalizedTarget) + 1e-6)
+        throw new Error('unmute did not animate from center toward authored gain');
       if (!spectrFiniteState(state) || !spectrBundleClean())
         throw new Error('tap produced non-finite state or bundle error');
       step('jitter-tap-complete');
@@ -265,6 +296,139 @@ setTimeout(() => {
       if (!spectrStatePosts().every(message => spectrFiniteState(message.payload)))
         throw new Error('outbound processing state became non-finite');
       if (!spectrBundleClean()) throw new Error('bundle error before reopen');
+      step('settings-start');
+      const settingsOpen = document.querySelector('[data-spectr-settings-open]');
+      if (!settingsOpen) throw new Error('settings open control missing');
+      await spectrClick(settingsOpen);
+      let settingsPanel = await spectrWaitFor(() => document.querySelector(
+        '[data-spectr-settings-panel]'), 'settings panel');
+      const option = settingsPanel.querySelector('[data-spectr-setting-option="warm"]')
+        || settingsPanel.querySelector('[data-spectr-setting-option]');
+      if (!option) throw new Error('settings option missing');
+      await spectrClick(option);
+      if (option.getAttribute('aria-pressed') !== 'true')
+        throw new Error('settings option did not select');
+      const toggle = settingsPanel.querySelector('[data-spectr-setting-toggle]');
+      if (!toggle) throw new Error('settings toggle missing');
+      const toggleBefore = toggle.getAttribute('aria-checked');
+      await spectrClick(toggle);
+      if (toggle.getAttribute('aria-checked') === toggleBefore)
+        throw new Error('settings toggle did not change');
+      await spectrClick(toggle);
+      if (toggle.getAttribute('aria-checked') !== toggleBefore)
+        throw new Error('settings toggle did not restore');
+      const slider = settingsPanel.querySelector('[data-spectr-setting-slider]');
+      if (!slider) throw new Error('settings slider missing');
+      const sliderBefore = Number(slider.value);
+      slider.value = sliderBefore > 0.5 ? '0.25' : '0.75';
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+      await spectrFrames(2);
+      const sliderAfter = settingsPanel.querySelector('[data-spectr-setting-slider]');
+      if (sliderAfter !== slider || Number(sliderAfter.value) === sliderBefore)
+        throw new Error('settings slider remounted or did not change');
+      const settingsClose = settingsPanel.querySelector('[data-spectr-settings-close]');
+      if (!settingsClose) throw new Error('settings close control missing');
+      await spectrClick(settingsClose);
+      await spectrWaitFor(() => !document.querySelector('[data-spectr-settings-panel]'),
+        'settings X dismissal');
+      await spectrClick(settingsOpen);
+      await spectrWaitFor(() => document.querySelector('[data-spectr-settings-panel]'),
+        'settings reopen for Escape');
+      spectrKey('Escape', 'Escape');
+      await spectrWaitFor(() => !document.querySelector('[data-spectr-settings-panel]'),
+        'settings Escape dismissal');
+      await spectrClick(settingsOpen);
+      settingsPanel = await spectrWaitFor(() => document.querySelector(
+        '[data-spectr-settings-panel]'), 'settings reopen for outside click');
+      await spectrClick(settingsPanel.parentElement);
+      await spectrWaitFor(() => !document.querySelector('[data-spectr-settings-panel]'),
+        'settings outside dismissal');
+      step('settings-complete');
+
+      const engineBadge = document.querySelector('[aria-label="Spectral mask engine"]');
+      if (!engineBadge || engineBadge.tagName === 'BUTTON'
+          || engineBadge.textContent.trim() !== 'SPECTRAL')
+        throw new Error('engine identity is not a static truthful badge');
+
+      step('minimap-start');
+      const beforeMinimap = spectrLatestState();
+      const designWidth = target.clientWidth, designHeight = target.clientHeight;
+      const fullMin = Math.log10(20), fullSpan = Math.log10(20000) - fullMin;
+      const leftFraction = (Math.log10(beforeMinimap.min_hz) - fullMin) / fullSpan;
+      const rightFraction = (Math.log10(beforeMinimap.max_hz) - fullMin) / fullSpan;
+      const mapX = fraction => rect.left
+        + (56 + fraction * (designWidth - 112)) * rect.width / designWidth;
+      const middleDesignX = 56 + ((leftFraction + rightFraction) * 0.5)
+        * (designWidth - 112);
+      const miniDesignY = Array.from({ length: designHeight }, (_, index) => index)
+        .find(candidate => window.__spectrTestHooks.minimapHit?.(
+          middleDesignX, candidate) === 'window');
+      if (!Number.isFinite(miniDesignY))
+        throw new Error('minimap did not expose an interactive window');
+      const miniY = rect.top + miniDesignY * rect.height / designHeight;
+      const footerTop = settingsOpen.getBoundingClientRect().top;
+      const minimapLabelBottom = miniY + 42 * rect.height / designHeight;
+      if (minimapLabelBottom >= footerTop)
+        throw new Error('minimap overlaps footer controls');
+      count = spectrStatePosts().length;
+      const trackX = mapX(leftFraction * 0.45);
+      await spectrTap(target, trackX, miniY);
+      state = await spectrPublishAfter(count, 'minimap track publication');
+      if (state.min_hz === beforeMinimap.min_hz)
+        throw new Error('minimap track did not recenter viewport');
+      const trackState = state;
+      const pannedLeftFraction = (Math.log10(state.min_hz) - fullMin) / fullSpan;
+      const pannedRightFraction = (Math.log10(state.max_hz) - fullMin) / fullSpan;
+      const dragStartX = mapX((pannedLeftFraction + pannedRightFraction) * 0.5);
+      count = spectrStatePosts().length;
+      spectrPointer(target, 'pointerdown', dragStartX, miniY, 41);
+      spectrPointer(target, 'pointermove', dragStartX + rect.width * 0.04, miniY, 41);
+      spectrPointer(target, 'pointerup', dragStartX + rect.width * 0.04, miniY, 41);
+      state = await spectrPublishAfter(count, 'minimap pan publication');
+      const beforeSpan = Math.log(trackState.max_hz / trackState.min_hz);
+      const afterSpan = Math.log(state.max_hz / state.min_hz);
+      if (Math.abs(afterSpan - beforeSpan) > 0.03
+          || state.min_hz === trackState.min_hz)
+        throw new Error('minimap pan did not preserve and move viewport');
+      if (window.getSelection().toString() !== '')
+        throw new Error('minimap drag selected text');
+      const shiftedLeftFraction = (Math.log10(state.min_hz) - fullMin) / fullSpan;
+      count = spectrStatePosts().length;
+      const leftHandleX = mapX(shiftedLeftFraction);
+      spectrPointer(target, 'pointerdown', leftHandleX, miniY, 42);
+      spectrPointer(target, 'pointermove', leftHandleX + rect.width * 0.025, miniY, 42);
+      spectrPointer(target, 'pointerup', leftHandleX + rect.width * 0.025, miniY, 42);
+      const resizedView = await spectrPublishAfter(count, 'minimap resize publication');
+      if (Math.abs(Math.log(resizedView.max_hz / resizedView.min_hz) - afterSpan) < 0.02)
+        throw new Error('minimap handle did not resize viewport');
+      step('minimap-complete');
+
+      step('morph-start');
+      const snapshotButtons = Array.from(document.querySelectorAll('button'))
+        .filter(candidate => ['A', 'B'].includes(candidate.textContent.trim()))
+        .sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+      const snapA = snapshotButtons.find(button => button.textContent.trim() === 'A');
+      const snapB = snapshotButtons.find(button => button.textContent.trim() === 'B');
+      if (!snapA || !snapB) throw new Error('snapshot controls missing');
+      await spectrClick(snapA);
+      count = spectrStatePosts().length;
+      spectrPointer(target, 'pointerdown', x, y);
+      spectrPointer(target, 'pointermove', x, y - 36);
+      spectrPointer(target, 'pointerup', x, y - 36);
+      await spectrPublishAfter(count, 'morph B edit publication');
+      await spectrClick(snapB);
+      const morph = await spectrWaitFor(() => document.querySelector('[data-spectr-morph]'),
+        'morph slider');
+      if (morph.disabled) throw new Error('morph remained disabled after A and B capture');
+      count = spectrStatePosts().length;
+      morph.value = '0.5';
+      morph.dispatchEvent(new Event('input', { bubbles: true }));
+      await spectrPublishAfter(count, 'morph midpoint publication');
+      if (!window.__spectrPosts.some(message => message.type === 'morph'
+          && Math.abs(message.payload.t - 0.5) < 1e-6))
+        throw new Error('morph did not reach native bridge');
+      step('morph-complete');
+
       step('initial-complete');
       window.dispatchEvent(new Event('pagehide'));
       if (window.SpectrAnalyzer.debugSnapshot() !== null
@@ -281,11 +445,12 @@ setTimeout(() => {
   const instrumented = path.join(temp, 'spectr.html');
   fs.writeFileSync(instrumented, html);
 
-  const runChrome = (url, profile) => spawnSync(chromePath, [
+  const runChrome = (url, profile, width, height) => spawnSync(chromePath, [
     '--headless=new', '--disable-gpu', '--disable-web-security',
     '--disable-background-networking', '--disable-component-update',
     '--disable-domain-reliability', '--disable-sync',
     '--allow-file-access-from-files', '--no-first-run', '--no-default-browser-check',
+    `--window-size=${width},${height}`,
     '--virtual-time-budget=5000', `--user-data-dir=${profile}`,
     '--dump-dom', url,
   ], { encoding: 'utf8', timeout: 45000 });
@@ -294,13 +459,14 @@ setTimeout(() => {
     || run.stderr;
 
   const initialUrl = `file://${instrumented}`;
-  const initial = runChrome(initialUrl, path.join(temp, 'profile-initial'));
+  const initial = runChrome(initialUrl, path.join(temp, 'profile-initial'), 1320, 860);
   assert.equal(initial.status, 0, initial.stderr);
   assert.match(initial.stdout, /SPECTR_BROWSER_ORACLE_INITIAL_OK/, failure(initial));
 
   // A second browser document models closing and reopening the native editor:
   // all JS state is gone, and only the finite native hydration may restore it.
-  const reopened = runChrome(initialUrl + '?reopened=1', path.join(temp, 'profile-reopened'));
+  const reopened = runChrome(initialUrl + '?reopened=1',
+    path.join(temp, 'profile-reopened'), 800, 521);
   assert.equal(reopened.status, 0, reopened.stderr);
   assert.match(reopened.stdout, /SPECTR_BROWSER_ORACLE_OK/, failure(reopened));
 } finally {

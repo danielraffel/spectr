@@ -23,7 +23,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "683531c98192ad2d05781591b61cf3757b9df997ab18d9edfaba9d8efaa1a3ec";
+    "f2f3ea90080eddbddf83c4b709207eaee84f094af33d801f955e1d3fc0c0de3a";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -218,6 +218,19 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("document.activeElement.click()") != adapter.npos);
     CHECK(adapter.find("fixedDesignSurface.style.transform") != adapter.npos);
     CHECK(adapter.find("wrapRef.current.clientWidth / rect.width") != adapter.npos);
+    CHECK(adapter.find("static engine identity badge") != adapter.npos);
+    CHECK(adapter.find("stable settings controls") != adapter.npos);
+    CHECK(adapter.find("settings close hit target") != adapter.npos);
+    CHECK(adapter.find("minimap clears bottom action rail") != adapter.npos);
+    CHECK(adapter.find("minimap behavior oracle seam") != adapter.npos);
+    CHECK(adapter.find("canvas interaction does not select text") != adapter.npos);
+    CHECK(adapter.find("native snapshot capture") != adapter.npos);
+    CHECK(adapter.find("native morph publication") != adapter.npos);
+    CHECK(adapter.find("center-origin unmute pulse") != adapter.npos);
+    CHECK(adapter.find("independent analyzer dBFS ruler") != adapter.npos);
+    CHECK(adapter.find("scale() {") != adapter.npos);
+    CHECK(adapter.find("data-spectr-settings-panel") != adapter.npos);
+    CHECK(adapter.find("data-spectr-morph") != adapter.npos);
     CHECK(adapter.find("deterministic canvas first paint") != adapter.npos);
     CHECK(adapter.find("deterministic canvas paint after sizing") != adapter.npos);
     CHECK(adapter.find("const renderAllRef = useRef(null)") != adapter.npos);
@@ -227,8 +240,9 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("-Infinity is categorical state, never an interpolation operand")
           != adapter.npos);
     CHECK(adapter.find("if (!isMuted(rg[i]))") != adapter.npos);
-    CHECK(adapter.find("if (isMuted(rg[i]) || !Number.isFinite(rg[i])) rg[i] = -1.02")
+    CHECK(adapter.find("if (isMuted(rg[i]) || !Number.isFinite(rg[i])) rg[i] = 0")
           != adapter.npos);
+    CHECK(adapter.find("unmutePulseRef.current[i] - dt * 3.5") != adapter.npos);
     CHECK(adapter.find("const restored = Number.isFinite(authoredDb)") != adapter.npos);
     CHECK(adapter.find("p.mode === 'gain' && p.button === 0 && !p.didDrag")
           != adapter.npos);
