@@ -12,12 +12,36 @@ try {
   let html = fs.readFileSync(htmlPath, 'utf8');
   const mock = `<script>
 window.__spectrHandlers = Object.create(null);
+window.__spectrPosts = [];
+// Headless --dump-dom may throttle RAF after first paint. A timer-backed RAF
+// keeps the production animation/effect callbacks ordered and deterministic.
+window.requestAnimationFrame = callback => setTimeout(
+  () => callback(performance.now()), 16);
+window.cancelAnimationFrame = handle => clearTimeout(handle);
+// Synthetic PointerEvents are not registered with Chromium's hardware pointer
+// tracker, so capture would otherwise throw before React reaches pointerup.
+Element.prototype.setPointerCapture = () => {};
+Element.prototype.releasePointerCapture = () => {};
+window.__spectrHydration = {
+  n_visible: 32,
+  gain_db: Array.from({ length: 32 }, (_, index) => -15 + index * 0.5),
+  muted: new Array(32).fill(true),
+  min_hz: 20,
+  max_hz: 20000,
+};
 window.pulp = {
   on(type, callback) {
     (window.__spectrHandlers[type] ||= new Set()).add(callback);
     return () => window.__spectrHandlers[type].delete(callback);
   },
-  postMessage() { return Promise.resolve({ ok: true, payload: { ok: true } }); }
+  postMessage(type, payload, id) {
+    window.__spectrPosts.push({ type, payload, id });
+    if (type === 'editor_ready') {
+      queueMicrotask(() => window.__spectrEmit(
+        'processing_state_hydrate', window.__spectrHydration));
+    }
+    return Promise.resolve({ ok: true, payload: { ok: true } });
+  }
 };
 window.__spectrEmit = (type, payload) => {
   for (const callback of window.__spectrHandlers[type] || [])
@@ -26,70 +50,259 @@ window.__spectrEmit = (type, payload) => {
 </script>`;
   html = html.replace('<script>', mock + '<script>');
   const oracle = `<script>
+const spectrFrames = (count = 1) => new Promise(resolve => {
+  const advance = () => count-- > 0 ? requestAnimationFrame(advance) : resolve();
+  requestAnimationFrame(advance);
+});
+const spectrWaitFor = async (predicate, label, limit = 180) => {
+  for (let frame = 0; frame < limit; ++frame) {
+    const value = predicate();
+    if (value) return value;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error('timed out waiting for ' + label);
+};
+const spectrStatePosts = () => window.__spectrPosts
+  .filter(message => message.type === 'processing_state_set');
+const spectrLatestState = () => spectrStatePosts().at(-1)?.payload;
+const spectrFiniteState = state => !!state
+  && Number.isFinite(state.min_hz) && Number.isFinite(state.max_hz)
+  && state.min_hz > 0 && state.max_hz > state.min_hz
+  && Array.isArray(state.gain_db) && state.gain_db.length === state.n_visible
+  && state.gain_db.every(Number.isFinite)
+  && Array.isArray(state.muted) && state.muted.length === state.n_visible
+  && state.muted.every(value => typeof value === 'boolean');
+const spectrBundleClean = () => !document.getElementById('__bundler_err');
+const spectrPublishAfter = async (count, label) => spectrWaitFor(
+  () => spectrStatePosts().length > count && spectrLatestState(), label);
+const spectrPointer = (target, type, x, y, pointerId = 7) => {
+  target.dispatchEvent(new PointerEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    pointerId,
+    pointerType: 'mouse',
+    isPrimary: true,
+    button: type === 'pointermove' ? -1 : 0,
+    buttons: type === 'pointerup' ? 0 : 1,
+    clientX: x,
+    clientY: y,
+  }));
+};
+const spectrTap = async (target, x, y, jitter = 0) => {
+  spectrPointer(target, 'pointerdown', x, y);
+  if (jitter) spectrPointer(target, 'pointermove', x + jitter, y + jitter);
+  spectrPointer(target, 'pointerup', x + jitter, y + jitter);
+  await spectrFrames(2);
+};
+const spectrModeLabel = () => {
+  const button = Array.from(document.querySelectorAll('button')).find(candidate =>
+    /^(SCULPT|LEVEL|BOOST|FLARE|GLIDE)(?:\\s|$)/.test(candidate.textContent.trim()));
+  return button && button.textContent.trim().split(/\\s+/)[0];
+};
+const spectrKey = (key, code) => {
+  const event = new KeyboardEvent('keydown', {
+    key, code, bubbles: true, cancelable: true,
+  });
+  // Dispatch from the focused document so capture listeners on document and
+  // React's bubble listener on window see the same path as a hardware key.
+  document.body.dispatchEvent(event);
+  return event;
+};
+
 setTimeout(() => {
   const result = document.createElement('pre');
   result.id = '__spectr_browser_oracle';
-  try {
-    const sampleAt1k = () => window.SpectrAnalyzer.sample(3, 0, 'visible');
-    if (sampleAt1k() !== 0) throw new Error('native pre-frame signal was not silent');
-    const visible = new Array(321).fill(-120);
-    const overview = new Array(121).fill(-120);
-    const exactPeakIndex = (Math.log10(1000) - Math.log10(20))
-      / (Math.log10(20000) - Math.log10(20)) * 320;
-    visible[Math.floor(exactPeakIndex)] = 0;
-    visible[Math.ceil(exactPeakIndex)] = 0;
-    const payload = {
-      schema_version: 1, epoch: 2, sequence_number: 4,
-      dropped_frames: 0, source_channels: 2,
-      fft_size: 8192, sample_rate: 48000, floor_db: -120, ceiling_db: 0,
-      visible: { min_hz: 20, max_hz: 20000, magnitude_db: visible },
-      overview: { min_hz: 20, max_hz: 20000, magnitude_db: overview },
-    };
-    window.__spectrEmit('analyzer_frame', payload);
-    if (sampleAt1k() < 0.95) throw new Error('valid live peak was not sampled');
-    const accepted = window.SpectrAnalyzer.debugSnapshot();
-    window.__spectrEmit('analyzer_frame', { ...payload, sequence_number: 3 });
-    if (window.SpectrAnalyzer.debugSnapshot() !== accepted)
-      throw new Error('stale frame replaced live state');
-    window.__spectrEmit('analyzer_frame', {
-      ...payload, sequence_number: 5,
-      visible: { ...payload.visible, magnitude_db: [NaN] },
-    });
-    if (window.SpectrAnalyzer.debugSnapshot() !== accepted)
-      throw new Error('malformed frame replaced live state');
-    window.__spectrEmit('analyzer_frame', {
-      ...payload, sequence_number: 6,
-      visible: { ...payload.visible, magnitude_db: new Array(321).fill(-120) },
-    });
-    if (sampleAt1k() !== 0) throw new Error('finite floor did not produce silence');
-    window.dispatchEvent(new Event('pagehide'));
-    if (window.SpectrAnalyzer.debugSnapshot() !== null
-        || window.__spectrHandlers.analyzer_frame.size !== 0)
-      throw new Error('analyzer listener survived document teardown');
-    if (document.getElementById('__bundler_err'))
-      throw new Error('bundle error sink is not empty');
-    result.textContent = 'SPECTR_BROWSER_ORACLE_OK';
-  } catch (error) {
-    result.textContent = 'SPECTR_BROWSER_ORACLE_FAIL:' + error.message;
-  }
   document.body.appendChild(result);
-}, 1500);
+  (async () => {
+    try {
+      const step = value => { result.dataset.step = value; };
+      const reopened = new URL(location.href).searchParams.has('reopened');
+      step(reopened ? 'reopened-start' : 'initial-start');
+      const hydrated = await spectrWaitFor(() => {
+        const state = spectrLatestState();
+        return spectrFiniteState(state) && state.muted.every(Boolean) && state;
+      }, reopened ? 'finite reopened hydration' : 'finite initial hydration');
+      step(reopened ? 'reopened-hydrated' : 'initial-hydrated');
+      await spectrFrames(5);
+      if (!spectrBundleClean()) throw new Error('bundle error after hydrated RAFs');
+      if (!hydrated.gain_db.every((gain, index) =>
+        gain === window.__spectrHydration.gain_db[index]))
+        throw new Error('hydration changed authored dB');
+
+      if (reopened) {
+        if ((window.__spectrHandlers.processing_state_hydrate?.size || 0) !== 1)
+          throw new Error('reopened hydration listener count is not one');
+        if (!spectrFiniteState(spectrLatestState()))
+          throw new Error('reopened publication is non-finite');
+        window.dispatchEvent(new Event('pagehide'));
+        if (window.SpectrAnalyzer.debugSnapshot() !== null
+            || window.__spectrHandlers.analyzer_frame.size !== 0)
+          throw new Error('analyzer survived reopened document teardown');
+        result.textContent = 'SPECTR_BROWSER_ORACLE_OK';
+        return;
+      }
+
+      const sampleAt1k = () => window.SpectrAnalyzer.sample(3, 0, 'visible');
+      if (sampleAt1k() !== 0) throw new Error('native pre-frame signal was not silent');
+      const visible = new Array(321).fill(-120);
+      const overview = new Array(121).fill(-120);
+      const exactPeakIndex = (Math.log10(1000) - Math.log10(20))
+        / (Math.log10(20000) - Math.log10(20)) * 320;
+      visible[Math.floor(exactPeakIndex)] = 0;
+      visible[Math.ceil(exactPeakIndex)] = 0;
+      const payload = {
+        schema_version: 1, epoch: 2, sequence_number: 4,
+        dropped_frames: 0, source_channels: 2,
+        fft_size: 8192, sample_rate: 48000, floor_db: -120, ceiling_db: 0,
+        visible: { min_hz: 20, max_hz: 20000, magnitude_db: visible },
+        overview: { min_hz: 20, max_hz: 20000, magnitude_db: overview },
+      };
+      window.__spectrEmit('analyzer_frame', payload);
+      if (sampleAt1k() < 0.95) throw new Error('valid live peak was not sampled');
+      const accepted = window.SpectrAnalyzer.debugSnapshot();
+      window.__spectrEmit('analyzer_frame', { ...payload, sequence_number: 3 });
+      if (window.SpectrAnalyzer.debugSnapshot() !== accepted)
+        throw new Error('stale frame replaced live state');
+      window.__spectrEmit('analyzer_frame', {
+        ...payload, sequence_number: 5,
+        visible: { ...payload.visible, magnitude_db: [NaN] },
+      });
+      if (window.SpectrAnalyzer.debugSnapshot() !== accepted)
+        throw new Error('malformed frame replaced live state');
+      window.__spectrEmit('analyzer_frame', {
+        ...payload, sequence_number: 6,
+        visible: { ...payload.visible, magnitude_db: new Array(321).fill(-120) },
+      });
+      if (sampleAt1k() !== 0) throw new Error('finite floor did not produce silence');
+      step('analyzer-complete');
+
+      const canvas = await spectrWaitFor(() => Array.from(document.querySelectorAll('canvas'))
+        .filter(candidate => getComputedStyle(candidate).pointerEvents !== 'none')
+        .sort((a, b) => {
+          const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+          return br.width * br.height - ar.width * ar.height;
+        })[0], 'interactive filter canvas');
+      const target = canvas.parentElement;
+      const rect = target.getBoundingClientRect();
+      const x = rect.left + rect.width * 0.43;
+      const y = rect.top + rect.height * 0.46;
+
+      let count = spectrStatePosts().length;
+      await spectrTap(target, x, y, 2);
+      let state = await spectrPublishAfter(count, '2px jitter tap publication');
+      const restoredBand = state.muted.findIndex(value => !value);
+      if (restoredBand < 0) throw new Error('2px jitter tap did not restore a band');
+      if (state.gain_db[restoredBand]
+          !== window.__spectrHydration.gain_db[restoredBand])
+        throw new Error('tap did not restore exact authored dB');
+      if (!spectrFiniteState(state) || !spectrBundleClean())
+        throw new Error('tap produced non-finite state or bundle error');
+      step('jitter-tap-complete');
+
+      count = spectrStatePosts().length;
+      await spectrTap(target, x, y);
+      state = await spectrPublishAfter(count, 'second tap publication');
+      if (!state.muted[restoredBand]) throw new Error('second tap did not remute band');
+      if (state.gain_db[restoredBand]
+          !== window.__spectrHydration.gain_db[restoredBand])
+        throw new Error('remute did not preserve exact authored dB');
+      step('remute-complete');
+
+      count = spectrStatePosts().length;
+      await spectrTap(target, x, y);
+      state = await spectrPublishAfter(count, 'pre-drag unmute publication');
+      if (state.muted[restoredBand]) throw new Error('pre-drag tap did not unmute band');
+      const preDragGain = state.gain_db[restoredBand];
+      count = spectrStatePosts().length;
+      spectrPointer(target, 'pointerdown', x, y);
+      spectrPointer(target, 'pointermove', x, y - 24);
+      spectrPointer(target, 'pointerup', x, y - 24);
+      await spectrFrames(3);
+      state = await spectrPublishAfter(count, '>3px drag publication');
+      if (state.muted[restoredBand]) throw new Error('drag toggled mute');
+      if (state.gain_db[restoredBand] === preDragGain)
+        throw new Error('>3px drag did not edit gain');
+      if (!spectrFiniteState(state) || !spectrBundleClean())
+        throw new Error('drag produced non-finite state or bundle error');
+      step('drag-complete');
+
+      Object.defineProperty(document, 'hasFocus', {
+        configurable: true, value: () => true,
+      });
+      target.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true, clientX: x, clientY: y,
+      }));
+      await spectrWaitFor(() => document.querySelector(
+        '[data-spectr-overlay="true"][aria-label="Band actions"]'),
+      'band context menu');
+      const modeBeforeBlockedKeys = spectrModeLabel();
+      for (let digit = 1; digit <= 6; ++digit) {
+        const event = spectrKey(String(digit), 'Digit' + digit);
+        if (event.defaultPrevented)
+          throw new Error('overlay leaked numeric key ownership: ' + digit);
+      }
+      await spectrFrames(2);
+      if (spectrModeLabel() !== modeBeforeBlockedKeys)
+        throw new Error('context menu allowed numeric shortcut');
+      step('overlay-keys-complete');
+      spectrKey('Escape', 'Escape');
+      await spectrWaitFor(() => !document.querySelector(
+        '[data-spectr-overlay="true"][aria-label="Band actions"]'),
+      'context menu dismissal');
+      step('context-menu-dismissed');
+
+      const numeric = spectrKey('2', 'Digit2');
+      if (!numeric.defaultPrevented) throw new Error('numeric shortcut was not owned');
+      await spectrWaitFor(() => spectrModeLabel() === 'LEVEL', 'numeric mode shortcut');
+      for (const key of ['a', 's', 'f', 'g', 'l']) {
+        const event = spectrKey(key, 'Key' + key.toUpperCase());
+        if (event.defaultPrevented)
+          throw new Error('musical typing key was cancelled: ' + key.toUpperCase());
+      }
+      await spectrFrames(3);
+      if (spectrModeLabel() !== 'LEVEL')
+        throw new Error('musical typing key changed edit mode');
+      if (!spectrStatePosts().every(message => spectrFiniteState(message.payload)))
+        throw new Error('outbound processing state became non-finite');
+      if (!spectrBundleClean()) throw new Error('bundle error before reopen');
+      step('initial-complete');
+      window.dispatchEvent(new Event('pagehide'));
+      if (window.SpectrAnalyzer.debugSnapshot() !== null
+          || window.__spectrHandlers.analyzer_frame.size !== 0)
+        throw new Error('analyzer survived initial document teardown');
+      result.textContent = 'SPECTR_BROWSER_ORACLE_INITIAL_OK';
+    } catch (error) {
+      result.textContent = 'SPECTR_BROWSER_ORACLE_FAIL:' + error.message;
+    }
+  })();
+}, 0);
 </script>`;
   html = html.replace('</body>', oracle + '</body>');
   const instrumented = path.join(temp, 'spectr.html');
   fs.writeFileSync(instrumented, html);
 
-  const run = spawnSync(chromePath, [
+  const runChrome = (url, profile) => spawnSync(chromePath, [
     '--headless=new', '--disable-gpu', '--disable-web-security',
     '--disable-background-networking', '--disable-component-update',
     '--disable-domain-reliability', '--disable-sync',
     '--allow-file-access-from-files', '--no-first-run', '--no-default-browser-check',
-    '--virtual-time-budget=5000', `--user-data-dir=${path.join(temp, 'profile')}`,
-    '--dump-dom', `file://${instrumented}`,
-  ], { encoding: 'utf8', timeout: 30000 });
-  assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /SPECTR_BROWSER_ORACLE_OK/,
-    run.stdout.match(/SPECTR_BROWSER_ORACLE_FAIL:[^<]*/)?.[0] || run.stderr);
+    '--virtual-time-budget=5000', `--user-data-dir=${profile}`,
+    '--dump-dom', url,
+  ], { encoding: 'utf8', timeout: 45000 });
+  const failure = run => run.stdout.match(/SPECTR_BROWSER_ORACLE_FAIL:[^<]*/)?.[0]
+    || run.stdout.match(/<pre id="__spectr_browser_oracle"[^>]*>/)?.[0]
+    || run.stderr;
+
+  const initialUrl = `file://${instrumented}`;
+  const initial = runChrome(initialUrl, path.join(temp, 'profile-initial'));
+  assert.equal(initial.status, 0, initial.stderr);
+  assert.match(initial.stdout, /SPECTR_BROWSER_ORACLE_INITIAL_OK/, failure(initial));
+
+  // A second browser document models closing and reopening the native editor:
+  // all JS state is gone, and only the finite native hydration may restore it.
+  const reopened = runChrome(initialUrl + '?reopened=1', path.join(temp, 'profile-reopened'));
+  assert.equal(reopened.status, 0, reopened.stderr);
+  assert.match(reopened.stdout, /SPECTR_BROWSER_ORACLE_OK/, failure(reopened));
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

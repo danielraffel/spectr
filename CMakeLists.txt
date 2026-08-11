@@ -122,9 +122,10 @@ target_compile_definitions(Spectr-test PRIVATE
 )
 catch_discover_tests(Spectr-test)
 
-# Real Chromium oracle for the imported adapter's native analyzer policy.
-# This runs the authored bundle with a mock Pulp bridge and proves native
-# pre-frame silence, finite live data, stale/malformed rejection, and silence.
+# Real Chromium oracle for the imported adapter's native analyzer and input
+# policy. This runs the authored bundle with a mock Pulp bridge and proves
+# native analyzer data, finite hydration/reopen, mute gestures, and shortcut
+# ownership through the actual React event handlers.
 find_program(SPECTR_NODE_EXECUTABLE NAMES node)
 find_program(SPECTR_CHROME_EXECUTABLE
     NAMES "Google Chrome" google-chrome chromium chromium-browser
@@ -135,7 +136,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             ${SPECTR_CHROME_EXECUTABLE})
-    set_tests_properties(Spectr-browser-analyzer PROPERTIES TIMEOUT 45)
+    set_tests_properties(Spectr-browser-analyzer PROPERTIES TIMEOUT 150)
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────
