@@ -122,3 +122,5 @@ implementation is claimed by the current branch.
 - Product contract: `planning/Spectr-V2-Product-Spec.md`
 - Pulp handoff: `planning/Spectr-V2-Pulp-Handoff.md`
 - Future freeze/sampler scope: `planning/Spectr-Sampler-Phase-Spec.md`
+- Ordered native-then-sampler execution:
+  `planning/Spectr-Native-Then-Sampler-Plan.md`

@@ -84,8 +84,10 @@ Add exactly these new user-facing concepts to the Spectr surface:
 - **Freeze toggle** — single control (keybinding **F**, matching
   prototype) that captures the current processed output into a sample
   buffer.
-  - `frozen = false` → live processing, effect behaviour unchanged
-  - `frozen = true` → playback of the captured buffer, not live input
+  - `frozen = false` → live processing, effect behaviour unchanged; MIDI notes
+    do not trigger sample playback
+  - `frozen = true` → playback of the captured buffer, not live input; this is
+    the only state in which MIDI notes trigger sampler voices
 - **Effect / Instrument toggle** — plugin-level mode switch. Effect mode is
   the V1 surface unchanged. Instrument mode routes host MIDI note on/off
   into buffer playback.
@@ -342,9 +344,10 @@ work.
   host-configured buses, loaded files, and—where a dedicated host integration
   exists—host-provided track descriptors.
 - The state control is one two-state affordance in the header:
-  - `LIVE` uses the incoming source and does not imply a captured asset;
-  - `FROZEN` uses the captured buffer and must remain visibly distinct even
-    when transport is stopped; and
+  - `LIVE` uses the incoming source, does not imply a captured asset, and does
+    not respond to MIDI notes with sample playback;
+  - `FROZEN` uses the captured buffer, enables chromatic MIDI playback, and must
+    remain visibly distinct even when transport is stopped;
   - changing state while audio is active follows the click-free transition
     contract in §12 rather than abruptly replacing the signal.
 - The prototype's sampler HTML runs the **exact same** band field,
