@@ -518,10 +518,12 @@ TEST_CASE("CLI proof: zoomed viewport passes its island and mutes outside") {
         return settled_peak;
     };
 
-    // Both tones are FFT-bin-centred. With the HPF/LPF edge bands muted, the
-    // first sits outside the isolated viewport while the second sits inside.
+    // All tones are FFT-bin-centred. With the HPF/LPF edge bands muted, the
+    // first and last prove rejection below and above the isolated viewport,
+    // while the middle tone proves the selected island still passes.
     CHECK(render_peak(187.5f) < 1.0e-6f);
     CHECK(render_peak(1500.0f) > 0.4f);
+    CHECK(render_peak(6000.0f) < 1.0e-6f);
 }
 
 TEST_CASE("M9.5 bridge: malformed JSON returns error") {
