@@ -5,6 +5,7 @@
 #include "spectr/spectr.hpp"
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -210,6 +211,110 @@ TEST_CASE("Pulp ValidationHarness proves Spectr pass and exact mute audio") {
     processor->replace_field(muted);
     const auto silenced = render_blocks(settle_blocks);
     for (const auto sample : silenced) CHECK(sample == 0.0f);
+}
+
+TEST_CASE("Spectr isolates three nonadjacent stereo frequency islands") {
+    if constexpr (spectr::kSpectralFftSize < 8192) {
+        SUCCEED("exact six-tone island oracle requires the Balanced or Maximum profile");
+        return;
+    }
+    constexpr double pi = 3.14159265358979323846;
+    constexpr int sample_rate = 48000;
+    constexpr int block_size = 512;
+    constexpr int analysis_size = spectr::kSpectralFftSize;
+    constexpr int bin_scale = analysis_size / 8192;
+    constexpr double amplitude = 0.04;
+    const std::array<int, 3> kept_bins{
+        52 * bin_scale, 205 * bin_scale, 597 * bin_scale};
+    const std::array<int, 3> rejected_bins{
+        102 * bin_scale, 376 * bin_scale, 1195 * bin_scale};
+    const auto hz_for_bin = [](int bin) {
+        return static_cast<double>(bin) * sample_rate / analysis_size;
+    };
+
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    host.prepare(sample_rate, block_size);
+    auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+    REQUIRE(plugin != nullptr);
+
+    spectr::BandField islands;
+    for (auto& band : islands.bands) band.muted = true;
+    std::array<std::size_t, kept_bins.size()> kept_bands{};
+    for (std::size_t i = 0; i < kept_bins.size(); ++i) {
+        kept_bands[i] = plugin->viewport().band_for_hz(
+            static_cast<float>(hz_for_bin(kept_bins[i])), 32);
+        islands.bands[kept_bands[i]].muted = false;
+    }
+    CHECK(kept_bands == std::array<std::size_t, 3>{12, 18, 23});
+    REQUIRE(plugin->replace_processing_state(
+        islands, spectr::Viewport{}, spectr::Layout::Bands32));
+
+    const auto total_samples = static_cast<std::size_t>(
+        spectr::kSpectralLatency + spectr::kSpectralFftSize * 4);
+    const auto padded_samples =
+        ((total_samples + block_size - 1) / block_size) * block_size;
+    std::vector<float> source_left(padded_samples, 0.0f);
+    std::vector<float> rendered_left(padded_samples, 0.0f);
+    std::vector<float> rendered_right(padded_samples, 0.0f);
+    for (std::size_t sample = 0; sample < padded_samples; ++sample) {
+        double value = 0.0;
+        for (const auto bin : kept_bins)
+            value += amplitude * std::sin(
+                2.0 * pi * hz_for_bin(bin) * sample / sample_rate);
+        for (const auto bin : rejected_bins)
+            value += amplitude * std::sin(
+                2.0 * pi * hz_for_bin(bin) * sample / sample_rate);
+        source_left[sample] = static_cast<float>(value);
+    }
+
+    pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+    const float* in_ptrs[] = {in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> iv(in_ptrs, 2, block_size);
+    auto ov = out.view();
+    for (std::size_t offset = 0; offset < padded_samples; offset += block_size) {
+        std::copy_n(source_left.data() + offset, block_size, in.channel(0).data());
+        for (int i = 0; i < block_size; ++i)
+            in.channel(1)[i] = -0.6f * in.channel(0)[i];
+        host.process(ov, iv);
+        std::copy_n(out.channel(0).data(), block_size,
+                    rendered_left.data() + offset);
+        std::copy_n(out.channel(1).data(), block_size,
+                    rendered_right.data() + offset);
+    }
+
+    const auto output_start = padded_samples - analysis_size;
+    const auto source_start = output_start
+                            - static_cast<std::size_t>(spectr::kSpectralLatency);
+    const auto projection = [=](const std::vector<float>& signal,
+                                std::size_t start,
+                                int bin) {
+        std::complex<double> sum{};
+        for (int i = 0; i < analysis_size; ++i) {
+            const auto phase = -2.0 * pi * bin * i / analysis_size;
+            sum += static_cast<double>(signal[start + static_cast<std::size_t>(i)])
+                 * std::complex<double>(std::cos(phase), std::sin(phase));
+        }
+        return sum * (2.0 / analysis_size);
+    };
+
+    for (const auto bin : kept_bins) {
+        const auto input = projection(source_left, source_start, bin);
+        const auto left = projection(rendered_left, output_start, bin);
+        const auto right = projection(rendered_right, output_start, bin);
+        INFO("retained FFT bin " << bin);
+        CHECK(std::abs(left) / std::abs(input) == Approx(1.0).margin(0.02));
+        const auto stereo_ratio = right / left;
+        CHECK(stereo_ratio.real() == Approx(-0.6).margin(0.002));
+        CHECK(stereo_ratio.imag() == Approx(0.0).margin(0.002));
+    }
+    for (const auto bin : rejected_bins) {
+        const auto input = projection(source_left, source_start, bin);
+        const auto left = projection(rendered_left, output_start, bin);
+        const auto right = projection(rendered_right, output_start, bin);
+        INFO("rejected FFT bin " << bin);
+        CHECK(std::abs(left) / std::abs(input) < 1.0e-5);
+        CHECK(std::abs(right) / std::abs(input) < 1.0e-5);
+    }
 }
 
 TEST_CASE("Spectr flat wet path reconstructs after documented startup taper") {

@@ -25,6 +25,7 @@
 
 #include <memory>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -195,6 +196,121 @@ TEST_CASE("native editor resolution disclosure uses current product geometry") {
     CHECK(payload["sample_rate"].get<double>() == Approx(48000.0));
     CHECK(payload["fully_represented"].getBool()
           == (payload["represented_bands"].get<int64_t>() == 64));
+}
+
+TEST_CASE("native analyzer message is finite bounded and peak-preserving") {
+    constexpr int fft_size = 8192;
+    constexpr float sample_rate = 48000.0f;
+    std::vector<float> bins(fft_size / 2 + 1, -120.0f);
+    const auto peak_bin = static_cast<std::size_t>(
+        std::lround(1000.0f * fft_size / sample_rate));
+    bins[peak_bin] = -6.0f;
+
+    const spectr::EditorAnalyzerSnapshot snapshot{
+        .magnitude_db = bins,
+        .epoch = 7,
+        .sequence_number = 19,
+        .dropped_frames = 2,
+        .source_channels = 2,
+        .fft_size = fft_size,
+        .sample_rate = sample_rate,
+        .floor_db = -120.0f,
+    };
+    pulp::view::WebViewMessage message;
+    REQUIRE(spectr::make_editor_analyzer_message(
+        snapshot, spectr::Viewport{}, message));
+    CHECK(message.type == "analyzer_frame");
+    CHECK(message.id == "spectr-analyzer-frame");
+
+    const auto payload = choc::json::parse(message.payload_json);
+    REQUIRE(payload.isObject());
+    CHECK(payload["schema_version"].get<int64_t>() == 1);
+    CHECK(payload["epoch"].get<int64_t>() == 7);
+    CHECK(payload["sequence_number"].get<int64_t>() == 19);
+    CHECK(payload["dropped_frames"].get<int64_t>() == 2);
+    CHECK(payload["source_channels"].get<int64_t>() == 2);
+    CHECK(payload["fft_size"].get<int64_t>() == fft_size);
+    CHECK(payload["sample_rate"].get<double>() == Approx(sample_rate));
+    CHECK(payload["floor_db"].get<double>() == Approx(-120.0));
+    CHECK(payload["ceiling_db"].get<double>() == Approx(24.0));
+    CHECK(payload["visible"]["magnitude_db"].size() == 321);
+    CHECK(payload["overview"]["magnitude_db"].size() == 121);
+
+    double visible_peak = -120.0;
+    for (std::uint32_t i = 0;
+         i < payload["visible"]["magnitude_db"].size(); ++i) {
+        const auto value = payload["visible"]["magnitude_db"][i].get<double>();
+        CHECK(std::isfinite(value));
+        visible_peak = std::max(visible_peak, value);
+    }
+    CHECK(visible_peak == Approx(-6.0));
+
+    const auto full_key = spectr::make_editor_analyzer_publication_key(
+        snapshot, spectr::Viewport{});
+    const spectr::Viewport zoomed{900.0f, 1100.0f};
+    const auto zoomed_key = spectr::make_editor_analyzer_publication_key(
+        snapshot, zoomed);
+    CHECK_FALSE(full_key == zoomed_key);
+    pulp::view::WebViewMessage zoomed_message;
+    REQUIRE(spectr::make_editor_analyzer_message(
+        snapshot, zoomed, zoomed_message));
+    const auto zoomed_payload = choc::json::parse(zoomed_message.payload_json);
+    CHECK(zoomed_payload["epoch"].get<int64_t>() == 7);
+    CHECK(zoomed_payload["sequence_number"].get<int64_t>() == 19);
+    CHECK(zoomed_payload["visible"]["min_hz"].get<double>() == Approx(900.0));
+    CHECK(zoomed_payload["visible"]["max_hz"].get<double>() == Approx(1100.0));
+    CHECK(zoomed_message.payload_json != message.payload_json);
+}
+
+TEST_CASE("native analyzer message rejects malformed input atomically") {
+    std::vector<float> bins(33, -120.0f);
+    spectr::EditorAnalyzerSnapshot snapshot{
+        .magnitude_db = bins,
+        .epoch = 1,
+        .sequence_number = 1,
+        .source_channels = 2,
+        .fft_size = 64,
+        .sample_rate = 48000.0f,
+        .floor_db = -120.0f,
+    };
+    pulp::view::WebViewMessage message{
+        .type = "sentinel", .payload_json = "sentinel", .id = "sentinel"};
+    bins[4] = std::numeric_limits<float>::quiet_NaN();
+    CHECK_FALSE(spectr::make_editor_analyzer_message(
+        snapshot, spectr::Viewport{}, message));
+    CHECK(message.type == "sentinel");
+    CHECK(message.payload_json == "sentinel");
+    CHECK(message.id == "sentinel");
+
+    bins[4] = -120.0f;
+    snapshot.fft_size = 128; // 65 bins required, but only 33 were supplied.
+    CHECK_FALSE(spectr::make_editor_analyzer_message(
+        snapshot, spectr::Viewport{}, message));
+    CHECK(message.type == "sentinel");
+    CHECK(message.payload_json == "sentinel");
+    CHECK(message.id == "sentinel");
+}
+
+TEST_CASE("native analyzer silence remains the finite floor") {
+    std::vector<float> bins(513, -96.0f);
+    const spectr::EditorAnalyzerSnapshot snapshot{
+        .magnitude_db = bins,
+        .epoch = 2,
+        .sequence_number = 3,
+        .source_channels = 2,
+        .fft_size = 1024,
+        .sample_rate = 48000.0f,
+        .floor_db = -96.0f,
+    };
+    pulp::view::WebViewMessage message;
+    REQUIRE(spectr::make_editor_analyzer_message(
+        snapshot, spectr::Viewport{}, message));
+    const auto payload = choc::json::parse(message.payload_json);
+    for (const auto trace_name : {"visible", "overview"}) {
+        const auto values = payload[trace_name]["magnitude_db"];
+        for (std::uint32_t i = 0; i < values.size(); ++i)
+            CHECK(values[i].get<double>() == Approx(-96.0));
+    }
 }
 
 TEST_CASE("native editor resolution message is failure atomic") {

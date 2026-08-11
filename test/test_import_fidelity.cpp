@@ -23,7 +23,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "c8b515e0bd074511013557bcdb5efa330eaacf6d482a84363557e09992c5d2aa";
+    "683531c98192ad2d05781591b61cf3757b9df997ab18d9edfaba9d8efaa1a3ec";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -201,6 +201,19 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("window.Babel.transformScriptTags()") != adapter.npos);
     CHECK(adapter.find("window.pulp.postMessage('processing_state_set'") != adapter.npos);
     CHECK(adapter.find("window.pulp.on('processing_state_hydrate'") != adapter.npos);
+    CHECK(adapter.find("window.pulp.on(\n        'analyzer_frame', acceptAnalyzerFrame)")
+          != adapter.npos);
+    CHECK(adapter.find("if (!nativeAnalyzerFrame) return 0") != adapter.npos);
+    CHECK(adapter.find("window.SpectrAnalyzer.sample(lf, t, 'visible')")
+          != adapter.npos);
+    CHECK(adapter.find("window.SpectrAnalyzer.sample(lf, tNow, 'visible')")
+          != adapter.npos);
+    CHECK(adapter.find("window.SpectrAnalyzer.sample(lf, timeRef.current, 'overview')")
+          != adapter.npos);
+    CHECK(adapter.find("window.SpectrSignal.sample(logFrequency, time)")
+          != adapter.npos);
+    CHECK(adapter.find("nativeAnalyzerFrame = null") != adapter.npos);
+    CHECK(adapter.find("rejected malformed native analyzer frame") != adapter.npos);
     CHECK(adapter.find("data-spectr-menu-root") != adapter.npos);
     CHECK(adapter.find("document.activeElement.click()") != adapter.npos);
     CHECK(adapter.find("fixedDesignSurface.style.transform") != adapter.npos);

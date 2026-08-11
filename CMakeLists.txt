@@ -122,6 +122,22 @@ target_compile_definitions(Spectr-test PRIVATE
 )
 catch_discover_tests(Spectr-test)
 
+# Real Chromium oracle for the imported adapter's native analyzer policy.
+# This runs the authored bundle with a mock Pulp bridge and proves native
+# pre-frame silence, finite live data, stale/malformed rejection, and silence.
+find_program(SPECTR_NODE_EXECUTABLE NAMES node)
+find_program(SPECTR_CHROME_EXECUTABLE
+    NAMES "Google Chrome" google-chrome chromium chromium-browser
+    PATHS "/Applications/Google Chrome.app/Contents/MacOS")
+if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
+    add_test(NAME Spectr-browser-analyzer
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            ${SPECTR_CHROME_EXECUTABLE})
+    set_tests_properties(Spectr-browser-analyzer PROPERTIES TIMEOUT 45)
+endif()
+
 # ── Plugin targets ─────────────────────────────────────────────────────
 
 pulp_add_plugin(Spectr
@@ -164,7 +180,7 @@ endforeach()
 # Artifact-level host proof: load the built CLAP and VST3 through Pulp::host
 # and run real audio across each binary boundary. This is deliberately
 # separate from Spectr-test's in-process Processor fixtures.
-if(TARGET Spectr_CLAP AND TARGET Spectr_VST3 AND TARGET Pulp::host)
+if((TARGET Spectr_CLAP OR TARGET Spectr_VST3) AND TARGET Pulp::host)
     add_executable(Spectr-artifact-test
         test/test_built_clap.cpp
         ${SPECTR_SOURCES})
@@ -174,12 +190,21 @@ if(TARGET Spectr_CLAP AND TARGET Spectr_VST3 AND TARGET Pulp::host)
     target_include_directories(Spectr-artifact-test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_compile_definitions(Spectr-artifact-test PRIVATE
-        SPECTR_TEST_CLAP_PATH="${CMAKE_BINARY_DIR}/CLAP/Spectr.clap"
-        SPECTR_TEST_VST3_PATH="${CMAKE_BINARY_DIR}/VST3/Spectr.vst3"
         SPECTR_EXPECTED_LATENCY=${SPECTR_PROCESSING_LATENCY}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
-    add_dependencies(Spectr-artifact-test Spectr_CLAP Spectr_VST3)
+    if(TARGET Spectr_CLAP)
+        target_compile_definitions(Spectr-artifact-test PRIVATE
+            SPECTR_HAVE_TEST_CLAP=1
+            SPECTR_TEST_CLAP_PATH="${CMAKE_BINARY_DIR}/CLAP/Spectr.clap")
+        add_dependencies(Spectr-artifact-test Spectr_CLAP)
+    endif()
+    if(TARGET Spectr_VST3)
+        target_compile_definitions(Spectr-artifact-test PRIVATE
+            SPECTR_HAVE_TEST_VST3=1
+            SPECTR_TEST_VST3_PATH="${CMAKE_BINARY_DIR}/VST3/Spectr.vst3")
+        add_dependencies(Spectr-artifact-test Spectr_VST3)
+    endif()
     catch_discover_tests(Spectr-artifact-test)
 endif()
 

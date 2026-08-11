@@ -212,6 +212,107 @@ document.addEventListener('DOMContentLoaded', async function() {
       }
       template = template.split(needle).join(replacement);
     };
+
+    // One analyzer source feeds every imported visualization. In a native
+    // WebView, silence before the first valid publication is intentional:
+    // the Claude Design demo signal must never masquerade as live audio.
+    const nativeAnalyzerAvailable = !!window.pulp
+      && typeof window.pulp.on === 'function'
+      && typeof window.pulp.postMessage === 'function';
+    let nativeAnalyzerFrame = null;
+    const validAnalyzerTrace = (trace, expectedLength) => !!trace
+      && Number.isFinite(trace.min_hz) && Number.isFinite(trace.max_hz)
+      && trace.min_hz > 0 && trace.max_hz > trace.min_hz
+      && Array.isArray(trace.magnitude_db)
+      && trace.magnitude_db.length === expectedLength
+      && trace.magnitude_db.every(Number.isFinite);
+    const acceptAnalyzerFrame = (message) => {
+      const payload = message && message.payload;
+      if (!payload || payload.schema_version !== 1
+          || !Number.isSafeInteger(payload.epoch) || payload.epoch < 0
+          || !Number.isSafeInteger(payload.sequence_number)
+          || payload.sequence_number < 0
+          || !Number.isSafeInteger(payload.dropped_frames)
+          || payload.dropped_frames < 0
+          || !Number.isInteger(payload.source_channels)
+          || payload.source_channels < 1
+          || !Number.isInteger(payload.fft_size) || payload.fft_size < 2
+          || !Number.isFinite(payload.sample_rate) || payload.sample_rate <= 0
+          || !Number.isFinite(payload.floor_db) || payload.floor_db >= 0
+          || !Number.isFinite(payload.ceiling_db)
+          || payload.ceiling_db <= payload.floor_db
+          || !validAnalyzerTrace(payload.visible, 321)
+          || !validAnalyzerTrace(payload.overview, 121)) {
+        console.error('[Spectr] rejected malformed native analyzer frame');
+        return false;
+      }
+      if (nativeAnalyzerFrame
+          && (payload.epoch < nativeAnalyzerFrame.epoch
+              || (payload.epoch === nativeAnalyzerFrame.epoch
+                  && payload.sequence_number <= nativeAnalyzerFrame.sequence_number)))
+        return false;
+      // Copy before publication so a bridge/mock cannot mutate accepted data.
+      nativeAnalyzerFrame = {
+        ...payload,
+        visible: { ...payload.visible,
+          magnitude_db: payload.visible.magnitude_db.slice() },
+        overview: { ...payload.overview,
+          magnitude_db: payload.overview.magnitude_db.slice() },
+      };
+      return true;
+    };
+    const sampleAnalyzerTrace = (trace, logFrequency, frame) => {
+      if (!trace || !Number.isFinite(logFrequency)) return 0;
+      const frequency = Math.pow(10, logFrequency);
+      const logMin = Math.log10(trace.min_hz);
+      const logMax = Math.log10(trace.max_hz);
+      const position = Math.max(0, Math.min(1,
+        (Math.log10(frequency) - logMin) / (logMax - logMin)));
+      const exact = position * (trace.magnitude_db.length - 1);
+      const left = Math.floor(exact);
+      const right = Math.min(left + 1, trace.magnitude_db.length - 1);
+      const mix = exact - left;
+      const db = trace.magnitude_db[left]
+        + (trace.magnitude_db[right] - trace.magnitude_db[left]) * mix;
+      return Math.max(0, Math.min(1,
+        (db - frame.floor_db) / (frame.ceiling_db - frame.floor_db)));
+    };
+    window.SpectrAnalyzer = {
+      native: nativeAnalyzerAvailable,
+      sample(logFrequency, time, traceName = 'visible') {
+        if (!nativeAnalyzerAvailable) {
+          return window.SpectrSignal
+            ? window.SpectrSignal.sample(logFrequency, time)
+            : 0;
+        }
+        if (!nativeAnalyzerFrame) return 0;
+        const trace = traceName === 'overview'
+          ? nativeAnalyzerFrame.overview : nativeAnalyzerFrame.visible;
+        return sampleAnalyzerTrace(trace, logFrequency, nativeAnalyzerFrame);
+      },
+      debugSnapshot() { return nativeAnalyzerFrame; },
+    };
+    if (nativeAnalyzerAvailable) {
+      const unsubscribeAnalyzer = window.pulp.on(
+        'analyzer_frame', acceptAnalyzerFrame);
+      window.addEventListener('pagehide', () => {
+        nativeAnalyzerFrame = null;
+        if (typeof unsubscribeAnalyzer === 'function') unsubscribeAnalyzer();
+      }, { once: true });
+    }
+
+    replaceSpectrSource(
+      'window.SpectrSignal.sample(lf, t)',
+      "window.SpectrAnalyzer.sample(lf, t, 'visible')",
+      'main spectrum uses shared analyzer');
+    replaceSpectrSource(
+      'window.SpectrSignal.sample(lf, tNow)',
+      "window.SpectrAnalyzer.sample(lf, tNow, 'visible')",
+      'band energy uses shared analyzer');
+    replaceSpectrSource(
+      'window.SpectrSignal.sample(lf, timeRef.current)',
+      "window.SpectrAnalyzer.sample(lf, timeRef.current, 'overview')",
+      'minimap uses overview analyzer');
     replaceSpectrSource(
       'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, onEditModeChange }) {',
       'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, onEditModeChange, nativeHydrated }) {',

@@ -14,12 +14,17 @@
 // inbound JSON envelopes through the bridge to those handlers.
 
 #include <pulp/view/editor_bridge.hpp>
+#include <pulp/view/frame_clock.hpp>
 #include <pulp/view/native_view_host.hpp>
 #include <pulp/view/web_view.hpp>
 
+#include <cstdint>
 #include <memory>
+#include <optional>
+#include <span>
 
 #include "spectr/editor_bridge.hpp"
+#include "spectr/viewport.hpp"
 
 namespace spectr {
 
@@ -31,6 +36,42 @@ pulp::view::WebViewMessage make_editor_hydration_message(const Spectr& plugin);
 
 bool make_editor_resolution_message(
     const Spectr& plugin, pulp::view::WebViewMessage& out_message);
+
+/// Immutable, borrowed analyzer snapshot consumed synchronously by the editor
+/// message builder. Keeping this product-side shape independent of Pulp's
+/// publication object confines future bridge API changes to one adapter.
+struct EditorAnalyzerSnapshot {
+    std::span<const float> magnitude_db;
+    std::uint64_t epoch = 0;
+    std::uint64_t sequence_number = 0;
+    std::uint64_t dropped_frames = 0;
+    int source_channels = 0;
+    int fft_size = 0;
+    float sample_rate = 0.0f;
+    float floor_db = -120.0f;
+};
+
+/// A publication changes when either the source snapshot or its product-side
+/// viewport projection changes. Audio can be paused while the user zooms.
+struct EditorAnalyzerPublicationKey {
+    std::uint64_t epoch = 0;
+    std::uint64_t sequence_number = 0;
+    float min_hz = 0.0f;
+    float max_hz = 0.0f;
+    friend bool operator==(const EditorAnalyzerPublicationKey&,
+                           const EditorAnalyzerPublicationKey&) = default;
+};
+
+EditorAnalyzerPublicationKey make_editor_analyzer_publication_key(
+    const EditorAnalyzerSnapshot& snapshot,
+    const Viewport& viewport) noexcept;
+
+/// Build one bounded, finite native analyzer publication. The output remains
+/// unchanged when the source snapshot or viewport is invalid.
+bool make_editor_analyzer_message(
+    const EditorAnalyzerSnapshot& snapshot,
+    const Viewport& viewport,
+    pulp::view::WebViewMessage& out_message);
 
 class EditorView : public pulp::view::NativeViewHost {
 public:
@@ -48,6 +89,10 @@ public:
 
 private:
     bool post_resolution_();
+    bool post_analyzer_();
+    void start_analyzer_clock_();
+    void stop_analyzer_clock_();
+    bool analyzer_tick_(float dt);
 
     // ── Member order matters for destruction ───────────────────────────
     //
@@ -79,6 +124,11 @@ private:
     EditorDragState                           drag_{};
     pulp::view::EditorBridge                  bridge_{};
     bool                                      bridge_attached_ = false;
+    bool                                      document_ready_ = false;
+    pulp::view::FrameClock*                   analyzer_clock_ = nullptr;
+    int                                       analyzer_subscription_ = -1;
+    float                                     analyzer_elapsed_ = 0.0f;
+    std::optional<EditorAnalyzerPublicationKey> analyzer_publication_key_;
     std::unique_ptr<pulp::view::WebViewPanel> panel_;
 };
 

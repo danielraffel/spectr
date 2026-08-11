@@ -206,6 +206,7 @@ void Spectr::configure_bridge_(int num_channels) {
     c.sample_rate      = static_cast<float>(sample_rate_);
     c.capture_waveform = true;
     c.waveform_length  = 1024;
+    c.max_frames_per_poll = kAnalyzerMaxFramesPerPoll;
     bridge_.configure(c);
 }
 

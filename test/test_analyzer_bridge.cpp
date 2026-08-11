@@ -82,6 +82,10 @@ void feed_sine(spectr::Spectr& plugin, double hz, int block, int total_samples) 
     }
 }
 
+void drain_analyzer(spectr::Spectr& plugin) {
+    for (int poll = 0; poll < 64 && plugin.bridge().poll(); ++poll) {}
+}
+
 } // namespace
 
 TEST_CASE("Analyzer bridge: spectrum populates after enough audio is fed") {
@@ -90,6 +94,7 @@ TEST_CASE("Analyzer bridge: spectrum populates after enough audio is fed") {
     CHECK(s.processor->bridge().num_bins()
           <= pulp::view::SpectrumData::kMaxBins);
     feed_sine(*s.processor, 1000.0, 256, settled_samples());
+    drain_analyzer(*s.processor);
 
     const auto& spec = s.processor->read_spectrum();
     CHECK(spec.num_bins > 0);
@@ -106,6 +111,7 @@ TEST_CASE("Analyzer bridge: spectrum peaks near the input tone frequency") {
     PreparedSpectr s{};
     const double tone_hz = 2000.0;
     feed_sine(*s.processor, tone_hz, 256, settled_samples());
+    drain_analyzer(*s.processor);
 
     const auto& spec = s.processor->read_spectrum();
     REQUIRE(spec.num_bins > 0);
@@ -134,6 +140,7 @@ TEST_CASE("Analyzer bridge: Maximum profile retains the upper spectrum") {
         PreparedSpectr s{};
         constexpr double tone_hz = 18000.0;
         feed_sine(*s.processor, tone_hz, 256, settled_samples());
+        drain_analyzer(*s.processor);
 
         const auto& spec = s.processor->read_spectrum();
         REQUIRE(spec.num_bins > 0);
@@ -166,6 +173,7 @@ TEST_CASE("Analyzer bridge: meter snapshot is readable after audio") {
 TEST_CASE("Analyzer bridge: waveform capture populates") {
     PreparedSpectr s{};
     feed_sine(*s.processor, 500.0, 256, settled_samples());
+    drain_analyzer(*s.processor);
 
     const auto& wave = s.processor->read_waveform();
     CHECK(wave.num_samples > 0);
@@ -196,6 +204,7 @@ TEST_CASE("Analyzer bridge: silence in → silence published") {
         pulp::audio::BufferView<float>       ov(out_ptrs, 2, static_cast<std::size_t>(block));
         s.processor->process(ov, iv, midi_in, midi_out, ctx);
     }
+    drain_analyzer(*s.processor);
 
     const auto& wave = s.processor->read_waveform();
     for (int i = 0; i < wave.num_samples; ++i) {

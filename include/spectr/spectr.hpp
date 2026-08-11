@@ -47,6 +47,9 @@ inline constexpr int kAnalyzerAnalysisHop =
     kAnalyzerAnalysisHopUncapped < 1 ? 1
     : (kAnalyzerAnalysisHopUncapped > kAnalyzerFftSize / 2
         ? kAnalyzerFftSize / 2 : kAnalyzerAnalysisHopUncapped);
+// At 30 UI polls/s this drains 61,440 frames/s, enough to stay ahead of a
+// 48 kHz stream while bounding each UI tick even in a refilling host.
+inline constexpr int kAnalyzerMaxFramesPerPoll = 2048;
 static_assert(kSpectralFftSize >= pulp::signal::kSpectralFrameEngineMinimumFftSize
               && kSpectralFftSize
                      <= pulp::signal::kSpectralFrameEngineMaximumFftSize
