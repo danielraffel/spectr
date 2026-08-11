@@ -335,7 +335,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         '    }',
       ].join('\n'),
       [
-        "    if (p.mode === 'gain' && !p.didDrag) {",
+        "    if (p.mode === 'gain' && p.button === 0 && !p.didDrag) {",
         '      const cur = targetGainsRef.current[p.band];',
         '      const authoredDb = mutedGainDbRef.current[p.band];',
         '      const restored = Number.isFinite(authoredDb)',
@@ -346,6 +346,29 @@ document.addEventListener('DOMContentLoaded', async function() {
         '    }',
       ].join('\n'),
       'single-tap mute toggle');
+    replaceSpectrSource(
+      String.raw`      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) p.didDrag = true;
+      const curBand = findBand(x, g);`,
+      String.raw`      const clientDx = e.clientX - p.startClientX;
+      const clientDy = e.clientY - p.startClientY;
+      if (Math.abs(clientDx) > 3 || Math.abs(clientDy) > 3) p.didDrag = true;
+      // Classify the gesture in unscaled viewport pixels. A tap may contain
+      // normal pointer jitter, even while the imported design is scaled.
+      if (!p.didDrag) return;
+      const curBand = findBand(x, g);`,
+      'tap jitter does not edit gain');
+    replaceSpectrSource(
+      String.raw`      mode: 'gain',
+      editMode: editModeRef.current,
+      startX: x, startY: y,
+      lastX: x, lastY: y,`,
+      String.raw`      mode: 'gain',
+      editMode: editModeRef.current,
+      button: e.button,
+      startX: x, startY: y,
+      startClientX: e.clientX, startClientY: e.clientY,
+      lastX: x, lastY: y,`,
+      'raw pointer origin for tap classification');
     replaceSpectrSource(
       '  const bankRef = useAppR(null);\n\n  const [info, setInfo] = useAppS({ N: settings.bandCount, zoom: \'1.00\' });',
       String.raw`  const bankRef = useAppR(null);
@@ -875,11 +898,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     return () => window.removeEventListener('keydown', onKey);
   }, [fireStatus]);`,
       'focus-local non-musical shortcuts');
-    replaceSpectrSource("hint: 'S'", "hint: '1'", 'Sculpt shortcut label');
-    replaceSpectrSource("hint: 'L'", "hint: '2'", 'Level shortcut label');
-    replaceSpectrSource("hint: 'B'", "hint: '3'", 'Boost shortcut label');
-    replaceSpectrSource("hint: 'F'", "hint: '4'", 'Flare shortcut label');
-    replaceSpectrSource("hint: 'G'", "hint: '5'", 'Glide shortcut label');
+    replaceAllSpectrSource("hint: 'S'", "hint: '1'", 2, 'Sculpt shortcut labels');
+    replaceAllSpectrSource("hint: 'L'", "hint: '2'", 2, 'Level shortcut labels');
+    replaceAllSpectrSource("hint: 'B'", "hint: '3'", 2, 'Boost shortcut labels');
+    replaceAllSpectrSource("hint: 'F'", "hint: '4'", 2, 'Flare shortcut labels');
+    replaceAllSpectrSource("hint: 'G'", "hint: '5'", 2, 'Glide shortcut labels');
     replaceSpectrSource(
       '<Hrow k="S / L / B">Sculpt · Level · Boost</Hrow>\n      <Hrow k="F / G">Flare · Glide</Hrow>\n      <Hrow k="A">Cycle analyzer</Hrow>',
       '<Hrow k="1 / 2 / 3">Sculpt · Level · Boost</Hrow>\n      <Hrow k="4 / 5">Flare · Glide</Hrow>\n      <Hrow k="6">Cycle analyzer</Hrow>',
@@ -888,6 +911,14 @@ document.addEventListener('DOMContentLoaded', async function() {
       '<Hrow k="DBL-CLICK">Toggle mute (−∞)</Hrow>',
       '<Hrow k="CLICK">Toggle mute (−∞)</Hrow>',
       'help mute gesture label');
+    replaceSpectrSource(
+      '    <div ref={ref}\n      style={{',
+      '    <div ref={ref} data-spectr-overlay="true" role="menu" aria-label="Band actions"\n      style={{',
+      'context menu shortcut ownership');
+    replaceSpectrSource(
+      '  const Item = ({ label, hint, onClick, disabled, danger, sub }) => (\n    <button\n      onClick=',
+      '  const Item = ({ label, hint, onClick, disabled, danger, sub }) => (\n    <button role="menuitem"\n      onClick=',
+      'context menu item semantics');
 
     // The host resizes the native WebView itself. Keep Claude Design's authored
     // geometry fixed inside that viewport and let one browser transform scale it

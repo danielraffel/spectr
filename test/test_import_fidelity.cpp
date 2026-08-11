@@ -23,7 +23,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "ecd395484cd23c4d97c0b2fe976f84d9318a1e57d40800697ff55b8f4ca5aa04";
+    "c8b515e0bd074511013557bcdb5efa330eaacf6d482a84363557e09992c5d2aa";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -125,10 +125,14 @@ constexpr std::array kPatchNeedles{
     ContractMarker{"mute-timing-state", "  const lastTapRef = useRef(null); // { band, t } — for double-tap-to-mute detection"},
     ContractMarker{"mute-render-transition", "          rg[i] = smooth(rg[i], -1.02, dt * 26);\n          if (rg[i] < -1.01) rg[i] = -Infinity; // latch"},
     ContractMarker{"mute-pointer-up", "      // A quick double-tap (same band, <350ms since last tap) toggles mute.\n      // Single taps do nothing — prevents accidental muting."},
+    ContractMarker{"tap-jitter-boundary", "      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) p.didDrag = true;\n      const curBand = findBand(x, g);"},
     ContractMarker{"shortcut-ownership", "      's': 'sculpt', 'l': 'level', 'b': 'boost', 'f': 'flare', 'g': 'glide'"},
-    ContractMarker{"shortcut-hints", "  { k: 'sculpt', label: 'SCULPT', hint: 'S'"},
+    ContractMarker{"shortcut-hints", "hint: 'S'", 2},
     ContractMarker{"help-shortcuts", "      <Hrow k=\"S / L / B\">Sculpt · Level · Boost</Hrow>"},
     ContractMarker{"help-mute", "      <Hrow k=\"DBL-CLICK\">Toggle mute (−∞)</Hrow>"},
+    ContractMarker{"gain-pointer-origin", "      mode: 'gain',\n      editMode: editModeRef.current,\n      startX: x, startY: y,\n      lastX: x, lastY: y,"},
+    ContractMarker{"context-menu-overlay", "    <div ref={ref}\n      style={{"},
+    ContractMarker{"context-menu-items", "  const Item = ({ label, hint, onClick, disabled, danger, sub }) => (\n    <button\n      onClick="},
     ContractMarker{"canvas-geometry", "const r = wrap.getBoundingClientRect();", 2},
     ContractMarker{"canvas-render-ref", "  const rafRef = useRef(0);\n  const timeRef = useRef(0);"},
     ContractMarker{"canvas-first-paint", "    rafRef.current = requestAnimationFrame(draw);\n    return () => cancelAnimationFrame(rafRef.current);"},
@@ -213,7 +217,15 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("if (isMuted(rg[i]) || !Number.isFinite(rg[i])) rg[i] = -1.02")
           != adapter.npos);
     CHECK(adapter.find("const restored = Number.isFinite(authoredDb)") != adapter.npos);
+    CHECK(adapter.find("p.mode === 'gain' && p.button === 0 && !p.didDrag")
+          != adapter.npos);
     CHECK(adapter.find("commitGain(p.band, isMuted(cur) ? restored : -Infinity)")
+          != adapter.npos);
+    CHECK(adapter.find("startClientX: e.clientX, startClientY: e.clientY")
+          != adapter.npos);
+    CHECK(adapter.find("button: e.button") != adapter.npos);
+    CHECK(adapter.find("const clientDx = e.clientX - p.startClientX") != adapter.npos);
+    CHECK(adapter.find("if (!p.didDrag) return;\n      const curBand = findBand(x, g);")
           != adapter.npos);
     CHECK(adapter.find("'1': 'sculpt', '2': 'level', '3': 'boost', '4': 'flare', '5': 'glide'")
           != adapter.npos);
@@ -223,6 +235,9 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
           != adapter.npos);
     CHECK(adapter.find("document.querySelector('[data-spectr-overlay=\"true\"]')")
           != adapter.npos);
+    CHECK(adapter.find("data-spectr-overlay=\"true\" role=\"menu\" aria-label=\"Band actions\"")
+          != adapter.npos);
+    CHECK(adapter.find("<button role=\"menuitem\"") != adapter.npos);
     CHECK(adapter.find("<Hrow k=\"CLICK\">Toggle mute (−∞)</Hrow>")
           != adapter.npos);
     CHECK(adapter.find("<Hrow k=\"1 / 2 / 3\">Sculpt · Level · Boost</Hrow>")
@@ -232,6 +247,7 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("<Hrow k=\"6\">Cycle analyzer</Hrow>") != adapter.npos);
     CHECK(adapter.find("\"hint: 'S'\", \"hint: '1'\"") != adapter.npos);
     CHECK(adapter.find("\"hint: 'G'\", \"hint: '5'\"") != adapter.npos);
+    CHECK(adapter.find("replaceAllSpectrSource(\"hint: 'S'\"") != adapter.npos);
     // The old terms occur only inside the exact source needles being removed;
     // the adapter digest and desired replacements above pin the emitted path.
     CHECK(count_occurrences(adapter, "lastTapRef.current") == 3);
