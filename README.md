@@ -8,9 +8,13 @@ of a sound** with unusual depth and targeting.
 
 ## Status
 
-Release 1 is an effect with 32–64 independently controllable logarithmic
-bands, a continuously zoomable frequency viewport, nonadjacent frequency
-islands, and exact mute. Its reviewed HTML design is embedded source-preservingly
+Release 1 is an effect with 32–64 authored logarithmic band controls, a
+continuously zoomable frequency viewport, nonadjacent frequency islands, and
+exact mute. The visible `RES represented/active` disclosure reports how many
+controls the selected fixed FFT geometry can represent independently in the
+current viewport. The default Balanced 8192 profile represents all 32 controls
+across 20 Hz–20 kHz; a narrow zoom or a higher control count may represent fewer
+controls independently. Its reviewed HTML design is embedded source-preservingly
 through Pulp's native WebView bridge, with a narrow runtime adapter connecting
 the design's live band/zoom state to native C++ DSP and state.
 
