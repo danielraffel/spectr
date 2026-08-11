@@ -129,20 +129,7 @@ EditorAnalyzerPublicationKey make_editor_analyzer_publication_key(
 }
 
 pulp::view::WebViewMessage make_editor_hydration_message(const Spectr& plugin) {
-    const auto n = visible_count(plugin.layout());
-    auto gains = choc::value::createEmptyArray();
-    auto muted = choc::value::createEmptyArray();
-    for (std::size_t i = 0; i < n; ++i) {
-        gains.addArrayElement(static_cast<double>(plugin.field().bands[i].gain_db));
-        muted.addArrayElement(plugin.field().bands[i].muted);
-    }
-
-    auto payload = choc::value::createObject("SpectrEditorHydration");
-    payload.addMember("n_visible", static_cast<std::int32_t>(n));
-    payload.addMember("gain_db", gains);
-    payload.addMember("muted", muted);
-    payload.addMember("min_hz", static_cast<double>(plugin.viewport().min_hz));
-    payload.addMember("max_hz", static_cast<double>(plugin.viewport().max_hz));
+    auto payload = make_editor_state_payload(plugin);
 
     return {
         .type = "processing_state_hydrate",

@@ -51,6 +51,8 @@
 //                             effect: Spectr::apply_morph_to_live(t)
 //  type="capture_snapshot"  — payload: {slot: "A"|"B"}
 //                             effect: Spectr::capture_snapshot(slot)
+//  type="recall_snapshot"   — payload: {slot: "A"|"B"}
+//                             effect: restore the native snapshot atomically
 //  type="ab_toggle"         — payload: {}
 //                             effect: flip snapshots().active
 //  type="load_pattern"      — payload: {id: "<pattern_id>"}
@@ -65,6 +67,9 @@
 
 #include <pulp/view/editor_bridge.hpp>
 
+#include <choc/containers/choc_Value.h>
+
+#include <cstdint>
 #include <optional>
 
 #include "spectr/edit_engine.hpp"  // BandSnapshot
@@ -80,6 +85,12 @@ class PatternLibrary;
 struct EditorDragState {
     std::optional<BandSnapshot> snap;
 };
+
+/// Canonical editor projection used by initial hydration and every native-owned
+/// snapshot/recall/morph response. Keeping one builder prevents the WebView's
+/// optimistic display mirror from becoming a second sound-state authority.
+choc::value::Value make_editor_state_payload(const Spectr& plugin,
+                                             std::uint32_t revision = 0);
 
 /// Register Spectr's editor-bridge handlers on the given Pulp
 /// EditorBridge. All state references are captured by closures and

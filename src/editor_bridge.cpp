@@ -68,7 +68,47 @@ std::optional<float> finite_number_(const choc::value::ValueView& value) {
     return static_cast<float>(number);
 }
 
+choc::value::Value snapshot_projection_(const FieldSnapshot& snapshot,
+                                        std::size_t visible) {
+    auto result = choc::value::createObject("SpectrSnapshotProjection");
+    result.addMember("populated", snapshot.populated);
+    auto gains = choc::value::createEmptyArray();
+    auto muted = choc::value::createEmptyArray();
+    for (std::size_t i = 0; i < visible; ++i) {
+        gains.addArrayElement(static_cast<double>(snapshot.field.bands[i].gain_db));
+        muted.addArrayElement(snapshot.field.bands[i].muted);
+    }
+    result.addMember("gain_db", gains);
+    result.addMember("muted", muted);
+    return result;
+}
+
 } // namespace
+
+choc::value::Value make_editor_state_payload(const Spectr& plugin,
+                                             std::uint32_t revision) {
+    const auto n = visible_count(plugin.layout());
+    auto gains = choc::value::createEmptyArray();
+    auto muted = choc::value::createEmptyArray();
+    for (std::size_t i = 0; i < n; ++i) {
+        gains.addArrayElement(static_cast<double>(plugin.field().bands[i].gain_db));
+        muted.addArrayElement(plugin.field().bands[i].muted);
+    }
+
+    auto snapshots = choc::value::createObject("SpectrSnapshotState");
+    snapshots.addMember("A", snapshot_projection_(plugin.snapshots().a, n));
+    snapshots.addMember("B", snapshot_projection_(plugin.snapshots().b, n));
+
+    auto payload = choc::value::createObject("SpectrEditorState");
+    payload.addMember("revision", static_cast<std::int32_t>(revision));
+    payload.addMember("n_visible", static_cast<std::int32_t>(n));
+    payload.addMember("gain_db", gains);
+    payload.addMember("muted", muted);
+    payload.addMember("min_hz", static_cast<double>(plugin.viewport().min_hz));
+    payload.addMember("max_hz", static_cast<double>(plugin.viewport().max_hz));
+    payload.addMember("snapshots", snapshots);
+    return payload;
+}
 
 void register_spectr_editor_handlers(EditorBridge& bridge,
                                      Spectr& plugin,
@@ -199,16 +239,35 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     bridge.add_handler("morph",
         [&plugin](const choc::value::ValueView& p) {
             const auto t = std::clamp(EditorBridge::get_float(p, "t", 0.0f), 0.0f, 1.0f);
+            const auto revision = EditorBridge::get_uint(p, "revision", 0);
             plugin.apply_morph_to_live(t);
-            return EditorBridge::ok_response();
+            return EditorBridge::ok_response(
+                make_editor_state_payload(plugin, revision));
         });
 
     bridge.add_handler("capture_snapshot",
         [&plugin](const choc::value::ValueView& p) -> std::string {
             const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));
             if (!slot) return EditorBridge::err_response("slot must be 'A' or 'B'");
+            const auto revision = EditorBridge::get_uint(p, "revision", 0);
             plugin.capture_snapshot(*slot);
-            return EditorBridge::ok_response();
+            return EditorBridge::ok_response(
+                make_editor_state_payload(plugin, revision));
+        });
+
+    bridge.add_handler("recall_snapshot",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));
+            if (!slot) return EditorBridge::err_response("slot must be 'A' or 'B'");
+            const auto& snapshot = plugin.snapshots().get(*slot);
+            if (!snapshot.populated)
+                return EditorBridge::err_response("snapshot slot is empty");
+            const auto revision = EditorBridge::get_uint(p, "revision", 0);
+            if (!plugin.replace_processing_state(
+                    snapshot.field, snapshot.viewport, snapshot.layout))
+                return EditorBridge::err_response("snapshot state is invalid");
+            return EditorBridge::ok_response(
+                make_editor_state_payload(plugin, revision));
         });
 
     bridge.add_handler("ab_toggle",

@@ -23,7 +23,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "f2f3ea90080eddbddf83c4b709207eaee84f094af33d801f955e1d3fc0c0de3a";
+    "e8fe828e105cd64c069e82cf1b959f7d70df7f0864ec423ca5268e53fa4ea8e8";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -224,8 +224,8 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("minimap clears bottom action rail") != adapter.npos);
     CHECK(adapter.find("minimap behavior oracle seam") != adapter.npos);
     CHECK(adapter.find("canvas interaction does not select text") != adapter.npos);
-    CHECK(adapter.find("native snapshot capture") != adapter.npos);
-    CHECK(adapter.find("native morph publication") != adapter.npos);
+    CHECK(adapter.find("native snapshot authority helpers") != adapter.npos);
+    CHECK(adapter.find("single-authority snapshot recall and morph") != adapter.npos);
     CHECK(adapter.find("center-origin unmute pulse") != adapter.npos);
     CHECK(adapter.find("independent analyzer dBFS ruler") != adapter.npos);
     CHECK(adapter.find("scale() {") != adapter.npos);

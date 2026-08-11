@@ -154,6 +154,10 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     r.proc->viewport() = {280.0f, 340.0f};
     r.proc->field().bands[17] = {-9.5f, true};
     r.proc->field().bands[47] = {6.25f, false};
+    r.proc->capture_snapshot(SnapshotBank::Slot::A);
+    r.proc->field().bands[17] = {3.0f, false};
+    r.proc->capture_snapshot(SnapshotBank::Slot::B);
+    r.proc->field().bands[17] = {-9.5f, true};
 
     const auto message = spectr::make_editor_hydration_message(*r.proc);
     CHECK(message.type == "processing_state_hydrate");
@@ -169,6 +173,13 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     CHECK(payload["gain_db"][47].get<double>() == Approx(6.25));
     CHECK(payload["min_hz"].get<double>() == Approx(280.0));
     CHECK(payload["max_hz"].get<double>() == Approx(340.0));
+    CHECK(payload["revision"].get<int64_t>() == 0);
+    REQUIRE(payload["snapshots"].isObject());
+    CHECK(payload["snapshots"]["A"]["populated"].getBool());
+    CHECK(payload["snapshots"]["B"]["populated"].getBool());
+    CHECK(payload["snapshots"]["A"]["gain_db"][17].get<double>() == Approx(-9.5));
+    CHECK(payload["snapshots"]["A"]["muted"][17].getBool());
+    CHECK(payload["snapshots"]["B"]["gain_db"][17].get<double>() == Approx(3.0));
 }
 
 TEST_CASE("native editor resolution disclosure uses current product geometry") {
@@ -601,13 +612,22 @@ TEST_CASE("M9.5 bridge morph: clamps t and applies to live field") {
     Rig r;
     // Populate A with -10 dB flat, B with +10 dB flat.
     for (auto& b : r.proc->field().bands) b.gain_db = -10.0f;
+    r.proc->field().bands[3].muted = false;
     r.proc->capture_snapshot(SnapshotBank::Slot::A);
     for (auto& b : r.proc->field().bands) b.gain_db = +10.0f;
+    r.proc->field().bands[3].muted = true;
     r.proc->capture_snapshot(SnapshotBank::Slot::B);
 
-    REQUIRE(response_ok(r.dispatch(
-            R"({"type":"morph","payload":{"t":0.5}})")));
+    const auto midpoint = r.dispatch(
+            R"({"type":"morph","payload":{"t":0.5,"revision":41}})");
+    REQUIRE(response_ok(midpoint));
     CHECK(r.proc->field().bands[0].gain_db == Approx(0.0f));
+    CHECK(r.proc->field().bands[3].muted); // B owns the exact midpoint.
+    const auto midpoint_payload = choc::json::parse(midpoint);
+    CHECK(midpoint_payload["revision"].get<int64_t>() == 41);
+    CHECK(midpoint_payload["muted"][3].getBool());
+    CHECK(midpoint_payload["snapshots"]["A"]["populated"].getBool());
+    CHECK(midpoint_payload["snapshots"]["B"]["populated"].getBool());
 
     // Out-of-range t clamps rather than erroring.
     REQUIRE(response_ok(r.dispatch(
@@ -627,14 +647,44 @@ TEST_CASE("M9.5 bridge capture_snapshot: slot string is required") {
         R"({"type":"capture_snapshot"})");
     CHECK(response_has_error(bad, "'A' or 'B'"));
 
-    REQUIRE(response_ok(r.dispatch(
-            R"({"type":"capture_snapshot","payload":{"slot":"A"}})")));
+    const auto captured = r.dispatch(
+            R"({"type":"capture_snapshot","payload":{"slot":"A","revision":7}})");
+    REQUIRE(response_ok(captured));
     CHECK(r.proc->snapshots().has(SnapshotBank::Slot::A));
     CHECK(r.proc->snapshots().a.field.bands[10].gain_db == Approx(-4.0f));
+    const auto captured_payload = choc::json::parse(captured);
+    CHECK(captured_payload["revision"].get<int64_t>() == 7);
+    CHECK(captured_payload["snapshots"]["A"]["populated"].getBool());
 
     REQUIRE(response_ok(r.dispatch(
             R"({"type":"capture_snapshot","payload":{"slot":"B"}})")));
     CHECK(r.proc->snapshots().has(SnapshotBank::Slot::B));
+}
+
+TEST_CASE("M9.5 bridge recall_snapshot restores field viewport and layout") {
+    Rig r;
+    r.proc->set_layout(spectr::Layout::Bands40);
+    r.proc->viewport() = {280.0f, 340.0f};
+    r.proc->field().bands[9] = {-13.0f, true};
+    r.proc->capture_snapshot(SnapshotBank::Slot::A);
+
+    r.proc->set_layout(spectr::Layout::Bands64);
+    r.proc->viewport() = {20.0f, 20000.0f};
+    r.proc->field().bands[9] = {8.0f, false};
+
+    CHECK(response_has_error(r.dispatch(
+        R"({"type":"recall_snapshot","payload":{"slot":"B"}})"), "empty"));
+    const auto recalled = r.dispatch(
+        R"({"type":"recall_snapshot","payload":{"slot":"A","revision":19}})");
+    REQUIRE(response_ok(recalled));
+    CHECK(r.proc->layout() == spectr::Layout::Bands40);
+    CHECK(r.proc->viewport().min_hz == Approx(280.0f));
+    CHECK(r.proc->viewport().max_hz == Approx(340.0f));
+    CHECK(r.proc->field().bands[9].gain_db == Approx(-13.0f));
+    CHECK(r.proc->field().bands[9].muted);
+    const auto recalled_payload = choc::json::parse(recalled);
+    CHECK(recalled_payload["revision"].get<int64_t>() == 19);
+    CHECK(recalled_payload["n_visible"].get<int64_t>() == 40);
 }
 
 TEST_CASE("M9.5 bridge ab_toggle: flips active slot") {

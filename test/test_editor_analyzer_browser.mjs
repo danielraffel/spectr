@@ -29,14 +29,31 @@ window.cancelAnimationFrame = handle => clearTimeout(handle);
 // tracker, so capture would otherwise throw before React reaches pointerup.
 Element.prototype.setPointerCapture = () => {};
 Element.prototype.releasePointerCapture = () => {};
+const spectrReopened = new URL(location.href).searchParams.has('reopened');
+const spectrJsOnly = new URL(location.href).searchParams.has('js-only');
+const spectrEmptySnapshots = () => ({
+  A: { populated: false, gain_db: [], muted: [] },
+  B: { populated: false, gain_db: [], muted: [] },
+});
+const spectrReopenedSnapshots = () => ({
+  A: { populated: true, gain_db: new Array(32).fill(12), muted: new Array(32).fill(false) },
+  B: { populated: true, gain_db: new Array(32).fill(-12), muted: Array.from({ length: 32 }, (_, i) => i === 7) },
+});
 window.__spectrHydration = {
+  revision: 0,
   n_visible: 32,
-  gain_db: Array.from({ length: 32 }, (_, index) => -15 + index * 0.5),
+  gain_db: Array.from({ length: 32 }, (_, index) => [-12, 0, 12][index % 3]),
   muted: new Array(32).fill(true),
   min_hz: 100,
   max_hz: 10000,
+  snapshots: spectrReopened ? spectrReopenedSnapshots() : spectrEmptySnapshots(),
 };
-window.pulp = {
+const spectrClone = value => JSON.parse(JSON.stringify(value));
+window.__spectrNativeState = spectrClone(window.__spectrHydration);
+const spectrReply = revision => ({ ok: true, payload: {
+  ok: true, ...spectrClone(window.__spectrNativeState), revision,
+} });
+if (!spectrJsOnly) window.pulp = {
   on(type, callback) {
     (window.__spectrHandlers[type] ||= new Set()).add(callback);
     return () => window.__spectrHandlers[type].delete(callback);
@@ -45,7 +62,44 @@ window.pulp = {
     window.__spectrPosts.push({ type, payload, id });
     if (type === 'editor_ready') {
       queueMicrotask(() => window.__spectrEmit(
-        'processing_state_hydrate', window.__spectrHydration));
+        'processing_state_hydrate', window.__spectrNativeState));
+      return Promise.resolve({ ok: true, payload: { ok: true } });
+    }
+    if (type === 'processing_state_set') {
+      window.__spectrNativeState = {
+        ...window.__spectrNativeState,
+        n_visible: payload.n_visible,
+        gain_db: payload.gain_db.slice(), muted: payload.muted.slice(),
+        min_hz: payload.min_hz, max_hz: payload.max_hz,
+      };
+      return Promise.resolve({ ok: true, payload: { ok: true } });
+    }
+    const revision = Number(payload && payload.revision) || 0;
+    if (type === 'capture_snapshot') {
+      window.__spectrNativeState.snapshots[payload.slot] = {
+        populated: true,
+        gain_db: window.__spectrNativeState.gain_db.slice(),
+        muted: window.__spectrNativeState.muted.slice(),
+      };
+      return Promise.resolve(spectrReply(revision));
+    }
+    if (type === 'recall_snapshot') {
+      const snap = window.__spectrNativeState.snapshots[payload.slot];
+      if (!snap || !snap.populated) return Promise.resolve({ ok: false, payload: { ok: false } });
+      window.__spectrNativeState.gain_db = snap.gain_db.slice();
+      window.__spectrNativeState.muted = snap.muted.slice();
+      return Promise.resolve(spectrReply(revision));
+    }
+    if (type === 'morph') {
+      const a = window.__spectrNativeState.snapshots.A;
+      const b = window.__spectrNativeState.snapshots.B;
+      const t = Math.max(0, Math.min(1, Number(payload.t)));
+      window.__spectrNativeState.gain_db = a.gain_db.map((gain, i) => gain + (b.gain_db[i] - gain) * t);
+      window.__spectrNativeState.muted = (t >= 0.5 ? b : a).muted.slice();
+      const reply = spectrReply(revision);
+      return t === 0.25
+        ? new Promise(resolve => setTimeout(() => resolve(reply), 80))
+        : Promise.resolve(reply);
     }
     return Promise.resolve({ ok: true, payload: { ok: true } });
   }
@@ -83,7 +137,10 @@ const spectrBundleClean = () => !document.getElementById('__bundler_err');
 const spectrPublishAfter = async (count, label) => spectrWaitFor(
   () => spectrStatePosts().length > count && spectrLatestState(), label);
 const spectrPointer = (target, type, x, y, pointerId = 7) => {
-  target.dispatchEvent(new PointerEvent(type, {
+  const hit = document.elementFromPoint(x, y);
+  if (!hit || (hit !== target && !target.contains(hit)))
+    throw new Error('pointer coordinate did not hit intended control');
+  hit.dispatchEvent(new PointerEvent(type, {
     bubbles: true,
     cancelable: true,
     pointerId,
@@ -124,7 +181,13 @@ const spectrClick = async target => {
 const spectrButton = label => Array.from(document.querySelectorAll('button'))
   .find(candidate => candidate.textContent.trim() === label);
 
-setTimeout(() => {
+window.spectrStartOracle = () => {
+  if (window.__spectrOracleStarted) return;
+  if (!window.__spectrTestHooks.renderState) {
+    setTimeout(window.spectrStartOracle, 20);
+    return;
+  }
+  window.__spectrOracleStarted = true;
   const result = document.createElement('pre');
   result.id = '__spectr_browser_oracle';
   document.body.appendChild(result);
@@ -132,6 +195,7 @@ setTimeout(() => {
     try {
       const step = value => { result.dataset.step = value; };
       const reopened = new URL(location.href).searchParams.has('reopened');
+      const jsOnly = new URL(location.href).searchParams.has('js-only');
       step(reopened ? 'reopened-start' : 'initial-start');
       const bodyRect = document.body.getBoundingClientRect();
       if (document.body.clientWidth !== 1320 || document.body.clientHeight !== 860)
@@ -140,9 +204,38 @@ setTimeout(() => {
         throw new Error('editor did not scale proportionally');
       if (bodyRect.width > innerWidth + 0.5 || bodyRect.height > innerHeight + 0.5)
         throw new Error('editor overflowed its host viewport');
+      if (jsOnly) {
+        const canvas = Array.from(document.querySelectorAll('canvas'))
+          .find(candidate => getComputedStyle(candidate).pointerEvents !== 'none');
+        const target = canvas && canvas.parentElement;
+        if (!target) throw new Error('JS-only interactive canvas missing');
+        const rect = target.getBoundingClientRect();
+        const x = rect.left + rect.width * 0.4, y = rect.top + rect.height * 0.45;
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const snapA = buttons.find(button => button.textContent.trim() === 'A');
+        const snapB = buttons.find(button => button.textContent.trim() === 'B');
+        if (!snapA || !snapB) throw new Error('JS-only snapshot controls missing');
+        await spectrClick(snapA);
+        await spectrTap(target, x, y);
+        await spectrClick(snapB);
+        const morph = await spectrWaitFor(() => document.querySelector('[data-spectr-morph]'),
+          'JS-only morph slider');
+        if (morph.disabled) throw new Error('JS-only morph remained disabled');
+        morph.value = '0.5';
+        morph.dispatchEvent(new Event('input', { bubbles: true }));
+        await spectrWaitFor(() => window.__spectrTestHooks.renderState?.()
+          .targetGains.some(value => value === -Infinity), 'JS-only midpoint mute parity');
+        if (window.__spectrPosts.length !== 0)
+          throw new Error('JS-only fallback attempted native publication');
+        document.documentElement.dataset.spectrOracle = 'JS_ONLY_OK';
+        return;
+      }
       const hydrated = await spectrWaitFor(() => {
-        const state = spectrLatestState();
-        return spectrFiniteState(state) && state.muted.every(Boolean) && state;
+        const state = window.__spectrTestHooks.renderState?.();
+        return state && state.nVisible === 32
+          && state.targetGains.length === 32
+          && state.targetGains.every(value => value === -Infinity)
+          && state.mutedGainDb.every(Number.isFinite) && state;
       }, reopened ? 'finite reopened hydration' : 'finite initial hydration');
       step(reopened ? 'reopened-hydrated' : 'initial-hydrated');
       await spectrFrames(5);
@@ -150,20 +243,39 @@ setTimeout(() => {
       if (!window.__spectrCanvasLabels.includes('dBFS')
           || !window.__spectrCanvasLabels.some(label => /^-(30|60|90|120)$/.test(label)))
         throw new Error('independent negative dBFS ruler was not drawn');
-      if (!hydrated.gain_db.every((gain, index) =>
+      if (!hydrated.mutedGainDb.every((gain, index) =>
         gain === window.__spectrHydration.gain_db[index]))
         throw new Error('hydration changed authored dB');
 
       if (reopened) {
         if ((window.__spectrHandlers.processing_state_hydrate?.size || 0) !== 1)
           throw new Error('reopened hydration listener count is not one');
-        if (!spectrFiniteState(spectrLatestState()))
-          throw new Error('reopened publication is non-finite');
+        const morph = await spectrWaitFor(() => document.querySelector('[data-spectr-morph]'),
+          'reopened morph slider');
+        if (morph.disabled) throw new Error('reopened snapshots did not hydrate');
+        morph.value = '0.25';
+        morph.dispatchEvent(new Event('input', { bubbles: true }));
+        morph.value = '0.75';
+        morph.dispatchEvent(new Event('input', { bubbles: true }));
+        await spectrWaitFor(() => Math.abs(
+          window.__spectrTestHooks.renderState?.().targetGains[0] + 0.25) < 1e-6,
+        'latest native morph projection');
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const afterStale = window.__spectrTestHooks.renderState().targetGains[0];
+        if (Math.abs(afterStale + 0.25) > 1e-6)
+          throw new Error('stale native morph response overwrote latest revision: ' + afterStale);
+        morph.value = '0.5';
+        morph.dispatchEvent(new Event('input', { bubbles: true }));
+        await spectrWaitFor(() => window.__spectrPosts.some(message =>
+          message.type === 'morph' && message.payload.t === 0.5), 'reopened morph command');
+        await spectrWaitFor(() => window.__spectrTestHooks.renderState?.().targetGains[7] === -Infinity,
+          'reopened authoritative midpoint mute');
         window.dispatchEvent(new Event('pagehide'));
         if (window.SpectrAnalyzer.debugSnapshot() !== null
             || window.__spectrHandlers.analyzer_frame.size !== 0)
           throw new Error('analyzer survived reopened document teardown');
         result.textContent = 'SPECTR_BROWSER_ORACLE_OK';
+        document.documentElement.dataset.spectrOracle = 'OK';
         return;
       }
 
@@ -238,6 +350,25 @@ setTimeout(() => {
           !== window.__spectrHydration.gain_db[restoredBand])
         throw new Error('remute did not preserve exact authored dB');
       step('remute-complete');
+
+      for (const [band, sign] of [[3, -1], [4, 0], [5, 1]]) {
+        const bandX = rect.left + (56 + (band + 0.5) * (target.clientWidth - 112) / 32)
+          * rect.width / target.clientWidth;
+        count = spectrStatePosts().length;
+        await spectrTap(target, bandX, y);
+        state = await spectrPublishAfter(count, 'signed unmute publication ' + sign);
+        if (state.muted[band]) throw new Error('signed unmute did not restore band ' + band);
+        const rendered = window.__spectrTestHooks.renderState?.();
+        if (!rendered || rendered.unmutePulse[band] <= 0)
+          throw new Error('signed unmute did not pulse band ' + band);
+        if (sign === 0 ? Math.abs(rendered.gains[band]) > 1e-6
+          : Math.sign(rendered.gains[band]) !== sign)
+          throw new Error('signed unmute originated on wrong side for band ' + band);
+        count = spectrStatePosts().length;
+        await spectrTap(target, bandX, y);
+        state = await spectrPublishAfter(count, 'signed remute publication ' + sign);
+        if (!state.muted[band]) throw new Error('signed remute failed for band ' + band);
+      }
 
       count = spectrStatePosts().length;
       await spectrTap(target, x, y);
@@ -416,6 +547,11 @@ setTimeout(() => {
       spectrPointer(target, 'pointermove', x, y - 36);
       spectrPointer(target, 'pointerup', x, y - 36);
       await spectrPublishAfter(count, 'morph B edit publication');
+      count = spectrStatePosts().length;
+      await spectrTap(target, x, y);
+      const beforeMorph = await spectrPublishAfter(count, 'morph B mute publication');
+      if (!beforeMorph.muted[restoredBand])
+        throw new Error('morph B fixture did not create mute disagreement');
       await spectrClick(snapB);
       const morph = await spectrWaitFor(() => document.querySelector('[data-spectr-morph]'),
         'morph slider');
@@ -423,10 +559,17 @@ setTimeout(() => {
       count = spectrStatePosts().length;
       morph.value = '0.5';
       morph.dispatchEvent(new Event('input', { bubbles: true }));
-      await spectrPublishAfter(count, 'morph midpoint publication');
-      if (!window.__spectrPosts.some(message => message.type === 'morph'
-          && Math.abs(message.payload.t - 0.5) < 1e-6))
+      const morphMessage = await spectrWaitFor(() => window.__spectrPosts.find(message =>
+        message.type === 'morph' && Math.abs(message.payload.t - 0.5) < 1e-6),
+      'morph midpoint native command');
+      if (!morphMessage)
         throw new Error('morph did not reach native bridge');
+      await spectrWaitFor(() => window.__spectrTestHooks.renderState?.()
+        .targetGains[restoredBand] === -Infinity, 'native midpoint projection');
+      if (!window.__spectrNativeState.muted[restoredBand])
+        throw new Error('native midpoint parity did not choose B mute');
+      if (spectrStatePosts().length !== count)
+        throw new Error('JS republished over native-owned morph state');
       step('morph-complete');
 
       step('initial-complete');
@@ -435,13 +578,19 @@ setTimeout(() => {
           || window.__spectrHandlers.analyzer_frame.size !== 0)
         throw new Error('analyzer survived initial document teardown');
       result.textContent = 'SPECTR_BROWSER_ORACLE_INITIAL_OK';
+      document.documentElement.dataset.spectrOracle = 'INITIAL_OK';
     } catch (error) {
       result.textContent = 'SPECTR_BROWSER_ORACLE_FAIL:' + error.message;
+      document.documentElement.dataset.spectrOracle = 'FAIL:' + error.message;
     }
   })();
-}, 0);
+};
+setTimeout(window.spectrStartOracle, 0);
 </script>`;
   html = html.replace('</body>', oracle + '</body>');
+  html = html.replace('      window.Babel.transformScriptTags();',
+    '      window.Babel.transformScriptTags();\n'
+    + '      window.spectrStartOracle();');
   const instrumented = path.join(temp, 'spectr.html');
   fs.writeFileSync(instrumented, html);
 
@@ -451,24 +600,40 @@ setTimeout(() => {
     '--disable-domain-reliability', '--disable-sync',
     '--allow-file-access-from-files', '--no-first-run', '--no-default-browser-check',
     `--window-size=${width},${height}`,
-    '--virtual-time-budget=5000', `--user-data-dir=${profile}`,
+    '--virtual-time-budget=15000', `--user-data-dir=${profile}`,
     '--dump-dom', url,
   ], { encoding: 'utf8', timeout: 45000 });
   const failure = run => run.stdout.match(/SPECTR_BROWSER_ORACLE_FAIL:[^<]*/)?.[0]
+    || run.stdout.match(/data-spectr-oracle="FAIL:[^"]*/)?.[0]
     || run.stdout.match(/<pre id="__spectr_browser_oracle"[^>]*>/)?.[0]
     || run.stderr;
 
   const initialUrl = `file://${instrumented}`;
   const initial = runChrome(initialUrl, path.join(temp, 'profile-initial'), 1320, 860);
   assert.equal(initial.status, 0, initial.stderr);
-  assert.match(initial.stdout, /SPECTR_BROWSER_ORACLE_INITIAL_OK/, failure(initial));
+  assert.match(initial.stdout, /data-spectr-oracle="INITIAL_OK"/, failure(initial));
+
+  const scaled = runChrome(initialUrl + '?scaled=1',
+    path.join(temp, 'profile-scaled'), 800, 521);
+  assert.equal(scaled.status, 0, scaled.stderr);
+  assert.match(scaled.stdout, /data-spectr-oracle="INITIAL_OK"/, failure(scaled));
+
+  const enlarged = runChrome(initialUrl + '?enlarged=1',
+    path.join(temp, 'profile-enlarged'), 1980, 1290);
+  assert.equal(enlarged.status, 0, enlarged.stderr);
+  assert.match(enlarged.stdout, /data-spectr-oracle="INITIAL_OK"/, failure(enlarged));
+
+  const jsOnly = runChrome(initialUrl + '?js-only=1',
+    path.join(temp, 'profile-js-only'), 800, 521);
+  assert.equal(jsOnly.status, 0, jsOnly.stderr);
+  assert.match(jsOnly.stdout, /data-spectr-oracle="JS_ONLY_OK"/, failure(jsOnly));
 
   // A second browser document models closing and reopening the native editor:
   // all JS state is gone, and only the finite native hydration may restore it.
   const reopened = runChrome(initialUrl + '?reopened=1',
     path.join(temp, 'profile-reopened'), 800, 521);
   assert.equal(reopened.status, 0, reopened.stderr);
-  assert.match(reopened.stdout, /SPECTR_BROWSER_ORACLE_OK/, failure(reopened));
+  assert.match(reopened.stdout, /data-spectr-oracle="OK"/, failure(reopened));
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

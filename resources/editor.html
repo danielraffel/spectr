@@ -153,6 +153,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     const spectrStateEffect = String.raw`  // ---- native DSP state publication ----
   useEffect(() => {
     if (!nativeHydrated) return;
+    if (nativeProjectionRef.current) {
+      nativeProjectionRef.current = false;
+      return;
+    }
     const frame = requestAnimationFrame(() => {
       if (!window.pulp || typeof window.pulp.postMessage !== 'function') return;
       const current = targetGainsRef.current;
@@ -161,6 +165,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         ? (mutedGainDbRef.current[i] ?? 0)
         : clamp(value, -1, 1) * 24);
       try {
+        // A later direct edit supersedes any in-flight native capture/recall/
+        // morph projection even if that older response arrives afterward.
+        ++nativeCommandRevisionRef.current;
         const publication = window.pulp.postMessage('processing_state_set', {
           n_visible: N,
           gain_db: gainDb,
@@ -298,6 +305,49 @@ document.addEventListener('DOMContentLoaded', async function() {
       },
       debugSnapshot() { return nativeAnalyzerFrame; },
     };
+    window.SpectrNativeState = {
+      parse(payload) {
+        const n = payload && Number(payload.n_visible);
+        const gainDb = payload && payload.gain_db;
+        const muted = payload && payload.muted;
+        const minHz = payload && Number(payload.min_hz);
+        const maxHz = payload && Number(payload.max_hz);
+        if (![32, 40, 48, 56, 64].includes(n)
+            || !Array.isArray(gainDb) || gainDb.length !== n
+            || !Array.isArray(muted) || muted.length !== n
+            || !gainDb.every(Number.isFinite)
+            || !muted.every(value => typeof value === 'boolean')
+            || !Number.isFinite(minHz) || !Number.isFinite(maxHz)
+            || minHz <= 0 || maxHz <= minHz) return null;
+        const parseSnapshot = projection => {
+          if (!projection || projection.populated !== true) return null;
+          if (!Array.isArray(projection.gain_db)
+              || projection.gain_db.length !== n
+              || !projection.gain_db.every(Number.isFinite)
+              || !Array.isArray(projection.muted)
+              || projection.muted.length !== n
+              || !projection.muted.every(value => typeof value === 'boolean'))
+            return undefined;
+          return {
+            gainDb: projection.gain_db.slice(),
+            muted: projection.muted.slice(),
+            values: projection.gain_db.map((db, i) => projection.muted[i]
+              ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
+          };
+        };
+        const projections = payload.snapshots || {};
+        const A = parseSnapshot(projections.A);
+        const B = parseSnapshot(projections.B);
+        if (A === undefined || B === undefined) return null;
+        return {
+          n, gainDb: gainDb.slice(), muted: muted.slice(),
+          gains: gainDb.map((db, i) => muted[i]
+            ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
+          minHz, maxHz, snapshots: { A, B },
+          revision: Number(payload.revision) || 0,
+        };
+      },
+    };
     if (nativeAnalyzerAvailable) {
       const unsubscribeAnalyzer = window.pulp.on(
         'analyzer_frame', acceptAnalyzerFrame);
@@ -321,11 +371,11 @@ document.addEventListener('DOMContentLoaded', async function() {
       'minimap uses overview analyzer');
     replaceSpectrSource(
       'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, onEditModeChange }) {',
-      'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, onEditModeChange, nativeHydrated }) {',
+      'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, onEditModeChange, nativeHydrated, onNativeState }) {',
       'native hydration publication gate');
     replaceSpectrSource(
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
-      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const resolutionGeometryRef = useRef(\'\');',
+      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  const nativeCommandRevisionRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  const resolutionGeometryRef = useRef(\'\');',
       'independent muted gain hydration');
     replaceSpectrSource(
       String.raw`      const next = new Array(N).fill(0);
@@ -513,6 +563,12 @@ document.addEventListener('DOMContentLoaded', async function() {
   const [nativeHydrated, setNativeHydrated] = useAppS(!nativeBridgeAvailable);
   const [nativeHydration, setNativeHydration] = useAppS(null);
   const [resolution, setResolution] = useAppS(null);
+  const acceptNativeState = useAppC((state) => {
+    setNativeHydrated(false);
+    setNativeHydration(state);
+    setSettings(current => ({ ...current, bandCount: state.n }));
+    setSnapshotStatus({ A: !!state.snapshots.A, B: !!state.snapshots.B });
+  }, []);
 
   // The native processor owns restored state. Ask for it only after this
   // listener exists, then keep React's initial defaults read-only until the
@@ -520,33 +576,12 @@ document.addEventListener('DOMContentLoaded', async function() {
   useAppE(() => {
     if (!nativeBridgeAvailable) return;
     const unsubscribeHydration = window.pulp.on('processing_state_hydrate', (message) => {
-      const payload = message && message.payload;
-      const n = payload && Number(payload.n_visible);
-      const gains = payload && payload.gain_db;
-      const muted = payload && payload.muted;
-      const minHz = payload && Number(payload.min_hz);
-      const maxHz = payload && Number(payload.max_hz);
-      if (![32, 40, 48, 56, 64].includes(n)
-          || !Array.isArray(gains) || gains.length !== n
-          || !Array.isArray(muted) || muted.length !== n
-          || !gains.every(Number.isFinite)
-          || !muted.every(value => typeof value === 'boolean')
-          || !Number.isFinite(minHz) || !Number.isFinite(maxHz)
-          || minHz <= 0 || maxHz <= minHz) {
+      const state = window.SpectrNativeState.parse(message && message.payload);
+      if (!state) {
         console.error('[Spectr] rejected malformed native hydration payload');
         return;
       }
-      setNativeHydrated(false);
-      setNativeHydration({
-        n,
-        gainDb: gains.slice(),
-        gains: gains.map((db, i) => muted[i]
-          ? -Infinity
-          : Math.max(-1, Math.min(1, db / 24))),
-        minHz,
-        maxHz,
-      });
-      setSettings(current => ({ ...current, bandCount: n }));
+      acceptNativeState(state);
     });
     const unsubscribeResolution = window.pulp.on('spectral_resolution', (message) => {
       const payload = message && message.payload;
@@ -586,7 +621,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       if (typeof unsubscribeResolution === 'function') unsubscribeResolution();
       clearInterval(resolutionRefresh);
     };
-  }, []);
+  }, [acceptNativeState]);
 
   useAppE(() => {
     if (!nativeHydration || settings.bandCount !== nativeHydration.n) return;
@@ -617,7 +652,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       'native state wins over browser default pattern');
     replaceSpectrSource(
       '<FilterBank settings={settings} sharedState={bankRef} onStatus={fireStatus} dspMode={dspMode} editMode={editMode} analyzerMode={analyzerMode} onEditModeChange={(v) => { setEditMode(v); fireStatus(`EDIT → ${v.toUpperCase()}`); }} />',
-      '<FilterBank settings={settings} sharedState={bankRef} onStatus={fireStatus} dspMode={dspMode} editMode={editMode} analyzerMode={analyzerMode} nativeHydrated={nativeHydrated} onEditModeChange={(v) => { setEditMode(v); fireStatus(`EDIT → ${v.toUpperCase()}`); }} />',
+      '<FilterBank settings={settings} sharedState={bankRef} onStatus={fireStatus} dspMode={dspMode} editMode={editMode} analyzerMode={analyzerMode} nativeHydrated={nativeHydrated} onNativeState={acceptNativeState} onEditModeChange={(v) => { setEditMode(v); fireStatus(`EDIT → ${v.toUpperCase()}`); }} />',
       'native hydration gate prop');
     replaceSpectrSource(
       String.raw`      setGains: (arr) => {
@@ -634,9 +669,12 @@ document.addEventListener('DOMContentLoaded', async function() {
         setGains(next);
       },
       hydrateProcessingState: (state) => {
+        nativeProjectionRef.current = true;
         mutedGainDbRef.current = state.gainDb.slice(0, N);
         targetGainsRef.current = state.gains.slice(0, N);
         renderGainsRef.current = state.gains.slice(0, N);
+        snapshotsRef.current = state.snapshots;
+        setSnapshots(state.snapshots);
         setGains(state.gains.slice(0, N));
         setView({ lmin: Math.log10(state.minHz), lmax: Math.log10(state.maxHz) });
       },
@@ -1045,33 +1083,118 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
       '<button data-spectr-settings-open onClick={() => setSettingsOpen(true)}\n          title="Settings"',
       'settings open hit target');
     replaceSpectrSource(
-      [
-        '        if (onStatus) onStatus(`SNAPSHOT ${slot} CAPTURED`);',
-        '      },',
-        '      recallSnap:',
-      ].join('\n'),
-      [
-        "        if (window.pulp && typeof window.pulp.postMessage === 'function') {",
-        "          Promise.resolve(window.pulp.postMessage('capture_snapshot', { slot },",
-        "            'spectr-capture-' + slot)).catch(() => {});",
-        '        }',
-        '        if (onStatus) onStatus(`SNAPSHOT ${slot} CAPTURED`);',
-        '      },',
-        '      recallSnap:',
-      ].join('\n'),
-      'native snapshot capture');
-    replaceSpectrSource(
-      String.raw`      setMorph: (v) => {
-        setMorph(v);
-        const s = snapshotsRef.current;`,
-      String.raw`      setMorph: (v) => {
-        setMorph(v);
-        if (window.pulp && typeof window.pulp.postMessage === 'function') {
-          Promise.resolve(window.pulp.postMessage('morph', { t: v },
-            'spectr-morph')).catch(() => {});
+      String.raw`  useEffect(() => {
+    if (!sharedState) return;
+    sharedState.current = {`,
+      String.raw`  useEffect(() => {
+    if (!sharedState) return;
+    const nativeOwnsSnapshots = !!window.pulp
+      && typeof window.pulp.postMessage === 'function';
+    const acceptNativeResponse = (response, revision, successStatus) => {
+      const body = response && response.payload;
+      if (!response || response.ok !== true || !body || body.ok !== true)
+        throw new Error((body && body.error) || 'native command rejected');
+      if (Number(body.revision) !== revision
+          || revision !== nativeCommandRevisionRef.current
+          || revision < nativeAppliedRevisionRef.current) return false;
+      const state = window.SpectrNativeState.parse(body);
+      if (!state) throw new Error('native command returned malformed state');
+      nativeAppliedRevisionRef.current = revision;
+      if (onNativeState) onNativeState(state);
+      if (successStatus && onStatus) onStatus(successStatus);
+      return true;
+    };
+    const issueNativeCommand = (type, payload, successStatus) => {
+      const revision = ++nativeCommandRevisionRef.current;
+      Promise.resolve(window.pulp.postMessage(type, { ...payload, revision },
+        'spectr-' + type + '-' + revision))
+        .then(response => acceptNativeResponse(response, revision, successStatus))
+        .catch(error => {
+          if (revision === nativeCommandRevisionRef.current && onStatus)
+            onStatus('NATIVE ' + type.toUpperCase() + ' FAILED');
+          console.error('[Spectr] native ' + type + ' failed', error);
+        });
+      return revision;
+    };
+    const localSnapshot = () => {
+      const values = targetGainsRef.current.slice();
+      const gainDb = values.map((value, i) => isMuted(value)
+        ? (mutedGainDbRef.current[i] ?? 0) : clamp(value, -1, 1) * 24);
+      return { values, gainDb, muted: values.map(isMuted) };
+    };
+    const optimisticNativeMorph = (a, b, amount) => {
+      const values = new Array(N);
+      const gainDb = new Array(N);
+      const bDominant = amount >= 0.5;
+      for (let i = 0; i < N; ++i) {
+        const dbA = a.gainDb[i] ?? 0, dbB = b.gainDb[i] ?? 0;
+        const db = lerp(dbA, dbB, amount);
+        const muted = bDominant ? !!b.muted[i] : !!a.muted[i];
+        gainDb[i] = db;
+        values[i] = muted ? -Infinity : clamp(db / 24, -1, 1);
+      }
+      nativeProjectionRef.current = true;
+      mutedGainDbRef.current = gainDb;
+      targetGainsRef.current = values.slice();
+      setGains(values);
+    };
+    sharedState.current = {`,
+      'native snapshot authority helpers');
+    const snapshotBlockStart = template.indexOf('      snapshot: (slot) => {');
+    const snapshotBlockEnd = template.indexOf(
+      '      getSnapshots: () => snapshots,', snapshotBlockStart);
+    if (snapshotBlockStart < 0 || snapshotBlockEnd < 0)
+      throw new Error('Spectr source patch point missing: single-authority snapshot recall and morph');
+    template = template.slice(0, snapshotBlockStart) + String.raw`      snapshot: (slot) => {
+        if (nativeOwnsSnapshots) {
+          issueNativeCommand('capture_snapshot', { slot },
+            'SNAPSHOT ' + slot + ' CAPTURED');
+          return;
         }
-        const s = snapshotsRef.current;`,
-      'native morph publication');
+        const snap = localSnapshot();
+        snapshotsRef.current = { ...snapshotsRef.current, [slot]: snap };
+        setSnapshots(snapshotsRef.current);
+        if (onStatus) onStatus('SNAPSHOT ' + slot + ' CAPTURED');
+      },
+      recallSnap: (slot) => {
+        const snap = snapshotsRef.current[slot];
+        if (!snap) {
+          if (onStatus) onStatus('NO SNAPSHOT IN ' + slot);
+          return;
+        }
+        if (nativeOwnsSnapshots) {
+          issueNativeCommand('recall_snapshot', { slot }, 'RECALLED ' + slot);
+          return;
+        }
+        const map = new Map();
+        for (let i = 0; i < Math.min(snap.values.length, N); i++)
+          map.set(i, snap.values[i]);
+        commitMany(map);
+        if (onStatus) onStatus('RECALLED ' + slot);
+      },
+      setMorph: (v) => {
+        setMorph(v);
+        const s = snapshotsRef.current;
+        if (!s.A || !s.B) return;
+        if (nativeOwnsSnapshots) {
+          optimisticNativeMorph(s.A, s.B, v);
+          issueNativeCommand('morph', { t: v }, null);
+          return;
+        }
+        const map = new Map();
+        const bDominant = v >= 0.5;
+        for (let i = 0; i < N; i++) {
+          const db = lerp(s.A.gainDb[i] ?? 0, s.B.gainDb[i] ?? 0, v);
+          const muted = bDominant ? !!s.B.muted[i] : !!s.A.muted[i];
+          map.set(i, muted ? -Infinity : clamp(db / 24, -1, 1));
+        }
+        commitMany(map);
+      },
+` + template.slice(snapshotBlockEnd);
+    replaceSpectrSource(
+      '  }, [N, snapshots, view]);\n\n  return (',
+      '  }, [N, snapshots, view, onNativeState]);\n\n  return (',
+      'native authority effect dependencies');
     replaceSpectrSource(
       '<input type="range" min="0" max="1" step="0.001" value={v}\n        disabled={!hasBoth}\n        onChange={e => {',
       '<input data-spectr-morph aria-label="Morph A to B" type="range" min="0" max="1" step="0.001" value={v}\n        disabled={!hasBoth}\n        onInput={e => {',
@@ -1230,8 +1353,17 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
     window.__spectrTestHooks.minimapHit = (x, y) => minimapHit(x, y, getGeom());
     window.__spectrTestHooks.renderState = () => ({
       gains: Array.from(renderGainsRef.current),
+      targetGains: Array.from(targetGainsRef.current),
+      mutedGainDb: Array.from(mutedGainDbRef.current),
+      view: { ...view },
+      nVisible: N,
       unmutePulse: Array.from(unmutePulseRef.current),
     });
+    if (!window.__spectrTestHooks.oracleScheduled
+        && typeof window.spectrStartOracle === 'function') {
+      window.__spectrTestHooks.oracleScheduled = true;
+      setTimeout(window.spectrStartOracle, 0);
+    }
   }
 
   const onPointerDown = (e) => {`,
