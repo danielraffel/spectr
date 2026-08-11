@@ -1200,6 +1200,14 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
       '<input data-spectr-morph aria-label="Morph A to B" type="range" min="0" max="1" step="0.001" value={v}\n        disabled={!hasBoth}\n        onInput={e => {',
       'morph slider input contract');
     replaceSpectrSource(
+      '<SnapBtn filled={snapshotStatus.A} onClick={act(b => b.snapshot(\'A\'))} capture label="A" />',
+      '<span data-spectr-snapshot-capture="A"><SnapBtn filled={snapshotStatus.A} onClick={act(b => b.snapshot(\'A\'))} capture label="A" /></span>',
+      'snapshot A capture selector');
+    replaceSpectrSource(
+      '<SnapBtn filled={snapshotStatus.B} onClick={act(b => b.snapshot(\'B\'))} capture label="B" />',
+      '<span data-spectr-snapshot-capture="B"><SnapBtn filled={snapshotStatus.B} onClick={act(b => b.snapshot(\'B\'))} capture label="B" /></span>',
+      'snapshot B capture selector');
+    replaceSpectrSource(
       '  const [showImport, setShowImport] = usePM(false);\n\n  const factory = window.Spectr.FACTORY_PATTERNS;',
       String.raw`  const [showImport, setShowImport] = usePM(false);
 
@@ -1357,7 +1365,12 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
       mutedGainDb: Array.from(mutedGainDbRef.current),
       view: { ...view },
       nVisible: N,
+      bankReady: !!sharedState?.current,
       unmutePulse: Array.from(unmutePulseRef.current),
+      snapshots: {
+        A: !!snapshotsRef.current.A,
+        B: !!snapshotsRef.current.B,
+      },
     });
     if (!window.__spectrTestHooks.oracleScheduled
         && typeof window.spectrStartOracle === 'function') {
@@ -1409,21 +1422,36 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
     // createElement so they execute, awaiting onload for src scripts to
     // preserve ordering (React before ReactDOM before Babel before text/babel).
     const doc = new DOMParser().parseFromString(template, 'text/html');
+    const editorGeometry = Object.freeze({
+      designWidth: 1320,
+      designHeight: 860,
+      preferredWidth: 990,
+      preferredHeight: 645,
+      minWidth: 792,
+      maxWidth: 2640,
+    });
     const fixedDesignStyle = doc.createElement('style');
     fixedDesignStyle.textContent = String.raw`
-html { width: 100%; height: 100%; overflow: hidden; background: #05070a; }
+html {
+  width: 100%; height: 100%; overflow: hidden; background: #05070a;
+}
 body {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 1320px !important;
-  height: 860px !important;
+  width: ${editorGeometry.designWidth}px !important;
+  height: ${editorGeometry.designHeight}px !important;
   overflow: hidden;
   transform-origin: center center;
 }
 #root {
-  width: 1320px !important;
-  height: 860px !important;
+  width: ${editorGeometry.designWidth}px !important;
+  height: ${editorGeometry.designHeight}px !important;
+}
+input:not([type]), input[type="text"], input[type="search"], textarea,
+[contenteditable="true"] {
+  user-select: text !important;
+  -webkit-user-select: text !important;
 }`;
     doc.head.appendChild(fixedDesignStyle);
     document.documentElement.replaceWith(doc.documentElement);
@@ -1433,12 +1461,150 @@ body {
       throw new Error('Spectr fixed-design root missing');
     }
     const resizeFixedDesign = () => {
-      const scale = Math.min(window.innerWidth / 1320, window.innerHeight / 860);
+      const scale = Math.min(
+        window.innerWidth / editorGeometry.designWidth,
+        window.innerHeight / editorGeometry.designHeight);
       fixedDesignSurface.style.transform =
         'translate(-50%, -50%) scale(' + scale + ')';
     };
     window.addEventListener('resize', resizeFixedDesign);
     resizeFixedDesign();
+
+    // Product-owned proportional resize grip. The imported design remains a
+    // 1320 x 860 canvas; this asks the native host to change only its viewport.
+    // Native code validates and clamps every request again before reaching the
+    // format adapter.
+    const resizeGrip = document.createElement('button');
+    resizeGrip.type = 'button';
+    resizeGrip.id = 'spectr-resize-grip';
+    resizeGrip.setAttribute('aria-label', 'Resize Spectr proportionally');
+    resizeGrip.title = 'Drag to resize';
+    resizeGrip.style.cssText = [
+      'position:absolute', 'right:0', 'bottom:0', 'width:28px', 'height:28px',
+      'padding:0', 'border:0', 'background:transparent', 'color:rgba(255,255,255,.5)',
+      'cursor:nwse-resize', 'z-index:10020', 'touch-action:none',
+      'user-select:none', '-webkit-user-select:none', 'outline:none'
+    ].join(';');
+    resizeGrip.innerHTML = '<svg aria-hidden="true" viewBox="0 0 28 28" width="28" height="28">'
+      + '<path d="M26 12L12 26M26 18L18 26M26 24L24 26" fill="none" '
+      + 'stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+    fixedDesignSurface.appendChild(resizeGrip);
+
+    const resizeStatus = document.createElement('div');
+    resizeStatus.id = 'spectr-resize-status';
+    resizeStatus.setAttribute('role', 'status');
+    resizeStatus.setAttribute('aria-live', 'polite');
+    resizeStatus.style.cssText = [
+      'position:absolute', 'right:32px', 'bottom:6px', 'z-index:10020',
+      'padding:3px 7px', 'border-radius:3px',
+      'background:rgba(70,10,10,.94)', 'border:1px solid rgba(255,120,120,.5)',
+      'color:rgba(255,190,190,.98)', 'font:9px var(--mono,monospace)',
+      'letter-spacing:.8px', 'pointer-events:none', 'display:none'
+    ].join(';');
+    fixedDesignSurface.appendChild(resizeStatus);
+
+    const resizeAspect = editorGeometry.designWidth / editorGeometry.designHeight;
+    const resizeBounds = {
+      minWidth: editorGeometry.minWidth,
+      maxWidth: editorGeometry.maxWidth,
+    };
+    const normalizeResizeWidth = width => {
+      const safe = Number.isFinite(width) ? width : window.innerWidth;
+      const bounded = Math.max(resizeBounds.minWidth,
+        Math.min(resizeBounds.maxWidth, safe));
+      const w = Math.round(bounded);
+      return { width: w, height: Math.round(w / resizeAspect) };
+    };
+    let resizeDrag = null;
+    let pendingResize = null;
+    let resizeFrame = 0;
+    let resizeInFlight = false;
+    let resizeSequence = 0;
+    let queuedResize = null;
+    const showResizeFailure = message => {
+      resizeStatus.textContent = message;
+      resizeStatus.style.display = 'block';
+    };
+    const dispatchResize = request => {
+      if (resizeInFlight) {
+        queuedResize = request;
+        return;
+      }
+      resizeInFlight = true;
+      const sequence = ++resizeSequence;
+      const payload = { ...request, sequence };
+      window.pulp.postMessage('editor_resize_request', payload,
+        'spectr-editor-resize-' + sequence).then(reply => {
+          const response = reply && reply.payload ? reply.payload : reply;
+          if (!response || Number(response.sequence) !== sequence) {
+            showResizeFailure('RESIZE PROTOCOL ERROR');
+          } else if (!response.accepted) {
+            showResizeFailure('HOST REFUSED RESIZE');
+          } else {
+            resizeStatus.style.display = 'none';
+          }
+      }).catch(() => showResizeFailure('RESIZE FAILED')).finally(() => {
+        resizeInFlight = false;
+        if (queuedResize) {
+          const next = queuedResize;
+          queuedResize = null;
+          dispatchResize(next);
+        }
+      });
+    };
+    const postPendingResize = () => {
+      resizeFrame = 0;
+      if (!pendingResize) return;
+      const request = pendingResize;
+      pendingResize = null;
+      if (window.pulp && typeof window.pulp.postMessage === 'function') {
+        dispatchResize(request);
+      } else {
+        showResizeFailure('RESIZE UNAVAILABLE');
+      }
+    };
+    const queueResize = request => {
+      pendingResize = request;
+      if (!resizeFrame) resizeFrame = requestAnimationFrame(postPendingResize);
+    };
+    resizeGrip.addEventListener('pointerdown', event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      resizeDrag = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startWidth: window.innerWidth,
+      };
+      resizeGrip.setPointerCapture(event.pointerId);
+    });
+    resizeGrip.addEventListener('pointermove', event => {
+      if (!resizeDrag || event.pointerId !== resizeDrag.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const dx = event.clientX - resizeDrag.startX;
+      const dy = event.clientY - resizeDrag.startY;
+      // Orthogonally project the pointer delta onto the fixed-aspect resize
+      // vector (dw, dw/aspect), so diagonal and one-axis drags both feel direct.
+      const dw = (dx + dy / resizeAspect)
+        / (1 + 1 / (resizeAspect * resizeAspect));
+      queueResize(normalizeResizeWidth(resizeDrag.startWidth + dw));
+    });
+    const endResize = event => {
+      if (!resizeDrag || event.pointerId !== resizeDrag.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (resizeFrame) {
+        cancelAnimationFrame(resizeFrame);
+        resizeFrame = 0;
+      }
+      postPendingResize();
+      resizeGrip.releasePointerCapture(event.pointerId);
+      resizeDrag = null;
+    };
+    resizeGrip.addEventListener('pointerup', endResize);
+    resizeGrip.addEventListener('pointercancel', endResize);
     const dead = Array.from(document.scripts);
     for (const old of dead) {
       const s = document.createElement('script');

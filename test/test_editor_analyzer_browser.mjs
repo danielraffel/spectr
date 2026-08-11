@@ -4,8 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const [htmlPath, chromePath] = process.argv.slice(2);
+const [htmlPath, chromePath, mode] = process.argv.slice(2);
 assert(htmlPath && chromePath, 'usage: test_editor_analyzer_browser.mjs HTML CHROME');
+const resizeOnlyMode = mode === '--resize-only';
+const jsOnlyMode = mode === '--js-only';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-analyzer-browser-'));
 try {
@@ -15,6 +17,8 @@ window.__spectrHandlers = Object.create(null);
 window.__spectrPosts = [];
 window.__spectrTestHooks = Object.create(null);
 window.__spectrCanvasLabels = [];
+window.__spectrResizeAccepted = true;
+window.__spectrResizeReplyDelay = 0;
 const spectrOriginalFillText = CanvasRenderingContext2D.prototype.fillText;
 CanvasRenderingContext2D.prototype.fillText = function(text, ...args) {
   window.__spectrCanvasLabels.push(String(text));
@@ -73,6 +77,17 @@ if (!spectrJsOnly) window.pulp = {
         min_hz: payload.min_hz, max_hz: payload.max_hz,
       };
       return Promise.resolve({ ok: true, payload: { ok: true } });
+    }
+    if (type === 'editor_resize_request') {
+      const response = { ok: true, payload: {
+        ok: true, accepted: true, width: payload.width, height: payload.height,
+        sequence: payload.sequence,
+      } };
+      response.payload.accepted = window.__spectrResizeAccepted;
+      return window.__spectrResizeReplyDelay > 0
+        ? new Promise(resolve => setTimeout(
+            () => resolve(response), window.__spectrResizeReplyDelay))
+        : Promise.resolve(response);
     }
     const revision = Number(payload && payload.revision) || 0;
     if (type === 'capture_snapshot') {
@@ -178,6 +193,93 @@ const spectrClick = async target => {
   }));
   await spectrFrames(2);
 };
+const spectrDispatchPointer = (target, type, x, y, pointerId = 91) => {
+  target.dispatchEvent(new PointerEvent(type, {
+    bubbles: true, cancelable: true, pointerId, pointerType: 'mouse',
+    isPrimary: true, button: type === 'pointermove' ? -1 : 0,
+    buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y,
+  }));
+};
+const spectrTestResizeGrip = async () => {
+  const grip = await spectrWaitFor(() => document.getElementById('spectr-resize-grip'),
+    'proportional resize grip');
+  const rect = grip.getBoundingClientRect();
+  const x = rect.left + rect.width * 0.5;
+  const y = rect.top + rect.height * 0.5;
+  const hit = document.elementFromPoint(x, y);
+  if (!hit || (hit !== grip && !grip.contains(hit)))
+    throw new Error('scaled elementFromPoint missed resize grip');
+
+  const before = window.__spectrPosts.length;
+  const atMinimum = innerWidth <= 792;
+  const dx = atMinimum ? -132 : 132;
+  const dy = atMinimum ? -86 : 86;
+  spectrDispatchPointer(grip, 'pointerdown', x, y);
+  spectrDispatchPointer(grip, 'pointermove', x + dx, y + dy);
+  spectrDispatchPointer(grip, 'pointerup', x + dx, y + dy);
+  const request = await spectrWaitFor(() => window.__spectrPosts.slice(before)
+    .find(message => message.type === 'editor_resize_request'),
+  'native proportional resize request');
+  const expectedWidth = atMinimum ? 792 : Math.min(2640, innerWidth + 132);
+  const expectedHeight = Math.round(expectedWidth * 860 / 1320);
+  if (request.payload.width !== expectedWidth
+      || request.payload.height !== expectedHeight)
+    throw new Error('resize request was not clamped fixed-aspect: '
+      + JSON.stringify(request.payload));
+  if (window.getSelection().toString() !== '')
+    throw new Error('resize grip selected text');
+  if (!Number.isInteger(request.payload.sequence) || request.payload.sequence < 1)
+    throw new Error('resize request was not sequenced');
+
+  const textInput = document.createElement('input');
+  textInput.type = 'text';
+  textInput.value = 'selectable pattern name';
+  document.body.appendChild(textInput);
+  if (getComputedStyle(textInput).userSelect === 'none')
+    throw new Error('resize selection guard leaked into text input');
+  textInput.focus();
+  textInput.setSelectionRange(0, 10);
+  if (textInput.selectionStart !== 0 || textInput.selectionEnd !== 10)
+    throw new Error('text input selection was disabled');
+  textInput.remove();
+
+  window.__spectrResizeReplyDelay = 80;
+  const burstBefore = window.__spectrPosts.length;
+  spectrDispatchPointer(grip, 'pointerdown', x, y, 92);
+  spectrDispatchPointer(grip, 'pointermove', x + 20, y + 13, 92);
+  await spectrFrames(2);
+  spectrDispatchPointer(grip, 'pointermove', x + 60, y + 39, 92);
+  spectrDispatchPointer(grip, 'pointermove', x + 90, y + 59, 92);
+  spectrDispatchPointer(grip, 'pointerup', x + 90, y + 59, 92);
+  const burst = await spectrWaitFor(() => {
+    const posts = window.__spectrPosts.slice(burstBefore)
+      .filter(message => message.type === 'editor_resize_request');
+    return posts.length >= 2 && posts;
+  }, 'coalesced resize burst');
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const allBurst = window.__spectrPosts.slice(burstBefore)
+    .filter(message => message.type === 'editor_resize_request');
+  if (allBurst.length !== 2)
+    throw new Error('resize burst was not latest-only coalesced: ' + allBurst.length);
+  if (burst[1].payload.sequence !== burst[0].payload.sequence + 1)
+    throw new Error('coalesced resize sequence was not monotonic');
+  window.__spectrResizeReplyDelay = 0;
+
+  window.__spectrResizeAccepted = false;
+  const refusalBefore = window.__spectrPosts.length;
+  spectrDispatchPointer(grip, 'pointerdown', x, y, 93);
+  spectrDispatchPointer(grip, 'pointermove', x + 32, y + 21, 93);
+  spectrDispatchPointer(grip, 'pointerup', x + 32, y + 21, 93);
+  await spectrWaitFor(() => window.__spectrPosts.length > refusalBefore,
+    'refused resize request');
+  const refusal = await spectrWaitFor(() => {
+    const status = document.getElementById('spectr-resize-status');
+    return status && status.style.display !== 'none' && status;
+  }, 'visible resize refusal');
+  if (!/REFUSED/.test(refusal.textContent))
+    throw new Error('resize refusal message was not explicit');
+  window.__spectrResizeAccepted = true;
+};
 const spectrButton = label => Array.from(document.querySelectorAll('button'))
   .find(candidate => candidate.textContent.trim() === label);
 
@@ -196,6 +298,7 @@ window.spectrStartOracle = () => {
       const step = value => { result.dataset.step = value; };
       const reopened = new URL(location.href).searchParams.has('reopened');
       const jsOnly = new URL(location.href).searchParams.has('js-only');
+      const resizeOnly = new URL(location.href).searchParams.has('resize-only');
       step(reopened ? 'reopened-start' : 'initial-start');
       const bodyRect = document.body.getBoundingClientRect();
       if (document.body.clientWidth !== 1320 || document.body.clientHeight !== 860)
@@ -204,6 +307,12 @@ window.spectrStartOracle = () => {
         throw new Error('editor did not scale proportionally');
       if (bodyRect.width > innerWidth + 0.5 || bodyRect.height > innerHeight + 0.5)
         throw new Error('editor overflowed its host viewport');
+      if (resizeOnly) {
+        await spectrTestResizeGrip();
+        result.textContent = 'SPECTR_BROWSER_RESIZE_OK';
+        document.documentElement.dataset.spectrOracle = 'RESIZE_OK';
+        return;
+      }
       if (jsOnly) {
         const canvas = Array.from(document.querySelectorAll('canvas'))
           .find(candidate => getComputedStyle(candidate).pointerEvents !== 'none');
@@ -211,16 +320,25 @@ window.spectrStartOracle = () => {
         if (!target) throw new Error('JS-only interactive canvas missing');
         const rect = target.getBoundingClientRect();
         const x = rect.left + rect.width * 0.4, y = rect.top + rect.height * 0.45;
-        const buttons = Array.from(document.querySelectorAll('button'));
-        const snapA = buttons.find(button => button.textContent.trim() === 'A');
-        const snapB = buttons.find(button => button.textContent.trim() === 'B');
+        const captureButton = slot => document
+          .querySelector('[data-spectr-snapshot-capture="' + slot + '"] button');
+        const snapA = captureButton('A');
+        const snapB = captureButton('B');
         if (!snapA || !snapB) throw new Error('JS-only snapshot controls missing');
-        await spectrClick(snapA);
+        await spectrWaitFor(() => window.__spectrTestHooks.renderState?.()
+          .bankReady, 'JS-only bank readiness');
+        snapA.click();
+        await spectrFrames(2);
+        await spectrWaitFor(() => window.__spectrTestHooks.renderState?.()
+          .snapshots.A, 'JS-only snapshot A capture');
         await spectrTap(target, x, y);
-        await spectrClick(snapB);
+        captureButton('B').click();
+        await spectrFrames(2);
+        await spectrWaitFor(() => window.__spectrTestHooks.renderState?.()
+          .snapshots.B, 'JS-only snapshot B capture');
         const morph = await spectrWaitFor(() => document.querySelector('[data-spectr-morph]'),
           'JS-only morph slider');
-        if (morph.disabled) throw new Error('JS-only morph remained disabled');
+        await spectrWaitFor(() => !morph.disabled, 'JS-only morph enablement');
         morph.value = '0.5';
         morph.dispatchEvent(new Event('input', { bubbles: true }));
         await spectrWaitFor(() => window.__spectrTestHooks.renderState?.()
@@ -238,6 +356,8 @@ window.spectrStartOracle = () => {
           && state.mutedGainDb.every(Number.isFinite) && state;
       }, reopened ? 'finite reopened hydration' : 'finite initial hydration');
       step(reopened ? 'reopened-hydrated' : 'initial-hydrated');
+      await spectrTestResizeGrip();
+      step('resize-grip-complete');
       await spectrFrames(5);
       if (!spectrBundleClean()) throw new Error('bundle error after hydrated RAFs');
       if (!window.__spectrCanvasLabels.includes('dBFS')
@@ -609,14 +729,39 @@ setTimeout(window.spectrStartOracle, 0);
     || run.stderr;
 
   const initialUrl = `file://${instrumented}`;
+  if (jsOnlyMode) {
+    const run = runChrome(initialUrl + '?js-only=1',
+      path.join(temp, 'profile-js-only'), 792, 516);
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /data-spectr-oracle="JS_ONLY_OK"/, failure(run));
+    process.exitCode = 0;
+  } else if (resizeOnlyMode) {
+    for (const [label, width, height] of [
+      ['minimum', 792, 516],
+      ['preferred', 990, 645],
+      ['authored', 1320, 860],
+      ['enlarged', 1980, 1290],
+    ]) {
+      const run = runChrome(initialUrl + '?resize-only=1',
+        path.join(temp, 'profile-resize-' + label), width, height);
+      assert.equal(run.status, 0, run.stderr);
+      assert.match(run.stdout, /data-spectr-oracle="RESIZE_OK"/, failure(run));
+    }
+    process.exitCode = 0;
+  } else {
   const initial = runChrome(initialUrl, path.join(temp, 'profile-initial'), 1320, 860);
   assert.equal(initial.status, 0, initial.stderr);
   assert.match(initial.stdout, /data-spectr-oracle="INITIAL_OK"/, failure(initial));
 
   const scaled = runChrome(initialUrl + '?scaled=1',
-    path.join(temp, 'profile-scaled'), 800, 521);
+    path.join(temp, 'profile-scaled'), 792, 516);
   assert.equal(scaled.status, 0, scaled.stderr);
   assert.match(scaled.stdout, /data-spectr-oracle="INITIAL_OK"/, failure(scaled));
+
+  const preferred = runChrome(initialUrl + '?preferred=1',
+    path.join(temp, 'profile-preferred'), 990, 645);
+  assert.equal(preferred.status, 0, preferred.stderr);
+  assert.match(preferred.stdout, /data-spectr-oracle="INITIAL_OK"/, failure(preferred));
 
   const enlarged = runChrome(initialUrl + '?enlarged=1',
     path.join(temp, 'profile-enlarged'), 1980, 1290);
@@ -624,16 +769,17 @@ setTimeout(window.spectrStartOracle, 0);
   assert.match(enlarged.stdout, /data-spectr-oracle="INITIAL_OK"/, failure(enlarged));
 
   const jsOnly = runChrome(initialUrl + '?js-only=1',
-    path.join(temp, 'profile-js-only'), 800, 521);
+    path.join(temp, 'profile-js-only'), 792, 516);
   assert.equal(jsOnly.status, 0, jsOnly.stderr);
   assert.match(jsOnly.stdout, /data-spectr-oracle="JS_ONLY_OK"/, failure(jsOnly));
 
   // A second browser document models closing and reopening the native editor:
   // all JS state is gone, and only the finite native hydration may restore it.
   const reopened = runChrome(initialUrl + '?reopened=1',
-    path.join(temp, 'profile-reopened'), 800, 521);
+    path.join(temp, 'profile-reopened'), 792, 516);
   assert.equal(reopened.status, 0, reopened.stderr);
   assert.match(reopened.stdout, /data-spectr-oracle="OK"/, failure(reopened));
+  }
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

@@ -108,7 +108,11 @@ TEST_CASE("Built Spectr Standalone renders headlessly without opening audio") {
   REQUIRE_FALSE(png.empty());
   const auto content = pulp::view::analyze_screenshot_content(png);
   INFO("content error=" << content.error);
-  CHECK(content.width == 2640);
-  CHECK(content.height == 1720);
+  // macOS headless capture uses the active Retina 2x backing scale. Derive
+  // the expected artifact size from the product's preferred logical viewport
+  // so reducing first-open size does not leave this oracle pinned to the old
+  // authored-design default.
+  CHECK(content.width == SPECTR_HOST_PREFERRED_W * 2);
+  CHECK(content.height == SPECTR_HOST_PREFERRED_H * 2);
   CHECK(content.passes_content_floor());
 }

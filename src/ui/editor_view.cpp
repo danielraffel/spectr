@@ -13,9 +13,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 #include <vector>
+
+#if !defined(PULP_HAS_PRESERVE_DESIGN_VIEWPORT_RESIZE) \
+    || !PULP_HAS_PRESERVE_DESIGN_VIEWPORT_RESIZE
+#error "Spectr requires Pulp preserve-design-viewport editor resizing"
+#endif
 
 namespace spectr {
 
@@ -235,6 +241,29 @@ EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
                 return pulp::view::EditorBridge::err_response(
                     "spectral resolution unavailable");
             return pulp::view::EditorBridge::ok_response();
+        });
+    bridge_.add_handler("editor_resize_request",
+        [this](const choc::value::ValueView& payload) {
+            const auto width = pulp::view::EditorBridge::get_float(
+                payload, "width", std::numeric_limits<float>::quiet_NaN());
+            const auto height = pulp::view::EditorBridge::get_float(
+                payload, "height", std::numeric_limits<float>::quiet_NaN());
+            const auto sequence = pulp::view::EditorBridge::get_uint(
+                payload, "sequence", 0);
+            const auto requested = normalize_editor_resize(width, height);
+            if (!requested || sequence == 0)
+                return pulp::view::EditorBridge::err_response(
+                    "editor resize dimensions and sequence must be valid");
+
+            const auto accepted =
+                plugin_.request_editor_resize_preserving_design_viewport(
+                requested->width, requested->height);
+            auto response = choc::value::createObject("SpectrEditorResizeResponse");
+            response.addMember("accepted", accepted);
+            response.addMember("width", static_cast<std::int64_t>(requested->width));
+            response.addMember("height", static_cast<std::int64_t>(requested->height));
+            response.addMember("sequence", static_cast<std::int64_t>(sequence));
+            return pulp::view::EditorBridge::ok_response(response);
         });
 }
 

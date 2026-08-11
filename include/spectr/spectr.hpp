@@ -21,6 +21,7 @@
 #include "spectr/pattern.hpp"
 #include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
+#include "spectr/editor_resize.hpp"
 
 #ifndef SPECTR_FFT_SIZE
 #define SPECTR_FFT_SIZE 8192
@@ -33,8 +34,10 @@ namespace spectr {
 
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
-inline constexpr int kSpectralLatency =
-    kSpectralFftSize + kSpectralAnalysisHop;
+// SpectralFrameEngine publishes each sample as soon as its final covering
+// frame is synthesized. The exact causal delay is therefore N - 1; the hop
+// controls update cadence/CPU, not an additional withheld output interval.
+inline constexpr int kSpectralLatency = kSpectralFftSize - 1;
 // VisualizationBridge publishes at most 4097 bins. Derive analyzer geometry
 // from the product profile, but cap Maximum's 16384 processing FFT at 8192 so
 // its upper spectrum is never silently truncated.
@@ -88,6 +91,7 @@ public:
     void prepare(const pulp::format::PrepareContext& ctx) override;
     void release() override;
     int latency_samples() const override;
+    pulp::format::ViewSize view_size() const override;
 
     void process(
         pulp::audio::BufferView<float>& output,

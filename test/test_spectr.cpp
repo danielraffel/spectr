@@ -425,7 +425,8 @@ TEST_CASE("Spectr clears delayed audio history at a host reset boundary") {
     constexpr std::size_t block_size = 512;
 
     const auto peak_after_impulse = [](bool request_reset,
-                                       bool request_transport_jump) {
+                                       bool request_transport_jump,
+                                       bool ordinary_loop_wrap) {
         pulp::format::HeadlessHost host(spectr::create_spectr);
         host.state().set_value(spectr::kMix, 0.0f);
         host.state().set_value(spectr::kOutputTrim, 0.0f);
@@ -458,6 +459,7 @@ TEST_CASE("Spectr clears delayed audio history at a host reset boundary") {
             pulp::format::ProcessContext context;
             context.reset_requested = request_reset && block == 0;
             context.transport_jump = request_transport_jump && block == 0;
+            context.ordinary_loop_wrap = ordinary_loop_wrap && block == 0;
             host.process(output, input, context);
             if (block == 0) {
                 std::fill(in.channel(0).begin(), in.channel(0).end(), 0.0f);
@@ -473,21 +475,74 @@ TEST_CASE("Spectr clears delayed audio history at a host reset boundary") {
     };
 
     // The control proves the stale impulse would cross the product's latency
-    // boundary. Both reset signals must erase it while preserving the smaller
-    // first impulse from the new timeline.
-    CHECK(peak_after_impulse(false, false) > 0.99f);
-    CHECK(peak_after_impulse(true, false) == Approx(0.25f));
-    CHECK(peak_after_impulse(false, true) == Approx(0.25f));
+    // boundary. Explicit reset and an unexpected seek erase it while preserving
+    // the smaller new-timeline impulse; an ordinary cycle wrap keeps history.
+    CHECK(peak_after_impulse(false, false, false) > 0.99f);
+    CHECK(peak_after_impulse(true, false, false) == Approx(0.25f));
+    CHECK(peak_after_impulse(false, true, false) == Approx(0.25f));
+    CHECK(peak_after_impulse(false, true, true) > 0.99f);
+}
+
+TEST_CASE("Spectr ordinary loop wrap preserves exact continuous source time") {
+    constexpr std::size_t block_size = 512;
+    constexpr std::size_t num_blocks = 64;
+    constexpr std::size_t wrap_block = 40;
+
+    pulp::format::HeadlessHost uninterrupted(spectr::create_spectr);
+    pulp::format::HeadlessHost looped(spectr::create_spectr);
+    uninterrupted.state().set_value(spectr::kMix, 100.0f);
+    looped.state().set_value(spectr::kMix, 100.0f);
+    uninterrupted.prepare(48000, static_cast<int>(block_size));
+    looped.prepare(48000, static_cast<int>(block_size));
+
+    pulp::audio::Buffer<float> in(2, block_size);
+    pulp::audio::Buffer<float> reference_out(2, block_size);
+    pulp::audio::Buffer<float> looped_out(2, block_size);
+    const float* input_channels[] = {
+        in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> input(
+        input_channels, 2, block_size);
+    auto reference_view = reference_out.view();
+    auto looped_view = looped_out.view();
+
+    // A polarity/amplitude-coded stream makes a dropped, duplicated, reordered,
+    // or newly zero-filled region observable rather than relying on one tone.
+    std::uint32_t state = 0x9e3779b9u;
+    for (std::size_t block = 0; block < num_blocks; ++block) {
+        for (std::size_t sample = 0; sample < block_size; ++sample) {
+            state = state * 1664525u + 1013904223u;
+            const float value = (static_cast<float>((state >> 8) & 0xffffu)
+                                 / 32768.0f - 1.0f) * 0.2f;
+            in.channel(0)[sample] = value;
+            in.channel(1)[sample] = -0.625f * value;
+        }
+
+        uninterrupted.process(reference_view, input);
+        pulp::format::ProcessContext context;
+        if (block == wrap_block) {
+            context.transport_jump = true;
+            context.ordinary_loop_wrap = true;
+        }
+        looped.process(looped_view, input, context);
+
+        for (std::size_t channel = 0; channel < 2; ++channel) {
+            for (std::size_t sample = 0; sample < block_size; ++sample) {
+                CHECK(looped_out.channel(channel)[sample]
+                      == Approx(reference_out.channel(channel)[sample])
+                             .margin(1.0e-7f));
+            }
+        }
+    }
 }
 
 TEST_CASE("Spectr imported editor has bounded proportional sizing") {
     spectr::Spectr plugin;
     const auto size = plugin.view_size();
 
-    CHECK(size.preferred_width == 1320);
-    CHECK(size.preferred_height == 860);
-    CHECK(size.min_width == 800);
-    CHECK(size.min_height == 521);
+    CHECK(size.preferred_width == 990);
+    CHECK(size.preferred_height == 645);
+    CHECK(size.min_width == 792);
+    CHECK(size.min_height == 516);
     CHECK(size.max_width == 2640);
     CHECK(size.max_height == 1720);
     CHECK(size.aspect_ratio == Approx(1320.0 / 860.0));

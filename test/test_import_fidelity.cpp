@@ -23,7 +23,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "e8fe828e105cd64c069e82cf1b959f7d70df7f0864ec423ca5268e53fa4ea8e8";
+    "d99c9861e9928cc8737d612c7f1068112f55e6a476cdc20b529a2a2a65a1ddd9";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -145,6 +145,19 @@ constexpr std::array kGestureMarkers{
     ContractMarker{"shift-selection", "      pointerRef.current = { mode: 'shift-select', band };"},
 };
 
+constexpr std::array kResizeMarkers{
+    ContractMarker{"fixed-design-canvas", "width: ${editorGeometry.designWidth}px !important;", 2},
+    ContractMarker{"resize-geometry", "const editorGeometry = Object.freeze({"},
+    ContractMarker{"resize-grip-hit-target", "resizeGrip.id = 'spectr-resize-grip';"},
+    ContractMarker{"resize-grip-pointer-capture", "resizeGrip.setPointerCapture(event.pointerId);"},
+    ContractMarker{"preserving-native-request", "window.pulp.postMessage('editor_resize_request', payload,"},
+    ContractMarker{"resize-selection-guard", "user-select:none', '-webkit-user-select:none'"},
+    ContractMarker{"resize-text-selection", "input:not([type]), input[type=\"text\"], input[type=\"search\"], textarea,"},
+    ContractMarker{"resize-sequence", "const sequence = ++resizeSequence;"},
+    ContractMarker{"resize-coalescing", "queuedResize = request;"},
+    ContractMarker{"resize-refusal", "showResizeFailure('HOST REFUSED RESIZE')"},
+};
+
 std::vector<std::string> structure_errors(std::string_view source) {
     std::vector<std::string> errors;
     if (count_occurrences(source, "<canvas") != 3) errors.emplace_back("canvas-count");
@@ -165,6 +178,14 @@ std::vector<std::string> patch_errors(std::string_view source) {
 std::vector<std::string> gesture_errors(std::string_view source) {
     std::vector<std::string> errors;
     for (const auto& marker : kGestureMarkers)
+        if (count_occurrences(source, marker.text) != marker.expected_count)
+            errors.emplace_back(marker.label);
+    return errors;
+}
+
+std::vector<std::string> resize_errors(std::string_view source) {
+    std::vector<std::string> errors;
+    for (const auto& marker : kResizeMarkers)
         if (count_occurrences(source, marker.text) != marker.expected_count)
             errors.emplace_back(marker.label);
     return errors;
@@ -283,6 +304,7 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(structure_errors(bundle->template_html).empty());
     CHECK(patch_errors(bundle->template_html).empty());
     CHECK(gesture_errors(bundle->template_html).empty());
+    CHECK(resize_errors(adapter).empty());
 }
 
 TEST_CASE("import fidelity oracle detects payload mutations") {
@@ -336,5 +358,16 @@ TEST_CASE("import gesture contract detects drag and Shift-selection mutations") 
         auto source = bundle->template_html;
         erase_once(source, marker.text);
         CHECK(contains(gesture_errors(source), marker.label));
+    }
+}
+
+TEST_CASE("import adapter contract detects proportional resize mutations") {
+    const auto source = outer_adapter(embedded_html());
+    REQUIRE_FALSE(source.empty());
+    for (const auto& marker : kResizeMarkers) {
+        INFO(marker.label);
+        auto mutated = source;
+        erase_once(mutated, marker.text);
+        CHECK(contains(resize_errors(mutated), marker.label));
     }
 }

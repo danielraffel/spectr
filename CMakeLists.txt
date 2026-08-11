@@ -4,15 +4,28 @@ project(Spectr VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# One authoritative imported-design viewport contract. The minimum preserves
-# the 1320:860 aspect ratio (rounded to whole logical pixels); the maximum is
-# exactly 2x the authored canvas.
-set(SPECTR_DESIGN_WIDTH 1320)
-set(SPECTR_DESIGN_HEIGHT 860)
-set(SPECTR_DESIGN_MIN_WIDTH 800)
-set(SPECTR_DESIGN_MIN_HEIGHT 521)
-set(SPECTR_DESIGN_MAX_WIDTH 2640)
-set(SPECTR_DESIGN_MAX_HEIGHT 1720)
+# The imported browser document owns its 1320 x 860 authored coordinate system.
+# Pulp's fixed design viewport opens smaller and the browser scales that canvas
+# into it. Keeping these concepts distinct makes AUv3's compile-time initial
+# size agree with every adapter's runtime preferred size.
+set(SPECTR_AUTHORED_WIDTH 1320)
+set(SPECTR_AUTHORED_HEIGHT 860)
+set(SPECTR_HOST_PREFERRED_WIDTH 990)
+set(SPECTR_HOST_PREFERRED_HEIGHT 645)
+set(SPECTR_HOST_MIN_WIDTH 792)
+set(SPECTR_HOST_MIN_HEIGHT 516)
+set(SPECTR_HOST_MAX_WIDTH 2640)
+set(SPECTR_HOST_MAX_HEIGHT 1720)
+foreach(_spectr_size_kind PREFERRED MIN MAX)
+    math(EXPR _spectr_width_cross
+         "${SPECTR_HOST_${_spectr_size_kind}_WIDTH} * ${SPECTR_AUTHORED_HEIGHT}")
+    math(EXPR _spectr_height_cross
+         "${SPECTR_HOST_${_spectr_size_kind}_HEIGHT} * ${SPECTR_AUTHORED_WIDTH}")
+    if(NOT _spectr_width_cross EQUAL _spectr_height_cross)
+        message(FATAL_ERROR
+            "Spectr ${_spectr_size_kind} editor size must preserve the authored aspect")
+    endif()
+endforeach()
 
 # Build-time spectral profile seam. Balanced (8192/2048) is the product
 # default. Live (1024/256) and Maximum (16384/4096) are alternate build
@@ -37,7 +50,7 @@ if(SPECTR_ANALYSIS_HOP LESS 1 OR
         "SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}; expected 1..${_spectr_max_analysis_hop}")
 endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
-     "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
+     "${SPECTR_FFT_SIZE} - 1")
 
 find_package(Pulp 0.801.0 REQUIRED)
 
@@ -62,6 +75,7 @@ set(SPECTR_HEADERS
     include/spectr/band_state.hpp
     include/spectr/viewport.hpp
     include/spectr/edit_modes.hpp
+    include/spectr/editor_resize.hpp
     include/spectr/editor_bridge.hpp
     include/spectr/preset_format.hpp
     include/spectr/snapshot.hpp
@@ -95,6 +109,7 @@ add_executable(Spectr-test
     test/test_analyzer_bridge.cpp
     test/test_m4_state.cpp
     test/test_edit_engine.cpp
+    test/test_editor_resize.cpp
     test/test_pattern.cpp
     test/test_editor_bridge.cpp
     test/test_import_fidelity.cpp
@@ -111,12 +126,20 @@ target_include_directories(Spectr-test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_compile_definitions(Spectr-test PRIVATE
-    PULP_PLUGIN_DESIGN_W=${SPECTR_DESIGN_WIDTH}
-    PULP_PLUGIN_DESIGN_H=${SPECTR_DESIGN_HEIGHT}
-    PULP_PLUGIN_DESIGN_MIN_W=${SPECTR_DESIGN_MIN_WIDTH}
-    PULP_PLUGIN_DESIGN_MIN_H=${SPECTR_DESIGN_MIN_HEIGHT}
-    PULP_PLUGIN_DESIGN_MAX_W=${SPECTR_DESIGN_MAX_WIDTH}
-    PULP_PLUGIN_DESIGN_MAX_H=${SPECTR_DESIGN_MAX_HEIGHT}
+    SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+    SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+    SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+    SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+    SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+    SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+    SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+    SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+    PULP_PLUGIN_DESIGN_W=${SPECTR_HOST_PREFERRED_WIDTH}
+    PULP_PLUGIN_DESIGN_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+    PULP_PLUGIN_DESIGN_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+    PULP_PLUGIN_DESIGN_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+    PULP_PLUGIN_DESIGN_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+    PULP_PLUGIN_DESIGN_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
     SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
     SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
 )
@@ -137,6 +160,13 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             ${SPECTR_CHROME_EXECUTABLE})
     set_tests_properties(Spectr-browser-analyzer PROPERTIES TIMEOUT 150)
+    add_test(NAME Spectr-browser-resize
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            ${SPECTR_CHROME_EXECUTABLE}
+            --resize-only)
+    set_tests_properties(Spectr-browser-resize PROPERTIES TIMEOUT 90)
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────
@@ -152,12 +182,12 @@ pulp_add_plugin(Spectr
     MANUFACTURER_CODE "Pulp"
     AAX_PRODUCT_CODE "SpeP"
     AAX_NATIVE_CODE "Spec"
-    DESIGN_WIDTH      ${SPECTR_DESIGN_WIDTH}
-    DESIGN_HEIGHT     ${SPECTR_DESIGN_HEIGHT}
-    DESIGN_MIN_WIDTH  ${SPECTR_DESIGN_MIN_WIDTH}
-    DESIGN_MIN_HEIGHT ${SPECTR_DESIGN_MIN_HEIGHT}
-    DESIGN_MAX_WIDTH  ${SPECTR_DESIGN_MAX_WIDTH}
-    DESIGN_MAX_HEIGHT ${SPECTR_DESIGN_MAX_HEIGHT}
+    DESIGN_WIDTH      ${SPECTR_HOST_PREFERRED_WIDTH}
+    DESIGN_HEIGHT     ${SPECTR_HOST_PREFERRED_HEIGHT}
+    DESIGN_MIN_WIDTH  ${SPECTR_HOST_MIN_WIDTH}
+    DESIGN_MIN_HEIGHT ${SPECTR_HOST_MIN_HEIGHT}
+    DESIGN_MAX_WIDTH  ${SPECTR_HOST_MAX_WIDTH}
+    DESIGN_MAX_HEIGHT ${SPECTR_HOST_MAX_HEIGHT}
 )
 
 # Attach our sources + include path to each Spectr plugin target that pulp
@@ -172,6 +202,14 @@ foreach(fmt VST3 AU CLAP Standalone)
         )
         target_link_libraries(${tgt} PRIVATE spectr_editor_assets)
         target_compile_definitions(${tgt} PRIVATE
+            SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+            SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+            SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+            SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+            SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+            SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+            SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+            SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
             SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
             SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         )
@@ -191,6 +229,14 @@ if((TARGET Spectr_CLAP OR TARGET Spectr_VST3) AND TARGET Pulp::host)
     target_include_directories(Spectr-artifact-test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_compile_definitions(Spectr-artifact-test PRIVATE
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
         SPECTR_EXPECTED_LATENCY=${SPECTR_PROCESSING_LATENCY}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
@@ -218,7 +264,9 @@ if(TARGET Spectr_Standalone AND TARGET Pulp::platform AND TARGET Pulp::view)
     target_link_libraries(Spectr-standalone-artifact-test PRIVATE
         Pulp::platform Pulp::view Catch2::Catch2WithMain)
     target_compile_definitions(Spectr-standalone-artifact-test PRIVATE
-        SPECTR_TEST_STANDALONE_PATH="$<TARGET_FILE:Spectr_Standalone>")
+        SPECTR_TEST_STANDALONE_PATH="$<TARGET_FILE:Spectr_Standalone>"
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT})
     add_dependencies(Spectr-standalone-artifact-test Spectr_Standalone)
     catch_discover_tests(Spectr-standalone-artifact-test)
 endif()

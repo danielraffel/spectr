@@ -179,6 +179,18 @@ std::unique_ptr<pulp::view::View> Spectr::create_view() {
     return std::make_unique<EditorView>(*this);
 }
 
+pulp::format::ViewSize Spectr::view_size() const {
+    return {
+        kEditorPreferredWidth,
+        kEditorPreferredHeight,
+        kEditorMinimumWidth,
+        kEditorMinimumHeight,
+        kEditorMaximumWidth,
+        kEditorMaximumHeight,
+        kEditorAspectRatio,
+    };
+}
+
 void Spectr::on_view_opened(pulp::view::View& view) {
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->attach_if_needed();
@@ -241,10 +253,10 @@ void Spectr::process(
     const float out_trim_db= state().get_value(kOutputTrim);
     const float target_output_gain = std::pow(10.0f, out_trim_db * 0.05f);
 
-    // A host seek/reset is a hard DSP-history boundary. Clear both the shared
-    // WOLA/dry-delay state and any product-level gain ramp before rendering the
-    // first block at the new timeline position.
-    if (ctx.should_reset_dsp_state()) {
+    // An explicit reset or unexpected seek is a hard DSP-history boundary.
+    // Preserve the continuously hot WOLA/dry-delay history across an ordinary
+    // host cycle wrap so looping does not emit a fresh startup gap.
+    if (ctx.should_reset_stream_history()) {
         if (processor_prepared_)
             mask_processor_.reset();
         output_gain_.set_immediate(target_output_gain);
