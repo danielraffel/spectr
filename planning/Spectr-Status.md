@@ -90,6 +90,24 @@ Pulp dependencies.
 
 ## Release 2 product direction
 
+Before expanding the product surface, Spectr has a renderer-modernization
+phase. The completed WebView editor will first be landed as an immutable,
+reproducible reference build. A separate worktree/branch will then implement a
+parallel native editor through Pulp's DesignIR/View tree and Skia/Dawn. The two
+lanes will share DSP, state, analyzer, preset, undo, automation, modulation, and
+interaction contracts and will be compared using the same fixtures and host
+matrix. Native becomes the default only after visual, behavioral,
+accessibility, persistence, host, and performance gates pass; the WebView
+baseline remains available for rollback and regression comparison. The
+executable phases and cutover criteria live in
+`planning/Spectr-Cutover-Gap-Tracker.md`.
+
+The native migration is also a Pulp importer qualification project: gaps found
+through Spectr should become reusable native-import/runtime capabilities rather
+than accumulating as a Spectr-specific rewrite. The destination is a browser-
+free editor rendered through Skia/Dawn, while preserving the source and
+behavioral evidence supplied by the Claude Design prototype.
+
 Release 2 remains effect-centric: add stereo, multi-layer freeze, sampling,
 and polyphonic MIDI-keyboard playback to the same effect. An instrument
 variant is a contingency only if the supported host matrix proves that a

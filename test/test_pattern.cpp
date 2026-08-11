@@ -127,6 +127,19 @@ TEST_CASE("M7 library: auto-named patterns use PATTERN NN format") {
     CHECK(b.name == "PATTERN 02");
 }
 
+TEST_CASE("M7 library: auto-name skips names restored from persistence") {
+    PatternLibrary lib;
+    const std::string json = R"({
+      "format":"spectr.patterns","version":1,"patterns":[
+        {"id":"user:restored","name":"PATTERN 01","gain_db":[0],"muted":[false]}
+      ]
+    })";
+    REQUIRE(lib.import_json(json) == 1);
+    BandField field;
+    const auto saved = lib.save_current(field);
+    CHECK(saved.name == "PATTERN 02");
+}
+
 TEST_CASE("M7 library: rename / duplicate / remove / update_from_current") {
     PatternLibrary lib;
     BandField f;
@@ -248,4 +261,37 @@ TEST_CASE("M7 library: import name-clash suffixes with (N)") {
     }
     CHECK(saw_twin);
     CHECK(saw_twin2);
+}
+
+TEST_CASE("M7 library: import clamps finite legacy gains before float narrowing") {
+    PatternLibrary lib;
+    const std::string json = R"({
+      "format":"spectr.patterns","version":1,"patterns":[
+        {"id":"user:legacy","name":"LEGACY","gain_db":[-36,1e100],"muted":[false,false]}
+      ]
+    })";
+    REQUIRE(lib.import_json(json) == 1);
+    REQUIRE(lib.user().size() == 1);
+    CHECK(lib.user().front().gain_db[0] == Approx(spectr::kBandGainMinDb));
+    CHECK(lib.user().front().gain_db[1] == Approx(spectr::kBandGainMaxDb));
+    CHECK(std::isfinite(lib.user().front().gain_db[1]));
+
+    BandField field;
+    lib.user().front().apply_to(field);
+    CHECK(std::isfinite(field.bands[0].gain_db));
+    CHECK(std::isfinite(field.bands[1].gain_db));
+}
+
+TEST_CASE("M7 library: import rejects non-finite gains without publishing a pattern") {
+    spectr::PatternLibrary lib;
+    const auto imported = lib.import_json(R"({
+      "version":1,
+      "patterns":[
+        {"id":"user:overflow","name":"OVERFLOW","gain_db":[1e999],"muted":[false]},
+        {"id":"user:string","name":"STRING","gain_db":["Infinity"],"muted":[false]}
+      ]
+    })");
+
+    CHECK(imported == 0);
+    CHECK(lib.user().empty());
 }

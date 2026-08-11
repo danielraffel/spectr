@@ -57,6 +57,13 @@
 //                             effect: flip snapshots().active
 //  type="load_pattern"      — payload: {id: "<pattern_id>"}
 //                             effect: apply pattern to field
+//  type="save_current_pattern"
+//                           — payload: {name?: "<pattern name>"}
+//                             effect: persist current field as a user pattern
+//  type="rename_pattern"    — payload: {id, name}
+//                             effect: rename a persisted user pattern
+//  type="delete_pattern"    — payload: {id}
+//                             effect: delete a persisted user pattern
 //  type="save_preset"       — payload: {name, author, description,
 //                                       created_at, modified_at}
 //                             effect: return preset_json in response extras

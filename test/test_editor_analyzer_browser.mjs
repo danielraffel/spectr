@@ -17,13 +17,36 @@ window.__spectrHandlers = Object.create(null);
 window.__spectrPosts = [];
 window.__spectrTestHooks = Object.create(null);
 window.__spectrCanvasLabels = [];
-window.__spectrResizeAccepted = true;
-window.__spectrResizeReplyDelay = 0;
+window.__spectrRuntimeErrors = [];
+window.confirm = () => true;
+window.addEventListener('error', event => {
+  window.__spectrRuntimeErrors.push(String(event.message || event.error || event.type));
+});
+window.addEventListener('unhandledrejection', event => {
+  window.__spectrRuntimeErrors.push(String(event.reason || 'unhandled rejection'));
+});
 const spectrOriginalFillText = CanvasRenderingContext2D.prototype.fillText;
 CanvasRenderingContext2D.prototype.fillText = function(text, ...args) {
   window.__spectrCanvasLabels.push(String(text));
   return spectrOriginalFillText.call(this, text, ...args);
 };
+// WebKit rejects non-finite Canvas coordinates. Chromium is more permissive
+// for several methods, so make the executable oracle enforce the stricter
+// cross-engine contract.
+for (const method of [
+  'arc', 'bezierCurveTo', 'clearRect', 'createLinearGradient',
+  'createRadialGradient', 'ellipse', 'fillRect', 'lineTo', 'moveTo',
+  'quadraticCurveTo', 'rect', 'rotate', 'scale', 'setTransform',
+  'strokeRect', 'transform', 'translate',
+]) {
+  const original = CanvasRenderingContext2D.prototype[method];
+  if (typeof original !== 'function') continue;
+  CanvasRenderingContext2D.prototype[method] = function(...args) {
+    if (args.some(value => typeof value === 'number' && !Number.isFinite(value)))
+      throw new TypeError('non-finite Canvas argument in ' + method);
+    return original.apply(this, args);
+  };
+}
 // Headless --dump-dom may throttle RAF after first paint. A timer-backed RAF
 // keeps the production animation/effect callbacks ordered and deterministic.
 window.requestAnimationFrame = callback => setTimeout(
@@ -52,6 +75,10 @@ window.__spectrHydration = {
   max_hz: 10000,
   snapshots: spectrReopened ? spectrReopenedSnapshots() : spectrEmptySnapshots(),
 };
+window.__spectrPatternEnvelope = {
+  format: 'spectr.patterns', version: 1, default_id: 'factory:flat', patterns: [],
+};
+window.__spectrHydration.patterns_json = JSON.stringify(window.__spectrPatternEnvelope);
 const spectrClone = value => JSON.parse(JSON.stringify(value));
 window.__spectrNativeState = spectrClone(window.__spectrHydration);
 const spectrReply = revision => ({ ok: true, payload: {
@@ -78,16 +105,34 @@ if (!spectrJsOnly) window.pulp = {
       };
       return Promise.resolve({ ok: true, payload: { ok: true } });
     }
-    if (type === 'editor_resize_request') {
-      const response = { ok: true, payload: {
-        ok: true, accepted: true, width: payload.width, height: payload.height,
-        sequence: payload.sequence,
-      } };
-      response.payload.accepted = window.__spectrResizeAccepted;
-      return window.__spectrResizeReplyDelay > 0
-        ? new Promise(resolve => setTimeout(
-            () => resolve(response), window.__spectrResizeReplyDelay))
-        : Promise.resolve(response);
+    if (type === 'save_current_pattern') {
+      const now = new Date().toISOString();
+      window.__spectrPatternEnvelope.patterns.push({
+        id: 'user:test-' + window.__spectrPatternEnvelope.patterns.length,
+        name: payload.name, source: 'user', created_at: now, updated_at: now,
+        gain_db: window.__spectrNativeState.gain_db.slice(),
+        muted: window.__spectrNativeState.muted.slice(),
+      });
+      window.__spectrNativeState.patterns_json = JSON.stringify(window.__spectrPatternEnvelope);
+      return Promise.resolve({ ok: true, payload: {
+        ok: true, patterns_json: window.__spectrNativeState.patterns_json,
+      } });
+    }
+    if (type === 'rename_pattern') {
+      const pattern = window.__spectrPatternEnvelope.patterns.find(item => item.id === payload.id);
+      if (pattern) pattern.name = payload.name;
+      window.__spectrNativeState.patterns_json = JSON.stringify(window.__spectrPatternEnvelope);
+      return Promise.resolve({ ok: true, payload: {
+        ok: true, patterns_json: window.__spectrNativeState.patterns_json,
+      } });
+    }
+    if (type === 'delete_pattern') {
+      window.__spectrPatternEnvelope.patterns = window.__spectrPatternEnvelope.patterns
+        .filter(item => item.id !== payload.id);
+      window.__spectrNativeState.patterns_json = JSON.stringify(window.__spectrPatternEnvelope);
+      return Promise.resolve({ ok: true, payload: {
+        ok: true, patterns_json: window.__spectrNativeState.patterns_json,
+      } });
     }
     const revision = Number(payload && payload.revision) || 0;
     if (type === 'capture_snapshot') {
@@ -148,10 +193,11 @@ const spectrFiniteState = state => !!state
   && state.gain_db.every(Number.isFinite)
   && Array.isArray(state.muted) && state.muted.length === state.n_visible
   && state.muted.every(value => typeof value === 'boolean');
-const spectrBundleClean = () => !document.getElementById('__bundler_err');
+const spectrBundleClean = () => !document.getElementById('__bundler_err')
+  && window.__spectrRuntimeErrors.length === 0;
 const spectrPublishAfter = async (count, label) => spectrWaitFor(
   () => spectrStatePosts().length > count && spectrLatestState(), label);
-const spectrPointer = (target, type, x, y, pointerId = 7) => {
+const spectrPointer = (target, type, x, y, pointerId = 7, modifiers = {}) => {
   const hit = document.elementFromPoint(x, y);
   if (!hit || (hit !== target && !target.contains(hit)))
     throw new Error('pointer coordinate did not hit intended control');
@@ -165,6 +211,7 @@ const spectrPointer = (target, type, x, y, pointerId = 7) => {
     buttons: type === 'pointerup' ? 0 : 1,
     clientX: x,
     clientY: y,
+    shiftKey: !!modifiers.shiftKey,
   }));
 };
 const spectrTap = async (target, x, y, jitter = 0) => {
@@ -193,43 +240,25 @@ const spectrClick = async target => {
   }));
   await spectrFrames(2);
 };
-const spectrDispatchPointer = (target, type, x, y, pointerId = 91) => {
-  target.dispatchEvent(new PointerEvent(type, {
-    bubbles: true, cancelable: true, pointerId, pointerType: 'mouse',
-    isPrimary: true, button: type === 'pointermove' ? -1 : 0,
-    buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y,
-  }));
-};
-const spectrTestResizeGrip = async () => {
-  const grip = await spectrWaitFor(() => document.getElementById('spectr-resize-grip'),
-    'proportional resize grip');
-  const rect = grip.getBoundingClientRect();
-  const x = rect.left + rect.width * 0.5;
-  const y = rect.top + rect.height * 0.5;
-  const hit = document.elementFromPoint(x, y);
-  if (!hit || (hit !== grip && !grip.contains(hit)))
-    throw new Error('scaled elementFromPoint missed resize grip');
-
-  const before = window.__spectrPosts.length;
-  const atMinimum = innerWidth <= 792;
-  const dx = atMinimum ? -132 : 132;
-  const dy = atMinimum ? -86 : 86;
-  spectrDispatchPointer(grip, 'pointerdown', x, y);
-  spectrDispatchPointer(grip, 'pointermove', x + dx, y + dy);
-  spectrDispatchPointer(grip, 'pointerup', x + dx, y + dy);
-  const request = await spectrWaitFor(() => window.__spectrPosts.slice(before)
-    .find(message => message.type === 'editor_resize_request'),
-  'native proportional resize request');
-  const expectedWidth = atMinimum ? 792 : Math.min(2640, innerWidth + 132);
-  const expectedHeight = Math.round(expectedWidth * 860 / 1320);
-  if (request.payload.width !== expectedWidth
-      || request.payload.height !== expectedHeight)
-    throw new Error('resize request was not clamped fixed-aspect: '
-      + JSON.stringify(request.payload));
-  if (window.getSelection().toString() !== '')
-    throw new Error('resize grip selected text');
-  if (!Number.isInteger(request.payload.sequence) || request.payload.sequence < 1)
-    throw new Error('resize request was not sequenced');
+const spectrTestNativeResizeSurface = async () => {
+  if (document.getElementById('spectr-resize-grip')
+      || document.getElementById('spectr-resize-status'))
+    throw new Error('product-owned resize affordance is still present');
+  if (window.__spectrPosts.some(message => message.type === 'editor_resize_request'))
+    throw new Error('product attempted to resize its native host');
+  const bodyRect = document.body.getBoundingClientRect();
+  const expectedScale = Math.min(innerWidth / 1320, innerHeight / 860);
+  const expectedWidth = 1320 * expectedScale;
+  const expectedHeight = 860 * expectedScale;
+  if (Math.abs(bodyRect.width - expectedWidth) > 0.75
+      || Math.abs(bodyRect.height - expectedHeight) > 0.75)
+    throw new Error('fixed design did not fit native host viewport');
+  if (Math.abs(bodyRect.left + bodyRect.width * 0.5 - innerWidth * 0.5) > 0.75
+      || Math.abs(bodyRect.top + bodyRect.height * 0.5 - innerHeight * 0.5) > 0.75)
+    throw new Error('fixed design was not centered in native host viewport');
+  const root = document.getElementById('root');
+  if (!root || root.clientWidth !== 1320 || root.clientHeight !== 860)
+    throw new Error('native host resize reflowed the authored design');
 
   const textInput = document.createElement('input');
   textInput.type = 'text';
@@ -242,43 +271,6 @@ const spectrTestResizeGrip = async () => {
   if (textInput.selectionStart !== 0 || textInput.selectionEnd !== 10)
     throw new Error('text input selection was disabled');
   textInput.remove();
-
-  window.__spectrResizeReplyDelay = 80;
-  const burstBefore = window.__spectrPosts.length;
-  spectrDispatchPointer(grip, 'pointerdown', x, y, 92);
-  spectrDispatchPointer(grip, 'pointermove', x + 20, y + 13, 92);
-  await spectrFrames(2);
-  spectrDispatchPointer(grip, 'pointermove', x + 60, y + 39, 92);
-  spectrDispatchPointer(grip, 'pointermove', x + 90, y + 59, 92);
-  spectrDispatchPointer(grip, 'pointerup', x + 90, y + 59, 92);
-  const burst = await spectrWaitFor(() => {
-    const posts = window.__spectrPosts.slice(burstBefore)
-      .filter(message => message.type === 'editor_resize_request');
-    return posts.length >= 2 && posts;
-  }, 'coalesced resize burst');
-  await new Promise(resolve => setTimeout(resolve, 100));
-  const allBurst = window.__spectrPosts.slice(burstBefore)
-    .filter(message => message.type === 'editor_resize_request');
-  if (allBurst.length !== 2)
-    throw new Error('resize burst was not latest-only coalesced: ' + allBurst.length);
-  if (burst[1].payload.sequence !== burst[0].payload.sequence + 1)
-    throw new Error('coalesced resize sequence was not monotonic');
-  window.__spectrResizeReplyDelay = 0;
-
-  window.__spectrResizeAccepted = false;
-  const refusalBefore = window.__spectrPosts.length;
-  spectrDispatchPointer(grip, 'pointerdown', x, y, 93);
-  spectrDispatchPointer(grip, 'pointermove', x + 32, y + 21, 93);
-  spectrDispatchPointer(grip, 'pointerup', x + 32, y + 21, 93);
-  await spectrWaitFor(() => window.__spectrPosts.length > refusalBefore,
-    'refused resize request');
-  const refusal = await spectrWaitFor(() => {
-    const status = document.getElementById('spectr-resize-status');
-    return status && status.style.display !== 'none' && status;
-  }, 'visible resize refusal');
-  if (!/REFUSED/.test(refusal.textContent))
-    throw new Error('resize refusal message was not explicit');
-  window.__spectrResizeAccepted = true;
 };
 const spectrButton = label => Array.from(document.querySelectorAll('button'))
   .find(candidate => candidate.textContent.trim() === label);
@@ -308,7 +300,7 @@ window.spectrStartOracle = () => {
       if (bodyRect.width > innerWidth + 0.5 || bodyRect.height > innerHeight + 0.5)
         throw new Error('editor overflowed its host viewport');
       if (resizeOnly) {
-        await spectrTestResizeGrip();
+        await spectrTestNativeResizeSurface();
         result.textContent = 'SPECTR_BROWSER_RESIZE_OK';
         document.documentElement.dataset.spectrOracle = 'RESIZE_OK';
         return;
@@ -356,8 +348,8 @@ window.spectrStartOracle = () => {
           && state.mutedGainDb.every(Number.isFinite) && state;
       }, reopened ? 'finite reopened hydration' : 'finite initial hydration');
       step(reopened ? 'reopened-hydrated' : 'initial-hydrated');
-      await spectrTestResizeGrip();
-      step('resize-grip-complete');
+      await spectrTestNativeResizeSurface();
+      step('native-resize-surface-complete');
       await spectrFrames(5);
       if (!spectrBundleClean()) throw new Error('bundle error after hydrated RAFs');
       if (!window.__spectrCanvasLabels.includes('dBFS')
@@ -377,6 +369,9 @@ window.spectrStartOracle = () => {
         morph.dispatchEvent(new Event('input', { bubbles: true }));
         morph.value = '0.75';
         morph.dispatchEvent(new Event('input', { bubbles: true }));
+        // Host resize can synchronously repaint before the next RAF repairs
+        // transition state. This was the real WebKit reopen failure mode.
+        window.dispatchEvent(new Event('resize'));
         await spectrWaitFor(() => Math.abs(
           window.__spectrTestHooks.renderState?.().targetGains[0] + 0.25) < 1e-6,
         'latest native morph projection');
@@ -390,6 +385,8 @@ window.spectrStartOracle = () => {
           message.type === 'morph' && message.payload.t === 0.5), 'reopened morph command');
         await spectrWaitFor(() => window.__spectrTestHooks.renderState?.().targetGains[7] === -Infinity,
           'reopened authoritative midpoint mute');
+        if (!spectrBundleClean())
+          throw new Error('bundle error after reopened morph and synchronous paint');
         window.dispatchEvent(new Event('pagehide'));
         if (window.SpectrAnalyzer.debugSnapshot() !== null
             || window.__spectrHandlers.analyzer_frame.size !== 0)
@@ -444,9 +441,32 @@ window.spectrStartOracle = () => {
       const x = rect.left + rect.width * 0.43;
       const y = rect.top + rect.height * 0.46;
 
+      const brushX = band => rect.left
+        + (56 + (band + 0.5) * (target.clientWidth - 112) / 32)
+          * rect.width / target.clientWidth;
       let count = spectrStatePosts().length;
+      spectrPointer(target, 'pointerdown', brushX(2), y, 77, { shiftKey: true });
+      spectrPointer(target, 'pointermove', brushX(6), y, 77, { shiftKey: true });
+      spectrPointer(target, 'pointermove', brushX(4), y, 77, { shiftKey: true });
+      spectrPointer(target, 'pointerup', brushX(4), y, 77, { shiftKey: true });
+      let state = await spectrPublishAfter(count, 'shift unmute brush publication');
+      for (let band = 2; band <= 6; ++band) {
+        if (state.muted[band]) throw new Error('shift brush skipped band ' + band);
+        if (state.gain_db[band] !== window.__spectrHydration.gain_db[band])
+          throw new Error('shift brush lost authored gain at band ' + band);
+      }
+      count = spectrStatePosts().length;
+      spectrPointer(target, 'pointerdown', brushX(2), y, 78, { shiftKey: true });
+      spectrPointer(target, 'pointermove', brushX(6), y, 78, { shiftKey: true });
+      spectrPointer(target, 'pointerup', brushX(6), y, 78, { shiftKey: true });
+      state = await spectrPublishAfter(count, 'shift mute brush publication');
+      for (let band = 2; band <= 6; ++band)
+        if (!state.muted[band]) throw new Error('shift mute brush skipped band ' + band);
+      step('shift-brush-complete');
+
+      count = spectrStatePosts().length;
       await spectrTap(target, x, y, 2);
-      let state = await spectrPublishAfter(count, '2px jitter tap publication');
+      state = await spectrPublishAfter(count, '2px jitter tap publication');
       const restoredBand = state.muted.findIndex(value => !value);
       if (restoredBand < 0) throw new Error('2px jitter tap did not restore a band');
       if (state.gain_db[restoredBand]
@@ -596,10 +616,82 @@ window.spectrStartOracle = () => {
         'settings outside dismissal');
       step('settings-complete');
 
-      const engineBadge = document.querySelector('[aria-label="Spectral mask engine"]');
-      if (!engineBadge || engineBadge.tagName === 'BUTTON'
-          || engineBadge.textContent.trim() !== 'SPECTRAL')
-        throw new Error('engine identity is not a static truthful badge');
+      const visualization = document.querySelector('[data-spectr-visualization]');
+      const visualizationButtons = visualization
+        ? Array.from(visualization.querySelectorAll('button')) : [];
+      if (visualizationButtons.map(button => button.textContent.trim()).join(',')
+          !== 'BARS,RESPONSE,BOTH')
+        throw new Error('truthful mask visualization choices are missing');
+      for (const label of ['BARS', 'RESPONSE', 'BOTH']) {
+        await spectrClick(visualizationButtons.find(button =>
+          button.textContent.trim() === label));
+        if (!spectrBundleClean())
+          throw new Error('mask visualization failed: ' + label);
+      }
+
+      const presetsButton = spectrButton('PRESETS ▾');
+      if (!presetsButton) throw new Error('preset dropdown trigger missing');
+      await spectrClick(presetsButton);
+      const saveCurrent = await spectrWaitFor(() =>
+        document.querySelector('[data-spectr-save-current]'), 'save current menu item');
+      await spectrClick(saveCurrent);
+      let saveName = await spectrWaitFor(() =>
+        document.querySelector('[data-spectr-save-name]'), 'save naming dialog');
+      if (saveName.value !== 'PATTERN 01')
+        throw new Error('incremented default preset name was wrong: ' + saveName.value);
+      saveName.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape', bubbles: true, cancelable: true,
+      }));
+      await spectrWaitFor(() => !document.querySelector('[data-spectr-save-dialog]'),
+        'save dialog Escape');
+      await spectrClick(presetsButton);
+      await spectrClick(await spectrWaitFor(() =>
+        document.querySelector('[data-spectr-save-current]'), 'save current reopen'));
+      saveName = await spectrWaitFor(() =>
+        document.querySelector('[data-spectr-save-name]'), 'save naming dialog reopen');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+        .set.call(saveName, 'MY MASK');
+      saveName.dispatchEvent(new Event('input', { bubbles: true }));
+      await spectrFrames(2);
+      saveName.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', bubbles: true, cancelable: true,
+      }));
+      await spectrWaitFor(() => window.__spectrPosts.some(message =>
+        message.type === 'save_current_pattern' && message.payload.name === 'MY MASK'),
+      'native save current command');
+      await spectrWaitFor(() => !document.querySelector('[data-spectr-save-dialog]'),
+        'save dialog close');
+
+      await spectrClick(presetsButton);
+      await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…'),
+        'preset manager menu item'));
+      const manager = await spectrWaitFor(() => document.querySelector(
+        '[aria-label="Pattern manager"]'), 'pattern manager');
+      await spectrClick(await spectrWaitFor(() => manager.querySelector(
+        '[data-spectr-pattern-id="user:test-0"]'), 'saved pattern row'));
+      await spectrClick(await spectrWaitFor(() => Array.from(manager.querySelectorAll('button'))
+        .find(button => button.textContent.trim() === '✎'), 'rename affordance'));
+      const renameInput = await spectrWaitFor(() => Array.from(manager.querySelectorAll('input'))
+        .find(input => input.value === 'MY MASK'), 'rename input');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+        .set.call(renameInput, 'RENAMED MASK');
+      renameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      await spectrFrames(2);
+      renameInput.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', bubbles: true, cancelable: true,
+      }));
+      await spectrWaitFor(() => window.__spectrPosts.some(message =>
+        message.type === 'rename_pattern' && message.payload.name === 'RENAMED MASK'),
+      'native rename command');
+      await spectrClick(await spectrWaitFor(() => Array.from(manager.querySelectorAll('button'))
+        .find(button => button.textContent.trim() === 'DELETE'), 'delete affordance'));
+      await spectrWaitFor(() => window.__spectrPosts.some(message =>
+        message.type === 'delete_pattern'), 'native delete command');
+      await spectrWaitFor(() => !manager.querySelector('[data-spectr-pattern-id^="user:"]'),
+        'deleted pattern removal');
+      await spectrClick(Array.from(manager.querySelectorAll('button'))
+        .find(button => button.textContent.trim() === '×'));
+      step('preset-crud-complete');
 
       step('minimap-start');
       const beforeMinimap = spectrLatestState();

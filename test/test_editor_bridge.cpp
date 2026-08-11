@@ -2,8 +2,7 @@
 //
 // Unit tests for the message router. Every message type is exercised
 // through the JSON envelope (i.e. the same path the WebView will
-// drive). The `Spectr` plugin and an optional `PatternLibrary` are
-// wired up to observe side effects.
+// drive). The `Spectr` plugin is wired up to observe side effects.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
@@ -32,7 +31,6 @@
 using Catch::Approx;
 using spectr::BandField;
 using spectr::EditorDragState;
-using spectr::PatternLibrary;
 using spectr::SnapshotBank;
 using spectr::Spectr;
 using spectr::register_spectr_editor_handlers;
@@ -42,14 +40,16 @@ namespace {
 struct Rig {
     pulp::state::StateStore       store;
     std::unique_ptr<Spectr>       proc;
-    PatternLibrary                library;
     EditorDragState               drag;
     pulp::view::EditorBridge      bridge;
 
     Rig() : proc(std::make_unique<Spectr>()) {
         proc->set_state_store(&store);
         proc->define_parameters(store);
-        register_spectr_editor_handlers(bridge, *proc, library, drag);
+        // Production registers the processor-owned library so pattern edits
+        // participate in the plugin state blob. Keep the bridge oracle wired
+        // to that same authority instead of a detached test-only library.
+        register_spectr_editor_handlers(bridge, *proc, proc->patterns(), drag);
     }
 
     std::string dispatch(std::string_view envelope_json) {
@@ -717,6 +717,35 @@ TEST_CASE("M9.5 bridge load_pattern: applies by id, errors on unknown") {
     CHECK(response_has_error(empty, "pattern id missing"));
 }
 
+TEST_CASE("native pattern CRUD persists through the plugin state blob") {
+    Rig r;
+    r.proc->field().bands[4] = {-7.5f, true};
+
+    auto response = r.dispatch(R"({"type":"save_current_pattern","payload":{}})");
+    REQUIRE(response_ok(response));
+    CHECK(response.find("PATTERN 01") != response.npos);
+    REQUIRE(r.proc->patterns().user().size() == 1);
+    const auto id = r.proc->patterns().user().front().id;
+
+    response = r.dispatch(std::string{"{\"type\":\"rename_pattern\",\"payload\":{\"id\":\""}
+        + id + R"(","name":"MY MASK"}})");
+    REQUIRE(response_ok(response));
+    CHECK(r.proc->patterns().user().front().name == "MY MASK");
+
+    const auto bytes = r.proc->serialize_plugin_state();
+    Rig reopened;
+    REQUIRE(reopened.proc->deserialize_plugin_state(bytes));
+    REQUIRE(reopened.proc->patterns().user().size() == 1);
+    CHECK(reopened.proc->patterns().user().front().name == "MY MASK");
+    CHECK(reopened.proc->patterns().user().front().gain_db[4] == Approx(-7.5f));
+    CHECK(reopened.proc->patterns().user().front().muted[4]);
+
+    response = reopened.dispatch(std::string{"{\"type\":\"delete_pattern\",\"payload\":{\"id\":\""}
+        + id + R"("}})");
+    REQUIRE(response_ok(response));
+    CHECK(reopened.proc->patterns().user().empty());
+}
+
 // Obsolete under pulp#711: the EditorBridge framework takes the
 // library by reference at handler registration, so there's no
 // "nullptr library" code path to exercise. Unknown-pattern-id is
@@ -835,4 +864,43 @@ TEST_CASE("M9.5 plugin_state: empty-span reset clears user patterns") {
     CHECK(r.proc->patterns().user().empty());
     // Factories still present (reconstructed by PatternLibrary()).
     CHECK_FALSE(r.proc->patterns().factory().empty());
+}
+
+TEST_CASE("plugin state migrates finite legacy gains without float overflow") {
+    Rig r;
+
+    const std::string live_overflow =
+        R"({"version":1,"band_gain":[-36,1e100]})";
+    const std::vector<std::uint8_t> live_bytes(
+        live_overflow.begin(), live_overflow.end());
+    REQUIRE(r.proc->deserialize_plugin_state(live_bytes));
+    CHECK(r.proc->field().bands[0].gain_db == Approx(spectr::kBandGainMinDb));
+    CHECK(r.proc->field().bands[1].gain_db == Approx(spectr::kBandGainMaxDb));
+    CHECK(std::isfinite(r.proc->field().bands[1].gain_db));
+
+    const std::string snapshot_overflow =
+        R"({"version":2,"band_gain":[0],"snapshots":{"a":{"populated":true,"band_gain":[1e100]}}})";
+    const std::vector<std::uint8_t> snapshot_bytes(
+        snapshot_overflow.begin(), snapshot_overflow.end());
+    REQUIRE(r.proc->deserialize_plugin_state(snapshot_bytes));
+    CHECK(r.proc->snapshots().a.field.bands[0].gain_db
+          == Approx(spectr::kBandGainMaxDb));
+    CHECK(std::isfinite(r.proc->snapshots().a.field.bands[0].gain_db));
+}
+
+TEST_CASE("plugin state rejects non-finite gain encodings failure-atomically") {
+    for (const std::string json : {
+        R"({"version":2,"band_gain":[1e999]})",
+        R"({"version":2,"band_gain":["Infinity"]})",
+        R"({"version":2,"band_gain":[0],"snapshots":{"a":{"populated":true,"band_gain":[1e999]}}})",
+    }) {
+        Rig r;
+        r.proc->field().bands[0].gain_db = 7.0f;
+        r.proc->capture_snapshot(SnapshotBank::Slot::B);
+        const auto before_b = r.proc->snapshots().b.field.bands[0].gain_db;
+        const std::vector<std::uint8_t> bytes(json.begin(), json.end());
+        CHECK_FALSE(r.proc->deserialize_plugin_state(bytes));
+        CHECK(r.proc->field().bands[0].gain_db == Approx(7.0f));
+        CHECK(r.proc->snapshots().b.field.bands[0].gain_db == Approx(before_b));
+    }
 }

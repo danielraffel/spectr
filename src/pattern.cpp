@@ -217,7 +217,12 @@ Pattern PatternLibrary::save_current(const BandField& current, std::string name)
     p.id     = make_uuid();
     if (name.empty()) {
         char buf[32];
-        std::snprintf(buf, sizeof(buf), "PATTERN %02d", next_user_number_++);
+        for (;;) {
+            std::snprintf(buf, sizeof(buf), "PATTERN %02d", next_user_number_++);
+            const auto collision = std::any_of(user_.begin(), user_.end(),
+                [&](const Pattern& existing) { return existing.name == buf; });
+            if (!collision) break;
+        }
         p.name = buf;
     } else {
         p.name = std::move(name);
@@ -345,10 +350,20 @@ std::size_t PatternLibrary::import_json(std::string_view json) {
     if (!root.hasObjectMember("version")) return 0;
     const auto v = root["version"];
     int version = 0;
-    if      (v.isInt32())   version = v.getInt32();
-    else if (v.isInt64())   version = static_cast<int>(v.getInt64());
-    else if (v.isFloat64()) version = static_cast<int>(v.getFloat64());
-    else return 0;
+    if (v.isInt32()) version = v.getInt32();
+    else if (v.isInt64()) {
+        const auto number = v.getInt64();
+        if (number < std::numeric_limits<int>::min()
+            || number > std::numeric_limits<int>::max()) return 0;
+        version = static_cast<int>(number);
+    } else if (v.isFloat64()) {
+        const auto number = v.getFloat64();
+        if (!std::isfinite(number)
+            || number < static_cast<double>(std::numeric_limits<int>::min())
+            || number > static_cast<double>(std::numeric_limits<int>::max()))
+            return 0;
+        version = static_cast<int>(number);
+    } else return 0;
     if (version != kPatternSchemaVersion) return 0;
 
     // Collect existing names (factory + user) for collision suffixing.
@@ -382,13 +397,20 @@ std::size_t PatternLibrary::import_json(std::string_view json) {
             if (po.hasObjectMember("gain_db") && po["gain_db"].isArray()) {
                 auto g = po["gain_db"];
                 const auto n = std::min<std::uint32_t>(g.size(), kMaxBands);
+                bool valid_gains = true;
                 for (std::uint32_t j = 0; j < n; ++j) {
                     const auto e = g[j];
-                    float v = 0.0f;
-                    if      (e.isFloat64()) v = static_cast<float>(e.getFloat64());
-                    else if (e.isInt64())   v = static_cast<float>(e.getInt64());
-                    p.gain_db[j] = v;
+                    double value = 0.0;
+                    if      (e.isFloat64()) value = e.getFloat64();
+                    else if (e.isInt64())   value = static_cast<double>(e.getInt64());
+                    else if (e.isInt32())   value = static_cast<double>(e.getInt32());
+                    else { valid_gains = false; break; }
+                    if (!std::isfinite(value)) { valid_gains = false; break; }
+                    p.gain_db[j] = static_cast<float>(std::clamp(
+                        value, static_cast<double>(kDbMin),
+                        static_cast<double>(kDbMax)));
                 }
+                if (!valid_gains) continue;
             }
             if (po.hasObjectMember("muted") && po["muted"].isArray()) {
                 auto m = po["muted"];

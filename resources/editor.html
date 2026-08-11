@@ -162,8 +162,9 @@ document.addEventListener('DOMContentLoaded', async function() {
       const current = targetGainsRef.current;
       const muted = current.map(value => isMuted(value));
       const gainDb = current.map((value, i) => isMuted(value)
-        ? (mutedGainDbRef.current[i] ?? 0)
-        : clamp(value, -1, 1) * 24);
+        ? (Number.isFinite(mutedGainDbRef.current[i])
+            ? mutedGainDbRef.current[i] : 0)
+        : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
       try {
         // A later direct edit supersedes any in-flight native capture/recall/
         // morph projection even if that older response arrives afterward.
@@ -345,7 +346,38 @@ document.addEventListener('DOMContentLoaded', async function() {
             ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
           minHz, maxHz, snapshots: { A, B },
           revision: Number(payload.revision) || 0,
+          patternsJson: typeof payload.patterns_json === 'string'
+            ? payload.patterns_json : null,
         };
+      },
+    };
+    window.SpectrNativePatterns = {
+      parse(patternsJson) {
+        try {
+          const envelope = JSON.parse(patternsJson);
+          if (!envelope || envelope.format !== 'spectr.patterns'
+              || !Array.isArray(envelope.patterns)) return null;
+          const patterns = [];
+          for (const pattern of envelope.patterns) {
+            if (!pattern || typeof pattern.id !== 'string'
+                || typeof pattern.name !== 'string'
+                || !Array.isArray(pattern.gain_db)
+                || !Array.isArray(pattern.muted)
+                || pattern.gain_db.length !== pattern.muted.length
+                || !pattern.gain_db.every(Number.isFinite)
+                || !pattern.muted.every(value => typeof value === 'boolean'))
+              return null;
+            patterns.push({
+              id: pattern.id, name: pattern.name, source: 'user', version: 1,
+              createdAt: pattern.created_at || '', updatedAt: pattern.updated_at || '',
+              tags: Array.isArray(pattern.tags) ? pattern.tags.slice() : [],
+              gains: pattern.gain_db.map((db, index) => pattern.muted[index]
+                ? null : Math.max(-1, Math.min(1, db / 24))),
+            });
+          }
+          return { patterns, defaultId: typeof envelope.default_id === 'string'
+            ? envelope.default_id : 'factory:flat' };
+        } catch { return null; }
       },
     };
     if (nativeAnalyzerAvailable) {
@@ -423,7 +455,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     const wasMuted = isMuted(targetGainsRef.current[idx]);
     if (isMuted(value) && !wasMuted)
       mutedGainDbRef.current[idx] = clamp(targetGainsRef.current[idx], -1, 1) * 24;
-    if (wasMuted && !isMuted(value)) unmutePulseRef.current[idx] = 1;
+    if (wasMuted && !isMuted(value)) {
+      // Begin from the 0 dB center even if hydration has not yet completed
+      // the visual collapse to its categorical mute latch.
+      renderGainsRef.current[idx] = 0;
+      unmutePulseRef.current[idx] = 1;
+    }
     targetGainsRef.current[idx] = value;
     setGains(prev => {
       const nxt = prev.slice();
@@ -438,7 +475,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         const wasMuted = isMuted(targetGainsRef.current[k]);
         if (isMuted(v) && !wasMuted)
           mutedGainDbRef.current[k] = clamp(targetGainsRef.current[k], -1, 1) * 24;
-        if (wasMuted && !isMuted(v)) unmutePulseRef.current[k] = 1;
+        if (wasMuted && !isMuted(v)) {
+          renderGainsRef.current[k] = 0;
+          unmutePulseRef.current[k] = 1;
+        }
         nxt[k] = v;
         targetGainsRef.current[k] = v;
       }
@@ -480,6 +520,26 @@ document.addEventListener('DOMContentLoaded', async function() {
           unmutePulseRef.current[i] - dt * 3.5);
       }`,
       'categorical mute render transition');
+    replaceSpectrSource(
+      '    const effectiveGains = rg;',
+      String.raw`    // A categorical mute uses -Infinity in control state, but Canvas APIs
+    // require finite geometry. Synchronous paints (initial hydration, host resize)
+    // can occur before the next animation frame has advanced the transition.
+    const effectiveGains = rg.map(value => Number.isFinite(value)
+      ? clamp(value, -1.02, 1.02) : 0);`,
+      'finite canvas gain geometry');
+    replaceSpectrSource(
+      '    const gv = renderGainsRef.current[band];',
+      String.raw`    const rendered = renderGainsRef.current[band];
+    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;`,
+      'finite hover gain display');
+    replaceSpectrSource(
+      String.raw`    const tx = clamp(x - tw / 2, g.inner.x, g.inner.x + g.inner.w - tw);
+    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);`,
+      String.raw`    // Share the fixed top-center lane with transient status messages.
+    const tx = g.w / 2 - tw / 2;
+    const ty = 60;`,
+      'fixed top-center hover readout');
     replaceSpectrSource(
       '    // --- Layer B: cap emission (signal-gated, narrow, localized) ---',
       String.raw`    // A flat band has no height animation when it becomes audible,
@@ -568,6 +628,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     setNativeHydration(state);
     setSettings(current => ({ ...current, bandCount: state.n }));
     setSnapshotStatus({ A: !!state.snapshots.A, B: !!state.snapshots.B });
+    const library = window.SpectrNativePatterns.parse(state.patternsJson);
+    if (library) {
+      setUserPatterns(library.patterns);
+      setDefaultId(library.defaultId);
+    }
   }, []);
 
   // The native processor owns restored state. Ask for it only after this
@@ -672,7 +737,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         nativeProjectionRef.current = true;
         mutedGainDbRef.current = state.gainDb.slice(0, N);
         targetGainsRef.current = state.gains.slice(0, N);
-        renderGainsRef.current = state.gains.slice(0, N);
+        // Never seed a synchronous WebKit paint with the categorical
+        // -Infinity sentinel. The target array still owns exact mute state.
+        renderGainsRef.current = state.gains.map(value =>
+          Number.isFinite(value) ? clamp(value, -1.02, 1.02) : 0).slice(0, N);
         snapshotsRef.current = state.snapshots;
         setSnapshots(state.snapshots);
         setGains(state.gains.slice(0, N));
@@ -728,19 +796,72 @@ document.addEventListener('DOMContentLoaded', async function() {
           onChange={setDspMode}
           options={[['fft', 'SPECTRAL']]}
         />`,
-      String.raw`        <div aria-label="Spectral mask engine" title="Spectral mask engine · FFT" style={{
-          height: 24, display: 'flex', alignItems: 'center',
-          padding: '0 10px', borderRadius: 3,
-          border: '1px solid rgba(255,255,255,0.1)',
-          background: 'rgba(255,255,255,0.10)',
-          color: '#fff', fontSize: 10, letterSpacing: 1,
-          cursor: 'default', userSelect: 'none',
-        }}>SPECTRAL</div>`,
-      'static engine identity badge');
+      String.raw`        <div data-spectr-visualization aria-label="Mask visualization">
+          <Segmented
+            value={visualizationMode}
+            onChange={setVisualizationMode}
+            options={[["bars", "BARS"], ["response", "RESPONSE"], ["both", "BOTH"]]}
+          />
+        </div>`,
+      'truthful mask visualization selector');
+    replaceSpectrSource(
+      'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, onEditModeChange, nativeHydrated, onNativeState }) {',
+      'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, visualizationMode, onEditModeChange, nativeHydrated, onNativeState }) {',
+      'visualization mode filter prop');
+    replaceSpectrSource(
+      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted, resolution }) {',
+      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted, resolution }) {',
+      'visualization mode chrome prop');
     replaceSpectrSource(
       "const [dspMode, setDspMode] = useAppS('iir');",
-      "const [dspMode, setDspMode] = useAppS('fft');",
+      "const [dspMode, setDspMode] = useAppS('fft');\n  const [visualizationMode, setVisualizationMode] = useAppS('both');",
       'DSP state default');
+    replaceSpectrSource(
+      '<FilterBank settings={settings} sharedState={bankRef} onStatus={fireStatus} dspMode={dspMode} editMode={editMode} analyzerMode={analyzerMode} nativeHydrated={nativeHydrated} onNativeState={acceptNativeState}',
+      '<FilterBank settings={settings} sharedState={bankRef} onStatus={fireStatus} dspMode={dspMode} editMode={editMode} analyzerMode={analyzerMode} visualizationMode={visualizationMode} nativeHydrated={nativeHydrated} onNativeState={acceptNativeState}',
+      'visualization mode filter value');
+    replaceSpectrSource(
+      '        setDspMode={(v) => { setDspMode(v); fireStatus(`DSP → ${v.toUpperCase()}`); }}',
+      '        setDspMode={(v) => { setDspMode(v); fireStatus(`DSP → ${v.toUpperCase()}`); }}\n        visualizationMode={visualizationMode}\n        setVisualizationMode={(v) => { setVisualizationMode(v); fireStatus(`VIEW → ${v.toUpperCase()}`); }}',
+      'visualization mode chrome value');
+    replaceSpectrSource(
+      String.raw`    // --- bands ---
+    drawBands(ctx, g);`,
+      String.raw`    // Both visualizations are projections of the same current mask.
+    if (visualizationMode !== 'response') drawBands(ctx, g);
+    if (visualizationMode !== 'bars') drawMaskResponse(ctx, g);`,
+      'mask visualization render choice');
+    replaceSpectrSource(
+      '  function drawBands(ctx, g) {',
+      String.raw`  function drawMaskResponse(ctx, g) {
+    const tg = targetGainsRef.current;
+    const rg = renderGainsRef.current;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(g.inner.x, g.inner.y, g.inner.w, g.inner.h);
+    ctx.clip();
+    ctx.beginPath();
+    for (let i = 0; i < N; ++i) {
+      const rendered = Number.isFinite(rg[i]) ? clamp(rg[i], -1, 1) : 0;
+      const y = isMuted(tg[i]) ? g.zeroY + g.halfH
+        : g.zeroY - rendered * g.halfH;
+      const x = bandCenterX(i, g);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = 'rgba(220,238,255,0.92)';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawBands(ctx, g) {`,
+      'mask-derived response curve');
+    replaceSpectrSource(
+      '  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, hover, marquee, selection, snapshots, morph, dspMode]);',
+      '  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, hover, marquee, selection, snapshots, morph, dspMode, visualizationMode]);',
+      'visualization render dependency');
     replaceSpectrSource(
       '  "bandCount": 64,',
       '  "bandCount": 32,',
@@ -763,8 +884,8 @@ document.addEventListener('DOMContentLoaded', async function() {
       '        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);\n      }\n      if (renderAllRef.current) renderAllRef.current();\n    };\n    resize();',
       'deterministic canvas paint after sizing');
     replaceSpectrSource(
-      '  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, hover, marquee, selection, snapshots, morph, dspMode]);\n\n  function drawGrid(ctx, g) {',
-      '  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, hover, marquee, selection, snapshots, morph, dspMode]);\n  renderAllRef.current = renderAll;\n\n  function drawGrid(ctx, g) {',
+      '  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, hover, marquee, selection, snapshots, morph, dspMode, visualizationMode]);\n\n  function drawGrid(ctx, g) {',
+      '  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, hover, marquee, selection, snapshots, morph, dspMode, visualizationMode]);\n  renderAllRef.current = renderAll;\n\n  function drawGrid(ctx, g) {',
       'latest canvas renderer publication');
 
     // Imported rich popups keep Claude's layout while adopting the same
@@ -1225,9 +1346,178 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
   const factory = window.Spectr.FACTORY_PATTERNS;`,
       'pattern manager Escape');
     replaceSpectrSource(
+      'function PatternManager({ open, onClose, userPatterns, setUserPatterns, defaultId, setDefaultId, N, onApply, currentGains, onStatus }) {',
+      'function PatternManager({ open, onClose, userPatterns, setUserPatterns, defaultId, setDefaultId, N, onApply, currentGains, onStatus, onRequestSave, onRenamePattern, onDeletePattern }) {',
+      'native pattern manager actions');
+    replaceSpectrSource(
+      '  const [managerOpen, setManagerOpen] = useAppS(false);',
+      '  const [managerOpen, setManagerOpen] = useAppS(false);\n  const [saveDialogOpen, setSaveDialogOpen] = useAppS(false);',
+      'save dialog state');
+    replaceSpectrSource(
+      [
+        '  const saveCurrent = () => {',
+        '    const existingNames = new Set([...factory, ...userPatterns].map(p => p.name.toUpperCase()));',
+        '    let n = 1, name;',
+        "    do { name = `PRESET ${String(userPatterns.length + n).padStart(2, '0')}`; n++; } while (existingNames.has(name.toUpperCase()));",
+        '    const p = window.Spectr.makeUserPattern(name, currentGains);',
+        '    setUserPatterns([...userPatterns, p]);',
+        '    setSelectedId(p.id);',
+        '    onStatus && onStatus(`SAVED "${name}"`);',
+        '  };',
+      ].join('\n'),
+      String.raw`  const saveCurrent = () => onRequestSave && onRequestSave();`,
+      'save current opens naming dialog');
+    replaceSpectrSource(
+      String.raw`  const rename = (id, newName) => {
+    setUserPatterns(userPatterns.map(p => p.id === id ? { ...p, name: newName.slice(0, 48) || 'Untitled', updatedAt: new Date().toISOString() } : p));
+  };`,
+      String.raw`  const rename = (id, newName) => {
+    const clean = newName.trim().slice(0, 48);
+    if (clean && onRenamePattern) onRenamePattern(id, clean);
+  };`,
+      'persisted pattern rename');
+    replaceSpectrSource(
+      [
+        '  const del = (id) => {',
+        '    setUserPatterns(userPatterns.filter(p => p.id !== id));',
+        "    if (defaultId === id) { setDefaultId('factory:flat'); }",
+        '    if (selectedId === id) setSelectedId(null);',
+        '    onStatus && onStatus(`DELETED`);',
+        '  };',
+      ].join('\n'),
+      String.raw`  const del = (id) => {
+    if (selectedId === id) setSelectedId(null);
+    if (onDeletePattern) onDeletePattern(id);
+  };`,
+      'persisted pattern delete');
+    replaceSpectrSource(
+      'window.PatternManager = PatternManager;',
+      String.raw`function PatternSaveDialog({ open, defaultName, onSave, onCancel }) {
+  const [draft, setDraft] = usePM(defaultName);
+  usePE(() => { if (open) setDraft(defaultName); }, [open, defaultName]);
+  if (!open) return null;
+  const submit = () => {
+    const name = draft.trim().slice(0, 48);
+    if (name) onSave(name);
+  };
+  return (
+    <div data-spectr-overlay="true" data-spectr-save-dialog role="dialog"
+      aria-modal="true" aria-label="Save current preset" onClick={onCancel}
+      style={{ position:'absolute', inset:0, zIndex:40, background:'rgba(5,7,10,.72)',
+        display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div onClick={event => event.stopPropagation()} style={{ width:360, padding:18,
+        background:'rgba(12,16,22,.99)', border:'1px solid rgba(255,255,255,.16)',
+        borderRadius:5, fontFamily:'var(--mono)', color:'#fff' }}>
+        <div style={{ fontSize:11, letterSpacing:2, marginBottom:12 }}>SAVE CURRENT PRESET</div>
+        <input data-spectr-save-name autoFocus value={draft}
+          onChange={event => setDraft(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === 'Enter') { event.preventDefault(); submit(); }
+            if (event.key === 'Escape') { event.preventDefault(); onCancel(); }
+          }}
+          style={{ width:'100%', padding:'7px 9px', background:'rgba(255,255,255,.05)',
+            border:'1px solid rgba(180,210,255,.4)', color:'#fff',
+            fontFamily:'var(--mono)', outline:'none', borderRadius:3 }} />
+        <div style={{ display:'flex', justifyContent:'flex-end', gap:7, marginTop:14 }}>
+          <MBtn onClick={onCancel}>CANCEL</MBtn>
+          <MBtn primary onClick={submit}>SAVE</MBtn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+window.PatternManager = PatternManager;`,
+      'save naming dialog');
+    replaceSpectrSource(
+      String.raw`  const currentGains = useAppC(() => {
+    const b = bankRef.current;
+    return b ? b.getGains() : new Array(settings.bandCount).fill(0);
+  }, [settings.bandCount]);`,
+      String.raw`  const currentGains = useAppC(() => {
+    const b = bankRef.current;
+    return b ? b.getGains() : new Array(settings.bandCount).fill(0);
+  }, [settings.bandCount]);
+
+  const acceptPatternLibrary = useAppC((body) => {
+    const library = window.SpectrNativePatterns.parse(body && body.patterns_json);
+    if (!library) throw new Error('native pattern library response was malformed');
+    setUserPatterns(library.patterns);
+    setDefaultId(library.defaultId);
+    return body;
+  }, []);
+  const patternCommand = useAppC((type, payload, fallback) => {
+    if (!nativeBridgeAvailable) { fallback && fallback(); return Promise.resolve(null); }
+    return Promise.resolve(window.pulp.postMessage(type, payload, 'spectr-' + type))
+      .then(response => {
+        const body = response && response.payload ? response.payload : response;
+        if (!response || response.ok !== true || !body || body.ok !== true)
+          throw new Error((body && body.error) || 'native pattern command rejected');
+        return acceptPatternLibrary(body);
+      }).catch(error => {
+        fireStatus('PRESET OPERATION FAILED');
+        console.error('[Spectr] native pattern command failed', error);
+        return null;
+      });
+  }, [acceptPatternLibrary, fireStatus, nativeBridgeAvailable]);
+  const nextPatternName = useAppC(() => {
+    const names = new Set(userPatterns.map(pattern => pattern.name.toUpperCase()));
+    let number = 1, candidate = '';
+    do { candidate = 'PATTERN ' + String(number++).padStart(2, '0'); }
+    while (names.has(candidate));
+    return candidate;
+  }, [userPatterns]);
+  const saveCurrentPattern = useAppC((name) => patternCommand(
+    'save_current_pattern', { name }, () => {
+      const pattern = window.Spectr.makeUserPattern(name, currentGains());
+      setUserPatterns(current => [...current, pattern]);
+    }).then(body => {
+      if (body || !nativeBridgeAvailable) {
+        fireStatus('SAVED "' + name + '"');
+        setSaveDialogOpen(false);
+      }
+    }), [currentGains, fireStatus, nativeBridgeAvailable, patternCommand]);
+  const renamePattern = useAppC((id, name) => patternCommand(
+    'rename_pattern', { id, name }, () => setUserPatterns(current => current.map(
+      pattern => pattern.id === id ? { ...pattern, name } : pattern))), [patternCommand]);
+  const deletePattern = useAppC((id) => patternCommand(
+    'delete_pattern', { id }, () => setUserPatterns(current => current.filter(
+      pattern => pattern.id !== id))).then(body => {
+        if (body || !nativeBridgeAvailable) fireStatus('DELETED');
+      }), [fireStatus, nativeBridgeAvailable, patternCommand]);`,
+      'native persisted pattern actions');
+    replaceSpectrSource(
+      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted, resolution }) {',
+      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onSavePattern, onClearAll, onResetAll, allMuted, resolution }) {',
+      'preset dropdown save action prop');
+    replaceSpectrSource(
+      String.raw`              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: 4, paddingTop: 2 }}>
+                <button onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}
+                  style={{ ...menuItem, color: 'hsl(200,85%,70%)' }}>MANAGE…</button>
+              </div>`,
+      String.raw`              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: 4, paddingTop: 2 }}>
+                <button data-spectr-save-current onClick={() => { onSavePattern(); setPatternMenu(false); }}
+                  style={{ ...menuItem, color: 'hsl(200,85%,70%)' }}>SAVE CURRENT…</button>
+                <button onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}
+                  style={{ ...menuItem, color: 'hsl(200,85%,70%)' }}>MANAGE…</button>
+              </div>`,
+      'save current dropdown item');
+    replaceSpectrSource(
+      '        onOpenPatternManager={() => setManagerOpen(true)}',
+      '        onOpenPatternManager={() => setManagerOpen(true)}\n        onSavePattern={() => setSaveDialogOpen(true)}',
+      'open save dialog from dropdown');
+    replaceSpectrSource(
+      '        onStatus={fireStatus}\n      />',
+      '        onStatus={fireStatus}\n        onRequestSave={() => setSaveDialogOpen(true)}\n        onRenamePattern={renamePattern}\n        onDeletePattern={deletePattern}\n      />\n      <PatternSaveDialog open={saveDialogOpen} defaultName={nextPatternName()}\n        onSave={saveCurrentPattern} onCancel={() => setSaveDialogOpen(false)} />',
+      'pattern manager native action props');
+    replaceSpectrSource(
       '<div style={{\n      position: \'absolute\', inset: 0, zIndex: 30,',
       '<div data-spectr-overlay="true" role="dialog" aria-modal="true" aria-label="Pattern manager" style={{\n      position: \'absolute\', inset: 0, zIndex: 30,',
       'pattern manager semantics');
+    replaceSpectrSource(
+      '<div onClick={onClick} onDoubleClick={onDblClick}',
+      '<div data-spectr-pattern-id={pattern.id} onClick={onClick} onDoubleClick={onDblClick}',
+      'pattern manager row selector');
     replaceSpectrSource(
       [
         '  // Global keyboard shortcuts for edit modes + analyzer',
@@ -1304,8 +1594,58 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
       'help shortcut labels');
     replaceSpectrSource(
       '<Hrow k="DBL-CLICK">Toggle mute (−∞)</Hrow>',
-      '<Hrow k="CLICK">Toggle mute (−∞)</Hrow>',
+      '<Hrow k="CLICK">Toggle mute (−∞)</Hrow>\n      <Hrow k="SHIFT+DRAG">Mute/unmute band range</Hrow>',
       'help mute gesture label');
+    replaceSpectrSource(
+      String.raw`    // Double click handled via click count via a small threshold on movement
+    if (shift) {
+      // add to selection / toggle
+      setSelection(prev => {
+        const nxt = new Set(prev);
+        if (nxt.has(band)) nxt.delete(band); else nxt.add(band);
+        return nxt;
+      });
+      pointerRef.current = { mode: 'shift-select', band };
+      return;
+    }`,
+      String.raw`    if (shift) {
+      // The starting state chooses one operation for the whole gesture. A
+      // visited band is committed once, even when the pointer reverses.
+      const shouldMute = !isMuted(curGain);
+      const brush = {
+        mode: 'mute-brush', band, lastBand: band, shouldMute,
+        visited: new Set(),
+      };
+      brush.paint = index => {
+        if (brush.visited.has(index)) return;
+        brush.visited.add(index);
+        const current = targetGainsRef.current[index];
+        const restored = Number.isFinite(mutedGainDbRef.current[index])
+          ? clamp(mutedGainDbRef.current[index] / 24, -1, 1) : 0;
+        commitGain(index, shouldMute ? -Infinity
+          : (isMuted(current) ? restored : current));
+      };
+      brush.paint(band);
+      pointerRef.current = brush;
+      return;
+    }`,
+      'deterministic shift mute brush start');
+    replaceSpectrSource(
+      String.raw`    if (p.mode === 'gain') {
+      const dx = x - p.startX;`,
+      String.raw`    if (p.mode === 'mute-brush') {
+      const currentBand = findBand(x, g);
+      if (currentBand < 0) return;
+      const from = Math.min(p.lastBand, currentBand);
+      const to = Math.max(p.lastBand, currentBand);
+      for (let band = from; band <= to; ++band) p.paint(band);
+      p.lastBand = currentBand;
+      return;
+    }
+
+    if (p.mode === 'gain') {
+      const dx = x - p.startX;`,
+      'deterministic shift mute brush move');
     replaceSpectrSource(
       '    <div ref={ref}\n      style={{',
       '    <div ref={ref} data-spectr-overlay="true" role="menu" aria-label="Band actions"\n      style={{',
@@ -1470,141 +1810,9 @@ input:not([type]), input[type="text"], input[type="search"], textarea,
     window.addEventListener('resize', resizeFixedDesign);
     resizeFixedDesign();
 
-    // Product-owned proportional resize grip. The imported design remains a
-    // 1320 x 860 canvas; this asks the native host to change only its viewport.
-    // Native code validates and clamps every request again before reaching the
-    // format adapter.
-    const resizeGrip = document.createElement('button');
-    resizeGrip.type = 'button';
-    resizeGrip.id = 'spectr-resize-grip';
-    resizeGrip.setAttribute('aria-label', 'Resize Spectr proportionally');
-    resizeGrip.title = 'Drag to resize';
-    resizeGrip.style.cssText = [
-      'position:absolute', 'right:0', 'bottom:0', 'width:28px', 'height:28px',
-      'padding:0', 'border:0', 'background:transparent', 'color:rgba(255,255,255,.5)',
-      'cursor:nwse-resize', 'z-index:10020', 'touch-action:none',
-      'user-select:none', '-webkit-user-select:none', 'outline:none'
-    ].join(';');
-    resizeGrip.innerHTML = '<svg aria-hidden="true" viewBox="0 0 28 28" width="28" height="28">'
-      + '<path d="M26 12L12 26M26 18L18 26M26 24L24 26" fill="none" '
-      + 'stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
-    fixedDesignSurface.appendChild(resizeGrip);
-
-    const resizeStatus = document.createElement('div');
-    resizeStatus.id = 'spectr-resize-status';
-    resizeStatus.setAttribute('role', 'status');
-    resizeStatus.setAttribute('aria-live', 'polite');
-    resizeStatus.style.cssText = [
-      'position:absolute', 'right:32px', 'bottom:6px', 'z-index:10020',
-      'padding:3px 7px', 'border-radius:3px',
-      'background:rgba(70,10,10,.94)', 'border:1px solid rgba(255,120,120,.5)',
-      'color:rgba(255,190,190,.98)', 'font:9px var(--mono,monospace)',
-      'letter-spacing:.8px', 'pointer-events:none', 'display:none'
-    ].join(';');
-    fixedDesignSurface.appendChild(resizeStatus);
-
-    const resizeAspect = editorGeometry.designWidth / editorGeometry.designHeight;
-    const resizeBounds = {
-      minWidth: editorGeometry.minWidth,
-      maxWidth: editorGeometry.maxWidth,
-    };
-    const normalizeResizeWidth = width => {
-      const safe = Number.isFinite(width) ? width : window.innerWidth;
-      const bounded = Math.max(resizeBounds.minWidth,
-        Math.min(resizeBounds.maxWidth, safe));
-      const w = Math.round(bounded);
-      return { width: w, height: Math.round(w / resizeAspect) };
-    };
-    let resizeDrag = null;
-    let pendingResize = null;
-    let resizeFrame = 0;
-    let resizeInFlight = false;
-    let resizeSequence = 0;
-    let queuedResize = null;
-    const showResizeFailure = message => {
-      resizeStatus.textContent = message;
-      resizeStatus.style.display = 'block';
-    };
-    const dispatchResize = request => {
-      if (resizeInFlight) {
-        queuedResize = request;
-        return;
-      }
-      resizeInFlight = true;
-      const sequence = ++resizeSequence;
-      const payload = { ...request, sequence };
-      window.pulp.postMessage('editor_resize_request', payload,
-        'spectr-editor-resize-' + sequence).then(reply => {
-          const response = reply && reply.payload ? reply.payload : reply;
-          if (!response || Number(response.sequence) !== sequence) {
-            showResizeFailure('RESIZE PROTOCOL ERROR');
-          } else if (!response.accepted) {
-            showResizeFailure('HOST REFUSED RESIZE');
-          } else {
-            resizeStatus.style.display = 'none';
-          }
-      }).catch(() => showResizeFailure('RESIZE FAILED')).finally(() => {
-        resizeInFlight = false;
-        if (queuedResize) {
-          const next = queuedResize;
-          queuedResize = null;
-          dispatchResize(next);
-        }
-      });
-    };
-    const postPendingResize = () => {
-      resizeFrame = 0;
-      if (!pendingResize) return;
-      const request = pendingResize;
-      pendingResize = null;
-      if (window.pulp && typeof window.pulp.postMessage === 'function') {
-        dispatchResize(request);
-      } else {
-        showResizeFailure('RESIZE UNAVAILABLE');
-      }
-    };
-    const queueResize = request => {
-      pendingResize = request;
-      if (!resizeFrame) resizeFrame = requestAnimationFrame(postPendingResize);
-    };
-    resizeGrip.addEventListener('pointerdown', event => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      resizeDrag = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        startWidth: window.innerWidth,
-      };
-      resizeGrip.setPointerCapture(event.pointerId);
-    });
-    resizeGrip.addEventListener('pointermove', event => {
-      if (!resizeDrag || event.pointerId !== resizeDrag.pointerId) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const dx = event.clientX - resizeDrag.startX;
-      const dy = event.clientY - resizeDrag.startY;
-      // Orthogonally project the pointer delta onto the fixed-aspect resize
-      // vector (dw, dw/aspect), so diagonal and one-axis drags both feel direct.
-      const dw = (dx + dy / resizeAspect)
-        / (1 + 1 / (resizeAspect * resizeAspect));
-      queueResize(normalizeResizeWidth(resizeDrag.startWidth + dw));
-    });
-    const endResize = event => {
-      if (!resizeDrag || event.pointerId !== resizeDrag.pointerId) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (resizeFrame) {
-        cancelAnimationFrame(resizeFrame);
-        resizeFrame = 0;
-      }
-      postPendingResize();
-      resizeGrip.releasePointerCapture(event.pointerId);
-      resizeDrag = null;
-    };
-    resizeGrip.addEventListener('pointerup', endResize);
-    resizeGrip.addEventListener('pointercancel', endResize);
+    // Resizing belongs to the native host frame. Logic, VST3, CLAP, and the
+    // standalone host resize their outer container; the fixed design surface
+    // above follows that viewport without adding an in-product resize affordance.
     const dead = Array.from(document.scripts);
     for (const old of dead) {
       const s = document.createElement('script');

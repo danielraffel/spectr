@@ -236,6 +236,124 @@ When every row is in the closed table AND the full screenshot A/B
 matches visually, the WebView path can be removed. That's the
 cutover.
 
+## Phased migration plan
+
+The native work must not overwrite or silently evolve the current WebView
+implementation. The two renderers remain independently buildable until the
+native path passes the complete cutover gate.
+
+### Phase W0 — Freeze the WebView reference
+
+Land the completed WebView product as an immutable comparison baseline before
+starting native renderer work.
+
+Required receipt:
+
+- exact Spectr commit and Pulp SDK/source identity;
+- signed AUv2, VST3, CLAP, and Standalone artifact hashes;
+- Release/native/browser/host validation results;
+- representative screenshots at minimum, preferred, authored, and enlarged
+  sizes;
+- scripted receipts for reopen, persistence, band editing, minimap gestures,
+  A/B capture and morph, presets, undo/redo, automation, and modulation; and
+- explicit rollback/install instructions.
+
+This baseline is retained after native cutover as a behavioral oracle. Native
+migration fixes do not land on the reference branch.
+
+### Phase N0 — Ultra architecture and importer audit
+
+Create a separate worktree and branch from the frozen baseline. Use an Ultra
+design pass to classify every editor surface as one of:
+
+1. already materializable through Pulp DesignIR/native import;
+2. requiring a reusable Pulp widget, canvas, input, accessibility, or runtime
+   capability;
+3. requiring a renderer-neutral Spectr controller/binding; or
+4. intentionally product-specific behavior that should remain small, explicit
+   Spectr code.
+
+The output is a source-to-native mapping, a measured gap ledger, and an ordered
+implementation plan. It must not be a one-off visual rewrite proposal.
+
+### Phase N1 — Establish the parallel native shell
+
+- Feed the preserved Claude Design source/assets through the canonical import
+  pipeline and DesignIR.
+- Materialize the static layout, tokens, typography, images, chrome, and
+  ordinary controls through Pulp's native View tree.
+- Render through Skia/Dawn; do not embed a browser or WebView inside the native
+  lane.
+- Connect the native tree to the existing renderer-neutral editor bridge/state
+  contract without changing DSP or session semantics.
+- Add a build-time/runtime developer selector so the WebView and native lanes
+  can be launched against the same state during comparison. The shipping
+  renderer remains explicit; there is no silent runtime fallback.
+
+### Phase N2 — Generalize the missing interactive primitives
+
+Implement missing behavior as reusable Pulp/importer capabilities wherever it
+is not inherently Spectr-specific. Expected surfaces include:
+
+- the high-density spectrum/mask canvas and truthful response overlay;
+- minimap pan, resize, and zoom interactions;
+- paint, sculpt, marquee, group selection, and Shift-drag mute brushes;
+- menus, dialogs, text entry, focus, keyboard ownership, clipboard, and file
+  workflows;
+- animation/timing and categorical mute transitions; and
+- accessibility semantics and automation-facing value descriptions.
+
+Every generalized capability needs a smaller framework-level fixture in
+addition to its Spectr integration test. Exact-string HTML patching is not an
+acceptable native architecture.
+
+### Phase N3 — Shared behavioral and visual parity
+
+Drive both renderers with the same canonical state fixtures and interaction
+scripts. Compare at least:
+
+- screenshots and layout geometry at every declared size and backing scale;
+- pointer, wheel, keyboard, focus, menu, modal, and text-input behavior;
+- analyzer publication, drawing, mute/unmute, selection, viewport, presets,
+  undo/redo, automation, modulation, A/B capture, and morph;
+- close/reopen, host save/restore, malformed-state rejection, and multi-instance
+  isolation; and
+- AUv2, VST3, CLAP, and Standalone lifecycle behavior.
+
+Visual similarity alone is insufficient. Each lane must produce equivalent
+state-transition and interaction receipts.
+
+### Phase N4 — Performance and operational comparison
+
+Measure the WebView and native lanes under the same M5 scenarios:
+
+- cold/warm editor open time and first meaningful frame;
+- steady and animated CPU/GPU use;
+- memory per open editor and with multiple plugin instances;
+- resize latency, frame pacing, and input latency;
+- analyzer-on/off cost and high-rate automation/modulation cost; and
+- teardown cleanliness, process count, and host-session stability.
+
+Record differences rather than assuming the native result wins every metric.
+Any regression accepted for cutover needs an explicit product rationale.
+
+### Phase N5 — Cutover decision
+
+Native becomes the default only when:
+
+- all blocking rows in this tracker are closed;
+- the shared parity suite is green;
+- native host validation is complete for all four formats;
+- no WebView-only persistence, editing, preset, automation, modulation, or
+  accessibility behavior remains; and
+- the performance/operational report shows the native path is ready for normal
+  production use.
+
+Keep the frozen WebView baseline and its evidence available for regression and
+historical comparison. Removing the shipping WebView dependency is a separate,
+reviewed decision after native qualification, not an automatic consequence of
+the first matching screenshot.
+
 ## Expected gap categories
 
 These are educated guesses about where the native path is likely to

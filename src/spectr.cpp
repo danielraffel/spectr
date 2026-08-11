@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -407,6 +409,42 @@ void reset_supplemental_state_(BandField& f, Viewport& v, Layout& l,
     patterns = PatternLibrary{};  // restores factories, drops user patterns
 }
 
+std::optional<float> read_band_gain_(const choc::value::ValueView& value) {
+    double gain = 0.0;
+    if      (value.isFloat64()) gain = value.getFloat64();
+    else if (value.isInt64())   gain = static_cast<double>(value.getInt64());
+    else if (value.isInt32())   gain = static_cast<double>(value.getInt32());
+    else                        return std::nullopt;
+
+    if (!std::isfinite(gain)) return std::nullopt;
+    // Older supplemental-state versions allowed a wider gain range and did
+    // not bump the schema when the Release-1 product range narrowed. Clamp in
+    // double precision before narrowing so those sessions migrate safely and
+    // huge-but-finite JSON numbers can never overflow to a float infinity.
+    return static_cast<float>(std::clamp(
+        gain, static_cast<double>(kBandGainMinDb),
+        static_cast<double>(kBandGainMaxDb)));
+}
+
+std::optional<int> read_int_(const choc::value::ValueView& value) {
+    if (value.isInt32()) return value.getInt32();
+    if (value.isInt64()) {
+        const auto number = value.getInt64();
+        if (number < std::numeric_limits<int>::min()
+            || number > std::numeric_limits<int>::max()) return std::nullopt;
+        return static_cast<int>(number);
+    }
+    if (value.isFloat64()) {
+        const auto number = value.getFloat64();
+        if (!std::isfinite(number)
+            || number < static_cast<double>(std::numeric_limits<int>::min())
+            || number > static_cast<double>(std::numeric_limits<int>::max()))
+            return std::nullopt;
+        return static_cast<int>(number);
+    }
+    return std::nullopt;
+}
+
 // Symmetric with write_snapshot_(). Returns true if `obj` was read
 // into `dst` without error. An unpopulated slot (empty object, or
 // `populated == false`) resets dst to default.
@@ -427,12 +465,9 @@ bool read_snapshot_(const choc::value::ValueView& obj, FieldSnapshot& dst) {
         auto arr = obj["band_gain"];
         const auto n = std::min<std::uint32_t>(arr.size(), kMaxBands);
         for (std::uint32_t i = 0; i < n; ++i) {
-            const auto e = arr[i];
-            float g = 0.0f;
-            if      (e.isFloat64()) g = static_cast<float>(e.getFloat64());
-            else if (e.isInt64())   g = static_cast<float>(e.getInt64());
-            else if (e.isInt32())   g = static_cast<float>(e.getInt32());
-            staged.field.bands[i].gain_db = g;
+            const auto gain = read_band_gain_(arr[i]);
+            if (!gain) return false;
+            staged.field.bands[i].gain_db = *gain;
         }
     }
     if (obj.hasObjectMember("band_mute") && obj["band_mute"].isArray()) {
@@ -455,11 +490,9 @@ bool read_snapshot_(const choc::value::ValueView& obj, FieldSnapshot& dst) {
     }
     if (!staged.viewport.valid()) staged.viewport = Viewport{};
     if (obj.hasObjectMember("layout_index")) {
-        const auto e = obj["layout_index"];
-        int idx = 0;
-        if      (e.isInt32())   idx = e.getInt32();
-        else if (e.isInt64())   idx = static_cast<int>(e.getInt64());
-        else if (e.isFloat64()) idx = static_cast<int>(e.getFloat64());
+        const auto parsed = read_int_(obj["layout_index"]);
+        if (!parsed) return false;
+        int idx = *parsed;
         idx = std::clamp(idx, 0, static_cast<int>(kLayoutCount) - 1);
         staged.layout = kLayoutValues[static_cast<std::size_t>(idx)];
     }
@@ -491,12 +524,9 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     // Version gate — accept v1 (legacy pre-M8) and v2 (with snapshots).
     // Reject anything else we don't know how to read.
     if (!root.hasObjectMember("version")) return false;
-    const auto v = root["version"];
-    int version = 0;
-    if      (v.isInt32())    version = v.getInt32();
-    else if (v.isInt64())    version = static_cast<int>(v.getInt64());
-    else if (v.isFloat64())  version = static_cast<int>(v.getFloat64());
-    else                     return false;
+    const auto parsed_version = read_int_(root["version"]);
+    if (!parsed_version) return false;
+    const int version = *parsed_version;
     if (version < 1 || version > kPluginStateVersion) return false;
 
     // Apply in a staging copy so a malformed payload leaves live state alone.
@@ -508,12 +538,9 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         auto arr = root["band_gain"];
         const auto n = std::min<std::uint32_t>(arr.size(), kMaxBands);
         for (std::uint32_t i = 0; i < n; ++i) {
-            const auto e = arr[i];
-            float g = 0.0f;
-            if      (e.isFloat64()) g = static_cast<float>(e.getFloat64());
-            else if (e.isInt64())   g = static_cast<float>(e.getInt64());
-            else if (e.isInt32())   g = static_cast<float>(e.getInt32());
-            new_field.bands[i].gain_db = g;
+            const auto gain = read_band_gain_(arr[i]);
+            if (!gain) return false;
+            new_field.bands[i].gain_db = *gain;
         }
     }
     if (root.hasObjectMember("band_mute") && root["band_mute"].isArray()) {
@@ -535,11 +562,9 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         else if (e.isInt64())   new_view.max_hz = static_cast<float>(e.getInt64());
     }
     if (root.hasObjectMember("layout_index")) {
-        const auto e = root["layout_index"];
-        int idx = 0;
-        if      (e.isInt32())   idx = e.getInt32();
-        else if (e.isInt64())   idx = static_cast<int>(e.getInt64());
-        else if (e.isFloat64()) idx = static_cast<int>(e.getFloat64());
+        const auto parsed = read_int_(root["layout_index"]);
+        if (!parsed) return false;
+        int idx = *parsed;
         idx = std::clamp(idx, 0, static_cast<int>(kLayoutCount) - 1);
         new_layout = kLayoutValues[static_cast<std::size_t>(idx)];
     }
@@ -553,15 +578,15 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     if (version >= 2 && root.hasObjectMember("snapshots") && root["snapshots"].isObject()) {
         const auto snaps = root["snapshots"];
         if (snaps.hasObjectMember("active")) {
-            const auto e = snaps["active"];
-            int a = 0;
-            if      (e.isInt32())   a = e.getInt32();
-            else if (e.isInt64())   a = static_cast<int>(e.getInt64());
-            else if (e.isFloat64()) a = static_cast<int>(e.getFloat64());
+            const auto parsed = read_int_(snaps["active"]);
+            if (!parsed) return false;
+            const int a = *parsed;
             new_bank.active = (a == 1) ? SnapshotBank::Slot::B : SnapshotBank::Slot::A;
         }
-        if (snaps.hasObjectMember("a")) read_snapshot_(snaps["a"], new_bank.a);
-        if (snaps.hasObjectMember("b")) read_snapshot_(snaps["b"], new_bank.b);
+        if (snaps.hasObjectMember("a")
+            && !read_snapshot_(snaps["a"], new_bank.a)) return false;
+        if (snaps.hasObjectMember("b")
+            && !read_snapshot_(snaps["b"], new_bank.b)) return false;
     }
 
     // M9.5 — user patterns. Apply into a fresh library so the factory

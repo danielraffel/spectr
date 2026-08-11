@@ -83,6 +83,12 @@ choc::value::Value snapshot_projection_(const FieldSnapshot& snapshot,
     return result;
 }
 
+choc::value::Value pattern_library_projection_(const PatternLibrary& library) {
+    auto result = choc::value::createObject("SpectrPatternLibraryProjection");
+    result.addMember("patterns_json", library.export_json());
+    return result;
+}
+
 } // namespace
 
 choc::value::Value make_editor_state_payload(const Spectr& plugin,
@@ -107,6 +113,7 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     payload.addMember("min_hz", static_cast<double>(plugin.viewport().min_hz));
     payload.addMember("max_hz", static_cast<double>(plugin.viewport().max_hz));
     payload.addMember("snapshots", snapshots);
+    payload.addMember("patterns_json", plugin.patterns().export_json());
     return payload;
 }
 
@@ -289,6 +296,38 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             pat->apply_to(plugin.field());
             plugin.publish_field();
             return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("save_current_pattern",
+        [&library, &plugin](const choc::value::ValueView& p) -> std::string {
+            auto name = EditorBridge::get_string(p, "name");
+            if (name.size() > 48) name.resize(48);
+            const auto saved = library.save_current(plugin.field(), std::move(name));
+            auto extras = pattern_library_projection_(library);
+            extras.addMember("id", saved.id);
+            extras.addMember("name", saved.name);
+            return EditorBridge::ok_response(extras);
+        });
+
+    bridge.add_handler("rename_pattern",
+        [&library](const choc::value::ValueView& p) -> std::string {
+            const auto id = EditorBridge::get_string(p, "id");
+            auto name = EditorBridge::get_string(p, "name");
+            if (id.empty()) return EditorBridge::err_response("pattern id missing");
+            if (name.empty()) return EditorBridge::err_response("pattern name missing");
+            if (name.size() > 48) name.resize(48);
+            if (!library.rename(id, std::move(name)))
+                return EditorBridge::err_response("unknown user pattern id");
+            return EditorBridge::ok_response(pattern_library_projection_(library));
+        });
+
+    bridge.add_handler("delete_pattern",
+        [&library](const choc::value::ValueView& p) -> std::string {
+            const auto id = EditorBridge::get_string(p, "id");
+            if (id.empty()) return EditorBridge::err_response("pattern id missing");
+            if (!library.remove(id))
+                return EditorBridge::err_response("unknown user pattern id");
+            return EditorBridge::ok_response(pattern_library_projection_(library));
         });
 
     // ── Preset save/load ───────────────────────────────────────────────

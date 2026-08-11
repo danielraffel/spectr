@@ -23,7 +23,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "d99c9861e9928cc8737d612c7f1068112f55e6a476cdc20b529a2a2a65a1ddd9";
+    "3f269efb9e1028d95742c360629527533a97759a31e6992072b608f97afec59a";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -124,6 +124,7 @@ constexpr std::array kPatchNeedles{
     ContractMarker{"pattern-manager", "  const [showImport, setShowImport] = usePM(false);\n\n  const factory = window.Spectr.FACTORY_PATTERNS;"},
     ContractMarker{"mute-timing-state", "  const lastTapRef = useRef(null); // { band, t } — for double-tap-to-mute detection"},
     ContractMarker{"mute-render-transition", "          rg[i] = smooth(rg[i], -1.02, dt * 26);\n          if (rg[i] < -1.01) rg[i] = -Infinity; // latch"},
+    ContractMarker{"finite-canvas-gains", "    const effectiveGains = rg;"},
     ContractMarker{"mute-pointer-up", "      // A quick double-tap (same band, <350ms since last tap) toggles mute.\n      // Single taps do nothing — prevents accidental muting."},
     ContractMarker{"tap-jitter-boundary", "      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) p.didDrag = true;\n      const curBand = findBand(x, g);"},
     ContractMarker{"shortcut-ownership", "      's': 'sculpt', 'l': 'level', 'b': 'boost', 'f': 'flare', 'g': 'glide'"},
@@ -148,14 +149,17 @@ constexpr std::array kGestureMarkers{
 constexpr std::array kResizeMarkers{
     ContractMarker{"fixed-design-canvas", "width: ${editorGeometry.designWidth}px !important;", 2},
     ContractMarker{"resize-geometry", "const editorGeometry = Object.freeze({"},
-    ContractMarker{"resize-grip-hit-target", "resizeGrip.id = 'spectr-resize-grip';"},
-    ContractMarker{"resize-grip-pointer-capture", "resizeGrip.setPointerCapture(event.pointerId);"},
-    ContractMarker{"preserving-native-request", "window.pulp.postMessage('editor_resize_request', payload,"},
-    ContractMarker{"resize-selection-guard", "user-select:none', '-webkit-user-select:none'"},
+    ContractMarker{"native-viewport-fit", "const scale = Math.min("},
+    ContractMarker{"native-viewport-resize", "window.addEventListener('resize', resizeFixedDesign);"},
+    ContractMarker{"fixed-design-center", "'translate(-50%, -50%) scale(' + scale + ')'"},
     ContractMarker{"resize-text-selection", "input:not([type]), input[type=\"text\"], input[type=\"search\"], textarea,"},
-    ContractMarker{"resize-sequence", "const sequence = ++resizeSequence;"},
-    ContractMarker{"resize-coalescing", "queuedResize = request;"},
-    ContractMarker{"resize-refusal", "showResizeFailure('HOST REFUSED RESIZE')"},
+};
+
+constexpr std::array kForbiddenProductResizeMarkers{
+    ContractMarker{"product-resize-grip", "spectr-resize-grip"},
+    ContractMarker{"product-resize-status", "spectr-resize-status"},
+    ContractMarker{"product-resize-request", "editor_resize_request"},
+    ContractMarker{"product-resize-pointer-capture", "resizeGrip.setPointerCapture"},
 };
 
 std::vector<std::string> structure_errors(std::string_view source) {
@@ -187,6 +191,9 @@ std::vector<std::string> resize_errors(std::string_view source) {
     std::vector<std::string> errors;
     for (const auto& marker : kResizeMarkers)
         if (count_occurrences(source, marker.text) != marker.expected_count)
+            errors.emplace_back(marker.label);
+    for (const auto& marker : kForbiddenProductResizeMarkers)
+        if (count_occurrences(source, marker.text) != 0)
             errors.emplace_back(marker.label);
     return errors;
 }
@@ -239,7 +246,9 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("document.activeElement.click()") != adapter.npos);
     CHECK(adapter.find("fixedDesignSurface.style.transform") != adapter.npos);
     CHECK(adapter.find("wrapRef.current.clientWidth / rect.width") != adapter.npos);
-    CHECK(adapter.find("static engine identity badge") != adapter.npos);
+    CHECK(adapter.find("truthful mask visualization selector") != adapter.npos);
+    CHECK(adapter.find("fixed top-center hover readout") != adapter.npos);
+    CHECK(adapter.find("deterministic shift mute brush start") != adapter.npos);
     CHECK(adapter.find("stable settings controls") != adapter.npos);
     CHECK(adapter.find("settings close hit target") != adapter.npos);
     CHECK(adapter.find("minimap clears bottom action rail") != adapter.npos);
@@ -248,6 +257,9 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("native snapshot authority helpers") != adapter.npos);
     CHECK(adapter.find("single-authority snapshot recall and morph") != adapter.npos);
     CHECK(adapter.find("center-origin unmute pulse") != adapter.npos);
+    CHECK(adapter.find("finite canvas gain geometry") != adapter.npos);
+    CHECK(adapter.find("finite hover gain display") != adapter.npos);
+    CHECK(adapter.find("Never seed a synchronous WebKit paint") != adapter.npos);
     CHECK(adapter.find("independent analyzer dBFS ruler") != adapter.npos);
     CHECK(adapter.find("scale() {") != adapter.npos);
     CHECK(adapter.find("data-spectr-settings-panel") != adapter.npos);
@@ -361,13 +373,19 @@ TEST_CASE("import gesture contract detects drag and Shift-selection mutations") 
     }
 }
 
-TEST_CASE("import adapter contract detects proportional resize mutations") {
+TEST_CASE("import adapter contract detects native viewport resize mutations") {
     const auto source = outer_adapter(embedded_html());
     REQUIRE_FALSE(source.empty());
     for (const auto& marker : kResizeMarkers) {
         INFO(marker.label);
         auto mutated = source;
         erase_once(mutated, marker.text);
+        CHECK(contains(resize_errors(mutated), marker.label));
+    }
+    for (const auto& marker : kForbiddenProductResizeMarkers) {
+        INFO(marker.label);
+        auto mutated = source;
+        mutated += marker.text;
         CHECK(contains(resize_errors(mutated), marker.label));
     }
 }
