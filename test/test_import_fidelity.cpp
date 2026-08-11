@@ -23,7 +23,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "171d00f6ad5952e11d1d501d79074decb096b33af29fe9f2a43c9ee8fee31ab0";
+    "ecd395484cd23c4d97c0b2fe976f84d9318a1e57d40800697ff55b8f4ca5aa04";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -122,12 +122,23 @@ constexpr std::array kPatchNeedles{
     ContractMarker{"settings-picker", "function PickerDropdown({ value, options, onChange, placeholder, renderPreview, renderOption, width = 260 }) {\n  const [open, setOpen] = React.useState(false);"},
     ContractMarker{"settings-modal", "function SettingsModal({ settings, setSettings, onClose }) {\n  const persist = (patch) => {"},
     ContractMarker{"pattern-manager", "  const [showImport, setShowImport] = usePM(false);\n\n  const factory = window.Spectr.FACTORY_PATTERNS;"},
-    ContractMarker{"shortcut-ownership", "      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;\n      if (e.metaKey || e.ctrlKey || e.altKey) return;"},
+    ContractMarker{"mute-timing-state", "  const lastTapRef = useRef(null); // { band, t } — for double-tap-to-mute detection"},
+    ContractMarker{"mute-render-transition", "          rg[i] = smooth(rg[i], -1.02, dt * 26);\n          if (rg[i] < -1.01) rg[i] = -Infinity; // latch"},
+    ContractMarker{"mute-pointer-up", "      // A quick double-tap (same band, <350ms since last tap) toggles mute.\n      // Single taps do nothing — prevents accidental muting."},
+    ContractMarker{"shortcut-ownership", "      's': 'sculpt', 'l': 'level', 'b': 'boost', 'f': 'flare', 'g': 'glide'"},
+    ContractMarker{"shortcut-hints", "  { k: 'sculpt', label: 'SCULPT', hint: 'S'"},
+    ContractMarker{"help-shortcuts", "      <Hrow k=\"S / L / B\">Sculpt · Level · Boost</Hrow>"},
+    ContractMarker{"help-mute", "      <Hrow k=\"DBL-CLICK\">Toggle mute (−∞)</Hrow>"},
     ContractMarker{"canvas-geometry", "const r = wrap.getBoundingClientRect();", 2},
     ContractMarker{"canvas-render-ref", "  const rafRef = useRef(0);\n  const timeRef = useRef(0);"},
     ContractMarker{"canvas-first-paint", "    rafRef.current = requestAnimationFrame(draw);\n    return () => cancelAnimationFrame(rafRef.current);"},
     ContractMarker{"canvas-sized-paint", "        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);\n      }\n    };\n    resize();"},
     ContractMarker{"canvas-render-publication", "  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, hover, marquee, selection, snapshots, morph, dspMode]);\n\n  function drawGrid(ctx, g) {"},
+};
+
+constexpr std::array kGestureMarkers{
+    ContractMarker{"drag-threshold", "      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) p.didDrag = true;"},
+    ContractMarker{"shift-selection", "      pointerRef.current = { mode: 'shift-select', band };"},
 };
 
 std::vector<std::string> structure_errors(std::string_view source) {
@@ -142,6 +153,14 @@ std::vector<std::string> structure_errors(std::string_view source) {
 std::vector<std::string> patch_errors(std::string_view source) {
     std::vector<std::string> errors;
     for (const auto& marker : kPatchNeedles)
+        if (count_occurrences(source, marker.text) != marker.expected_count)
+            errors.emplace_back(marker.label);
+    return errors;
+}
+
+std::vector<std::string> gesture_errors(std::string_view source) {
+    std::vector<std::string> errors;
+    for (const auto& marker : kGestureMarkers)
         if (count_occurrences(source, marker.text) != marker.expected_count)
             errors.emplace_back(marker.label);
     return errors;
@@ -188,9 +207,39 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("if (renderAllRef.current) renderAllRef.current()") != adapter.npos);
     CHECK(adapter.find("renderAllRef.current = renderAll") != adapter.npos);
     CHECK(adapter.find("Apply synchronously when it is ready") != adapter.npos);
+    CHECK(adapter.find("-Infinity is categorical state, never an interpolation operand")
+          != adapter.npos);
+    CHECK(adapter.find("if (!isMuted(rg[i]))") != adapter.npos);
+    CHECK(adapter.find("if (isMuted(rg[i]) || !Number.isFinite(rg[i])) rg[i] = -1.02")
+          != adapter.npos);
+    CHECK(adapter.find("const restored = Number.isFinite(authoredDb)") != adapter.npos);
+    CHECK(adapter.find("commitGain(p.band, isMuted(cur) ? restored : -Infinity)")
+          != adapter.npos);
+    CHECK(adapter.find("'1': 'sculpt', '2': 'level', '3': 'boost', '4': 'flare', '5': 'glide'")
+          != adapter.npos);
+    CHECK(adapter.find("e.isComposing || e.keyCode === 229 || e.repeat")
+          != adapter.npos);
+    CHECK(adapter.find("e.metaKey || e.ctrlKey || e.altKey || e.shiftKey")
+          != adapter.npos);
+    CHECK(adapter.find("document.querySelector('[data-spectr-overlay=\"true\"]')")
+          != adapter.npos);
+    CHECK(adapter.find("<Hrow k=\"CLICK\">Toggle mute (−∞)</Hrow>")
+          != adapter.npos);
+    CHECK(adapter.find("<Hrow k=\"1 / 2 / 3\">Sculpt · Level · Boost</Hrow>")
+          != adapter.npos);
+    CHECK(adapter.find("<Hrow k=\"4 / 5\">Flare · Glide</Hrow>")
+          != adapter.npos);
+    CHECK(adapter.find("<Hrow k=\"6\">Cycle analyzer</Hrow>") != adapter.npos);
+    CHECK(adapter.find("\"hint: 'S'\", \"hint: '1'\"") != adapter.npos);
+    CHECK(adapter.find("\"hint: 'G'\", \"hint: '5'\"") != adapter.npos);
+    // The old terms occur only inside the exact source needles being removed;
+    // the adapter digest and desired replacements above pin the emitted path.
+    CHECK(count_occurrences(adapter, "lastTapRef.current") == 3);
+    CHECK(count_occurrences(adapter, "'s': 'sculpt'") == 1);
 
     CHECK(structure_errors(bundle->template_html).empty());
     CHECK(patch_errors(bundle->template_html).empty());
+    CHECK(gesture_errors(bundle->template_html).empty());
 }
 
 TEST_CASE("import fidelity oracle detects payload mutations") {
@@ -233,5 +282,16 @@ TEST_CASE("import adapter contract detects pinned core source-needle drift") {
         auto source = bundle->template_html;
         erase_once(source, marker.text);
         CHECK(contains(patch_errors(source), marker.label));
+    }
+}
+
+TEST_CASE("import gesture contract detects drag and Shift-selection mutations") {
+    const auto bundle = pulp::view::parse_claude_bundle(embedded_html());
+    REQUIRE(bundle.has_value());
+    for (const auto& marker : kGestureMarkers) {
+        INFO(marker.label);
+        auto source = bundle->template_html;
+        erase_once(source, marker.text);
+        CHECK(contains(gesture_errors(source), marker.label));
     }
 }

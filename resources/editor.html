@@ -285,6 +285,68 @@ document.addEventListener('DOMContentLoaded', async function() {
   };`,
       'mute preserves authored gain');
     replaceSpectrSource(
+      '  const lastTapRef = useRef(null); // { band, t } — for double-tap-to-mute detection\n',
+      '',
+      'single-tap mute has no timing state');
+    replaceSpectrSource(
+      String.raw`      for (let i = 0; i < rg.length; i++) {
+        if (isMuted(tg[i])) {
+          // animate toward a synthetic "muted Y" via very fast collapse
+          rg[i] = smooth(rg[i], -1.02, dt * 26);
+          if (rg[i] < -1.01) rg[i] = -Infinity; // latch
+        } else {
+          if (isMuted(rg[i])) rg[i] = -1.02; // start from bottom
+          rg[i] = smooth(rg[i], tg[i], dt * k);
+        }
+      }`,
+      String.raw`      for (let i = 0; i < rg.length; i++) {
+        if (isMuted(tg[i])) {
+          // -Infinity is categorical state, never an interpolation operand.
+          if (!isMuted(rg[i])) {
+            if (!Number.isFinite(rg[i])) rg[i] = -1.02;
+            rg[i] = smooth(rg[i], -1.02, dt * 26);
+            if (!Number.isFinite(rg[i]) || rg[i] < -1.01) rg[i] = -Infinity;
+          }
+        } else {
+          // Recover from either the mute sentinel or stale non-finite render state.
+          if (isMuted(rg[i]) || !Number.isFinite(rg[i])) rg[i] = -1.02;
+          const target = Number.isFinite(tg[i]) ? tg[i] : 0;
+          rg[i] = smooth(rg[i], target, dt * k);
+        }
+      }`,
+      'categorical mute render transition');
+    replaceSpectrSource(
+      [
+        "    if (p.mode === 'gain') {",
+        '      // A quick double-tap (same band, <350ms since last tap) toggles mute.',
+        '      // Single taps do nothing — prevents accidental muting.',
+        '      if (!p.didDrag) {',
+        '        const now = performance.now();',
+        '        const last = lastTapRef.current;',
+        '        if (last && last.band === p.band && now - last.t < 350) {',
+        '          const cur = targetGainsRef.current[p.band];',
+        '          commitGain(p.band, isMuted(cur) ? 0 : -Infinity);',
+        '          if (onStatus) onStatus(isMuted(cur) ? `BAND ${p.band + 1} UNMUTED` : `BAND ${p.band + 1} MUTED`);',
+        '          lastTapRef.current = null;',
+        '        } else {',
+        '          lastTapRef.current = { band: p.band, t: now };',
+        '        }',
+        '      }',
+        '    }',
+      ].join('\n'),
+      [
+        "    if (p.mode === 'gain' && !p.didDrag) {",
+        '      const cur = targetGainsRef.current[p.band];',
+        '      const authoredDb = mutedGainDbRef.current[p.band];',
+        '      const restored = Number.isFinite(authoredDb)',
+        '        ? clamp(authoredDb / 24, -1, 1)',
+        '        : 0;',
+        '      commitGain(p.band, isMuted(cur) ? restored : -Infinity);',
+        '      if (onStatus) onStatus(isMuted(cur) ? `BAND ${p.band + 1} UNMUTED` : `BAND ${p.band + 1} MUTED`);',
+        '    }',
+      ].join('\n'),
+      'single-tap mute toggle');
+    replaceSpectrSource(
       '  const bankRef = useAppR(null);\n\n  const [info, setInfo] = useAppS({ N: settings.bandCount, zoom: \'1.00\' });',
       String.raw`  const bankRef = useAppR(null);
   const nativeBridgeAvailable = !!window.pulp
@@ -749,9 +811,83 @@ document.addEventListener('DOMContentLoaded', async function() {
       '<div data-spectr-overlay="true" role="dialog" aria-modal="true" aria-label="Pattern manager" style={{\n      position: \'absolute\', inset: 0, zIndex: 30,',
       'pattern manager semantics');
     replaceSpectrSource(
-      '      if (t && (t.tagName === \'INPUT\' || t.tagName === \'TEXTAREA\' || t.isContentEditable)) return;\n      if (e.metaKey || e.ctrlKey || e.altKey) return;',
-      '      if (t && (t.tagName === \'INPUT\' || t.tagName === \'TEXTAREA\' || t.isContentEditable)) return;\n      if (document.querySelector(\'[data-spectr-overlay="true"]\')) return;\n      if (e.metaKey || e.ctrlKey || e.altKey) return;',
-      'global shortcut overlay ownership');
+      [
+        '  // Global keyboard shortcuts for edit modes + analyzer',
+        '  useAppE(() => {',
+        '    const modeKeys = {',
+        "      's': 'sculpt', 'l': 'level', 'b': 'boost', 'f': 'flare', 'g': 'glide'",
+        '    };',
+        '    const onKey = (e) => {',
+        '      // ignore if typing in a text field',
+        '      const t = e.target;',
+        "      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;",
+        '      if (e.metaKey || e.ctrlKey || e.altKey) return;',
+        '      const k = e.key.toLowerCase();',
+        '      if (modeKeys[k]) {',
+        '        e.preventDefault();',
+        '        setEditMode(modeKeys[k]);',
+        '        fireStatus(`EDIT → ${modeKeys[k].toUpperCase()}`);',
+        '        return;',
+        '      }',
+        "      if (k === 'a') {",
+        '        e.preventDefault();',
+        '        setAnalyzerMode(m => {',
+        "          const next = m === 'peak' ? 'avg' : m === 'avg' ? 'both' : m === 'both' ? 'off' : 'peak';",
+        '          fireStatus(`ANALYZER → ${next.toUpperCase()}`);',
+        '          return next;',
+        '        });',
+        '      }',
+        '    };',
+        "    window.addEventListener('keydown', onKey);",
+        "    return () => window.removeEventListener('keydown', onKey);",
+        '  }, [fireStatus]);',
+      ].join('\n'),
+      String.raw`  // Focus-local shortcuts deliberately avoid Logic Musical Typing letters.
+  useAppE(() => {
+    const modeKeys = {
+      '1': 'sculpt', '2': 'level', '3': 'boost', '4': 'flare', '5': 'glide'
+    };
+    const onKey = (e) => {
+      const t = e.target;
+      if ((typeof document.hasFocus === 'function' && !document.hasFocus())
+          || e.isComposing || e.keyCode === 229 || e.repeat
+          || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey
+          || (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+                    || t.tagName === 'SELECT' || t.isContentEditable))
+          || document.querySelector('[data-spectr-overlay="true"]')) return;
+      const k = e.key;
+      if (modeKeys[k]) {
+        e.preventDefault();
+        setEditMode(modeKeys[k]);
+        fireStatus('EDIT → ' + modeKeys[k].toUpperCase());
+        return;
+      }
+      if (k === '6') {
+        e.preventDefault();
+        setAnalyzerMode(m => {
+          const next = m === 'peak' ? 'avg' : m === 'avg' ? 'both' : m === 'both' ? 'off' : 'peak';
+          fireStatus('ANALYZER → ' + next.toUpperCase());
+          return next;
+        });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fireStatus]);`,
+      'focus-local non-musical shortcuts');
+    replaceSpectrSource("hint: 'S'", "hint: '1'", 'Sculpt shortcut label');
+    replaceSpectrSource("hint: 'L'", "hint: '2'", 'Level shortcut label');
+    replaceSpectrSource("hint: 'B'", "hint: '3'", 'Boost shortcut label');
+    replaceSpectrSource("hint: 'F'", "hint: '4'", 'Flare shortcut label');
+    replaceSpectrSource("hint: 'G'", "hint: '5'", 'Glide shortcut label');
+    replaceSpectrSource(
+      '<Hrow k="S / L / B">Sculpt · Level · Boost</Hrow>\n      <Hrow k="F / G">Flare · Glide</Hrow>\n      <Hrow k="A">Cycle analyzer</Hrow>',
+      '<Hrow k="1 / 2 / 3">Sculpt · Level · Boost</Hrow>\n      <Hrow k="4 / 5">Flare · Glide</Hrow>\n      <Hrow k="6">Cycle analyzer</Hrow>',
+      'help shortcut labels');
+    replaceSpectrSource(
+      '<Hrow k="DBL-CLICK">Toggle mute (−∞)</Hrow>',
+      '<Hrow k="CLICK">Toggle mute (−∞)</Hrow>',
+      'help mute gesture label');
 
     // The host resizes the native WebView itself. Keep Claude Design's authored
     // geometry fixed inside that viewport and let one browser transform scale it
