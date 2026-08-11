@@ -2,12 +2,11 @@
 
 // Spectr plugin editor — embeds the prototype HTML via a WebViewPanel.
 //
-// The plugin editor is a thin native View that owns a pulp::view::WebViewPanel.
-// On attach, we locate whichever host owns the editor window (PluginViewHost
-// in plugin editors, WindowHost in the standalone), ask it for its actual
-// native content size, and attach our WebView as its native child. Spectr's
-// Processor drives attach/sync/detach via on_view_opened / on_view_resized /
-// on_view_closed.
+// The plugin editor is a NativeViewHost that owns a pulp::view::WebViewPanel.
+// NativeViewHost supplies the shared plugin/standalone attachment, resize,
+// clipping, teardown, and headless-snapshot lifecycle. Spectr's Processor
+// drives its explicit lifecycle hooks through on_view_opened /
+// on_view_resized / on_view_closed.
 //
 // Message routing: the EditorView owns a pulp::view::EditorBridge (pulp#711
 // framework, Pulp v0.41.0+). Handlers are registered at construction via
@@ -15,7 +14,7 @@
 // inbound JSON envelopes through the bridge to those handlers.
 
 #include <pulp/view/editor_bridge.hpp>
-#include <pulp/view/view.hpp>
+#include <pulp/view/native_view_host.hpp>
 #include <pulp/view/web_view.hpp>
 
 #include <memory>
@@ -26,24 +25,30 @@ namespace spectr {
 
 class Spectr;
 
-class EditorView : public pulp::view::View {
+/// Build the native-to-editor snapshot sent after the page reports that its
+/// React bridge listener is installed.
+pulp::view::WebViewMessage make_editor_hydration_message(const Spectr& plugin);
+
+bool make_editor_resolution_message(
+    const Spectr& plugin, pulp::view::WebViewMessage& out_message);
+
+class EditorView : public pulp::view::NativeViewHost {
 public:
     explicit EditorView(Spectr& plugin);
     ~EditorView() override;
 
-    /// Create the WebViewPanel (if needed) and attach its NSView as a
-    /// native child of whichever host owns the editor window. Sizes the
-    /// child to the host's actual content size to avoid letterbox gaps.
+    /// Reconcile the native child with the active plugin or standalone host.
     void attach_if_needed();
 
-    /// Update the native child view bounds to match the current host
-    /// content size. Wired to Processor::on_view_resized.
+    /// Recompute the native child bounds after a host resize.
     void sync_to_host();
 
     /// Detach on editor close.
     void detach_if_needed();
 
 private:
+    bool post_resolution_();
+
     // ── Member order matters for destruction ───────────────────────────
     //
     // C++ destroys members in REVERSE declaration order. `panel_` must
@@ -73,7 +78,7 @@ private:
     Spectr&                                   plugin_;
     EditorDragState                           drag_{};
     pulp::view::EditorBridge                  bridge_{};
-    bool                                      attached_ = false;
+    bool                                      bridge_attached_ = false;
     std::unique_ptr<pulp::view::WebViewPanel> panel_;
 };
 

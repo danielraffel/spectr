@@ -18,8 +18,8 @@ namespace spectr {
 
 namespace {
 
-constexpr float kDbMin = -60.0f;
-constexpr float kDbMax = +12.0f;
+constexpr float kDbMin = kBandGainMinDb;
+constexpr float kDbMax = kBandGainMaxDb;
 
 /// Map the prototype's [-1, +1] band value into Spectr's dB range.
 /// -Infinity in the prototype becomes muted=true in our model.
@@ -32,8 +32,7 @@ void proto_to_db(float proto_value, float& out_db, bool& out_muted) noexcept {
     out_muted = false;
     const float clamped = std::clamp(proto_value, -1.0f, 1.0f);
     out_db = clamped >= 0.0f ? clamped * kDbMax : -clamped * kDbMin;
-    // Note: -clamped * kDbMin because kDbMin is -60 and we want proto=-0.5
-    // to land at -30 dB, not +30. Derivation: -(-0.5) * (-60) = -30. ✓
+    // Note: -clamped * kDbMin preserves the negative sign on the lower half.
 }
 
 std::string iso_now() {

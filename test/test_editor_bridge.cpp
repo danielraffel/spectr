@@ -13,14 +13,20 @@
 #include "spectr/preset_format.hpp"
 #include "spectr/snapshot.hpp"
 #include "spectr/spectr.hpp"
+#include "spectr/ui/editor_view.hpp"
+
+#include "spectr_editor_assets_data.hpp"
 
 #include <pulp/state/store.hpp>
+#include <pulp/view/script_engine.hpp>
 
 #include <choc/containers/choc_Value.h>
 #include <choc/text/choc_JSON.h>
 
 #include <memory>
+#include <cmath>
 #include <string>
+#include <vector>
 
 using Catch::Approx;
 using spectr::BandField;
@@ -64,7 +70,343 @@ bool response_has_error(const std::string& r, std::string_view substr) {
     return not_ok && r.find(substr) != std::string::npos;
 }
 
+std::string field_envelope(std::uint32_t n,
+                           std::uint32_t special_band = 0,
+                           float special_gain = 0.0f,
+                           bool special_muted = false,
+                           bool all_muted = false) {
+    auto gains = choc::value::createEmptyArray();
+    auto mutes = choc::value::createEmptyArray();
+    for (std::uint32_t i = 0; i < n; ++i) {
+        gains.addArrayElement(static_cast<double>(i == special_band ? special_gain : 0.0f));
+        mutes.addArrayElement(all_muted || (i == special_band && special_muted));
+    }
+    auto payload = choc::value::createObject("BandFieldPayload");
+    payload.addMember("n_visible", static_cast<std::int32_t>(n));
+    payload.addMember("gain_db", gains);
+    payload.addMember("muted", mutes);
+    auto envelope = choc::value::createObject("Envelope");
+    envelope.addMember("type", "band_field_set");
+    envelope.addMember("payload", payload);
+    return choc::json::toString(envelope, false);
+}
+
+std::string processing_state_envelope(std::uint32_t n,
+                                      float min_hz,
+                                      float max_hz,
+                                      std::uint32_t special_band = 0,
+                                      float special_gain = 0.0f,
+                                      bool special_muted = false,
+                                      bool mute_edges = false) {
+    auto gains = choc::value::createEmptyArray();
+    auto mutes = choc::value::createEmptyArray();
+    for (std::uint32_t i = 0; i < n; ++i) {
+        gains.addArrayElement(
+            static_cast<double>(i == special_band ? special_gain : 0.0f));
+        mutes.addArrayElement((i == special_band && special_muted)
+                            || (mute_edges && (i == 0 || i + 1 == n)));
+    }
+    auto payload = choc::value::createObject("ProcessingStatePayload");
+    payload.addMember("n_visible", static_cast<std::int32_t>(n));
+    payload.addMember("gain_db", gains);
+    payload.addMember("muted", mutes);
+    payload.addMember("min_hz", static_cast<double>(min_hz));
+    payload.addMember("max_hz", static_cast<double>(max_hz));
+    auto envelope = choc::value::createObject("Envelope");
+    envelope.addMember("type", "processing_state_set");
+    envelope.addMember("payload", payload);
+    return choc::json::toString(envelope, false);
+}
+
 } // namespace
+
+TEST_CASE("native editor bridge: complete field preserves exact mute and layout") {
+    Rig r;
+    r.proc->field().bands[63].gain_db = 7.0f;
+
+    const auto response = r.dispatch(field_envelope(40, 7, -13.5f, true));
+    REQUIRE(response_ok(response));
+    CHECK(r.proc->layout() == spectr::Layout::Bands40);
+    CHECK(r.proc->field().bands[7].gain_db == Approx(-13.5f));
+    CHECK(r.proc->field().bands[7].muted);
+    CHECK(r.proc->field().linear_gain(7) == 0.0f);
+    CHECK(r.proc->field().bands[63].gain_db == Approx(7.0f));
+}
+
+TEST_CASE("native editor bridge publishes zoomed processing state atomically") {
+    Rig r;
+    const auto response = r.dispatch(
+        processing_state_envelope(48, 280.0f, 340.0f, 17, -9.5f, true));
+
+    REQUIRE(response_ok(response));
+    CHECK(r.proc->layout() == spectr::Layout::Bands48);
+    CHECK(r.proc->viewport().min_hz == Approx(280.0f));
+    CHECK(r.proc->viewport().max_hz == Approx(340.0f));
+    CHECK(r.proc->field().bands[17].gain_db == Approx(-9.5f));
+    CHECK(r.proc->field().bands[17].muted);
+    CHECK(r.proc->field().linear_gain(17) == 0.0f);
+}
+
+TEST_CASE("native editor hydration reports the restored field viewport and layout") {
+    Rig r;
+    r.proc->set_layout(spectr::Layout::Bands48);
+    r.proc->viewport() = {280.0f, 340.0f};
+    r.proc->field().bands[17] = {-9.5f, true};
+    r.proc->field().bands[47] = {6.25f, false};
+
+    const auto message = spectr::make_editor_hydration_message(*r.proc);
+    CHECK(message.type == "processing_state_hydrate");
+    CHECK(message.id == "spectr-processing-state-hydrate");
+
+    const auto payload = choc::json::parse(message.payload_json);
+    REQUIRE(payload.isObject());
+    CHECK(payload["n_visible"].get<int64_t>() == 48);
+    CHECK(payload["gain_db"].size() == 48);
+    CHECK(payload["muted"].size() == 48);
+    CHECK(payload["gain_db"][17].get<double>() == Approx(-9.5));
+    CHECK(payload["muted"][17].getBool());
+    CHECK(payload["gain_db"][47].get<double>() == Approx(6.25));
+    CHECK(payload["min_hz"].get<double>() == Approx(280.0));
+    CHECK(payload["max_hz"].get<double>() == Approx(340.0));
+}
+
+TEST_CASE("native editor resolution disclosure uses current product geometry") {
+    Rig r;
+    pulp::format::PrepareContext prepare;
+    prepare.sample_rate = 48000.0;
+    prepare.max_buffer_size = 512;
+    prepare.input_channels = 1;
+    prepare.output_channels = 1;
+    r.proc->prepare(prepare);
+    r.proc->set_layout(spectr::Layout::Bands64);
+    r.proc->viewport() = {280.0f, 340.0f};
+
+    pulp::view::WebViewMessage message;
+    REQUIRE(spectr::make_editor_resolution_message(*r.proc, message));
+    CHECK(message.type == "spectral_resolution");
+    CHECK(message.id == "spectr-spectral-resolution");
+
+    const auto payload = choc::json::parse(message.payload_json);
+    REQUIRE(payload.isObject());
+    CHECK(payload["active_bands"].get<int64_t>() == 64);
+    CHECK(payload["represented_bands"].get<int64_t>() >= 0);
+    CHECK(payload["represented_bands"].get<int64_t>() <= 64);
+    CHECK(payload["fft_size"].get<int64_t>() == spectr::kSpectralFftSize);
+    CHECK(payload["sample_rate"].get<double>() == Approx(48000.0));
+    CHECK(payload["fully_represented"].getBool()
+          == (payload["represented_bands"].get<int64_t>() == 64));
+}
+
+TEST_CASE("native editor resolution message is failure atomic") {
+    Rig r;
+    pulp::format::PrepareContext prepare;
+    prepare.sample_rate = 48000.0;
+    prepare.max_buffer_size = 512;
+    prepare.input_channels = 1;
+    prepare.output_channels = 1;
+    r.proc->prepare(prepare);
+    r.proc->viewport() = {500.0f, 400.0f};
+    pulp::view::WebViewMessage message{
+        .type = "sentinel",
+        .payload_json = R"({"keep":true})",
+        .id = "sentinel-id",
+    };
+
+    CHECK_FALSE(spectr::make_editor_resolution_message(*r.proc, message));
+    CHECK(message.type == "sentinel");
+    CHECK(message.payload_json == R"({"keep":true})");
+    CHECK(message.id == "sentinel-id");
+}
+
+TEST_CASE("native editor resolution is unavailable before prepare") {
+    Rig r;
+    pulp::view::WebViewMessage message{
+        .type = "sentinel",
+        .payload_json = "null",
+        .id = "sentinel-id",
+    };
+    CHECK_FALSE(spectr::make_editor_resolution_message(*r.proc, message));
+    CHECK(message.type == "sentinel");
+    CHECK(message.id == "sentinel-id");
+}
+
+TEST_CASE("embedded editor gates default publication until native hydration") {
+    const std::string html(
+        reinterpret_cast<const char*>(spectr_editor::editor_html),
+        spectr_editor::editor_html_size);
+
+    CHECK(html.find("window.pulp.on('processing_state_hydrate'")
+          != std::string::npos);
+    CHECK(html.find("window.pulp.postMessage('editor_ready'")
+          != std::string::npos);
+    CHECK(html.find("if (!nativeHydrated) return;")
+          != std::string::npos);
+    CHECK(html.find("if (nativeBridgeAvailable) return;")
+          != std::string::npos);
+    CHECK(html.find("mutedGainDbRef.current[i] ?? 0")
+          != std::string::npos);
+    CHECK(html.find("hydrateProcessingState(nativeHydration)")
+          != std::string::npos);
+    CHECK(html.find("spectral_resolution_request") != std::string::npos);
+    CHECK(html.find("RES {resolution ?") != std::string::npos);
+    CHECK(html.find("rgba(255,176,96,0.88)") != std::string::npos);
+}
+
+TEST_CASE("native editor bridge rejects invalid zoom without partial mutation") {
+    Rig r;
+    const auto before_field = r.proc->field();
+    const auto before_viewport = r.proc->viewport();
+    const auto before_layout = r.proc->layout();
+
+    const auto response = r.dispatch(
+        processing_state_envelope(64, 340.0f, 280.0f, 9, -12.0f, true));
+    REQUIRE(response_has_error(response, "invalid viewport"));
+    CHECK(r.proc->layout() == before_layout);
+    CHECK(r.proc->viewport().min_hz == Approx(before_viewport.min_hz));
+    CHECK(r.proc->viewport().max_hz == Approx(before_viewport.max_hz));
+    CHECK(r.proc->field().bands[9].gain_db
+          == Approx(before_field.bands[9].gain_db));
+    CHECK(r.proc->field().bands[9].muted == before_field.bands[9].muted);
+}
+
+TEST_CASE("native editor bridge: field contract rejects malformed values atomically") {
+    Rig r;
+    const auto before = r.proc->field();
+
+    CHECK(response_has_error(r.dispatch(
+        R"({"type":"band_field_set","payload":{"n_visible":31,"gain_db":[],"muted":[]}})"),
+        "n_visible"));
+    CHECK(response_has_error(r.dispatch(
+        R"({"type":"band_field_set","payload":{"n_visible":32,"gain_db":[0],"muted":[false]}})"),
+        "lengths"));
+
+    auto out_of_range = field_envelope(32, 3, 24.01f, false);
+    CHECK(response_has_error(r.dispatch(out_of_range), "within -24 and +24"));
+    CHECK(r.proc->field().bands[3].gain_db == Approx(before.bands[3].gain_db));
+
+    CHECK(response_has_error(r.dispatch(
+        R"({"type":"band_field_set","payload":{"n_visible":32,"gain_db":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"muted":[false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,0]}})"),
+        "boolean"));
+}
+
+TEST_CASE("native ScriptEngine calls the same Spectr field contract") {
+    Rig r;
+    pulp::view::ScriptEngine engine;
+    r.bridge.attach_native_runtime(engine, "__spectrDispatch");
+
+    const auto envelope = field_envelope(32, 11, 6.25f, true);
+    const auto result = engine.evaluate(
+        "__spectrDispatch(JSON.stringify(" + envelope + "))");
+
+    REQUIRE(result.isString());
+    CHECK(response_ok(std::string(result.getString())));
+    CHECK(r.proc->field().bands[11].gain_db == Approx(6.25f));
+    CHECK(r.proc->field().bands[11].muted);
+}
+
+TEST_CASE("CLI proof: JS field dispatch reaches C++ DSP and produces digital silence") {
+    Rig r;
+    pulp::format::PrepareContext prepare;
+    prepare.sample_rate = 48000.0;
+    prepare.max_buffer_size = 512;
+    prepare.input_channels = 1;
+    prepare.output_channels = 1;
+    r.proc->prepare(prepare);
+
+    pulp::view::ScriptEngine engine;
+    r.bridge.attach_native_runtime(engine, "__spectrDispatch");
+    const auto envelope = field_envelope(32, 0, 0.0f, false, true);
+    const auto response = engine.evaluate(
+        "__spectrDispatch(JSON.stringify(" + envelope + "))");
+    REQUIRE(response.isString());
+    REQUIRE(response_ok(std::string(response.getString())));
+
+    constexpr std::size_t block_size = 512;
+    constexpr std::size_t required = static_cast<std::size_t>(
+        spectr::kSpectralLatency + spectr::kSpectralFftSize + 1024);
+    constexpr std::size_t total =
+        ((required + block_size - 1) / block_size) * block_size;
+    std::vector<float> input(total), output(total, 1.0f);
+    for (std::size_t i = 0; i < total; ++i) {
+        input[i] = 0.5f * std::sin(2.0 * 3.14159265358979323846 * 997.0
+                                  * static_cast<double>(i) / 48000.0);
+    }
+    pulp::midi::MidiBuffer midi_in, midi_out;
+    pulp::format::ProcessContext context;
+    context.sample_rate = 48000.0;
+    context.num_samples = static_cast<std::uint32_t>(block_size);
+
+    for (std::size_t offset = 0; offset < total; offset += block_size) {
+        const float* input_channels[] = {input.data() + offset};
+        float* output_channels[] = {output.data() + offset};
+        pulp::audio::BufferView<const float> input_view(input_channels, 1, block_size);
+        pulp::audio::BufferView<float> output_view(output_channels, 1, block_size);
+        r.proc->process(output_view, input_view, midi_in, midi_out, context);
+    }
+
+    double output_energy = 0.0;
+    // Ignore startup latency so this cannot pass merely because WOLA has not
+    // emitted a frame yet.
+    for (std::size_t i = static_cast<std::size_t>(spectr::kSpectralLatency);
+         i < output.size(); ++i)
+        output_energy += output[i] * output[i];
+    CHECK(output_energy == Approx(0.0).margin(1.0e-12));
+}
+
+TEST_CASE("CLI proof: zoomed viewport passes its island and mutes outside") {
+    const auto render_peak = [](float frequency_hz) {
+        Rig r;
+        pulp::format::PrepareContext prepare;
+        prepare.sample_rate = 48000.0;
+        prepare.max_buffer_size = 512;
+        prepare.input_channels = 1;
+        prepare.output_channels = 1;
+        r.proc->prepare(prepare);
+        REQUIRE(response_ok(r.dispatch(
+            processing_state_envelope(32, 1000.0f, 2000.0f,
+                                      0, 0.0f, false, true))));
+
+        constexpr std::size_t block_size = 512;
+        constexpr std::size_t blocks = static_cast<std::size_t>(
+            (spectr::kSpectralLatency + spectr::kSpectralFftSize
+             + 4 * static_cast<int>(block_size)
+             + static_cast<int>(block_size) - 1)
+            / static_cast<int>(block_size));
+        std::vector<float> input(block_size), output(block_size);
+        pulp::midi::MidiBuffer midi_in, midi_out;
+        pulp::format::ProcessContext context;
+        context.sample_rate = 48000.0;
+        context.num_samples = static_cast<std::uint32_t>(block_size);
+
+        float settled_peak = 0.0f;
+        for (std::size_t block = 0; block < blocks; ++block) {
+            for (std::size_t sample = 0; sample < block_size; ++sample) {
+                const auto absolute = block * block_size + sample;
+                input[sample] = 0.5f * std::sin(
+                    2.0 * 3.14159265358979323846 * frequency_hz
+                    * static_cast<double>(absolute) / 48000.0);
+            }
+            const float* in_channels[] = {input.data()};
+            float* out_channels[] = {output.data()};
+            pulp::audio::BufferView<const float> in_view(
+                in_channels, 1, block_size);
+            pulp::audio::BufferView<float> out_view(
+                out_channels, 1, block_size);
+            r.proc->process(out_view, in_view, midi_in, midi_out, context);
+            if (block * block_size >= static_cast<std::size_t>(
+                    spectr::kSpectralLatency + spectr::kSpectralFftSize)) {
+                for (const auto value : output)
+                    settled_peak = std::max(settled_peak, std::abs(value));
+            }
+        }
+        return settled_peak;
+    };
+
+    // Both tones are FFT-bin-centred. With the HPF/LPF edge bands muted, the
+    // first sits outside the isolated viewport while the second sits inside.
+    CHECK(render_peak(187.5f) < 1.0e-6f);
+    CHECK(render_peak(1500.0f) > 0.4f);
+}
 
 TEST_CASE("M9.5 bridge: malformed JSON returns error") {
     Rig r;

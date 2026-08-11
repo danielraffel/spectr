@@ -32,6 +32,13 @@
 //
 // ── Message types ──────────────────────────────────────────────────────
 //
+//  type="band_field_set"    — payload: {n_visible, gain_db[], muted[]}
+//                             effect: publish field + layout
+//  type="processing_state_set"
+//                           — payload: {n_visible, gain_db[], muted[],
+//                                       min_hz, max_hz}
+//                             effect: atomically publish field + layout +
+//                                     sound-defining viewport
 //  type="paint_start"       — payload: {}
 //                             effect: capture BandSnapshot
 //  type="paint"             — payload: {mode, start_band, start_value,
@@ -74,7 +81,7 @@ struct EditorDragState {
     std::optional<BandSnapshot> snap;
 };
 
-/// Register Spectr's 10 editor-bridge handlers on the given pulp
+/// Register Spectr's editor-bridge handlers on the given Pulp
 /// EditorBridge. All state references are captured by closures and
 /// must outlive the bridge. Intended to be called once at EditorView
 /// construction.

@@ -14,6 +14,7 @@
 #include <choc/text/choc_JSON.h>
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -45,6 +46,28 @@ std::optional<SnapshotBank::Slot> parse_slot_(std::string_view s) {
     return std::nullopt;
 }
 
+std::optional<Layout> parse_layout_(std::uint32_t n) {
+    switch (n) {
+        case 32: return Layout::Bands32;
+        case 40: return Layout::Bands40;
+        case 48: return Layout::Bands48;
+        case 56: return Layout::Bands56;
+        case 64: return Layout::Bands64;
+        default: return std::nullopt;
+    }
+}
+
+std::optional<float> finite_number_(const choc::value::ValueView& value) {
+    double number = 0.0;
+    if      (value.isFloat64()) number = value.getFloat64();
+    else if (value.isInt64())   number = static_cast<double>(value.getInt64());
+    else if (value.isInt32())   number = static_cast<double>(value.getInt32());
+    else return std::nullopt;
+
+    if (!std::isfinite(number)) return std::nullopt;
+    return static_cast<float>(number);
+}
+
 } // namespace
 
 void register_spectr_editor_handlers(EditorBridge& bridge,
@@ -52,6 +75,93 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                                      PatternLibrary& library,
                                      EditorDragState& drag)
 {
+    // Complete JS field publication. Gain and mute are deliberately separate:
+    // JSON never transports -Infinity, while a muted band still reaches an
+    // exact 0.0 multiplier in BandField::linear_gain().
+    bridge.add_handler("band_field_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject()) return EditorBridge::err_response("payload must be object");
+
+            const auto n_visible = EditorBridge::get_uint(p, "n_visible", 0);
+            const auto layout = parse_layout_(n_visible);
+            if (!layout) return EditorBridge::err_response("n_visible must be 32, 40, 48, 56, or 64");
+
+            if (!p.hasObjectMember("gain_db") || !p["gain_db"].isArray())
+                return EditorBridge::err_response("gain_db must be array");
+            if (!p.hasObjectMember("muted") || !p["muted"].isArray())
+                return EditorBridge::err_response("muted must be array");
+
+            const auto gains = p["gain_db"];
+            const auto mutes = p["muted"];
+            if (gains.size() != n_visible || mutes.size() != n_visible)
+                return EditorBridge::err_response("gain_db and muted lengths must equal n_visible");
+
+            auto next = plugin.field();
+            for (std::uint32_t i = 0; i < n_visible; ++i) {
+                const auto gain = finite_number_(gains[i]);
+                if (!gain) return EditorBridge::err_response("gain_db values must be finite numbers");
+                if (*gain < kBandGainMinDb || *gain > kBandGainMaxDb)
+                    return EditorBridge::err_response("gain_db values must be within -24 and +24 dB");
+                if (!mutes[i].isBool())
+                    return EditorBridge::err_response("muted values must be boolean");
+                next.bands[i].gain_db = *gain;
+                next.bands[i].muted = mutes[i].getBool();
+            }
+
+            if (plugin.layout() != *layout) plugin.set_layout(*layout);
+            plugin.replace_field(next);
+            return EditorBridge::ok_response();
+        });
+
+    // Atomic state publication for the imported live editor. Zoom/pan changes
+    // are sound-defining in Spectr, so the viewport and the full band field
+    // cross the bridge together and compile into one complete Pulp mask table.
+    bridge.add_handler("processing_state_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject())
+                return EditorBridge::err_response("payload must be object");
+
+            const auto n_visible = EditorBridge::get_uint(p, "n_visible", 0);
+            const auto layout = parse_layout_(n_visible);
+            if (!layout)
+                return EditorBridge::err_response(
+                    "n_visible must be 32, 40, 48, 56, or 64");
+            if (!p.hasObjectMember("gain_db") || !p["gain_db"].isArray())
+                return EditorBridge::err_response("gain_db must be array");
+            if (!p.hasObjectMember("muted") || !p["muted"].isArray())
+                return EditorBridge::err_response("muted must be array");
+            if (!p.hasObjectMember("min_hz") || !p.hasObjectMember("max_hz"))
+                return EditorBridge::err_response("min_hz and max_hz are required");
+
+            const auto gains = p["gain_db"];
+            const auto mutes = p["muted"];
+            if (gains.size() != n_visible || mutes.size() != n_visible)
+                return EditorBridge::err_response(
+                    "gain_db and muted lengths must equal n_visible");
+
+            BandField next = plugin.field();
+            for (std::uint32_t i = 0; i < n_visible; ++i) {
+                const auto gain = finite_number_(gains[i]);
+                if (!gain || *gain < kBandGainMinDb || *gain > kBandGainMaxDb)
+                    return EditorBridge::err_response(
+                        "gain_db values must be finite and within -24 and +24 dB");
+                if (!mutes[i].isBool())
+                    return EditorBridge::err_response("muted values must be boolean");
+                next.bands[i].gain_db = *gain;
+                next.bands[i].muted = mutes[i].getBool();
+            }
+
+            const auto min_hz = finite_number_(p["min_hz"]);
+            const auto max_hz = finite_number_(p["max_hz"]);
+            if (!min_hz || !max_hz)
+                return EditorBridge::err_response(
+                    "min_hz and max_hz must be finite numbers");
+            const Viewport viewport{*min_hz, *max_hz};
+            if (!plugin.replace_processing_state(next, viewport, *layout))
+                return EditorBridge::err_response("invalid viewport");
+            return EditorBridge::ok_response();
+        });
+
     // ── Drag protocol ──────────────────────────────────────────────────
 
     bridge.add_handler("paint_start",
@@ -74,6 +184,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             g.n_visible     = EditorBridge::get_uint (p, "n_visible",    32);
 
             dispatch_edit(*mode, plugin.field(), g, *drag.snap);
+            plugin.publish_field();
             return EditorBridge::ok_response();
         });
 
@@ -117,6 +228,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             const auto* pat = library.find(id);
             if (!pat) return EditorBridge::err_response("unknown pattern id");
             pat->apply_to(plugin.field());
+            plugin.publish_field();
             return EditorBridge::ok_response();
         });
 

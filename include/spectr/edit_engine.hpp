@@ -39,7 +39,8 @@ struct BandSnapshot {
 
 /// Drag gesture state at the moment an edit is dispatched. `start_*`
 /// captures where the user pressed; `current_*` is where they are now.
-/// Values are in dB in [-60, +12] unless a mode reinterprets them.
+/// Values are in dB in [kBandGainMinDb, kBandGainMaxDb] unless a mode
+/// reinterprets them.
 struct DragGesture {
     std::size_t start_band   = 0;
     float       start_value  = 0.0f;

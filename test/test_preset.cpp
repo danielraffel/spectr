@@ -46,7 +46,6 @@ TEST_CASE("M9 preset round-trip preserves working state") {
     // Build a non-default state across both flat params and supplemental.
     a.store.set_value(spectr::kMix,        42.0f);
     a.store.set_value(spectr::kOutputTrim,  6.0f);
-    a.store.set_value(spectr::kMorph,       0.33f);
     a.proc->field().bands[7].gain_db  = -9.0f;
     a.proc->field().bands[42].muted   = true;
     a.proc->viewport().min_hz = 120.0f;
@@ -85,7 +84,6 @@ TEST_CASE("M9 preset round-trip preserves working state") {
     // Flat params restored.
     CHECK(b.store.get_value(spectr::kMix)        == Approx(42.0f));
     CHECK(b.store.get_value(spectr::kOutputTrim) == Approx(6.0f));
-    CHECK(b.store.get_value(spectr::kMorph)      == Approx(0.33f));
 
     // Supplemental state restored.
     CHECK(b.proc->field().bands[0].gain_db == Approx(+6.0f));  // live field = B's snapshot

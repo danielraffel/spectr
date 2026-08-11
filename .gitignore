@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+build-*/
 cmake-build-*/
 
 # macOS / Finder
@@ -14,6 +15,9 @@ cmake-build-*/
 
 # User-specific Pulp config (paths differ per user)
 pulp.toml
+
+# Local native-editor experiment; Release 1 ships the reviewed WebView import.
+native-react/
 
 # SDK caches if any appear inside project
 .pulp/

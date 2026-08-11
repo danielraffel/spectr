@@ -8,17 +8,22 @@ of a sound** with unusual depth and targeting.
 
 ## Status
 
-**Audio + state layer working** (M1–M4). `pulp#625` landed as PR#628 and Spectr's
-supplemental plugin-state blob is live.
+Release 1 is an effect with 32–64 independently controllable logarithmic
+bands, a continuously zoomable frequency viewport, nonadjacent frequency
+islands, and exact mute. Its reviewed HTML design is embedded source-preservingly
+through Pulp's native WebView bridge, with a narrow runtime adapter connecting
+the design's live band/zoom state to native C++ DSP and state.
 
-**Editor UI is parked** behind
-[`danielraffel/pulp#651`](https://github.com/danielraffel/pulp/issues/651).
-The plan is to embed the prototype HTML verbatim via `WebViewPanel` for
-pixel-perfect visual parity; the blocker is that `View` subclasses inside
-a plugin editor can't reach the `PluginViewHost`'s native NSView handle.
-The full attempt lives on branch
-[`feature/webview-editor-parked`](https://github.com/danielraffel/spectr/tree/feature/webview-editor-parked)
-ready to resume once `#651` ships an accessor.
+The production path builds AU, VST3, CLAP, and Standalone artifacts. The test
+suite covers the shared spectral-mask DSP, exact latency and mute behavior,
+state round-trip, actual CLAP/VST3 artifact hosting, and a headless Standalone
+launch. Visible host validation is tracked in the canonical goal document.
+
+For the M5 trial, hosts see only the meaningful continuous audio controls:
+`Mix` and `Output`. Snapshot A/B selection and per-band morph remain editor-local
+working state and are preserved with Spectr's supplemental plugin state; they are
+not advertised as host automation until their realtime publication contract is
+ready.
 
 See [`planning/`](planning/) for the full design package:
 
@@ -31,13 +36,40 @@ See [`planning/`](planning/) for the full design package:
 
 ## Building
 
-Requires Pulp SDK 0.33.0+. Copy `pulp.toml.example` to `pulp.toml` and
-edit the SDK paths for your environment, then:
+Requires a Pulp SDK with WebView and AU/VST3/CLAP/Standalone support. A local
+Pulp checkout can produce the immutable development SDK used by Forge-style
+consumers:
 
 ```bash
-pulp build
-pulp test
+Pulp_DIR="$(pulp sdk install --local --profile forge-dev --print-path)/lib/cmake/Pulp"
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPulp_DIR="$Pulp_DIR"
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
+
+The forge profile validates WebView provenance and normalizes every installed
+static archive to arm64. Release/distribution builds should use a release SDK,
+not the development profile.
+
+### Spectral build profiles
+
+New build directories use the **Balanced** product default: an 8192-sample FFT
+with a 2048-sample analysis hop. At 48 kHz it represents all 32 bands across
+the full 20 Hz–20 kHz viewport and reports 10,240 samples (213.33 ms) of
+latency to the host.
+
+Two alternate fixed build profiles are available for explicit trials:
+
+| Profile | CMake configuration | 48 kHz latency | Intended tradeoff |
+|---|---|---:|---|
+| Live | `-DSPECTR_FFT_SIZE=1024 -DSPECTR_ANALYSIS_HOP=256` | 1,280 samples / 26.67 ms | Lower latency, substantially coarser narrow-view isolation |
+| Balanced (default) | `-DSPECTR_FFT_SIZE=8192 -DSPECTR_ANALYSIS_HOP=2048` | 10,240 samples / 213.33 ms | Full normal-range representation with useful zoom detail |
+| Maximum | `-DSPECTR_FFT_SIZE=16384 -DSPECTR_ANALYSIS_HOP=4096` | 20,480 samples / 426.67 ms | Highest available narrow-view detail, highest latency |
+
+These select one compile-time WOLA geometry for an artifact. They are not
+runtime response modes and cannot be switched dynamically in a loaded plugin.
+Use a fresh build directory when comparing profiles so an older CMake cache
+does not retain its previous geometry.
 
 ## License
 

@@ -20,6 +20,10 @@ namespace {
 
 constexpr double kSampleRate = 48000.0;
 
+constexpr int settled_samples() noexcept {
+    return spectr::kSpectralLatency + spectr::kSpectralFftSize + 4096;
+}
+
 /// Fill a 2-channel buffer with a continuous sine. `start` lets callers
 /// advance the phase across multiple calls so the waveform is seamless.
 void fill_sine(std::vector<float>& ch0, std::vector<float>& ch1,
@@ -82,7 +86,10 @@ void feed_sine(spectr::Spectr& plugin, double hz, int block, int total_samples) 
 
 TEST_CASE("Analyzer bridge: spectrum populates after enough audio is fed") {
     PreparedSpectr s{};
-    feed_sine(*s.processor, 1000.0, 256, 4096);
+    CHECK(s.processor->bridge().fft_size() == spectr::kAnalyzerFftSize);
+    CHECK(s.processor->bridge().num_bins()
+          <= pulp::view::SpectrumData::kMaxBins);
+    feed_sine(*s.processor, 1000.0, 256, settled_samples());
 
     const auto& spec = s.processor->read_spectrum();
     CHECK(spec.num_bins > 0);
@@ -98,7 +105,7 @@ TEST_CASE("Analyzer bridge: spectrum populates after enough audio is fed") {
 TEST_CASE("Analyzer bridge: spectrum peaks near the input tone frequency") {
     PreparedSpectr s{};
     const double tone_hz = 2000.0;
-    feed_sine(*s.processor, tone_hz, 256, 8192);
+    feed_sine(*s.processor, tone_hz, 256, settled_samples());
 
     const auto& spec = s.processor->read_spectrum();
     REQUIRE(spec.num_bins > 0);
@@ -122,9 +129,32 @@ TEST_CASE("Analyzer bridge: spectrum peaks near the input tone frequency") {
     CHECK(peak_db > -40.0f);
 }
 
+TEST_CASE("Analyzer bridge: Maximum profile retains the upper spectrum") {
+    if constexpr (spectr::kSpectralFftSize > 8192) {
+        PreparedSpectr s{};
+        constexpr double tone_hz = 18000.0;
+        feed_sine(*s.processor, tone_hz, 256, settled_samples());
+
+        const auto& spec = s.processor->read_spectrum();
+        REQUIRE(spec.num_bins > 0);
+        const float bin_step = static_cast<float>(kSampleRate)
+                             / static_cast<float>(spectr::kAnalyzerFftSize);
+        const int expected = static_cast<int>(tone_hz / bin_step + 0.5);
+        REQUIRE(expected < spec.num_bins);
+
+        float peak_db = -200.0f;
+        for (int k = std::max(0, expected - 5);
+             k <= std::min(spec.num_bins - 1, expected + 5); ++k)
+            peak_db = std::max(peak_db, spec.magnitude_db[k]);
+        CHECK(peak_db > -40.0f);
+    } else {
+        SUCCEED("processing FFT fits the analyzer publication capacity");
+    }
+}
+
 TEST_CASE("Analyzer bridge: meter snapshot is readable after audio") {
     PreparedSpectr s{};
-    feed_sine(*s.processor, 1000.0, 256, 4096);
+    feed_sine(*s.processor, 1000.0, 256, settled_samples());
 
     // We don't assume any specific field on MultiChannelMeterData — just
     // that the triple-buffer returns a readable snapshot.
@@ -135,7 +165,7 @@ TEST_CASE("Analyzer bridge: meter snapshot is readable after audio") {
 
 TEST_CASE("Analyzer bridge: waveform capture populates") {
     PreparedSpectr s{};
-    feed_sine(*s.processor, 500.0, 256, 4096);
+    feed_sine(*s.processor, 500.0, 256, settled_samples());
 
     const auto& wave = s.processor->read_waveform();
     CHECK(wave.num_samples > 0);
