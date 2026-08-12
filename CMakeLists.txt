@@ -82,6 +82,87 @@ set(SPECTR_HEADERS
     include/spectr/ui/editor_view.hpp
 )
 
+# ── Native-editor N1 vertical slice ──────────────────────────────────
+#
+# This is a separate, standalone-only graph. It intentionally does not
+# compile editor_view.cpp/editor_bridge.cpp and does not link the HTML binary
+# data target. The current Pulp SDK still exposes WebKit transitively from its
+# monolithic view-core library; removing that framework edge requires an SDK
+# library split, not another product target. A native editor failure returns
+# an empty GPU root rather than silently selecting AutoUi or the WebView
+# baseline.
+set(SPECTR_NATIVE_N1_SOURCES
+    src/spectr.cpp
+    src/pattern.cpp
+    src/preset_format.cpp
+    src/snapshot.cpp
+    src/ui/native_editor.cpp
+)
+
+pulp_add_binary_data(spectr_native_assets
+    SOURCES native-ui/dist/editor.js
+    NAMESPACE spectr_native
+)
+
+function(spectr_configure_native_n1_target target)
+    target_include_directories(${target} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_definitions(${target} PRIVATE
+        SPECTR_NATIVE_EDITOR=1
+        SPECTR_NATIVE_N1_SDK_COMPAT=1
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
+        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
+    )
+endfunction()
+
+add_library(SpectrNativeN1_Core OBJECT ${SPECTR_NATIVE_N1_SOURCES})
+target_link_libraries(SpectrNativeN1_Core PUBLIC
+    Pulp::format Pulp::view-script spectr_native_assets
+)
+spectr_configure_native_n1_target(SpectrNativeN1_Core)
+
+if(APPLE)
+    add_executable(SpectrNativeN1_Standalone MACOSX_BUNDLE
+        native_main.cpp
+    )
+else()
+    add_executable(SpectrNativeN1_Standalone
+        native_main.cpp
+    )
+endif()
+target_link_libraries(SpectrNativeN1_Standalone PRIVATE
+    SpectrNativeN1_Core Pulp::standalone
+)
+spectr_configure_native_n1_target(SpectrNativeN1_Standalone)
+set_target_properties(SpectrNativeN1_Standalone PROPERTIES
+    OUTPUT_NAME "Spectr Native N1"
+    MACOSX_BUNDLE_BUNDLE_NAME "Spectr Native N1"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "com.pulp.spectr.native-n1"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
+    MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
+)
+
+foreach(_forbidden_native_source
+        src/ui/editor_view.cpp
+        src/editor_bridge.cpp
+        resources/editor.html)
+    list(FIND SPECTR_NATIVE_N1_SOURCES "${_forbidden_native_source}"
+         _forbidden_native_source_index)
+    if(NOT _forbidden_native_source_index EQUAL -1)
+        message(FATAL_ERROR
+            "SpectrNativeN1 must not compile ${_forbidden_native_source}")
+    endif()
+endforeach()
+
 # ── Source-preserving editor asset ─────────────────────────────────────
 # Release 1 embeds the reviewed HTML prototype and hosts it through Pulp's
 # native WebView bridge. Native-editor experiments remain outside this branch.
@@ -144,6 +225,15 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
 )
 catch_discover_tests(Spectr-test)
+
+add_executable(Spectr-native-n1-test
+    test/test_native_n1.cpp
+)
+target_link_libraries(Spectr-native-n1-test PRIVATE
+    SpectrNativeN1_Core Catch2::Catch2WithMain
+)
+spectr_configure_native_n1_target(Spectr-native-n1-test)
+catch_discover_tests(Spectr-native-n1-test)
 
 # Real Chromium oracle for the imported adapter's native analyzer and input
 # policy. This runs the authored bundle with a mock Pulp bridge and proves

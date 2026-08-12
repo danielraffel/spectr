@@ -16,6 +16,12 @@
 #include <array>
 #include <memory>
 
+#if defined(SPECTR_NATIVE_EDITOR)
+#include <filesystem>
+#include <pulp/view/frame_clock.hpp>
+#include <pulp/view/scripted_ui.hpp>
+#endif
+
 #include "spectr/band_state.hpp"
 #include "spectr/edit_modes.hpp"
 #include "spectr/pattern.hpp"
@@ -123,6 +129,14 @@ public:
     void on_view_opened(pulp::view::View& view) override;
     void on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) override;
     void on_view_closed(pulp::view::View& view) override;
+#if defined(SPECTR_NATIVE_EDITOR)
+    pulp::view::ScriptedUiSession* active_scripted_ui() override {
+        return native_scripted_ui_.get();
+    }
+    const pulp::view::ScriptedUiSession* active_scripted_ui() const override {
+        return native_scripted_ui_.get();
+    }
+#endif
     // ── Accessors — primarily for tests and the UI layer ───────────────
 
     const BandField&  field()     const noexcept { return field_; }
@@ -219,6 +233,22 @@ private:
     SnapshotBank                          snapshots_{};
     PatternLibrary                        patterns_{};
     std::unique_ptr<pulp::view::ABCompare> ab_{};
+
+#if defined(SPECTR_NATIVE_EDITOR)
+    std::unique_ptr<pulp::view::ScriptedUiSession> native_scripted_ui_{};
+    std::filesystem::path native_script_path_{};
+    pulp::view::View* native_editor_root_ = nullptr;
+    pulp::view::FrameClock* native_frame_clock_ = nullptr;
+    int native_frame_subscription_ = -1;
+    float native_analyzer_elapsed_ = 0.0f;
+    std::uint64_t native_analyzer_sequence_ = 0;
+
+    std::unique_ptr<pulp::view::View> create_native_editor_();
+    void open_native_editor_(pulp::view::View& view);
+    void close_native_editor_();
+    bool tick_native_analyzer_(float dt);
+    void hydrate_native_editor_();
+#endif
 
     [[nodiscard]] pulp::signal::SpectralBandLayout
         make_mask_layout_() const noexcept;

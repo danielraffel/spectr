@@ -1,5 +1,7 @@
 #include "spectr/spectr.hpp"
+#if !defined(SPECTR_NATIVE_EDITOR)
 #include "spectr/ui/editor_view.hpp"
+#endif
 
 #include <choc/containers/choc_Value.h>
 #include <choc/text/choc_JSON.h>
@@ -170,6 +172,9 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
 }
 
 std::unique_ptr<pulp::view::View> Spectr::create_view() {
+#if defined(SPECTR_NATIVE_EDITOR)
+    return create_native_editor_();
+#else
     // Release 1 embeds the reviewed editor.html. Visual parity remains
     // by construction; JS↔C++ state sync flows through EditorView's
     // message handler. See include/spectr/ui/editor_view.hpp.
@@ -179,9 +184,21 @@ std::unique_ptr<pulp::view::View> Spectr::create_view() {
     // so we don't leave a gap if window chrome differs from our
     // preferred size.
     return std::make_unique<EditorView>(*this);
+#endif
 }
 
 pulp::format::ViewSize Spectr::view_size() const {
+#if defined(SPECTR_NATIVE_EDITOR)
+    return {
+        kEditorDesignWidth,
+        kEditorDesignHeight,
+        kEditorDesignWidth,
+        kEditorDesignHeight,
+        kEditorDesignWidth,
+        kEditorDesignHeight,
+        kEditorAspectRatio,
+    };
+#else
     return {
         kEditorPreferredWidth,
         kEditorPreferredHeight,
@@ -191,24 +208,37 @@ pulp::format::ViewSize Spectr::view_size() const {
         kEditorMaximumHeight,
         kEditorAspectRatio,
     };
+#endif
 }
 
 void Spectr::on_view_opened(pulp::view::View& view) {
+#if defined(SPECTR_NATIVE_EDITOR)
+    open_native_editor_(view);
+#else
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->attach_if_needed();
     }
+#endif
 }
 
 void Spectr::on_view_resized(pulp::view::View& view, uint32_t /*w*/, uint32_t /*h*/) {
+#if defined(SPECTR_NATIVE_EDITOR)
+    if (&view == native_editor_root_) hydrate_native_editor_();
+#else
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->sync_to_host();
     }
+#endif
 }
 
 void Spectr::on_view_closed(pulp::view::View& view) {
+#if defined(SPECTR_NATIVE_EDITOR)
+    if (&view == native_editor_root_) close_native_editor_();
+#else
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->detach_if_needed();
     }
+#endif
 }
 
 void Spectr::configure_bridge_(int num_channels) {
@@ -258,7 +288,16 @@ void Spectr::process(
     // An explicit reset or unexpected seek is a hard DSP-history boundary.
     // Preserve the continuously hot WOLA/dry-delay history across an ordinary
     // host cycle wrap so looping does not emit a fresh startup gap.
-    if (ctx.should_reset_stream_history()) {
+#if defined(SPECTR_NATIVE_N1_SDK_COMPAT)
+    // The installed 0.803.0 Forge SDK predates should_reset_stream_history().
+    // For this standalone-only N1 scaffold, honor explicit resets and avoid
+    // treating ordinary loop wraps as cold starts. The shipping format graph
+    // continues to compile against the newer, precise helper below.
+    const bool should_reset_stream_history = ctx.reset_requested;
+#else
+    const bool should_reset_stream_history = ctx.should_reset_stream_history();
+#endif
+    if (should_reset_stream_history) {
         if (processor_prepared_)
             mask_processor_.reset();
         output_gain_.set_immediate(target_output_gain);
