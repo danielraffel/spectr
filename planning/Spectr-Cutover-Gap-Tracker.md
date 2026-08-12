@@ -276,16 +276,41 @@ design pass to classify every editor surface as one of:
 The output is a source-to-native mapping, a measured gap ledger, and an ordered
 implementation plan. It must not be a one-off visual rewrite proposal.
 
+N0 result (2026-08-11): **static DesignIR is not the runtime architecture.**
+Browser capture is screenshot-backed, while the offline runtime walker
+serializes only a settled element tree. Neither retains React hooks, closures,
+effects, timers, event listeners, the analyzer loop, or the imperative canvas
+program. The negative oracle rendered only a small inert control stack at the
+upper-left of a 1320x860 native frame with a blank canvas. The native product
+therefore uses a live QuickJS controller and `@pulp/react` native View /
+CanvasWidget tree rendered by Skia Graphite on Dawn. DesignIR remains a
+structural audit artifact, never the runtime behavior authority.
+
+The original Claude HTML is also not the shipping source by itself. The frozen
+editor is the original plus checked-in adapter transformations for hydration,
+analyzer frames, mute semantics, snapshots/morph, patterns, focus, shortcuts,
+Shift-drag brushing, and scaling. N1 first canonicalizes that behavior into
+stable source modules; runtime exact-string replacement is not a native
+architecture.
+
 ### Phase N1 — Establish the parallel native shell
 
-- Feed the preserved Claude Design source/assets through the canonical import
-  pipeline and DesignIR.
-- Materialize the static layout, tokens, typography, images, chrome, and
-  ordinary controls through Pulp's native View tree.
-- Render through Skia/Dawn; do not embed a browser or WebView inside the native
-  lane.
-- Connect the native tree to the existing renderer-neutral editor bridge/state
-  contract without changing DSP or session semantics.
+- Canonicalize frozen original-plus-adapter behavior into checked-in source
+  modules with no runtime `replaceSpectrSource` transform.
+- Build a separate native-only artifact. It must not link, embed, or reference
+  WebView/WKWebView, `editor.html`, browser capture, screenshot controls, or a
+  per-surface browser fallback.
+- Run the canonical controller in live QuickJS through `@pulp/react`; create
+  native View and CanvasWidget nodes rather than a serialized static snapshot.
+- Render through Skia Graphite/Dawn and require `use_gpu=true`,
+  `is_gpu_backed=true`, and the fixed 1320x860 design viewport. A CPU renderer,
+  blank/error View, static DesignIR fallback, or unavailable bridge fails.
+- First vertical slice: minimal native chrome, the real 32-band canvas, one real
+  analyzer frame, finite C++ hydration, one single-tap mute, and one sculpt drag
+  using the frozen formula. Each gesture must reach authoritative C++ state,
+  receive a monotonic revision, and redraw.
+- Render later N2/N3 surfaces as visibly disabled native placeholders. Never
+  route an unavailable region back to WebView.
 - Add a build-time/runtime developer selector so the WebView and native lanes
   can be launched against the same state during comparison. The shipping
   renderer remains explicit; there is no silent runtime fallback.
@@ -302,6 +327,15 @@ is not inherently Spectr-specific. Expected surfaces include:
   workflows;
 - animation/timing and categorical mute transitions; and
 - accessibility semantics and automation-facing value descriptions.
+
+Confirmed framework prerequisites include a supported native
+`ScriptedUiSession`/EditorBridge attachment; deterministic release-capable
+ReactDOM-to-`@pulp/react` source transformation; single-delivery pointer
+propagation/cancellation and real capture retargeting; context-menu and
+double-click events; focused keyboard/key-up/Tab routing; native accessibility
+properties and Invoke/Toggle/range actions; modal focus trapping; and explicit
+file/clipboard/durable-storage capabilities. These are framework fixtures first,
+then Spectr integration tests.
 
 Every generalized capability needs a smaller framework-level fixture in
 addition to its Spectr integration test. Exact-string HTML patching is not an
@@ -349,6 +383,11 @@ Native becomes the default only when:
 - the performance/operational report shows the native path is ready for normal
   production use.
 
+The native shipping artifact must also pass a resource, dependency, and symbol
+scan proving that it contains no WebView implementation or hidden runtime
+fallback. The frozen WebView comparison remains a separately selected artifact,
+not an alternate renderer inside the native binary.
+
 Keep the frozen WebView baseline and its evidence available for regression and
 historical comparison. Removing the shipping WebView dependency is a separate,
 reviewed decision after native qualification, not an automatic consequence of
@@ -380,8 +419,16 @@ first repro surfaces it.
 | Gap | Pulp issue | Filed | Severity | Blocks cutover? | Notes |
 -->
 
-_(none yet — first gaps surface once M9.5 slice 3 is wired and pulp#468
-reaches Phase 1 implementation)_
+| Gap | Pulp issue | Filed | Severity | Blocks cutover? | Notes |
+|---|---|---|---|---|---|
+| Static DesignIR loses hooks, listeners, timers, and canvas programs | pending | 2026-08-11 | P0 | yes | Native uses live release QuickJS / `@pulp/react`; strict mode rejects static or screenshot fallback. |
+| Native `EditorBridge` cannot attach through the public `ScriptedUiSession` lifecycle | pending | 2026-08-11 | P0 | yes | Working engine overload exists, but public native runtime attachment is incomplete. |
+| Pointer delivery/propagation/cancellation/capture are not browser-equivalent | pending | 2026-08-11 | P0 | yes | Current paths can duplicate delivery; capture is bookkeeping rather than input retargeting. |
+| Context menu, double-click, focused key-up/Tab routing are incomplete | pending | 2026-08-11 | P0 | yes | Required for menus, shortcuts, text entry, and host keyboard ownership. |
+| Native accessibility properties and actions are incomplete | pending | 2026-08-11 | P0 | yes | Canvas bands require semantic peers; controls need press/toggle/range actions. |
+| Browser file/clipboard/modal/storage assumptions need native capabilities | pending | 2026-08-11 | P1 | yes | Pattern import/export cannot rely on FileReader, downloads, or global temporary storage. |
+| Frozen adapter behavior is not canonical source | product | 2026-08-11 | P0 | yes | Fold exact shipping behavior into stable native source modules before parity. |
+| Browser edit formulas diverge from dormant C++ `EditEngine` | product | 2026-08-11 | P0 | yes | Preserve frozen algorithms or unify implementations behind a mutation-sensitive oracle. |
 
 ## Closed Gaps
 

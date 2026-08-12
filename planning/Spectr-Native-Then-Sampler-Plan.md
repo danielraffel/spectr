@@ -26,8 +26,12 @@ Follow `Spectr-Cutover-Gap-Tracker.md` phases N0–N5:
 
 1. Run an Ultra architecture/import audit of the preserved Claude Design source.
 2. Create a separate worktree and native-renderer branch.
-3. Import/materialize the editor through Pulp DesignIR and the native View tree.
-4. Render through Skia/Dawn without a WebView or embedded browser.
+3. Use DesignIR/browser capture only as structural and visual audit evidence.
+   Canonicalize frozen original-plus-adapter behavior into stable source, then
+   run it live in QuickJS through `@pulp/react` native Views and CanvasWidgets.
+4. Render through Skia Graphite/Dawn without WebView, WKWebView, an embedded
+   browser, screenshot-backed controls, or a hidden fallback. Require the GPU
+   backend and fail closed if it is unavailable.
 5. Reuse the same DSP, state, analyzer, preset, undo, automation, modulation,
    A/B, morph, and interaction contracts as the WebView baseline.
 6. Generalize missing widgets/import/runtime behavior in Pulp rather than adding
@@ -36,6 +40,11 @@ Follow `Spectr-Cutover-Gap-Tracker.md` phases N0–N5:
    interaction, host, state, and performance fixtures.
 8. Make native the default only after the complete N5 gate passes. Retain the
    WebView baseline for rollback and regression comparison.
+
+The first accepted native slice must already cross the real product boundary:
+finite C++ hydration, a real analyzer frame, a real 32-band canvas, tap-to-mute,
+and sculpt-drag must round-trip through revisioned authoritative state. An inert
+native shell or static screenshot does not satisfy Phase 1.
 
 ## Phase 2 — Spectral Sampler on the native editor
 
