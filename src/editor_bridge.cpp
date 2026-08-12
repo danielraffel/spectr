@@ -15,7 +15,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -90,22 +89,32 @@ choc::value::Value pattern_library_projection_(const PatternLibrary& library) {
     return result;
 }
 
-std::string authoritative_response_(const Spectr& plugin,
-                                    std::uint32_t* revision,
-                                    bool mutated,
-                                    std::uint32_t fallback_revision = 0) {
-    if (revision != nullptr && mutated
-        && *revision != std::numeric_limits<std::uint32_t>::max()) {
-        ++*revision;
-    }
-    return EditorBridge::ok_response(make_editor_state_payload(
-        plugin, revision != nullptr ? *revision : fallback_revision));
+std::optional<EditorRevision> expected_revision_(
+    const choc::value::ValueView& payload) {
+    if (!payload.isObject() || !payload.hasObjectMember("expected_revision"))
+        return std::nullopt;
+    const auto value = payload["expected_revision"];
+    if (value.isInt32() && value.getInt32() >= 0)
+        return static_cast<EditorRevision>(value.getInt32());
+    if (value.isInt64() && value.getInt64() >= 0)
+        return static_cast<EditorRevision>(value.getInt64());
+    // A present but malformed precondition must never degrade into an
+    // unconditional mutation. This sentinel is outside the authority's
+    // signed-JSON revision domain and therefore always rejects as stale.
+    return kMaxEditorRevision + 1;
+}
+
+std::string authority_response_(const Spectr& plugin,
+                                const EditorReceipt& receipt) {
+    if (!receipt.accepted) return EditorBridge::err_response(receipt.error);
+    return EditorBridge::ok_response(
+        make_editor_state_payload(plugin, receipt.revision));
 }
 
 } // namespace
 
 choc::value::Value make_editor_state_payload(const Spectr& plugin,
-                                             std::uint32_t revision) {
+                                             EditorRevision revision) {
     const auto n = visible_count(plugin.layout());
     auto gains = choc::value::createEmptyArray();
     auto muted = choc::value::createEmptyArray();
@@ -119,7 +128,8 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     snapshots.addMember("B", snapshot_projection_(plugin.snapshots().b, n));
 
     auto payload = choc::value::createObject("SpectrEditorState");
-    payload.addMember("revision", static_cast<std::int64_t>(revision));
+    payload.addMember("revision", static_cast<std::int64_t>(
+        std::min(revision, kMaxEditorRevision)));
     payload.addMember("n_visible", static_cast<std::int32_t>(n));
     payload.addMember("gain_db", gains);
     payload.addMember("muted", muted);
@@ -133,23 +143,22 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
 void register_spectr_editor_handlers(EditorBridge& bridge,
                                      Spectr& plugin,
                                      PatternLibrary& library,
-                                     EditorDragState& drag,
-                                     std::uint32_t* authoritative_revision)
+                                     EditorAuthority& authority)
 {
     bridge.add_handler("processing_state_get",
-        [&plugin, &drag, authoritative_revision](const choc::value::ValueView&) {
+        [&plugin, &authority](const choc::value::ValueView&) {
             // Every committed realm requests state on mount. Treat that as a
             // new gesture epoch so a reload can never resume a C++ snapshot
             // captured by callbacks from the retired realm.
-            drag.snap.reset();
-            return authoritative_response_(plugin, authoritative_revision, false);
+            authority.reset_transient_state();
+            return authority_response_(plugin, {true, authority.revision(), {}});
         });
 
     // Complete JS field publication. Gain and mute are deliberately separate:
     // JSON never transports -Infinity, while a muted band still reaches an
     // exact 0.0 multiplier in BandField::linear_gain().
     bridge.add_handler("band_field_set",
-        [&plugin, authoritative_revision](const choc::value::ValueView& p) -> std::string {
+        [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             if (!p.isObject()) return EditorBridge::err_response("payload must be object");
 
             const auto n_visible = EditorBridge::get_uint(p, "n_visible", 0);
@@ -178,18 +187,15 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 next.bands[i].muted = mutes[i].getBool();
             }
 
-            if (!plugin.replace_processing_state(next, plugin.viewport(), *layout))
-                return EditorBridge::err_response("invalid band field");
-            if (authoritative_revision != nullptr)
-                return authoritative_response_(plugin, authoritative_revision, true);
-            return EditorBridge::ok_response();
+            return authority_response_(plugin, authority.replace_processing_state(
+                next, plugin.viewport(), *layout, expected_revision_(p)));
         });
 
     // Atomic state publication for the imported live editor. Zoom/pan changes
     // are sound-defining in Spectr, so the viewport and the full band field
     // cross the bridge together and compile into one complete Pulp mask table.
     bridge.add_handler("processing_state_set",
-        [&plugin, authoritative_revision](const choc::value::ValueView& p) -> std::string {
+        [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             if (!p.isObject())
                 return EditorBridge::err_response("payload must be object");
 
@@ -229,24 +235,20 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 return EditorBridge::err_response(
                     "min_hz and max_hz must be finite numbers");
             const Viewport viewport{*min_hz, *max_hz};
-            if (!plugin.replace_processing_state(next, viewport, *layout))
-                return EditorBridge::err_response("invalid viewport");
-            if (authoritative_revision != nullptr)
-                return authoritative_response_(plugin, authoritative_revision, true);
-            return EditorBridge::ok_response();
+            return authority_response_(plugin, authority.replace_processing_state(
+                next, viewport, *layout, expected_revision_(p)));
         });
 
     // ── Drag protocol ──────────────────────────────────────────────────
 
     bridge.add_handler("paint_start",
-        [&drag, &plugin](const choc::value::ValueView&) {
-            drag.snap = BandSnapshot::capture(plugin.field());
-            return EditorBridge::ok_response();
+        [&plugin, &authority](const choc::value::ValueView& p) {
+            return authority_response_(
+                plugin, authority.begin_band_edit(expected_revision_(p)));
         });
 
     bridge.add_handler("paint",
-        [&drag, &plugin, authoritative_revision](const choc::value::ValueView& p) -> std::string {
-            if (!drag.snap) return EditorBridge::err_response("paint without paint_start");
+        [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             if (!p.isObject()) return EditorBridge::err_response("payload must be object");
             const auto mode = parse_edit_mode_(EditorBridge::get_string(p, "mode"));
             if (!mode) return EditorBridge::err_response("unknown edit mode");
@@ -276,53 +278,38 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             g.current_value = *current_value;
             g.n_visible     = n_visible;
 
-            dispatch_edit(*mode, plugin.field(), g, *drag.snap);
-            plugin.publish_field();
-            if (authoritative_revision != nullptr)
-                return authoritative_response_(plugin, authoritative_revision, true);
-            return EditorBridge::ok_response();
+            return authority_response_(plugin, authority.update_band_edit(
+                *mode, g, expected_revision_(p)));
         });
 
     bridge.add_handler("paint_end",
-        [&drag](const choc::value::ValueView&) {
-            drag.snap.reset();
-            return EditorBridge::ok_response();
+        [&plugin, &authority](const choc::value::ValueView&) {
+            return authority_response_(plugin, authority.end_band_edit());
         });
 
     // ── Morph / snapshot / A-B ─────────────────────────────────────────
 
     bridge.add_handler("morph",
-        [&plugin](const choc::value::ValueView& p) {
+        [&plugin, &authority](const choc::value::ValueView& p) {
             const auto t = std::clamp(EditorBridge::get_float(p, "t", 0.0f), 0.0f, 1.0f);
-            const auto revision = EditorBridge::get_uint(p, "revision", 0);
-            plugin.apply_morph_to_live(t);
-            return EditorBridge::ok_response(
-                make_editor_state_payload(plugin, revision));
+            return authority_response_(
+                plugin, authority.apply_morph(t, expected_revision_(p)));
         });
 
     bridge.add_handler("capture_snapshot",
-        [&plugin](const choc::value::ValueView& p) -> std::string {
+        [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));
             if (!slot) return EditorBridge::err_response("slot must be 'A' or 'B'");
-            const auto revision = EditorBridge::get_uint(p, "revision", 0);
-            plugin.capture_snapshot(*slot);
-            return EditorBridge::ok_response(
-                make_editor_state_payload(plugin, revision));
+            return authority_response_(plugin, authority.capture_snapshot(
+                *slot, expected_revision_(p)));
         });
 
     bridge.add_handler("recall_snapshot",
-        [&plugin](const choc::value::ValueView& p) -> std::string {
+        [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));
             if (!slot) return EditorBridge::err_response("slot must be 'A' or 'B'");
-            const auto& snapshot = plugin.snapshots().get(*slot);
-            if (!snapshot.populated)
-                return EditorBridge::err_response("snapshot slot is empty");
-            const auto revision = EditorBridge::get_uint(p, "revision", 0);
-            if (!plugin.replace_processing_state(
-                    snapshot.field, snapshot.viewport, snapshot.layout))
-                return EditorBridge::err_response("snapshot state is invalid");
-            return EditorBridge::ok_response(
-                make_editor_state_payload(plugin, revision));
+            return authority_response_(plugin, authority.recall_snapshot(
+                *slot, expected_revision_(p)));
         });
 
     bridge.add_handler("ab_toggle",

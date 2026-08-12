@@ -21,8 +21,8 @@
 //
 // ── Drag protocol (paint_start / paint / paint_end) ────────────────────
 //
-//   paint_start   → capture a BandSnapshot from Spectr.field() into
-//                   the shared `EditorDragState` (held by EditorView)
+//   paint_start   → capture a BandSnapshot from Spectr.field() into the
+//                   processor-owned renderer-neutral EditorAuthority
 //   paint         → dispatch_edit with that captured snapshot
 //   paint_end     → drop the snapshot
 //
@@ -80,27 +80,18 @@
 #include <choc/containers/choc_Value.h>
 
 #include <cstdint>
-#include <optional>
-
-#include "spectr/edit_engine.hpp"  // BandSnapshot
+#include "spectr/editor_authority.hpp"
 
 namespace spectr {
 
 class Spectr;
 class PatternLibrary;
 
-/// Cross-call state the drag handlers need. Owned by whoever owns the
-/// bridge (typically EditorView) so handler closures can capture a
-/// stable reference.
-struct EditorDragState {
-    std::optional<BandSnapshot> snap;
-};
-
 /// Canonical editor projection used by initial hydration and every native-owned
 /// snapshot/recall/morph response. Keeping one builder prevents the WebView's
 /// optimistic display mirror from becoming a second sound-state authority.
 choc::value::Value make_editor_state_payload(const Spectr& plugin,
-                                             std::uint32_t revision = 0);
+                                             EditorRevision revision = 0);
 
 /// Register Spectr's editor-bridge handlers on the given Pulp
 /// EditorBridge. All state references are captured by closures and
@@ -109,7 +100,6 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
 void register_spectr_editor_handlers(pulp::view::EditorBridge& bridge,
                                      Spectr& plugin,
                                      PatternLibrary& library,
-                                     EditorDragState& drag,
-                                     std::uint32_t* authoritative_revision = nullptr);
+                                     EditorAuthority& authority);
 
 } // namespace spectr

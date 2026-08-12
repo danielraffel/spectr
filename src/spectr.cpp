@@ -15,7 +15,7 @@
 
 namespace spectr {
 
-Spectr::Spectr()  = default;
+Spectr::Spectr() : editor_authority_(*this) {}
 Spectr::~Spectr() = default;
 
 pulp::format::PluginDescriptor Spectr::descriptor() const {

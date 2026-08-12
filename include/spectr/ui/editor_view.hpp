@@ -105,8 +105,8 @@ private:
     //   attached_   → pod, trivially destroyed
     //   bridge_     → destroyed AFTER panel_ — handler closures safe
     //                 to drain
-    //   drag_       → destroyed AFTER bridge_ — closures that captured
-    //                 &drag_ have stopped firing by now
+    // Gesture state is processor-owned by EditorAuthority, so closing or
+    // replacing a renderer cannot leave callbacks pointing into this view.
     //   plugin_     → reference, no destructor
     //
     // EditorBridge is non-movable + non-copyable by design (pulp#711
@@ -121,7 +121,6 @@ private:
     // teardown landed in pulp#728 (fixes #726).
 
     Spectr&                                   plugin_;
-    EditorDragState                           drag_{};
     pulp::view::EditorBridge                  bridge_{};
     bool                                      bridge_attached_ = false;
     bool                                      document_ready_ = false;

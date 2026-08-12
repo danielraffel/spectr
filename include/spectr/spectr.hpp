@@ -26,6 +26,7 @@
 
 #include "spectr/band_state.hpp"
 #include "spectr/edit_modes.hpp"
+#include "spectr/editor_authority.hpp"
 #include "spectr/pattern.hpp"
 #include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
@@ -138,8 +139,8 @@ public:
     const pulp::view::ScriptedUiSession* active_scripted_ui() const override {
         return native_scripted_ui_.get();
     }
-    std::uint32_t native_editor_revision() const noexcept {
-        return native_editor_revision_;
+    EditorRevision native_editor_revision() const noexcept {
+        return editor_authority_.revision();
     }
 #endif
     // ── Accessors — primarily for tests and the UI layer ───────────────
@@ -154,6 +155,8 @@ public:
     const Viewport&   viewport()  const noexcept { return viewport_; }
     Viewport&         viewport()        noexcept { return viewport_; }
     Layout            layout()    const noexcept { return layout_; }
+    EditorAuthority& editor_authority() noexcept { return editor_authority_; }
+    const EditorAuthority& editor_authority() const noexcept { return editor_authority_; }
 
     void set_layout(Layout L);
 
@@ -238,11 +241,10 @@ private:
     SnapshotBank                          snapshots_{};
     PatternLibrary                        patterns_{};
     std::unique_ptr<pulp::view::ABCompare> ab_{};
+    EditorAuthority                       editor_authority_;
 
 #if defined(SPECTR_NATIVE_EDITOR)
-    EditorDragState native_editor_drag_{};
     pulp::view::EditorBridge native_editor_bridge_{};
-    std::uint32_t native_editor_revision_ = 0;
     bool native_editor_handlers_registered_ = false;
     std::unique_ptr<pulp::view::ScriptedUiSession> native_scripted_ui_{};
     std::filesystem::path native_script_path_{};

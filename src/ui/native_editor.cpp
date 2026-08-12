@@ -74,8 +74,8 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
         *root, state(), std::move(options));
 
     if (!native_editor_handlers_registered_) {
-        register_spectr_editor_handlers(native_editor_bridge_, *this, patterns(),
-                                         native_editor_drag_, &native_editor_revision_);
+        register_spectr_editor_handlers(
+            native_editor_bridge_, *this, patterns(), editor_authority());
         native_editor_handlers_registered_ = true;
     }
     native_editor_bridge_.attach_native_runtime(
@@ -106,7 +106,8 @@ void Spectr::hydrate_native_editor_() {
     js << "if (typeof globalThis.__spectrHydrate !== 'function') "
           "throw new Error('native hydration boundary missing');"
           "globalThis.__spectrHydrate("
-       << choc::json::toString(make_editor_state_payload(*this, native_editor_revision_))
+       << choc::json::toString(make_editor_state_payload(
+              *this, editor_authority().revision()))
        << ");";
 
     try {
@@ -171,7 +172,7 @@ void Spectr::close_native_editor_() {
     native_frame_clock_ = nullptr;
     native_analyzer_elapsed_ = 0.0f;
     native_analyzer_sequence_ = 0;
-    native_editor_drag_.snap.reset();
+    editor_authority().reset_transient_state();
     native_editor_root_ = nullptr;
     if (native_scripted_ui_) {
         native_editor_bridge_.detach_native_runtime(

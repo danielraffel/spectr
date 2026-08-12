@@ -30,7 +30,6 @@
 
 using Catch::Approx;
 using spectr::BandField;
-using spectr::EditorDragState;
 using spectr::SnapshotBank;
 using spectr::Spectr;
 using spectr::register_spectr_editor_handlers;
@@ -40,7 +39,6 @@ namespace {
 struct Rig {
     pulp::state::StateStore       store;
     std::unique_ptr<Spectr>       proc;
-    EditorDragState               drag;
     pulp::view::EditorBridge      bridge;
 
     Rig() : proc(std::make_unique<Spectr>()) {
@@ -49,7 +47,8 @@ struct Rig {
         // Production registers the processor-owned library so pattern edits
         // participate in the plugin state blob. Keep the bridge oracle wired
         // to that same authority instead of a detached test-only library.
-        register_spectr_editor_handlers(bridge, *proc, proc->patterns(), drag);
+        register_spectr_editor_handlers(
+            bridge, *proc, proc->patterns(), proc->editor_authority());
     }
 
     std::string dispatch(std::string_view envelope_json) {
@@ -132,6 +131,99 @@ TEST_CASE("native editor bridge: complete field preserves exact mute and layout"
     CHECK(r.proc->field().bands[7].muted);
     CHECK(r.proc->field().linear_gain(7) == 0.0f);
     CHECK(r.proc->field().bands[63].gain_db == Approx(7.0f));
+}
+
+TEST_CASE("editor authority owns one monotonic revision across state snapshots and morph") {
+    Rig r;
+    auto& authority = r.proc->editor_authority();
+    REQUIRE(authority.revision() == 0);
+
+    auto field = r.proc->field();
+    field.bands[3].gain_db = -9.0f;
+    const auto replace = authority.replace_processing_state(
+        field, {80.0f, 8000.0f}, spectr::Layout::Bands32, 0);
+    REQUIRE(replace.accepted);
+    REQUIRE(replace.revision == 1);
+
+    const auto capture_a = authority.capture_snapshot(SnapshotBank::Slot::A, 1);
+    REQUIRE(capture_a.accepted);
+    REQUIRE(capture_a.revision == 2);
+
+    field.bands[3].gain_db = 15.0f;
+    const auto replace_b = authority.replace_processing_state(
+        field, {80.0f, 8000.0f}, spectr::Layout::Bands32, 2);
+    REQUIRE(replace_b.accepted);
+    REQUIRE(replace_b.revision == 3);
+
+    const auto capture_b = authority.capture_snapshot(SnapshotBank::Slot::B, 3);
+    REQUIRE(capture_b.accepted);
+    REQUIRE(capture_b.revision == 4);
+
+    const auto morph = authority.apply_morph(0.5f, 4);
+    REQUIRE(morph.accepted);
+    REQUIRE(morph.revision == 5);
+    REQUIRE(r.proc->field().bands[3].gain_db == Approx(3.0f));
+}
+
+TEST_CASE("editor authority rejects stale or invalid commands failure atomically") {
+    Rig r;
+    auto& authority = r.proc->editor_authority();
+    auto field = r.proc->field();
+    field.bands[9].gain_db = 6.0f;
+    REQUIRE(authority.replace_processing_state(
+        field, r.proc->viewport(), r.proc->layout(), 0).accepted);
+
+    const auto before = r.proc->field();
+    const auto before_viewport = r.proc->viewport();
+    const auto before_layout = r.proc->layout();
+    const auto revision = authority.revision();
+
+    auto stale = before;
+    stale.bands[9].gain_db = -17.0f;
+    const auto stale_receipt = authority.replace_processing_state(
+        stale, {300.0f, 600.0f}, spectr::Layout::Bands64, 0);
+    REQUIRE_FALSE(stale_receipt.accepted);
+    CHECK(stale_receipt.error == "stale editor revision");
+
+    auto invalid = before;
+    invalid.bands[9].gain_db = std::numeric_limits<float>::infinity();
+    const auto invalid_receipt = authority.replace_processing_state(
+        invalid, {300.0f, 600.0f}, spectr::Layout::Bands64, revision);
+    REQUIRE_FALSE(invalid_receipt.accepted);
+    CHECK(authority.revision() == revision);
+    CHECK(r.proc->field().bands[9].gain_db == Approx(before.bands[9].gain_db));
+    CHECK(r.proc->viewport().min_hz == Approx(before_viewport.min_hz));
+    CHECK(r.proc->viewport().max_hz == Approx(before_viewport.max_hz));
+    CHECK(r.proc->layout() == before_layout);
+}
+
+TEST_CASE("editor authority invalidates a captured gesture on concurrent mutation") {
+    Rig r;
+    auto& authority = r.proc->editor_authority();
+    REQUIRE(authority.begin_band_edit(0).accepted);
+
+    auto concurrent = r.proc->field();
+    concurrent.bands[4].gain_db = -7.0f;
+    REQUIRE(authority.replace_processing_state(
+        concurrent, r.proc->viewport(), r.proc->layout(), 0).accepted);
+    REQUIRE(authority.revision() == 1);
+
+    spectr::DragGesture gesture;
+    gesture.start_band = 4;
+    gesture.current_band = 4;
+    gesture.start_value = -7.0f;
+    gesture.current_value = 12.0f;
+    gesture.n_visible = 32;
+    const auto stale_update = authority.update_band_edit(
+        spectr::EditMode::Sculpt, gesture, 0);
+    REQUIRE_FALSE(stale_update.accepted);
+    CHECK(r.proc->field().bands[4].gain_db == Approx(-7.0f));
+    CHECK(authority.revision() == 1);
+
+    const auto retired_update = authority.update_band_edit(
+        spectr::EditMode::Sculpt, gesture, 1);
+    REQUIRE_FALSE(retired_update.accepted);
+    CHECK(retired_update.error == "paint without paint_start");
 }
 
 TEST_CASE("native editor bridge publishes zoomed processing state atomically") {

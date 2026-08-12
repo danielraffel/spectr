@@ -211,12 +211,11 @@ bool make_editor_analyzer_message(
 
 EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
     register_editor_assets_once();
-    // Populate the bridge with Spectr's product handlers. Closures capture
-    // `plugin_`, `plugin_.patterns()`, and `drag_` by reference — all
-    // live as long as `this` does, so the bridge's non-movable
-    // guarantee plus EditorView being heap-allocated via create_view()
-    // covers lifetime.
-    register_spectr_editor_handlers(bridge_, plugin_, plugin_.patterns(), drag_);
+    // Populate the bridge with Spectr's product handlers. Sound-state and
+    // gesture authority live on the processor so a view reload/replacement
+    // cannot become a second authority.
+    register_spectr_editor_handlers(
+        bridge_, plugin_, plugin_.patterns(), plugin_.editor_authority());
     bridge_.add_handler("editor_ready", [this](const choc::value::ValueView&) {
         if (!panel_)
             return pulp::view::EditorBridge::err_response("editor is not attached");

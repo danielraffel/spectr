@@ -63,6 +63,7 @@ find_package(Pulp 0.801.0 REQUIRED)
 set(SPECTR_SOURCES
     src/spectr.cpp
     src/edit_engine.cpp
+    src/editor_authority.cpp
     src/editor_bridge.cpp
     src/pattern.cpp
     src/preset_format.cpp
@@ -75,6 +76,7 @@ set(SPECTR_HEADERS
     include/spectr/band_state.hpp
     include/spectr/viewport.hpp
     include/spectr/edit_modes.hpp
+    include/spectr/editor_authority.hpp
     include/spectr/editor_resize.hpp
     include/spectr/editor_bridge.hpp
     include/spectr/preset_format.hpp
@@ -91,6 +93,7 @@ set(SPECTR_HEADERS
 set(SPECTR_NATIVE_N1_SOURCES
     src/spectr.cpp
     src/edit_engine.cpp
+    src/editor_authority.cpp
     src/editor_bridge.cpp
     src/pattern.cpp
     src/preset_format.cpp
@@ -226,6 +229,15 @@ target_link_libraries(Spectr-native-n1-test PRIVATE
 )
 spectr_configure_native_n1_target(Spectr-native-n1-test)
 catch_discover_tests(Spectr-native-n1-test)
+
+add_executable(Spectr-editor-authority-test
+    test/test_editor_authority.cpp
+)
+target_link_libraries(Spectr-editor-authority-test PRIVATE
+    SpectrNativeN1_Core Catch2::Catch2WithMain
+)
+spectr_configure_native_n1_target(Spectr-editor-authority-test)
+catch_discover_tests(Spectr-editor-authority-test)
 
 # Real Chromium oracle for the imported adapter's native analyzer and input
 # policy. This runs the authored bundle with a mock Pulp bridge and proves
