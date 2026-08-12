@@ -328,6 +328,24 @@ is not inherently Spectr-specific. Expected surfaces include:
 - animation/timing and categorical mute transitions; and
 - accessibility semantics and automation-facing value descriptions.
 
+Native resizing must preserve usability rather than uniformly shrinking the
+1320x860 authored canvas. The graph may become denser at smaller sizes, but
+chrome and dialogs must reflow or scroll while retaining readable typography
+and usable hit targets. At the declared minimum size, body text must be at
+least 12 logical px, control/label text at least 14 logical px where the frozen
+design uses primary labels, compact hit targets at least 24 logical px (32 px
+preferred), and the complete Settings surface must remain reachable without
+clipping. Minimum/preferred screenshot fixtures must include Settings open and
+must report computed font sizes, hit rectangles, focus order, and scroll reach.
+Blind root scaling that produces sub-12 px settings text is a release blocker.
+
+Composite controls expose one semantic hit region covering their complete
+visible bounds. In particular, every point inside the inset A or B snapshot
+button—including its dot, label, center, and corner regions—must capture the
+corresponding snapshot exactly once. Child artwork may not own or narrow the
+gesture target. The same whole-control rule applies to recall, morph endpoint,
+mode, preset, and settings controls.
+
 Confirmed framework prerequisites include a supported native
 `ScriptedUiSession`/EditorBridge attachment; deterministic release-capable
 ReactDOM-to-`@pulp/react` source transformation; single-delivery pointer
@@ -356,6 +374,11 @@ scripts. Compare at least:
 
 Visual similarity alone is insufficient. Each lane must produce equivalent
 state-transition and interaction receipts.
+
+The shared pointer suite must probe composite controls at their dot/icon,
+label, center, and four inset corners. A/B capture must produce one identical
+authoritative receipt from every point in the visible button rectangle at the
+minimum, preferred, authored, and enlarged editor sizes.
 
 ### Phase N4 — Performance and operational comparison
 
