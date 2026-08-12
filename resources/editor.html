@@ -406,6 +406,20 @@ document.addEventListener('DOMContentLoaded', async function() {
       'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, onEditModeChange, nativeHydrated, onNativeState }) {',
       'native hydration publication gate');
     replaceSpectrSource(
+      '      {ctxMenu && (\n        <ContextMenu',
+      '      {ctxMenu && (\n        <StableContextMenu',
+      'stable band context menu identity');
+    replaceSpectrSource(
+      'window.FilterBank = FilterBank;',
+      String.raw`const StableContextMenu = React.memo(ContextMenu, (previous, next) =>
+  previous.x === next.x && previous.y === next.y &&
+  previous.band === next.band && previous.N === next.N &&
+  previous.selection === next.selection &&
+  previous.editMode === next.editMode);
+
+window.FilterBank = FilterBank;`,
+      'band context menu ignores analyzer-only parent renders');
+    replaceSpectrSource(
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  const nativeCommandRevisionRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  const resolutionGeometryRef = useRef(\'\');',
       'independent muted gain hydration');
@@ -1502,6 +1516,14 @@ window.PatternManager = PatternManager;`,
                   style={{ ...menuItem, color: 'hsl(200,85%,70%)' }}>MANAGE…</button>
               </div>`,
       'save current dropdown item');
+    replaceSpectrSource(
+      '<button onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}\n                  style={{ ...menuItem, color: \'hsl(200,85%,70%)\' }}>MANAGE…</button>',
+      '<button data-spectr-pattern-manage onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}\n                  style={{ ...menuItem, color: \'hsl(200,85%,70%)\' }}>MANAGE…</button>',
+      'pattern manager dropdown selector');
+    replaceSpectrSource(
+      "<canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />",
+      "<canvas data-spectr-filter-canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />",
+      'filter canvas selector');
     replaceSpectrSource(
       '        onOpenPatternManager={() => setManagerOpen(true)}',
       '        onOpenPatternManager={() => setManagerOpen(true)}\n        onSavePattern={() => setSaveDialogOpen(true)}',

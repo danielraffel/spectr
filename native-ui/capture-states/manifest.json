@@ -1,0 +1,73 @@
+{
+  "schema": "spectr-native-parity-matrix-v1",
+  "version": 1,
+  "source": "../../resources/editor.html",
+  "states": [
+    {
+      "id": "main",
+      "plan": null,
+      "surface": "main editor",
+      "behavior": ["canvas gestures", "minimap gestures", "snapshot capture and recall", "morph"]
+    },
+    {
+      "id": "bands",
+      "plan": "bands.json",
+      "surface": "band-count dropdown",
+      "behavior": ["open", "select", "outside click", "Escape"]
+    },
+    {
+      "id": "overflow",
+      "plan": "overflow.json",
+      "surface": "overflow dropdown",
+      "behavior": ["open", "select", "outside click", "Escape"]
+    },
+    {
+      "id": "edit",
+      "plan": "edit.json",
+      "surface": "edit-mode dropdown",
+      "behavior": ["open", "select", "outside click", "Escape"]
+    },
+    {
+      "id": "analyzer",
+      "plan": "analyzer.json",
+      "surface": "analyzer-mode dropdown",
+      "behavior": ["open", "select", "outside click", "Escape"]
+    },
+    {
+      "id": "pattern",
+      "plan": "pattern.json",
+      "surface": "pattern dropdown",
+      "behavior": ["open", "apply", "save current", "manage", "outside click", "Escape"]
+    },
+    {
+      "id": "save-dialog",
+      "plan": "save-dialog.json",
+      "surface": "save-pattern dialog",
+      "behavior": ["name", "save", "cancel", "Enter", "Escape"]
+    },
+    {
+      "id": "pattern-manager",
+      "plan": "pattern-manager.json",
+      "surface": "pattern manager",
+      "behavior": ["search", "apply", "rename", "delete", "close"]
+    },
+    {
+      "id": "settings",
+      "plan": "settings.json",
+      "surface": "settings dialog",
+      "behavior": ["options", "toggles", "sliders", "close button", "outside click", "Escape"]
+    },
+    {
+      "id": "help",
+      "plan": "help.json",
+      "surface": "help overlay",
+      "behavior": ["open", "close", "outside click", "Escape"]
+    },
+    {
+      "id": "band-context",
+      "plan": "band-context.json",
+      "surface": "band context menu",
+      "behavior": ["context click", "actions", "outside click", "Escape"]
+    }
+  ]
+}

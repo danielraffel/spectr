@@ -23,7 +23,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "3f269efb9e1028d95742c360629527533a97759a31e6992072b608f97afec59a";
+    "f56fd98e1d021fa3fd86d05ab44e2f48b93ac359d4e3df1015cdd2960e992f0f";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -231,6 +231,11 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("window.pulp.on('processing_state_hydrate'") != adapter.npos);
     CHECK(adapter.find("window.pulp.on(\n        'analyzer_frame', acceptAnalyzerFrame)")
           != adapter.npos);
+    CHECK(adapter.find("data-spectr-pattern-manage") != adapter.npos);
+    CHECK(adapter.find("data-spectr-filter-canvas") != adapter.npos);
+    CHECK(adapter.find("const StableContextMenu = React.memo(ContextMenu")
+          != adapter.npos);
+    CHECK(adapter.find("<StableContextMenu") != adapter.npos);
     CHECK(adapter.find("if (!nativeAnalyzerFrame) return 0") != adapter.npos);
     CHECK(adapter.find("window.SpectrAnalyzer.sample(lf, t, 'visible')")
           != adapter.npos);
