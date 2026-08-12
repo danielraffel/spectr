@@ -1,7 +1,11 @@
 #include "spectr/spectr.hpp"
 
+#include "spectr/editor_bridge.hpp"
+
 #include <pulp/runtime/log.hpp>
 #include <pulp/view/view.hpp>
+
+#include <choc/text/choc_JSON.h>
 
 #include "spectr_native_assets_data.hpp"
 
@@ -69,11 +73,21 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     native_scripted_ui_ = std::make_unique<pulp::view::ScriptedUiSession>(
         *root, state(), std::move(options));
 
+    if (!native_editor_handlers_registered_) {
+        register_spectr_editor_handlers(native_editor_bridge_, *this, patterns(),
+                                         native_editor_drag_, &native_editor_revision_);
+        native_editor_handlers_registered_ = true;
+    }
+    native_editor_bridge_.attach_native_runtime(
+        *native_scripted_ui_, "__spectrEditorDispatch");
+
     std::string error;
     if (!native_scripted_ui_->load(&error)) {
         pulp::runtime::log_error(
             "[Spectr native N1] QuickJS/@pulp/react load failed: {}; editor is fail-closed",
             error);
+        native_editor_bridge_.detach_native_runtime(
+            *native_scripted_ui_, "__spectrEditorDispatch");
         native_scripted_ui_.reset();
         std::error_code ec;
         std::filesystem::remove(native_script_path_, ec);
@@ -91,15 +105,9 @@ void Spectr::hydrate_native_editor_() {
     std::ostringstream js;
     js << "if (typeof globalThis.__spectrHydrate !== 'function') "
           "throw new Error('native hydration boundary missing');"
-          "globalThis.__spectrHydrate({bands:[";
-    for (std::size_t i = 0; i < 32; ++i) {
-        if (i != 0) js << ',';
-        const auto& band = field_.bands[i];
-        js << "{gainDb:" << std::clamp(band.gain_db, kBandGainMinDb, kBandGainMaxDb)
-           << ",muted:" << (band.muted ? "true" : "false") << '}';
-    }
-    js << "],viewport:{minHz:" << viewport_.min_hz
-       << ",maxHz:" << viewport_.max_hz << "}});";
+          "globalThis.__spectrHydrate("
+       << choc::json::toString(make_editor_state_payload(*this, native_editor_revision_))
+       << ");";
 
     try {
         native_scripted_ui_->bridge()->load_script(js.str(), "spectr-native-hydration");
@@ -163,7 +171,12 @@ void Spectr::close_native_editor_() {
     native_frame_clock_ = nullptr;
     native_analyzer_elapsed_ = 0.0f;
     native_analyzer_sequence_ = 0;
+    native_editor_drag_.snap.reset();
     native_editor_root_ = nullptr;
+    if (native_scripted_ui_) {
+        native_editor_bridge_.detach_native_runtime(
+            *native_scripted_ui_, "__spectrEditorDispatch");
+    }
     native_scripted_ui_.reset();
     if (!native_script_path_.empty()) {
         std::error_code ec;

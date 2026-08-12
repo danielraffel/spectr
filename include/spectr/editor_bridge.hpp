@@ -39,6 +39,9 @@
 //                                       min_hz, max_hz}
 //                             effect: atomically publish field + layout +
 //                                     sound-defining viewport
+//  type="processing_state_get"
+//                           — payload: {}
+//                             effect: return authoritative editor projection
 //  type="paint_start"       — payload: {}
 //                             effect: capture BandSnapshot
 //  type="paint"             — payload: {mode, start_band, start_value,
@@ -106,6 +109,7 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
 void register_spectr_editor_handlers(pulp::view::EditorBridge& bridge,
                                      Spectr& plugin,
                                      PatternLibrary& library,
-                                     EditorDragState& drag);
+                                     EditorDragState& drag,
+                                     std::uint32_t* authoritative_revision = nullptr);
 
 } // namespace spectr

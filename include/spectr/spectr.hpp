@@ -18,8 +18,10 @@
 
 #if defined(SPECTR_NATIVE_EDITOR)
 #include <filesystem>
+#include <pulp/view/editor_bridge.hpp>
 #include <pulp/view/frame_clock.hpp>
 #include <pulp/view/scripted_ui.hpp>
+#include "spectr/editor_bridge.hpp"
 #endif
 
 #include "spectr/band_state.hpp"
@@ -136,6 +138,9 @@ public:
     const pulp::view::ScriptedUiSession* active_scripted_ui() const override {
         return native_scripted_ui_.get();
     }
+    std::uint32_t native_editor_revision() const noexcept {
+        return native_editor_revision_;
+    }
 #endif
     // ── Accessors — primarily for tests and the UI layer ───────────────
 
@@ -235,6 +240,10 @@ private:
     std::unique_ptr<pulp::view::ABCompare> ab_{};
 
 #if defined(SPECTR_NATIVE_EDITOR)
+    EditorDragState native_editor_drag_{};
+    pulp::view::EditorBridge native_editor_bridge_{};
+    std::uint32_t native_editor_revision_ = 0;
+    bool native_editor_handlers_registered_ = false;
     std::unique_ptr<pulp::view::ScriptedUiSession> native_scripted_ui_{};
     std::filesystem::path native_script_path_{};
     pulp::view::View* native_editor_root_ = nullptr;

@@ -5361,17 +5361,52 @@
     }
   });
 
-  // native-ui/src/editor.tsx
+  // ../spectr-native-editor-20260811/native-ui/src/editor.tsx
   var import_react3 = __toESM(require_react());
 
-  // ../pulp/packages/pulp-react/src/index.ts
+  // packages/pulp-react/src/index.ts
   var import_react_reconciler = __toESM(require_react_reconciler(), 1);
   var import_constants2 = __toESM(require_constants(), 1);
 
-  // ../pulp/packages/pulp-react/src/host-config.ts
+  // packages/pulp-react/src/host-config.ts
   var import_constants = __toESM(require_constants(), 1);
 
-  // ../pulp/packages/pulp-react/src/synthetic-event.ts
+  // packages/pulp-react/src/layout-flush.ts
+  var suppressDepth = 0;
+  var deferredFlush;
+  var flushScheduled = false;
+  function enqueueDeferredFlush() {
+    if (flushScheduled) return;
+    flushScheduled = true;
+    const run = () => {
+      flushScheduled = false;
+      if (suppressDepth > 0) {
+        enqueueDeferredFlush();
+        return;
+      }
+      const flush = deferredFlush;
+      deferredFlush = void 0;
+      flush?.();
+    };
+    const raf = globalThis.requestAnimationFrame;
+    if (typeof raf === "function") {
+      raf(run);
+    } else if (typeof setTimeout === "function") {
+      setTimeout(run, 1);
+    } else {
+      flushScheduled = false;
+    }
+  }
+  function requestLayoutFlush(flush) {
+    if (suppressDepth > 0) {
+      deferredFlush = flush;
+      enqueueDeferredFlush();
+      return;
+    }
+    flush();
+  }
+
+  // packages/pulp-react/src/synthetic-event.ts
   var g = () => globalThis;
   function makeStyleProxy(id) {
     const setters = {
@@ -5382,16 +5417,16 @@
       // visibility: 'hidden' | 'visible' — matches CSS, not the inverse `hidden`.
       visibility: (v) => callBridge("setVisible", id, String(v) !== "hidden"),
       // Border shorthands route to the per-attribute bridge setters
-      // that preserve unset siblings (pulp #1027).
+      // that preserve unset siblings.
       borderColor: (v) => callBridge("setBorderColor", id, String(v)),
       borderWidth: (v) => callBridge("setBorderWidth", id, Number(v)),
       borderRadius: (v) => callBridge("setBorderRadius", id, Number(v)),
       // Text
       color: (v) => callBridge("setTextColor", id, String(v)),
       fontSize: (v) => callBridge("setFontSize", id, Number(v)),
-      // pulp #1434 Phase A2-5 — bridge forwards comma-separated CSS
-      // family lists; first non-empty wins. Whole-list resolution is
-      // gated on pulp #932.
+      // The bridge forwards comma-separated CSS family lists; first
+      // non-empty family wins. Whole-list resolution belongs to the
+      // font resolver, not this event-time style proxy.
       fontFamily: (v) => callBridge("setFontFamily", id, String(v)),
       // Layout — minimal subset; matches what setFlex accepts.
       width: (v) => callBridge("setFlex", id, "width", Number(v)),
@@ -5417,20 +5452,48 @@
     const fn = g()[name];
     if (typeof fn === "function") fn(...args);
   }
+  var emptyLayoutRect = () => ({
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0
+  });
   function makeElementWrapper(id) {
     return {
       id,
       _id: id,
       // mirrors web-compat Element naming for cross-compat consumers
       style: makeStyleProxy(id),
-      // pulp #1352: setAttribute/getAttribute are common in DOM-shaped
-      // code; we accept the writes but don't persist them — there is
-      // no HTML attribute layer in Pulp. JSX prop-applier is the
-      // canonical write path.
+      // setAttribute/getAttribute are common in DOM-shaped code; we
+      // accept the writes but don't persist them — there is no HTML
+      // attribute layer in Pulp. JSX prop-applier is the canonical
+      // write path.
       setAttribute(_name, _value) {
       },
       getAttribute(_name) {
         return null;
+      },
+      getBoundingClientRect() {
+        const rect = g().getLayoutRect?.(id);
+        if (!rect) return emptyLayoutRect();
+        const x = Number(rect.x ?? rect.left ?? 0);
+        const y = Number(rect.y ?? rect.top ?? 0);
+        const width = Number(rect.width ?? 0);
+        const height = Number(rect.height ?? 0);
+        return {
+          x,
+          y,
+          width,
+          height,
+          top: Number(rect.top ?? y),
+          right: Number(rect.right ?? x + width),
+          bottom: Number(rect.bottom ?? y + height),
+          left: Number(rect.left ?? x)
+        };
       }
     };
   }
@@ -5464,7 +5527,14 @@
       altKey: false,
       metaKey: false,
       scale: 1,
+      deltaScale: 0,
       rotation: 0,
+      deltaRotation: 0,
+      translationX: 0,
+      translationY: 0,
+      velocityX: 0,
+      velocityY: 0,
+      tapCount: 0,
       deltaX: 0,
       deltaY: 0,
       deltaZ: 0,
@@ -5493,7 +5563,14 @@
       if (typeof d.altKey === "boolean") evt.altKey = d.altKey;
       if (typeof d.metaKey === "boolean") evt.metaKey = d.metaKey;
       if (typeof d.scale === "number") evt.scale = d.scale;
+      if (typeof d.deltaScale === "number") evt.deltaScale = d.deltaScale;
       if (typeof d.rotation === "number") evt.rotation = d.rotation;
+      if (typeof d.deltaRotation === "number") evt.deltaRotation = d.deltaRotation;
+      if (typeof d.translationX === "number") evt.translationX = d.translationX;
+      if (typeof d.translationY === "number") evt.translationY = d.translationY;
+      if (typeof d.velocityX === "number") evt.velocityX = d.velocityX;
+      if (typeof d.velocityY === "number") evt.velocityY = d.velocityY;
+      if (typeof d.tapCount === "number") evt.tapCount = d.tapCount;
       if (typeof d.key === "string") evt.key = d.key;
       if (typeof d.keyCode === "number") evt.keyCode = d.keyCode;
     }
@@ -5509,7 +5586,7 @@
     return evt;
   }
 
-  // ../pulp/packages/pulp-react/src/prop-applier-internal.ts
+  // packages/pulp-react/src/prop-applier-internal.ts
   var g2 = globalThis;
   var _pa_count = 0;
   function call(name, ...args) {
@@ -5575,7 +5652,7 @@
     return value;
   }
 
-  // ../pulp/packages/pulp-react/src/prop-applier-layout.ts
+  // packages/pulp-react/src/prop-applier-layout.ts
   function _coerceLen(tok) {
     if (typeof tok === "number") return tok;
     const s = String(tok).trim();
@@ -5594,13 +5671,14 @@
   function applyLayoutProp(id, key, value, props) {
     switch (key) {
       // Flex / layout — all forwarded through setFlex
-      // pulp #1434 (rn NOT-IMPL bundle 1) — `direction` is overloaded:
+      // `direction` is overloaded:
       //   • RN (and CSS spec) sense — writing direction: 'ltr' / 'rtl' /
       //     'inherit' (RN spec also accepts 'auto' on iOS-classic). The
       //     New Architecture surfaces this cross-platform.
-      //   • pulp historical sense — flexDirection alias: 'row' / 'col' /
+      //   • Pulp historical sense — flexDirection alias: 'row' / 'col' /
       //     'row-reverse' / 'column' / 'column-reverse'. Existing test
-      //     at prop-applier-direction.test.ts:60 pins this behavior.
+      //     in prop-applier-direction.test.ts ("does NOT shadow FlexProps
+      //     `direction`") pins this behavior.
       // Disambiguate on value: writing-direction keywords route to
       // setDirection; everything else falls through to setFlex(direction)
       // for backward compat. `writingDirection` is preferred for new code
@@ -5614,8 +5692,8 @@
         call("setFlex", id, "direction", value);
         return true;
       }
-      // pulp #108 — RN/React-style `flexDirection` (camelCase) is the
-      // canonical key in JSX. Without this case the prop fell through
+      // RN/React-style `flexDirection` (camelCase) is the canonical
+      // key in JSX. Without this case the prop falls through
       // as unknown, leaving Yoga's column default in place and
       // collapsing CSS-imported flex rows into vertical stacks. Maps
       // to the same setFlex(direction, …) dispatch as the `direction`
@@ -5637,7 +5715,7 @@
       case "columnGap":
         call("setFlex", id, "column_gap", value);
         return true;
-      // Wave 2 rn — `padding` shorthand accepts string forms (`'5%'`,
+      // `padding` shorthand accepts string forms (`'5%'`,
       // `'10px 20px'`, etc.). The bridge `padding` shorthand key only
       // takes a numeric value, so we fan out string values to the
       // four per-edge keys (which DO accept `number | string` via
@@ -5661,8 +5739,8 @@
         call("setFlex", id, "padding", value);
         return true;
       }
-      // pulp #1434 (cross-surface mega-batch) — per-edge padding accepts
-      // either a number (px) or a percent string ('5%' → percent of
+      // Per-edge padding accepts either a number (px) or a percent
+      // string ('5%' -> percent of
       // parent main-axis size). Yoga padding does NOT support 'auto'.
       case "paddingTop":
         call("setFlex", id, "padding_top", value);
@@ -5676,7 +5754,7 @@
       case "paddingLeft":
         call("setFlex", id, "padding_left", value);
         return true;
-      // Wave 2 rn — `margin` shorthand accepts string forms (`'5%'`,
+      // `margin` shorthand accepts string forms (`'5%'`,
       // `'auto'`, `'10px auto'`, etc.). The bridge `margin` shorthand
       // key only takes a numeric value, so we fan out string values
       // to the four per-edge keys (which DO accept `number | string`
@@ -5700,8 +5778,8 @@
         call("setFlex", id, "margin", value);
         return true;
       }
-      // pulp #1434 (cross-surface mega-batch) — per-edge margin accepts
-      // a number (px), percent string ('5%'), or the keyword 'auto'
+      // Per-edge margin accepts a number (px), percent string ('5%'),
+      // or the keyword 'auto'
       // (Yoga's YGNodeStyleSetMarginAuto — used for centering with
       // marginLeft:'auto' + marginRight:'auto').
       case "marginTop":
@@ -5716,16 +5794,16 @@
       case "marginLeft":
         call("setFlex", id, "margin_left", value);
         return true;
-      // pulp #1434 batch 4 — React Native shorthand aliases. RN code
-      // commonly writes `style={{ marginHorizontal: 8 }}` and expects
+      // React Native shorthand aliases. RN code commonly writes
+      // `style={{ marginHorizontal: 8 }}` and expects
       // it to fan out to marginLeft + marginRight on the underlying
       // layout. Same pattern for marginVertical / paddingHorizontal /
       // paddingVertical. We dispatch to the existing per-edge bridge
       // setters so the value reaches the same FlexStyle slot whether
       // it arrived through this alias or through the explicit edge
       // prop. No FlexStyle field change required.
-      // pulp #1434 cross-surface mega-batch — RN aliases now forward
-      // percent strings (and 'auto' for margin) through the per-edge
+      // RN aliases forward percent strings (and 'auto' for margin)
+      // through the per-edge
       // fan-out. The per-edge keys `margin_*` / `padding_*` accept
       // number | string at the bridge boundary.
       case "marginHorizontal":
@@ -5750,10 +5828,10 @@
       case "flexShrink":
         call("setFlex", id, "flex_shrink", value);
         return true;
-      // pulp #1434 (#1518) — RN-style `flex: <number>` shorthand.
-      // RN spec: `flex: positive` → `{flexGrow: n, flexShrink: 1, flexBasis: 0}`;
-      // `flex: 0` → no growth / no shrink at intrinsic basis;
-      // `flex: -1` (or any negative) → no growth, can shrink at auto basis.
+      // RN-style `flex: <number>` shorthand.
+      // RN spec: `flex: positive` -> `{flexGrow: n, flexShrink: 1, flexBasis: 0}`;
+      // `flex: 0` -> no growth / no shrink at intrinsic basis;
+      // `flex: -1` (or any negative) -> no growth, can shrink at auto basis.
       // CSS spec is more nuanced (bare number is `flex: <n> 1 0`), but RN's
       // narrow contract is what consumers passing JSX `flex={1}` expect;
       // our adapter is RN-flavored so we honor RN semantics.
@@ -5775,8 +5853,8 @@
         }
         return true;
       }
-      // pulp #1434 (rn batch C) — dimension keys forward
-      // `number | string` so the bridge sees `'50%'` / `'auto'`
+      // Dimension keys forward `number | string` so the bridge sees
+      // `'50%'` / `'auto'`
       // verbatim. Numeric values still flow through unchanged.
       // The bridge's setFlex case for each key inspects the third
       // arg as a string and detects '%' / 'auto' suffix; otherwise
@@ -5784,8 +5862,8 @@
       case "flexBasis":
         call("setFlex", id, "flex_basis", value);
         return true;
-      // pulp #1434 Triage #14 — flexWrap accepts boolean (legacy
-      // true/false) or the CSS keyword strings (`"wrap"` /
+      // flexWrap accepts boolean (legacy true/false) or the CSS
+      // keyword strings (`"wrap"` /
       // `"wrap-reverse"` / `"nowrap"`). Forward strings verbatim
       // so the bridge can route wrap-reverse through Yoga's
       // YGWrapWrapReverse.
@@ -5824,8 +5902,8 @@
       case "alignSelf":
         call("setFlex", id, "align_self", value);
         return true;
-      // pulp #1434 (sub-agent #12 follow-up) — multi-line flex
-      // cross-axis distribution. Yoga supports it natively via
+      // Multi-line flex cross-axis distribution. Yoga supports it
+      // natively via
       // YGNodeStyleSetAlignContent; the bridge accepts both bare
       // (`start`/`end`) and prefixed (`flex-start`/`flex-end`)
       // spellings plus the space-* values.
@@ -5835,21 +5913,21 @@
       case "justifyContent":
         call("setFlex", id, "justify_content", value);
         return true;
-      // pulp #1434 — aspectRatio routes through setFlex like the other
-      // flex props. Accepts a finite positive number (RN-style); strings
+      // aspectRatio routes through setFlex like the other flex props.
+      // Accepts a finite positive number (RN-style); strings
       // ("16/9", "auto") are NOT accepted at the JSX surface — those
       // belong to the CSS shim path (web-compat-style-decl.js). A value
-      // of 0 / NaN / undefined clears the slot on the bridge side.
+      // of 0 / NaN clears the slot on the bridge side; null/undefined
+      // are no-op'd by the dispatcher before this handler runs.
       case "aspectRatio":
         call("setFlex", id, "aspect_ratio", value);
         return true;
-      // pulp #1434 (rn batch — Triage #12) — `display: 'flex' | 'none'`.
-      // RN exports + Figma / v0 / Claude Design HTML routinely emit
+      // `display: 'flex' | 'none'`. RN exports and imported design-tool
+      // HTML routinely emit
       // `style={{ display: 'flex' }}` (the implicit default in pulp,
       // but the prop-applier shouldn't drop it as unknown) or
-      // `style={{ display: 'none' }}` to hide a subtree. The yoga
-      // surface wired this for the CSS shim in #1422; this branch
-      // makes the same path reachable from RN-flavored JSX without a
+      // `style={{ display: 'none' }}` to hide a subtree. The same
+      // bridge path is reachable from RN-flavored JSX without a
       // round-trip through the el.style proxy.
       //
       // 'none'  → setVisible(id, false). View::visible() is the
@@ -5887,13 +5965,10 @@
         }
         return true;
       }
-      // pulp #1387 gap #1 — overflow was reachable via the DOM-lite
-      // path (web-compat-style-decl.js routes 'overflow' to setOverflow)
-      // but missing from the @pulp/react prop-applier, so JSX consumers
-      // setting `style={{ overflow: 'hidden' }}` silently dropped it.
-      // Spectr's dropdowns hit this — `width: 230 + overflow: hidden`
-      // on the dropdown row was being discarded, so the row grew to
-      // intrinsic content width and overflowed the container.
+      // overflow is reachable via both DOM-lite web-compat and
+      // @pulp/react props. JSX consumers setting
+      // `style={{ overflow: 'hidden' }}` must reach the same bridge
+      // path as web-compat-style-decl.js.
       // Accepts the CSS keyword strings ('hidden' / 'visible' /
       // 'scroll' / 'auto'); bridge maps to View::Overflow enum.
       case "overflow":
@@ -5909,7 +5984,7 @@
       case "overflowY":
         call("setOverflow", id, value);
         return true;
-      // pulp #1516 — CSS box-sizing. Yoga 3.x honors the spec via
+      // CSS box-sizing. Yoga 3.x honors the spec via
       // YGNodeStyleSetBoxSizing; consumers passing JSX
       // `boxSizing: 'border-box'` get the standard
       // "padding+border are inside declared dimensions" behavior.
@@ -5917,14 +5992,11 @@
       case "boxSizing":
         call("setBoxSizing", id, value);
         return true;
-      // pulp #1434 rn logical-edge bundle (sub-agent #27 finding) —
       // RN's CSS-spec-equivalent logical-flow props. LTR-only fast
-      // path: Start → Left, End → Right, inset shorthand expands to
-      // top/right/bottom/left, insetBlock → top+bottom,
-      // insetInline → left+right (LTR). True RTL bidi requires a
-      // future direction system — tracked as a separate big project.
-      // The 11 entries here close the missing-on-rn gap with the
-      // honest LTR-only caveat documented in the catalog.
+      // path: Start -> Left, End -> Right, inset shorthand expands to
+      // top/right/bottom/left, insetBlock -> top+bottom, insetInline
+      // -> left+right (LTR). True RTL bidi requires a future direction
+      // system; the catalog documents this LTR-only caveat.
       case "marginStart": {
         call("setFlex", id, "margin_left", value);
         return true;
@@ -5990,8 +6062,8 @@
         call("setRight", id, v);
         return true;
       }
-      // pulp #1434 Phase A2-2 — CSS Grid surface. Forwards each
-      // property verbatim to setGrid; the C++ bridge handles
+      // CSS Grid surface. Forwards each property verbatim to setGrid;
+      // the C++ bridge handles
       // template-track parsing, named-area parsing, and the
       // grid-area shorthand (named token vs `row / col / row / col`
       // numeric form).
@@ -6049,14 +6121,13 @@
       case "gridRowGap":
         call("setGrid", id, "row_gap", value);
         return true;
-      // CSS-style positioning (pulp #779 follow-up; matches setPosition
-      // + setTop/setLeft/setRight/setBottom on the bridge).
-      // pulp #1434 batch 6 — top/right/bottom/left accept either a number
-      // ('50' → px) or a percent string ('50%' → percent of parent).
-      // Mirrors PR #1426 (width/height percent) for the four View
-      // positional fields. Figma absolute-positioned overlays, v0.dev
-      // hero anchors, and Claude Design sticky elements all emit
-      // `top:'50%'` etc. routinely; without percent forwarding the
+      // CSS-style positioning matches setPosition plus
+      // setTop/setLeft/setRight/setBottom on the bridge.
+      // top/right/bottom/left accept either a number ('50' -> px) or
+      // a percent string ('50%' -> percent of parent), mirroring the
+      // width/height percent behavior for View positional fields.
+      // Design-tool absolute overlays, hero anchors, and sticky elements
+      // routinely emit `top:'50%'` etc.; without percent forwarding the
       // layout collapses to numeric 0 silently. The bridge inspects
       // arg index 1 as a string, detects the '%' suffix, and routes to
       // Yoga's YGNodeStyleSetPositionPercent path via View::top_unit_.
@@ -6083,7 +6154,7 @@
     }
   }
 
-  // ../pulp/packages/pulp-react/src/prop-applier-paint.ts
+  // packages/pulp-react/src/prop-applier-paint.ts
   function _parseBoxShadow(s) {
     let work = s.trim();
     let inset = false;
@@ -6145,14 +6216,13 @@
     switch (key) {
       // Visual style
       // CSS `background` shorthand can carry color, gradient, or url. The
-      // C++ `setBackground` bridge fn (widget_bridge.cpp:3350) only parses
+      // C++ `setBackground` bridge fn only parses
       // a color token via `set_background_color(parseHexColor(...))`, so
-      // gradient strings collapse to a bogus color (often white). Caught
-      // by Spectr's 2026-05-11 live render — chip strip's
-      // `background: linear-gradient(to bottom, ...)` painted white, making
-      // the white SPECTR / ZOOMABLE FILTER BANK / axis labels invisible.
-      // Mirrors the same gradient-detection fix applied to backgroundImage
-      // below (Codex P1 on #1831).
+      // gradient strings collapse to a bogus color (often white). Route
+      // gradients explicitly so labels on gradient-backed controls stay
+      // visible.
+      // Mirrors the same gradient-detection path applied to
+      // backgroundImage below.
       case "background": {
         const sval = String(value);
         if (/(linear|radial|conic)-gradient\(/i.test(sval)) {
@@ -6167,12 +6237,12 @@
         call("setBackgroundGradient", id, value);
         return true;
       // CSS `background-image` longhand. The C++ `setBackground` bridge fn
-      // only parses a color token (widget_bridge.cpp:3350 →
-      // `set_background_color(parseHexColor(...))`), so we must detect
-      // gradient strings here and route to the gradient bridge instead;
+      // only parses a color token (`set_background_color(parseHexColor(...))`),
+      // so we must detect gradient strings here and route to the gradient
+      // bridge instead;
       // otherwise inputs like `linear-gradient(...)` collapse to a bogus
       // color parse. `url(...)` has no image bridge today — drop quietly
-      // rather than corrupting the color slot. (Codex P1 on #1831.)
+      // rather than corrupting the color slot.
       case "backgroundImage": {
         const sval = String(value);
         if (/(linear|radial|conic)-gradient\(/i.test(sval)) {
@@ -6185,13 +6255,14 @@
         call("setBackground", id, _resolveVar(sval));
         return true;
       }
-      // pulp #1517 — background sub-properties. The bridge stores the
-      // keyword on the View slot. Paint impact today is partial:
+      // Background sub-properties. The bridge stores the keyword on
+      // the View slot. Paint impact today is partial:
       //   • `backgroundAttachment` — `scroll` is conformant; `fixed` /
       //     `local` are noop (pulp doesn't model scroll contexts).
       //   • `backgroundClip` — `text` is the interesting variant
       //     (paint-time SkBlendMode::kSrcIn against text glyphs);
-      //     deferred to a future PR. Other values noop on solid bg.
+      //     not implemented in the current paint path. Other values noop
+      //     on solid bg.
       //   • `backgroundOrigin` — relevant only for repeating gradients;
       //     noop today.
       case "backgroundAttachment":
@@ -6208,8 +6279,8 @@
         call("setBorder", id, b.color, b.width ?? 1, b.radius ?? 0);
         return true;
       }
-      // pulp #1027 (audit PR #1166 finding #4) — RN-style flat border props.
-      // These MUST route through the per-attribute bridge setters so a
+      // RN-style flat border props. These must route through the
+      // per-attribute bridge setters so a
       // commitUpdate that touches only one of them preserves the others.
       // Lowering them onto the unified `setBorder(id, color, width, radius)`
       // would clobber the unset slots back to 0/empty.
@@ -6219,8 +6290,8 @@
       case "borderWidth":
         call("setBorderWidth", id, value);
         return true;
-      // Wave 2 rn — `borderRadius` accepts the RN Fabric elliptical
-      // form `{ x, y }`. The Skia paint backend currently takes a
+      // `borderRadius` accepts the RN Fabric elliptical form `{ x,
+      // y }`. The Skia paint backend currently takes a
       // single uniform radius per corner (no rrect ellipse axes), so
       // we degrade the elliptical input by averaging x and y — the
       // closest visual fidelity for the common Fabric usage where x
@@ -6230,15 +6301,15 @@
       case "borderRadius":
         call("setBorderRadius", id, _coerceRadius(value));
         return true;
-      // pulp #1434 Triage #10 — borderStyle keyword passes verbatim
-      // to setBorderStyle. Bridge maps to View::BorderStyle. Skia
+      // borderStyle keyword passes verbatim to setBorderStyle. Bridge
+      // maps to View::BorderStyle. Skia
       // installs the dash effect for `dashed` / `dotted`; other
       // named styles currently degrade to solid.
       case "borderStyle":
         call("setBorderStyle", id, value);
         return true;
-      // pulp #1514 — list-style cluster. Pulp doesn't model
-      // <li>/<ul>/<ol> semantics, so the bridge stores the value
+      // list-style cluster. Pulp doesn't model <li>/<ul>/<ol>
+      // semantics, so the bridge stores the value
       // verbatim on the View and a future paint pass renders the
       // marker. Today the catalog is `partial` (stored, not
       // painted). The shorthand `listStyle` parses on the JS side
@@ -6304,8 +6375,8 @@
         return true;
       }
       // RN per-side flat props — route to the per-side bridge setters
-      // that already preserve the unrelated attribute (see widget_bridge
-      // applyBorderSide helper introduced in pulp #1026).
+      // that already preserve the unrelated attribute (see the
+      // widget_bridge applyBorderSide helper).
       case "borderTopColor":
         call("setBorderTopColor", id, _resolveVar(value));
         return true;
@@ -6330,8 +6401,8 @@
       case "borderLeftWidth":
         call("setBorderLeftWidth", id, value);
         return true;
-      // Wave 2 rn — per-corner radii accept the RN Fabric elliptical
-      // `{ x, y }` form too (degraded to averaged uniform radius;
+      // Per-corner radii accept the RN Fabric elliptical `{ x, y }`
+      // form too (degraded to averaged uniform radius;
       // see `borderRadius` above for the rrect rationale).
       case "borderTopLeftRadius":
         call("setBorderTopLeftRadius", id, _coerceRadius(value));
@@ -6345,8 +6416,8 @@
       case "borderBottomRightRadius":
         call("setBorderBottomRightRadius", id, _coerceRadius(value));
         return true;
-      // pulp #1519 — RN outline cluster. Paint-time ring drawn OUTSIDE
-      // the border-box (no Yoga layout impact). Each prop routes to its
+      // RN outline cluster. Paint-time ring is drawn outside the
+      // border-box (no Yoga layout impact). Each prop routes to its
       // own per-attribute bridge fn so a JSX prop diff that touches one
       // outline-* preserves the others. Style keyword set mirrors
       // borderStyle (CSS spec is identical).
@@ -6380,15 +6451,17 @@
       case "visible":
         call("setVisible", id, value);
         return true;
-      // pulp #1434 (Triage #15) — `boxShadow` accepts:
-      //  • `null` / `undefined` / `'none'` → clearBoxShadow
+      // `boxShadow` accepts:
+      //  • `'none'` / `''` -> clearBoxShadow
+      //  • `null` / `undefined` -> no-op in the generic dispatcher
+      //    before this handler runs
       //  • String form (`'2px 4px 8px rgba(0,0,0,0.3)'` with optional
       //    `inset`) — parsed inline below.
       //  • Object form `{ offsetX, offsetY, blur?, spread?, color,
       //    inset? }` — dispatched directly.
       //
-      // Wave 2 rn — multi-shadow comma-separated string lists are now
-      // wired: we split on commas (respecting paren depth so a color
+      // Multi-shadow comma-separated string lists are split on
+      // commas (respecting paren depth so a color
       // literal like `rgba(0,0,0,0.3)` doesn't get cut), then dispatch
       // one setBoxShadow per parsed shadow. CSS spec layers the first
       // shadow on TOP (closest to viewer); the bridge applies them in
@@ -6435,7 +6508,6 @@
         }
         if (typeof value === "string") {
           const parts = _splitMultiShadow(value);
-          let emitted = 0;
           for (const p of parts) {
             const parsed = _parseBoxShadow(p);
             if (parsed) {
@@ -6449,7 +6521,6 @@
                 parsed.color,
                 parsed.inset
               );
-              emitted++;
             }
           }
           return true;
@@ -6473,7 +6544,6 @@
         }
         return true;
       }
-      // pulp #1434 rn logical-edge bundle (sub-agent #27 finding) —
       // RN's logical border-width edges. Route to the per-side bridge
       // setter that preserves the unrelated attribute (color) — same
       // pattern as borderLeftWidth / borderRightWidth.
@@ -6485,9 +6555,7 @@
         call("setBorderRightWidth", id, value);
         return true;
       }
-      // pulp #1434 rn bridge-wires bundle (sub-agent #27 finding) —
-      // RN-style props that already had C++ bridge fns registered
-      // but no `@pulp/react` prop-applier dispatch. Each forwards
+      // RN-style props with direct C++ bridge functions. Each forwards
       // the keyword / string straight through to the matching setter.
       case "backfaceVisibility":
         call("setBackfaceVisibility", id, value);
@@ -6498,8 +6566,8 @@
       case "filter":
         call("setFilter", id, value);
         return true;
-      // pulp #1515 — CSS clip-path / mask cluster. The bridge fns
-      // store the value on the View; Skia paint side honors
+      // CSS clip-path / mask cluster. The bridge fns store the value
+      // on the View; Skia paint side honors
       // `clip-path: path("...")` via SkPath::FromSVGString. Other
       // clip-path forms (URL refs, named shapes) and mask painting
       // (saveLayer + SkBlendMode::kDstIn) are deferred. The
@@ -6522,16 +6590,15 @@
       case "appearance":
         call("setAppearance", id, value);
         return true;
-      // CSS `object-fit` / `object-position` — image fitting.
-      // Storage-only today; ImageView paint follow-up.
+      // CSS `object-fit` / `object-position` image fitting. Storage-only
+      // today; ImageView paint can consume the stored slot later.
       case "objectFit":
         call("setObjectFit", id, value);
         return true;
       case "objectPosition":
         call("setObjectPosition", id, value);
         return true;
-      // pulp #1549 — RN `mixBlendMode` (RN 0.76 New Architecture).
-      // Forwards the W3C blend-mode keyword string to
+      // RN `mixBlendMode` forwards the W3C blend-mode keyword string to
       // `setMixBlendMode`; the bridge keyword→enum table lives at
       // widget_bridge.cpp::setMixBlendMode.
       case "mixBlendMode":
@@ -6543,18 +6610,16 @@
       case "userSelect":
         call("setUserSelect", id, value);
         return true;
-      // pulp #1552 — backgroundRepeat is storage-only at the View layer
-      // (paint-time honoring is a follow-up for url() / repeating
+      // backgroundRepeat is storage-only at the View layer
+      // (paint-time honoring is deferred for url() / repeating
       // gradient backgrounds).
       case "backgroundRepeat":
         call("setBackgroundRepeat", id, value);
         return true;
-      // pulp #1737 RN-OOS-fixup (audit 2026-05-11) — RN iOS-legacy
-      // box-shadow longhand. Modern RN code uses `boxShadow` (CSS
-      // shorthand) which Pulp fully supports, but upstream RN still
-      // accepts shadowColor / shadowOffset / shadowOpacity /
-      // shadowRadius as cross-platform-ish style props (originally
-      // iOS-only, but Pulp implements them cross-platform via the
+      // React Native box-shadow longhands. Modern RN code uses
+      // `boxShadow` (CSS shorthand) which Pulp fully supports, but RN
+      // still accepts shadowColor / shadowOffset / shadowOpacity /
+      // shadowRadius as style props. Pulp implements them via the
       // unified BoxShadow struct on View). Each per-attribute setter
       // writes ONE slot of View::shadow_ in isolation so a JSX diff
       // that touches one prop doesn't clobber the others.
@@ -6574,8 +6639,8 @@
       case "shadowRadius":
         call("setShadowRadius", id, value);
         return true;
-      // pulp #1737 RN-OOS-fixup final sweep — RN's Android-only
-      // `elevation` (Material Design 0..24dp). The bridge shim
+      // RN's Android-only `elevation` (Material Design 0..24dp). The
+      // bridge shim
       // translates the elevation value to a Material-approximated
       // single-shadow BoxShadow so consumers shipping unchanged
       // RN-Android styles render a visible shadow on every Pulp
@@ -6584,8 +6649,8 @@
       case "elevation":
         call("setElevation", id, value);
         return true;
-      // pulp #1737 RN-OOS-fixup (#1812) — RN's `borderCurve` corner
-      // shape. `circular` (default) keeps Pulp's standard rounded
+      // RN's `borderCurve` corner shape. `circular` (default) keeps
+      // Pulp's standard rounded
       // corner; `continuous` switches the View paint to the iOS-
       // style squircle approximation (super-ellipse path). Authors
       // shipping iOS-aesthetic designs with `borderCurve: 'continuous'`
@@ -6593,8 +6658,8 @@
       case "borderCurve":
         call("setBorderCurve", id, value);
         return true;
-      // pulp #1737 RN-OOS-fixup (final round) — RN's `isolation`.
-      // Pulp's per-View paint model is structurally isolated by
+      // RN's `isolation`. Pulp's per-View paint model is structurally
+      // isolated by
       // default (per-View save_layer_with_blend composition + paint-
       // order-scoped z-index), matching the dominant author intent
       // of `isolation: isolate`. Honest CSS-subset claim: both
@@ -6602,12 +6667,12 @@
       case "isolation":
         call("setIsolation", id, value);
         return true;
-      // pulp #1434 (rn NOT-IMPL bundle 1) — RN's `experimental_backgroundImage`
-      // (New Architecture only) accepts a CSS gradient string. Route
+      // RN's `experimental_backgroundImage` (New Architecture only)
+      // accepts a CSS gradient string. Route
       // through the existing setBackgroundGradient bridge fn — same
       // shape, same parser. RN also allows an array-of-objects gradient
       // form on Fabric; that shape is NOT supported here (gradient
-      // strings only). Catalog flips missing → partial.
+      // strings only).
       case "experimental_backgroundImage":
         call("setBackgroundGradient", id, value);
         return true;
@@ -6616,7 +6681,7 @@
     }
   }
 
-  // ../pulp/packages/pulp-react/src/prop-applier-typography.ts
+  // packages/pulp-react/src/prop-applier-typography.ts
   function _normalizeFontWeight(value) {
     if (typeof value === "number") return value;
     const s = String(value).trim().toLowerCase();
@@ -6657,31 +6722,19 @@
       case "textOverflow":
         call("setTextOverflow", id, value);
         return true;
-      // pulp #1434 Phase A2-3 — writing direction (RN ViewStyle uses
-      // `writingDirection` for this — CSS uses `direction`, but the
-      // pulp prop name `direction` already routes to FlexProps via
-      // setFlex above. The CSS-string-form `style.direction = 'rtl'`
-      // path goes through the el.style adapter's `direction` case
-      // which calls setDirection directly).
+      // RN ViewStyle uses `writingDirection` for writing direction. CSS
+      // uses `direction`, but the pulp prop name `direction` already
+      // routes to FlexProps via setFlex above. The CSS-string-form
+      // `style.direction = 'rtl'` path goes through the el.style adapter's
+      // `direction` case, which calls setDirection directly.
       case "writingDirection":
         call("setDirection", id, value);
         return true;
-      // pulp #1737 RN-OOS-fixup (catalog audit 2026-05-11) — these 4
-      // RN style props were classified `wontfix` in compat.json despite
-      // having fully-wired bridge fns AND css-side proof on the
-      // matching css/* surfaces (css/verticalAlign, css/textDecoration*
-      // all `supported`). One-line route closes the rn-side gap; the
-      // catalog flips from wontfix → supported on the same JSON edit.
-      //
-      // verticalAlign — RN's cross-platform vertical-align prop.
-      // textAlignVertical — RN-Android equivalent of verticalAlign;
-      //                     same setVerticalAlign target works for
-      //                     both since Pulp's Label::vertical_align_
-      //                     models what both CSS+RN-Android need.
-      // textDecorationColor / textDecorationStyle — text-decoration
-      //                     longhand setters; bridge already routes
-      //                     to Label::set_text_decoration_color /
-      //                     ::set_text_decoration_style.
+      // RN text layout aliases that map to existing bridge setters:
+      // verticalAlign is RN's cross-platform vertical-align prop, while
+      // textAlignVertical is the RN-Android equivalent and uses the same
+      // setVerticalAlign target. textDecorationColor / textDecorationStyle
+      // route to the matching text-decoration longhand setters.
       case "verticalAlign":
         call("setVerticalAlign", id, value);
         return true;
@@ -6706,31 +6759,20 @@
       case "textColor":
         call("setTextColor", id, _resolveVar(value));
         return true;
-      // pulp #1434 — widen to include `'auto'` and `'justify'` (CSS /
-      // RN canonical). `'auto'` is writing-direction-relative
-      // (LTR-only today, degrades to `'left'`); `'justify'` flows to
-      // canvas TextAlign::justify (SkParagraph kJustify wiring is a
-      // follow-up — backends approximate as left for now).
+      // Include `'auto'` and `'justify'` (CSS / RN canonical). `'auto'` is
+      // writing-direction-relative (LTR-only today, degrades to `'left'`);
+      // `'justify'` flows to canvas TextAlign::justify, with backends
+      // approximating as left when full justify layout is unavailable.
       case "textAlign":
         call("setTextAlign", id, value);
         return true;
-      // Typography — Label widgets honor these via setX bridge fns.
-      // pulp #1434 Phase A2-5 — fontFamily IS now dispatched. The
-      // bridge picks the first non-empty family from a comma-
-      // separated CSS list and stores it on the Label or on the
-      // owning View's `inheritable_font_family_` slot for container
-      // cascade. The whole-list fallback chain (full font-stack
-      // resolution) still depends on SkFontMgr registration in
-      // pulp #932 — until that lands, families that aren't already
-      // registered with Skia fall through to the platform default.
-      // Wiring is independent: when #932 lands, no consumer change
-      // is needed — the registry just resolves the same name.
-      // pulp #1899 (gap #3) — resolve `var(--mono)` before forwarding.
-      // The bridge expects a real family name; the literal "var(--mono)"
-      // gives Skia's font matcher nothing to match against and silently
-      // falls back to a proportional sans (e.g. Spectr top-bar labels
-      // rendered in the wrong typeface AND inside an opacity layer that
-      // degraded the LCD AA — both fixed in this change).
+      // Typography. Label widgets honor these via setX bridge functions.
+      // The fontFamily bridge picks the first non-empty family from a
+      // comma-separated CSS list and stores it on the Label or on the
+      // owning View's `inheritable_font_family_` slot for container cascade.
+      // Families not registered with Skia fall through to the platform
+      // default. Resolve `var(--mono)` before forwarding because the bridge
+      // expects a real family name, not a CSS variable expression.
       case "fontFamily":
         call("setFontFamily", id, _resolveVar(value));
         return true;
@@ -6746,44 +6788,35 @@
       case "letterSpacing":
         call("setLetterSpacing", id, value);
         return true;
-      // Wave 2 rn — `lineHeight` accepts CSS unitless-multiplier
-      // semantics. A value `<= 8` is treated as a multiplier of the
-      // current `fontSize` from props (defaults to 14 when absent —
-      // matches the Label default). Larger values flow through as
-      // absolute pixels (the existing path). Px-suffix strings strip
-      // the suffix and pass through as absolute too. The bridge
-      // setter signature is unchanged — it always sees a number.
+      // `lineHeight` accepts CSS unitless-multiplier semantics. A value
+      // `<= 8` is treated as a multiplier of the current `fontSize` from
+      // props (defaults to 14 when absent, matching the Label default).
+      // Larger values flow through as absolute pixels. Px-suffix strings
+      // strip the suffix and pass through as absolute too. The bridge setter
+      // signature is unchanged; it always sees a number.
       case "lineHeight":
         call("setLineHeight", id, _resolveLineHeight(value, props));
         return true;
-      // pulp #1552 — line-clamp + webkit-line-clamp wiring. Both
-      // line-clamp keys funnel through the same setter (shared CSS
-      // shim case + RN-style alias). 0 / non-finite clears the slot.
+      // line-clamp + webkit-line-clamp wiring. Both line-clamp keys funnel
+      // through the same setter. 0 / non-finite clears the slot.
       case "lineClamp":
       case "webkitLineClamp": {
         const n = typeof value === "number" ? value : parseInt(String(value), 10);
         call("setLineClamp", id, Number.isFinite(n) ? n : 0);
         return true;
       }
-      // pulp #1434 (rn NOT-IMPL bundle 1) — RN's `textDecorationLine`
-      // is the spec-aligned name; pulp's bridge uses `setTextDecoration`
-      // (single-keyword form). RN allows `'underline line-through'` as
-      // a compound — pass through verbatim; the bridge's keyword table
-      // currently honors single-keyword `'none' / 'underline' /
-      // 'line-through' / 'overline'`. Compound rendering is the same
-      // partial gap as css/textDecoration's "single-keyword only" note.
+      // RN's `textDecorationLine` is the spec-aligned name; pulp's bridge
+      // uses `setTextDecoration` (single-keyword form). RN allows
+      // `'underline line-through'` as a compound; pass through verbatim.
+      // The bridge's keyword table currently honors single-keyword `'none'
+      // / 'underline' / 'line-through' / 'overline'`.
       case "textDecorationLine":
         call("setTextDecoration", id, value);
         return true;
-      // pulp #1434 (rn NOT-IMPL bundle 1) — RN textShadow cluster.
-      // The CSS shim (`web-compat-style-decl.js`) calls `setTextShadow`
-      // defensively (`if (typeof setTextShadow === 'function')`); the
-      // bridge does NOT yet register that fn, so paint is a no-op
-      // today. Wire the @pulp/react surface here so when the bridge
-      // gains the registration (planned slot, see #1548 feature
-      // branch) every consumer flips on without a JSX-side change.
-      // Each per-attribute setter writes ONE slot in isolation so a
-      // diff that touches one prop doesn't clobber the others.
+      // RN textShadow cluster. The CSS shim (`web-compat-style-decl.js`)
+      // handles aggregate CSS shorthand. Each per-attribute setter here
+      // writes one slot in isolation so a diff that touches one prop
+      // doesn't clobber the others.
       case "textShadowColor":
         call("setTextShadowColor", id, _resolveVar(value));
         return true;
@@ -6797,16 +6830,13 @@
       case "textShadowRadius":
         call("setTextShadowRadius", id, value);
         return true;
-      // pulp #1737 RN-OOS-fixup final sweep — RN's Android-only
-      // `includeFontPadding`. Pulp's text-shaping doesn't add
-      // Android-vestigial vertical glyph padding regardless of this
-      // value, so the bridge fn accepts the keyword + stores it on
-      // a View slot (round-trip), and the paint pipeline ignores it.
-      // Authors setting `false` (the common case — remove Android
-      // padding) get what they want by default; authors setting
-      // `true` get the same tight-baseline behavior (Pulp can't add
-      // padding it doesn't model). Catalog status is `supported` as
-      // an honest CSS-subset claim (same pattern as overscroll-behavior).
+      // RN's Android-only `includeFontPadding`. Pulp's text-shaping
+      // doesn't add Android-vestigial vertical glyph padding regardless of
+      // this value, so the bridge accepts the keyword, stores it on a View
+      // slot for round-trip state, and the paint pipeline ignores it.
+      // Authors setting `false` get tight-baseline behavior by default;
+      // authors setting `true` get the same result because Pulp cannot add
+      // padding it does not model.
       case "includeFontPadding":
         call("setIncludeFontPadding", id, Boolean(value));
         return true;
@@ -6814,15 +6844,12 @@
       case "textTransform":
         call("setTextTransform", id, value);
         return true;
-      // pulp #1434 (rn NOT-IMPL bundle 1) — RN's `fontVariant` is a
-      // string-array of OpenType feature tokens (`['small-caps',
-      // 'tabular-nums', ...]`). True implementation requires HarfBuzz
-      // hb_feature_t setting on the shape pass — outside the scope of
-      // this prop-applier wiring. Forward as a comma-joined string to
-      // a bridge fn name reserved for the future paint-time impl;
-      // until the bridge registers `setFontVariant`, the dispatch is
-      // a no-op (the `call` helper silently skips unregistered names).
-      // Catalog flips missing → partial with the gotcha documented.
+      // RN's `fontVariant` is a string-array of OpenType feature tokens
+      // (`['small-caps', 'tabular-nums', ...]`). Full implementation
+      // requires HarfBuzz hb_feature_t settings on the shape pass. Forward
+      // as a comma-joined string to a reserved bridge function; until the
+      // bridge registers `setFontVariant`, the dispatch is a no-op because
+      // the `call` helper silently skips unregistered names.
       case "fontVariant": {
         const joined = Array.isArray(value) ? value.join(",") : String(value);
         call("setFontVariant", id, joined);
@@ -6833,7 +6860,7 @@
     }
   }
 
-  // ../pulp/packages/pulp-react/src/prop-applier-transform.ts
+  // packages/pulp-react/src/prop-applier-transform.ts
   function _parseAngleDegrees(v) {
     if (typeof v === "number") return v;
     const s = String(v).trim();
@@ -6909,8 +6936,7 @@
           snap.scale = typeof v === "number" ? v : parseFloat(String(v));
           snap.haveScale = true;
           break;
-        // pulp #1434 Triage #9 fan-out — skewX / skewY now reach the
-        // bridge via the freshly-registered setSkew(id, x_deg, y_deg).
+        // skewX / skewY reach the bridge through setSkew(id, x_deg, y_deg).
         // Both axes accumulate independently; one consolidated call
         // emits at dispatch time.
         case "skewX":
@@ -6921,9 +6947,8 @@
           snap.skewY = _parseAngleDegrees(v);
           snap.haveSkew = true;
           break;
-        // 3D / matrix ops — not modeled in pulp's 2D View. Silently
-        // drop. pulp follow-up tracks if/when 3D transforms are
-        // introduced.
+        // 3D / matrix ops are not modeled in pulp's 2D View, so this
+        // surface silently drops them.
         case "rotateX":
         case "rotateY":
         case "perspective":
@@ -6946,8 +6971,8 @@
         call("setTransformOrigin", id, parsed.x, parsed.y);
         return true;
       }
-      // pulp #1434 Triage #9 — RN array transform.
-      // RN's transform is an array of single-property objects:
+      // RN array transform. RN's transform is an array of single-property
+      // objects:
       //   transform: [
       //     { translateX: 10 }, { translateY: 20 },
       //     { rotate: '45deg' }, { scale: 1.5 },
@@ -6972,11 +6997,10 @@
         if (snap.haveSkew) call("setSkew", id, snap.skewX, snap.skewY);
         return true;
       }
-      // pulp #1434 Phase A2-1 — CSS transitions. The bridge parses
-      // the full shorthand into a list of TransitionSpecs that the
-      // dispatcher (PR 2 of the ladder) consults when a property
-      // changes. Longhand fields apply uniformly across the parsed
-      // list (CSS spec semantics).
+      // CSS transitions. The bridge parses the full shorthand into a list
+      // of TransitionSpecs that the dispatcher consults when a property
+      // changes. Longhand fields apply uniformly across the parsed list
+      // (CSS spec semantics).
       case "transition":
         call("setTransition", id, value);
         return true;
@@ -7008,21 +7032,17 @@
       case "transitionTimingFunction":
         call("setTransitionTimingFunction", id, value);
         return true;
-      // pulp #1434 Phase A2-1 — CSS animations. animation-name
-      // resolves through the keyframes registry populated by
-      // defineKeyframes; PR 4 wires the playback driver. The
-      // shorthand path takes a single name + duration; longhand
-      // props can be split out by the host as needed.
+      // CSS animations. animation-name resolves through the keyframes
+      // registry populated by defineKeyframes. The shorthand path takes a
+      // single name + duration; longhand props can be split out by the host
+      // as needed.
       case "animationName":
         call("setAnimation", id, value, 1, 1, "normal");
         return true;
-      // Codex audit on pulp #1508 (P1): animationDuration was
-      // dispatched to setTransitionDuration here, which mutated
-      // *transition* timing on the same View instead of *animation*
-      // timing. Route through the legacy 2-arg setAnimation control-
-      // token form (`setAnimation(id, 'duration', seconds)`) so the
-      // bridge stages it on the View's pending-animation slot
-      // alongside animationName / animationDelay / etc.
+      // animationDuration must route through animation timing, not
+      // transition timing. The legacy 2-arg setAnimation control-token
+      // form stages it on the View's pending-animation slot alongside
+      // animationName / animationDelay / etc.
       case "animationDuration": {
         if (typeof value === "number") {
           call("setAnimation", id, "duration", value);
@@ -7062,11 +7082,10 @@
       case "animationFillMode":
         call("setAnimation", id, "fill", value);
         return true;
-      // pulp #1434 Wave 3 css.3 — animation-play-state. Routes
-      // through the legacy 2-arg setAnimation control-token form so
-      // the bridge stores the keyword on View::animation_play_state_;
-      // View::tick_animations honors `paused` by skipping the
-      // timeline advance (web spec semantic).
+      // animation-play-state routes through the legacy 2-arg setAnimation
+      // control-token form so the bridge stores the keyword on
+      // View::animation_play_state_; View::tick_animations honors `paused`
+      // by skipping the timeline advance (web spec semantic).
       case "animationPlayState":
         call("setAnimation", id, "play_state", value);
         return true;
@@ -7075,15 +7094,15 @@
     }
   }
 
-  // ../pulp/packages/pulp-react/src/prop-applier-events.ts
+  // packages/pulp-react/src/prop-applier-events.ts
   function applyEventProp(id, key, value) {
     switch (key) {
-      // pulp #1148 — generalized overlay-click routing. `overlay={true}`
-      // claims the view as the active click-eligible overlay so React
-      // popovers built on `<View position="absolute">` receive clicks
-      // even though hit_test would otherwise resolve to a sibling. The
-      // matching releaseOverlay is emitted by applyChangedProps when
-      // the prop flips off, and by detach() at unmount.
+      // Generalized overlay-click routing. `overlay={true}` claims the
+      // view as the active click-eligible overlay so React popovers built
+      // on `<View position="absolute">` receive clicks even though
+      // hit_test would otherwise resolve to a sibling. The matching
+      // releaseOverlay is emitted by applyChangedProps when the prop flips
+      // off, and by detach() at unmount.
       case "overlay":
         if (value) {
           call("claimOverlay", id);
@@ -7091,15 +7110,13 @@
         }
         call("releaseOverlay", id);
         return true;
-      // pulp ARIA modal/popup auto-overlay — UX best-practice default.
+      // ARIA modal/popup auto-overlay. This makes semantically modal
+      // controls dismissable by default without each consumer duplicating
+      // overlay-position heuristics.
       // When the JSX declares an ARIA role that semantically IS a
       // dismissable overlay (`role="dialog" | "alertdialog" | "menu" |
       // "listbox"`) or sets `aria-modal="true"`, claim the overlay so
-      // Esc-dismiss + outside-click routing fire automatically. Pre-fix,
-      // every consumer (Spectr's dom-adapter, etc.) had to opt in by
-      // mirroring a position:absolute heuristic, which missed inset:0
-      // full-screen modal backdrops (the most common modal pattern) and
-      // every dropdown/menu authored without explicit positioning.
+      // Esc-dismiss + outside-click routing fire automatically.
       //
       // Override semantics: an explicit `overlay={false}` still wins
       // because applyChangedProps emits that case AFTER the role case
@@ -7128,7 +7145,7 @@
     }
   }
 
-  // ../pulp/packages/pulp-react/src/prop-applier.ts
+  // packages/pulp-react/src/prop-applier.ts
   var g3 = globalThis;
   var _aap_count = 0;
   function logApply(stage, id, type, propCount) {
@@ -7146,8 +7163,65 @@
   function isEventHandler(key) {
     return key.startsWith("on") && key.length > 2 && key[2] === key[2]?.toUpperCase();
   }
+  function virtualListPropRank(key) {
+    if (isEventHandler(key)) return -1;
+    switch (key) {
+      case "rowCount":
+        return 0;
+      case "rowHeight":
+        return 1;
+      case "overscan":
+        return 2;
+      case "selectionMode":
+        return 3;
+      case "selected":
+        return 4;
+      case "renderRow":
+        return 5;
+      case "scrollToRow":
+        return 6;
+      default:
+        return 100;
+    }
+  }
+  function orderedPropKeys(type, props) {
+    const keys = Object.keys(props);
+    if (type !== "VirtualList" && type !== "virtuallist" && type !== "virtual-list") return keys;
+    return keys.map((key, index) => ({ key, index })).sort((a, b) => virtualListPropRank(a.key) - virtualListPropRank(b.key) || a.index - b.index).map((item) => item.key);
+  }
+  function isVirtualListType(type) {
+    return type === "VirtualList" || type === "virtuallist" || type === "virtual-list";
+  }
+  function isSvgPathType(type) {
+    return type === "SvgPath" || type === "path";
+  }
+  function hasProp(props, key) {
+    return Object.prototype.hasOwnProperty.call(props, key) && props[key] !== void 0 && props[key] !== null;
+  }
+  function applySvgPathStrokeState(id, props, clearing = false) {
+    const hasStroke = hasProp(props, "stroke");
+    const hasGradient = hasProp(props, "strokeGradient") && String(props.strokeGradient).length > 0;
+    if (hasStroke) {
+      call("setSvgStroke", id, String(props.stroke));
+    } else if (clearing) {
+      call("setSvgStroke", id, hasGradient ? "#000000" : "none");
+    }
+    if (hasGradient) {
+      call("setSvgStrokeGradient", id, String(props.strokeGradient));
+    }
+  }
   function eventNameFor(propName) {
-    return propName.slice(2).toLowerCase();
+    const eventName = propName.slice(2);
+    switch (eventName) {
+      case "Pan":
+        return "panchange";
+      case "Pinch":
+        return "pinchchange";
+      case "Rotate":
+        return "rotatechange";
+      default:
+        return eventName.toLowerCase();
+    }
   }
   function isHoverEvent(eventName) {
     return eventName === "mouseenter" || eventName === "mouseleave" || eventName === "pointerenter" || eventName === "pointerleave";
@@ -7157,6 +7231,34 @@
   }
   function isWheelEvent(eventName) {
     return eventName === "wheel";
+  }
+  function gestureRegistrarFor(eventName) {
+    switch (eventName) {
+      case "tap":
+        return "registerTapGesture";
+      case "doubletap":
+        return "registerDoubleTapGesture";
+      case "longpress":
+        return "registerLongPressGesture";
+      case "panstart":
+      case "panchange":
+      case "panend":
+        return "registerPanGesture";
+      case "swipe":
+        return "registerSwipeGesture";
+      case "fling":
+        return "registerFlingGesture";
+      case "pinchstart":
+      case "pinchchange":
+      case "pinchend":
+        return "registerPinchGesture";
+      case "rotatestart":
+      case "rotatechange":
+      case "rotateend":
+        return "registerRotateGesture";
+      default:
+        return null;
+    }
   }
   function applyEventHandler(id, key, value) {
     if (typeof value !== "function") return;
@@ -7172,6 +7274,10 @@
     }
     if (isWheelEvent(eventName)) {
       call("registerWheel", id);
+    }
+    const gestureRegistrar = gestureRegistrarFor(eventName);
+    if (gestureRegistrar) {
+      call(gestureRegistrar, id);
     }
     const handler = value;
     call("on", id, eventName, (...rawArgs) => {
@@ -7195,6 +7301,10 @@
   }
   function applyOne(id, type, key, value, props) {
     if (value === void 0 || value === null) {
+      if (isVirtualListType(type)) {
+        if (key === "selectionMode") call("setVirtualListSelectionMode", id, "single");
+        if (key === "selected") call("setVirtualListSelected", id, -1);
+      }
       return;
     }
     if (type === "SvgRect") {
@@ -7214,6 +7324,28 @@
     if (applyTypographyProp(id, key, value, props)) return;
     if (applyTransformProp(id, key, value)) return;
     if (applyEventProp(id, key, value)) return;
+    if ((type === "img" || type === "Image") && key === "src") {
+      call("setImageSource", id, String(value));
+      return;
+    }
+    if (isVirtualListType(type)) {
+      switch (key) {
+        case "rowCount":
+          return call("setVirtualListRowCount", id, value);
+        case "rowHeight":
+          return call("setListRowHeight", id, value);
+        case "overscan":
+          return call("setVirtualListOverscan", id, value);
+        case "selectionMode":
+          return call("setVirtualListSelectionMode", id, value);
+        case "selected":
+          return call("setVirtualListSelected", id, value);
+        case "scrollToRow":
+          return call("scrollVirtualListToRow", id, value);
+        case "renderRow":
+          return call("refreshVirtualListRows", id);
+      }
+    }
     switch (key) {
       // Widget-specific data
       case "data":
@@ -7226,9 +7358,8 @@
         if (type === "Progress") return call("setProgress", id, value);
         if (type === "Meter") return call("setMeterLevel", id, value);
         return call("setValue", id, value);
-      // SvgPath (pulp #994) — wires the SvgPathWidget bridge surface
-      // (createSvgPath / setSvgPath / setSvgViewBox / setSvgFill /
-      // setSvgStroke / setSvgStrokeWidth) through a typed JSX intrinsic.
+      // SvgPath wires the SvgPathWidget bridge surface through a
+      // typed JSX intrinsic.
       case "d":
         return call("setSvgPath", id, value);
       case "viewBox": {
@@ -7248,8 +7379,14 @@
       }
       case "fill":
         return call("setSvgFill", id, value);
+      case "fillRule":
+        return call("setSvgFillRule", id, value);
+      case "fillGradient":
+        return call("setSvgFillGradient", id, value);
       case "stroke":
         return call("setSvgStroke", id, value);
+      case "strokeGradient":
+        return call("setSvgStrokeGradient", id, value);
       case "strokeWidth":
         return call("setSvgStrokeWidth", id, value);
       default:
@@ -7298,9 +7435,10 @@
         svgGeometryEmitted = true;
       }
     }
-    for (const key of Object.keys(props)) {
+    for (const key of orderedPropKeys(type, props)) {
       if (isReactInternal(key)) continue;
       if (key === "children") continue;
+      if (isSvgPathType(type) && (key === "stroke" || key === "strokeGradient")) continue;
       if (isEventHandler(key)) {
         applyEventHandler(id, key, props[key]);
         continue;
@@ -7311,10 +7449,16 @@
       }
       applyOne(id, type, key, props[key], props);
     }
+    if (isSvgPathType(type) && (hasProp(props, "stroke") || hasProp(props, "strokeGradient"))) {
+      applySvgPathStrokeState(id, props);
+    }
   }
   function applyChangedProps(instance, oldProps, newProps) {
     const { id, type } = instance;
     let mutated = false;
+    const selectionModeChanged = isVirtualListType(type) && oldProps.selectionMode !== newProps.selectionMode;
+    const rowCountChanged = isVirtualListType(type) && oldProps.rowCount !== newProps.rowCount;
+    const svgPathStrokeChanged = isSvgPathType(type) && (oldProps.stroke !== newProps.stroke || oldProps.strokeGradient !== newProps.strokeGradient);
     const svgRectGeoChanged = type === "SvgRect" && (oldProps.x !== newProps.x || oldProps.y !== newProps.y || oldProps.width !== newProps.width || oldProps.height !== newProps.height);
     const svgLineGeoChanged = type === "SvgLine" && (oldProps.x1 !== newProps.x1 || oldProps.y1 !== newProps.y1 || oldProps.x2 !== newProps.x2 || oldProps.y2 !== newProps.y2);
     if (svgRectGeoChanged) {
@@ -7325,9 +7469,10 @@
       emitSvgLineGeometry(id, newProps);
       mutated = true;
     }
-    for (const key of Object.keys(newProps)) {
+    for (const key of orderedPropKeys(type, newProps)) {
       if (isReactInternal(key)) continue;
       if (key === "children") continue;
+      if (svgPathStrokeChanged && (key === "stroke" || key === "strokeGradient")) continue;
       if (svgRectGeoChanged && type === "SvgRect" && (key === "x" || key === "y" || key === "width" || key === "height")) continue;
       if (svgLineGeoChanged && type === "SvgLine" && (key === "x1" || key === "y1" || key === "x2" || key === "y2")) continue;
       if (oldProps[key] !== newProps[key]) {
@@ -7339,9 +7484,14 @@
         mutated = true;
       }
     }
+    if (svgPathStrokeChanged) {
+      applySvgPathStrokeState(id, newProps, true);
+      mutated = true;
+    }
     for (const key of Object.keys(oldProps)) {
       if (isReactInternal(key)) continue;
       if (key === "children") continue;
+      if (svgPathStrokeChanged && (key === "stroke" || key === "strokeGradient")) continue;
       if (!(key in newProps)) {
         if (key === "visible") {
           call("setVisible", id, true);
@@ -7372,12 +7522,28 @@
           call("setTextColor", id, "");
           mutated = true;
         }
+        if (key === "src" && (type === "img" || type === "Image")) {
+          call("setImageSource", id, "");
+          mutated = true;
+        }
+        if (isVirtualListType(type) && key === "selectionMode") {
+          call("setVirtualListSelectionMode", id, "single");
+          mutated = true;
+        }
+        if (isVirtualListType(type) && key === "selected") {
+          call("setVirtualListSelected", id, -1);
+          mutated = true;
+        }
       }
+    }
+    if ((selectionModeChanged || rowCountChanged) && Object.prototype.hasOwnProperty.call(newProps, "selected")) {
+      applyOne(id, type, "selected", newProps.selected, newProps);
+      mutated = true;
     }
     return mutated;
   }
 
-  // ../pulp/packages/pulp-react/src/host-config.ts
+  // packages/pulp-react/src/host-config.ts
   var NoEventPriority = 0;
   var currentUpdatePriority = NoEventPriority;
   var g4 = globalThis;
@@ -7447,7 +7613,7 @@
         call2("createWaveform", id, parentId);
         return;
       case "Meter":
-        call2("createMeter", id, parentId);
+        call2("createMeter", id, props.orientation ?? "vertical", parentId);
         return;
       case "Progress":
         call2("createProgress", id, parentId);
@@ -7464,8 +7630,21 @@
       case "Combo":
         call2("createCombo", id, parentId);
         return;
+      // Ink & Signal design-system widgets.
+      case "Badge":
+        call2("createBadge", id, asText(props.children) ?? (props.text ?? ""), props.tone ?? "neutral", parentId);
+        return;
+      case "Stepper":
+        call2("createStepper", id, parentId);
+        return;
+      case "Pan":
+        call2("createPan", id, parentId);
+        return;
       case "ListBox":
         call2("createListBox", id, parentId);
+        return;
+      case "VirtualList":
+        call2("createVirtualList", id, parentId);
         return;
       case "Canvas":
         call2("createCanvas", id, parentId);
@@ -7474,7 +7653,7 @@
         call2("createImage", id, parentId);
         return;
       case "Icon":
-        call2("createIcon", id, parentId);
+        call2("createIcon", id, props.name ?? "image_upload", parentId);
         return;
       case "SvgPath":
         call2("createSvgPath", id, parentId);
@@ -7484,6 +7663,12 @@
         return;
       case "SvgLine":
         call2("createSvgLine", id, parentId);
+        return;
+      // Layout box for a platform-native child view (WebView / native text
+      // field / video layer). Materializes empty; a C++ host binds the OS
+      // handle by id. See docs/reference/js-bridge.md.
+      case "NativeView":
+        call2("createNativeView", id, parentId);
         return;
       default: {
         const lower = String(type).toLowerCase();
@@ -7581,14 +7766,9 @@
           case "canvas":
             call2("createCanvas", id, parentId);
             return;
-          // pulp routing-parity sweep 2026-06-08 — lowercase widget
-          // intrinsic aliases. These mirror the capitalized widget
-          // cases above (the source of truth) so a lowercase
-          // `<knob>` / `<fader>` / … tag dispatches to the SAME
-          // native createX bridge call instead of silently falling
-          // through to the createCol container fallback. (lowercase
-          // `select`/`progress`/`img`/`canvas` are already handled
-          // just above; widget-specific intrinsics added here.)
+          // Lowercase widget aliases mirror the capitalized widget
+          // cases so `<knob>` / `<fader>` / ... dispatch to the same
+          // native createX calls instead of the container fallback.
           case "knob":
             call2("createKnob", id, parentId);
             return;
@@ -7611,7 +7791,7 @@
             call2("createWaveform", id, parentId);
             return;
           case "meter":
-            call2("createMeter", id, parentId);
+            call2("createMeter", id, props.orientation ?? "vertical", parentId);
             return;
           case "xypad":
             call2("createXYPad", id, parentId);
@@ -7619,8 +7799,24 @@
           case "listbox":
             call2("createListBox", id, parentId);
             return;
+          case "virtuallist":
+          case "virtual-list":
+            call2("createVirtualList", id, parentId);
+            return;
+          case "native-view":
+            call2("createNativeView", id, parentId);
+            return;
+          case "badge":
+            call2("createBadge", id, asText(props.children) ?? (props.text ?? ""), props.tone ?? "neutral", parentId);
+            return;
+          case "stepper":
+            call2("createStepper", id, parentId);
+            return;
+          case "pan":
+            call2("createPan", id, parentId);
+            return;
           case "icon":
-            call2("createIcon", id, parentId);
+            call2("createIcon", id, props.name ?? "image_upload", parentId);
             return;
           case "svg":
             call2("createCol", id, parentId);
@@ -7740,15 +7936,9 @@
     "th",
     "title",
     "tspan",
-    // pulp jsx-instrument-import 2026-05-17 — container tags that
-    // host-config conditionally treats as text-leaves when their
-    // children are pure string/number. Without this, shouldSetTextContent
-    // returns false → React mounts the text children as separate
-    // synthetic Label widgets → duplicate text rendered on top of the
-    // createLabel we already made. The shouldSetTextContent check below
-    // still gates on children-are-pure-text (so divs with element
-    // children correctly route to createCol via createWidget's else
-    // branch).
+    // Container tags can be text leaves only when their children are pure
+    // string/number content. Element-bearing containers still route through
+    // createCol so React can mount the nested children.
     "div",
     "section",
     "article",
@@ -7924,17 +8114,11 @@
     },
     commitTextUpdate(_textInstance, _oldText, _newText) {
     },
-    // pulp #1840 P1 (Codex follow-up) — React's mutation reconciler
-    // calls resetTextContent(instance) when shouldSetTextContent flips
-    // from true → false on an existing TEXT_BEARING node. Concretely,
-    // a transition like <span>hi</span> → <span><em>hi</em></span>:
-    // the old commit treated <span> as text-bearing and pushed "hi" via
-    // setText; the new commit needs the inner <em> child mounted, so
-    // React first asks the host to clear the stale text. Without this
-    // hook the reconciler can throw (or leave stale text un-cleared on
-    // hosts that tolerate the missing callback). Clear by calling
-    // setText(id, '') — which the bridge already handles as a no-op for
-    // non-text-capable types, so this is safe for the whole alias set.
+    // React's mutation reconciler calls resetTextContent when
+    // shouldSetTextContent flips from true to false on an existing
+    // TEXT_BEARING node, such as <span>hi</span> becoming
+    // <span><em>hi</em></span>. Clear stale text before the new child
+    // element mounts.
     resetTextContent(instance) {
       if (typeof g4.setText === "function") call2("setText", instance.id, "");
     },
@@ -7943,17 +8127,14 @@
       return null;
     },
     resetAfterCommit(_container) {
-      if (typeof g4.layout === "function") call2("layout");
+      requestLayoutFlush(() => {
+        if (typeof g4.layout === "function") call2("layout");
+      });
     },
     // ── Misc required no-ops / passthroughs ────────────────────────
-    // Phase 7 codex round 5 — return the DOM-shim element when
-    // available so the bundle's `ref.current.X` calls resolve to
-    // browser-DOM-shape methods (getContext, getBoundingClientRect,
-    // style setters, addEventListener, etc.). Falls back to the
-    // Instance descriptor for tests that run without the C++ shim
-    // chain. The PulpInstance return type is technically wrong (we
-    // return an Element or PulpInstance), but react-reconciler's
-    // types are inflexible here and we cast at the call site.
+    // Return the DOM-shim Element when available so `ref.current.X`
+    // calls resolve to browser-shaped methods. Fall back to the Instance
+    // descriptor in tests that run without the shim chain.
     getPublicInstance(instance) {
       const inst = instance;
       return inst._dom ?? instance;
@@ -8039,7 +8220,7 @@
   }
   function autoId(container) {
     const n = ++container.nextId;
-    return `pr_${n.toString(36)}`;
+    return `${container.idPrefix ?? "pr_"}${n.toString(36)}`;
   }
   function shallowDiff(a, b) {
     const aKeys = Object.keys(a);
@@ -8049,7 +8230,7 @@
     return false;
   }
 
-  // ../pulp/packages/pulp-react/src/intrinsics.ts
+  // packages/pulp-react/src/intrinsics.ts
   var import_react = __toESM(require_react(), 1);
   var View = (props) => (0, import_react.createElement)("View", props);
   var Row = (props) => (0, import_react.createElement)("Row", props);
@@ -8057,7 +8238,7 @@
   var Button = (props) => (0, import_react.createElement)("Button", props);
   var Canvas = (props) => (0, import_react.createElement)("Canvas", props);
 
-  // ../pulp/packages/pulp-react/src/shortcuts.ts
+  // packages/pulp-react/src/shortcuts.ts
   var import_react2 = __toESM(require_react(), 1);
   var MOD_SHIFT = 1 << 0;
   var MOD_CTRL = 1 << 1;
@@ -8065,7 +8246,7 @@
   var MOD_META = 1 << 3;
   var MOD_CMD = 1 << 4;
 
-  // ../pulp/packages/pulp-react/src/index.ts
+  // packages/pulp-react/src/index.ts
   var reconciler = (0, import_react_reconciler.default)(PulpHostConfig);
   try {
     reconciler.injectIntoDevTools({
@@ -8077,8 +8258,8 @@
   } catch {
   }
   var rootsByContainer = /* @__PURE__ */ new WeakMap();
-  function createRoot(rootId = "") {
-    return { rootId, nextId: 0 };
+  function createRoot(rootId = "", idPrefix) {
+    return { rootId, idPrefix, nextId: 0 };
   }
   var defaultContainer = null;
   function render(element, container) {
@@ -8109,12 +8290,22 @@
     return c;
   }
 
-  // native-ui/src/editor.tsx
+  // ../spectr-native-editor-20260811/native-ui/src/editor.tsx
   var DESIGN_WIDTH = 1320;
   var DESIGN_HEIGHT = 860;
   var BAND_COUNT = 32;
   function clampGain(value) {
     return Math.max(-24, Math.min(24, value));
+  }
+  function initialState() {
+    return {
+      revision: 0,
+      n_visible: BAND_COUNT,
+      gain_db: Array.from({ length: BAND_COUNT }, () => 0),
+      muted: Array.from({ length: BAND_COUNT }, () => false),
+      min_hz: 20,
+      max_hz: 2e4
+    };
   }
   function AnalyzerCanvas({ magnitudes }) {
     (0, import_react3.useLayoutEffect)(() => {
@@ -8126,12 +8317,10 @@
       };
       call3("canvasClear");
       call3("canvasFillRect", 0, 0, 1e3, 300, "#080b10");
-      for (let x = 0; x <= 1e3; x += 125) {
+      for (let x = 0; x <= 1e3; x += 125)
         call3("canvasStrokeLine", x, 0, x, 300, "#202a35", 1);
-      }
-      for (let y = 0; y <= 300; y += 60) {
+      for (let y = 0; y <= 300; y += 60)
         call3("canvasStrokeLine", 0, y, 1e3, y, "#202a35", 1);
-      }
       if (magnitudes.length > 1) {
         call3("canvasSetStrokeColor", "#2be1ff");
         call3("canvasSetLineWidth", 2);
@@ -8147,38 +8336,94 @@
     return /* @__PURE__ */ import_react3.default.createElement(Canvas, { id: "spectr-analyzer-canvas", width: 1e3, height: 300 });
   }
   function App() {
-    const [bands, setBands] = (0, import_react3.useState)(
-      () => Array.from({ length: BAND_COUNT }, () => ({ gainDb: 0, muted: false }))
-    );
+    const [editorState, setEditorState] = (0, import_react3.useState)(initialState);
     const [magnitudes, setMagnitudes] = (0, import_react3.useState)([]);
-    const [viewport, setViewport] = (0, import_react3.useState)({ minHz: 20, maxHz: 2e4 });
-    const sculpting = (0, import_react3.useRef)(false);
-    (0, import_react3.useLayoutEffect)(() => {
-      globalThis.__spectrHydrate = (payload) => {
-        if (!payload || !Array.isArray(payload.bands) || payload.bands.length !== BAND_COUNT) return;
-        setBands(payload.bands.map((band) => ({
-          gainDb: clampGain(Number.isFinite(band.gainDb) ? band.gainDb : 0),
-          muted: band.muted === true
-        })));
-        if (payload.viewport && Number.isFinite(payload.viewport.minHz) && Number.isFinite(payload.viewport.maxHz)) {
-          setViewport(payload.viewport);
-        }
+    const current = (0, import_react3.useRef)(editorState);
+    const gesture = (0, import_react3.useRef)(null);
+    const applyAuthoritative = (payload) => {
+      if (!payload || payload.n_visible !== BAND_COUNT || !Array.isArray(payload.gain_db) || payload.gain_db.length !== BAND_COUNT || !Array.isArray(payload.muted) || payload.muted.length !== BAND_COUNT || !payload.gain_db.every(Number.isFinite) || !payload.muted.every((value) => typeof value === "boolean") || !Number.isFinite(payload.revision) || !Number.isFinite(payload.min_hz) || !Number.isFinite(payload.max_hz) || payload.min_hz <= 0 || payload.max_hz <= payload.min_hz || payload.revision < current.current.revision) return;
+      const next = {
+        revision: payload.revision,
+        n_visible: BAND_COUNT,
+        gain_db: payload.gain_db.map((value) => clampGain(Number(value))),
+        muted: payload.muted.map((value) => value === true),
+        min_hz: Number(payload.min_hz),
+        max_hz: Number(payload.max_hz)
       };
+      current.current = next;
+      setEditorState(next);
+    };
+    const dispatch = (type, payload = {}) => {
+      if (typeof globalThis.__spectrEditorDispatch !== "function")
+        throw new Error("required native Spectr editor bridge is unavailable");
+      const response = JSON.parse(globalThis.__spectrEditorDispatch(
+        JSON.stringify({ type, payload })
+      ));
+      if (!response.ok) throw new Error(response.error || `native ${type} failed`);
+      if (Number.isFinite(response.revision)) applyAuthoritative(response);
+      return response;
+    };
+    (0, import_react3.useLayoutEffect)(() => {
+      globalThis.__spectrHydrate = applyAuthoritative;
       globalThis.__spectrAnalyzer = (next) => {
         if (Array.isArray(next) && next.length > 1 && next.every(Number.isFinite))
           setMagnitudes(next);
       };
+      try {
+        dispatch("processing_state_get");
+      } catch (error) {
+        if (!String(error).includes("unavailable during validation")) throw error;
+      }
       return () => {
         globalThis.__spectrHydrate = void 0;
         globalThis.__spectrAnalyzer = void 0;
       };
     }, []);
-    const sculpt = (index, event) => {
+    const valueFromEvent = (event) => {
       const bounds = event.currentTarget?.getBoundingClientRect?.();
-      if (!bounds || bounds.height <= 0 || !Number.isFinite(event.clientY)) return;
-      const normalized = 1 - (event.clientY - bounds.top) / bounds.height;
-      const gainDb = clampGain(normalized * 48 - 24);
-      setBands((current) => current.map((band, i) => i === index ? { ...band, gainDb } : band));
+      const height = bounds?.height;
+      const y = Number.isFinite(event.offsetY) ? event.offsetY : Number.isFinite(event.clientY) && bounds ? event.clientY - bounds.top : NaN;
+      if (!Number.isFinite(y) || !Number.isFinite(height) || height <= 0) return null;
+      return { y, gain: clampGain((1 - y / height) * 48 - 24) };
+    };
+    const beginGesture = (index, event) => {
+      const value = valueFromEvent(event);
+      if (!value) return;
+      gesture.current = { index, startY: value.y, startValue: value.gain, dragging: false };
+    };
+    const moveGesture = (index, event) => {
+      const active = gesture.current;
+      const value = valueFromEvent(event);
+      if (!active || active.index !== index || !value) return;
+      if (!active.dragging && Math.abs(value.y - active.startY) < 2) return;
+      if (!active.dragging) {
+        dispatch("paint_start");
+        active.dragging = true;
+      }
+      dispatch("paint", {
+        mode: "Sculpt",
+        start_band: index,
+        start_value: active.startValue,
+        current_band: index,
+        current_value: value.gain,
+        n_visible: BAND_COUNT
+      });
+    };
+    const endGesture = (index) => {
+      const active = gesture.current;
+      gesture.current = null;
+      if (!active || active.index !== index) return;
+      if (active.dragging) {
+        dispatch("paint_end");
+        return;
+      }
+      const nextMuted = [...current.current.muted];
+      nextMuted[index] = !nextMuted[index];
+      dispatch("band_field_set", {
+        n_visible: BAND_COUNT,
+        gain_db: current.current.gain_db,
+        muted: nextMuted
+      });
     };
     return /* @__PURE__ */ import_react3.default.createElement(
       View,
@@ -8190,7 +8435,7 @@
         padding: 24,
         gap: 18
       },
-      /* @__PURE__ */ import_react3.default.createElement(Row, { height: 56, alignItems: "center", justifyContent: "space-between" }, /* @__PURE__ */ import_react3.default.createElement(Row, { alignItems: "center", gap: 14 }, /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#f5f8fb" }, "SPECTR"), /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#65717e" }, "NATIVE N1 / QUICKJS")), /* @__PURE__ */ import_react3.default.createElement(Row, { alignItems: "center", gap: 18 }, /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#7e8b98" }, Math.round(viewport.minHz), " Hz"), /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#2be1ff" }, "32 BANDS"), /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#7e8b98" }, Math.round(viewport.maxHz / 1e3), " kHz"))),
+      /* @__PURE__ */ import_react3.default.createElement(Row, { height: 56, alignItems: "center", justifyContent: "space-between" }, /* @__PURE__ */ import_react3.default.createElement(Row, { alignItems: "center", gap: 14 }, /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#f5f8fb" }, "SPECTR"), /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#65717e" }, "NATIVE N1 / QUICKJS")), /* @__PURE__ */ import_react3.default.createElement(Row, { alignItems: "center", gap: 18 }, /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#7e8b98" }, Math.round(editorState.min_hz), " Hz"), /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#2be1ff" }, "32 BANDS"), /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#7e8b98" }, Math.round(editorState.max_hz / 1e3), " kHz"))),
       /* @__PURE__ */ import_react3.default.createElement(
         View,
         {
@@ -8201,9 +8446,10 @@
         },
         /* @__PURE__ */ import_react3.default.createElement(AnalyzerCanvas, { magnitudes })
       ),
-      /* @__PURE__ */ import_react3.default.createElement(Row, { height: 330, gap: 5, alignItems: "end" }, bands.map((band, index) => {
-        const fill = band.muted ? "#32151b" : band.gainDb >= 0 ? "#123943" : "#17212b";
-        const height = 120 + (band.gainDb + 24) * 3.75;
+      /* @__PURE__ */ import_react3.default.createElement(Row, { height: 330, gap: 5, alignItems: "end" }, editorState.gain_db.map((gainDb, index) => {
+        const muted = editorState.muted[index];
+        const fill = muted ? "#32151b" : gainDb >= 0 ? "#123943" : "#17212b";
+        const height = 120 + (gainDb + 24) * 3.75;
         return /* @__PURE__ */ import_react3.default.createElement(
           Button,
           {
@@ -8212,27 +8458,19 @@
             width: 34,
             height,
             background: fill,
-            border: { color: band.muted ? "#ff5964" : "#2be1ff", width: 1, radius: 3 },
-            textColor: band.muted ? "#ff7a84" : "#d8f8ff",
-            onClick: () => setBands((current) => current.map((item, i) => i === index ? { ...item, muted: !item.muted } : item)),
-            onPointerDown: (event) => {
-              sculpting.current = true;
-              sculpt(index, event);
-            },
-            onPointerMove: (event) => {
-              if (sculpting.current) sculpt(index, event);
-            },
-            onPointerUp: () => {
-              sculpting.current = false;
-            },
+            border: { color: muted ? "#ff5964" : "#2be1ff", width: 1, radius: 3 },
+            textColor: muted ? "#ff7a84" : "#d8f8ff",
+            onPointerDown: (event) => beginGesture(index, event),
+            onPointerMove: (event) => moveGesture(index, event),
+            onPointerUp: () => endGesture(index),
             onPointerCancel: () => {
-              sculpting.current = false;
+              gesture.current = null;
             }
           },
           String(index + 1)
         );
       })),
-      /* @__PURE__ */ import_react3.default.createElement(Row, { height: 32, justifyContent: "space-between", alignItems: "center" }, /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#596673" }, "INPUT PROBE: TAP / SCULPT IS UI-LOCAL IN N1"), /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#596673" }, "LIVE ANALYZER DATA FROM VISUALIZATIONBRIDGE"))
+      /* @__PURE__ */ import_react3.default.createElement(Row, { height: 32, justifyContent: "space-between", alignItems: "center" }, /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#596673" }, "TAP MUTE / SCULPT: AUTHORITATIVE C++ ROUND-TRIP"), /* @__PURE__ */ import_react3.default.createElement(Label, { textColor: "#596673" }, "REV ", editorState.revision, " / LIVE NATIVE ANALYZER"))
     );
   }
   render(/* @__PURE__ */ import_react3.default.createElement(App, null));

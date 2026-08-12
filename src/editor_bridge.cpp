@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -89,6 +90,18 @@ choc::value::Value pattern_library_projection_(const PatternLibrary& library) {
     return result;
 }
 
+std::string authoritative_response_(const Spectr& plugin,
+                                    std::uint32_t* revision,
+                                    bool mutated,
+                                    std::uint32_t fallback_revision = 0) {
+    if (revision != nullptr && mutated
+        && *revision != std::numeric_limits<std::uint32_t>::max()) {
+        ++*revision;
+    }
+    return EditorBridge::ok_response(make_editor_state_payload(
+        plugin, revision != nullptr ? *revision : fallback_revision));
+}
+
 } // namespace
 
 choc::value::Value make_editor_state_payload(const Spectr& plugin,
@@ -106,7 +119,7 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     snapshots.addMember("B", snapshot_projection_(plugin.snapshots().b, n));
 
     auto payload = choc::value::createObject("SpectrEditorState");
-    payload.addMember("revision", static_cast<std::int32_t>(revision));
+    payload.addMember("revision", static_cast<std::int64_t>(revision));
     payload.addMember("n_visible", static_cast<std::int32_t>(n));
     payload.addMember("gain_db", gains);
     payload.addMember("muted", muted);
@@ -120,13 +133,23 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
 void register_spectr_editor_handlers(EditorBridge& bridge,
                                      Spectr& plugin,
                                      PatternLibrary& library,
-                                     EditorDragState& drag)
+                                     EditorDragState& drag,
+                                     std::uint32_t* authoritative_revision)
 {
+    bridge.add_handler("processing_state_get",
+        [&plugin, &drag, authoritative_revision](const choc::value::ValueView&) {
+            // Every committed realm requests state on mount. Treat that as a
+            // new gesture epoch so a reload can never resume a C++ snapshot
+            // captured by callbacks from the retired realm.
+            drag.snap.reset();
+            return authoritative_response_(plugin, authoritative_revision, false);
+        });
+
     // Complete JS field publication. Gain and mute are deliberately separate:
     // JSON never transports -Infinity, while a muted band still reaches an
     // exact 0.0 multiplier in BandField::linear_gain().
     bridge.add_handler("band_field_set",
-        [&plugin](const choc::value::ValueView& p) -> std::string {
+        [&plugin, authoritative_revision](const choc::value::ValueView& p) -> std::string {
             if (!p.isObject()) return EditorBridge::err_response("payload must be object");
 
             const auto n_visible = EditorBridge::get_uint(p, "n_visible", 0);
@@ -155,8 +178,10 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 next.bands[i].muted = mutes[i].getBool();
             }
 
-            if (plugin.layout() != *layout) plugin.set_layout(*layout);
-            plugin.replace_field(next);
+            if (!plugin.replace_processing_state(next, plugin.viewport(), *layout))
+                return EditorBridge::err_response("invalid band field");
+            if (authoritative_revision != nullptr)
+                return authoritative_response_(plugin, authoritative_revision, true);
             return EditorBridge::ok_response();
         });
 
@@ -164,7 +189,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     // are sound-defining in Spectr, so the viewport and the full band field
     // cross the bridge together and compile into one complete Pulp mask table.
     bridge.add_handler("processing_state_set",
-        [&plugin](const choc::value::ValueView& p) -> std::string {
+        [&plugin, authoritative_revision](const choc::value::ValueView& p) -> std::string {
             if (!p.isObject())
                 return EditorBridge::err_response("payload must be object");
 
@@ -206,6 +231,8 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             const Viewport viewport{*min_hz, *max_hz};
             if (!plugin.replace_processing_state(next, viewport, *layout))
                 return EditorBridge::err_response("invalid viewport");
+            if (authoritative_revision != nullptr)
+                return authoritative_response_(plugin, authoritative_revision, true);
             return EditorBridge::ok_response();
         });
 
@@ -218,20 +245,41 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         });
 
     bridge.add_handler("paint",
-        [&drag, &plugin](const choc::value::ValueView& p) -> std::string {
+        [&drag, &plugin, authoritative_revision](const choc::value::ValueView& p) -> std::string {
             if (!drag.snap) return EditorBridge::err_response("paint without paint_start");
+            if (!p.isObject()) return EditorBridge::err_response("payload must be object");
             const auto mode = parse_edit_mode_(EditorBridge::get_string(p, "mode"));
             if (!mode) return EditorBridge::err_response("unknown edit mode");
 
+            const auto n_visible = EditorBridge::get_uint(p, "n_visible", 0);
+            const auto start_band = EditorBridge::get_uint(p, "start_band", n_visible);
+            const auto current_band = EditorBridge::get_uint(p, "current_band", n_visible);
+            if (n_visible != visible_count(plugin.layout())
+                || start_band >= n_visible || current_band >= n_visible) {
+                return EditorBridge::err_response("paint geometry is outside the active layout");
+            }
+            if (!p.hasObjectMember("start_value") || !p.hasObjectMember("current_value"))
+                return EditorBridge::err_response("paint values are required");
+            const auto start_value = finite_number_(p["start_value"]);
+            const auto current_value = finite_number_(p["current_value"]);
+            if (!start_value || !current_value
+                || *start_value < kBandGainMinDb || *start_value > kBandGainMaxDb
+                || *current_value < kBandGainMinDb || *current_value > kBandGainMaxDb) {
+                return EditorBridge::err_response(
+                    "paint values must be finite and within -24 and +24 dB");
+            }
+
             DragGesture g;
-            g.start_band    = EditorBridge::get_uint (p, "start_band",   0);
-            g.start_value   = EditorBridge::get_float(p, "start_value",  0.0f);
-            g.current_band  = EditorBridge::get_uint (p, "current_band", g.start_band);
-            g.current_value = EditorBridge::get_float(p, "current_value", g.start_value);
-            g.n_visible     = EditorBridge::get_uint (p, "n_visible",    32);
+            g.start_band    = start_band;
+            g.start_value   = *start_value;
+            g.current_band  = current_band;
+            g.current_value = *current_value;
+            g.n_visible     = n_visible;
 
             dispatch_edit(*mode, plugin.field(), g, *drag.snap);
             plugin.publish_field();
+            if (authoritative_revision != nullptr)
+                return authoritative_response_(plugin, authoritative_revision, true);
             return EditorBridge::ok_response();
         });
 

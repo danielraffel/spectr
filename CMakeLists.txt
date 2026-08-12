@@ -84,15 +84,14 @@ set(SPECTR_HEADERS
 
 # ── Native-editor N1 vertical slice ──────────────────────────────────
 #
-# This is a separate, standalone-only graph. It intentionally does not
-# compile editor_view.cpp/editor_bridge.cpp and does not link the HTML binary
-# data target. The current Pulp SDK still exposes WebKit transitively from its
-# monolithic view-core library; removing that framework edge requires an SDK
-# library split, not another product target. A native editor failure returns
-# an empty GPU root rather than silently selecting AutoUi or the WebView
-# baseline.
+# This is a separate, standalone-only graph. NATIVE_UI selects Pulp's native
+# scripted Skia/Dawn link floor, while this source list excludes editor_view.cpp
+# and the HTML binary-data target. A native editor failure returns an empty GPU
+# root rather than silently selecting AutoUi or the WebView baseline.
 set(SPECTR_NATIVE_N1_SOURCES
     src/spectr.cpp
+    src/edit_engine.cpp
+    src/editor_bridge.cpp
     src/pattern.cpp
     src/preset_format.cpp
     src/snapshot.cpp
@@ -124,36 +123,29 @@ function(spectr_configure_native_n1_target target)
     )
 endfunction()
 
-add_library(SpectrNativeN1_Core OBJECT ${SPECTR_NATIVE_N1_SOURCES})
+pulp_add_plugin(SpectrNativeN1
+    NATIVE_UI
+    FORMATS Standalone
+    SOURCES ${SPECTR_NATIVE_N1_SOURCES}
+    PROCESSOR_FACTORY spectr::create_spectr
+    PLUGIN_NAME "Spectr Native N1"
+    BUNDLE_ID "com.pulp.spectr.native-n1"
+    MANUFACTURER "Pulp"
+    VERSION "1.0.0"
+    CATEGORY Effect
+    DESIGN_WIDTH ${SPECTR_AUTHORED_WIDTH}
+    DESIGN_HEIGHT ${SPECTR_AUTHORED_HEIGHT}
+    DESIGN_MIN_WIDTH ${SPECTR_AUTHORED_WIDTH}
+    DESIGN_MIN_HEIGHT ${SPECTR_AUTHORED_HEIGHT}
+    DESIGN_MAX_WIDTH ${SPECTR_AUTHORED_WIDTH}
+    DESIGN_MAX_HEIGHT ${SPECTR_AUTHORED_HEIGHT})
 target_link_libraries(SpectrNativeN1_Core PUBLIC
-    Pulp::format Pulp::view-script spectr_native_assets
-)
+    Pulp::view-native spectr_native_assets)
 spectr_configure_native_n1_target(SpectrNativeN1_Core)
-
-if(APPLE)
-    add_executable(SpectrNativeN1_Standalone MACOSX_BUNDLE
-        native_main.cpp
-    )
-else()
-    add_executable(SpectrNativeN1_Standalone
-        native_main.cpp
-    )
-endif()
-target_link_libraries(SpectrNativeN1_Standalone PRIVATE
-    SpectrNativeN1_Core Pulp::standalone
-)
 spectr_configure_native_n1_target(SpectrNativeN1_Standalone)
-set_target_properties(SpectrNativeN1_Standalone PROPERTIES
-    OUTPUT_NAME "Spectr Native N1"
-    MACOSX_BUNDLE_BUNDLE_NAME "Spectr Native N1"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "com.pulp.spectr.native-n1"
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
-    MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
-)
 
 foreach(_forbidden_native_source
         src/ui/editor_view.cpp
-        src/editor_bridge.cpp
         resources/editor.html)
     list(FIND SPECTR_NATIVE_N1_SOURCES "${_forbidden_native_source}"
          _forbidden_native_source_index)
