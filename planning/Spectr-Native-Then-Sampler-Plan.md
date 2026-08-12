@@ -102,3 +102,25 @@ Complete and review each phase before opening the next. Framework gaps land in
 Pulp with independent tests; product behavior lands in Spectr. Do not declare
 native cutover or sampler completion from screenshots alone—require audio,
 state, interaction, host, and performance evidence.
+
+## Post-sampler idea — multi-scene morph rail
+
+Keep the initial product contract deliberately simple: two complete A/B scenes,
+full-button capture/recall, and one automatable/modulatable A↔B morph value.
+Only after native cutover and sampler acceptance, evaluate an optional scene
+rail that:
+
+- starts with A and B but uses `+` to add scenes, up to a hard maximum of 8;
+- displays each populated scene as a marker along one continuous morph rail;
+- allows full-button capture, recall, rename, reorder, and delete while keeping
+  at least two scenes;
+- morphs continuously between the two adjacent markers surrounding the rail
+  position, with one categorical boundary policy for muted bands;
+- automates and modulates one normalized rail position rather than exposing a
+  separate host parameter for every pair of scenes; and
+- persists scene identity, ordering, positions, content, and the current rail
+  value across save/close/reopen without changing the two-scene default UX.
+
+Before implementation, specify behavior when layouts/viewports differ between
+adjacent scenes, host-automation compatibility when scenes are added or
+removed, undo grouping, and source-time integrity during continuous motion.

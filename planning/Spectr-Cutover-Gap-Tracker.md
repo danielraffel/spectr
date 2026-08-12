@@ -342,9 +342,11 @@ Blind root scaling that produces sub-12 px settings text is a release blocker.
 Composite controls expose one semantic hit region covering their complete
 visible bounds. In particular, every point inside the inset A or B snapshot
 button—including its dot, label, center, and corner regions—must capture the
-corresponding snapshot exactly once. Child artwork may not own or narrow the
-gesture target. The same whole-control rule applies to recall, morph endpoint,
-mode, preset, and settings controls.
+corresponding snapshot exactly once. The complete visible `▶ A` and `▶ B`
+recall buttons must likewise recall exactly once from any point in their
+bounds. Child artwork may not own or narrow the gesture target. The same
+whole-control rule applies to morph endpoint, mode, preset, and settings
+controls.
 
 Confirmed framework prerequisites include a supported native
 `ScriptedUiSession`/EditorBridge attachment; deterministic release-capable
@@ -377,8 +379,8 @@ state-transition and interaction receipts.
 
 The shared pointer suite must probe composite controls at their dot/icon,
 label, center, and four inset corners. A/B capture must produce one identical
-authoritative receipt from every point in the visible button rectangle at the
-minimum, preferred, authored, and enlarged editor sizes.
+authoritative receipt from every point in the visible capture or recall button
+rectangle at the minimum, preferred, authored, and enlarged editor sizes.
 
 ### Phase N4 — Performance and operational comparison
 
