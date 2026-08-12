@@ -427,6 +427,7 @@ first repro surfaces it.
 | Context menu, double-click, focused key-up/Tab routing are incomplete | pending | 2026-08-11 | P0 | yes | Required for menus, shortcuts, text entry, and host keyboard ownership. |
 | Native accessibility properties and actions are incomplete | pending | 2026-08-11 | P0 | yes | Canvas bands require semantic peers; controls need press/toggle/range actions. |
 | Browser file/clipboard/modal/storage assumptions need native capabilities | pending | 2026-08-11 | P1 | yes | Pattern import/export cannot rely on FileReader, downloads, or global temporary storage. |
+| Native-only consumers still inherit WebKit from Pulp's monolithic view link interface | pending | 2026-08-11 | P0 | yes | Spectr sources/assets are clean, but the current final executable still links WebKit; split the reusable native/scripted lane and prove JavaScriptCore + wgpu without WebKit. |
 | Frozen adapter behavior is not canonical source | product | 2026-08-11 | P0 | yes | Fold exact shipping behavior into stable native source modules before parity. |
 | Browser edit formulas diverge from dormant C++ `EditEngine` | product | 2026-08-11 | P0 | yes | Preserve frozen algorithms or unify implementations behind a mutation-sensitive oracle. |
 

@@ -54,3 +54,9 @@ The first acceptable N1 slice must prove real finite C++ hydration, a real
 analyzer frame, the real 32-band canvas, tap-to-mute, and sculpt-drag through a
 revisioned C++ state round trip. Static chrome or screenshot similarity is not
 acceptance evidence.
+
+The first native-only product scaffold also proved that excluding Spectr's
+WebView sources and HTML is not enough: the installed Pulp `view-core` link
+interface still placed `WebKit.framework` in the final executable alongside
+JavaScriptCore and wgpu. Removing that transitive dependency is a generalized
+Pulp link-floor prerequisite and an explicit N5 binary-inspection gate.
