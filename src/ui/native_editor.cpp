@@ -43,12 +43,8 @@ struct EmbeddedFile {
 
 const std::array kEmbeddedFiles{
     EmbeddedFile{"runtime.js", spectr_native::runtime_js, spectr_native::runtime_js_size},
+    EmbeddedFile{"materialized-document.runtime.json", spectr_native::materialized_document_runtime_json, spectr_native::materialized_document_runtime_json_size},
     EmbeddedFile{"design.js", spectr_native::design_js, spectr_native::design_js_size},
-    EmbeddedFile{"editor.ir.json", spectr_native::editor_ir_json, spectr_native::editor_ir_json_size},
-    EmbeddedFile{"assets/25ee97e9130cc8e719e4514a227dca176877a5ec0aaaf5cb2f5125b369386249.png", spectr_native::_25ee97e9130cc8e719e4514a227dca176877a5ec0aaaf5cb2f5125b369386249_png, spectr_native::_25ee97e9130cc8e719e4514a227dca176877a5ec0aaaf5cb2f5125b369386249_png_size},
-    EmbeddedFile{"assets/406f550c49fc82813b945e66628b54f6a72b2785ad90218809c9a25a1cdfd446.png", spectr_native::_406f550c49fc82813b945e66628b54f6a72b2785ad90218809c9a25a1cdfd446_png, spectr_native::_406f550c49fc82813b945e66628b54f6a72b2785ad90218809c9a25a1cdfd446_png_size},
-    EmbeddedFile{"assets/79560b1989a72f89fa7110fa518b679b9f5745dc0e54d17191cb3e44f7a807ae.png", spectr_native::_79560b1989a72f89fa7110fa518b679b9f5745dc0e54d17191cb3e44f7a807ae_png, spectr_native::_79560b1989a72f89fa7110fa518b679b9f5745dc0e54d17191cb3e44f7a807ae_png_size},
-    EmbeddedFile{"assets/b7f238f6baabff2ba8356456ad6526a6688af54d4f2ee942969165bb29c19a03.png", spectr_native::b7f238f6baabff2ba8356456ad6526a6688af54d4f2ee942969165bb29c19a03_png, spectr_native::b7f238f6baabff2ba8356456ad6526a6688af54d4f2ee942969165bb29c19a03_png_size},
 };
 
 std::filesystem::path package_path_for(const void* instance) {
@@ -236,6 +232,14 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
 
 void Spectr::open_native_editor_(pulp::view::View& view) {
     if (&view != native_editor_root_ || !native_scripted_ui_) return;
+    const auto bounds = view.bounds();
+    const auto width = bounds.width > 0.0f
+        ? static_cast<uint32_t>(std::lround(bounds.width))
+        : kEditorPreferredWidth;
+    const auto height = bounds.height > 0.0f
+        ? static_cast<uint32_t>(std::lround(bounds.height))
+        : kEditorPreferredHeight;
+    on_view_resized(view, width, height);
     if (native_frame_subscription_ >= 0) return;
     native_frame_clock_ = view.frame_clock();
     if (!native_frame_clock_) return;

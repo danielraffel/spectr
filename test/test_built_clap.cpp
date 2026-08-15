@@ -154,6 +154,13 @@ void check_built_artifact(const std::filesystem::path& bundle,
     CHECK(slot->info().name == "Spectr");
     const auto parameters = slot->parameters();
     CHECK(parameters.size() == 3);
+    for (const auto& parameter : parameters) {
+        INFO("parameter " << parameter.name << " id=" << parameter.id
+             << " default=" << parameter.default_value
+             << " current=" << slot->get_parameter(parameter.id));
+        CHECK(slot->get_parameter(parameter.id)
+              == Catch::Approx(parameter.default_value));
+    }
     for (const std::string_view expected : {
              "Mix", "Output"}) {
         CHECK(std::ranges::any_of(parameters, [expected](const auto& parameter) {
@@ -251,6 +258,20 @@ TEST_CASE("Pulp host loads and processes the built Spectr CLAP artifact") {
 #if defined(SPECTR_HAVE_TEST_VST3)
 TEST_CASE("Pulp host loads and processes the built Spectr VST3 artifact") {
     check_built_artifact(SPECTR_TEST_VST3_PATH,
+                         pulp::host::PluginFormat::VST3);
+}
+#endif
+
+#if defined(SPECTR_HAVE_WEBVIEW_REFERENCE_TEST_CLAP)
+TEST_CASE("Pulp host loads and processes the frozen Spectr WebView CLAP artifact") {
+    check_built_artifact(SPECTR_WEBVIEW_REFERENCE_TEST_CLAP_PATH,
+                         pulp::host::PluginFormat::CLAP);
+}
+#endif
+
+#if defined(SPECTR_HAVE_WEBVIEW_REFERENCE_TEST_VST3)
+TEST_CASE("Pulp host loads and processes the frozen Spectr WebView VST3 artifact") {
+    check_built_artifact(SPECTR_WEBVIEW_REFERENCE_TEST_VST3_PATH,
                          pulp::host::PluginFormat::VST3);
 }
 #endif

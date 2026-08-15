@@ -43,10 +43,11 @@ namespace spectr {
 
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
-// SpectralFrameEngine publishes each sample as soon as its final covering
-// frame is synthesized. The exact causal delay is therefore N - 1; the hop
-// controls update cadence/CPU, not an additional withheld output interval.
-inline constexpr int kSpectralLatency = kSpectralFftSize - 1;
+// SpectralFrameEngine reads through a fixed causal cursor of one complete FFT
+// frame plus one analysis hop, keeping latency invariant to host block
+// partitioning.
+inline constexpr int kSpectralLatency =
+    kSpectralFftSize + kSpectralAnalysisHop;
 // VisualizationBridge publishes at most 4097 bins. Derive analyzer geometry
 // from the product profile, but cap Maximum's 16384 processing FFT at 8192 so
 // its upper spectrum is never silently truncated.
@@ -80,7 +81,11 @@ enum ParamIDs : pulp::state::ParamID {
 
 inline pulp::format::PluginDescriptor make_descriptor() {
     return {
+#if defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
+        .name         = "Spectr Native Preview",
+#else
         .name         = "Spectr",
+#endif
         .manufacturer = "Pulp",
         .bundle_id    = "com.pulp.spectr",
         .version      = "1.0.0",

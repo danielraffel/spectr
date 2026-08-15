@@ -716,7 +716,10 @@ TEST_CASE("M9.5 bridge morph: clamps t and applies to live field") {
     CHECK(r.proc->field().bands[0].gain_db == Approx(0.0f));
     CHECK(r.proc->field().bands[3].muted); // B owns the exact midpoint.
     const auto midpoint_payload = choc::json::parse(midpoint);
-    CHECK(midpoint_payload["revision"].get<int64_t>() == 41);
+    // The legacy `revision` field is not authoritative. Only
+    // `expected_revision` participates in optimistic concurrency, and the
+    // editor authority owns the monotonic response revision.
+    CHECK(midpoint_payload["revision"].get<int64_t>() == 1);
     CHECK(midpoint_payload["muted"][3].getBool());
     CHECK(midpoint_payload["snapshots"]["A"]["populated"].getBool());
     CHECK(midpoint_payload["snapshots"]["B"]["populated"].getBool());
@@ -745,7 +748,7 @@ TEST_CASE("M9.5 bridge capture_snapshot: slot string is required") {
     CHECK(r.proc->snapshots().has(SnapshotBank::Slot::A));
     CHECK(r.proc->snapshots().a.field.bands[10].gain_db == Approx(-4.0f));
     const auto captured_payload = choc::json::parse(captured);
-    CHECK(captured_payload["revision"].get<int64_t>() == 7);
+    CHECK(captured_payload["revision"].get<int64_t>() == 1);
     CHECK(captured_payload["snapshots"]["A"]["populated"].getBool());
 
     REQUIRE(response_ok(r.dispatch(
@@ -775,7 +778,7 @@ TEST_CASE("M9.5 bridge recall_snapshot restores field viewport and layout") {
     CHECK(r.proc->field().bands[9].gain_db == Approx(-13.0f));
     CHECK(r.proc->field().bands[9].muted);
     const auto recalled_payload = choc::json::parse(recalled);
-    CHECK(recalled_payload["revision"].get<int64_t>() == 19);
+    CHECK(recalled_payload["revision"].get<int64_t>() == 1);
     CHECK(recalled_payload["n_visible"].get<int64_t>() == 40);
 }
 

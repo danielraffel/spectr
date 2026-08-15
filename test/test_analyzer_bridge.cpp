@@ -27,11 +27,13 @@ constexpr int settled_samples() noexcept {
 /// Fill a 2-channel buffer with a continuous sine. `start` lets callers
 /// advance the phase across multiple calls so the waveform is seamless.
 void fill_sine(std::vector<float>& ch0, std::vector<float>& ch1,
-               double hz, std::size_t start = 0, double sr = kSampleRate)
+               double hz, std::size_t start = 0, double sr = kSampleRate,
+               float amplitude = 1.0f)
 {
     const double w = 2.0 * M_PI * hz / sr;
     for (std::size_t i = 0; i < ch0.size(); ++i) {
-        const float s = static_cast<float>(std::sin(w * static_cast<double>(i + start)));
+        const float s = amplitude * static_cast<float>(
+            std::sin(w * static_cast<double>(i + start)));
         ch0[i] = s;
         ch1[i] = s;
     }
@@ -60,7 +62,8 @@ struct PreparedSpectr {
     spectr::Spectr* operator->() noexcept { return processor.get(); }
 };
 
-void feed_sine(spectr::Spectr& plugin, double hz, int block, int total_samples) {
+void feed_sine(spectr::Spectr& plugin, double hz, int block, int total_samples,
+               float amplitude = 1.0f) {
     std::vector<float> in0(block), in1(block);
     std::vector<float> out0(block), out1(block);
     const float* in_ptrs[2]  = {in0.data(), in1.data()};
@@ -73,13 +76,23 @@ void feed_sine(spectr::Spectr& plugin, double hz, int block, int total_samples) 
     int fed = 0;
     while (fed < total_samples) {
         const int n = std::min(block, total_samples - fed);
-        fill_sine(in0, in1, hz, static_cast<std::size_t>(fed));
+        fill_sine(in0, in1, hz, static_cast<std::size_t>(fed),
+                  kSampleRate, amplitude);
         pulp::audio::BufferView<const float> iv(in_ptrs, 2, static_cast<std::size_t>(n));
         pulp::audio::BufferView<float>       ov(out_ptrs, 2, static_cast<std::size_t>(n));
         ctx.num_samples = n;
         plugin.process(ov, iv, midi_in, midi_out, ctx);
         fed += n;
     }
+}
+
+float peak_near_bin(const pulp::view::SpectrumData& spectrum,
+                    int expected_bin, int radius = 2) {
+    float peak_db = spectrum.floor_db;
+    for (int bin = std::max(0, expected_bin - radius);
+         bin <= std::min(spectrum.num_bins - 1, expected_bin + radius); ++bin)
+        peak_db = std::max(peak_db, spectrum.magnitude_db[bin]);
+    return peak_db;
 }
 
 void drain_analyzer(spectr::Spectr& plugin) {
@@ -133,6 +146,32 @@ TEST_CASE("Analyzer bridge: spectrum peaks near the input tone frequency") {
          << ", " << peak_db << " dB)");
     CHECK(std::abs(peak_bin - expected) <= 2);
     CHECK(peak_db > -40.0f);
+}
+
+TEST_CASE("Analyzer bridge: post-DSP spectrum preserves peak-amplitude dBFS",
+          "[analyzer][dbfs][oracle]") {
+    // Select a bin-centred tone so spectral leakage cannot hide normalization,
+    // coherent-gain, or single-sided scaling errors.  The default flat mask,
+    // unity output trim, and 100% mix must preserve its amplitude through the
+    // same post-engine signal path that feeds the native editor.
+    constexpr int kToneBin = 256;
+    const double tone_hz = static_cast<double>(kToneBin) * kSampleRate
+                         / static_cast<double>(spectr::kAnalyzerFftSize);
+    constexpr std::array<float, 4> kExpectedDb{
+        0.0f, -6.0f, -30.0f, -60.0f};
+
+    for (const float expected_db : kExpectedDb) {
+        CAPTURE(expected_db, tone_hz);
+        PreparedSpectr s{};
+        const float amplitude = std::pow(10.0f, expected_db / 20.0f);
+        feed_sine(*s.processor, tone_hz, 256, settled_samples(), amplitude);
+        drain_analyzer(*s.processor);
+
+        const auto& spectrum = s.processor->read_spectrum();
+        REQUIRE(spectrum.num_bins > kToneBin);
+        CHECK(peak_near_bin(spectrum, kToneBin)
+              == Approx(expected_db).margin(0.15f));
+    }
 }
 
 TEST_CASE("Analyzer bridge: Maximum profile retains the upper spectrum") {
@@ -212,7 +251,8 @@ TEST_CASE("Analyzer bridge: silence in → silence published") {
     }
 
     const auto& spec = s.processor->read_spectrum();
+    REQUIRE(spec.floor_db == Approx(-120.0f));
     for (int k = 0; k < spec.num_bins; ++k) {
-        CHECK(spec.magnitude_db[k] < -60.0f);
+        CHECK(spec.magnitude_db[k] == Approx(spec.floor_db).margin(0.001f));
     }
 }

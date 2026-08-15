@@ -5,10 +5,12 @@
 
 #include <choc/containers/choc_Value.h>
 #include <choc/text/choc_JSON.h>
+#include <pulp/runtime/log.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <sstream>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -188,15 +190,7 @@ std::unique_ptr<pulp::view::View> Spectr::create_view() {
 }
 
 pulp::format::ViewSize Spectr::view_size() const {
-    return {
-        kEditorPreferredWidth,
-        kEditorPreferredHeight,
-        kEditorMinimumWidth,
-        kEditorMinimumHeight,
-        kEditorMaximumWidth,
-        kEditorMaximumHeight,
-        kEditorAspectRatio,
-    };
+    return make_editor_view_size<pulp::format::ViewSize>();
 }
 
 void Spectr::on_view_opened(pulp::view::View& view) {
@@ -209,9 +203,24 @@ void Spectr::on_view_opened(pulp::view::View& view) {
 #endif
 }
 
-void Spectr::on_view_resized(pulp::view::View& view, uint32_t /*w*/, uint32_t /*h*/) {
+void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
 #if defined(SPECTR_NATIVE_EDITOR)
-    (void)view;
+    if (&view != native_editor_root_ || w == 0 || h == 0) return;
+    view.set_bounds({0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h)});
+    view.layout_children();
+    if (native_scripted_ui_ && native_scripted_ui_->bridge()) {
+        std::ostringstream script;
+        script << "if (typeof globalThis.__spectrResizeNativeEditor === 'function') "
+                  "globalThis.__spectrResizeNativeEditor("
+               << w << ',' << h << ");";
+        try {
+            native_scripted_ui_->bridge()->load_script(
+                script.str(), "spectr-native-responsive-resize");
+        } catch (const std::exception& error) {
+            pulp::runtime::log_error(
+                "[Spectr native] responsive resize rejected: {}", error.what());
+        }
+    }
 #else
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->sync_to_host();

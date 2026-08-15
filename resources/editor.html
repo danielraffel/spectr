@@ -173,7 +173,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     const spectrStateEffect = String.raw`  // ---- native DSP state publication ----
   useEffect(() => {
     if (!nativeHydrated) return;
-    if (nativeDirectPublicationPendingRef.current) return;
     if (nativeProjectionRef.current && !nativeEditPendingRef.current) {
       nativeProjectionRef.current = false;
       return;
@@ -188,6 +187,14 @@ document.addEventListener('DOMContentLoaded', async function() {
         ? (Number.isFinite(mutedGainDbRef.current[i])
             ? mutedGainDbRef.current[i] : 0)
         : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
+      const publicationSignature = JSON.stringify([
+        N, gainDb, muted, view.lmin, view.lmax,
+      ]);
+      // Direct pointer handlers have already published this exact state. A
+      // signature is deliberately used instead of an effect-ordering flag:
+      // unrelated React commits may run between the handler and this frame.
+      if (publicationSignature === nativeDirectPublicationSignatureRef.current)
+        return;
       try {
         // A later direct edit supersedes any in-flight native capture/recall/
         // morph projection even if that older response arrives afterward.
@@ -536,7 +543,7 @@ window.FilterBank = FilterBank;`,
       'band context menu ignores analyzer-only parent renders');
     replaceSpectrSource(
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
-      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationPendingRef = useRef(false);\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  const resolutionGeometryRef = useRef(\'\');',
+      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  const resolutionGeometryRef = useRef(\'\');',
       'independent muted gain hydration');
     replaceSpectrSource(
       String.raw`      const next = new Array(N).fill(0);
@@ -584,26 +591,23 @@ window.FilterBank = FilterBank;`,
     // A real user gesture is always publishable. Hydration gates projection
     // effects, not direct intent arriving through an already-live bridge.
     if (!window.pulp || typeof window.pulp.postMessage !== 'function') return;
-    nativeDirectPublicationPendingRef.current = true;
     const current = targetGainsRef.current;
     const muted = current.map(value => isMuted(value));
     const gainDb = current.map((value, i) => isMuted(value)
       ? (Number.isFinite(mutedGainDbRef.current[i])
           ? mutedGainDbRef.current[i] : 0)
       : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
+    nativeDirectPublicationSignatureRef.current = JSON.stringify([
+      N, gainDb, muted, view.lmin, view.lmax,
+    ]);
     ++nativeCommandSequenceRef.current;
-    try {
-      Promise.resolve(window.pulp.postMessage('processing_state_set', {
-        n_visible: N, gain_db: gainDb, muted,
-        min_hz: Math.pow(10, view.lmin),
-        max_hz: Math.pow(10, view.lmax),
-      }, 'spectr-processing-state')).catch(error => {
-        console.error('[Spectr] native direct-edit publication failed', error);
-      });
-    } finally {
-      // Native dispatch is synchronous; only the response is promised.
-      nativeDirectPublicationPendingRef.current = false;
-    }
+    Promise.resolve(window.pulp.postMessage('processing_state_set', {
+      n_visible: N, gain_db: gainDb, muted,
+      min_hz: Math.pow(10, view.lmin),
+      max_hz: Math.pow(10, view.lmax),
+    }, 'spectr-processing-state')).catch(error => {
+      console.error('[Spectr] native direct-edit publication failed', error);
+    });
   };
   const commitGain = (idx, value) => {
     // A real pointer edit is authoritative even if it arrives before the

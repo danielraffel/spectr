@@ -23,7 +23,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "f56fd98e1d021fa3fd86d05ab44e2f48b93ac359d4e3df1015cdd2960e992f0f";
+    "1b5ee7d57e90f4f42c8f2109cd2a7a5164b9300ea70c39135b9564edcc7562ed";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -228,6 +228,10 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("new DOMParser().parseFromString(template, 'text/html')") != adapter.npos);
     CHECK(adapter.find("window.Babel.transformScriptTags()") != adapter.npos);
     CHECK(adapter.find("window.pulp.postMessage('processing_state_set'") != adapter.npos);
+    CHECK(adapter.find("nativeDirectPublicationSignatureRef") != adapter.npos);
+    CHECK(adapter.find(
+        "publicationSignature === nativeDirectPublicationSignatureRef.current")
+          != adapter.npos);
     CHECK(adapter.find("window.pulp.on('processing_state_hydrate'") != adapter.npos);
     CHECK(adapter.find("window.pulp.on(\n        'analyzer_frame', acceptAnalyzerFrame)")
           != adapter.npos);
@@ -252,11 +256,11 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("fixedDesignSurface.style.transform") != adapter.npos);
     CHECK(adapter.find("wrapRef.current.clientWidth / rect.width") != adapter.npos);
     CHECK(adapter.find("truthful mask visualization selector") != adapter.npos);
-    CHECK(adapter.find("fixed top-center hover readout") != adapter.npos);
+    CHECK(adapter.find("finite hover gain display") != adapter.npos);
     CHECK(adapter.find("deterministic shift mute brush start") != adapter.npos);
     CHECK(adapter.find("stable settings controls") != adapter.npos);
     CHECK(adapter.find("settings close hit target") != adapter.npos);
-    CHECK(adapter.find("minimap clears bottom action rail") != adapter.npos);
+    CHECK(adapter.find("frequency ruler and minimap clear fixed chrome") != adapter.npos);
     CHECK(adapter.find("minimap behavior oracle seam") != adapter.npos);
     CHECK(adapter.find("canvas interaction does not select text") != adapter.npos);
     CHECK(adapter.find("native snapshot authority helpers") != adapter.npos);
@@ -300,7 +304,7 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
           != adapter.npos);
     CHECK(adapter.find("document.querySelector('[data-spectr-overlay=\"true\"]')")
           != adapter.npos);
-    CHECK(adapter.find("data-spectr-overlay=\"true\" role=\"menu\" aria-label=\"Band actions\"")
+    CHECK(adapter.find("data-spectr-band-context-menu=\"true\" role=\"menu\" aria-label=\"Band actions\"")
           != adapter.npos);
     CHECK(adapter.find("<button role=\"menuitem\"") != adapter.npos);
     CHECK(adapter.find("<Hrow k=\"CLICK\">Toggle mute (−∞)</Hrow>")

@@ -2,13 +2,17 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <pulp/canvas/recording_canvas.hpp>
 #include <pulp/state/store.hpp>
 #include <pulp/view/frame_clock.hpp>
 #include <pulp/view/input_events.hpp>
 #include <pulp/view/pointer_dispatch.hpp>
 #include <pulp/view/screenshot.hpp>
 #include <pulp/view/scripted_ui.hpp>
+#include <pulp/view/ui_components.hpp>
+#include <pulp/view/window_host.hpp>
 #include <pulp/view/widgets.hpp>
+#include <pulp/view/widgets/svg_rect.hpp>
 
 #include <algorithm>
 #include <array>
@@ -207,6 +211,14 @@ const View* find_sized_descendant(const View& view, float width, float height) {
     return nullptr;
 }
 
+void collect_svg_rects(const View& view,
+                       std::vector<const pulp::view::SvgRectWidget*>& result) {
+    if (const auto* rect = dynamic_cast<const pulp::view::SvgRectWidget*>(&view))
+        result.push_back(rect);
+    for (std::size_t index = 0; index < view.child_count(); ++index)
+        collect_svg_rects(*view.child_at(index), result);
+}
+
 struct NativeEditorRig {
     pulp::state::StateStore store;
     spectr::Spectr processor;
@@ -255,7 +267,33 @@ struct NativeEditorRig {
         REQUIRE(session->bridge() != nullptr);
         return *session->bridge();
     }
+
+    void resize(float width, float height) {
+        REQUIRE(root != nullptr);
+        processor.on_view_resized(*root, width, height);
+        settle(clock, 16);
+        CHECK(root->bounds().width == Catch::Approx(width));
+        CHECK(root->bounds().height == Catch::Approx(height));
+    }
 };
+
+void native_click_label(NativeEditorRig& rig, std::string_view text) {
+    const auto* label = find_label(*rig.root, text);
+    REQUIRE(label != nullptr);
+    auto* click_target = const_cast<View*>(static_cast<const View*>(label));
+    while (click_target != nullptr && !click_target->on_click)
+        click_target = click_target->parent();
+    REQUIRE(click_target != nullptr);
+    const auto bounds = click_target->bounds();
+    REQUIRE(bounds.width > 0.0f);
+    REQUIRE(bounds.height > 0.0f);
+    const auto point = root_point(*click_target,
+                                  bounds.width * 0.5f,
+                                  bounds.height * 0.5f);
+    REQUIRE(rig.root->hit_test(point) == click_target);
+    rig.root->simulate_click(point);
+    settle(rig.clock, 12);
+}
 
 void feed_tone(NativeEditorRig& rig) {
     constexpr int block = 256;
@@ -293,11 +331,13 @@ std::optional<std::filesystem::path> atlas_directory() {
 
 void capture(NativeEditorRig& rig,
              const std::optional<std::filesystem::path>& directory,
-             std::string_view name) {
+             std::string_view name,
+             int width = 1320,
+             int height = 860) {
     if (!directory) return;
     const auto path = *directory / (std::string(name) + ".png");
     REQUIRE(pulp::view::render_to_file(
-        *rig.root, 1320, 860, path.string(), 2.0f,
+        *rig.root, width, height, path.string(), 2.0f,
         pulp::view::ScreenshotBackend::gpu));
 }
 
@@ -350,6 +390,16 @@ void require_app_state(NativeEditorRig& rig, std::string_view expression,
         + "if (!s || !(" + std::string(expression) + ")) throw new Error("
         + js_string(message) + " + ': ' + JSON.stringify(s)); })();";
     rig.bridge().load_script(script, "spectr-native-app-state-contract");
+}
+
+void require_runtime_contract(NativeEditorRig& rig,
+                              std::string_view expression,
+                              std::string_view message) {
+    const auto script = std::string{"(() => { if (!("}
+        + std::string(expression) + ")) throw new Error("
+        + js_string(message) + " + ': ' + JSON.stringify("
+        + "globalThis.__spectrResponsiveLayoutReceipt__)); })();";
+    rig.bridge().load_script(script, "spectr-native-responsive-contract");
 }
 
 std::vector<Point> snapshot_hit_points(const View& button,
@@ -442,6 +492,119 @@ std::vector<std::uint8_t> corrupt_first_pattern_gain(
 
 } // namespace
 
+TEST_CASE("native editor advertises proportional host-corner resizing",
+          "[native-n1][resize]") {
+    pulp::state::StateStore store;
+    spectr::Spectr processor;
+    processor.set_state_store(&store);
+    processor.define_parameters(store);
+
+    const auto size = processor.view_size();
+    CHECK(size.preferred_width == 990);
+    CHECK(size.preferred_height == 645);
+    CHECK(size.min_width == 792);
+    CHECK(size.min_height == 516);
+    CHECK(size.max_width == 2640);
+    CHECK(size.max_height == 1720);
+    CHECK(size.aspect_ratio == Catch::Approx(990.0 / 645.0));
+    CHECK(size.design_width == 1320);
+    CHECK(size.design_height == 860);
+    CHECK(size.viewport_policy == pulp::format::ViewportPolicy::Responsive);
+    CHECK_FALSE(pulp::format::should_pin_design_viewport(size));
+    CHECK(pulp::format::should_lock_view_aspect(size));
+
+    NativeEditorRig rig;
+    const auto directory = atlas_directory();
+    struct ResizeCase {
+        int width;
+        int height;
+        std::string_view mode;
+        int bottom_height;
+        int graph_height;
+        std::string_view image;
+    };
+    for (const auto& sample : std::array<ResizeCase, 4>{
+             ResizeCase{792, 516, "compact-two-row", 96, 376, "minimum-home"},
+             ResizeCase{990, 645, "compact-two-row", 96, 505, "preferred-home"},
+             ResizeCase{1320, 860, "authored", 56, 760, "authored-home"},
+             ResizeCase{2640, 1720, "expanded", 56, 1620, "enlarged-home"},
+         }) {
+        rig.resize(sample.width, sample.height);
+        require_runtime_contract(
+            rig,
+            "(() => { const r = globalThis.__spectrResponsiveLayoutReceipt__; "
+            "return r && r.schema === 'spectr-responsive-layout-v1'"
+            " && r.width === " + std::to_string(sample.width)
+            + " && r.height === " + std::to_string(sample.height)
+            + " && r.mode === " + js_string(sample.mode)
+            + " && r.design_transform === 'none' && r.top_height === 44"
+            + " && r.bottom_height === " + std::to_string(sample.bottom_height)
+            + " && r.graph_height === " + std::to_string(sample.graph_height)
+            + " && r.focus_order.length > 0"
+            + " && r.typography_scale === 1"
+            + "; })()",
+            "responsive layout receipt mismatch");
+        capture(rig, directory, sample.image, sample.width, sample.height);
+    }
+
+    rig.resize(792, 516);
+    for (const auto text : {"CLEAR", "SCULPT ▾", "PEAK ▾", "PRESETS ▾"}) {
+        const auto* label = find_label(*rig.root, text);
+        REQUIRE(label != nullptr);
+        CHECK(label->font_size() >= 10.0f);
+        CHECK_FALSE(label->cached_line_boxes().empty());
+        auto* target = label->parent();
+        while (target != nullptr && !target->on_click) target = target->parent();
+        REQUIRE(target != nullptr);
+        CHECK(target->bounds().height >= 24.0f);
+    }
+
+    activate(rig, "[data-spectr-settings-open]");
+    require_runtime_contract(
+        rig,
+        "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
+        "return s && s.width === 520 && Math.abs(s.height - 464.4) < 0.01"
+        " && s.content_height === 684 && s.scroll_reachable === true"
+        " && s.native_scroll_view === true"
+        " && s.authored_skin === true; })()",
+        "compact settings were not constrained to a reachable scroll viewport");
+    capture(rig, directory, "minimum-settings", 792, 516);
+    const auto* settings_title = find_label(*rig.root, "SETTINGS");
+    REQUIRE(settings_title != nullptr);
+    auto* settings_scroll = const_cast<View*>(
+        static_cast<const View*>(settings_title));
+    while (settings_scroll != nullptr
+           && dynamic_cast<pulp::view::ScrollView*>(settings_scroll) == nullptr)
+        settings_scroll = settings_scroll->parent();
+    auto* scroll_view = dynamic_cast<pulp::view::ScrollView*>(settings_scroll);
+    REQUIRE(scroll_view != nullptr);
+    REQUIRE(scroll_view->has_background_color());
+    CHECK(scroll_view->background_color().r8() == 14);
+    CHECK(scroll_view->background_color().g8() == 18);
+    CHECK(scroll_view->background_color().b8() == 25);
+    CHECK(scroll_view->background_color().a8() == 250);
+    REQUIRE(scroll_view->has_border());
+    CHECK(scroll_view->border_color().r8() == 255);
+    CHECK(scroll_view->border_color().g8() == 255);
+    CHECK(scroll_view->border_color().b8() == 255);
+    CHECK(scroll_view->border_color().a8() == 26);
+    CHECK(scroll_view->border_width() == Catch::Approx(1.0f));
+    CHECK(scroll_view->corner_radius() == Catch::Approx(8.0f));
+    CHECK(scroll_view->content_size().height == Catch::Approx(684.0f));
+    CHECK(scroll_view->bounds().height == Catch::Approx(464.4f).margin(0.1f));
+    scroll_view->set_scroll(0.0f, 684.0f);
+    settle(rig.clock, 4);
+    CHECK(scroll_view->scroll_y() > 200.0f);
+    const auto* response_label = find_label(*rig.root, "Response");
+    REQUIRE(response_label != nullptr);
+    const auto response_point = root_point(
+        *response_label, response_label->bounds().width * 0.5f,
+        response_label->bounds().height * 0.5f);
+    CHECK(response_point.y >= 0.0f);
+    CHECK(response_point.y <= 516.0f);
+    capture(rig, directory, "minimum-settings-bottom", 792, 516);
+}
+
 TEST_CASE("native frozen state atlas interactions and persistence",
           "[native-n1][state-parity]") {
     PatternStoragePoison storage;
@@ -450,6 +613,48 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     require_home(rig);
     require_app_state(rig, "s.nativeHydrated === true && s.statusMounted === false",
                       "initial native commit was not hydrated and status-free");
+    require_app_state(
+        rig,
+        "JSON.stringify(globalThis.__spectrHeaderOpticalCenteringReceipt__) "
+        "=== '[{\"role\":\"mark\",\"x_shift\":0,\"y_shift\":0.5},"
+        "{\"role\":\"word\",\"x_shift\":-1,\"y_shift\":1},"
+        "{\"role\":\"separator\",\"x_shift\":0,\"y_shift\":1.25},"
+        "{\"role\":\"tagline\",\"x_shift\":0,\"y_shift\":1.25}]'",
+        "header optical-centering corrections were not applied");
+    const auto* brand_word = find_label(*rig.root, "SPECTR");
+    const auto* brand_tagline = find_label(*rig.root, "ZOOMABLE FILTER BANK");
+    REQUIRE(brand_word != nullptr);
+    REQUIRE(brand_tagline != nullptr);
+    CHECK(brand_word->font_family().find("JetBrains Mono")
+          != std::string::npos);
+    CHECK(brand_word->font_size() == Catch::Approx(11.0f));
+    CHECK(brand_word->letter_spacing() == Catch::Approx(1.5f));
+    REQUIRE(brand_word->cached_line_boxes().size() == 1);
+    CHECK(brand_word->cached_line_boxes().front().width
+          == Catch::Approx(48.609375f).margin(0.01f));
+    CHECK(brand_tagline->font_family().find("JetBrains Mono")
+          != std::string::npos);
+    CHECK(brand_tagline->font_size() == Catch::Approx(11.0f));
+    CHECK(brand_tagline->letter_spacing() == Catch::Approx(0.5f));
+    REQUIRE(brand_tagline->cached_line_boxes().size() == 1);
+    CHECK(brand_tagline->cached_line_boxes().front().width
+          == Catch::Approx(142.0f).margin(0.01f));
+    const auto require_optical_shift = [](const View* view,
+                                           float expected_x,
+                                           float expected_y) {
+        REQUIRE(view != nullptr);
+        REQUIRE(view->has_transform_matrix());
+        float a, b, c, d, e, f;
+        view->get_transform_matrix(a, b, c, d, e, f);
+        CHECK(a == Catch::Approx(1.0f));
+        CHECK(b == Catch::Approx(0.0f));
+        CHECK(c == Catch::Approx(0.0f));
+        CHECK(d == Catch::Approx(1.0f));
+        CHECK(e == Catch::Approx(expected_x));
+        CHECK(f == Catch::Approx(expected_y));
+    };
+    require_optical_shift(brand_word, -1.0f, 1.0f);
+    require_optical_shift(brand_tagline, 0.0f, 1.25f);
     require_app_state(rig, "s.userPatterns.length === 0",
                       "native UI consumed browser-local preset poison");
     REQUIRE(std::all_of(rig.processor.field().bands.begin(),
@@ -458,6 +663,132 @@ TEST_CASE("native frozen state atlas interactions and persistence",
                             return band.gain_db == 0.0f && !band.muted;
                         }));
     storage.require_unchanged();
+    require_app_state(
+        rig,
+        "JSON.stringify(globalThis.__spectrToolbarTextButtonCenteringReceipt__) "
+        "=== '[{\"text\":\"CLEAR\",\"line_top\":6},"
+        "{\"text\":\"⋯\",\"line_top\":6}]'",
+        "text-only toolbar centering corrections were not applied");
+    const auto* clear_label = find_label(*rig.root, "CLEAR");
+    REQUIRE(clear_label != nullptr);
+    REQUIRE(clear_label->cached_line_boxes().size() == 1);
+    CHECK(clear_label->cached_line_boxes().front().left
+          == Catch::Approx(10.0f).margin(0.01f));
+    CHECK(clear_label->cached_line_boxes().front().top
+          == Catch::Approx(6.0f).margin(0.01f));
+    const auto* overflow_label = find_label(*rig.root, "⋯");
+    REQUIRE(overflow_label != nullptr);
+    CAPTURE(overflow_label->font_family(),
+            overflow_label->cached_line_boxes().size(),
+            overflow_label->bounds().width,
+            overflow_label->bounds().height);
+    REQUIRE(overflow_label->cached_line_boxes().size() == 1);
+    const auto& overflow_line = overflow_label->cached_line_boxes().front();
+    CAPTURE(overflow_line.left, overflow_line.top, overflow_line.width,
+            overflow_line.height);
+    pulp::view::Label::reset_line_break_path_counts();
+    pulp::canvas::RecordingCanvas overflow_canvas;
+    const_cast<pulp::view::Label*>(overflow_label)->paint(overflow_canvas);
+    const auto overflow_counts = pulp::view::Label::line_break_path_counts();
+    CAPTURE(overflow_counts.cached, overflow_counts.reflowed,
+            overflow_counts.uncached);
+    const auto overflow_draw = std::find_if(
+        overflow_canvas.commands().begin(), overflow_canvas.commands().end(),
+        [](const auto& command) {
+            return command.type
+                == pulp::canvas::DrawCommand::Type::fill_text;
+        });
+    REQUIRE(overflow_draw != overflow_canvas.commands().end());
+    CAPTURE(overflow_draw->f[0], overflow_draw->f[1]);
+    REQUIRE(overflow_draw->f[0] == Catch::Approx(10.0f).margin(0.01f));
+    // The captured 13px line box is painted with the 3px CSS half-leading
+    // retained around the 10px face.  This is the non-image canary for the
+    // toolbar's optical vertical centering at both 1x and Retina scale.
+    REQUIRE(overflow_draw->f[1] == Catch::Approx(16.0f).margin(0.01f));
+
+    const auto require_captured_toolbar_label = [&](std::string_view text,
+                                                     float expected_width) {
+        const auto* label = find_label(*rig.root, text);
+        REQUIRE(label != nullptr);
+        CAPTURE(text, label->font_family(), label->font_size(),
+                label->letter_spacing(), label->cached_line_boxes().size());
+        REQUIRE(label->font_family().find("JetBrains Mono")
+                != std::string::npos);
+        REQUIRE(label->font_size() == Catch::Approx(10.0f).margin(0.001f));
+        REQUIRE(label->letter_spacing()
+                == Catch::Approx(1.0f).margin(0.001f));
+        REQUIRE(label->cached_line_boxes().size() == 1);
+        const auto& line = label->cached_line_boxes().front();
+        CAPTURE(line.left, line.top, line.width, line.height);
+        REQUIRE(line.width == Catch::Approx(expected_width).margin(0.02f));
+        REQUIRE(line.height == Catch::Approx(13.017578f).margin(0.01f));
+    };
+    require_captured_toolbar_label("SCULPT ▾", 56.034375f);
+    require_captured_toolbar_label("PEAK ▾", 42.042578f);
+    require_app_state(
+        rig,
+        "JSON.stringify(globalThis.__spectrToolbarOpticalCenteringReceipt__) === "
+        "'[{\"root\":\"edit\",\"svg_top\":6.5,\"label_top\":6.25,\"svg_x_shift\":-1,\"svg_y_shift\":0,\"label_x_shift\":-1,\"label_y_shift\":0},"
+        "{\"root\":\"analyzer\",\"svg_top\":3.75,\"label_top\":6.25,\"svg_x_shift\":-1,\"svg_y_shift\":0,\"label_x_shift\":-1,\"label_y_shift\":0},"
+        "{\"root\":\"pattern\",\"svg_top\":5.375,\"label_top\":6.375,\"svg_x_shift\":0.25,\"svg_y_shift\":0,\"label_x_shift\":0.25,\"label_y_shift\":0}]'",
+        "toolbar optical-centering corrections were not applied");
+    const auto require_toolbar_child_geometry = [&](std::string_view text,
+                                                      float icon_top,
+                                                      float label_top,
+                                                      float icon_width,
+                                                      float icon_height,
+                                                      float icon_left,
+                                                      float label_left,
+                                                      float icon_x_shift,
+                                                      float icon_y_shift,
+                                                      float label_x_shift,
+                                                      float label_y_shift) {
+        const auto* label = find_label(*rig.root, text);
+        REQUIRE(label != nullptr);
+        const auto* button = label->parent();
+        REQUIRE(button != nullptr);
+        const auto* icon = find_sized_descendant(*button, icon_width, icon_height);
+        REQUIRE(icon != nullptr);
+        CAPTURE(text, button->bounds().width, button->bounds().height,
+                icon->bounds().x, icon->bounds().y,
+                label->bounds().x, label->bounds().y);
+        REQUIRE(button->bounds().height == Catch::Approx(26.0f).margin(0.01f));
+        REQUIRE(icon->bounds().x == Catch::Approx(icon_left).margin(0.01f));
+        REQUIRE(label->bounds().x == Catch::Approx(label_left).margin(0.01f));
+        REQUIRE(icon->bounds().y == Catch::Approx(icon_top).margin(0.01f));
+        REQUIRE(label->bounds().y == Catch::Approx(label_top).margin(0.01f));
+        const auto require_shift = [](const View* child, float x_shift,
+                                      float y_shift) {
+            CHECK(child->has_transform_matrix()
+                  == (x_shift != 0.0f || y_shift != 0.0f));
+            if (x_shift != 0.0f || y_shift != 0.0f) {
+                float a, b, c, d, e, f;
+                child->get_transform_matrix(a, b, c, d, e, f);
+                CHECK(a == Catch::Approx(1.0f));
+                CHECK(b == Catch::Approx(0.0f));
+                CHECK(c == Catch::Approx(0.0f));
+                CHECK(d == Catch::Approx(1.0f));
+                CHECK(e == Catch::Approx(x_shift));
+                CHECK(f == Catch::Approx(y_shift));
+            }
+        };
+        require_shift(icon, icon_x_shift, icon_y_shift);
+        require_shift(label, label_x_shift, label_y_shift);
+    };
+    // View bounds include the button's 1px border; the receipt above preserves
+    // the raw CSS top coordinates.
+    require_toolbar_child_geometry("SCULPT ▾", 7.5f,
+                                   7.25f, 22.0f, 16.0f,
+                                   11.0f, 39.0f,
+                                   -1.0f, 0.0f, -1.0f, 0.0f);
+    require_toolbar_child_geometry("PEAK ▾", 4.75f,
+                                   7.25f, 22.0f, 16.0f,
+                                   11.0f, 39.0f,
+                                   -1.0f, 0.0f, -1.0f, 0.0f);
+    require_toolbar_child_geometry("PRESETS ▾", 6.375f,
+                                   7.375f, 18.0f, 13.0f,
+                                   11.0f, 35.0f,
+                                   0.25f, 0.0f, 0.25f, 0.0f);
     feed_tone(rig);
     capture(rig, directory, "home");
 
@@ -517,6 +848,28 @@ TEST_CASE("native frozen state atlas interactions and persistence",
 
     activate(rig, "[data-spectr-settings-open]");
     require_state(rig, "settings");
+    require_runtime_contract(
+        rig,
+        "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
+        "return s && s.width === 520 && s.height === 679"
+        " && s.top === 90.5 && s.authored_skin === true; })()",
+        "authored settings geometry drifted from the frozen 1320x860 capture");
+    const auto* authored_settings_title = find_label(*rig.root, "SETTINGS");
+    REQUIRE(authored_settings_title != nullptr);
+    const View* authored_settings_panel = authored_settings_title;
+    while (authored_settings_panel != nullptr
+           && dynamic_cast<const pulp::view::ScrollView*>(
+                  authored_settings_panel) == nullptr)
+        authored_settings_panel = authored_settings_panel->parent();
+    REQUIRE(authored_settings_panel != nullptr);
+    CHECK(authored_settings_panel->bounds().x
+          == Catch::Approx(400.0f).margin(0.01f));
+    CHECK(authored_settings_panel->bounds().y
+          == Catch::Approx(90.5f).margin(0.01f));
+    CHECK(authored_settings_panel->bounds().width
+          == Catch::Approx(520.0f).margin(0.01f));
+    CHECK(authored_settings_panel->bounds().height
+          == Catch::Approx(679.0f).margin(0.01f));
     capture(rig, directory, "settings");
     activate(rig, "[data-spectr-setting-option=\"warm\"]");
     activate(rig, "[data-spectr-setting-toggle]");
@@ -613,14 +966,59 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     storage.require_unchanged();
     const auto pattern_id = rig.processor.patterns().user().front().id;
 
+    // The menu item removes its own captured subtree while its click callback
+    // opens the manager. Exercise the real down/up dispatcher repeatedly: the
+    // semantic atlas driver cannot detect callback-lifetime regressions here.
+    for (int cycle = 0; cycle < 8; ++cycle) {
+        INFO("native self-removing manager click cycle " << cycle);
+        activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+        native_click_label(rig, "MANAGE…");
+        require_app_state(rig, "s.managerOpen === true",
+                          "native pointer did not open pattern manager");
+        native_click_label(rig, "×");
+        require_app_state(rig, "s.managerOpen === false",
+                          "native pointer did not close pattern manager");
+    }
     activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
-    activate(rig, "[data-spectr-pattern-manage]");
+    native_click_label(rig, "MANAGE…");
     require_app_state(rig,
         "s.managerOpen === true && s.userPatterns.length === 1",
         "saved preset was not available in the native pattern manager");
+    std::vector<const pulp::view::SvgRectWidget*> preview_rects;
+    collect_svg_rects(*rig.root, preview_rects);
+    const auto distributed_preview_bars = std::count_if(
+        preview_rects.begin(), preview_rects.end(), [](const auto* rect) {
+            return rect->rect_x() > 1.0f && rect->rect_width() >= 1.0f
+                && rect->rect_height() > 0.0f;
+        });
+    const auto viewport_sized_preview_bars = std::count_if(
+        preview_rects.begin(), preview_rects.end(), [](const auto* rect) {
+            return rect->rect_x() > 1.0f && rect->bounds().width >= 55.0f
+                && rect->bounds().height >= 21.0f;
+        });
+    const auto visibly_tall_preview_bars = std::count_if(
+        preview_rects.begin(), preview_rects.end(), [](const auto* rect) {
+            return rect->rect_x() > 1.0f && rect->rect_height() >= 4.0f
+                && rect->bounds().width >= 55.0f;
+        });
+    CAPTURE(preview_rects.size(), distributed_preview_bars,
+            viewport_sized_preview_bars, visibly_tall_preview_bars);
+    REQUIRE(distributed_preview_bars >= 16);
+    REQUIRE(viewport_sized_preview_bars >= 16);
+    REQUIRE(visibly_tall_preview_bars >= 40);
     capture(rig, directory, "pattern-manager");
     activate(rig, "[data-spectr-pattern-id=" + js_string(pattern_id) + "]");
     activate(rig, "[data-spectr-manager-action=\"rename-start\"]");
+    // Entering rename replaces the selected row with a controlled input in a
+    // follow-up React commit. Give that commit its own host-frame service
+    // window before targeting the new node; otherwise a heavily loaded host
+    // can make the semantic driver race the mount it just requested.
+    settle(rig.clock, 16);
+    require_runtime_contract(
+        rig,
+        "typeof globalThis.__pulpFindMaterializedElement__ === 'function'"
+        " && !!globalThis.__pulpFindMaterializedElement__('#spectr-manager-rename')",
+        "pattern rename input did not mount");
     activate(rig, "#spectr-manager-rename", "change",
              R"js({value:'FLAT',target:{value:'FLAT'},currentTarget:{value:'FLAT'}})js");
     activate(rig, "#spectr-manager-rename", "blur");

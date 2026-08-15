@@ -49,8 +49,11 @@ if(SPECTR_ANALYSIS_HOP LESS 1 OR
         "SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP} is invalid for "
         "SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}; expected 1..${_spectr_max_analysis_hop}")
 endif()
+# SpectralFrameEngine uses a fixed-latency read cursor so host block boundaries
+# cannot move the output. Its causal bound is one FFT frame plus one analysis
+# hop (see SpectralFrameEngine::latency_samples()).
 math(EXPR SPECTR_PROCESSING_LATENCY
-     "${SPECTR_FFT_SIZE} - 1")
+     "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
 find_package(Pulp 0.801.0 REQUIRED)
 
@@ -86,11 +89,11 @@ set(SPECTR_HEADERS
 
 # ── Native-editor N1 vertical slice ──────────────────────────────────
 #
-# This is a separate, standalone-only graph. NATIVE_UI selects Pulp's native
+# This is a separate browser-free graph. NATIVE_UI selects Pulp's native
 # scripted Skia/Dawn link floor, while this source list excludes editor_view.cpp
 # and the HTML binary-data target. A native editor failure returns an empty GPU
 # root rather than silently selecting AutoUi or the WebView baseline.
-set(SPECTR_NATIVE_N1_SOURCES
+set(SPECTR_NATIVE_SOURCES
     src/spectr.cpp
     src/edit_engine.cpp
     src/editor_authority.cpp
@@ -101,73 +104,135 @@ set(SPECTR_NATIVE_N1_SOURCES
     src/ui/native_editor.cpp
 )
 
+# Pulp's native/WebView target split landed after the pinned Spectr canvas SDK.
+# Newer SDKs expose the browser-free link floor as Pulp::view-native.  The
+# pinned 0.803.1 SDK exports the same native scripted stack through Pulp::view;
+# accept that compatibility surface only when its link interface does not pull
+# the WebView archive back into the graph.
+if(TARGET Pulp::view-native)
+    set(SPECTR_NATIVE_VIEW_TARGET Pulp::view-native)
+elseif(TARGET Pulp::view)
+    get_target_property(_spectr_view_links Pulp::view INTERFACE_LINK_LIBRARIES)
+    if("${_spectr_view_links}" MATCHES "view-webview")
+        message(FATAL_ERROR
+            "Pinned Pulp SDK has no Pulp::view-native target and Pulp::view "
+            "links WebView; refusing to contaminate the native Spectr lane")
+    endif()
+    set(SPECTR_NATIVE_VIEW_TARGET Pulp::view)
+else()
+    message(FATAL_ERROR "Pinned Pulp SDK exports no usable native view target")
+endif()
+
+set(SPECTR_NATIVE_ASSET_SOURCES
+    native-ui/materialized/runtime.js
+    native-ui/materialized/materialized-document.runtime.json
+    native-ui/materialized/design.js
+)
+foreach(_forbidden_native_asset
+        resources/editor.html
+        native-ui/materialized/editor.ir.json)
+    list(FIND SPECTR_NATIVE_ASSET_SOURCES "${_forbidden_native_asset}"
+         _forbidden_native_asset_index)
+    if(NOT _forbidden_native_asset_index EQUAL -1)
+        message(FATAL_ERROR
+            "Shipping Spectr must not embed ${_forbidden_native_asset}")
+    endif()
+endforeach()
+
 pulp_add_binary_data(spectr_native_assets
-    SOURCES
-        native-ui/materialized/runtime.js
-        native-ui/materialized/design.js
-        native-ui/materialized/editor.ir.json
-        native-ui/materialized/assets/25ee97e9130cc8e719e4514a227dca176877a5ec0aaaf5cb2f5125b369386249.png
-        native-ui/materialized/assets/406f550c49fc82813b945e66628b54f6a72b2785ad90218809c9a25a1cdfd446.png
-        native-ui/materialized/assets/79560b1989a72f89fa7110fa518b679b9f5745dc0e54d17191cb3e44f7a807ae.png
-        native-ui/materialized/assets/b7f238f6baabff2ba8356456ad6526a6688af54d4f2ee942969165bb29c19a03.png
+    SOURCES ${SPECTR_NATIVE_ASSET_SOURCES}
     NAMESPACE spectr_native
 )
 
-function(spectr_configure_native_n1_target target)
+function(spectr_configure_native_target target)
     target_include_directories(${target} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_compile_definitions(${target} PRIVATE
         SPECTR_NATIVE_EDITOR=1
-        SPECTR_NATIVE_N1_SDK_COMPAT=1
         SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
         SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
-        SPECTR_HOST_PREFERRED_W=${SPECTR_AUTHORED_WIDTH}
-        SPECTR_HOST_PREFERRED_H=${SPECTR_AUTHORED_HEIGHT}
-        SPECTR_HOST_MIN_W=${SPECTR_AUTHORED_WIDTH}
-        SPECTR_HOST_MIN_H=${SPECTR_AUTHORED_HEIGHT}
-        SPECTR_HOST_MAX_W=${SPECTR_AUTHORED_WIDTH}
-        SPECTR_HOST_MAX_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
     )
 endfunction()
 
-pulp_add_plugin(SpectrNativeN1
+option(SPECTR_NATIVE_PREVIEW_IDENTITY
+       "Build the native editor with a collision-free local preview identity" OFF)
+if(SPECTR_NATIVE_PREVIEW_IDENTITY)
+    set(SPECTR_NATIVE_PLUGIN_TARGET SpectrNativePreview)
+    set(SPECTR_NATIVE_PLUGIN_NAME "Spectr Native Preview")
+    set(SPECTR_NATIVE_BUNDLE_ID "com.pulp.spectr.native-preview")
+    set(SPECTR_NATIVE_PLUGIN_CODE "SpNP")
+else()
+    set(SPECTR_NATIVE_PLUGIN_TARGET Spectr)
+    set(SPECTR_NATIVE_PLUGIN_NAME "Spectr")
+    set(SPECTR_NATIVE_BUNDLE_ID "com.pulp.spectr")
+    set(SPECTR_NATIVE_PLUGIN_CODE "Spec")
+endif()
+set(SPECTR_NATIVE_CORE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Core")
+set(SPECTR_NATIVE_STANDALONE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone")
+set(SPECTR_NATIVE_VST3_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_VST3")
+set(SPECTR_NATIVE_AU_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AU")
+set(SPECTR_NATIVE_CLAP_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_CLAP")
+
+pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     NATIVE_UI
-    FORMATS Standalone
-    SOURCES ${SPECTR_NATIVE_N1_SOURCES}
+    FORMATS VST3 AU CLAP Standalone
+    SOURCES ${SPECTR_NATIVE_SOURCES}
     PROCESSOR_FACTORY spectr::create_spectr
-    PLUGIN_NAME "Spectr Native N1"
-    BUNDLE_ID "com.pulp.spectr.native-n1"
+    PLUGIN_NAME "${SPECTR_NATIVE_PLUGIN_NAME}"
+    BUNDLE_ID "${SPECTR_NATIVE_BUNDLE_ID}"
     MANUFACTURER "Pulp"
+    PLUGIN_CODE "${SPECTR_NATIVE_PLUGIN_CODE}"
+    MANUFACTURER_CODE "Pulp"
     VERSION "1.0.0"
     CATEGORY Effect
     DESIGN_WIDTH ${SPECTR_AUTHORED_WIDTH}
     DESIGN_HEIGHT ${SPECTR_AUTHORED_HEIGHT}
-    DESIGN_MIN_WIDTH ${SPECTR_AUTHORED_WIDTH}
-    DESIGN_MIN_HEIGHT ${SPECTR_AUTHORED_HEIGHT}
-    DESIGN_MAX_WIDTH ${SPECTR_AUTHORED_WIDTH}
-    DESIGN_MAX_HEIGHT ${SPECTR_AUTHORED_HEIGHT})
-target_link_libraries(SpectrNativeN1_Core PUBLIC
-    Pulp::view-native spectr_native_assets)
-spectr_configure_native_n1_target(SpectrNativeN1_Core)
-spectr_configure_native_n1_target(SpectrNativeN1_Standalone)
+    DESIGN_MIN_WIDTH ${SPECTR_HOST_MIN_WIDTH}
+    DESIGN_MIN_HEIGHT ${SPECTR_HOST_MIN_HEIGHT}
+    DESIGN_MAX_WIDTH ${SPECTR_HOST_MAX_WIDTH}
+    DESIGN_MAX_HEIGHT ${SPECTR_HOST_MAX_HEIGHT})
+target_link_libraries(${SPECTR_NATIVE_CORE_TARGET} PUBLIC
+    ${SPECTR_NATIVE_VIEW_TARGET} spectr_native_assets)
+foreach(_spectr_native_target
+        ${SPECTR_NATIVE_CORE_TARGET}
+        ${SPECTR_NATIVE_STANDALONE_TARGET}
+        ${SPECTR_NATIVE_VST3_TARGET}
+        ${SPECTR_NATIVE_AU_TARGET}
+        ${SPECTR_NATIVE_CLAP_TARGET})
+    if(TARGET ${_spectr_native_target})
+        spectr_configure_native_target(${_spectr_native_target})
+        if(SPECTR_NATIVE_PREVIEW_IDENTITY)
+            target_compile_definitions(${_spectr_native_target} PRIVATE
+                SPECTR_NATIVE_PREVIEW_IDENTITY=1)
+        endif()
+    endif()
+endforeach()
 
 foreach(_forbidden_native_source
         src/ui/editor_view.cpp
         resources/editor.html)
-    list(FIND SPECTR_NATIVE_N1_SOURCES "${_forbidden_native_source}"
+    list(FIND SPECTR_NATIVE_SOURCES "${_forbidden_native_source}"
          _forbidden_native_source_index)
     if(NOT _forbidden_native_source_index EQUAL -1)
         message(FATAL_ERROR
-            "SpectrNativeN1 must not compile ${_forbidden_native_source}")
+            "Shipping Spectr must not compile ${_forbidden_native_source}")
     endif()
 endforeach()
 
 # ── Source-preserving editor asset ─────────────────────────────────────
-# Release 1 embeds the reviewed HTML prototype and hosts it through Pulp's
-# native WebView bridge. Native-editor experiments remain outside this branch.
+# The reviewed Release 1 HTML remains available as an explicit, independently
+# buildable oracle. It is never part of the default shipping artifact graph.
+option(SPECTR_BUILD_WEBVIEW_REFERENCE
+       "Build the frozen WebView comparison artifacts" OFF)
 pulp_add_binary_data(spectr_editor_assets
     SOURCES resources/editor.html
     NAMESPACE spectr_editor
@@ -233,18 +298,22 @@ add_executable(Spectr-native-n1-test
     test/test_native_state_parity.cpp
 )
 target_link_libraries(Spectr-native-n1-test PRIVATE
-    SpectrNativeN1_Core Catch2::Catch2WithMain
+    ${SPECTR_NATIVE_CORE_TARGET} Catch2::Catch2WithMain
 )
-spectr_configure_native_n1_target(Spectr-native-n1-test)
-catch_discover_tests(Spectr-native-n1-test)
+spectr_configure_native_target(Spectr-native-n1-test)
+# Both cases mount the same heavyweight native materialized editor runtime.
+# Keep them mutually exclusive so a CPU-starved frame pump cannot make the
+# shorter interaction case observe an event before its host-state response.
+catch_discover_tests(Spectr-native-n1-test
+    PROPERTIES RESOURCE_LOCK spectr_native_materialized_editor)
 
 add_executable(Spectr-editor-authority-test
     test/test_editor_authority.cpp
 )
 target_link_libraries(Spectr-editor-authority-test PRIVATE
-    SpectrNativeN1_Core Catch2::Catch2WithMain
+    ${SPECTR_NATIVE_CORE_TARGET} Catch2::Catch2WithMain
 )
-spectr_configure_native_n1_target(Spectr-editor-authority-test)
+spectr_configure_native_target(Spectr-editor-authority-test)
 catch_discover_tests(Spectr-editor-authority-test)
 
 # Real Chromium oracle for the imported adapter's native analyzer and input
@@ -273,14 +342,15 @@ endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────
 
-pulp_add_plugin(Spectr
+if(SPECTR_BUILD_WEBVIEW_REFERENCE)
+pulp_add_plugin(SpectrWebViewReference
     FORMATS         VST3 AU CLAP Standalone
-    PLUGIN_NAME     "Spectr"
-    BUNDLE_ID       "com.pulp.spectr"
+    PLUGIN_NAME     "Spectr WebView Reference"
+    BUNDLE_ID       "com.pulp.spectr.webview-reference"
     MANUFACTURER    "Pulp"
     VERSION         "1.0.0"
     CATEGORY        Effect
-    PLUGIN_CODE     "Spec"
+    PLUGIN_CODE     "SpWR"
     MANUFACTURER_CODE "Pulp"
     AAX_PRODUCT_CODE "SpeP"
     AAX_NATIVE_CODE "Spec"
@@ -296,7 +366,7 @@ pulp_add_plugin(Spectr
 # generated. Targets are named Spectr_VST3 / Spectr_AU / Spectr_CLAP /
 # Spectr_Standalone.
 foreach(fmt VST3 AU CLAP Standalone)
-    set(tgt Spectr_${fmt})
+    set(tgt SpectrWebViewReference_${fmt})
     if(TARGET ${tgt})
         target_sources(${tgt} PRIVATE ${SPECTR_SOURCES})
         target_include_directories(${tgt} PRIVATE
@@ -304,6 +374,7 @@ foreach(fmt VST3 AU CLAP Standalone)
         )
         target_link_libraries(${tgt} PRIVATE spectr_editor_assets)
         target_compile_definitions(${tgt} PRIVATE
+            SPECTR_WEBVIEW_REFERENCE=1
             SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
             SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
             SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
@@ -317,11 +388,14 @@ foreach(fmt VST3 AU CLAP Standalone)
         )
     endif()
 endforeach()
+endif()
 
 # Artifact-level host proof: load the built CLAP and VST3 through Pulp::host
 # and run real audio across each binary boundary. This is deliberately
 # separate from Spectr-test's in-process Processor fixtures.
-if((TARGET Spectr_CLAP OR TARGET Spectr_VST3) AND TARGET Pulp::host)
+if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} OR
+    TARGET SpectrWebViewReference_CLAP OR TARGET SpectrWebViewReference_VST3) AND
+   TARGET Pulp::host)
     add_executable(Spectr-artifact-test
         test/test_built_clap.cpp
         ${SPECTR_SOURCES})
@@ -342,33 +416,60 @@ if((TARGET Spectr_CLAP OR TARGET Spectr_VST3) AND TARGET Pulp::host)
         SPECTR_EXPECTED_LATENCY=${SPECTR_PROCESSING_LATENCY}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
-    if(TARGET Spectr_CLAP)
+    if(TARGET ${SPECTR_NATIVE_CLAP_TARGET})
         target_compile_definitions(Spectr-artifact-test PRIVATE
             SPECTR_HAVE_TEST_CLAP=1
-            SPECTR_TEST_CLAP_PATH="${CMAKE_BINARY_DIR}/CLAP/Spectr.clap")
-        add_dependencies(Spectr-artifact-test Spectr_CLAP)
+            SPECTR_TEST_CLAP_PATH="${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap")
+        add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_CLAP_TARGET})
     endif()
-    if(TARGET Spectr_VST3)
+    if(TARGET ${SPECTR_NATIVE_VST3_TARGET})
         target_compile_definitions(Spectr-artifact-test PRIVATE
             SPECTR_HAVE_TEST_VST3=1
-            SPECTR_TEST_VST3_PATH="${CMAKE_BINARY_DIR}/VST3/Spectr.vst3")
-        add_dependencies(Spectr-artifact-test Spectr_VST3)
+            SPECTR_TEST_VST3_PATH="${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3")
+        add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_VST3_TARGET})
+    endif()
+    if(TARGET SpectrWebViewReference_CLAP)
+        target_compile_definitions(Spectr-artifact-test PRIVATE
+            SPECTR_HAVE_WEBVIEW_REFERENCE_TEST_CLAP=1
+            SPECTR_WEBVIEW_REFERENCE_TEST_CLAP_PATH="${CMAKE_BINARY_DIR}/CLAP/Spectr WebView Reference.clap")
+        add_dependencies(Spectr-artifact-test SpectrWebViewReference_CLAP)
+    endif()
+    if(TARGET SpectrWebViewReference_VST3)
+        target_compile_definitions(Spectr-artifact-test PRIVATE
+            SPECTR_HAVE_WEBVIEW_REFERENCE_TEST_VST3=1
+            SPECTR_WEBVIEW_REFERENCE_TEST_VST3_PATH="${CMAKE_BINARY_DIR}/VST3/Spectr WebView Reference.vst3")
+        add_dependencies(Spectr-artifact-test SpectrWebViewReference_VST3)
     endif()
     catch_discover_tests(Spectr-artifact-test)
+endif()
+
+if(TARGET ${SPECTR_NATIVE_STANDALONE_TARGET} AND TARGET Pulp::platform AND TARGET Pulp::view)
+    add_executable(Spectr-native-standalone-artifact-test
+        test/test_built_standalone.cpp)
+    target_link_libraries(Spectr-native-standalone-artifact-test PRIVATE
+        Pulp::platform Pulp::view Catch2::Catch2WithMain)
+    target_compile_definitions(Spectr-native-standalone-artifact-test PRIVATE
+        SPECTR_TEST_STANDALONE_PATH="$<TARGET_FILE:${SPECTR_NATIVE_STANDALONE_TARGET}>"
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT})
+    add_dependencies(Spectr-native-standalone-artifact-test
+        ${SPECTR_NATIVE_STANDALONE_TARGET})
+    catch_discover_tests(Spectr-native-standalone-artifact-test
+        TEST_PREFIX "native: ")
 endif()
 
 # Standalone artifact proof: launch the exact packaged executable headlessly,
 # capture its real GPU back buffer, and verify screenshot-only mode stays clear
 # of the audio device. This is intentionally downstream of the CLI/DSP suite.
-if(TARGET Spectr_Standalone AND TARGET Pulp::platform AND TARGET Pulp::view)
+if(TARGET SpectrWebViewReference_Standalone AND TARGET Pulp::platform AND TARGET Pulp::view)
     add_executable(Spectr-standalone-artifact-test
         test/test_built_standalone.cpp)
     target_link_libraries(Spectr-standalone-artifact-test PRIVATE
         Pulp::platform Pulp::view Catch2::Catch2WithMain)
     target_compile_definitions(Spectr-standalone-artifact-test PRIVATE
-        SPECTR_TEST_STANDALONE_PATH="$<TARGET_FILE:Spectr_Standalone>"
+        SPECTR_TEST_STANDALONE_PATH="$<TARGET_FILE:SpectrWebViewReference_Standalone>"
         SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
         SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT})
-    add_dependencies(Spectr-standalone-artifact-test Spectr_Standalone)
+    add_dependencies(Spectr-standalone-artifact-test SpectrWebViewReference_Standalone)
     catch_discover_tests(Spectr-standalone-artifact-test)
 endif()

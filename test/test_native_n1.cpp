@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <pulp/canvas/font_resolver.hpp>
+#include <pulp/canvas/recording_canvas.hpp>
 #include <pulp/canvas/text_shaper.hpp>
 #include <pulp/state/store.hpp>
 #include <pulp/view/canvas_widget.hpp>
@@ -15,6 +16,7 @@
 #include <pulp/view/widgets.hpp>
 #include <pulp/view/widgets/svg_rect.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <array>
 #include <string>
@@ -96,6 +98,15 @@ const pulp::view::Label* find_label(const pulp::view::View& view,
     return nullptr;
 }
 
+void find_labels(const pulp::view::View& view, std::string_view text,
+                 std::vector<const pulp::view::Label*>& matches) {
+    if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+        label != nullptr && label->text() == text)
+        matches.push_back(label);
+    for (size_t index = 0; index < view.child_count(); ++index)
+        find_labels(*view.child_at(index), text, matches);
+}
+
 } // namespace
 
 TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
@@ -112,10 +123,12 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     processor.prepare(prepare);
 
     const auto size = processor.view_size();
-    REQUIRE(size.preferred_width == 1320);
-    REQUIRE(size.preferred_height == 860);
-    REQUIRE(size.min_width == 1320);
-    REQUIRE(size.max_width == 1320);
+    REQUIRE(size.preferred_width == 990);
+    REQUIRE(size.preferred_height == 645);
+    REQUIRE(size.min_width == 792);
+    REQUIRE(size.min_height == 516);
+    REQUIRE(size.max_width == 2640);
+    REQUIRE(size.max_height == 1720);
 
     const auto engines_before = pulp::view::js_engine_creation_stats();
     auto root = processor.create_view();
@@ -148,10 +161,13 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     session->bridge()->load_script(R"js(
       globalThis.__spectrTestHooks = globalThis.__spectrTestHooks || {};
       globalThis.__spectrEditorRequests = [];
+      globalThis.__spectrEditorResponses = [];
       const spectrEditorDispatch = globalThis.__spectrEditorDispatch;
       globalThis.__spectrEditorDispatch = request => {
         globalThis.__spectrEditorRequests.push(JSON.parse(request));
-        return spectrEditorDispatch(request);
+        const response = spectrEditorDispatch(request);
+        globalThis.__spectrEditorResponses.push(JSON.parse(response));
+        return response;
       };
       globalThis.__spectrBridgeTypes = {
         sameWindow: globalThis.window === globalThis,
@@ -244,7 +260,8 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
           throw new Error(`tap did not publish; callbacks=${keys.filter(key =>
             key.includes('__behavior_pr_3')).join(',')}; state=${JSON.stringify(
               globalThis.__spectrTestHooks?.renderState?.() ?? null)}; requests=${JSON.stringify(
-              globalThis.__spectrEditorRequests)}; bridgeTypes=${JSON.stringify(
+              globalThis.__spectrEditorRequests)}; responses=${JSON.stringify(
+              globalThis.__spectrEditorResponses)}; bridgeTypes=${JSON.stringify(
               globalThis.__spectrBridgeTypes)}`);
         )js", "spectr-native-band-tap-debug");
     }
@@ -261,6 +278,14 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     root->simulate_click(tap);
     for (int frame = 0; frame < 8; ++frame)
         clock.tick(1.0f / 60.0f);
+    if (processor.native_editor_revision() != 2) {
+        session->bridge()->load_script(R"js(
+          throw new Error(`second tap published an unexpected revision; requests=${JSON.stringify(
+            globalThis.__spectrEditorRequests)}; responses=${JSON.stringify(
+            globalThis.__spectrEditorResponses)}; state=${JSON.stringify(
+            globalThis.__spectrTestHooks?.renderState?.() ?? null)}`);
+        )js", "spectr-native-second-band-tap-debug");
+    }
     REQUIRE(processor.native_editor_revision() == 2);
     REQUIRE_FALSE(processor.field().bands[band].muted);
     REQUIRE(processor.field().bands[band].gain_db == authored_gain);
@@ -276,8 +301,11 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     session->bridge()->load_script(R"js(
       const settingsDiagnostics = globalThis.__pulpMaterializedMetadataDiagnostics__;
       if (!settingsDiagnostics || settingsDiagnostics.state_id !== 'settings' ||
-          settingsDiagnostics.layout_expected !== 175 ||
-          settingsDiagnostics.layout_applied !== 175 ||
+          // SVG presentation primitives contribute paint/ink bounds, not
+          // independent layout boxes. The shared materialization contract
+          // deliberately excludes those 12 legacy rows from Yoga replay.
+          settingsDiagnostics.layout_expected !== 163 ||
+          settingsDiagnostics.layout_applied !== 163 ||
           settingsDiagnostics.layout_node_miss !== 0 ||
           settingsDiagnostics.text_expected !== 67 ||
           settingsDiagnostics.text_applied !== 67 ||
@@ -331,6 +359,33 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     REQUIRE(spectral_line.width
             == Catch::Approx(54.40625f).margin(0.01f));
     REQUIRE(spectral_line.height == Catch::Approx(13.0f).margin(0.01f));
+
+    // Typography parity is app-wide. A duplicate semantic label with default
+    // styling can paint over the captured text while this screen's one button
+    // still happens to satisfy its shaping contract, so exercise each role in
+    // the settings hierarchy and require one authoritative painter per string.
+    for (const auto text : {"SETTINGS", "APPEARANCE", "Theme", "Bloom",
+                            "Spectral"}) {
+        std::vector<const pulp::view::Label*> labels;
+        find_labels(*root, text, labels);
+        CAPTURE(text, labels.size());
+        for (const auto* label : labels) {
+            CAPTURE(label->id(), label->font_family(), label->font_size(),
+                    label->font_weight(), label->letter_spacing(),
+                    label->bounds().x, label->bounds().y,
+                    label->bounds().width, label->bounds().height);
+        }
+        REQUIRE(labels.size() == 1);
+        REQUIRE(labels.front()->font_family().find("pulp-materialized-asset-")
+                != std::string::npos);
+        const auto resolved_face = pulp::canvas::resolved_face_identity(
+            labels.front()->font_family(), labels.front()->font_weight());
+        CAPTURE(resolved_face);
+        // Variable-font weight instances retain the source PostScript prefix
+        // and append a deterministic axis suffix (for example the 600-weight
+        // SETTINGS title). Regular 400 text resolves to the unsuffixed face.
+        REQUIRE(resolved_face.starts_with("JetBrainsMono-Regular"));
+    }
     if (const auto* capture_path =
             std::getenv("SPECTR_NATIVE_TEST_CAPTURE_SETTINGS");
         capture_path != nullptr && *capture_path != '\0') {
@@ -348,16 +403,79 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     session->bridge()->load_script(R"js(
       const restoredHomeDiagnostics = globalThis.__pulpMaterializedMetadataDiagnostics__;
       if (!restoredHomeDiagnostics || restoredHomeDiagnostics.state_id !== '' ||
-          restoredHomeDiagnostics.layout_expected !== 81 ||
-          restoredHomeDiagnostics.layout_applied !== 81 ||
+          restoredHomeDiagnostics.layout_expected !== 69 ||
+          restoredHomeDiagnostics.layout_applied !== 69 ||
           restoredHomeDiagnostics.layout_node_miss !== 0 ||
-          restoredHomeDiagnostics.text_expected !== 23 ||
-          restoredHomeDiagnostics.text_applied !== 23 ||
+          // The toolbar now includes exact merged captures for the formerly
+          // split SCULPT and PEAK text runs.
+          restoredHomeDiagnostics.text_expected !== 25 ||
+          restoredHomeDiagnostics.text_applied !== 25 ||
           restoredHomeDiagnostics.text_node_miss !== 0 ||
           restoredHomeDiagnostics.text_content_mismatch !== 0 ||
           restoredHomeDiagnostics.text_target_miss !== 0)
         throw new Error(`materialized home metadata was not restored exactly after settings close: ${JSON.stringify(restoredHomeDiagnostics)}`);
     )js", "spectr-native-home-restore-contract");
+
+    // The overflow glyph is a useful optical-centering canary: Chromium uses
+    // Menlo for U+22EF because the captured JetBrains Mono web-font subset does
+    // not contain it.  Preserve both that fallback and Chromium's exact line
+    // box inside the 29.03125 x 26 CSS button.  Checking only the button or
+    // Label bounds would miss a glyph run painted against the wrong origin.
+    std::vector<const pulp::view::Label*> overflow_labels;
+    find_labels(*root, "⋯", overflow_labels);
+    CAPTURE(overflow_labels.size());
+    REQUIRE(overflow_labels.size() == 1);
+    const auto* overflow_label = overflow_labels.front();
+    CAPTURE(overflow_label->font_family(), overflow_label->font_size(),
+            overflow_label->font_weight(), overflow_label->letter_spacing(),
+            overflow_label->bounds().x, overflow_label->bounds().y,
+            overflow_label->bounds().width, overflow_label->bounds().height);
+    REQUIRE(pulp::canvas::resolved_face_identity(
+                overflow_label->font_family(), overflow_label->font_weight())
+            == "Menlo-Regular");
+    REQUIRE(overflow_label->bounds().width
+            == Catch::Approx(27.03125f).margin(0.01f));
+    REQUIRE(overflow_label->bounds().height
+            == Catch::Approx(24.0f).margin(0.01f));
+    const auto overflow_origin = root_point(*overflow_label, 0.0f, 0.0f);
+    CAPTURE(overflow_origin.x, overflow_origin.y);
+    REQUIRE(overflow_origin.x == Catch::Approx(86.0f).margin(0.01f));
+    REQUIRE(overflow_origin.y == Catch::Approx(820.5f).margin(0.01f));
+    REQUIRE(overflow_label->font_size()
+            == Catch::Approx(10.0f).margin(0.001f));
+    REQUIRE(overflow_label->letter_spacing()
+            == Catch::Approx(1.0f).margin(0.001f));
+    REQUIRE(overflow_label->cached_line_boxes().size() == 1);
+    const auto& overflow_line = overflow_label->cached_line_boxes().front();
+    CAPTURE(overflow_line.left, overflow_line.top, overflow_line.width,
+            overflow_line.height);
+    // The native paint-only Label is inset by the button's one-pixel border.
+    // The toolbar optical-centering contract retains Chromium's horizontal
+    // inset and moves the local line box down by half a CSS pixel so the
+    // ellipsis shares the icon/label device-pixel centerline.
+    REQUIRE(overflow_line.left == Catch::Approx(10.0f).margin(0.01f));
+    REQUIRE(overflow_line.top == Catch::Approx(6.0f).margin(0.01f));
+    REQUIRE(overflow_line.width
+            == Catch::Approx(7.03125f).margin(0.01f));
+    REQUIRE(overflow_line.height == Catch::Approx(13.0f).margin(0.01f));
+    pulp::view::Label::reset_line_break_path_counts();
+    pulp::canvas::RecordingCanvas overflow_canvas;
+    const_cast<pulp::view::Label*>(overflow_label)->paint(overflow_canvas);
+    const auto overflow_counts = pulp::view::Label::line_break_path_counts();
+    CAPTURE(overflow_counts.cached, overflow_counts.reflowed,
+            overflow_counts.uncached);
+    REQUIRE(overflow_counts.cached == 1);
+    REQUIRE(overflow_counts.reflowed == 0);
+    const auto overflow_draw = std::find_if(
+        overflow_canvas.commands().begin(), overflow_canvas.commands().end(),
+        [](const auto& command) {
+            return command.type
+                == pulp::canvas::DrawCommand::Type::fill_text;
+        });
+    REQUIRE(overflow_draw != overflow_canvas.commands().end());
+    REQUIRE(overflow_draw->f[0] == Catch::Approx(10.0f).margin(0.01f));
+    // Pin the corrected optical phase in the actual paint command too.
+    REQUIRE(overflow_draw->f[1] == Catch::Approx(16.0f).margin(0.01f));
 
     session->bridge()->load_script(R"js(
       const analyzer = globalThis.SpectrAnalyzer;
@@ -384,6 +502,17 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
       const frame = globalThis.SpectrAnalyzer?.debugSnapshot?.();
       if (!frame || frame.sequence_number <= 0)
         throw new Error('native analyzer frame was not accepted');
+      const scale = globalThis.SpectrAnalyzer.scale();
+      if (scale.floor !== -120 || scale.ceiling !== 24)
+        throw new Error(`unexpected analyzer range: ${scale.floor}/${scale.ceiling}`);
+      for (const [db, expected] of [
+        [-120, 0], [-90, 30 / 144], [-60, 60 / 144],
+        [-30, 90 / 144], [0, 120 / 144], [24, 1],
+      ]) {
+        const amount = globalThis.SpectrAnalyzer.normalizeDb(db);
+        if (Math.abs(amount - expected) > 1e-12)
+          throw new Error(`wrong dBFS normalization at ${db}: ${amount}/${expected}`);
+      }
       const at1k = globalThis.SpectrAnalyzer.sample(Math.log10(1000), 0, 'visible');
       const at100 = globalThis.SpectrAnalyzer.sample(Math.log10(100), 0, 'visible');
       const at10k = globalThis.SpectrAnalyzer.sample(Math.log10(10000), 0, 'visible');
@@ -391,6 +520,25 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
         throw new Error(`native analyzer did not preserve the 1k tone: ${at100}/${at1k}/${at10k}`);
       if (!(globalThis.__spectrAnalyzerAppSampleCalls > 3))
         throw new Error('materialized application did not sample the native analyzer');
+
+      // Independently reproduce the trace sampler from the published raw-dBFS
+      // payload.  This catches a trace-only range or transform that could still
+      // leave the separately painted ruler looking mathematically correct.
+      const trace = frame.visible;
+      const logFrequency = Math.log10(1000);
+      const position = Math.max(0, Math.min(1,
+        (logFrequency - Math.log10(trace.min_hz))
+        / (Math.log10(trace.max_hz) - Math.log10(trace.min_hz))));
+      const exact = position * (trace.magnitude_db.length - 1);
+      const left = Math.floor(exact);
+      const right = Math.min(left + 1, trace.magnitude_db.length - 1);
+      const mix = exact - left;
+      const rawDb = trace.magnitude_db[left]
+        + (trace.magnitude_db[right] - trace.magnitude_db[left]) * mix;
+      const independentlyNormalized = Math.max(0, Math.min(1,
+        (rawDb - frame.floor_db) / (frame.ceiling_db - frame.floor_db)));
+      if (Math.abs(at1k - independentlyNormalized) > 1e-12)
+        throw new Error(`trace/ruler projection mismatch: ${at1k}/${independentlyNormalized}`);
     )js", "spectr-native-analyzer-contract");
 
     // The native retained command stream must preserve the calibrated dBFS

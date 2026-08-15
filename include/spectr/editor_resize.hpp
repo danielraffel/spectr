@@ -15,8 +15,9 @@ namespace spectr {
 #error "Spectr host dimensions must come from the product build contract"
 #endif
 
-// Claude Design's authored coordinate system stays fixed at 1320 x 860.
-// The host opens smaller by default and scales this design uniformly.
+// Claude Design's 1320 x 860 capture remains the pixel-exact authored
+// reference. The live editor reflows at the host bounds instead of scaling the
+// whole tree, so type and hit targets remain readable at the minimum size.
 inline constexpr std::uint32_t kEditorDesignWidth = SPECTR_AUTHORED_DESIGN_W;
 inline constexpr std::uint32_t kEditorDesignHeight = SPECTR_AUTHORED_DESIGN_H;
 inline constexpr std::uint32_t kEditorPreferredWidth = SPECTR_HOST_PREFERRED_W;
@@ -33,5 +34,34 @@ static_assert(kEditorMinimumWidth * kEditorDesignHeight
               == kEditorMinimumHeight * kEditorDesignWidth);
 static_assert(kEditorMaximumWidth * kEditorDesignHeight
               == kEditorMaximumHeight * kEditorDesignWidth);
+
+// Keep Spectr source-compatible with the frozen Pulp SDK used for the N0
+// baseline while taking advantage of the explicit authored-viewport contract
+// in newer SDKs. The member probes are dependent on ViewSize, so an older
+// seven-field ViewSize remains a supported compile target without preprocessor
+// version guesses.
+template <typename ViewSize>
+constexpr ViewSize make_editor_view_size() {
+    ViewSize size{
+        kEditorPreferredWidth,
+        kEditorPreferredHeight,
+        kEditorMinimumWidth,
+        kEditorMinimumHeight,
+        kEditorMaximumWidth,
+        kEditorMaximumHeight,
+        kEditorAspectRatio,
+    };
+    if constexpr (requires(ViewSize value) {
+                      value.design_width;
+                      value.design_height;
+                  }) {
+        size.design_width = kEditorDesignWidth;
+        size.design_height = kEditorDesignHeight;
+    }
+    if constexpr (requires(ViewSize value) { value.viewport_policy; }) {
+        size.viewport_policy = decltype(size.viewport_policy)::Responsive;
+    }
+    return size;
+}
 
 } // namespace spectr
