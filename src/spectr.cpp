@@ -188,17 +188,6 @@ std::unique_ptr<pulp::view::View> Spectr::create_view() {
 }
 
 pulp::format::ViewSize Spectr::view_size() const {
-#if defined(SPECTR_NATIVE_EDITOR)
-    return {
-        kEditorDesignWidth,
-        kEditorDesignHeight,
-        kEditorDesignWidth,
-        kEditorDesignHeight,
-        kEditorDesignWidth,
-        kEditorDesignHeight,
-        kEditorAspectRatio,
-    };
-#else
     return {
         kEditorPreferredWidth,
         kEditorPreferredHeight,
@@ -208,7 +197,6 @@ pulp::format::ViewSize Spectr::view_size() const {
         kEditorMaximumHeight,
         kEditorAspectRatio,
     };
-#endif
 }
 
 void Spectr::on_view_opened(pulp::view::View& view) {
@@ -223,7 +211,7 @@ void Spectr::on_view_opened(pulp::view::View& view) {
 
 void Spectr::on_view_resized(pulp::view::View& view, uint32_t /*w*/, uint32_t /*h*/) {
 #if defined(SPECTR_NATIVE_EDITOR)
-    if (&view == native_editor_root_) hydrate_native_editor_();
+    (void)view;
 #else
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
         editor->sync_to_host();
@@ -628,13 +616,14 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             && !read_snapshot_(snaps["b"], new_bank.b)) return false;
     }
 
-    // M9.5 — user patterns. Apply into a fresh library so the factory
-    // presets are present regardless of what the blob carried; import
-    // appends the stored user patterns + default_id. Swap-on-success.
+    // M9.5 — user patterns. Restore into a fresh library so the factory
+    // presets are present regardless of what the blob carried, while user
+    // IDs, names, order, and default remain exact. Swap-on-success.
     PatternLibrary new_patterns{};
-    if (root.hasObjectMember("patterns_json") && root["patterns_json"].isString()) {
+    if (root.hasObjectMember("patterns_json")) {
+        if (!root["patterns_json"].isString()) return false;
         const auto s = root["patterns_json"].getString();
-        new_patterns.import_json(std::string_view(s));
+        if (!new_patterns.restore_json(std::string_view(s))) return false;
     }
 
     field_ = new_field;

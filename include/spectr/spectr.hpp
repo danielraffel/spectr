@@ -247,7 +247,7 @@ private:
     pulp::view::EditorBridge native_editor_bridge_{};
     bool native_editor_handlers_registered_ = false;
     std::unique_ptr<pulp::view::ScriptedUiSession> native_scripted_ui_{};
-    std::filesystem::path native_script_path_{};
+    std::filesystem::path native_package_path_{};
     pulp::view::View* native_editor_root_ = nullptr;
     pulp::view::FrameClock* native_frame_clock_ = nullptr;
     int native_frame_subscription_ = -1;
@@ -258,7 +258,6 @@ private:
     void open_native_editor_(pulp::view::View& view);
     void close_native_editor_();
     bool tick_native_analyzer_(float dt);
-    void hydrate_native_editor_();
 #endif
 
     [[nodiscard]] pulp::signal::SpectralBandLayout

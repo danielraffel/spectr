@@ -68,6 +68,12 @@
       "plan": "band-context.json",
       "surface": "band context menu",
       "behavior": ["context click", "actions", "outside click", "Escape"]
+    },
+    {
+      "id": "snapshots-morph",
+      "plan": "snapshots-morph.json",
+      "surface": "snapshot and morph rail",
+      "behavior": ["capture A", "capture B", "recall A", "recall B", "morph"]
     }
   ]
 }

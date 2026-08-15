@@ -240,6 +240,17 @@ const spectrClick = async target => {
   }));
   await spectrFrames(2);
 };
+const spectrOutsideClick = async target => {
+  // Popup dismissal is installed on document.mousedown.  Preserve the real
+  // browser event order instead of treating a synthetic click as equivalent.
+  target.dispatchEvent(new MouseEvent('mousedown', {
+    bubbles: true, cancelable: true, button: 0,
+  }));
+  target.dispatchEvent(new MouseEvent('click', {
+    bubbles: true, cancelable: true, button: 0,
+  }));
+  await spectrFrames(2);
+};
 const spectrTestNativeResizeSurface = async () => {
   if (document.getElementById('spectr-resize-grip')
       || document.getElementById('spectr-resize-status'))
@@ -312,8 +323,9 @@ window.spectrStartOracle = () => {
         if (!target) throw new Error('JS-only interactive canvas missing');
         const rect = target.getBoundingClientRect();
         const x = rect.left + rect.width * 0.4, y = rect.top + rect.height * 0.45;
-        const captureButton = slot => document
-          .querySelector('[data-spectr-snapshot-capture="' + slot + '"] button');
+        const captureButton = slot => document.querySelector(
+          '[data-spectr-snapshot-action="capture"][data-spectr-snapshot-slot="'
+            + slot + '"]');
         const snapA = captureButton('A');
         const snapB = captureButton('B');
         if (!snapA || !snapB) throw new Error('JS-only snapshot controls missing');
@@ -348,13 +360,29 @@ window.spectrStartOracle = () => {
           && state.mutedGainDb.every(Number.isFinite) && state;
       }, reopened ? 'finite reopened hydration' : 'finite initial hydration');
       step(reopened ? 'reopened-hydrated' : 'initial-hydrated');
+      if (document.querySelector('[data-spectr-status-banner]'))
+        throw new Error('empty status banner was mounted');
+      Object.defineProperty(document, 'hasFocus', {
+        configurable: true, value: () => true,
+      });
+      spectrKey('1', 'Digit1');
+      const statusBanner = await spectrWaitFor(() =>
+        document.querySelector('[data-spectr-status-banner]'),
+      'non-empty status banner');
+      if (!statusBanner.textContent.trim())
+        throw new Error('visible status banner had no message');
+      await spectrWaitFor(() =>
+        !document.querySelector('[data-spectr-status-banner]'),
+      'expired status banner removal');
       await spectrTestNativeResizeSurface();
       step('native-resize-surface-complete');
       await spectrFrames(5);
       if (!spectrBundleClean()) throw new Error('bundle error after hydrated RAFs');
+      const expectedDbfsLabels = ['-120', '-90', '-60', '-30', '0', '+24'];
       if (!window.__spectrCanvasLabels.includes('dBFS')
-          || !window.__spectrCanvasLabels.some(label => /^-(30|60|90|120)$/.test(label)))
-        throw new Error('independent negative dBFS ruler was not drawn');
+          || !expectedDbfsLabels.every(label =>
+            window.__spectrCanvasLabels.includes(label)))
+        throw new Error('complete calibrated dBFS ruler was not drawn');
       if (!hydrated.mutedGainDb.every((gain, index) =>
         gain === window.__spectrHydration.gain_db[index]))
         throw new Error('hydration changed authored dB');
@@ -402,17 +430,51 @@ window.spectrStartOracle = () => {
       const overview = new Array(121).fill(-120);
       const exactPeakIndex = (Math.log10(1000) - Math.log10(20))
         / (Math.log10(20000) - Math.log10(20)) * 320;
-      visible[Math.floor(exactPeakIndex)] = 0;
-      visible[Math.ceil(exactPeakIndex)] = 0;
+      visible[Math.floor(exactPeakIndex)] = 24;
+      visible[Math.ceil(exactPeakIndex)] = 24;
       const payload = {
         schema_version: 1, epoch: 2, sequence_number: 4,
         dropped_frames: 0, source_channels: 2,
-        fft_size: 8192, sample_rate: 48000, floor_db: -120, ceiling_db: 0,
+        fft_size: 8192, sample_rate: 48000, floor_db: -120, ceiling_db: 24,
         visible: { min_hz: 20, max_hz: 20000, magnitude_db: visible },
         overview: { min_hz: 20, max_hz: 20000, magnitude_db: overview },
       };
       window.__spectrEmit('analyzer_frame', payload);
       if (sampleAt1k() < 0.95) throw new Error('valid live peak was not sampled');
+      const expectedDbfsMapping = [
+        [-120, 0], [-90, 30 / 144], [-60, 60 / 144],
+        [-30, 90 / 144], [0, 120 / 144], [24, 1],
+      ];
+      const deterministicAmplitudes = [
+        [1, 0], [10 ** (-6 / 20), -6], [10 ** (-30 / 20), -30],
+        [10 ** (-60 / 20), -60], [0, -120],
+      ];
+      for (const [amplitude, expectedDb] of deterministicAmplitudes) {
+        const measuredDb = amplitude > 0
+          ? 20 * Math.log10(amplitude) : -Infinity;
+        const clampedDb = Math.max(-120, Math.min(24, measuredDb));
+        if (Math.abs(clampedDb - expectedDb) > 1e-9)
+          throw new Error('incorrect amplitude to dBFS conversion: '
+            + amplitude + ' -> ' + clampedDb);
+        const expectedAmount = (expectedDb + 120) / 144;
+        const actualAmount = window.SpectrAnalyzer.normalizeDb(measuredDb);
+        if (Math.abs(actualAmount - expectedAmount) > 1e-9)
+          throw new Error('dBFS display mapping diverged for amplitude '
+            + amplitude + ': ' + actualAmount);
+      }
+      for (const [db, expected] of expectedDbfsMapping) {
+        const actual = window.SpectrAnalyzer.normalizeDb(db);
+        if (Math.abs(actual - expected) > 1e-9)
+          throw new Error('incorrect dBFS normalization for ' + db + ': ' + actual);
+      }
+      const zeroY = 500, halfH = 400;
+      for (const [db, expected] of expectedDbfsMapping) {
+        const actualY = window.SpectrAnalyzer.project(
+          window.SpectrAnalyzer.normalizeDb(db), zeroY, halfH);
+        const expectedY = zeroY - expected * halfH * 0.95;
+        if (Math.abs(actualY - expectedY) > 1e-9)
+          throw new Error('incorrect dBFS projection for ' + db + ': ' + actualY);
+      }
       const accepted = window.SpectrAnalyzer.debugSnapshot();
       window.__spectrEmit('analyzer_frame', { ...payload, sequence_number: 3 });
       if (window.SpectrAnalyzer.debugSnapshot() !== accepted)
@@ -567,6 +629,33 @@ window.spectrStartOracle = () => {
       if (!spectrStatePosts().every(message => spectrFiniteState(message.payload)))
         throw new Error('outbound processing state became non-finite');
       if (!spectrBundleClean()) throw new Error('bundle error before reopen');
+
+      // Every footer popup is exercised through the rendered trigger, not a
+      // component-local setter.  Each menu must honor both global dismissal
+      // paths before one real option is selected and observed in the same
+      // React commit that paints its trigger.
+      const menuTrigger = key => {
+        const root = document.querySelector('[data-spectr-menu-root="' + key + '"]');
+        const host = root && root.querySelector('[data-spectr-menu-trigger]');
+        return host && (host.matches('button') ? host : host.querySelector('button'));
+      };
+      const menuOptions = key => document.querySelector(
+        '[data-spectr-menu-root="' + key + '"] [data-spectr-menu-options]');
+      const openMenu = async key => {
+        const trigger = menuTrigger(key);
+        if (!trigger) throw new Error(key + ' menu trigger missing');
+        await spectrClick(trigger);
+        return spectrWaitFor(() => menuOptions(key), key + ' menu open');
+      };
+      const exerciseMenuDismissals = async key => {
+        await openMenu(key);
+        spectrKey('Escape', 'Escape');
+        await spectrWaitFor(() => !menuOptions(key), key + ' menu Escape');
+        await openMenu(key);
+        await spectrOutsideClick(document.querySelector('[data-screen-label="Spectr main"]'));
+        await spectrWaitFor(() => !menuOptions(key), key + ' menu outside click');
+      };
+
       step('settings-start');
       const settingsOpen = document.querySelector('[data-spectr-settings-open]');
       if (!settingsOpen) throw new Error('settings open control missing');
@@ -745,6 +834,81 @@ window.spectrStartOracle = () => {
       if (Math.abs(Math.log(resizedView.max_hz / resizedView.min_hz) - afterSpan) < 0.02)
         throw new Error('minimap handle did not resize viewport');
       step('minimap-complete');
+
+      step('dropdowns-start');
+      await exerciseMenuDismissals('bands');
+      await openMenu('bands');
+      await spectrClick(document.querySelector('[data-spectr-band-count="40"]'));
+      await spectrWaitFor(() => window.__spectrTestHooks.appState?.().settings.bandCount === 40,
+        '40-band selection');
+      await openMenu('bands');
+      await spectrClick(document.querySelector('[data-spectr-band-count="32"]'));
+      await spectrWaitFor(() => window.__spectrTestHooks.appState?.().settings.bandCount === 32,
+        '32-band restore');
+
+      await exerciseMenuDismissals('edit');
+      await openMenu('edit');
+      await spectrClick(document.querySelector('[data-spectr-edit-mode="level"]'));
+      await spectrWaitFor(() => window.__spectrTestHooks.appState?.().editMode === 'level',
+        'edit dropdown selection');
+      await openMenu('edit');
+      await spectrClick(document.querySelector('[data-spectr-edit-mode="sculpt"]'));
+
+      await exerciseMenuDismissals('analyzer');
+      await openMenu('analyzer');
+      await spectrClick(document.querySelector('[data-spectr-analyzer-mode="avg"]'));
+      await spectrWaitFor(() => window.__spectrTestHooks.appState?.().analyzerMode === 'avg',
+        'analyzer dropdown selection');
+      await openMenu('analyzer');
+      await spectrClick(document.querySelector('[data-spectr-analyzer-mode="peak"]'));
+
+      await exerciseMenuDismissals('overflow');
+      const beforeOverflow = spectrClone(spectrLatestState());
+      count = spectrStatePosts().length;
+      await openMenu('overflow');
+      await spectrClick(document.querySelector('[data-spectr-overflow-action="invert"]'));
+      const invertedOverflow = await spectrPublishAfter(count, 'overflow invert publication');
+      if (JSON.stringify(invertedOverflow.gain_db) === JSON.stringify(beforeOverflow.gain_db))
+        throw new Error('overflow selection did not mutate authoritative gains');
+      if (invertedOverflow.min_hz !== beforeOverflow.min_hz
+          || invertedOverflow.max_hz !== beforeOverflow.max_hz)
+        throw new Error('non-view overflow action changed the minimap viewport');
+      await spectrWaitFor(() => !menuOptions('overflow'), 'overflow action close');
+
+      count = spectrStatePosts().length;
+      await openMenu('overflow');
+      await spectrClick(document.querySelector('[data-spectr-overflow-action="mute-all"]'));
+      const mutedOverflow = await spectrPublishAfter(count, 'overflow mute-all publication');
+      if (!mutedOverflow.muted.slice(0, 32).every(Boolean))
+        throw new Error('overflow mute-all did not mute every active band');
+      count = spectrStatePosts().length;
+      await openMenu('overflow');
+      await spectrClick(document.querySelector('[data-spectr-overflow-action="mute-all"]'));
+      const unmutedOverflow = await spectrPublishAfter(count,
+        'overflow immediate unmute-all publication');
+      if (unmutedOverflow.muted.slice(0, 32).some(Boolean))
+        throw new Error('overflow immediate second click reused stale mute state');
+
+      await exerciseMenuDismissals('pattern');
+      await openMenu('pattern');
+      await spectrClick(document.querySelector('[data-spectr-pattern-menu-id="factory:flat"]'));
+      await spectrWaitFor(() => !menuOptions('pattern'), 'pattern selection close');
+
+      const helpTrigger = menuTrigger('help');
+      if (!helpTrigger) throw new Error('help trigger missing');
+      await spectrClick(helpTrigger);
+      await spectrWaitFor(() => document.querySelector('[aria-label="Keyboard shortcuts"]'),
+        'help open');
+      spectrKey('Escape', 'Escape');
+      await spectrWaitFor(() => !document.querySelector('[aria-label="Keyboard shortcuts"]'),
+        'help Escape');
+      await spectrClick(helpTrigger);
+      await spectrWaitFor(() => document.querySelector('[aria-label="Keyboard shortcuts"]'),
+        'help reopen');
+      await spectrOutsideClick(document.querySelector('[data-screen-label="Spectr main"]'));
+      await spectrWaitFor(() => !document.querySelector('[aria-label="Keyboard shortcuts"]'),
+        'help outside click');
+      step('dropdowns-complete');
 
       step('morph-start');
       const snapshotButtons = Array.from(document.querySelectorAll('button'))

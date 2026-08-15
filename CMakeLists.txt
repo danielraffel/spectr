@@ -102,7 +102,14 @@ set(SPECTR_NATIVE_N1_SOURCES
 )
 
 pulp_add_binary_data(spectr_native_assets
-    SOURCES native-ui/dist/editor.js
+    SOURCES
+        native-ui/materialized/runtime.js
+        native-ui/materialized/design.js
+        native-ui/materialized/editor.ir.json
+        native-ui/materialized/assets/25ee97e9130cc8e719e4514a227dca176877a5ec0aaaf5cb2f5125b369386249.png
+        native-ui/materialized/assets/406f550c49fc82813b945e66628b54f6a72b2785ad90218809c9a25a1cdfd446.png
+        native-ui/materialized/assets/79560b1989a72f89fa7110fa518b679b9f5745dc0e54d17191cb3e44f7a807ae.png
+        native-ui/materialized/assets/b7f238f6baabff2ba8356456ad6526a6688af54d4f2ee942969165bb29c19a03.png
     NAMESPACE spectr_native
 )
 
@@ -223,6 +230,7 @@ catch_discover_tests(Spectr-test)
 
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
+    test/test_native_state_parity.cpp
 )
 target_link_libraries(Spectr-native-n1-test PRIVATE
     SpectrNativeN1_Core Catch2::Catch2WithMain

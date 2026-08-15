@@ -222,6 +222,58 @@ TEST_CASE("M7 library: export → import round-trips user patterns") {
     CHECK(lib_b.default_id() == b->id);
 }
 
+TEST_CASE("M7 library: exact restore preserves factory-name collisions") {
+    PatternLibrary source;
+    BandField field;
+    field.bands[3].gain_db = -18.0f;
+    const auto saved = source.save_current(field, "FLAT");
+    REQUIRE(source.set_default(saved.id));
+
+    PatternLibrary restored;
+    REQUIRE(restored.restore_json(source.export_json()));
+    REQUIRE(restored.user().size() == 1);
+    CHECK(restored.user().front().id == saved.id);
+    CHECK(restored.user().front().name == "FLAT");
+    CHECK(restored.user().front().gain_db[3] == Approx(-18.0f));
+    CHECK(restored.default_id() == saved.id);
+}
+
+TEST_CASE("M7 library: exact restore accepts an empty user envelope") {
+    PatternLibrary live;
+    BandField field;
+    live.save_current(field, "REMOVE ON RESTORE");
+
+    const PatternLibrary empty;
+    REQUIRE(live.restore_json(empty.export_json()));
+    CHECK(live.user().empty());
+    CHECK(live.default_id() == std::string{kFlat});
+}
+
+TEST_CASE("M7 library: exact restore rejects malformed state atomically") {
+    PatternLibrary live;
+    BandField field;
+    field.bands[3].gain_db = 7.0f;
+    const auto keep = live.save_current(field, "KEEP");
+    REQUIRE(live.set_default(keep.id));
+
+    PatternLibrary encoded;
+    encoded.save_current(field, "REPLACEMENT");
+    auto malformed = encoded.export_json();
+    const auto key = malformed.find("\"gain_db\"");
+    REQUIRE(key != std::string::npos);
+    const auto value = malformed.find('[', key) + 1;
+    const auto end = malformed.find_first_of(",]", value);
+    REQUIRE(end != std::string::npos);
+    malformed.replace(value, end - value, "1e999");
+
+    CHECK_FALSE(live.restore_json(malformed));
+    REQUIRE(live.user().size() == 1);
+    CHECK(live.user().front().id == keep.id);
+    CHECK(live.user().front().name == "KEEP");
+    CHECK(live.user().front().gain_db[3] == Approx(7.0f));
+    CHECK(live.default_id() == keep.id);
+}
+
 TEST_CASE("M7 library: import rejects unknown schema version") {
     PatternLibrary lib;
     const std::string bad = R"({"format":"spectr.patterns","version":999,"patterns":[]})";

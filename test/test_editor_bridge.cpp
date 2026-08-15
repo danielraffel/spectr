@@ -958,6 +958,24 @@ TEST_CASE("M9.5 plugin_state: empty-span reset clears user patterns") {
     CHECK_FALSE(r.proc->patterns().factory().empty());
 }
 
+TEST_CASE("M9.5 plugin_state: malformed pattern envelope is failure-atomic") {
+    Rig r;
+    const auto saved = r.proc->patterns().save_current(r.proc->field(), "KEEP");
+    REQUIRE(r.proc->patterns().set_default(saved.id));
+
+    for (const std::string json : {
+        R"({"version":2,"patterns_json":17})",
+        R"({"version":2,"patterns_json":"{\"format\":\"spectr.patterns\",\"version\":1,\"patterns\":[{\"id\":\"user:bad\",\"name\":\"BAD\",\"source\":\"user\",\"created_at\":\"now\",\"updated_at\":\"now\",\"gain_db\":[1e999],\"muted\":[false]}],\"default_id\":\"factory:flat\"}"})",
+    }) {
+        const std::vector<std::uint8_t> bytes(json.begin(), json.end());
+        CHECK_FALSE(r.proc->deserialize_plugin_state(bytes));
+        REQUIRE(r.proc->patterns().user().size() == 1);
+        CHECK(r.proc->patterns().user().front().id == saved.id);
+        CHECK(r.proc->patterns().user().front().name == "KEEP");
+        CHECK(r.proc->patterns().default_id() == saved.id);
+    }
+}
+
 TEST_CASE("plugin state migrates finite legacy gains without float overflow") {
     Rig r;
 

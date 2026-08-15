@@ -64,6 +64,26 @@
 document.addEventListener('DOMContentLoaded', async function() {
   const loading = document.getElementById('__bundler_loading');
   function setStatus(msg) { if (loading) loading.textContent = msg; }
+  // The importer's first stability plateau can occur while this outer bundle
+  // is still decompressing. Expose the standard readiness contract
+  // synchronously, then resolve it only after React's real bank is mounted.
+  window.__pulpCaptureReady = () => new Promise((resolve, reject) => {
+    const deadline = Date.now() + 15000;
+    const poll = () => {
+      if (document.querySelector('[data-spectr-bank-ready="true"]')) {
+        resolve();
+        return;
+      }
+      if (Date.now() >= deadline) {
+        const detail = document.getElementById('__bundler_err')?.textContent
+          || loading?.textContent || 'editor mount timed out';
+        reject(new Error('Spectr bank did not become capture-ready: ' + detail));
+        return;
+      }
+      setTimeout(poll, 16);
+    };
+    poll();
+  });
 
   // Error sink persists across replaceWith since it's on window, not the DOM.
   window.addEventListener('error', function(e) {
@@ -153,10 +173,13 @@ document.addEventListener('DOMContentLoaded', async function() {
     const spectrStateEffect = String.raw`  // ---- native DSP state publication ----
   useEffect(() => {
     if (!nativeHydrated) return;
-    if (nativeProjectionRef.current) {
+    if (nativeDirectPublicationPendingRef.current) return;
+    if (nativeProjectionRef.current && !nativeEditPendingRef.current) {
       nativeProjectionRef.current = false;
       return;
     }
+    nativeProjectionRef.current = false;
+    nativeEditPendingRef.current = false;
     const frame = requestAnimationFrame(() => {
       if (!window.pulp || typeof window.pulp.postMessage !== 'function') return;
       const current = targetGainsRef.current;
@@ -168,7 +191,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       try {
         // A later direct edit supersedes any in-flight native capture/recall/
         // morph projection even if that older response arrives afterward.
-        ++nativeCommandRevisionRef.current;
+        ++nativeCommandSequenceRef.current;
         const publication = window.pulp.postMessage('processing_state_set', {
           n_visible: N,
           gain_db: gainDb,
@@ -282,8 +305,17 @@ document.addEventListener('DOMContentLoaded', async function() {
       const mix = exact - left;
       const db = trace.magnitude_db[left]
         + (trace.magnitude_db[right] - trace.magnitude_db[left]) * mix;
-      return Math.max(0, Math.min(1,
-        (db - frame.floor_db) / (frame.ceiling_db - frame.floor_db)));
+      return normalizeAnalyzerDb(db, frame.floor_db, frame.ceiling_db);
+    };
+    const normalizeAnalyzerDb = (db, floor, ceiling) => {
+      if (!Number.isFinite(db) || !Number.isFinite(floor)
+          || !Number.isFinite(ceiling) || ceiling <= floor) return 0;
+      return Math.max(0, Math.min(1, (db - floor) / (ceiling - floor)));
+    };
+    const projectAnalyzerAmount = (amount, zeroY, halfH) => {
+      if (!Number.isFinite(amount) || !Number.isFinite(zeroY)
+          || !Number.isFinite(halfH) || halfH < 0) return zeroY;
+      return zeroY - Math.max(0, Math.min(1, amount)) * halfH * 0.95;
     };
     window.SpectrAnalyzer = {
       native: nativeAnalyzerAvailable,
@@ -304,8 +336,79 @@ document.addEventListener('DOMContentLoaded', async function() {
               ceiling: nativeAnalyzerFrame.ceiling_db }
           : { floor: -120, ceiling: 24 };
       },
+      normalizeDb(db) {
+        const scale = this.scale();
+        return normalizeAnalyzerDb(db, scale.floor, scale.ceiling);
+      },
+      project(amount, zeroY, halfH) {
+        return projectAnalyzerAmount(amount, zeroY, halfH);
+      },
       debugSnapshot() { return nativeAnalyzerFrame; },
     };
+    replaceSpectrSource(
+      String.raw`  useEffectChrome(() => {
+    if (!message) return;
+    const display = message.split('|')[0];
+    setText(display);
+    setVisible(true);
+    const t = setTimeout(() => setVisible(false), 1400);
+    return () => clearTimeout(t);
+  }, [message]);
+  return (
+    <div style={{`,
+      String.raw`  useEffectChrome(() => {
+    if (!message) {
+      setVisible(false);
+      setText('');
+      return;
+    }
+    const display = message.split('|')[0].trim();
+    if (!display) {
+      setVisible(false);
+      setText('');
+      return;
+    }
+    setText(display);
+    setVisible(true);
+    const t = setTimeout(() => {
+      setVisible(false);
+      setText('');
+    }, 1400);
+    return () => clearTimeout(t);
+  }, [message]);
+  return (
+    <div data-spectr-status-shell="true"
+      data-spectr-status-banner={visible && text ? 'true' : undefined}
+      role="status" aria-live="polite" style={{`,
+      'status banner keeps stable geometry without painting an empty box');
+    replaceSpectrSource(
+      String.raw`      position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',
+      padding: '6px 14px',
+      background: 'rgba(12,16,22,0.92)',
+      border: '1px solid rgba(180,210,255,0.3)',
+      borderRadius: 3,
+      fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 1.5,
+      color: 'rgba(200,220,255,0.95)',
+      zIndex: 6, pointerEvents: 'none',
+      opacity: visible ? 1 : 0,
+      transition: 'opacity 0.2s',
+      backdropFilter: 'blur(8px)',
+    }}>{text}</div>`,
+      String.raw`      position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',
+      width: 240, height: 26, padding: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: visible && text ? 'rgba(12,16,22,0.92)' : 'transparent',
+      border: '1px solid ' + (visible && text
+        ? 'rgba(180,210,255,0.3)' : 'transparent'),
+      borderRadius: 3,
+      fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 1.5,
+      color: visible && text ? 'rgba(200,220,255,0.95)' : 'transparent',
+      zIndex: 6, pointerEvents: 'none',
+      opacity: visible && text ? 1 : 0,
+      transition: 'opacity 0.2s',
+      backdropFilter: visible && text ? 'blur(8px)' : 'none',
+    }}>{visible && text ? text : ''}</div>`,
+      'status banner shell is visually empty while idle');
     window.SpectrNativeState = {
       parse(payload) {
         const n = payload && Number(payload.n_visible);
@@ -402,6 +505,18 @@ document.addEventListener('DOMContentLoaded', async function() {
       "window.SpectrAnalyzer.sample(lf, timeRef.current, 'overview')",
       'minimap uses overview analyzer');
     replaceSpectrSource(
+      'zeroY - arr[i] * halfH * 0.95',
+      'window.SpectrAnalyzer.project(arr[i], zeroY, halfH)',
+      'instantaneous analyzer uses shared dBFS projection');
+    replaceSpectrSource(
+      'zeroY - avg[i] * halfH * 0.95',
+      'window.SpectrAnalyzer.project(avg[i], zeroY, halfH)',
+      'average analyzer uses shared dBFS projection');
+    replaceSpectrSource(
+      'zeroY - peaks[i] * halfH * 0.95',
+      'window.SpectrAnalyzer.project(peaks[i], zeroY, halfH)',
+      'peak analyzer uses shared dBFS projection');
+    replaceSpectrSource(
       'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, onEditModeChange }) {',
       'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, onEditModeChange, nativeHydrated, onNativeState }) {',
       'native hydration publication gate');
@@ -421,7 +536,7 @@ window.FilterBank = FilterBank;`,
       'band context menu ignores analyzer-only parent renders');
     replaceSpectrSource(
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
-      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  const nativeCommandRevisionRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  const resolutionGeometryRef = useRef(\'\');',
+      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationPendingRef = useRef(false);\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  const resolutionGeometryRef = useRef(\'\');',
       'independent muted gain hydration');
     replaceSpectrSource(
       String.raw`      const next = new Array(N).fill(0);
@@ -465,7 +580,35 @@ window.FilterBank = FilterBank;`,
       return nxt;
     });
   };`,
-      String.raw`  const commitGain = (idx, value) => {
+      String.raw`  const queueNativeProcessingStatePublication = () => {
+    // A real user gesture is always publishable. Hydration gates projection
+    // effects, not direct intent arriving through an already-live bridge.
+    if (!window.pulp || typeof window.pulp.postMessage !== 'function') return;
+    nativeDirectPublicationPendingRef.current = true;
+    const current = targetGainsRef.current;
+    const muted = current.map(value => isMuted(value));
+    const gainDb = current.map((value, i) => isMuted(value)
+      ? (Number.isFinite(mutedGainDbRef.current[i])
+          ? mutedGainDbRef.current[i] : 0)
+      : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
+    ++nativeCommandSequenceRef.current;
+    try {
+      Promise.resolve(window.pulp.postMessage('processing_state_set', {
+        n_visible: N, gain_db: gainDb, muted,
+        min_hz: Math.pow(10, view.lmin),
+        max_hz: Math.pow(10, view.lmax),
+      }, 'spectr-processing-state')).catch(error => {
+        console.error('[Spectr] native direct-edit publication failed', error);
+      });
+    } finally {
+      // Native dispatch is synchronous; only the response is promised.
+      nativeDirectPublicationPendingRef.current = false;
+    }
+  };
+  const commitGain = (idx, value) => {
+    // A real pointer edit is authoritative even if it arrives before the
+    // hydration echo-suppression effect has consumed its one-shot latch.
+    nativeEditPendingRef.current = true;
     const wasMuted = isMuted(targetGainsRef.current[idx]);
     if (isMuted(value) && !wasMuted)
       mutedGainDbRef.current[idx] = clamp(targetGainsRef.current[idx], -1, 1) * 24;
@@ -481,23 +624,28 @@ window.FilterBank = FilterBank;`,
       nxt[idx] = value;
       return nxt;
     });
+    queueNativeProcessingStatePublication();
   };
   const commitMany = (map) => {
-    setGains(prev => {
-      const nxt = prev.slice();
-      for (const [k, v] of map) {
-        const wasMuted = isMuted(targetGainsRef.current[k]);
-        if (isMuted(v) && !wasMuted)
-          mutedGainDbRef.current[k] = clamp(targetGainsRef.current[k], -1, 1) * 24;
-        if (wasMuted && !isMuted(v)) {
-          renderGainsRef.current[k] = 0;
-          unmutePulseRef.current[k] = 1;
-        }
-        nxt[k] = v;
-        targetGainsRef.current[k] = v;
+    nativeEditPendingRef.current = true;
+    const nextTarget = targetGainsRef.current.slice();
+    for (const [k, v] of map) {
+      const wasMuted = isMuted(targetGainsRef.current[k]);
+      if (isMuted(v) && !wasMuted)
+        mutedGainDbRef.current[k] = clamp(targetGainsRef.current[k], -1, 1) * 24;
+      if (wasMuted && !isMuted(v)) {
+        renderGainsRef.current[k] = 0;
+        unmutePulseRef.current[k] = 1;
       }
-      return nxt;
+      nextTarget[k] = v;
+    }
+    targetGainsRef.current = nextTarget;
+    setGains(prev => {
+      const nextState = prev.slice();
+      for (const [k, v] of map) nextState[k] = v;
+      return nextState;
     });
+    queueNativeProcessingStatePublication();
   };`,
       'mute preserves authored gain');
     replaceSpectrSource(
@@ -547,13 +695,6 @@ window.FilterBank = FilterBank;`,
       String.raw`    const rendered = renderGainsRef.current[band];
     const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;`,
       'finite hover gain display');
-    replaceSpectrSource(
-      String.raw`    const tx = clamp(x - tw / 2, g.inner.x, g.inner.x + g.inner.w - tw);
-    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);`,
-      String.raw`    // Share the fixed top-center lane with transient status messages.
-    const tx = g.w / 2 - tw / 2;
-    const ty = 60;`,
-      'fixed top-center hover readout');
     replaceSpectrSource(
       '    // --- Layer B: cap emission (signal-gated, narrow, localized) ---',
       String.raw`    // A flat band has no height animation when it becomes audible,
@@ -749,6 +890,9 @@ window.FilterBank = FilterBank;`,
       },
       hydrateProcessingState: (state) => {
         nativeProjectionRef.current = true;
+        if (Number.isSafeInteger(state.revision) && state.revision >= 0)
+          nativeAppliedRevisionRef.current = Math.max(
+            nativeAppliedRevisionRef.current, state.revision);
         mutedGainDbRef.current = state.gainDb.slice(0, N);
         targetGainsRef.current = state.gains.slice(0, N);
         // Never seed a synchronous WebKit paint with the categorical
@@ -1043,6 +1187,42 @@ window.FilterBank = FilterBank;`,
       'function AnalyzerPopover({ value, onChange }) {\n  return (\n    <div data-spectr-menu-options data-spectr-overlay="true" role="listbox" style={{',
       'analyzer popup options');
     replaceSpectrSource(
+      '                  <button key={n}\n                    onClick={() => {',
+      '                  <button key={n} data-spectr-band-count={n}\n                    onClick={() => {',
+      'band-count option selectors');
+    replaceSpectrSource(
+      '<button onClick={() => { onResetAll(); setOverflowMenu(false); }} style={menuItem}>',
+      '<button data-spectr-overflow-action="reset-all" onClick={() => { onResetAll(); setOverflowMenu(false); }} style={menuItem}>',
+      'overflow reset selector');
+    replaceSpectrSource(
+      '<button onClick={() => { act(b => b.invert())(); setOverflowMenu(false); }} style={menuItem}>INVERT</button>',
+      '<button data-spectr-overflow-action="invert" onClick={() => { act(b => b.invert())(); setOverflowMenu(false); }} style={menuItem}>INVERT</button>',
+      'overflow invert selector');
+    replaceSpectrSource(
+      '<button onClick={() => { act(b => allMuted ? b.unmuteAll() : b.muteAll())(); setOverflowMenu(false); }} style={menuItem}>',
+      '<button data-spectr-overflow-action="mute-all" onClick={() => { act(b => b.allMuted && b.allMuted() ? b.unmuteAll() : b.muteAll())(); setOverflowMenu(false); }} style={menuItem}>',
+      'overflow authoritative mute toggle');
+    replaceSpectrSource(
+      '<button onClick={() => { act(b => b.resetView())(); setOverflowMenu(false); }} style={menuItem}>FIT VIEW</button>',
+      '<button data-spectr-overflow-action="fit-view" onClick={() => { act(b => b.resetView())(); setOverflowMenu(false); }} style={menuItem}>FIT VIEW</button>',
+      'overflow fit selector');
+    replaceSpectrSource(
+      '          <button key={m.k}\n            onClick={() => onChange(m.k)}',
+      '          <button key={m.k} data-spectr-edit-mode={m.k}\n            onClick={() => onChange(m.k)}',
+      'edit-mode option selectors');
+    replaceSpectrSource(
+      '          <button key={a.k}\n            onClick={() => onChange(a.k)}',
+      '          <button key={a.k} data-spectr-analyzer-mode={a.k}\n            onClick={() => onChange(a.k)}',
+      'analyzer-mode option selectors');
+    replaceSpectrSource(
+      '<button key={p.id} onClick={() => { onApplyPattern(p); setPatternMenu(false); }}\n                  style={menuItem}>',
+      '<button key={p.id} data-spectr-pattern-menu-id={p.id} onClick={() => { onApplyPattern(p); setPatternMenu(false); }}\n                  style={menuItem}>',
+      'factory pattern option selectors');
+    replaceSpectrSource(
+      '<button key={p.id} onClick={() => { onApplyPattern(p); setPatternMenu(false); }}\n                      style={menuItem}>',
+      '<button key={p.id} data-spectr-pattern-menu-id={p.id} onClick={() => { onApplyPattern(p); setPatternMenu(false); }}\n                      style={menuItem}>',
+      'user pattern option selectors');
+    replaceSpectrSource(
       'function HelpPopover({ onClose }) {\n  return (\n    <div style={{',
       'function HelpPopover({ onClose }) {\n  return (\n    <div data-spectr-overlay="true" role="dialog" aria-label="Keyboard shortcuts" style={{',
       'help popup overlay marker');
@@ -1168,7 +1348,10 @@ function SpectrSettingsChips({ value, onChange, opts }) {
 function SpectrSettingsSlider({ value, min, max, step, onChange, fmt }) {
   return <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 200 }}>
     <input data-spectr-setting-slider type="range" min={min} max={max} step={step} value={value}
-      onInput={event => onChange(parseFloat(event.currentTarget.value))}
+      onInput={event => {
+        const candidate = Number(spectrInputValue(event));
+        if (Number.isFinite(candidate)) onChange(candidate);
+      }}
       style={{ flex: 1, accentColor: 'hsl(200,80%,60%)' }} />
     <span className="tnum" style={{ width: 36, textAlign: 'right', fontSize: 10, opacity: 0.75 }}>
       {fmt ? fmt(value) : value.toFixed(2)}
@@ -1225,12 +1408,16 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
     if (!sharedState) return;
     const nativeOwnsSnapshots = !!window.pulp
       && typeof window.pulp.postMessage === 'function';
-    const acceptNativeResponse = (response, revision, successStatus) => {
+    const acceptNativeResponse = (response, sequence, successStatus) => {
       const body = response && response.payload;
       if (!response || response.ok !== true || !body || body.ok !== true)
         throw new Error((body && body.error) || 'native command rejected');
-      if (Number(body.revision) !== revision
-          || revision !== nativeCommandRevisionRef.current
+      const revision = Number(body.revision);
+      if (!Number.isSafeInteger(revision) || revision < 0)
+        throw new Error('native command returned an invalid revision');
+      // Sequence orders UI intent; revision is processor-owned authority. They
+      // are deliberately different domains and must never be compared.
+      if (sequence !== nativeCommandSequenceRef.current
           || revision < nativeAppliedRevisionRef.current) return false;
       const state = window.SpectrNativeState.parse(body);
       if (!state) throw new Error('native command returned malformed state');
@@ -1240,16 +1427,16 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
       return true;
     };
     const issueNativeCommand = (type, payload, successStatus) => {
-      const revision = ++nativeCommandRevisionRef.current;
-      Promise.resolve(window.pulp.postMessage(type, { ...payload, revision },
-        'spectr-' + type + '-' + revision))
-        .then(response => acceptNativeResponse(response, revision, successStatus))
+      const sequence = ++nativeCommandSequenceRef.current;
+      Promise.resolve(window.pulp.postMessage(type, payload,
+        'spectr-' + type + '-' + sequence))
+        .then(response => acceptNativeResponse(response, sequence, successStatus))
         .catch(error => {
-          if (revision === nativeCommandRevisionRef.current && onStatus)
+          if (sequence === nativeCommandSequenceRef.current && onStatus)
             onStatus('NATIVE ' + type.toUpperCase() + ' FAILED');
           console.error('[Spectr] native ' + type + ' failed', error);
         });
-      return revision;
+      return sequence;
     };
     const localSnapshot = () => {
       const values = targetGainsRef.current.slice();
@@ -1332,16 +1519,48 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
       'native authority effect dependencies');
     replaceSpectrSource(
       '<input type="range" min="0" max="1" step="0.001" value={v}\n        disabled={!hasBoth}\n        onChange={e => {',
-      '<input data-spectr-morph aria-label="Morph A to B" type="range" min="0" max="1" step="0.001" value={v}\n        disabled={!hasBoth}\n        onInput={e => {',
+      '<input id="spectr-snapshot-morph" data-spectr-morph aria-label="Morph A to B" type="range" min="0" max="1" step="0.001" value={v}\n        disabled={!hasBoth}\n        onInput={e => {',
       'morph slider input contract');
     replaceSpectrSource(
+      '          const val = parseFloat(e.target.value);\n          setV(val);\n          if (bankRef.current) bankRef.current.setMorph(val);',
+      '          const val = Number(spectrInputValue(e));\n          if (!Number.isFinite(val)) return;\n          setV(val);\n          if (bankRef.current) bankRef.current.setMorph(val);',
+      'finite morph input contract');
+    replaceSpectrSource(
+      'function SnapBtn({ filled, onClick, capture, label }) {',
+      'function SnapBtn({ id, action, slot, filled, onClick, capture, label }) {',
+      'snapshot button semantic identity');
+    replaceSpectrSource(
+      '    <button onClick={handle}\n      style={{\n        background: flash ?',
+      '    <button id={id} data-spectr-snapshot-action={action} data-spectr-snapshot-slot={slot} onClick={handle}\n      style={{\n        background: flash ?',
+      'snapshot button owns its complete semantic rectangle');
+    replaceSpectrSource(
+      "        opacity: !isCapture && !filled ? 0.45 : 1,\n      }}\n      disabled={!isCapture && !filled}",
+      "        opacity: !isCapture && !filled ? 0.45 : 1,\n        pointerEvents: 'box-only',\n      }}\n      disabled={!isCapture && !filled}",
+      'snapshot button intercepts its complete semantic rectangle');
+    replaceSpectrSource(
+      "        boxShadow: filled ? '0 0 6px hsl(200,85%,65%)' : 'none',\n      }} />}",
+      "        boxShadow: filled ? '0 0 6px hsl(200,85%,65%)' : 'none',\n        pointerEvents: 'none',\n      }} />}",
+      'snapshot dot cannot steal pointer ownership');
+    replaceSpectrSource(
       '<SnapBtn filled={snapshotStatus.A} onClick={act(b => b.snapshot(\'A\'))} capture label="A" />',
-      '<span data-spectr-snapshot-capture="A"><SnapBtn filled={snapshotStatus.A} onClick={act(b => b.snapshot(\'A\'))} capture label="A" /></span>',
-      'snapshot A capture selector');
+      '<SnapBtn id="spectr-snapshot-capture-a" action="capture" slot="A" filled={snapshotStatus.A} onClick={act(b => b.snapshot(\'A\'))} capture label="A" />',
+      'snapshot A complete button selector');
     replaceSpectrSource(
       '<SnapBtn filled={snapshotStatus.B} onClick={act(b => b.snapshot(\'B\'))} capture label="B" />',
-      '<span data-spectr-snapshot-capture="B"><SnapBtn filled={snapshotStatus.B} onClick={act(b => b.snapshot(\'B\'))} capture label="B" /></span>',
-      'snapshot B capture selector');
+      '<SnapBtn id="spectr-snapshot-capture-b" action="capture" slot="B" filled={snapshotStatus.B} onClick={act(b => b.snapshot(\'B\'))} capture label="B" />',
+      'snapshot B complete button selector');
+    replaceSpectrSource(
+      '<SnapBtn filled={snapshotStatus.A} onClick={act(b => b.recallSnap(\'A\'))} label="▸ A" />',
+      '<SnapBtn id="spectr-snapshot-recall-a" action="recall" slot="A" filled={snapshotStatus.A} onClick={act(b => b.recallSnap(\'A\'))} label="▸ A" />',
+      'snapshot A recall complete button selector');
+    replaceSpectrSource(
+      '<SnapBtn filled={snapshotStatus.B} onClick={act(b => b.recallSnap(\'B\'))} label="▸ B" />',
+      '<SnapBtn id="spectr-snapshot-recall-b" action="recall" slot="B" filled={snapshotStatus.B} onClick={act(b => b.recallSnap(\'B\'))} label="▸ B" />',
+      'snapshot B recall complete button selector');
+    replaceSpectrSource(
+      '<span style={{ opacity: 0.55, fontSize: 10 }}>SNAPSHOT</span>',
+      '<span data-spectr-snapshots-ready={snapshotStatus.A && snapshotStatus.B ? "true" : undefined} style={{ opacity: 0.55, fontSize: 10 }}>SNAPSHOT</span>',
+      'snapshot pair visual state selector');
     replaceSpectrSource(
       '  const [showImport, setShowImport] = usePM(false);\n\n  const factory = window.Spectr.FACTORY_PATTERNS;',
       String.raw`  const [showImport, setShowImport] = usePM(false);
@@ -1361,12 +1580,28 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
       'pattern manager Escape');
     replaceSpectrSource(
       'function PatternManager({ open, onClose, userPatterns, setUserPatterns, defaultId, setDefaultId, N, onApply, currentGains, onStatus }) {',
-      'function PatternManager({ open, onClose, userPatterns, setUserPatterns, defaultId, setDefaultId, N, onApply, currentGains, onStatus, onRequestSave, onRenamePattern, onDeletePattern }) {',
+      String.raw`function spectrInputValue(event) {
+  const direct = event?.value;
+  if (direct && typeof direct === 'object') {
+    return direct.value ?? direct.currentTarget?.value
+      ?? direct.target?.value ?? event?.nativeEvent?.rawArgs?.[0];
+  }
+  return direct ?? event?.currentTarget?.value ?? event?.target?.value
+    ?? event?.nativeEvent?.rawArgs?.[0];
+}
+
+function PatternManager({ open, onClose, userPatterns, setUserPatterns, defaultId, setDefaultId, N, onApply, currentGains, onStatus, onRequestSave, onRenamePattern, onDeletePattern }) {`,
       'native pattern manager actions');
     replaceSpectrSource(
       '  const [managerOpen, setManagerOpen] = useAppS(false);',
       '  const [managerOpen, setManagerOpen] = useAppS(false);\n  const [saveDialogOpen, setSaveDialogOpen] = useAppS(false);',
       'save dialog state');
+    replaceSpectrSource(
+      '      setInfo({ N: b.N, zoom: (full / span).toFixed(2) });',
+      String.raw`      const nextInfo = { N: b.N, zoom: (full / span).toFixed(2) };
+      setInfo(previous => previous.N === nextInfo.N
+        && previous.zoom === nextInfo.zoom ? previous : nextInfo);`,
+      'stable unchanged viewport info');
     replaceSpectrSource(
       [
         '  const saveCurrent = () => {',
@@ -1423,8 +1658,8 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
         background:'rgba(12,16,22,.99)', border:'1px solid rgba(255,255,255,.16)',
         borderRadius:5, fontFamily:'var(--mono)', color:'#fff' }}>
         <div style={{ fontSize:11, letterSpacing:2, marginBottom:12 }}>SAVE CURRENT PRESET</div>
-        <input data-spectr-save-name autoFocus value={draft}
-          onChange={event => setDraft(event.target.value)}
+        <input id="spectr-save-name" data-spectr-save-name autoFocus value={draft}
+          onChange={event => setDraft(String(spectrInputValue(event) ?? ''))}
           onKeyDown={event => {
             if (event.key === 'Enter') { event.preventDefault(); submit(); }
             if (event.key === 'Escape') { event.preventDefault(); onCancel(); }
@@ -1443,6 +1678,25 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
 
 window.PatternManager = PatternManager;`,
       'save naming dialog');
+    replaceSpectrSource(
+      String.raw`  const [userPatterns, setUserPatterns] = useAppS(() => window.Spectr.loadStore());
+  const [defaultId, setDefaultId] = useAppS(() => window.Spectr.loadDefaultId());
+  useAppE(() => { window.Spectr.saveStore(userPatterns); }, [userPatterns]);
+  useAppE(() => { window.Spectr.saveDefaultId(defaultId); }, [defaultId]);`,
+      String.raw`  // Plugin state is the sole preset authority in native hosts. Browser
+  // previews retain localStorage, but native must neither seed from nor write
+  // to that unrelated persistence domain while hydration is pending.
+  const [userPatterns, setUserPatterns] = useAppS(() =>
+    nativeBridgeAvailable ? [] : window.Spectr.loadStore());
+  const [defaultId, setDefaultId] = useAppS(() =>
+    nativeBridgeAvailable ? 'factory:flat' : window.Spectr.loadDefaultId());
+  useAppE(() => {
+    if (!nativeBridgeAvailable) window.Spectr.saveStore(userPatterns);
+  }, [nativeBridgeAvailable, userPatterns]);
+  useAppE(() => {
+    if (!nativeBridgeAvailable) window.Spectr.saveDefaultId(defaultId);
+  }, [defaultId, nativeBridgeAvailable]);`,
+      'native processor-owned pattern persistence');
     replaceSpectrSource(
       String.raw`  const currentGains = useAppC(() => {
     const b = bankRef.current;
@@ -1501,6 +1755,32 @@ window.PatternManager = PatternManager;`,
       }), [fireStatus, nativeBridgeAvailable, patternCommand]);`,
       'native persisted pattern actions');
     replaceSpectrSource(
+      '  // Browser previews may apply their saved default. A native editor is\n  // always hydrated from host state instead.',
+      String.raw`  // Deterministic read-only UI projection used by the executed-browser
+  // and mounted-native interaction suites. It reports the same React commit
+  // that paints the editor; it cannot mutate product or processor state.
+  if (window.__spectrTestHooks) {
+    window.__spectrTestHooks.appState = () => ({
+      nativeHydrated,
+      settings: { ...settings },
+      editMode,
+      analyzerMode,
+      visualizationMode,
+      snapshotStatus: { ...snapshotStatus },
+      managerOpen,
+      saveDialogOpen,
+      userPatterns: userPatterns.map(pattern => ({
+        id: pattern.id, name: pattern.name,
+      })),
+      defaultId,
+      statusMounted: !!document.querySelector('[data-spectr-status-banner]'),
+    });
+  }
+
+  // Browser previews may apply their saved default. A native editor is
+  // always hydrated from host state instead.`,
+      'same-commit native UI state oracle');
+    replaceSpectrSource(
       'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted, resolution }) {',
       'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onSavePattern, onClearAll, onResetAll, allMuted, resolution }) {',
       'preset dropdown save action prop');
@@ -1525,6 +1805,50 @@ window.PatternManager = PatternManager;`,
       "<canvas data-spectr-filter-canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />",
       'filter canvas selector');
     replaceSpectrSource(
+      String.raw`    <div
+      ref={wrapRef}
+      style={{`,
+      String.raw`    <div
+      ref={wrapRef}
+      data-spectr-filter-surface
+      onContextMenu={(e) => {
+        e.preventDefault();
+        const g = getGeom();
+        if (!g) return;
+        const rect = wrapRef.current.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * wrapRef.current.clientWidth / rect.width;
+        const y = (e.clientY - rect.top) * wrapRef.current.clientHeight / rect.height;
+        const band = findBand(x, g);
+        const inPlot = x >= g.inner.x && x <= g.inner.x + g.inner.w
+          && y >= g.inner.y && y <= g.inner.y + g.inner.h;
+        setCtxMenu({ x, y, band: inPlot ? band : -1 });
+      }}
+      style={{`,
+      'filter gesture surface selector');
+    replaceSpectrSource(
+      String.raw`  const onPointerDown = (e) => {
+    const g = getGeom();`,
+      String.raw`  const onPointerDown = (e) => {
+    // A secondary click belongs exclusively to the context-menu gesture. Some
+    // hosts do not synthesize a later DOM contextmenu event, so establish the
+    // same menu state directly from the pointer event and let contextmenu be
+    // the browser fallback.
+    if (e.button === 2) {
+      e.preventDefault();
+      const g = getGeom();
+      if (!g) return;
+      const rect = wrapRef.current.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * wrapRef.current.clientWidth / rect.width;
+      const y = (e.clientY - rect.top) * wrapRef.current.clientHeight / rect.height;
+      const band = findBand(x, g);
+      const inPlot = x >= g.inner.x && x <= g.inner.x + g.inner.w
+        && y >= g.inner.y && y <= g.inner.y + g.inner.h;
+      setCtxMenu({ x, y, band: inPlot ? band : -1 });
+      return;
+    }
+    const g = getGeom();`,
+      'secondary click context ownership');
+    replaceSpectrSource(
       '        onOpenPatternManager={() => setManagerOpen(true)}',
       '        onOpenPatternManager={() => setManagerOpen(true)}\n        onSavePattern={() => setSaveDialogOpen(true)}',
       'open save dialog from dropdown');
@@ -1538,8 +1862,48 @@ window.PatternManager = PatternManager;`,
       'pattern manager semantics');
     replaceSpectrSource(
       '<div onClick={onClick} onDoubleClick={onDblClick}',
-      '<div data-spectr-pattern-id={pattern.id} onClick={onClick} onDoubleClick={onDblClick}',
+      '<div data-spectr-pattern-id={pattern.id} data-spectr-pattern-source={pattern.source} onClick={onClick} onDoubleClick={onDblClick}',
       'pattern manager row selector');
+    replaceSpectrSource(
+      '          <input\n            type="text" placeholder="search…" value={query} onChange={e => setQuery(e.target.value)}',
+      '          <input data-spectr-manager-search\n            type="text" placeholder="search…" value={query} onChange={e => setQuery(e.target.value)}',
+      'pattern manager search selector');
+    replaceSpectrSource(
+      '<button onClick={onClose} style={iconBtn}>×</button>',
+      '<button data-spectr-manager-close onClick={onClose} style={iconBtn}>×</button>',
+      'pattern manager close selector');
+    replaceSpectrSource(
+      '<input autoFocus value={draft}\n            onChange={e => setDraft(e.target.value)}',
+      '<input data-spectr-manager-rename autoFocus value={draft}\n            onChange={e => setDraft(e.target.value)}',
+      'pattern manager rename input selector');
+    replaceSpectrSource(
+      '<input data-spectr-manager-rename autoFocus value={draft}\n            onChange={e => setDraft(e.target.value)}',
+      '<input id="spectr-manager-rename" data-spectr-manager-rename autoFocus value={draft}\n            onChange={e => setDraft(String(spectrInputValue(e) ?? \'\'))}',
+      'pattern manager native rename value');
+    replaceSpectrSource(
+      '<button onClick={() => setEditName(true)} style={iconBtn}>✎</button>',
+      '<button data-spectr-manager-action="rename-start" onClick={() => setEditName(true)} style={iconBtn}>✎</button>',
+      'pattern manager rename affordance selector');
+    replaceSpectrSource(
+      'function MBtn({ children, onClick, primary, danger }) {\n  return (\n    <button onClick={onClick} style={{',
+      'function MBtn({ children, onClick, primary, danger, action }) {\n  return (\n    <button data-spectr-manager-action={action} onClick={onClick} style={{',
+      'pattern manager action button selectors');
+    replaceSpectrSource(
+      '<MBtn primary onClick={onApply}>APPLY</MBtn>',
+      '<MBtn action="apply" primary onClick={onApply}>APPLY</MBtn>',
+      'pattern manager apply selector');
+    replaceSpectrSource(
+      '<MBtn danger onClick={onDelete}>DELETE</MBtn>',
+      '<MBtn action="delete" danger onClick={onDelete}>DELETE</MBtn>',
+      'pattern manager delete selector');
+    replaceSpectrSource(
+      '<MBtn onClick={saveCurrent} primary>SAVE CURRENT</MBtn>',
+      '<MBtn action="save-current" onClick={saveCurrent} primary>SAVE CURRENT</MBtn>',
+      'pattern manager save selector');
+    replaceSpectrSource(
+      '<MBtn onClick={onCancel}>CANCEL</MBtn>\n          <MBtn primary onClick={submit}>SAVE</MBtn>',
+      '<MBtn action="save-cancel" onClick={onCancel}>CANCEL</MBtn>\n          <MBtn action="save-submit" primary onClick={submit}>SAVE</MBtn>',
+      'save dialog action selectors');
     replaceSpectrSource(
       [
         '  // Global keyboard shortcuts for edit modes + analyzer',
@@ -1670,12 +2034,35 @@ window.PatternManager = PatternManager;`,
       'deterministic shift mute brush move');
     replaceSpectrSource(
       '    <div ref={ref}\n      style={{',
-      '    <div ref={ref} data-spectr-overlay="true" role="menu" aria-label="Band actions"\n      style={{',
+      '    <div ref={ref} data-spectr-overlay="true" data-spectr-band-context-menu="true" role="menu" aria-label="Band actions"\n      style={{',
       'context menu shortcut ownership');
     replaceSpectrSource(
       '  const Item = ({ label, hint, onClick, disabled, danger, sub }) => (\n    <button\n      onClick=',
-      '  const Item = ({ label, hint, onClick, disabled, danger, sub }) => (\n    <button role="menuitem"\n      onClick=',
+      '  const Item = ({ action, label, hint, onClick, disabled, danger, sub }) => (\n    <button role="menuitem" data-spectr-band-action={action}\n      onClick=',
       'context menu item semantics');
+    replaceSpectrSource(
+      '<Item label="Mute / Unmute" onClick={() => onMuteBand(band)} />',
+      '<Item action="mute-band" label="Mute / Unmute" onClick={() => onMuteBand(band)} />',
+      'context mute action selector');
+    replaceSpectrSource(
+      '<Item label="Reset to 0 dB" onClick={() => onZeroBand(band)} />',
+      '<Item action="reset-band" label="Reset to 0 dB" onClick={() => onZeroBand(band)} />',
+      'context reset action selector');
+    // Chromium paints these divider strings in uppercase via text-transform.
+    // Materialized native text is keyed from DOM content, so make that painted
+    // contract literal without changing the frozen browser appearance.
+    replaceSpectrSource(
+      '<Divider label={`Band ${band + 1}`} />',
+      '<Divider label={`BAND ${band + 1}`} />',
+      'context band divider painted text');
+    replaceSpectrSource(
+      '<Divider label="Edit Mode" />',
+      '<Divider label="EDIT MODE" />',
+      'context edit divider painted text');
+    replaceSpectrSource(
+      '<Divider label="View" />',
+      '<Divider label="VIEW" />',
+      'context view divider painted text');
 
     // The host resizes the native WebView itself. Keep Claude Design's authored
     // geometry fixed inside that viewport and let one browser transform scale it
@@ -1689,8 +2076,8 @@ window.PatternManager = PatternManager;`,
       'fixed-design canvas geometry');
     replaceSpectrSource(
       'const pad = { l: 56, r: 56, t: 56, b: 88 };',
-      'const pad = { l: 56, r: 56, t: 56, b: 120 };',
-      'minimap clears bottom action rail');
+      'const pad = { l: 56, r: 56, t: 70, b: 120 };',
+      'frequency ruler and minimap clear fixed chrome');
     replaceSpectrSource(
       String.raw`    ctx.fillStyle = 'rgba(255,255,255,0.30)';
     ctx.fillText('dB', inner.x - 8, g.inner.y - 8);`,
@@ -1705,9 +2092,8 @@ window.PatternManager = PatternManager;`,
         && value <= analyzerScale.ceiling);
     ctx.textAlign = 'left';
     for (const dbfs of analyzerTicks) {
-      const amount = (dbfs - analyzerScale.floor)
-        / (analyzerScale.ceiling - analyzerScale.floor);
-      const y = g.zeroY - amount * g.halfH * 0.95;
+      const amount = window.SpectrAnalyzer.normalizeDb(dbfs);
+      const y = window.SpectrAnalyzer.project(amount, g.zeroY, g.halfH);
       ctx.fillStyle = dbfs === 0
         ? 'rgba(130,220,180,0.62)' : 'rgba(130,220,180,0.30)';
       ctx.fillText((dbfs > 0 ? '+' : '') + dbfs,
@@ -1718,7 +2104,18 @@ window.PatternManager = PatternManager;`,
       'independent analyzer dBFS ruler');
     replaceSpectrSource(
       '  const onPointerDown = (e) => {',
-      String.raw`  // Optional executed-browser oracle seam; absent in production hosts.
+      String.raw`  // Bank readiness is a DOM lifecycle fact used by deterministic
+  // Chromium capture and accessibility automation. Keep it independent from
+  // native hydration, whose projection effect may intentionally return early.
+  useEffect(() => {
+    if (!wrapRef.current) return;
+    if (sharedState?.current)
+      wrapRef.current.dataset.spectrBankReady = 'true';
+    else
+      delete wrapRef.current.dataset.spectrBankReady;
+  });
+
+  // Optional executed-browser oracle seam; absent in production hosts.
   if (window.__spectrTestHooks) {
     window.__spectrTestHooks.minimapHit = (x, y) => minimapHit(x, y, getGeom());
     window.__spectrTestHooks.renderState = () => ({
