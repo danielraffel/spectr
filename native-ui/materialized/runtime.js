@@ -8710,13 +8710,27 @@
     const clock = g5.__pulpCapturedReplayClock__;
     if (clock.current < clock.target) {
       clock.current = Math.min(clock.target, clock.current + 50);
+      return clock.current;
     }
+    // Replay is complete. The captured clock exists to make a captured document
+    // settle deterministically; once it has, the LIVE app needs real advancing
+    // time or every dt-driven animation is frozen forever (dt === 0).
+    const now = typeof _nativeNow === "number" ? _nativeNow
+      : (typeof __performanceNow__ === "function" ? __performanceNow__() : 0);
+    if (clock.liveBase === void 0) clock.liveBase = now;
+    clock.current = clock.target + (now - clock.liveBase);
     return clock.current;
   };
   g5.__pulpRequestedMaterializedState__ = "";
   g5.performance = {
     now: function() {
-      return g5.__pulpCapturedReplayClock__.current;
+      const clock = g5.__pulpCapturedReplayClock__;
+      if (clock.current >= clock.target && typeof __performanceNow__ === "function") {
+        const now = __performanceNow__();
+        if (clock.liveBase === void 0) clock.liveBase = now;
+        return clock.target + (now - clock.liveBase);
+      }
+      return clock.current;
     }
   };
   function materializedDomRegistryValues() {
