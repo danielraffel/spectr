@@ -100,7 +100,7 @@ public:
     const Pattern* find(const std::string& id) const;
 
     /// Serialize the user-patterns + default-id to a JSON envelope that
-    /// round-trips through import_json(). Does NOT include factory
+    /// round-trips exactly through restore_json(). Does NOT include factory
     /// patterns (they're rebuilt on construction). Envelope shape:
     /// `{"format":"spectr.patterns","version":1,"patterns":[...],
     ///   "default_id":"..."}`.
@@ -111,6 +111,12 @@ public:
     /// patterns — clashing names get suffixed (e.g. "MYPATTERN (2)").
     /// Returns number of patterns imported; 0 on any parse failure.
     std::size_t import_json(std::string_view json);
+
+    /// Replace user patterns from a plugin-state envelope. Unlike interactive
+    /// import, this preserves IDs, names, order, and default exactly, rejects
+    /// any malformed member, and leaves the current library unchanged on
+    /// failure.
+    bool restore_json(std::string_view json);
 
 private:
     std::vector<Pattern> factory_;

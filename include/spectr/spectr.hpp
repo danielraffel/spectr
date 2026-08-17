@@ -8,31 +8,84 @@
 // Milestone 4.
 
 #include <pulp/format/processor.hpp>
+#include <pulp/signal/spectral_band_mask.hpp>
+#include <pulp/signal/spectral_mask_processor.hpp>
+#include <pulp/signal/smoothed_value.hpp>
 #include <pulp/view/ab_compare.hpp>
 #include <pulp/view/visualization_bridge.hpp>
+#include <array>
 #include <memory>
+
+#if defined(SPECTR_NATIVE_EDITOR)
+#include <filesystem>
+#include <pulp/view/editor_bridge.hpp>
+#include <pulp/view/frame_clock.hpp>
+#include <pulp/view/scripted_ui.hpp>
+#include "spectr/editor_bridge.hpp"
+#endif
 
 #include "spectr/band_state.hpp"
 #include "spectr/edit_modes.hpp"
-#include "spectr/engine.hpp"
+#include "spectr/editor_authority.hpp"
 #include "spectr/pattern.hpp"
 #include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
+#include "spectr/editor_resize.hpp"
+
+#ifndef SPECTR_FFT_SIZE
+#define SPECTR_FFT_SIZE 8192
+#endif
+#ifndef SPECTR_ANALYSIS_HOP
+#define SPECTR_ANALYSIS_HOP 2048
+#endif
 
 namespace spectr {
+
+inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
+inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
+// SpectralFrameEngine reads through a fixed causal cursor of one complete FFT
+// frame plus one analysis hop, keeping latency invariant to host block
+// partitioning.
+inline constexpr int kSpectralLatency =
+    kSpectralFftSize + kSpectralAnalysisHop;
+// VisualizationBridge publishes at most 4097 bins. Derive analyzer geometry
+// from the product profile, but cap Maximum's 16384 processing FFT at 8192 so
+// its upper spectrum is never silently truncated.
+inline constexpr int kAnalyzerFftSize =
+    kSpectralFftSize > 8192 ? 8192 : kSpectralFftSize;
+inline constexpr int kAnalyzerAnalysisHopUncapped =
+    (kSpectralAnalysisHop * kAnalyzerFftSize + kSpectralFftSize - 1)
+        / kSpectralFftSize;
+inline constexpr int kAnalyzerAnalysisHop =
+    kAnalyzerAnalysisHopUncapped < 1 ? 1
+    : (kAnalyzerAnalysisHopUncapped > kAnalyzerFftSize / 2
+        ? kAnalyzerFftSize / 2 : kAnalyzerAnalysisHopUncapped);
+// At 30 UI polls/s this drains 61,440 frames/s, enough to stay ahead of a
+// 48 kHz stream while bounding each UI tick even in a refilling host.
+inline constexpr int kAnalyzerMaxFramesPerPoll = 2048;
+static_assert(kSpectralFftSize >= pulp::signal::kSpectralFrameEngineMinimumFftSize
+              && kSpectralFftSize
+                     <= pulp::signal::kSpectralFrameEngineMaximumFftSize
+              && (kSpectralFftSize & (kSpectralFftSize - 1)) == 0
+              && kSpectralAnalysisHop > 0
+              && kSpectralAnalysisHop <= kSpectralFftSize / 2,
+              "Spectr build selected unsupported Pulp spectral geometry");
+static_assert(kAnalyzerFftSize / 2 + 1
+                  <= pulp::view::SpectrumData::kMaxBins,
+              "Spectr analyzer geometry exceeds Pulp spectrum capacity");
 
 enum ParamIDs : pulp::state::ParamID {
     kMix          = 1,
     kOutputTrim   = 2,   ///< dB, [-24, +24]
-    kResponseMode = 3,   ///< 0=Live, 1=Precision
-    kEngineMode   = 4,   ///< 0=IIR, 1=FFT, 2=Hybrid
-    kBandCount    = 5,   ///< 0=32, 1=40, 2=48, 3=56, 4=64
-    kMorph        = 6,   ///< [0, 1], 0=A, 1=B (Milestone 8)
 };
 
 inline pulp::format::PluginDescriptor make_descriptor() {
     return {
+#if defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
+        .name         = "Spectr Native Preview",
+#else
         .name         = "Spectr",
+#endif
         .manufacturer = "Pulp",
         .bundle_id    = "com.pulp.spectr",
         .version      = "1.0.0",
@@ -40,9 +93,8 @@ inline pulp::format::PluginDescriptor make_descriptor() {
     };
 }
 
-/// Top-level Spectr plugin. Owns the BandField, Viewport, and the active
-/// SpectralEngine. Milestones 2+ fill in the engine impls and state
-/// registration.
+/// Top-level Spectr plugin. Owns the product state and Pulp's reusable
+/// streaming spectral-mask processor.
 class Spectr : public pulp::format::Processor {
 public:
     Spectr();
@@ -52,6 +104,8 @@ public:
     void define_parameters(pulp::state::StateStore& store) override;
     void prepare(const pulp::format::PrepareContext& ctx) override;
     void release() override;
+    int latency_samples() const override;
+    pulp::format::ViewSize view_size() const override;
 
     void process(
         pulp::audio::BufferView<float>& output,
@@ -83,38 +137,52 @@ public:
     void on_view_opened(pulp::view::View& view) override;
     void on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) override;
     void on_view_closed(pulp::view::View& view) override;
-    pulp::format::ViewSize view_size() const override {
-        // Matches the prototype's natural canvas size from screenshots.
-        return {/*pref_w*/1320, /*pref_h*/860,
-                /*min_w*/800,  /*min_h*/480,
-                /*max_w*/0,    /*max_h*/0,
-                /*aspect*/0.0};
+#if defined(SPECTR_NATIVE_EDITOR)
+    pulp::view::ScriptedUiSession* active_scripted_ui() override {
+        return native_scripted_ui_.get();
     }
-
+    const pulp::view::ScriptedUiSession* active_scripted_ui() const override {
+        return native_scripted_ui_.get();
+    }
+    EditorRevision native_editor_revision() const noexcept {
+        return editor_authority_.revision();
+    }
+#endif
     // ── Accessors — primarily for tests and the UI layer ───────────────
 
     const BandField&  field()     const noexcept { return field_; }
     BandField&        field()           noexcept { return field_; }
+    void replace_field(const BandField& field) noexcept;
+    bool replace_processing_state(const BandField& field,
+                                  const Viewport& viewport,
+                                  Layout layout) noexcept;
+    void publish_field() noexcept;
     const Viewport&   viewport()  const noexcept { return viewport_; }
     Viewport&         viewport()        noexcept { return viewport_; }
     Layout            layout()    const noexcept { return layout_; }
-    ResponseMode      response()  const noexcept { return response_mode_; }
-    EngineKind        engine_kind() const noexcept { return engine_kind_; }
+    EditorAuthority& editor_authority() noexcept { return editor_authority_; }
+    const EditorAuthority& editor_authority() const noexcept { return editor_authority_; }
 
     void set_layout(Layout L);
-    void set_response_mode(ResponseMode m) noexcept { response_mode_ = m; }
-    void set_engine_kind(EngineKind k);
+
+    /// Analyze how many of the current layout's authored bands own at least
+    /// one distinct bin at the compiled FFT geometry and current sample rate.
+    /// Control-thread only; unavailable before prepare, and `out_resolution`
+    /// is unchanged on failure.
+    [[nodiscard]] bool spectral_resolution(
+        pulp::signal::SpectralBandResolution& out_resolution) const noexcept;
 
     // ── Snapshot A/B + morph (Milestone 8) ──────────────────────────────
     //
     // Spectr tracks two kinds of A/B state:
     //
-    //   - Flat StateStore params (Mix, Output, Response, Engine, Bands,
-    //     Morph itself): handled by pulp::view::ABCompare over the
-    //     StateStore. Access via ab_compare().
+    //   - Flat StateStore params (Mix and Output): handled by
+    //     pulp::view::ABCompare over the StateStore. Access via
+    //     ab_compare().
     //   - Band-field + viewport + layout: held in snapshots_ below, with
-    //     per-band morph via morph_fields(). Serialized in the plugin
-    //     state blob so it survives session reload.
+    //     editor-local per-band morph via morph_fields(). Serialized in the
+    //     plugin state blob so it survives session reload without exposing a
+    //     misleading host-automation parameter.
     //
     // UI drives both in lockstep for the full A/B experience.
 
@@ -161,20 +229,45 @@ public:
 private:
     double sample_rate_ = 48000.0;
     int    max_block_   = 512;
+    int    channels_    = 1;
 
-    BandField                        field_{};
-    Viewport                         viewport_{};
-    Layout                           layout_       = Layout::Bands32;
-    ResponseMode                     response_mode_= ResponseMode::Precision;
-    EngineKind                       engine_kind_  = EngineKind::Fft;
-    std::unique_ptr<SpectralEngine>  engine_{};
+    static constexpr std::size_t kMaximumChannels = 64;
+
+    BandField                              field_{};
+    Viewport                               viewport_{};
+    Layout                                 layout_ = Layout::Bands32;
+    pulp::signal::SpectralMaskProcessor    mask_processor_{};
+    pulp::signal::SmoothedValue<float>     output_gain_{1.0f};
+    bool                                   processor_prepared_ = false;
+    std::array<const float*, kMaximumChannels> input_channels_{};
+    std::array<float*, kMaximumChannels>       output_channels_{};
 
     pulp::view::VisualizationBridge       bridge_{};
     SnapshotBank                          snapshots_{};
     PatternLibrary                        patterns_{};
     std::unique_ptr<pulp::view::ABCompare> ab_{};
+    EditorAuthority                       editor_authority_;
 
-    void rebuild_engine_();
+#if defined(SPECTR_NATIVE_EDITOR)
+    pulp::view::EditorBridge native_editor_bridge_{};
+    bool native_editor_handlers_registered_ = false;
+    std::unique_ptr<pulp::view::ScriptedUiSession> native_scripted_ui_{};
+    std::filesystem::path native_package_path_{};
+    pulp::view::View* native_editor_root_ = nullptr;
+    pulp::view::FrameClock* native_frame_clock_ = nullptr;
+    int native_frame_subscription_ = -1;
+    float native_analyzer_elapsed_ = 0.0f;
+    std::uint64_t native_analyzer_sequence_ = 0;
+
+    std::unique_ptr<pulp::view::View> create_native_editor_();
+    void open_native_editor_(pulp::view::View& view);
+    void close_native_editor_();
+    bool tick_native_analyzer_(float dt);
+#endif
+
+    [[nodiscard]] pulp::signal::SpectralBandLayout
+        make_mask_layout_() const noexcept;
+    void publish_processing_state_() noexcept;
     void configure_bridge_(int num_channels);
 };
 

@@ -127,6 +127,19 @@ TEST_CASE("M7 library: auto-named patterns use PATTERN NN format") {
     CHECK(b.name == "PATTERN 02");
 }
 
+TEST_CASE("M7 library: auto-name skips names restored from persistence") {
+    PatternLibrary lib;
+    const std::string json = R"({
+      "format":"spectr.patterns","version":1,"patterns":[
+        {"id":"user:restored","name":"PATTERN 01","gain_db":[0],"muted":[false]}
+      ]
+    })";
+    REQUIRE(lib.import_json(json) == 1);
+    BandField field;
+    const auto saved = lib.save_current(field);
+    CHECK(saved.name == "PATTERN 02");
+}
+
 TEST_CASE("M7 library: rename / duplicate / remove / update_from_current") {
     PatternLibrary lib;
     BandField f;
@@ -209,6 +222,58 @@ TEST_CASE("M7 library: export → import round-trips user patterns") {
     CHECK(lib_b.default_id() == b->id);
 }
 
+TEST_CASE("M7 library: exact restore preserves factory-name collisions") {
+    PatternLibrary source;
+    BandField field;
+    field.bands[3].gain_db = -18.0f;
+    const auto saved = source.save_current(field, "FLAT");
+    REQUIRE(source.set_default(saved.id));
+
+    PatternLibrary restored;
+    REQUIRE(restored.restore_json(source.export_json()));
+    REQUIRE(restored.user().size() == 1);
+    CHECK(restored.user().front().id == saved.id);
+    CHECK(restored.user().front().name == "FLAT");
+    CHECK(restored.user().front().gain_db[3] == Approx(-18.0f));
+    CHECK(restored.default_id() == saved.id);
+}
+
+TEST_CASE("M7 library: exact restore accepts an empty user envelope") {
+    PatternLibrary live;
+    BandField field;
+    live.save_current(field, "REMOVE ON RESTORE");
+
+    const PatternLibrary empty;
+    REQUIRE(live.restore_json(empty.export_json()));
+    CHECK(live.user().empty());
+    CHECK(live.default_id() == std::string{kFlat});
+}
+
+TEST_CASE("M7 library: exact restore rejects malformed state atomically") {
+    PatternLibrary live;
+    BandField field;
+    field.bands[3].gain_db = 7.0f;
+    const auto keep = live.save_current(field, "KEEP");
+    REQUIRE(live.set_default(keep.id));
+
+    PatternLibrary encoded;
+    encoded.save_current(field, "REPLACEMENT");
+    auto malformed = encoded.export_json();
+    const auto key = malformed.find("\"gain_db\"");
+    REQUIRE(key != std::string::npos);
+    const auto value = malformed.find('[', key) + 1;
+    const auto end = malformed.find_first_of(",]", value);
+    REQUIRE(end != std::string::npos);
+    malformed.replace(value, end - value, "1e999");
+
+    CHECK_FALSE(live.restore_json(malformed));
+    REQUIRE(live.user().size() == 1);
+    CHECK(live.user().front().id == keep.id);
+    CHECK(live.user().front().name == "KEEP");
+    CHECK(live.user().front().gain_db[3] == Approx(7.0f));
+    CHECK(live.default_id() == keep.id);
+}
+
 TEST_CASE("M7 library: import rejects unknown schema version") {
     PatternLibrary lib;
     const std::string bad = R"({"format":"spectr.patterns","version":999,"patterns":[]})";
@@ -248,4 +313,37 @@ TEST_CASE("M7 library: import name-clash suffixes with (N)") {
     }
     CHECK(saw_twin);
     CHECK(saw_twin2);
+}
+
+TEST_CASE("M7 library: import clamps finite legacy gains before float narrowing") {
+    PatternLibrary lib;
+    const std::string json = R"({
+      "format":"spectr.patterns","version":1,"patterns":[
+        {"id":"user:legacy","name":"LEGACY","gain_db":[-36,1e100],"muted":[false,false]}
+      ]
+    })";
+    REQUIRE(lib.import_json(json) == 1);
+    REQUIRE(lib.user().size() == 1);
+    CHECK(lib.user().front().gain_db[0] == Approx(spectr::kBandGainMinDb));
+    CHECK(lib.user().front().gain_db[1] == Approx(spectr::kBandGainMaxDb));
+    CHECK(std::isfinite(lib.user().front().gain_db[1]));
+
+    BandField field;
+    lib.user().front().apply_to(field);
+    CHECK(std::isfinite(field.bands[0].gain_db));
+    CHECK(std::isfinite(field.bands[1].gain_db));
+}
+
+TEST_CASE("M7 library: import rejects non-finite gains without publishing a pattern") {
+    spectr::PatternLibrary lib;
+    const auto imported = lib.import_json(R"({
+      "version":1,
+      "patterns":[
+        {"id":"user:overflow","name":"OVERFLOW","gain_db":[1e999],"muted":[false]},
+        {"id":"user:string","name":"STRING","gain_db":["Infinity"],"muted":[false]}
+      ]
+    })");
+
+    CHECK(imported == 0);
+    CHECK(lib.user().empty());
 }

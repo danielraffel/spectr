@@ -236,6 +236,188 @@ When every row is in the closed table AND the full screenshot A/B
 matches visually, the WebView path can be removed. That's the
 cutover.
 
+## Phased migration plan
+
+The native work must not overwrite or silently evolve the current WebView
+implementation. The two renderers remain independently buildable until the
+native path passes the complete cutover gate.
+
+### Phase W0 — Freeze the WebView reference
+
+Land the completed WebView product as an immutable comparison baseline before
+starting native renderer work.
+
+Required receipt:
+
+- exact Spectr commit and Pulp SDK/source identity;
+- signed AUv2, VST3, CLAP, and Standalone artifact hashes;
+- Release/native/browser/host validation results;
+- representative screenshots at minimum, preferred, authored, and enlarged
+  sizes;
+- scripted receipts for reopen, persistence, band editing, minimap gestures,
+  A/B capture and morph, presets, undo/redo, automation, and modulation; and
+- explicit rollback/install instructions.
+
+This baseline is retained after native cutover as a behavioral oracle. Native
+migration fixes do not land on the reference branch.
+
+### Phase N0 — Ultra architecture and importer audit
+
+Create a separate worktree and branch from the frozen baseline. Use an Ultra
+design pass to classify every editor surface as one of:
+
+1. already materializable through Pulp DesignIR/native import;
+2. requiring a reusable Pulp widget, canvas, input, accessibility, or runtime
+   capability;
+3. requiring a renderer-neutral Spectr controller/binding; or
+4. intentionally product-specific behavior that should remain small, explicit
+   Spectr code.
+
+The output is a source-to-native mapping, a measured gap ledger, and an ordered
+implementation plan. It must not be a one-off visual rewrite proposal.
+
+N0 result (2026-08-11): **static DesignIR is not the runtime architecture.**
+Browser capture is screenshot-backed, while the offline runtime walker
+serializes only a settled element tree. Neither retains React hooks, closures,
+effects, timers, event listeners, the analyzer loop, or the imperative canvas
+program. The negative oracle rendered only a small inert control stack at the
+upper-left of a 1320x860 native frame with a blank canvas. The native product
+therefore uses a live QuickJS controller and `@pulp/react` native View /
+CanvasWidget tree rendered by Skia Graphite on Dawn. DesignIR remains a
+structural audit artifact, never the runtime behavior authority.
+
+The original Claude HTML is also not the shipping source by itself. The frozen
+editor is the original plus checked-in adapter transformations for hydration,
+analyzer frames, mute semantics, snapshots/morph, patterns, focus, shortcuts,
+Shift-drag brushing, and scaling. N1 first canonicalizes that behavior into
+stable source modules; runtime exact-string replacement is not a native
+architecture.
+
+### Phase N1 — Establish the parallel native shell
+
+- Canonicalize frozen original-plus-adapter behavior into checked-in source
+  modules with no runtime `replaceSpectrSource` transform.
+- Build a separate native-only artifact. It must not link, embed, or reference
+  WebView/WKWebView, `editor.html`, browser capture, screenshot controls, or a
+  per-surface browser fallback.
+- Run the canonical controller in live QuickJS through `@pulp/react`; create
+  native View and CanvasWidget nodes rather than a serialized static snapshot.
+- Render through Skia Graphite/Dawn and require `use_gpu=true`,
+  `is_gpu_backed=true`, and the fixed 1320x860 design viewport. A CPU renderer,
+  blank/error View, static DesignIR fallback, or unavailable bridge fails.
+- First vertical slice: minimal native chrome, the real 32-band canvas, one real
+  analyzer frame, finite C++ hydration, one single-tap mute, and one sculpt drag
+  using the frozen formula. Each gesture must reach authoritative C++ state,
+  receive a monotonic revision, and redraw.
+- Render later N2/N3 surfaces as visibly disabled native placeholders. Never
+  route an unavailable region back to WebView.
+- Add a build-time/runtime developer selector so the WebView and native lanes
+  can be launched against the same state during comparison. The shipping
+  renderer remains explicit; there is no silent runtime fallback.
+
+### Phase N2 — Generalize the missing interactive primitives
+
+Implement missing behavior as reusable Pulp/importer capabilities wherever it
+is not inherently Spectr-specific. Expected surfaces include:
+
+- the high-density spectrum/mask canvas and truthful response overlay;
+- minimap pan, resize, and zoom interactions;
+- paint, sculpt, marquee, group selection, and Shift-drag mute brushes;
+- menus, dialogs, text entry, focus, keyboard ownership, clipboard, and file
+  workflows;
+- animation/timing and categorical mute transitions; and
+- accessibility semantics and automation-facing value descriptions.
+
+Native resizing must preserve usability rather than uniformly shrinking the
+1320x860 authored canvas. The graph may become denser at smaller sizes, but
+chrome and dialogs must reflow or scroll while retaining readable typography
+and usable hit targets. At the declared minimum size, body text must be at
+least 12 logical px, control/label text at least 14 logical px where the frozen
+design uses primary labels, compact hit targets at least 24 logical px (32 px
+preferred), and the complete Settings surface must remain reachable without
+clipping. Minimum/preferred screenshot fixtures must include Settings open and
+must report computed font sizes, hit rectangles, focus order, and scroll reach.
+Blind root scaling that produces sub-12 px settings text is a release blocker.
+
+Composite controls expose one semantic hit region covering their complete
+visible bounds. In particular, every point inside the inset A or B snapshot
+button—including its dot, label, center, and corner regions—must capture the
+corresponding snapshot exactly once. The complete visible `▶ A` and `▶ B`
+recall buttons must likewise recall exactly once from any point in their
+bounds. Child artwork may not own or narrow the gesture target. The same
+whole-control rule applies to morph endpoint, mode, preset, and settings
+controls.
+
+Confirmed framework prerequisites include a supported native
+`ScriptedUiSession`/EditorBridge attachment; deterministic release-capable
+ReactDOM-to-`@pulp/react` source transformation; single-delivery pointer
+propagation/cancellation and real capture retargeting; context-menu and
+double-click events; focused keyboard/key-up/Tab routing; native accessibility
+properties and Invoke/Toggle/range actions; modal focus trapping; and explicit
+file/clipboard/durable-storage capabilities. These are framework fixtures first,
+then Spectr integration tests.
+
+Every generalized capability needs a smaller framework-level fixture in
+addition to its Spectr integration test. Exact-string HTML patching is not an
+acceptable native architecture.
+
+### Phase N3 — Shared behavioral and visual parity
+
+Drive both renderers with the same canonical state fixtures and interaction
+scripts. Compare at least:
+
+- screenshots and layout geometry at every declared size and backing scale;
+- pointer, wheel, keyboard, focus, menu, modal, and text-input behavior;
+- analyzer publication, drawing, mute/unmute, selection, viewport, presets,
+  undo/redo, automation, modulation, A/B capture, and morph;
+- close/reopen, host save/restore, malformed-state rejection, and multi-instance
+  isolation; and
+- AUv2, VST3, CLAP, and Standalone lifecycle behavior.
+
+Visual similarity alone is insufficient. Each lane must produce equivalent
+state-transition and interaction receipts.
+
+The shared pointer suite must probe composite controls at their dot/icon,
+label, center, and four inset corners. A/B capture must produce one identical
+authoritative receipt from every point in the visible capture or recall button
+rectangle at the minimum, preferred, authored, and enlarged editor sizes.
+
+### Phase N4 — Performance and operational comparison
+
+Measure the WebView and native lanes under the same M5 scenarios:
+
+- cold/warm editor open time and first meaningful frame;
+- steady and animated CPU/GPU use;
+- memory per open editor and with multiple plugin instances;
+- resize latency, frame pacing, and input latency;
+- analyzer-on/off cost and high-rate automation/modulation cost; and
+- teardown cleanliness, process count, and host-session stability.
+
+Record differences rather than assuming the native result wins every metric.
+Any regression accepted for cutover needs an explicit product rationale.
+
+### Phase N5 — Cutover decision
+
+Native becomes the default only when:
+
+- all blocking rows in this tracker are closed;
+- the shared parity suite is green;
+- native host validation is complete for all four formats;
+- no WebView-only persistence, editing, preset, automation, modulation, or
+  accessibility behavior remains; and
+- the performance/operational report shows the native path is ready for normal
+  production use.
+
+The native shipping artifact must also pass a resource, dependency, and symbol
+scan proving that it contains no WebView implementation or hidden runtime
+fallback. The frozen WebView comparison remains a separately selected artifact,
+not an alternate renderer inside the native binary.
+
+Keep the frozen WebView baseline and its evidence available for regression and
+historical comparison. Removing the shipping WebView dependency is a separate,
+reviewed decision after native qualification, not an automatic consequence of
+the first matching screenshot.
+
 ## Expected gap categories
 
 These are educated guesses about where the native path is likely to
@@ -262,8 +444,17 @@ first repro surfaces it.
 | Gap | Pulp issue | Filed | Severity | Blocks cutover? | Notes |
 -->
 
-_(none yet — first gaps surface once M9.5 slice 3 is wired and pulp#468
-reaches Phase 1 implementation)_
+| Gap | Pulp issue | Filed | Severity | Blocks cutover? | Notes |
+|---|---|---|---|---|---|
+| Static DesignIR loses hooks, listeners, timers, and canvas programs | pending | 2026-08-11 | P0 | yes | Native uses live release QuickJS / `@pulp/react`; strict mode rejects static or screenshot fallback. |
+| Native `EditorBridge` cannot attach through the public `ScriptedUiSession` lifecycle | pending | 2026-08-11 | P0 | yes | Working engine overload exists, but public native runtime attachment is incomplete. |
+| Pointer delivery/propagation/cancellation/capture are not browser-equivalent | pending | 2026-08-11 | P0 | yes | Current paths can duplicate delivery; capture is bookkeeping rather than input retargeting. |
+| Context menu, double-click, focused key-up/Tab routing are incomplete | pending | 2026-08-11 | P0 | yes | Required for menus, shortcuts, text entry, and host keyboard ownership. |
+| Native accessibility properties and actions are incomplete | pending | 2026-08-11 | P0 | yes | Canvas bands require semantic peers; controls need press/toggle/range actions. |
+| Browser file/clipboard/modal/storage assumptions need native capabilities | pending | 2026-08-11 | P1 | yes | Pattern import/export cannot rely on FileReader, downloads, or global temporary storage. |
+| Native-only consumers still inherit WebKit from Pulp's monolithic view link interface | pending | 2026-08-11 | P0 | yes | Spectr sources/assets are clean, but the current final executable still links WebKit; split the reusable native/scripted lane and prove JavaScriptCore + wgpu without WebKit. |
+| Frozen adapter behavior is not canonical source | product | 2026-08-11 | P0 | yes | Fold exact shipping behavior into stable native source modules before parity. |
+| Browser edit formulas diverge from dormant C++ `EditEngine` | product | 2026-08-11 | P0 | yes | Preserve frozen algorithms or unify implementations behind a mutation-sensitive oracle. |
 
 ## Closed Gaps
 

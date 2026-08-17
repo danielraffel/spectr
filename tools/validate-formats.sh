@@ -14,9 +14,33 @@ set -euo pipefail
 
 BUILD_DIR="${1:-$(pwd)/build}"
 
-AU_SRC="${BUILD_DIR}/Spectr.component"
-VST3_SRC="${BUILD_DIR}/Spectr.vst3"
-CLAP_SRC="${BUILD_DIR}/Spectr.clap"
+resolve_artifact() {
+    local format="$1" artifact="$2" candidate
+    local preferred="${BUILD_DIR}/${format}/${artifact}"
+
+    # Pulp's single-config generators use <build>/<FORMAT>/<artifact>.
+    # Also accept common multi-config and legacy root layouts so this helper
+    # keeps working with Ninja Multi-Config, Xcode, and older build trees.
+    for candidate in \
+        "$preferred" \
+        "${BUILD_DIR}/${format}/Release/${artifact}" \
+        "${BUILD_DIR}/Release/${format}/${artifact}" \
+        "${BUILD_DIR}/Release/${artifact}" \
+        "${BUILD_DIR}/${artifact}"
+    do
+        if [ -e "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    # Preserve the expected path so install_copy emits one useful diagnostic.
+    printf '%s\n' "$preferred"
+}
+
+AU_SRC="$(resolve_artifact AU Spectr.component)"
+VST3_SRC="$(resolve_artifact VST3 Spectr.vst3)"
+CLAP_SRC="$(resolve_artifact CLAP Spectr.clap)"
 
 AU_DEST="${HOME}/Library/Audio/Plug-Ins/Components/Spectr.component"
 VST3_DEST="${HOME}/Library/Audio/Plug-Ins/VST3/Spectr.vst3"
@@ -28,6 +52,13 @@ AU_SUBTYPE=Spec
 AU_MANU=Pulp
 
 fail=0
+passed=0
+VALIDATOR_ENV=(
+    env
+    PULP_DISABLE_PLUGIN_EDITOR=1
+    PULP_HEADLESS=1
+    PULP_TEST_MODE=1
+)
 say()  { printf "\n▸ %s\n" "$*"; }
 warn() { printf "⚠  %s\n" "$*" >&2; }
 die()  { printf "✗ %s\n" "$*" >&2; fail=1; }
@@ -48,49 +79,65 @@ install_copy() {
 # ── AU (auval, built in) ───────────────────────────────────────────────
 
 if install_copy "$AU_SRC" "$AU_DEST" "AU v2"; then
-    say "Running auval -v ${AU_TYPE} ${AU_SUBTYPE} ${AU_MANU}"
-    if auval -v "$AU_TYPE" "$AU_SUBTYPE" "$AU_MANU" | tail -5 | grep -q "AU VALIDATION SUCCEEDED"; then
-        say "AU v2: PASS"
+    if ! command -v auval >/dev/null 2>&1; then
+        die "AU v2: auval not found"
     else
-        die "AU v2: FAIL (see \`auval -v ${AU_TYPE} ${AU_SUBTYPE} ${AU_MANU}\` for details)"
+        say "Running auval -v ${AU_TYPE} ${AU_SUBTYPE} ${AU_MANU}"
+        if "${VALIDATOR_ENV[@]}" auval -v "$AU_TYPE" "$AU_SUBTYPE" "$AU_MANU" \
+            | tail -5 | grep -q "AU VALIDATION SUCCEEDED"; then
+            say "AU v2: PASS"
+            passed=$((passed + 1))
+        else
+            die "AU v2: FAIL (run auval -v ${AU_TYPE} ${AU_SUBTYPE} ${AU_MANU} for details)"
+        fi
     fi
+else
+    die "AU v2: required artifact missing"
 fi
 
 # ── VST3 (pluginval) ───────────────────────────────────────────────────
 
 if install_copy "$VST3_SRC" "$VST3_DEST" "VST3"; then
     if ! command -v pluginval >/dev/null 2>&1; then
-        warn "pluginval not found (brew install pluginval); skipping VST3 validation"
+        die "VST3: pluginval not found (brew install pluginval)"
     else
         say "Running pluginval --strictness-level 10 ${VST3_DEST}"
-        if pluginval --strictness-level 10 --validate "$VST3_DEST" 2>&1 | tail -5 | grep -qi "completed"; then
+        if "${VALIDATOR_ENV[@]}" pluginval --strictness-level 10 \
+            --validate "$VST3_DEST" 2>&1 | tail -5 | grep -qi "completed"; then
             say "VST3: PASS"
+            passed=$((passed + 1))
         else
             die "VST3: FAIL"
         fi
     fi
+else
+    die "VST3: required artifact missing"
 fi
 
 # ── CLAP (clap-validator) ──────────────────────────────────────────────
 
 if install_copy "$CLAP_SRC" "$CLAP_DEST" "CLAP"; then
     if ! command -v clap-validator >/dev/null 2>&1; then
-        warn "clap-validator not found (cargo install clap-validator); skipping CLAP validation"
+        die "CLAP: clap-validator not found (cargo install clap-validator)"
     else
         say "Running clap-validator validate ${CLAP_DEST}"
-        if clap-validator validate "$CLAP_DEST" 2>&1 | tail -10 | grep -qi "passed\|success"; then
+        if "${VALIDATOR_ENV[@]}" clap-validator validate "$CLAP_DEST" 2>&1 \
+            | tail -10 | grep -qi "passed\|success"; then
             say "CLAP: PASS"
+            passed=$((passed + 1))
         else
             die "CLAP: FAIL"
         fi
     fi
+else
+    die "CLAP: required artifact missing"
 fi
 
 echo
-if [ "$fail" -eq 0 ]; then
+if [ "$fail" -eq 0 ] && [ "$passed" -eq 3 ]; then
     echo "✓ All format validators succeeded."
     exit 0
 else
-    echo "✗ One or more validators failed."
+    echo "✗ Format validation incomplete or failed (${passed}/3 passed)."
     exit 1
 fi

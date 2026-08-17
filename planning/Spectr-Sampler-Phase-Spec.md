@@ -5,7 +5,8 @@ Date: 2026-04-22
 Owner: Daniel Raffel
 Pairs with: `Spectr-V2-Product-Spec.md` (effect-first V1), `Spectr-V2-Pulp-Handoff.md`
 
-This spec covers the sampler phases that come **after** V1 ships.
+This spec covers the sampler phases that come **after** V1 ships and the
+Skia/Dawn native-editor cutover passes its acceptance gate.
 It replaces the thin seam-preservation language in the V2 product spec §13 with a
 concrete product contract that the build team can plan against. It does not
 change V1 scope.
@@ -37,6 +38,10 @@ Two design voices fed this spec:
 - `/Users/danielraffel/Code/spectr-design/Spectr-2/Spectr Sampler.html` —
   the richer prototype that adds root key, tune, direction, loop region,
   sample region, fades, and crossfade on top of the minimal model.
+- `/Users/danielraffel/Downloads/Claude/Spectr-2/Spectr Sampler.html` — the
+  current Claude Design reference for the compact header treatment: the main
+  Spectr identity remains, a source selector sits beside it, and one prominent
+  `LIVE` / `FROZEN` control communicates capture state.
 
 This spec honours both by phasing them: the minimal framing is Phase 4
 **exit criteria**; the richer prototype controls are the Phase 4
@@ -70,14 +75,19 @@ Add exactly these new user-facing concepts to the Spectr surface:
 
 - **Source picker** — dropdown selecting where audio comes from.
   Allowed sources:
-  - plugin sidechain / track input (the default; matches prototype
-    `input-12`)
+  - the plugin's main audio input (default)
+  - host-configured sidechain or auxiliary input buses, when the active format
+    and host expose them to the plugin instance
+  - selectable hardware input channels in Standalone, when the device layer
+    exposes them
   - dropped / loaded audio file
 - **Freeze toggle** — single control (keybinding **F**, matching
   prototype) that captures the current processed output into a sample
   buffer.
-  - `frozen = false` → live processing, effect behaviour unchanged
-  - `frozen = true` → playback of the captured buffer, not live input
+  - `frozen = false` → live processing, effect behaviour unchanged; MIDI notes
+    do not trigger sample playback
+  - `frozen = true` → playback of the captured buffer, not live input; this is
+    the only state in which MIDI notes trigger sampler voices
 - **Effect / Instrument toggle** — plugin-level mode switch. Effect mode is
   the V1 surface unchanged. Instrument mode routes host MIDI note on/off
   into buffer playback.
@@ -113,6 +123,29 @@ Decision confirmed: **rendered sample, not recompute-per-note.** Simpler,
 predictable, sounds exactly like what the user heard. The
 recompute-per-note option is deferred to Phase 6 as "live spectral
 resynthesis," not built here.
+
+### 4.3.1 Source-routing capability boundary
+
+The prototype menu shows named tracks and buses (`Drums`, `Bass`, `Bus A`, and
+similar entries). Treat that as interaction and visual intent, not as a
+cross-format API promise.
+
+Standard AUv2, VST3, and CLAP plugin instances do not receive a portable API for
+enumerating arbitrary tracks in the host session or rewiring those tracks from
+the plugin editor. The host owns track and bus routing. Therefore:
+
+- the plugin menu may list the main input, configured sidechain/auxiliary buses,
+  loaded files, and any source descriptors the host has actually supplied;
+- an unavailable source class is omitted or disabled with an explanation;
+- Spectr never fabricates a DAW track list from prototype labels;
+- users select arbitrary DAW tracks by routing them to Spectr through the host;
+  and
+- richer named-track selection requires an explicit host integration or future
+  Pulp routing/control capability and must be separately gated per host.
+
+The renderer-neutral source model should use stable source IDs plus display
+metadata. The native UI consumes that model; it must not contain Logic-,
+REAPER-, AU-, VST3-, or CLAP-specific routing logic.
 
 ### 4.4 Playback Contract
 
@@ -304,9 +337,24 @@ work.
 - The effect surface does not change in instrument mode except for the
   source picker and freeze toggle in the top bar. Users who never freeze
   never see sampler UI.
+- Keep the primary `SPECTR` identity. A subtle `SPECTRAL SAMPLER` mode label is
+  acceptable, but a separate branded editor is not required.
+- The source selector shows the active source and a status dot. Its menu groups
+  only sources the current runtime can truthfully expose: live inputs,
+  host-configured buses, loaded files, and—where a dedicated host integration
+  exists—host-provided track descriptors.
+- The state control is one two-state affordance in the header:
+  - `LIVE` uses the incoming source, does not imply a captured asset, and does
+    not respond to MIDI notes with sample playback;
+  - `FROZEN` uses the captured buffer, enables chromatic MIDI playback, and must
+    remain visibly distinct even when transport is stopped;
+  - changing state while audio is active follows the click-free transition
+    contract in §12 rather than abruptly replacing the signal.
 - The prototype's sampler HTML runs the **exact same** band field,
   viewport, analyzer, and edit modes as the standalone HTML. Preserve that
   visual equivalence — the sampler is not a different product.
+- Build this surface natively through the accepted Skia/Dawn editor and its
+  reusable controls. Do not reopen a WebView lane for the sampler prototype.
 - Keybindings: **F** freezes / unfreezes. Same mnemonic as the prototype.
 
 ## 11. Success Criteria For The Sampler (Cumulative)
@@ -346,12 +394,22 @@ work.
 Before starting Phase 4 work:
 
 1. V1 effect has shipped and is stable.
-2. `feature/clap-midi-cc-coverage` has landed (needed for sustain / pitch
+2. The native-editor Phase N5 cutover decision in
+   `Spectr-Cutover-Gap-Tracker.md` is accepted, and the WebView reference build
+   remains reproducible for comparison and rollback.
+3. The current Claude sampler prototype has been imported into DesignIR and
+   mapped onto the accepted native editor primitives; any new reusable import
+   gaps are filed against Pulp rather than patched locally in Spectr.
+4. `feature/clap-midi-cc-coverage` has landed (needed for sustain / pitch
    bend).
-3. `#625` status is resolved: either landed (preferred route) or
+5. `#625` status is resolved: either landed (preferred route) or
    explicitly deferred to a Spectr-owned side-channel file format for
    frozen assets.
-4. A short Phase 4 scoping doc pins which subset of §4.2 is "MVP" and
+6. A capability probe records, per AUv2/VST3/CLAP/Standalone host, which main,
+   sidechain, auxiliary, file, device, or host-described sources are actually
+   discoverable and selectable. The UI fixture is generated from this matrix,
+   not from prototype placeholder names.
+7. A short Phase 4 scoping doc pins which subset of §4.2 is "MVP" and
    which is "production target," because the prototype has richer
    controls than the sampler-ideas "minimal" framing — the build team
    needs a clear line, not two competing design voices.

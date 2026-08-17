@@ -6,9 +6,8 @@
 // wrapper rather than PresetManager's default format. The wrapper
 // bundles four pieces so a round-trip always restores the full sound:
 //
-//   - StateStore blob: flat automatable parameters (Mix, Output,
-//     Response, Engine, Bands, Morph). Binary bytes are base64-encoded
-//     before landing in the JSON.
+//   - StateStore blob: flat host-automatable parameters (Mix and Output).
+//     Binary bytes are base64-encoded before landing in the JSON.
 //   - Plugin state: the supplemental blob (§5.4), which carries the
 //     canonical BandField, viewport, layout, and the A/B snapshot
 //     bank. Already JSON text — embedded as a nested object.

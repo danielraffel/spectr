@@ -19,13 +19,14 @@ struct Viewport {
         return min_hz > 0.0f && max_hz > min_hz && max_hz <= 192000.0f;
     }
 
-    /// Frequency (Hz) at band index `i` of a layout with `n` visible bands.
-    /// Uses log-spaced centres; edge bands sit at min_hz and max_hz.
+    /// Frequency (Hz) at the center of band `i`. The viewport bounds are the
+    /// outer edges of N equal log-frequency partitions; the first/last bands
+    /// may additionally own frequencies outside the viewport in the DSP mask.
     float band_center_hz(std::size_t i, std::size_t n) const noexcept {
-        if (n <= 1) return min_hz;
+        if (n == 0) return min_hz;
         const float lmin = std::log(min_hz);
         const float lmax = std::log(max_hz);
-        const float t = static_cast<float>(i) / static_cast<float>(n - 1);
+        const float t = (static_cast<float>(i) + 0.5f) / static_cast<float>(n);
         return std::exp(lmin + t * (lmax - lmin));
     }
 
@@ -38,7 +39,7 @@ struct Viewport {
         const float lmin = std::log(min_hz);
         const float lmax = std::log(max_hz);
         const float t = (std::log(hz) - lmin) / (lmax - lmin);
-        const auto idx = static_cast<std::size_t>(t * static_cast<float>(n - 1) + 0.5f);
+        const auto idx = static_cast<std::size_t>(t * static_cast<float>(n));
         return idx >= n ? n - 1 : idx;
     }
 };

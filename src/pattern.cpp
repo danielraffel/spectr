@@ -13,13 +13,14 @@
 #include <random>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 
 namespace spectr {
 
 namespace {
 
-constexpr float kDbMin = -60.0f;
-constexpr float kDbMax = +12.0f;
+constexpr float kDbMin = kBandGainMinDb;
+constexpr float kDbMax = kBandGainMaxDb;
 
 /// Map the prototype's [-1, +1] band value into Spectr's dB range.
 /// -Infinity in the prototype becomes muted=true in our model.
@@ -32,8 +33,7 @@ void proto_to_db(float proto_value, float& out_db, bool& out_muted) noexcept {
     out_muted = false;
     const float clamped = std::clamp(proto_value, -1.0f, 1.0f);
     out_db = clamped >= 0.0f ? clamped * kDbMax : -clamped * kDbMin;
-    // Note: -clamped * kDbMin because kDbMin is -60 and we want proto=-0.5
-    // to land at -30 dB, not +30. Derivation: -(-0.5) * (-60) = -30. ✓
+    // Note: -clamped * kDbMin preserves the negative sign on the lower half.
 }
 
 std::string iso_now() {
@@ -218,7 +218,12 @@ Pattern PatternLibrary::save_current(const BandField& current, std::string name)
     p.id     = make_uuid();
     if (name.empty()) {
         char buf[32];
-        std::snprintf(buf, sizeof(buf), "PATTERN %02d", next_user_number_++);
+        for (;;) {
+            std::snprintf(buf, sizeof(buf), "PATTERN %02d", next_user_number_++);
+            const auto collision = std::any_of(user_.begin(), user_.end(),
+                [&](const Pattern& existing) { return existing.name == buf; });
+            if (!collision) break;
+        }
         p.name = buf;
     } else {
         p.name = std::move(name);
@@ -346,10 +351,20 @@ std::size_t PatternLibrary::import_json(std::string_view json) {
     if (!root.hasObjectMember("version")) return 0;
     const auto v = root["version"];
     int version = 0;
-    if      (v.isInt32())   version = v.getInt32();
-    else if (v.isInt64())   version = static_cast<int>(v.getInt64());
-    else if (v.isFloat64()) version = static_cast<int>(v.getFloat64());
-    else return 0;
+    if (v.isInt32()) version = v.getInt32();
+    else if (v.isInt64()) {
+        const auto number = v.getInt64();
+        if (number < std::numeric_limits<int>::min()
+            || number > std::numeric_limits<int>::max()) return 0;
+        version = static_cast<int>(number);
+    } else if (v.isFloat64()) {
+        const auto number = v.getFloat64();
+        if (!std::isfinite(number)
+            || number < static_cast<double>(std::numeric_limits<int>::min())
+            || number > static_cast<double>(std::numeric_limits<int>::max()))
+            return 0;
+        version = static_cast<int>(number);
+    } else return 0;
     if (version != kPatternSchemaVersion) return 0;
 
     // Collect existing names (factory + user) for collision suffixing.
@@ -383,13 +398,20 @@ std::size_t PatternLibrary::import_json(std::string_view json) {
             if (po.hasObjectMember("gain_db") && po["gain_db"].isArray()) {
                 auto g = po["gain_db"];
                 const auto n = std::min<std::uint32_t>(g.size(), kMaxBands);
+                bool valid_gains = true;
                 for (std::uint32_t j = 0; j < n; ++j) {
                     const auto e = g[j];
-                    float v = 0.0f;
-                    if      (e.isFloat64()) v = static_cast<float>(e.getFloat64());
-                    else if (e.isInt64())   v = static_cast<float>(e.getInt64());
-                    p.gain_db[j] = v;
+                    double value = 0.0;
+                    if      (e.isFloat64()) value = e.getFloat64();
+                    else if (e.isInt64())   value = static_cast<double>(e.getInt64());
+                    else if (e.isInt32())   value = static_cast<double>(e.getInt32());
+                    else { valid_gains = false; break; }
+                    if (!std::isfinite(value)) { valid_gains = false; break; }
+                    p.gain_db[j] = static_cast<float>(std::clamp(
+                        value, static_cast<double>(kDbMin),
+                        static_cast<double>(kDbMax)));
                 }
+                if (!valid_gains) continue;
             }
             if (po.hasObjectMember("muted") && po["muted"].isArray()) {
                 auto m = po["muted"];
@@ -421,6 +443,98 @@ std::size_t PatternLibrary::import_json(std::string_view json) {
     }
 
     return imported;
+}
+
+bool PatternLibrary::restore_json(std::string_view json) {
+    choc::value::Value root;
+    try {
+        root = choc::json::parse(json);
+    } catch (...) {
+        return false;
+    }
+    if (!root.isObject()
+        || !root.hasObjectMember("format") || !root["format"].isString()
+        || root["format"].getString() != "spectr.patterns"
+        || !root.hasObjectMember("version")
+        || !root.hasObjectMember("patterns") || !root["patterns"].isArray()
+        || !root.hasObjectMember("default_id") || !root["default_id"].isString())
+        return false;
+
+    const auto encoded_version = root["version"];
+    int version = 0;
+    if (encoded_version.isInt32()) version = encoded_version.getInt32();
+    else if (encoded_version.isInt64()) {
+        const auto value = encoded_version.getInt64();
+        if (value < std::numeric_limits<int>::min()
+            || value > std::numeric_limits<int>::max()) return false;
+        version = static_cast<int>(value);
+    } else return false;
+    if (version != kPatternSchemaVersion) return false;
+
+    PatternLibrary staged;
+    std::unordered_set<std::string> ids;
+    for (const auto& pattern : staged.factory_) ids.insert(pattern.id);
+
+    const auto patterns = root["patterns"];
+    staged.user_.reserve(patterns.size());
+    for (std::uint32_t index = 0; index < patterns.size(); ++index) {
+        const auto encoded = patterns[index];
+        if (!encoded.isObject()
+            || !encoded.hasObjectMember("id") || !encoded["id"].isString()
+            || !encoded.hasObjectMember("name") || !encoded["name"].isString()
+            || !encoded.hasObjectMember("source") || !encoded["source"].isString()
+            || encoded["source"].getString() != "user"
+            || !encoded.hasObjectMember("created_at")
+            || !encoded["created_at"].isString()
+            || !encoded.hasObjectMember("updated_at")
+            || !encoded["updated_at"].isString()
+            || !encoded.hasObjectMember("gain_db")
+            || !encoded["gain_db"].isArray()
+            || encoded["gain_db"].size() != kMaxBands
+            || !encoded.hasObjectMember("muted") || !encoded["muted"].isArray()
+            || encoded["muted"].size() != kMaxBands)
+            return false;
+
+        Pattern pattern;
+        pattern.id = std::string(encoded["id"].getString());
+        if (pattern.id.empty() || !ids.insert(pattern.id).second) return false;
+        pattern.name = std::string(encoded["name"].getString());
+        pattern.source = PatternSource::User;
+        pattern.created_at = std::string(encoded["created_at"].getString());
+        pattern.updated_at = std::string(encoded["updated_at"].getString());
+
+        const auto gains = encoded["gain_db"];
+        const auto mutes = encoded["muted"];
+        for (std::uint32_t band = 0; band < kMaxBands; ++band) {
+            const auto gain = gains[band];
+            double value = 0.0;
+            if (gain.isFloat64()) value = gain.getFloat64();
+            else if (gain.isInt64()) value = static_cast<double>(gain.getInt64());
+            else if (gain.isInt32()) value = static_cast<double>(gain.getInt32());
+            else return false;
+            if (!std::isfinite(value) || !mutes[band].isBool()) return false;
+            pattern.gain_db[band] = static_cast<float>(std::clamp(
+                value, static_cast<double>(kDbMin), static_cast<double>(kDbMax)));
+            pattern.muted[band] = mutes[band].getBool();
+        }
+
+        if (encoded.hasObjectMember("tags")) {
+            if (!encoded["tags"].isArray()) return false;
+            const auto tags = encoded["tags"];
+            pattern.tags.reserve(tags.size());
+            for (std::uint32_t tag = 0; tag < tags.size(); ++tag) {
+                if (!tags[tag].isString()) return false;
+                pattern.tags.emplace_back(tags[tag].getString());
+            }
+        }
+        staged.user_.push_back(std::move(pattern));
+    }
+
+    const std::string default_id(root["default_id"].getString());
+    if (staged.find(default_id) == nullptr) return false;
+    staged.default_id_ = default_id;
+    *this = std::move(staged);
+    return true;
 }
 
 } // namespace spectr

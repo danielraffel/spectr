@@ -24,6 +24,8 @@ using spectr::apply_glide;
 using spectr::apply_level;
 using spectr::apply_sculpt;
 using spectr::dispatch_edit;
+using spectr::kBandGainMaxDb;
+using spectr::kBandGainMinDb;
 using spectr::kMaxBands;
 
 namespace {
@@ -91,16 +93,16 @@ TEST_CASE("M6 Level: flattens the swept range to the current value") {
 }
 
 TEST_CASE("M6 Boost: scales snapshot gains by drag direction") {
-    auto f0 = ramp_field(-10.0f, 1.0f);   // -10, -9, ..., -10 + 63 = +53 (clamped to +12)
+    auto f0 = ramp_field(-10.0f, 0.5f);
     const auto snap = BandSnapshot::capture(f0);
 
     SECTION("drag up boosts positive bands") {
         auto f = f0;
-        // Drag from 0 dB to +6 dB. dy_norm = 6/72 ≈ 0.083. mult = 1 + 0.33 ≈ 1.33.
+        // Drag from 0 dB to +6 dB. dy_norm = 6/48 = 0.125; mult = 1.5.
         const auto drag = make_drag(0, 0.0f, 0, +6.0f);
         apply_boost(f, drag, snap);
-        // band 15: snap = -10 + 15 = 5 → boosted ≈ 5 * 1.33 ≈ 6.66
-        CHECK(f.bands[15].gain_db > snap.gain_db[15]);
+        // band 25 is positive, so an upward drag increases it.
+        CHECK(f.bands[25].gain_db > snap.gain_db[25]);
     }
 
     SECTION("drag down pulls gains toward zero then flips") {
@@ -108,7 +110,7 @@ TEST_CASE("M6 Boost: scales snapshot gains by drag direction") {
         const auto drag = make_drag(0, 0.0f, 0, -6.0f);
         apply_boost(f, drag, snap);
         // Each band scaled by < 1.0; positive bands get smaller.
-        CHECK(std::fabs(f.bands[15].gain_db) < std::fabs(snap.gain_db[15]) + 0.01f);
+        CHECK(std::fabs(f.bands[25].gain_db) < std::fabs(snap.gain_db[25]) + 0.01f);
     }
 }
 
@@ -147,23 +149,19 @@ TEST_CASE("M6 Glide: interpolates each snapshot band toward current value by dra
 
     SECTION("full-range drag reaches current_value everywhere") {
         auto f = f0;
-        // Full drag from kDbMin (-60) to kDbMax (+12) → dy_norm = 1.0, t = 1.
-        const auto drag = make_drag(0, -60.0f, 0, +12.0f);
+        // Full drag across the canonical range → dy_norm = 1.0, t = 1.
+        const auto drag = make_drag(0, kBandGainMinDb, 0, kBandGainMaxDb);
         apply_glide(f, drag, snap);
         for (std::size_t i = 0; i < kMaxBands; ++i) {
-            CHECK(f.bands[i].gain_db == Approx(+12.0f));
+            CHECK(f.bands[i].gain_db == Approx(kBandGainMaxDb));
         }
     }
 
     SECTION("half-range drag is halfway between snapshot and current") {
         auto f = f0;
-        // Half-range drag within the clamp-valid dB window [-60, +12]:
-        // start at -18, end at +18 → Δ = 36 → dy_norm = 36/72 = 0.5, t = 0.5.
-        // Both endpoints land inside the range so the engine's clamp to
-        // kDbMax doesn't shift the target.
-        const auto drag = make_drag(0, -18.0f, 0, +18.0f);
+        // -12 to +12 spans half the canonical 48 dB range, so t = 0.5.
+        const auto drag = make_drag(0, -12.0f, 0, +12.0f);
         apply_glide(f, drag, snap);
-        // target clamped to kDbMax = +12.
         const float target = +12.0f;
         for (std::size_t i = 0; i < kMaxBands; ++i) {
             const float expected = snap.gain_db[i] + (target - snap.gain_db[i]) * 0.5f;
@@ -189,8 +187,11 @@ TEST_CASE("M6 snapshot-at-drag-start stays stable across the gesture") {
     apply_boost(f, d2, snap);
 
     // f after second call should be snap * mult_for_d2, not after_first * mult_for_d2.
-    const float expected_15 = snap.gain_db[15] * (1.0f + (6.0f / 72.0f) * 4.0f);
-    CHECK(f.bands[15].gain_db == Approx(std::clamp(expected_15, -60.0f, 12.0f)).margin(1e-4));
+    const float range = kBandGainMaxDb - kBandGainMinDb;
+    const float expected_15 = snap.gain_db[15] * (1.0f + (6.0f / range) * 4.0f);
+    CHECK(f.bands[15].gain_db == Approx(std::clamp(expected_15,
+                                                   kBandGainMinDb,
+                                                   kBandGainMaxDb)).margin(1e-4));
     (void)after_first;
 }
 

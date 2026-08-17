@@ -8,8 +8,8 @@ namespace spectr {
 
 namespace {
 
-constexpr float kDbMin = -60.0f;
-constexpr float kDbMax = +12.0f;
+constexpr float kDbMin = kBandGainMinDb;
+constexpr float kDbMax = kBandGainMaxDb;
 constexpr float kDbRange = kDbMax - kDbMin;
 
 float clamp_db(float v) noexcept {

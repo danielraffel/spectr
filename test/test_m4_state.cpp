@@ -39,12 +39,10 @@ struct Wired {
 TEST_CASE("M4: every V1 parameter is registered") {
     Wired w;
     auto params = w.store.all_params();
-    // At least the 5 V1 parameters should be present.
-    CHECK(params.size() >= 5);
+    CHECK(params.size() == 2);
 
     const std::vector<pulp::state::ParamID> expected = {
-        spectr::kMix, spectr::kOutputTrim, spectr::kResponseMode,
-        spectr::kEngineMode, spectr::kBandCount,
+        spectr::kMix, spectr::kOutputTrim,
     };
     for (auto id : expected) {
         bool found = false;
@@ -52,6 +50,8 @@ TEST_CASE("M4: every V1 parameter is registered") {
         INFO("Missing parameter id " << id);
         CHECK(found);
     }
+    for (const auto& param : params)
+        CHECK(param.name != "Morph");
 }
 
 TEST_CASE("M4: serialize_plugin_state produces non-empty JSON") {
@@ -156,9 +156,9 @@ TEST_CASE("M4: deserialize_plugin_state on empty span resets to defaults") {
     CHECK(w.proc->viewport().min_hz == Approx(20.0f));
 }
 
-TEST_CASE("M4: host param automation reaches the engine on process()") {
-    // Wire a fresh Spectr and drive it by setting store params, then
-    // verifying that process() picks up the new layout / mode.
+TEST_CASE("M4: band-count configuration publishes before process()") {
+    // Layout changes compile and publish through Pulp's shared control-side
+    // handoff; process() only consumes the latest complete table.
     Wired w;
     pulp::format::PrepareContext pc;
     pc.sample_rate     = 48000.0;
@@ -167,9 +167,7 @@ TEST_CASE("M4: host param automation reaches the engine on process()") {
     pc.output_channels = 2;
     w.proc->prepare(pc);
 
-    // Default layout is 32-band (Layout::Bands32). Switch param to 64-band
-    // and confirm process() picks it up.
-    w.store.set_value(spectr::kBandCount, 4.0f);  // index 4 = Bands64
+    w.proc->set_layout(spectr::Layout::Bands64);
 
     // Minimal buffers.
     std::vector<float> in0(256), in1(256), out0(256), out1(256);
@@ -184,4 +182,5 @@ TEST_CASE("M4: host param automation reaches the engine on process()") {
 
     w.proc->process(ov, iv, midi_in, midi_out, ctx);
     CHECK(w.proc->layout() == spectr::Layout::Bands64);
+    CHECK(w.store.all_params().size() == 2);
 }
