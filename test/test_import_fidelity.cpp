@@ -23,7 +23,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "1b5ee7d57e90f4f42c8f2109cd2a7a5164b9300ea70c39135b9564edcc7562ed";
+    "ee955daa9e524f663e497a695768b5c295c085fe75faeb5870dff885ffc68883";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -125,6 +125,13 @@ constexpr std::array kPatchNeedles{
     ContractMarker{"mute-timing-state", "  const lastTapRef = useRef(null); // { band, t } — for double-tap-to-mute detection"},
     ContractMarker{"mute-render-transition", "          rg[i] = smooth(rg[i], -1.02, dt * 26);\n          if (rg[i] < -1.01) rg[i] = -Infinity; // latch"},
     ContractMarker{"finite-canvas-gains", "    const effectiveGains = rg;"},
+    // Every band gain reaches a canvas Y through gainToY. These pin the three
+    // projection sites the adapter rewrites; drift in any of them silently
+    // restores an axis-floor or non-finite coordinate for a muted band.
+    ContractMarker{"gain-projector", "function gainToY(g, zeroY, halfH) {\n  if (isMuted(g)) return zeroY + halfH; // bottom\n  return zeroY - g * halfH;\n}"},
+    ContractMarker{"band-body-projection", "      const topY = zeroY - Math.max(gval, 0) * halfH;\n      const botY = zeroY - Math.min(gval, 0) * halfH;"},
+    ContractMarker{"response-spline-projection", "        y: zeroY - effectiveGains[i] * halfH,"},
+    ContractMarker{"band-geometry-seam", "        isSel: selection.has(i),\n      };\n    }"},
     ContractMarker{"mute-pointer-up", "      // A quick double-tap (same band, <350ms since last tap) toggles mute.\n      // Single taps do nothing — prevents accidental muting."},
     ContractMarker{"tap-jitter-boundary", "      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) p.didDrag = true;\n      const curBand = findBand(x, g);"},
     ContractMarker{"shortcut-ownership", "      's': 'sculpt', 'l': 'level', 'b': 'boost', 'f': 'flare', 'g': 'glide'"},
@@ -268,6 +275,21 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("center-origin unmute pulse") != adapter.npos);
     CHECK(adapter.find("finite canvas gain geometry") != adapter.npos);
     CHECK(adapter.find("finite hover gain display") != adapter.npos);
+    CHECK(adapter.find("guarded band gain projection") != adapter.npos);
+    CHECK(adapter.find("band body geometry uses guarded projection") != adapter.npos);
+    CHECK(adapter.find("response spline uses guarded projection") != adapter.npos);
+    CHECK(adapter.find("band body geometry oracle seam") != adapter.npos);
+    // A muted band must not be projected to the axis floor. The adapter both
+    // removes the floor return from gainToY and stops drawMaskResponse from
+    // reintroducing it, so neither form may survive in the emitted source.
+    CHECK(adapter.find("if (!Number.isFinite(g)) return zeroY;") != adapter.npos);
+    CHECK(adapter.find("return zeroY - clamp(g, -1.02, 1.02) * halfH;") != adapter.npos);
+    CHECK(adapter.find("gainToY(isMuted(tg[i]) ? 0 : rg[i], g.zeroY, g.halfH)")
+          != adapter.npos);
+    CHECK(adapter.find("gainToY(Math.max(gval, 0), zeroY, halfH)") != adapter.npos);
+    CHECK(adapter.find("gainToY(effectiveGains[i], zeroY, halfH)") != adapter.npos);
+    CHECK(count_occurrences(adapter, "isMuted(tg[i]) ? g.zeroY + g.halfH") == 0);
+    CHECK(count_occurrences(adapter, "if (isMuted(g)) return zeroY + halfH") == 1);
     CHECK(adapter.find("Never seed a synchronous WebKit paint") != adapter.npos);
     CHECK(adapter.find("independent analyzer dBFS ruler") != adapter.npos);
     CHECK(adapter.find("scale() {") != adapter.npos);

@@ -33,10 +33,12 @@ CanvasRenderingContext2D.prototype.fillText = function(text, ...args) {
 // WebKit rejects non-finite Canvas coordinates. Chromium is more permissive
 // for several methods, so make the executable oracle enforce the stricter
 // cross-engine contract.
+// arcTo is how the imported design builds every rounded rect (mute chip, hover
+// readout, minimap handles), so it belongs in the same net as the other path ops.
 for (const method of [
-  'arc', 'bezierCurveTo', 'clearRect', 'createLinearGradient',
+  'arc', 'arcTo', 'bezierCurveTo', 'clearRect', 'createLinearGradient',
   'createRadialGradient', 'ellipse', 'fillRect', 'lineTo', 'moveTo',
-  'quadraticCurveTo', 'rect', 'rotate', 'scale', 'setTransform',
+  'quadraticCurveTo', 'rect', 'rotate', 'roundRect', 'scale', 'setTransform',
   'strokeRect', 'transform', 'translate',
 ]) {
   const original = CanvasRenderingContext2D.prototype[method];
@@ -413,6 +415,52 @@ window.spectrStartOracle = () => {
           message.type === 'morph' && message.payload.t === 0.5), 'reopened morph command');
         await spectrWaitFor(() => window.__spectrTestHooks.renderState?.().targetGains[7] === -Infinity,
           'reopened authoritative midpoint mute');
+        // spectr#35 / spectr#44 regression. Control state legitimately carries
+        // the -Infinity mute sentinel; projected canvas coordinates never may,
+        // and a muted band belongs ON the 0 dB line beside its mute badge, not
+        // at the axis floor. A snapshot hydrate followed by a morph is the
+        // exact combination that produced both symptoms, and it is the one the
+        // close/reconstruct rig never reached.
+        await spectrWaitFor(() =>
+          window.__spectrTestHooks.renderState?.().bandGeometry?.responseY?.length,
+        'projected band geometry after reopened morph');
+        const projected = window.__spectrTestHooks.renderState();
+        const geometry = projected.bandGeometry;
+        if (!Number.isFinite(geometry.zeroY) || !Number.isFinite(geometry.halfH)
+            || geometry.halfH <= 0)
+          throw new Error('projected band geometry frame was not finite: '
+            + JSON.stringify({ zeroY: geometry.zeroY, halfH: geometry.halfH }));
+        for (const key of ['responseY', 'topY', 'botY']) {
+          const coordinates = geometry[key];
+          if (coordinates.length !== projected.nVisible)
+            throw new Error('projected ' + key + ' did not cover every band: '
+              + coordinates.length + ' of ' + projected.nVisible);
+          const offending = coordinates.findIndex(value => !Number.isFinite(value));
+          if (offending !== -1)
+            throw new Error('non-finite projected ' + key + ' at band '
+              + offending + ': ' + coordinates[offending]);
+          // The band body legitimately animates between 0 dB and the collapse
+          // floor, so only bound it to the plot. The mask response curve has no
+          // transition and must sit exactly on 0 dB for a muted band.
+          const bound = geometry.halfH * 1.05;
+          const strayed = coordinates.findIndex(value =>
+            value < geometry.zeroY - bound || value > geometry.zeroY + bound);
+          if (strayed !== -1)
+            throw new Error('projected ' + key + ' left the plot at band '
+              + strayed + ': ' + coordinates[strayed]);
+          if (key !== 'responseY') continue;
+          const floored = projected.targetGains.findIndex((gain, index) =>
+            gain === -Infinity
+            && Math.abs(coordinates[index] - geometry.zeroY) > 1e-6);
+          if (floored !== -1)
+            throw new Error('muted band ' + floored
+              + ' left the 0 dB line in the mask response: '
+              + coordinates[floored] + ' (0 dB at ' + geometry.zeroY
+              + ', axis floor at ' + (geometry.zeroY + geometry.halfH) + ')');
+        }
+        if (!projected.targetGains.includes(-Infinity))
+          throw new Error('mask response 0 dB contract was not exercised: '
+            + 'no muted band survived the reopened morph');
         if (!spectrBundleClean())
           throw new Error('bundle error after reopened morph and synchronous paint');
         window.dispatchEvent(new Event('pagehide'));
