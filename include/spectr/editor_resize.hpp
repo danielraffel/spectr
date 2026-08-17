@@ -40,6 +40,55 @@ static_assert(kEditorMaximumWidth * kEditorDesignHeight
 // in newer SDKs. The member probes are dependent on ViewSize, so an older
 // seven-field ViewSize remains a supported compile target without preprocessor
 // version guesses.
+// Resolved target for an editor-owned resize gesture.
+struct EditorResizeTarget {
+    std::uint32_t width;
+    std::uint32_t height;
+};
+
+// Resolve a resize-grip drag into an aspect-locked size inside the declared
+// host bounds.
+//
+// AU v2 has no host->plugin resize callback, so the editor owns its resize
+// affordance and asks the host for a size (see `Spectr::create_native_editor_`).
+// That makes this the single place the two guarantees live: the authored aspect
+// ratio is preserved exactly, and the result never leaves
+// [kEditorMinimum*, kEditorMaximum*] — so a drag cannot produce a geometry the
+// responsive layout was never validated at.
+//
+// `dx` / `dy` are cumulative pointer deltas from the drag start; `base_*` is the
+// editor size when the drag began. The axis the user moved further (compared in
+// width-equivalent units) drives the result, which keeps a mostly-vertical drag
+// from feeling dead.
+inline EditorResizeTarget resolve_editor_resize(std::uint32_t base_width,
+                                                std::uint32_t base_height,
+                                                double dx,
+                                                double dy) {
+    const double from_x = static_cast<double>(base_width) + dx;
+    const double from_y =
+        (static_cast<double>(base_height) + dy) * kEditorAspectRatio;
+    double width = (dx * dx >= dy * dy * kEditorAspectRatio * kEditorAspectRatio)
+        ? from_x
+        : from_y;
+
+    const auto clamp = [](double value, double low, double high) {
+        return value < low ? low : (value > high ? high : value);
+    };
+    width = clamp(width, static_cast<double>(kEditorMinimumWidth),
+                  static_cast<double>(kEditorMaximumWidth));
+    double height = width / kEditorAspectRatio;
+    if (height < static_cast<double>(kEditorMinimumHeight)
+        || height > static_cast<double>(kEditorMaximumHeight)) {
+        height = clamp(height, static_cast<double>(kEditorMinimumHeight),
+                       static_cast<double>(kEditorMaximumHeight));
+        width = height * kEditorAspectRatio;
+    }
+    return EditorResizeTarget{
+        static_cast<std::uint32_t>(width + 0.5),
+        static_cast<std::uint32_t>(height + 0.5),
+    };
+}
+
 template <typename ViewSize>
 constexpr ViewSize make_editor_view_size() {
     ViewSize size{

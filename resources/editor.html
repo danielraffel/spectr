@@ -543,7 +543,7 @@ window.FilterBank = FilterBank;`,
       'band context menu ignores analyzer-only parent renders');
     replaceSpectrSource(
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
-      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  const resolutionGeometryRef = useRef(\'\');',
+      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  const resolutionGeometryRef = useRef(\'\');\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
       'independent muted gain hydration');
     replaceSpectrSource(
       String.raw`      const next = new Array(N).fill(0);
@@ -686,6 +686,50 @@ window.FilterBank = FilterBank;`,
           unmutePulseRef.current[i] - dt * 3.5);
       }`,
       'categorical mute render transition');
+    // Every band gain becomes a canvas Y through exactly one projector, the way
+    // every analyzer amount goes through window.SpectrAnalyzer.project. Two
+    // invariants live here so no individual draw site has to remember them:
+    // the result is always finite, and a muted band sits ON the 0 dB line next
+    // to its mute badge. Dropping a muted band to `zeroY + halfH` reads as a
+    // real -24 dB notch, which contradicts the bar that already rests at 0.
+    replaceSpectrSource(
+      String.raw`function gainToY(g, zeroY, halfH) {
+  if (isMuted(g)) return zeroY + halfH; // bottom
+  return zeroY - g * halfH;
+}`,
+      String.raw`function gainToY(g, zeroY, halfH) {
+  if (!Number.isFinite(zeroY)) return 0;
+  if (!Number.isFinite(halfH) || halfH < 0) return zeroY;
+  // -Infinity is categorical mute, not an extreme magnitude: rest on 0 dB.
+  if (!Number.isFinite(g)) return zeroY;
+  return zeroY - clamp(g, -1.02, 1.02) * halfH;
+}`,
+      'guarded band gain projection');
+    replaceSpectrSource(
+      String.raw`      const topY = zeroY - Math.max(gval, 0) * halfH;
+      const botY = zeroY - Math.min(gval, 0) * halfH;`,
+      String.raw`      const topY = gainToY(Math.max(gval, 0), zeroY, halfH);
+      const botY = gainToY(Math.min(gval, 0), zeroY, halfH);`,
+      'band body geometry uses guarded projection');
+    replaceSpectrSource(
+      String.raw`        isSel: selection.has(i),
+      };
+    }`,
+      String.raw`        isSel: selection.has(i),
+      };
+    }
+    if (window.__spectrTestHooks)
+      bandGeometryRef.current = {
+        ...(bandGeometryRef.current || {}),
+        zeroY, halfH,
+        topY: geom.map(entry => entry.topY),
+        botY: geom.map(entry => entry.botY),
+      };`,
+      'band body geometry oracle seam');
+    replaceSpectrSource(
+      '        y: zeroY - effectiveGains[i] * halfH,',
+      '        y: gainToY(effectiveGains[i], zeroY, halfH),',
+      'response spline uses guarded projection');
     replaceSpectrSource(
       '    const effectiveGains = rg;',
       String.raw`    // A categorical mute uses -Infinity in control state, but Canvas APIs
@@ -1003,13 +1047,20 @@ window.FilterBank = FilterBank;`,
     ctx.rect(g.inner.x, g.inner.y, g.inner.w, g.inner.h);
     ctx.clip();
     ctx.beginPath();
+    const projected = new Array(N);
     for (let i = 0; i < N; ++i) {
-      const rendered = Number.isFinite(rg[i]) ? clamp(rg[i], -1, 1) : 0;
-      const y = isMuted(tg[i]) ? g.zeroY + g.halfH
-        : g.zeroY - rendered * g.halfH;
+      // A muted band contributes no attenuation curve of its own; it rests on
+      // the 0 dB line beside its mute badge instead of diving to the floor.
+      const y = gainToY(isMuted(tg[i]) ? 0 : rg[i], g.zeroY, g.halfH);
       const x = bandCenterX(i, g);
+      projected[i] = y;
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
+    if (window.__spectrTestHooks)
+      bandGeometryRef.current = {
+        ...(bandGeometryRef.current || {}),
+        zeroY: g.zeroY, halfH: g.halfH, responseY: projected,
+      };
     ctx.strokeStyle = 'rgba(220,238,255,0.92)';
     ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
@@ -2130,6 +2181,18 @@ window.PatternManager = PatternManager;`,
       nVisible: N,
       bankReady: !!sharedState?.current,
       unmutePulse: Array.from(unmutePulseRef.current),
+      // Canvas coordinates as actually projected by the last paint. Control
+      // state may legitimately hold the -Infinity mute sentinel; geometry
+      // never may, and a muted band must land on the 0 dB line.
+      bandGeometry: bandGeometryRef.current
+        ? {
+            zeroY: bandGeometryRef.current.zeroY,
+            halfH: bandGeometryRef.current.halfH,
+            responseY: Array.from(bandGeometryRef.current.responseY || []),
+            topY: Array.from(bandGeometryRef.current.topY || []),
+            botY: Array.from(bandGeometryRef.current.botY || []),
+          }
+        : null,
       snapshots: {
         A: !!snapshotsRef.current.A,
         B: !!snapshotsRef.current.B,

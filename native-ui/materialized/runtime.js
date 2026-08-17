@@ -8817,13 +8817,38 @@
       applyMaterializedImportMetadata(activeMaterializedMetadata);
       applySpectrToolbarOpticalCentering();
     }
+    // Pulp pins the materialized behaviour layer to the AUTHORED design box
+    // (materialized_runtime_entry.mjs: setFlex(behaviorRootId,'width',
+    // authoredWidth)), while the captured document root inside it follows the
+    // host. That is correct for a pinned design-viewport import, but Spectr
+    // hosts this design responsively: above 1320x860 the layer clips its own
+    // reflowed content, and hit testing never descends into a container the
+    // point falls outside of, so EVERY control goes dead. Track the host here.
+    g5.setFlex(behaviorRootId, "width", width);
+    g5.setFlex(behaviorRootId, "height", height);
     const values = materializedDomRegistryValues();
     const root = materializedNodeAtPath({ path: [{ tag: "div", index: 0 }] }, values);
     const children = root ? materializedElementChildren(root, new Set(values)) : [];
     const idOf = (node) => String(node && (node.__pulpId || node.id) || "");
+    // The widget bridge silently degrades a mistyped or non-finite geometry
+    // argument instead of reporting it — measured: setLeft(undefined) snaps to
+    // 0, setLeft(NaN) falls back to the flow position, and
+    // setFlex(id,'width',undefined|NaN) drops to auto-sizing. None of the three
+    // throws, logs, or returns an error, so all of them still render something
+    // plausible. That is precisely how the wrong metrics keys below survived
+    // here undetected. Refuse the write and record it, so the layout cannot
+    // degrade quietly and a test can assert this list stays empty.
+    const rejectedBoxes = g5.__spectrResponsiveLayoutRejects__
+      || (g5.__spectrResponsiveLayoutRejects__ = []);
     const setBox = (node, left, top, boxWidth, boxHeight) => {
       const id = idOf(node);
       if (!id) return false;
+      if (![left, top, boxWidth, boxHeight].every(Number.isFinite)) {
+        if (rejectedBoxes.length < 64)
+          rejectedBoxes.push(id + ":" + [left, top, boxWidth, boxHeight]
+            .map(String).join(","));
+        return false;
+      }
       g5.setPosition(id, "absolute");
       g5.setLeft(id, left);
       g5.setTop(id, top);
@@ -8901,8 +8926,15 @@
       firstRow.forEach(([index, left]) => {
         const metrics = idOf(bottomChildren[index]) && g5.getLayoutBoxMetrics
           ? g5.getLayoutBoxMetrics(idOf(bottomChildren[index])) : null;
-        setBox(bottomChildren[index], left, 8,
-          metrics && metrics.width > 0 ? metrics.width : 26, 26);
+        // getLayoutBoxMetrics reports the DOM box model - offsetWidth, not
+        // width. Reading `metrics.width` yielded undefined for every rail
+        // control, so each one silently took the 26px icon-square fallback.
+        // For a wrapped control that only shrank the wrapper, but CLEAR is the
+        // button itself: its 46px "CLEAR" run then painted 20px past a 26px hit
+        // box, leaving visible ink with no hit region behind it (spectr #39).
+        const measured = metrics && Number.isFinite(metrics.offsetWidth)
+          ? metrics.offsetWidth : 0;
+        setBox(bottomChildren[index], left, 8, measured > 0 ? measured : 26, 26);
       });
       [[8, 12, 72], [9, 92, 35], [10, 135, 35], [11, 178, 39],
        [12, 225, 39], [13, 272, 180]].forEach(
@@ -8920,8 +8952,14 @@
         [2, 3, 4, 5, 6].forEach((index) => {
           const id = idOf(topChildren[index]);
           const metrics = id && g5.getLayoutBoxMetrics ? g5.getLayoutBoxMetrics(id) : null;
-          if (metrics) setBox(topChildren[index], metrics.left + delta, metrics.top,
-                              metrics.width, metrics.height);
+          // Same box-model key mismatch as the compact rail above: left/top/
+          // width/height do not exist on this payload, so this shifted the
+          // top-row controls to `undefined + delta` (NaN) with undefined extent
+          // at any non-authored width.
+          if (metrics && Number.isFinite(metrics.localX)
+              && Number.isFinite(metrics.offsetWidth))
+            setBox(topChildren[index], metrics.localX + delta, metrics.localY,
+                   metrics.offsetWidth, metrics.offsetHeight);
         });
         setBox(bottomChildren[15], width - 86, 15.5, 26, 26);
         setBox(bottomChildren[16], width - 46, 15.5, 26, 26);

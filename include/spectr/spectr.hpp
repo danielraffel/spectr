@@ -87,7 +87,16 @@ inline pulp::format::PluginDescriptor make_descriptor() {
         .name         = "Spectr",
 #endif
         .manufacturer = "Pulp",
+        // The CLAP adapter uses this as the plugin ID, which is the identity a
+        // host persists in session state. It must differ from production or an
+        // installed preview collides with it: a session saved against one can
+        // resolve to the other. REAPER hides this by keying its cache on
+        // filename, so the collision is invisible until a host keys by ID.
+#if defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
+        .bundle_id    = "com.pulp.spectr.native-preview",
+#else
         .bundle_id    = "com.pulp.spectr",
+#endif
         .version      = "1.0.0",
         .category     = pulp::format::PluginCategory::Effect,
     };

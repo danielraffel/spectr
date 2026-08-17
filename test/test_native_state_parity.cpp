@@ -277,6 +277,145 @@ struct NativeEditorRig {
     }
 };
 
+// Root-space rectangle, so paint geometry and hit geometry can be compared in
+// one coordinate space regardless of where a view sits in the tree.
+struct RootRect {
+    float left = 0.0f, top = 0.0f, right = 0.0f, bottom = 0.0f;
+};
+
+RootRect root_rect(const View& view) {
+    const auto bounds = view.bounds();
+    const auto origin = root_point(view, 0.0f, 0.0f);
+    return {origin.x, origin.y, origin.x + bounds.width,
+            origin.y + bounds.height};
+}
+
+bool chain_interactive(const View& view) {
+    for (const auto* node = &view; node != nullptr; node = node->parent())
+        if (!node->visible() || !node->enabled()) return false;
+    return true;
+}
+
+const View* nearest_click_target(const View* view) {
+    while (view != nullptr && !view->on_click) view = view->parent();
+    return view;
+}
+
+void collect_click_targets(const View& view, std::vector<const View*>& out) {
+    if (view.on_click && chain_interactive(view)) out.push_back(&view);
+    for (std::size_t index = 0; index < view.child_count(); ++index)
+        collect_click_targets(*view.child_at(index), out);
+}
+
+// What the user aims at: the control's own border box unioned with every
+// visible descendant box AND every shaped glyph run inside it. A label whose
+// run is wider than the box it lives in is painted ink with no hit region
+// behind it, which reads as "the button only works in part of the button".
+RootRect painted_extent(const View& control) {
+    auto extent = root_rect(control);
+    const std::function<void(const View&)> walk = [&](const View& view) {
+        if (!view.visible()) return;
+        const auto box = root_rect(view);
+        extent.left = std::min(extent.left, box.left);
+        extent.top = std::min(extent.top, box.top);
+        extent.right = std::max(extent.right, box.right);
+        extent.bottom = std::max(extent.bottom, box.bottom);
+        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view)) {
+            for (const auto& line : label->cached_line_boxes()) {
+                const auto run = root_point(view, line.left, line.top);
+                extent.left = std::min(extent.left, run.x);
+                extent.top = std::min(extent.top, run.y);
+                extent.right = std::max(extent.right, run.x + line.width);
+                extent.bottom = std::max(extent.bottom, run.y + line.height);
+            }
+        }
+        for (std::size_t index = 0; index < view.child_count(); ++index)
+            walk(*view.child_at(index));
+    };
+    for (std::size_t index = 0; index < control.child_count(); ++index)
+        walk(*control.child_at(index));
+    return extent;
+}
+
+std::string describe_control(const View& view) {
+    const auto box = root_rect(view);
+    std::ostringstream out;
+    out << (view.id().empty() ? std::string("<anonymous>") : view.id())
+        << " root(" << box.left << ',' << box.top << " -> " << box.right << ','
+        << box.bottom << ')';
+    return out.str();
+}
+
+// Sample the whole hit box, not just the middle: the reported failures were all
+// at an edge of a painted control.
+std::vector<Point> box_probe_points(const View& control) {
+    const auto bounds = control.bounds();
+    const std::array<std::pair<float, float>, 9> fractions{{
+        {0.5f, 0.5f}, {0.02f, 0.06f}, {0.98f, 0.06f}, {0.02f, 0.94f},
+        {0.98f, 0.94f}, {0.02f, 0.5f}, {0.98f, 0.5f}, {0.5f, 0.06f},
+        {0.5f, 0.94f},
+    }};
+    std::vector<Point> points;
+    points.reserve(fractions.size());
+    for (const auto& [fx, fy] : fractions)
+        points.push_back(
+            root_point(control, bounds.width * fx, bounds.height * fy));
+    return points;
+}
+
+// Count native "click" dispatches by wrapping the one global the widget bridge
+// actually calls. Wrapping the React callback registry instead proves nothing:
+// the bridge holds each JS callback directly and never consults that map.
+void install_click_dispatch_counter(NativeEditorRig& rig) {
+    rig.bridge().load_script(R"js((() => {
+      globalThis.__spectrClickDispatchCount = 0;
+      if (globalThis.__spectrClickDispatchWrapped) return;
+      if (typeof globalThis.__dispatch__ !== 'function')
+        throw new Error('widget bridge __dispatch__ global is missing');
+      globalThis.__spectrClickDispatchWrapped = true;
+      const inner = globalThis.__dispatch__;
+      globalThis.__dispatch__ = function (id, event, payload) {
+        if (event === 'click')
+          globalThis.__spectrClickDispatchCount =
+            (globalThis.__spectrClickDispatchCount || 0) + 1;
+        return inner.call(this, id, event, payload);
+      };
+    })();)js", "spectr-native-click-dispatch-counter");
+}
+
+// The bridge has no evaluate-with-result seam, so read the counter back the way
+// the rest of this file reads runtime state: throw it and parse the message.
+int click_dispatch_count(NativeEditorRig& rig) {
+    try {
+        rig.bridge().load_script(
+            "throw new Error('CLICKS:' + globalThis.__spectrClickDispatchCount);",
+            "spectr-native-click-dispatch-read");
+    } catch (const std::exception& error) {
+        const std::string message = error.what();
+        const auto marker = message.find("CLICKS:");
+        if (marker != std::string::npos)
+            return std::atoi(message.c_str() + marker + 7);
+    }
+    FAIL("click dispatch counter was not readable");
+    return -1;
+}
+
+// The responsive layer refuses to write a non-finite box and records it. An
+// empty list is the contract: the bridge coerces bad geometry silently (a
+// mistyped metrics key snaps a control to 0, to its flow position, or to
+// auto-size), so this is the only signal that the layout arithmetic held.
+void require_no_rejected_layout_boxes(NativeEditorRig& rig) {
+    try {
+        rig.bridge().load_script(
+            "if ((globalThis.__spectrResponsiveLayoutRejects__ || []).length)"
+            " throw new Error('responsive layout rejected non-finite boxes: '"
+            " + JSON.stringify(globalThis.__spectrResponsiveLayoutRejects__));",
+            "spectr-native-layout-reject-contract");
+    } catch (const std::exception& error) {
+        FAIL(error.what());
+    }
+}
+
 void native_click_label(NativeEditorRig& rig, std::string_view text) {
     const auto* label = find_label(*rig.root, text);
     REQUIRE(label != nullptr);
@@ -1137,4 +1276,100 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     require_app_state(deleted_reopen, "s.userPatterns.length === 0",
                       "deleted preset reappeared after native reopen");
     storage.require_unchanged();
+}
+
+// Every button must be tappable across its whole painted area, at every host
+// size — issue #39, reported twice from Logic. Two separate invariants, because
+// two different layers can break the promise:
+//
+//  1. Paint must not spill outside the hit box. Pulp hit-tests a view's box; a
+//     glyph run wider than its button is visible ink with no hit region behind
+//     it. The 2px slack absorbs the 1px border a captured chip paints on its
+//     own edge, and nothing larger.
+//  2. Every point inside the hit box must resolve to that control. Hit testing
+//     returns the deepest painted node (a label or an icon), so the walk to the
+//     nearest interactive ancestor has to succeed from anywhere in the box.
+//
+// Then one end-to-end sweep at the host's preferred size proves a synthesized
+// click at those points actually reaches the application, not just the view.
+TEST_CASE("native buttons are tappable across their whole painted bounds",
+          "[native-n1][tap-targets]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    constexpr float kBorderSlack = 2.0f;
+
+    for (const auto& size : std::array<std::pair<int, int>, 4>{
+             std::pair{792, 516}, std::pair{990, 645},
+             std::pair{1320, 860}, std::pair{2640, 1720}}) {
+        rig.resize(static_cast<float>(size.first),
+                   static_cast<float>(size.second));
+        // QuickJS needs more host frames than a JIT engine to finish the React
+        // commit this resize schedules; assert on the settled tree.
+        settle(rig.clock, 96);
+        INFO("host size " << size.first << 'x' << size.second);
+        require_no_rejected_layout_boxes(rig);
+
+        std::vector<const View*> controls;
+        collect_click_targets(*rig.root, controls);
+        REQUIRE(controls.size() >= 15);
+
+        for (const auto* control : controls) {
+            const auto box = root_rect(*control);
+            if (box.right - box.left <= 0.0f || box.bottom - box.top <= 0.0f)
+                continue;
+            INFO("control " << describe_control(*control));
+            const auto painted = painted_extent(*control);
+            CAPTURE(painted.left, painted.top, painted.right, painted.bottom,
+                    box.left, box.top, box.right, box.bottom);
+            CHECK(painted.left >= box.left - kBorderSlack);
+            CHECK(painted.top >= box.top - kBorderSlack);
+            CHECK(painted.right <= box.right + kBorderSlack);
+            CHECK(painted.bottom <= box.bottom + kBorderSlack);
+
+            for (const auto& point : box_probe_points(*control)) {
+                CAPTURE(point.x, point.y);
+                auto* hit = rig.root->hit_test(point);
+                REQUIRE(hit != nullptr);
+                INFO("hit " << describe_control(*hit));
+                const auto* resolved = nearest_click_target(hit);
+                INFO("resolved "
+                     << (resolved ? describe_control(*resolved)
+                                  : std::string("<none>")));
+                CHECK(resolved == control);
+            }
+        }
+    }
+
+    // Logic opens the editor at the preferred size, which is where the reported
+    // dead zones were. Prove the whole box is live end to end there.
+    rig.resize(990, 645);
+    settle(rig.clock, 96);
+    install_click_dispatch_counter(rig);
+    std::vector<const View*> controls;
+    collect_click_targets(*rig.root, controls);
+    REQUIRE(controls.size() >= 15);
+    for (const auto* control : controls) {
+        if (control->bounds().width <= 0.0f || control->bounds().height <= 0.0f)
+            continue;
+        INFO("control " << describe_control(*control));
+        // Aim at the PAINTED extent, in root space, because that is what the
+        // user aims at. Probing the hit box instead would pass even when ink
+        // spills outside it, which is the whole complaint in #39.
+        const auto painted = painted_extent(*control);
+        const float y = (painted.top + painted.bottom) * 0.5f;
+        for (const float x : {painted.left + 1.5f,
+                              (painted.left + painted.right) * 0.5f,
+                              painted.right - 1.5f}) {
+            CAPTURE(x, y, painted.left, painted.right);
+            const auto before = click_dispatch_count(rig);
+            rig.root->simulate_click({x, y});
+            settle(rig.clock, 12);
+            // EXACTLY one, not "at least one". A single native click must reach
+            // the application once: the bridge stamps a __pulpDispatchToken on
+            // every pointer payload for de-duplication, but nothing on the JS
+            // side reads it, so a double delivery here would double-apply a
+            // parameter edit with no backstop.
+            CHECK(click_dispatch_count(rig) == before + 1);
+        }
+    }
 }

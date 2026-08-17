@@ -141,3 +141,82 @@ TEST_CASE("editor bridge never degrades a malformed revision into an uncondition
     CHECK(r.processor.editor_authority().revision() == 0);
     CHECK(r.processor.field().bands[6].gain_db == Approx(0.0f));
 }
+
+// spectr#49. `revision` is the editor's change signal: the UI and the host
+// automation path both treat a bump as "the state moved". Two call sites
+// publish the same processing state (a tap handler and an async effect), so
+// under contention the same state arrives twice and the second arrival used to
+// bump anyway — a change report for a change that did not happen. With #34
+// making ~140 parameters host-automatable and #37 having the UI observe them,
+// a false change signal at that scale drives spurious parameter writes and
+// redundant repaints, so idempotence is the correct invariant rather than a
+// workaround for a flaky test.
+TEST_CASE("editor authority treats a re-published identical state as no change",
+          "[editor-authority][idempotence]") {
+    AuthorityRig r;
+    auto& authority = r.processor.editor_authority();
+    REQUIRE(authority.revision() == 0);
+
+    const spectr::Viewport viewport{80.0f, 8000.0f};
+    auto field = r.processor.field();
+    field.bands[16].muted = true;
+
+    // A real change advances exactly once.
+    const auto first = authority.replace_processing_state(
+        field, viewport, spectr::Layout::Bands32, 0);
+    REQUIRE(first.accepted);
+    REQUIRE(first.revision == 1);
+    REQUIRE(r.processor.field().bands[16].muted);
+
+    // The duplicate the reproduction captured: byte-identical payload, arriving
+    // after the original was already applied. Accepted, but not a change.
+    const auto duplicate = authority.replace_processing_state(
+        field, viewport, spectr::Layout::Bands32, 1);
+    CHECK(duplicate.accepted);
+    CHECK(duplicate.revision == 1);
+    CHECK(authority.revision() == 1);
+    CHECK(r.processor.field().bands[16].muted);
+
+    // Repeating it cannot creep the counter either.
+    for (int repeat = 0; repeat < 4; ++repeat) {
+        const auto again = authority.replace_processing_state(
+            field, viewport, spectr::Layout::Bands32, 1);
+        CHECK(again.accepted);
+        CHECK(again.revision == 1);
+    }
+    CHECK(authority.revision() == 1);
+
+    // Idempotence must not swallow a real edit that follows.
+    field.bands[16].muted = false;
+    const auto unmute = authority.replace_processing_state(
+        field, viewport, spectr::Layout::Bands32, 1);
+    CHECK(unmute.accepted);
+    CHECK(unmute.revision == 2);
+    CHECK_FALSE(r.processor.field().bands[16].muted);
+
+    // Nor a change confined to the viewport, or to the layout, with the band
+    // field untouched — both are sound-defining in Spectr.
+    const auto zoom = authority.replace_processing_state(
+        field, {100.0f, 10000.0f}, spectr::Layout::Bands32, 2);
+    CHECK(zoom.accepted);
+    CHECK(zoom.revision == 3);
+
+    const auto relayout = authority.replace_processing_state(
+        field, {100.0f, 10000.0f}, spectr::Layout::Bands40, 3);
+    CHECK(relayout.accepted);
+    CHECK(relayout.revision == 4);
+
+    // A single-band, single-dB delta is a change, not rounding noise.
+    field.bands[0].gain_db = 1.0f;
+    const auto nudge = authority.replace_processing_state(
+        field, {100.0f, 10000.0f}, spectr::Layout::Bands40, 4);
+    CHECK(nudge.accepted);
+    CHECK(nudge.revision == 5);
+
+    // A stale expectation must still reject, and must not be reinterpreted as
+    // an idempotent no-op just because the payload happens to match.
+    const auto stale = authority.replace_processing_state(
+        field, {100.0f, 10000.0f}, spectr::Layout::Bands40, 1);
+    CHECK_FALSE(stale.accepted);
+    CHECK(stale.revision == 5);
+}
