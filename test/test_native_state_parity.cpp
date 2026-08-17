@@ -402,6 +402,49 @@ void require_runtime_contract(NativeEditorRig& rig,
     rig.bridge().load_script(script, "spectr-native-responsive-contract");
 }
 
+
+// Wait for a runtime predicate rather than assuming a fixed frame budget.
+// A bare `settle(clock, N)` encodes ONE engine's commit latency: QuickJS is an
+// interpreter, and measurably needs 2-4x more host frames than JIT-compiled JSC
+// to finish the same React commit (16 and 32 frames fail, 64 pass). A budget
+// tuned under JSC therefore fails under QuickJS even though the element does
+// mount, which reads as a product defect and is not one. Polling keeps the
+// assertion about BEHAVIOUR - does it commit - instead of about speed, and it
+// also removes the pre-existing race this call site already warned about on a
+// heavily loaded host. Raising the constant would have hidden both.
+void settle_until_contract(NativeEditorRig& rig,
+                           std::string_view expression,
+                           std::string_view message,
+                           int max_frames = 240,
+                           int poll_frames = 8) {
+    for (int waited = 0; waited + poll_frames <= max_frames; waited += poll_frames) {
+        settle(rig.clock, poll_frames);
+        try {
+            require_runtime_contract(rig, expression, message);
+            return;
+        } catch (const std::exception&) {
+            // Not committed yet; keep servicing host frames until the budget ends.
+        }
+    }
+    // Budget exhausted - run once more unguarded so the real diagnostic surfaces.
+    require_runtime_contract(rig, expression, message);
+}
+
+
+// C++-side counterpart to settle_until_contract: wait for an OBSERVABLE EFFECT
+// instead of assuming one host frame is enough. Driving a DOM event and then
+// asserting processor state on the next line assumes the React commit and the
+// resulting processor mutation both land synchronously; they do not. Under
+// JIT-compiled JSC that assumption held often enough to look deterministic.
+template <typename Predicate>
+void settle_until(NativeEditorRig& rig, Predicate&& predicate,
+                  int max_frames = 240, int poll_frames = 8) {
+    for (int waited = 0; waited + poll_frames <= max_frames; waited += poll_frames) {
+        if (predicate()) return;
+        settle(rig.clock, poll_frames);
+    }
+}
+
 std::vector<Point> snapshot_hit_points(const View& button,
                                        std::string_view text,
                                        bool capture_button) {
@@ -1008,13 +1051,23 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     REQUIRE(visibly_tall_preview_bars >= 40);
     capture(rig, directory, "pattern-manager");
     activate(rig, "[data-spectr-pattern-id=" + js_string(pattern_id) + "]");
+    // Selecting the row is itself a React commit. Clicking rename-start before it
+    // lands targets a node that does not exist yet, so the click is swallowed and
+    // the rename never starts - and then no amount of waiting for the input can
+    // succeed. This raced invisibly under JIT-compiled JSC and reproduces under
+    // QuickJS. Wait for the control before driving it.
+    settle_until_contract(
+        rig,
+        "typeof globalThis.__pulpFindMaterializedElement__ === 'function'"
+        " && !!globalThis.__pulpFindMaterializedElement__("
+        "'[data-spectr-manager-action=\"rename-start\"]')",
+        "pattern rename-start control did not mount");
     activate(rig, "[data-spectr-manager-action=\"rename-start\"]");
     // Entering rename replaces the selected row with a controlled input in a
     // follow-up React commit. Give that commit its own host-frame service
     // window before targeting the new node; otherwise a heavily loaded host
     // can make the semantic driver race the mount it just requested.
-    settle(rig.clock, 16);
-    require_runtime_contract(
+    settle_until_contract(
         rig,
         "typeof globalThis.__pulpFindMaterializedElement__ === 'function'"
         " && !!globalThis.__pulpFindMaterializedElement__('#spectr-manager-rename')",
@@ -1022,6 +1075,12 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     activate(rig, "#spectr-manager-rename", "change",
              R"js({value:'FLAT',target:{value:'FLAT'},currentTarget:{value:'FLAT'}})js");
     activate(rig, "#spectr-manager-rename", "blur");
+    // blur commits the rename through React and then into the processor; neither
+    // hop is synchronous with the event.
+    settle_until(rig, [&] {
+        const auto& user = rig.processor.patterns().user();
+        return !user.empty() && user.front().name == "FLAT";
+    });
     REQUIRE(rig.processor.patterns().user().front().name == "FLAT");
     storage.require_unchanged();
 

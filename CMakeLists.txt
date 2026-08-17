@@ -250,6 +250,39 @@ include(CTest)
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
 
+# Does the resolved Pulp SDK actually ship the WebView editor path? A cutover SDK
+# is built with PULP_BUILD_WEBVIEW=OFF, which removes EditorBridge::attach_webview,
+# WebViewPanel::create and the embedded-resource fetcher. Link them anyway and the
+# test binaries fail with undefined arm64 symbols while the shipping plugin targets
+# — which build from SPECTR_NATIVE_SOURCES — stay green, so the breakage looks like
+# a product failure when it is only the legacy test graph.
+set(SPECTR_SDK_HAS_WEBVIEW OFF)
+if(TARGET Pulp::view)
+    get_target_property(_spectr_pulp_view_defs Pulp::view INTERFACE_COMPILE_DEFINITIONS)
+    if(_spectr_pulp_view_defs MATCHES "PULP_BUILD_WEBVIEW=1")
+        set(SPECTR_SDK_HAS_WEBVIEW ON)
+    endif()
+    unset(_spectr_pulp_view_defs)
+endif()
+
+if(SPECTR_SDK_HAS_WEBVIEW)
+    set(SPECTR_TEST_SOURCES ${SPECTR_SOURCES})
+    set(SPECTR_TEST_WEBVIEW_CASES test/test_editor_bridge.cpp)
+    set(SPECTR_TEST_ASSET_TARGET spectr_editor_assets)
+else()
+    # Browser-free SDK: use the same source list the shipping plugins use and drop
+    # the one case that exercises the WebView editor directly.
+    set(SPECTR_TEST_SOURCES ${SPECTR_NATIVE_SOURCES})
+    set(SPECTR_TEST_WEBVIEW_CASES)
+    # The native source list carries native_editor.cpp, whose generated JS/document
+    # blobs live in spectr_native_assets. Keep spectr_editor_assets linked too: the
+    # import-fidelity cases compare the native render against editor.html, and that
+    # is a TEST FIXTURE. N5 forbids editor.html inside a shipping bundle, not inside
+    # a test binary, so dropping it here would delete the browser-oracle coverage
+    # this cutover depends on while proving nothing about the product.
+    set(SPECTR_TEST_ASSET_TARGET spectr_native_assets spectr_editor_assets)
+endif()
+
 add_executable(Spectr-test
     test/test_spectr.cpp
     test/test_band_state.cpp
@@ -259,21 +292,22 @@ add_executable(Spectr-test
     test/test_edit_engine.cpp
     test/test_editor_resize.cpp
     test/test_pattern.cpp
-    test/test_editor_bridge.cpp
+    ${SPECTR_TEST_WEBVIEW_CASES}
     test/test_import_fidelity.cpp
     test/test_preset.cpp
     test/test_snapshot.cpp
-    ${SPECTR_SOURCES}
+    ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
     Pulp::format Pulp::view
     Catch2::Catch2WithMain
-    spectr_editor_assets
+    ${SPECTR_TEST_ASSET_TARGET}
 )
 target_include_directories(Spectr-test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_compile_definitions(Spectr-test PRIVATE
+    $<$<NOT:$<BOOL:${SPECTR_SDK_HAS_WEBVIEW}>>:SPECTR_NATIVE_EDITOR=1>
     SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
     SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
     SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
@@ -396,15 +430,18 @@ endif()
 if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} OR
     TARGET SpectrWebViewReference_CLAP OR TARGET SpectrWebViewReference_VST3) AND
    TARGET Pulp::host)
+    # Same browser-free selection as Spectr-test: a cutover SDK has no WebView
+    # editor to link against.
     add_executable(Spectr-artifact-test
         test/test_built_clap.cpp
-        ${SPECTR_SOURCES})
+        ${SPECTR_TEST_SOURCES})
     target_link_libraries(Spectr-artifact-test PRIVATE
         Pulp::host Pulp::format Pulp::view
-        Catch2::Catch2WithMain spectr_editor_assets)
+        Catch2::Catch2WithMain ${SPECTR_TEST_ASSET_TARGET})
     target_include_directories(Spectr-artifact-test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_compile_definitions(Spectr-artifact-test PRIVATE
+        $<$<NOT:$<BOOL:${SPECTR_SDK_HAS_WEBVIEW}>>:SPECTR_NATIVE_EDITOR=1>
         SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
         SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
         SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
