@@ -372,6 +372,16 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${SPECTR_CHROME_EXECUTABLE}
             --resize-only)
     set_tests_properties(Spectr-browser-resize PROPERTIES TIMEOUT 90)
+    # Ten checks: five edit modes x redraw-unmutes on/off, asserting the band
+    # state each mode's real pointer handler publishes -- not the shared
+    # decision point, which would pass even if a mode bypassed it.
+    add_test(NAME Spectr-browser-mute-modes
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            ${SPECTR_CHROME_EXECUTABLE}
+            --mute-modes)
+    set_tests_properties(Spectr-browser-mute-modes PROPERTIES TIMEOUT 180)
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────

@@ -672,8 +672,99 @@ window.FilterBank = FilterBank;`,
       return nextState;
     });
     queueNativeProcessingStatePublication();
+  };
+  // Every DRAWN gain edit funnels through here, and only through here, so the
+  // five edit modes cannot drift apart on mute handling again. A mode computes
+  // the gain it wants and says nothing about mute; this decides once whether
+  // the edit clears the mute (settings.unmuteOnDraw, the default, and what
+  // SCULPT and LEVEL always did) or is refused by it (what BOOST, FLARE and
+  // GLIDE always did). Explicit mute commands -- the Shift brush, single-tap
+  // toggle, MUTE ALL, solo, snapshot recall, morph, patterns -- keep going
+  // through commitMany and are deliberately unaffected: this is a policy for
+  // drawing, not a veto on saying "mute".
+  const commitDrawnGains = (map) => {
+    if (unmuteOnDrawRef.current) { commitMany(map); return; }
+    const held = new Map();
+    for (const [index, value] of map)
+      held.set(index, isMuted(targetGainsRef.current[index]) ? -Infinity : value);
+    commitMany(held);
+  };
+  // A muted band's authored gain is stashed, not destroyed. Modes that scale or
+  // blend an existing value need a finite operand or -Infinity swallows the
+  // edit before the policy above can decide anything -- which is exactly how
+  // BOOST, FLARE and GLIDE came to have a hardcoded mute policy of their own.
+  const editBaseGain = (value, index) => {
+    if (!isMuted(value)) return value;
+    const db = mutedGainDbRef.current[index];
+    return Number.isFinite(db) ? clamp(db / 24, -1, 1) : 0;
   };`,
       'mute preserves authored gain');
+    // Six drawn-edit sites, six independent mute decisions. They now compute a
+    // gain from a finite base and hand it to commitDrawnGains, which owns the
+    // policy. No mode keeps one of its own.
+    replaceSpectrSource(
+      String.raw`        for (const [i, v0] of p.groupStart.entries()) {
+          if (isMuted(v0)) { map.set(i, -Infinity); continue; }
+          map.set(i, clamp(v0 + delta, -1, 1));
+        }
+        commitMany(map);`,
+      String.raw`        for (const [i, v0] of p.groupStart.entries())
+          map.set(i, clamp(editBaseGain(v0, i) + delta, -1, 1));
+        commitDrawnGains(map);`,
+      'group drag defers the mute decision');
+    replaceSpectrSource(
+      String.raw`        map.set(curBand, newG);
+        commitMany(map);
+        p.band = curBand;
+        p.lastX = x; p.lastY = y;`,
+      String.raw`        map.set(curBand, newG);
+        commitDrawnGains(map);
+        p.band = curBand;
+        p.lastX = x; p.lastY = y;`,
+      'sculpt defers the mute decision');
+    replaceSpectrSource(
+      String.raw`        for (const b of p.paintedBands) map.set(b, newG); // all painted follow
+        commitMany(map);`,
+      String.raw`        for (const b of p.paintedBands) map.set(b, newG); // all painted follow
+        commitDrawnGains(map);`,
+      'level defers the mute decision');
+    replaceSpectrSource(
+      String.raw`          const v0 = p.startSnap[b];
+          if (isMuted(v0)) { map.set(b, -Infinity); continue; }
+          map.set(b, clamp(v0 * k, -1, 1));
+        }
+        commitMany(map);`,
+      String.raw`          const v0 = editBaseGain(p.startSnap[b], b);
+          map.set(b, clamp(v0 * k, -1, 1));
+        }
+        commitDrawnGains(map);`,
+      'boost defers the mute decision');
+    replaceSpectrSource(
+      String.raw`          const v0 = p.startSnap[b];
+          if (isMuted(v0)) { map.set(b, -Infinity); continue; }
+          const sign = v0 >= 0 ? 1 : -1;`,
+      String.raw`          const v0 = editBaseGain(p.startSnap[b], b);
+          const sign = v0 >= 0 ? 1 : -1;`,
+      'flare defers the mute decision');
+    replaceSpectrSource(
+      String.raw`          map.set(b, clamp(out, -1, 1));
+        }
+        commitMany(map);`,
+      String.raw`          map.set(b, clamp(out, -1, 1));
+        }
+        commitDrawnGains(map);`,
+      'flare commits through the shared path');
+    replaceSpectrSource(
+      String.raw`          const v0 = p.startSnap[i];
+          if (isMuted(v0)) { map.set(i, -Infinity); continue; }
+          map.set(i, clamp(v0 + (newG - v0) * w, -1, 1));
+        }
+        commitMany(map);`,
+      String.raw`          const v0 = editBaseGain(p.startSnap[i], i);
+          map.set(i, clamp(v0 + (newG - v0) * w, -1, 1));
+        }
+        commitDrawnGains(map);`,
+      'glide defers the mute decision');
     replaceSpectrSource(
       '  const lastTapRef = useRef(null); // { band, t } — for double-tap-to-mute detection\n',
       '',
@@ -1097,6 +1188,15 @@ window.FilterBank = FilterBank;`,
       '  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, hover, marquee, selection, snapshots, morph, dspMode]);',
       '  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, hover, marquee, selection, snapshots, morph, dspMode, visualizationMode]);',
       'visualization render dependency');
+    // Drawing over a muted band either clears the mute or is refused by it.
+    // Default ON reproduces what SCULPT and LEVEL already did; OFF reproduces
+    // what BOOST, FLARE and GLIDE already did. Before this the choice was
+    // hardcoded per mode, differently, which is the inconsistency being fixed.
+    //
+    // The default is expressed as `unmuteOnDraw !== false` at every read rather
+    // than as a key in the captured #tweak-defaults block. Same default, and it
+    // leaves that captured DOM node byte-identical -- worth having in a
+    // document whose layout and text bindings were captured, not computed.
     replaceSpectrSource(
       '  "bandCount": 64,',
       '  "bandCount": 32,',
@@ -1106,6 +1206,17 @@ window.FilterBank = FilterBank;`,
     // harness advances native frames. Preserve RAF for the live analyzer, but
     // make initial and dependency-driven canvas paint deterministic so a native
     // snapshot never depends on WebKit winning that scheduling race.
+    replaceSpectrSource(
+      "  const { bandCount, metaphor, bloom, spectrumIntensity, muteStyle, motionMode, showMinimap, showRulers, theme } = settings;",
+      "  const { bandCount, metaphor, bloom, spectrumIntensity, muteStyle, motionMode, showMinimap, showRulers, theme, unmuteOnDraw } = settings;",
+      'redraw-unmutes setting is read by the bank');
+    replaceSpectrSource(
+      "  const editModeRef = useRef(editMode || 'sculpt');",
+      "  const unmuteOnDrawRef = useRef(unmuteOnDraw !== false);\n"
+      + "  useEffect(() => { unmuteOnDrawRef.current = unmuteOnDraw !== false; },\n"
+      + "    [unmuteOnDraw]);\n"
+      + "  const editModeRef = useRef(editMode || 'sculpt');",
+      'redraw-unmutes pointer-stable ref');
     replaceSpectrSource(
       '  const rafRef = useRef(0);\n  const timeRef = useRef(0);',
       '  const rafRef = useRef(0);\n  const renderAllRef = useRef(null);\n  const timeRef = useRef(0);',
@@ -1463,6 +1574,21 @@ function SpectrSettingsToggle({ value, onChange }) {
 
 function SettingsModal({ settings, setSettings, onClose }) {`,
       'stable settings controls');
+    // The natural home is the settings panel, beside Mute style. It cannot go
+    // there: the native materialized runtime paints an ADDED settings row on
+    // top of an existing one (reproduced in both the STRUCTURE and MOTION
+    // groups, by screenshot). The overflow menu is built fresh every time it
+    // opens, like the presets and band-context popups, and lays out correctly.
+    // Move this back beside its siblings if the document is ever re-materialized.
+    replaceSpectrSource(
+      String.raw`<button data-spectr-overflow-action="fit-view" onClick={() => { act(b => b.resetView())(); setOverflowMenu(false); }} style={menuItem}>FIT VIEW</button>`,
+      String.raw`<button data-spectr-overflow-action="fit-view" onClick={() => { act(b => b.resetView())(); setOverflowMenu(false); }} style={menuItem}>FIT VIEW</button>
+              <button data-spectr-redraw-unmutes={settings.unmuteOnDraw !== false ? 'on' : 'off'}
+                onClick={() => { setSettings(s => ({ ...s, unmuteOnDraw: !(s.unmuteOnDraw !== false) })); setOverflowMenu(false); }}
+                style={menuItem}>
+                REDRAW UNMUTES <span style={{ opacity: 0.4, marginLeft: 8 }}>{settings.unmuteOnDraw !== false ? 'ON' : 'OFF'}</span>
+              </button>`,
+      'redraw-unmutes overflow toggle');
     replaceAllSpectrSource('<Group ', '<SpectrSettingsGroup ', 3,
       'stable settings groups open');
     replaceAllSpectrSource('</Group>', '</SpectrSettingsGroup>', 3,

@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "69282c6af57364abd884271b1716949273ddb98b7afdd4e41cf8dfefda88fab6";
+    "bc6806f342a892c876fc815a947da18b853ec78e209bba8f11e714e9fccad3bb";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -157,6 +157,20 @@ constexpr std::array kPatchNeedles{
     // fixed slot at the top of the plot; the adapter raises this lower bound so
     // the two never paint over one another.
     ContractMarker{"hover-readout-clamp", "    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);"},
+    // Six drawn-edit sites, each of which decided mute for itself: SCULPT and
+    // LEVEL simply wrote a finite gain, BOOST, FLARE, GLIDE and the group drag
+    // short-circuited to the sentinel. The adapter routes all six through one
+    // decision point, so drift in any of them silently restores a per-mode
+    // policy and the "Redraw unmutes" setting stops meaning anything.
+    ContractMarker{"edit-mode-ref", "  const editModeRef = useRef(editMode || 'sculpt');"},
+    ContractMarker{"bank-settings-destructure", "  const { bandCount, metaphor, bloom, spectrumIntensity, muteStyle, motionMode, showMinimap, showRulers, theme } = settings;"},
+    ContractMarker{"mute-policy-group", "        for (const [i, v0] of p.groupStart.entries()) {\n          if (isMuted(v0)) { map.set(i, -Infinity); continue; }\n          map.set(i, clamp(v0 + delta, -1, 1));\n        }\n        commitMany(map);"},
+    ContractMarker{"mute-policy-sculpt", "        map.set(curBand, newG);\n        commitMany(map);"},
+    ContractMarker{"mute-policy-level", "        for (const b of p.paintedBands) map.set(b, newG); // all painted follow\n        commitMany(map);"},
+    ContractMarker{"mute-policy-boost", "          const v0 = p.startSnap[b];\n          if (isMuted(v0)) { map.set(b, -Infinity); continue; }\n          map.set(b, clamp(v0 * k, -1, 1));"},
+    ContractMarker{"mute-policy-flare", "          const v0 = p.startSnap[b];\n          if (isMuted(v0)) { map.set(b, -Infinity); continue; }\n          const sign = v0 >= 0 ? 1 : -1;"},
+    ContractMarker{"mute-policy-glide", "          const v0 = p.startSnap[i];\n          if (isMuted(v0)) { map.set(i, -Infinity); continue; }\n          map.set(i, clamp(v0 + (newG - v0) * w, -1, 1));"},
+    ContractMarker{"overflow-fit-view", "              <button onClick={() => { act(b => b.resetView())(); setOverflowMenu(false); }} style={menuItem}>FIT VIEW</button>"},
 };
 
 constexpr std::array kGestureMarkers{
@@ -324,6 +338,13 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
           != adapter.npos);
     CHECK(adapter.find("status banner replaces one message at a time") != adapter.npos);
     CHECK(adapter.find("shownRef.current !== display") != adapter.npos);
+    // One mute policy for drawing, consulted by every mode.
+    CHECK(adapter.find("redraw-unmutes overflow toggle") != adapter.npos);
+    CHECK(adapter.find("data-spectr-redraw-unmutes") != adapter.npos);
+    CHECK(adapter.find("const commitDrawnGains = (map) => {") != adapter.npos);
+    CHECK(adapter.find("const editBaseGain = (value, index) => {") != adapter.npos);
+    CHECK(count_occurrences(adapter, "commitDrawnGains(map);") == 6);
+    CHECK(adapter.find("defers the mute decision") != adapter.npos);
     CHECK(adapter.find("Apply synchronously when it is ready") != adapter.npos);
     CHECK(adapter.find("-Infinity is categorical state, never an interpolation operand")
           != adapter.npos);
@@ -488,6 +509,39 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   "const t = setTimeout(() => {\\n      setVisible(false);\\n"
                   "      setText(\\\"\\\");\\n    }, 1400);")
               == 0);
+    }
+
+    SECTION("every edit mode defers its mute decision to one place") {
+        // The behavioural proof is Spectr-browser-mute-modes, which drives all
+        // five modes through their real pointer handlers. This is the emitted
+        // -document half: a mode that kept a policy of its own would still make
+        // that lane fail, but only here does the SHIPPING document say so.
+        CHECK(count_occurrences(document, "const commitDrawnGains = (map) => {") == 1);
+        CHECK(count_occurrences(document, "commitDrawnGains(map);") == 6);
+        CHECK(count_occurrences(document, "const editBaseGain = (value, index) => {") == 1);
+        CHECK(count_occurrences(document, "unmuteOnDrawRef.current") == 2);
+        // No drawn-edit site may short-circuit a muted band to the sentinel
+        // before the shared policy has decided anything.
+        CHECK(count_occurrences(document, "map.set(b, -Infinity);") == 0);
+        CHECK(count_occurrences(document, "map.set(i, -Infinity);\\n            continue;") == 0);
+    }
+
+    SECTION("the redraw-unmutes setting ships, its control deliberately does not") {
+        // The default is `unmuteOnDraw !== false` at every read, not a key in
+        // the captured #tweak-defaults block, so that node stays byte-identical.
+        CHECK(count_occurrences(document, "unmuteOnDrawRef") == 3);
+        CHECK(count_occurrences(document, "\\\"unmuteOnDraw\\\":") == 0);
+        // The one place source and shipping document diverge on purpose. The
+        // native materialized runtime paints a child ADDED to a container at
+        // that container's first child position, on top of what is already
+        // there -- reproduced by screenshot in the settings STRUCTURE group,
+        // the settings MOTION group, and the overflow menu. resources/editor.html
+        // carries the toggle so it appears the moment the document is
+        // re-materialized; mirroring it today would ship an unreadable overlap.
+        // If this starts failing because the control IS present, the document
+        // was re-materialized -- delete this expectation, do not re-hide it.
+        CHECK(count_occurrences(document, "data-spectr-redraw-unmutes") == 0);
+        CHECK(count_occurrences(document, "REDRAW UNMUTES") == 0);
     }
 
     SECTION("a muted band still rests on the 0 dB line") {
