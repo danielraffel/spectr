@@ -176,3 +176,49 @@ reflow is the other half of the double-application.
 
 So: the two changes are a pair, not independent. Land them together, and re-run the reproduction
 above afterwards to confirm the window fills.
+
+
+## RESOLVED 2026-08-18 — the JS reflow was the mechanism, not a viewport pin
+
+Closed by spectr `4e43917` (pin the editor viewport so resize is proportional only).
+
+**Acceptance measurement**, standalone rebuilt with the package, launched and
+captured:
+
+```
+window 1320x892 (authored 1320x860 + title bar)
+[gpu-host] first frame: logical=1320x860 gpu=2640x1720 scale=2.0
+rightmost ink 2614/2640 = 99.0%      lowest ink 1744/1784 = 97.8%
+```
+
+Against the 75% recorded above (ink ending at 1485 of 1980). The remainder is
+rounded corners and title bar. Backing scale is a clean **2.0**, not the 1.5
+measured before — no 0.75 factor anywhere in the pipeline.
+
+**Which hypothesis won.** The pin theory in this document is NOT what was
+happening. Two independent checks say the pin was never silently on:
+
+- All three SDKs named by `Pulp_DIR` declare `viewport_policy`, so the
+  `if constexpr (requires(...))` probe HITS and `Responsive` really was set.
+- `should_pin_design_viewport()` returns false on its first line for
+  `Responsive`, unconditionally.
+
+The actual mechanism needs no pin at all: `applySpectrResponsiveLayout` calls
+`applyMaterializedImportMetadata`, which restores every node to its authored
+1320x860 geometry before re-placing it. Any path that lays content out in
+authored units and presents it in a 990 window yields 0.75 — and 990 IS 0.75 of
+1320 by construction, since `SPECTR_HOST_PREFERRED` is defined as 0.75 of
+authored. Removing the reflow removed the symptom.
+
+**The pruning hazard was re-tested under the pin**, since the earlier disproof
+was for `Responsive` and did not transfer: the rig asserts the root stays at the
+authored box while the host varies, and the tap-target sweep passes 3659
+assertions across 792x516 / 990x645 / 1320x860 / 2640x1720 with every control
+hit-testable.
+
+**Method note worth keeping.** The confident disproof recorded above was made
+against `~/Code/pulp`, but the standalone builds against the SDK named by
+`Pulp_DIR` in its `CMakeCache.txt`. The two copies of
+`standalone_editor_chrome.hpp` differ in exactly the code that was being read.
+Always resolve `Pulp_DIR` and read the SDK copy; there are several staged SDKs
+on this machine and different Spectr build dirs point at different ones.
