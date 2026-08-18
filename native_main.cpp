@@ -6,9 +6,6 @@
 #include <string>
 
 int main(int argc, char** argv) {
-    // The standalone window is natively resizable by macOS, which owns the
-    // bottom-right corner; the editor must not draw a competing grip there.
-    spectr::set_host_draws_native_resize(true);
     pulp::format::StandaloneApp app(spectr::create_spectr);
     pulp::format::StandaloneConfig config;
     config.input_channels = 2;

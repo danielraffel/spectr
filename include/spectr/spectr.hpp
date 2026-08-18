@@ -41,23 +41,36 @@
 
 namespace spectr {
 
-/// Declare that this process's host already draws a native window-resize
-/// affordance, so the editor must NOT add its own.
+/// Declare that this build's format gives the user no way to resize the
+/// editor, so the editor must draw its own resize grip (see
+/// `create_native_editor_`).
 ///
-/// AU v2 has no host->plugin resize contract and Logic's plugin window has no
-/// grow area, so a hosted editor owns its resize gesture (see the grip in
-/// `create_native_editor_`). A standalone window is the opposite case: macOS
-/// owns the bottom-right corner of a resizable NSWindow and consumes press and
-/// click there before the content view is asked — measured, with the grip
-/// present, painted, and receiving nothing while the window resized. A grip
-/// there is a painted control that can never fire.
+/// Opt-IN, default false, and asserted by exactly one format entry point:
+/// `au_v2_entry.cpp`. AU v2 is the only format Spectr ships where the host
+/// offers no resize affordance at all — `AUCocoaUIView` passes a size
+/// plugin-ward once at creation and never again, and Logic's plugin window
+/// exposes no grow area (no `AXGrowArea`, and it refuses `AXSize`). A
+/// plugin-drawn corner grip is the mechanism there, gated on the wrapper type,
+/// which is also the pattern JUCE recommends for exactly this asymmetry.
 ///
-/// This is declared by the process entry point rather than sniffed.
-/// `pulp::format::detect_host_type()` cannot answer it: it reports
+/// Every other surface already has a working affordance and must NOT get a
+/// second one competing with it:
+///   * VST3    — `IPlugView::checkSizeConstraint` / `onSize` (verified in REAPER)
+///   * CLAP    — `gui_adjust_size` / `gui_set_size` (verified in REAPER)
+///   * AU v3   — host-initiated resize through the plug-in window border
+///   * Standalone — macOS owns the bottom-right corner of a resizable NSWindow
+///     and consumes press and click there before the content view is asked
+///     (measured: grip present, painted, correctly placed, and receiving
+///     nothing at all while the window resized underneath it)
+///
+/// Declared by the entry point rather than sniffed at runtime.
+/// `pulp::format::detect_host_type()` cannot answer this: it reports
 /// `HostType::Standalone` by matching "pulp" in the process name, and this
-/// product's standalone is "Spectr Native Preview".
-void set_host_draws_native_resize(bool value);
-bool host_draws_native_resize();
+/// product's standalone is "Spectr Native Preview". Pulp exposes no
+/// wrapper-type enum to a `Processor`, so the linked entry point is the only
+/// place that knows the answer.
+void set_editor_owns_resize_grip(bool value);
+bool editor_owns_resize_grip();
 
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
@@ -288,20 +301,48 @@ private:
     // only ever take one step. The host size is the thing that actually moves.
     std::uint32_t native_host_width_ = 0;
     std::uint32_t native_host_height_ = 0;
-    // Editor size latched at grip mouse-down. `ResizableCorner` reports
-    // cumulative deltas from the drag start, so the base must be sampled once
+    // Editor size latched at grip mouse-down. The grip resolves a size from a
+    // cumulative delta against the drag start, so the base must be sampled once
     // per drag rather than read live (reading live would compound).
     std::uint32_t native_resize_base_width_ = 0;
     std::uint32_t native_resize_base_height_ = 0;
+    // Pointer position at grip mouse-down, in HOST/WINDOW space.
+    //
+    // NOT design space, and this is the whole bug the grip used to have. Under
+    // a pinned viewport the host maps design->window with a scale of
+    // host_width / kEditorDesignWidth, and mouse points arrive inverse-mapped
+    // back into design space. Resizing therefore CHANGES THE MEANING of a
+    // design-space coordinate mid-gesture: hold the pointer perfectly still,
+    // grow the editor, and the same physical pixel reports a smaller design x.
+    // A delta latched in design space then collapses toward zero, the next
+    // request shrinks the editor, the scale drops back, the delta reappears —
+    // measured, driving a STATIONARY pointer through the real dispatch path,
+    // as the requested size swinging across 903x588 .. 1959x1277 on successive
+    // pointer events, with a full materialized re-layout behind every swing.
+    // Window space is invariant under the resize, so the latch lives there.
+    float native_resize_start_window_x_ = 0.0f;
+    float native_resize_start_window_y_ = 0.0f;
     // Set when the host refuses a request mid-drag, so one refusal doesn't turn
     // into a rejected transaction per mouse-move for the rest of the gesture.
     bool native_resize_refused_ = false;
+    // Last (w, h) handed to publish_native_layout_. Under a pinned viewport
+    // every resize publishes the same authored box, so without this the whole
+    // materialized restore + re-place pass re-runs per pointer event for a
+    // result that cannot differ. 0 means "nothing published yet", which is the
+    // state a freshly created editor must be in so the first pass still runs.
+    std::uint32_t native_published_width_ = 0;
+    std::uint32_t native_published_height_ = 0;
     pulp::view::FrameClock* native_frame_clock_ = nullptr;
     int native_frame_subscription_ = -1;
     float native_analyzer_elapsed_ = 0.0f;
     std::uint64_t native_analyzer_sequence_ = 0;
 
     std::unique_ptr<pulp::view::View> create_native_editor_();
+    /// Map a ROOT (design-space) point to HOST/WINDOW space using the live host
+    /// size, mirroring the transform the editor host applies at paint. Identity
+    /// when no design viewport is pinned, which is the right answer for the
+    /// un-pinned case because root space IS window space there.
+    pulp::view::Point native_root_to_window_(pulp::view::Point root_pt) const;
     void publish_native_layout_(std::uint32_t w, std::uint32_t h);
     void open_native_editor_(pulp::view::View& view);
     void close_native_editor_();

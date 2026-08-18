@@ -4,8 +4,10 @@
 
 #include <pulp/runtime/log.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
+#include <pulp/format/plugin_descriptor.hpp>
 #include <pulp/view/buttons.hpp>
 #include <pulp/view/view.hpp>
+#include <pulp/view/window_host.hpp>
 
 #include <choc/text/choc_JSON.h>
 
@@ -33,32 +35,53 @@
 namespace spectr {
 
 namespace {
-std::atomic<bool> g_host_draws_native_resize{false};
+std::atomic<bool> g_editor_owns_resize_grip{false};
 }  // namespace
 
-void set_host_draws_native_resize(bool value) {
-    g_host_draws_native_resize.store(value, std::memory_order_relaxed);
+void set_editor_owns_resize_grip(bool value) {
+    g_editor_owns_resize_grip.store(value, std::memory_order_relaxed);
 }
 
-bool host_draws_native_resize() {
-    return g_host_draws_native_resize.load(std::memory_order_relaxed);
+bool editor_owns_resize_grip() {
+    return g_editor_owns_resize_grip.load(std::memory_order_relaxed);
 }
 
 namespace {
 
 constexpr float kPublishPeriodSeconds = 1.0f / 30.0f;
 
-// Editor-owned resize affordance. The bottom bar keeps a fixed ~20pt gutter to
-// the right of the help button at every declared size (measured: the button
-// ends at x=1300 of 1320, and at x=2620 of 2640 — the gutter does NOT scale
-// with the editor). Size + inset must therefore stay under that gutter so the
-// grip's left edge clears the button on the x-axis; at 14 + 3 it clears by 3pt
-// at the tightest size. `editor resize grip overlaps no other control` in
-// test_native_state_parity.cpp checks that at all four sizes — an earlier
-// 16 + 6 pass validated only at the preferred size and landed on the help
-// button at the authored 1320x860 capture.
+// Editor-owned resize affordance, laid into the bottom bar rather than floated
+// in the corner behind it — the arrangement Arturia's Efx FRAGMENTS uses in
+// Logic, where the grip lines sit at the far right of the plug-in's own bottom
+// chrome strip, in line with that strip's controls.
+//
+// Under the pinned viewport (see make_editor_view_size) the bottom bar's
+// geometry is CONSTANT, which is what makes fixed placement correct here: the
+// materialized layout always runs at the authored 1320x860 box, so the
+// `width < 1200` compact branch that used to move these controls is now
+// unreachable and the gutter can no longer change under the grip. Authored
+// geometry, read off applySpectrResponsiveLayout:
+//   * bar        y = 860 - 56 = 804, height 56, full width
+//   * gear / "?" 26x26 at y = 804 + 15.5, the help button ending at x = 1300
+//   * gutter     x = 1300 .. 1320, i.e. 20pt
+// A 14pt grip inset 3pt from the right edge spans x = 1303..1317 and clears the
+// help button by 3pt. Vertically it is centred on the bar's 26pt control row
+// instead of tucked into the last 3pt of the corner, so it reads as part of the
+// bar. `editor resize grip overlaps no other control` pins the clearance.
 constexpr float kResizeGripSize = 14.0f;
 constexpr float kResizeGripInset = 3.0f;
+// Bar metrics the grip aligns to. Kept as named constants so the two places
+// that must agree (this placement and the test that asserts it) cite one
+// source, and so a bar-height change fails visibly rather than silently
+// sliding the grip off the control row.
+constexpr float kBottomBarHeight = 56.0f;
+constexpr float kBottomBarControlHeight = 26.0f;
+constexpr float kBottomBarControlTop = 15.5f;
+// Distance from the editor's bottom edge to the vertical centre of the grip:
+// centre it on the bar's control row, not on the bar box.
+constexpr float kResizeGripBottomInset =
+    kBottomBarHeight - kBottomBarControlTop - kBottomBarControlHeight * 0.5f
+    - kResizeGripSize * 0.5f;
 // The materialized DesignIR tree is a sandwich: `__pulp_materialized_surface__`
 // paints at z = -20000 and `__pulp_materialized_behavior__` takes interaction at
 // z = +20000. Native chrome that must own its own rect has to clear the
@@ -73,12 +96,30 @@ constexpr std::size_t kVisibleAnalyzerPointCount = 321;
 constexpr std::size_t kOverviewAnalyzerPointCount = 121;
 constexpr float kAnalyzerCeilingDb = 24.0f;
 
-// `ResizableCorner` reports cumulative deltas from the drag start but does not
-// announce the drag start itself, so the owner cannot latch the size the deltas
-// are relative to. Surface that one edge.
+// `ResizableCorner` supplies the shape (non-focusable, wants mouse input) but
+// NOT the arithmetic: its `on_resize` reports a delta between two points in the
+// view's own coordinate space, and under a pinned design viewport that space
+// rescales during the very gesture that drives it. So the base class's delta is
+// deliberately unused here, and this reports absolute ROOT-space positions
+// instead, leaving the owner — which is the only thing that knows the live host
+// size — to convert them into the invariant window space. See
+// `native_resize_start_window_x_`.
 class EditorResizeGrip : public pulp::view::ResizableCorner {
 public:
-    std::function<void()> on_drag_begin;
+    EditorResizeGrip() {
+        // Semantically correct, and INERT IN THIS HOST TODAY: the shared macOS
+        // plug-in-view cursor switch (plugin_view_host_mac.mm,
+        // pulp_plugin_apply_hover_cursor) maps only the horizontal and vertical
+        // resize styles and lets every diagonal one fall through to the arrow.
+        // Set anyway rather than left default_ — it is what the control means,
+        // it costs nothing, and it starts working the moment that switch grows
+        // a diagonal case. Do not read this as "the grip shows a resize
+        // cursor"; it does not yet.
+        set_cursor(pulp::view::View::CursorStyle::bottom_right_resize);
+    }
+
+    std::function<void(pulp::view::Point)> on_drag_begin;
+    std::function<void(pulp::view::Point)> on_drag_move;
 
     // ResizableCorner strokes with the theme's `control.border`, which on this
     // near-black background is effectively invisible — instrumenting the live
@@ -99,12 +140,25 @@ public:
     void on_mouse_enter() override { hovered_ = true; }
     void on_mouse_leave() override { hovered_ = false; }
 
+    // `pos` arrives in this view's LOCAL space (pointer_dispatch localizes the
+    // root point through the parent chain). The grip is a direct child of the
+    // root, so adding its own origin recovers the root-space point — and the
+    // origin must be added rather than ignored, because the local->root offset
+    // is scaled by the design viewport too, and dropping it reintroduces a
+    // smaller version of the same feedback error.
     void on_mouse_down(pulp::view::Point pos) override {
-        if (on_drag_begin) on_drag_begin();
-        pulp::view::ResizableCorner::on_mouse_down(pos);
+        if (on_drag_begin) on_drag_begin(to_root(pos));
+    }
+
+    void on_mouse_drag(pulp::view::Point pos) override {
+        if (on_drag_move) on_drag_move(to_root(pos));
     }
 
 private:
+    pulp::view::Point to_root(pulp::view::Point local) const {
+        return {local.x + bounds().x, local.y + bounds().y};
+    }
+
     bool hovered_ = false;
 };
 struct EmbeddedFile {
@@ -266,7 +320,37 @@ void append_trace(std::ostringstream& js,
 
 } // namespace
 
+pulp::view::Point Spectr::native_root_to_window_(
+    pulp::view::Point root_pt) const {
+    // Only meaningful while a design viewport is pinned; without one the root
+    // is laid out at the host size and the two spaces already coincide.
+    if (!pulp::format::should_pin_design_viewport(view_size())
+        || native_host_width_ == 0 || native_host_height_ == 0) {
+        return root_pt;
+    }
+    float sx = 1.0f, sy = 1.0f, tx = 0.0f, ty = 0.0f;
+    // `top_align` MUST match what the host used, or the y mapping is off by
+    // half the letterbox. AU v2 is the only format that reaches this code and
+    // au_v2_cocoa_view.mm calls set_design_viewport_top_align(true) whenever the
+    // viewport is pinned, so `true` is the matching value rather than a guess.
+    if (!pulp::view::WindowHost::compute_design_viewport_transform(
+            static_cast<float>(native_host_width_),
+            static_cast<float>(native_host_height_),
+            static_cast<float>(kEditorDesignWidth),
+            static_cast<float>(kEditorDesignHeight),
+            sx, sy, tx, ty, /*top_align=*/true)) {
+        return root_pt;
+    }
+    return {root_pt.x * sx + tx, root_pt.y * sy + ty};
+}
+
 std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
+    // A fresh editor has published nothing, so the first publish_native_layout_
+    // must run even though the size it is handed has not changed since the last
+    // editor. Reset here rather than on close: create is the one path both the
+    // normal and the fail-closed construction share.
+    native_published_width_ = 0;
+    native_published_height_ = 0;
     auto root = std::make_unique<pulp::view::View>();
     root->set_theme(pulp::view::Theme::dark());
     root->flex().direction = pulp::view::FlexDirection::column;
@@ -380,34 +464,20 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     // fires when the host actually applied the new frame. If the host refuses,
     // nothing here moves, so the internal size and the host window cannot
     // disagree.
-    // Only where the host provides no resize affordance of its own. In a
-    // standalone window macOS owns these exact pixels and consumes press and
-    // click before the content view is asked, so a grip here is a painted
-    // control that can never fire — see set_host_draws_native_resize().
-    // DISABLED. The editor does not own a resize affordance.
-    //
-    // The grip was a workaround for AU v2 having no host->plugin resize
-    // contract, and it fails in both directions: in a standalone macOS owns
-    // the window corner and consumes the events before the view sees them,
-    // and in Logic grabbing it disrupts the editor. Beyond that it is the
-    // wrong shape of fix — resizing belongs to the window corner, not to
-    // chrome inside the plug-in UI.
-    //
-    // Corner resize already works in VST3, CLAP and AU v3, which have real
-    // host-driven resize contracts. AU v2 is the one format without one, and
-    // the answer there is to ship AU v3 rather than to draw our own handle.
-    // Kept behind a constant rather than deleted so the wiring (and its
-    // tests) survive for the AU v3 work.
-    constexpr bool kEditorOwnsResizeGrip = false;
-    if (kEditorOwnsResizeGrip && !host_draws_native_resize()) {
+    // Only where the format gives the user no resize affordance of its own,
+    // which today means AU v2 alone — see set_editor_owns_resize_grip(). It is
+    // opt-in, so every other format (and the standalone, where macOS owns these
+    // exact pixels and consumes press and click before the content view is
+    // asked) gets nothing here by default.
+    if (editor_owns_resize_grip()) {
     auto grip = std::make_unique<EditorResizeGrip>();
     grip->set_position(pulp::view::View::Position::absolute);
     grip->set_right(kResizeGripInset);
-    grip->set_bottom(kResizeGripInset);
+    grip->set_bottom(kResizeGripBottomInset);
     grip->flex().preferred_width = kResizeGripSize;
     grip->flex().preferred_height = kResizeGripSize;
     grip->set_z_index(kResizeGripZIndex);
-    grip->on_drag_begin = [this] {
+    grip->on_drag_begin = [this](pulp::view::Point root_pt) {
         // Measure from the HOST size, not the root. Under a pinned viewport the
         // root is constant at the authored box, so basing the drag on root
         // bounds makes every gesture start from the same number and the grip
@@ -416,10 +486,20 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
             ? native_host_width_ : kEditorPreferredWidth;
         native_resize_base_height_ = native_host_height_ > 0
             ? native_host_height_ : kEditorPreferredHeight;
+        const auto start = native_root_to_window_(root_pt);
+        native_resize_start_window_x_ = start.x;
+        native_resize_start_window_y_ = start.y;
         native_resize_refused_ = false;
     };
-    grip->on_resize = [this](float dx, float dy) {
+    grip->on_drag_move = [this](pulp::view::Point root_pt) {
         if (native_resize_refused_ || native_resize_base_width_ == 0) return;
+        // Both ends of the delta in window space, so the arithmetic is immune
+        // to the scale change this very gesture causes. Doing it in design
+        // space instead is the oscillation documented on
+        // `native_resize_start_window_x_`.
+        const auto now = native_root_to_window_(root_pt);
+        const double dx = now.x - native_resize_start_window_x_;
+        const double dy = now.y - native_resize_start_window_y_;
         const auto target = resolve_editor_resize(
             native_resize_base_width_, native_resize_base_height_, dx, dy);
         // Skip the round trip while the drag still resolves to the size the

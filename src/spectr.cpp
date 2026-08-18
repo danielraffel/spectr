@@ -251,6 +251,16 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
 
 #if defined(SPECTR_NATIVE_EDITOR)
 void Spectr::publish_native_layout_(std::uint32_t w, std::uint32_t h) {
+    // The pass below restores the captured authored geometry and re-places the
+    // whole materialized tree — hundreds of bridge writes. Under a pinned
+    // viewport on_view_resized always calls it with the SAME authored box, so
+    // during a resize drag it re-ran per pointer event to produce a layout
+    // identical to the one already on screen. Publish only when the arguments
+    // actually move; the first call after an editor is created always does,
+    // because native_published_* is reset with the editor.
+    if (w == native_published_width_ && h == native_published_height_) return;
+    native_published_width_ = w;
+    native_published_height_ = h;
     if (native_scripted_ui_ && native_scripted_ui_->bridge()) {
         std::ostringstream script;
         script << "if (typeof globalThis.__spectrResizeNativeEditor === 'function') "

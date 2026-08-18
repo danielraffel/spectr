@@ -1457,11 +1457,56 @@ const View* find_resize_grip(const View& view) {
     return nullptr;
 }
 
+// The grip is opt-IN and the flag is process-global (au_v2_entry.cpp asserts it
+// for the AU v2 build and nothing else does), so a case that wants a grip must
+// ask for one — and must restore, or every later case in this binary inherits
+// whatever the last one set.
+struct ScopedEditorOwnsResizeGrip {
+    bool previous = spectr::editor_owns_resize_grip();
+    explicit ScopedEditorOwnsResizeGrip(bool value) {
+        spectr::set_editor_owns_resize_grip(value);
+    }
+    ~ScopedEditorOwnsResizeGrip() {
+        spectr::set_editor_owns_resize_grip(previous);
+    }
+};
+
+// The design-viewport mapping the editor host applies, reproduced here so grip
+// cases can drive the SAME window <-> root transform the host does.
+//
+// This is not incidental scaffolding. Every earlier grip case ran at an
+// implicit scale of 1, where a delta measured in root space and a delta
+// measured in window space are numerically identical — so a defect that only
+// exists at scale != 1 could not be expressed, let alone caught, and the suite
+// passed over a grip that flapped the window ~100pt per pointer event in Logic.
+// `top_align` matches au_v2_cocoa_view.mm, which pins it true.
+pulp::view::Point window_to_root(pulp::view::Point window_pt,
+                                 float host_w, float host_h) {
+    return pulp::view::WindowHost::design_viewport_window_to_root(
+        window_pt, host_w, host_h,
+        static_cast<float>(spectr::kEditorDesignWidth),
+        static_cast<float>(spectr::kEditorDesignHeight), /*top_align=*/true);
+}
+
+pulp::view::Point root_to_window(pulp::view::Point root_pt,
+                                 float host_w, float host_h) {
+    float sx = 1.0f, sy = 1.0f, tx = 0.0f, ty = 0.0f;
+    if (!pulp::view::WindowHost::compute_design_viewport_transform(
+            host_w, host_h,
+            static_cast<float>(spectr::kEditorDesignWidth),
+            static_cast<float>(spectr::kEditorDesignHeight),
+            sx, sy, tx, ty, /*top_align=*/true)) {
+        return root_pt;
+    }
+    return {root_pt.x * sx + tx, root_pt.y * sy + ty};
+}
+
 }  // namespace
 
-TEST_CASE("editor resize grip sits in the bottom-right corner at every size",
+TEST_CASE("editor resize grip sits in the bottom bar at every size",
           "[native-n1][resize-grip]") {
     PatternStoragePoison storage;
+    ScopedEditorOwnsResizeGrip grip_enabled{true};
     NativeEditorRig rig;
 
     for (const auto& size : std::array<std::pair<int, int>, 4>{
@@ -1485,8 +1530,15 @@ TEST_CASE("editor resize grip sits in the bottom-right corner at every size",
         // instead, which is exactly the reflow the user ruled out.
         CHECK(box.right
               == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth) - 3.0f));
-        CHECK(box.bottom
-              == Catch::Approx(static_cast<float>(spectr::kEditorDesignHeight) - 3.0f));
+        // Laid INTO the bottom bar rather than floated in the corner behind it
+        // (the Efx FRAGMENTS arrangement): vertically centred on the bar's 26pt
+        // control row, whose centre is bar_top(804) + 15.5 + 13 = 832.5. A grip
+        // that drifts off that row stops reading as part of the bar, and a bar
+        // height change that nobody propagated fails here.
+        constexpr float kBarControlRowCentre = 804.0f + 15.5f + 13.0f;
+        CHECK((box.top + box.bottom) * 0.5f
+              == Catch::Approx(kBarControlRowCentre));
+        CHECK(box.bottom < static_cast<float>(spectr::kEditorDesignHeight));
 
         // Reachable: hit-testing its centre resolves to the grip itself, not to
         // whatever the scripted realm painted underneath.
@@ -1502,6 +1554,7 @@ TEST_CASE("editor resize grip sits in the bottom-right corner at every size",
 TEST_CASE("editor resize grip outranks the behaviour layer",
           "[native-n1][resize-grip]") {
     PatternStoragePoison storage;
+    ScopedEditorOwnsResizeGrip grip_enabled{true};
     NativeEditorRig rig;
     rig.resize(990, 645);
     settle(rig.clock, 96);
@@ -1530,6 +1583,7 @@ TEST_CASE("editor resize grip outranks the behaviour layer",
 TEST_CASE("editor resize grip overlaps no other control",
           "[native-n1][resize-grip]") {
     PatternStoragePoison storage;
+    ScopedEditorOwnsResizeGrip grip_enabled{true};
     NativeEditorRig rig;
 
     // Every declared size, not just the one Logic opens at. The bottom bar
@@ -1574,6 +1628,7 @@ TEST_CASE("editor resize grip overlaps no other control",
 TEST_CASE("editor resize grip drag requests an aspect-held, clamped size",
           "[native-n1][resize-grip]") {
     PatternStoragePoison storage;
+    ScopedEditorOwnsResizeGrip grip_enabled{true};
     NativeEditorRig rig;
     rig.resize(990, 645);
     settle(rig.clock, 96);
@@ -1590,15 +1645,25 @@ TEST_CASE("editor resize grip drag requests an aspect-held, clamped size",
             return accept;
         });
 
-    const auto drag = [&](float dx, float dy) {
-        mutable_grip.on_mouse_down({0.0f, 0.0f});
-        mutable_grip.on_mouse_drag({dx, dy});
+    // Deltas are stated as POINTER movement — window-space points, which is
+    // what a user actually moves and what the editor must grow by. At this host
+    // size the design viewport scales by 990/1320 = 0.75, so a root-space delta
+    // is NOT the same number; deriving the root points to deliver from the
+    // intended window movement keeps the case honest at any host size.
+    const auto drag = [&](float window_dx, float window_dy) {
+        const auto anchor = pulp::view::Point{0.0f, 0.0f};
+        const auto origin = root_to_window(anchor, 990.0f, 645.0f);
+        const auto moved = window_to_root(
+            {origin.x + window_dx, origin.y + window_dy}, 990.0f, 645.0f);
+        mutable_grip.on_mouse_down(anchor);
+        mutable_grip.on_mouse_drag(moved);
     };
 
     SECTION("a grow drag asks for the aspect-held size") {
         drag(330.0f, 0.0f);
         REQUIRE(requests.size() == 1);
-        // Base is the HOST size the rig was driven to, not the authored box.
+        // Base is the HOST size the rig was driven to, not the authored box,
+        // and the delta is the pointer movement in that same host space.
         const auto expected = spectr::resolve_editor_resize(990, 645, 330.0f, 0.0f);
         CHECK(requests.front().first == expected.width);
         CHECK(requests.front().second == expected.height);
@@ -1650,8 +1715,10 @@ TEST_CASE("editor resize grip drag requests an aspect-held, clamped size",
 TEST_CASE("editor resize grip round-trips a granted resize",
           "[native-n1][resize-grip]") {
     PatternStoragePoison storage;
+    ScopedEditorOwnsResizeGrip au_v2{true};
     NativeEditorRig rig;
-    rig.resize(990, 645);
+    float host_w = 990.0f, host_h = 645.0f;
+    rig.resize(host_w, host_h);
     settle(rig.clock, 96);
 
     std::vector<std::pair<std::uint32_t, std::uint32_t>> requests;
@@ -1661,19 +1728,27 @@ TEST_CASE("editor resize grip round-trips a granted resize",
             return true;
         });
 
-    const auto drag_and_grant = [&](float dx, float dy) {
+    // `window_dx` / `window_dy` are POINTER movement, so the second gesture is
+    // stated in the same units as the first even though the editor — and
+    // therefore the design-viewport scale — has grown between them.
+    const auto drag_and_grant = [&](float window_dx, float window_dy) {
         const auto* grip = find_resize_grip(*rig.root);
         REQUIRE(grip != nullptr);
         auto& mutable_grip = *const_cast<View*>(grip);
-        mutable_grip.on_mouse_down({0.0f, 0.0f});
-        mutable_grip.on_mouse_drag({dx, dy});
+        const auto anchor = pulp::view::Point{0.0f, 0.0f};
+        const auto origin = root_to_window(anchor, host_w, host_h);
+        const auto moved = window_to_root(
+            {origin.x + window_dx, origin.y + window_dy}, host_w, host_h);
+        mutable_grip.on_mouse_down(anchor);
+        mutable_grip.on_mouse_drag(moved);
         REQUIRE_FALSE(requests.empty());
         // The host grants it: the window resizes, and the new size arrives back
         // through on_view_resized exactly as a real host delivers it — after
         // the gesture, not re-entrantly inside the mouse handler.
         const auto granted = requests.back();
-        rig.resize(static_cast<float>(granted.first),
-                   static_cast<float>(granted.second));
+        host_w = static_cast<float>(granted.first);
+        host_h = static_cast<float>(granted.second);
+        rig.resize(host_w, host_h);
         settle(rig.clock, 96);
         return granted;
     };
@@ -1699,8 +1774,15 @@ TEST_CASE("editor resize grip round-trips a granted resize",
         const auto box = root_rect(*grip);
         CHECK(box.right
               == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth) - 3.0f));
-        CHECK(box.bottom
-              == Catch::Approx(static_cast<float>(spectr::kEditorDesignHeight) - 3.0f));
+        // Laid INTO the bottom bar rather than floated in the corner behind it
+        // (the Efx FRAGMENTS arrangement): vertically centred on the bar's 26pt
+        // control row, whose centre is bar_top(804) + 15.5 + 13 = 832.5. A grip
+        // that drifts off that row stops reading as part of the bar, and a bar
+        // height change that nobody propagated fails here.
+        constexpr float kBarControlRowCentre = 804.0f + 15.5f + 13.0f;
+        CHECK((box.top + box.bottom) * 0.5f
+              == Catch::Approx(kBarControlRowCentre));
+        CHECK(box.bottom < static_cast<float>(spectr::kEditorDesignHeight));
     }
 
     // And the UI is still live at the size the gesture produced. This is the
@@ -1756,6 +1838,7 @@ TEST_CASE("editor resize grip round-trips a granted resize",
 TEST_CASE("editor resize grip resizes through the host dispatch path",
           "[native-n1][resize-grip]") {
     PatternStoragePoison storage;
+    ScopedEditorOwnsResizeGrip grip_enabled{true};
     NativeEditorRig rig;
     rig.resize(990, 645);
     settle(rig.clock, 96);
@@ -1788,9 +1871,12 @@ TEST_CASE("editor resize grip resizes through the host dispatch path",
                                            /*modifiers=*/0,
                                            /*click_count=*/1,
                                            /*bubble=*/true));
-    pulp::view::deliver_mouse_drag(*rig.root, target,
-                                   {press.x + 330.0f, press.y + 215.0f},
-                                   /*modifiers=*/0);
+    // Move the pointer 330 x 215 WINDOW-space points, expressed as the root
+    // point the host would deliver for that movement at this scale.
+    const auto press_window = root_to_window(press, 990.0f, 645.0f);
+    const auto moved = window_to_root(
+        {press_window.x + 330.0f, press_window.y + 215.0f}, 990.0f, 645.0f);
+    pulp::view::deliver_mouse_drag(*rig.root, target, moved, /*modifiers=*/0);
 
     // The gesture reached the editor and produced a real host request.
     REQUIRE(requests.size() == 1);
@@ -1800,40 +1886,26 @@ TEST_CASE("editor resize grip resizes through the host dispatch path",
     CHECK(requests.front().first * 860ull == requests.front().second * 1320ull);
 }
 
-// ── Host gating ──────────────────────────────────────────────────────────────
+// ── Format gating ────────────────────────────────────────────────────────────
 //
-// The grip exists for hosts that provide NO resize affordance — AU v2, where
-// the format has no host->plugin resize contract and Logic's plugin window has
-// no grow area. A standalone window is the opposite: macOS owns the
-// bottom-right corner of a resizable NSWindow and consumes press and click
-// there before the content view is asked. Measured in a live standalone, with
-// the grip present, painted, and correctly placed: the window resized and the
-// grip's mouse channels never fired once.
+// The grip exists ONLY for a format that offers the user no resize affordance,
+// which today means AU v2 alone: the format hands a size plugin-ward once at
+// view creation and never again, and Logic's plug-in window has no grow area.
+// VST3 (checkSizeConstraint/onSize) and CLAP (gui_adjust_size) both resize
+// correctly through their own host protocols — verified in REAPER — so a grip
+// there would duplicate a working affordance. A standalone window is the
+// opposite failure: macOS owns the bottom-right corner of a resizable NSWindow
+// and consumes press and click there before the content view is asked, measured
+// in a live standalone with the grip present, painted, and correctly placed —
+// the window resized and the grip's mouse channels never fired once.
 //
-// So in a standalone the grip can only ever be a painted control that does
-// nothing, sitting on top of the affordance that does work. This case is the
-// regression guard: it asserts the standalone editor puts NOTHING in the corner
-// macOS owns, which is the check that would have caught it immediately.
-namespace {
+// So the flag is opt-IN and only `au_v2_entry.cpp` asserts it. These two cases
+// are the guard on that default in both directions.
 
-// The flag is process-global, so restore it or every later case in this binary
-// inherits whatever the last one set.
-struct ScopedHostDrawsNativeResize {
-    bool previous = spectr::host_draws_native_resize();
-    explicit ScopedHostDrawsNativeResize(bool value) {
-        spectr::set_host_draws_native_resize(value);
-    }
-    ~ScopedHostDrawsNativeResize() {
-        spectr::set_host_draws_native_resize(previous);
-    }
-};
-
-}  // namespace
-
-TEST_CASE("standalone editor leaves the OS resize corner alone",
+TEST_CASE("editors default to no grip so only AU v2 opts in",
           "[native-n1][resize-grip]") {
     PatternStoragePoison storage;
-    ScopedHostDrawsNativeResize standalone{true};
+    ScopedEditorOwnsResizeGrip default_build{false};
 
     NativeEditorRig rig;
     rig.resize(990, 645);
@@ -1842,8 +1914,9 @@ TEST_CASE("standalone editor leaves the OS resize corner alone",
     // No grip at all — not merely inert, absent.
     CHECK(find_resize_grip(*rig.root) == nullptr);
 
-    // And nothing else of the editor's has crept into the corner macOS owns.
-    // A control there would compete for the window resize even without a grip.
+    // And nothing else of the editor's has crept into the corner a standalone's
+    // macOS window owns. A control there would compete for the window resize
+    // even without a grip.
     const auto corner = pulp::view::Point{
         static_cast<float>(spectr::kEditorDesignWidth) - 4.0f,
         static_cast<float>(spectr::kEditorDesignHeight) - 4.0f};
@@ -1852,9 +1925,9 @@ TEST_CASE("standalone editor leaves the OS resize corner alone",
     CHECK(nearest_click_target(hit) == nullptr);
 }
 
-TEST_CASE("hosted editor still gets the grip", "[native-n1][resize-grip]") {
+TEST_CASE("the AU v2 opt-in gets the grip", "[native-n1][resize-grip]") {
     PatternStoragePoison storage;
-    ScopedHostDrawsNativeResize hosted{false};
+    ScopedEditorOwnsResizeGrip au_v2{true};
 
     NativeEditorRig rig;
     rig.resize(990, 645);
@@ -1864,3 +1937,207 @@ TEST_CASE("hosted editor still gets the grip", "[native-n1][resize-grip]") {
     // grip everywhere, which would make every other grip case vacuous.
     REQUIRE(find_resize_grip(*rig.root) != nullptr);
 }
+
+// ── The regression this whole slice exists for ───────────────────────────────
+//
+// Grabbing the grip in Logic "disrupted the editor". Root cause: a pinned
+// design viewport makes ROOT space a SCALED space whose scale is
+// host_width / 1320 — a function of the very quantity the grip changes. Mouse
+// points arrive inverse-mapped into that space, so applying a resize
+// retroactively changes what the latched drag origin MEANT. Hold the pointer
+// perfectly still after one 100pt move and the reported delta collapses toward
+// zero, the next request shrinks the editor, the scale drops back, the delta
+// reappears. Measured by this case against the pre-fix code: the requested size
+// swings across 903x588 .. 1959x1277 on successive events while the pointer
+// never moves, each swing dragging a full materialized re-layout behind it.
+//
+// Nothing in the suite could see it, and that is the interesting part: every
+// other case runs at an implicit scale of 1, where the broken design-space
+// arithmetic and the correct window-space arithmetic are the same numbers. The
+// case below is the one that fails without the fix — it drives a STATIONARY
+// pointer through the real host dispatch path while a host that actually
+// applies the requested size moves the scale underneath it.
+TEST_CASE("editor resize grip holds still when the pointer holds still",
+          "[native-n1][resize-grip]") {
+    PatternStoragePoison storage;
+    ScopedEditorOwnsResizeGrip au_v2{true};
+    NativeEditorRig rig;
+
+    // Open at the authored box, which is where Logic opens the editor.
+    float host_w = static_cast<float>(spectr::kEditorDesignWidth);
+    float host_h = static_cast<float>(spectr::kEditorDesignHeight);
+    rig.resize(host_w, host_h);
+    settle(rig.clock, 96);
+
+    const auto* grip = find_resize_grip(*rig.root);
+    REQUIRE(grip != nullptr);
+
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> requests;
+    rig.processor.set_editor_resize_handler(
+        [&](std::uint32_t w, std::uint32_t h) {
+            requests.push_back({w, h});
+            // A host that APPLIES the request, which is what Logic's AU v2
+            // container resize does. Applying it is what moves the scale, so a
+            // handler that only records cannot reproduce the defect.
+            host_w = static_cast<float>(w);
+            host_h = static_cast<float>(h);
+            rig.processor.on_view_resized(*rig.root, w, h);
+            return true;
+        });
+
+    const auto box = root_rect(*grip);
+    const auto press = pulp::view::Point{(box.left + box.right) * 0.5f,
+                                         (box.top + box.bottom) * 0.5f};
+    auto* target = rig.root->hit_test(press);
+    REQUIRE(target == grip);
+    REQUIRE(pulp::view::transfer_input_focus(*rig.root, target));
+    REQUIRE(pulp::view::deliver_mouse_down(*rig.root, target, press,
+                                           /*modifiers=*/0, /*click_count=*/1,
+                                           /*bubble=*/true));
+
+    // One real 100pt drag to the right, and then the pointer NEVER MOVES AGAIN.
+    // Its window-space position is fixed for the rest of the gesture; only the
+    // root-space point the host would deliver for it changes, because the scale
+    // does.
+    const auto pressed_window = root_to_window(press, host_w, host_h);
+    const auto held_window =
+        pulp::view::Point{pressed_window.x + 100.0f, pressed_window.y};
+
+    for (int event = 0; event < 12; ++event) {
+        const auto delivered = window_to_root(held_window, host_w, host_h);
+        pulp::view::deliver_mouse_drag(*rig.root, target, delivered,
+                                       /*modifiers=*/0);
+    }
+
+    REQUIRE(!requests.empty());
+    // A stationary pointer resolves to ONE size. Not "settles eventually" —
+    // every request the gesture makes must agree, because each disagreement is
+    // a visible jump of the plug-in window in the host.
+    const auto first = requests.front();
+    for (const auto& request : requests) {
+        INFO("requested " << request.first << 'x' << request.second
+             << " vs first " << first.first << 'x' << first.second);
+        CHECK(request == first);
+    }
+    // And it is the size the movement actually asked for: +100 window points.
+    const auto expected = spectr::resolve_editor_resize(
+        spectr::kEditorDesignWidth, spectr::kEditorDesignHeight, 100.0, 0.0);
+    CHECK(first.first == expected.width);
+    CHECK(first.second == expected.height);
+}
+
+// Structural guard against the blindness that let the oscillation ship.
+//
+// The defect above was not merely uncaught, it was INEXPRESSIBLE: every case in
+// this file ran at an implicit design-viewport scale of 1, and at scale 1 a
+// delta measured in root space and a delta measured in window space are
+// literally the same number. A whole suite can be green and blind to an entire
+// class of coordinate-space bug because the fixture never leaves the identity
+// case.
+//
+// So this case exists to keep a non-unit scale in the suite permanently, and it
+// asserts the scale is non-unit FIRST — otherwise a well-meaning change to the
+// host size below would quietly neutralize it and leave a test that proves
+// nothing while still passing.
+TEST_CASE("editor resize grip measures the pointer, not design units",
+          "[native-n1][resize-grip]") {
+    PatternStoragePoison storage;
+    ScopedEditorOwnsResizeGrip au_v2{true};
+    NativeEditorRig rig;
+
+    // 990/1320 = 0.75. Deliberately not the authored box.
+    constexpr float kHostW = 990.0f, kHostH = 645.0f;
+    const float scale = kHostW / static_cast<float>(spectr::kEditorDesignWidth);
+    REQUIRE(scale != Catch::Approx(1.0f));
+
+    rig.resize(kHostW, kHostH);
+    settle(rig.clock, 96);
+
+    const auto* grip = find_resize_grip(*rig.root);
+    REQUIRE(grip != nullptr);
+
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> requests;
+    rig.processor.set_editor_resize_handler(
+        [&](std::uint32_t w, std::uint32_t h) {
+            requests.push_back({w, h});
+            return true;
+        });
+
+    const auto box = root_rect(*grip);
+    const auto press = pulp::view::Point{(box.left + box.right) * 0.5f,
+                                         (box.top + box.bottom) * 0.5f};
+    auto* target = rig.root->hit_test(press);
+    REQUIRE(target == grip);
+    REQUIRE(pulp::view::transfer_input_focus(*rig.root, target));
+    REQUIRE(pulp::view::deliver_mouse_down(*rig.root, target, press,
+                                           /*modifiers=*/0, /*click_count=*/1,
+                                           /*bubble=*/true));
+
+    // Move the pointer exactly 120 WINDOW points to the right.
+    constexpr float kPointerTravel = 120.0f;
+    const auto pressed_window = root_to_window(press, kHostW, kHostH);
+    const auto moved = window_to_root(
+        {pressed_window.x + kPointerTravel, pressed_window.y}, kHostW, kHostH);
+    pulp::view::deliver_mouse_drag(*rig.root, target, moved, /*modifiers=*/0);
+
+    REQUIRE(requests.size() == 1);
+    // The editor grows by what the POINTER travelled, 1:1.
+    CHECK(requests.front().first
+          == static_cast<std::uint32_t>(kHostW) + static_cast<std::uint32_t>(kPointerTravel));
+    // And explicitly NOT by the root-space delta, which at this scale is
+    // 120/0.75 = 160. That is the number the pre-fix code produced, and the
+    // only thing separating the two readings is a scale != 1.
+    const auto conflated = static_cast<std::uint32_t>(
+        kHostW + kPointerTravel / scale);
+    CHECK(requests.front().first != conflated);
+}
+
+// Companion guard on the other half of the same gesture: under a pinned
+// viewport on_view_resized always publishes the SAME authored box, so the
+// materialized restore + re-place pass must not re-run per pointer event. It is
+// hundreds of bridge writes producing a layout identical to the one on screen,
+// and it ran inside the resize round trip for the whole drag.
+TEST_CASE("a resize to an unchanged design box republishes nothing",
+          "[native-n1][resize-grip]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.resize(1320, 860);
+    settle(rig.clock, 96);
+
+    // Count the passes by wrapping the entry point the publisher calls.
+    rig.bridge().load_script(
+        "globalThis.__spectrLayoutPasses__ = 0;"
+        "globalThis.__spectrWrappedResize__ = globalThis.__spectrResizeNativeEditor;"
+        "globalThis.__spectrResizeNativeEditor = function(w, h) {"
+        "  globalThis.__spectrLayoutPasses__ += 1;"
+        "  return globalThis.__spectrWrappedResize__(w, h); };",
+        "spectr-native-layout-pass-counter");
+
+    // Drive the resize path the way a drag does. Under the pin every one of
+    // these publishes the authored box, so after the first there is nothing new
+    // to say and the JS pass must not run again.
+    for (const auto& size : std::array<std::pair<int, int>, 4>{
+             std::pair{1400, 912}, std::pair{1480, 964},
+             std::pair{1560, 1016}, std::pair{1640, 1068}}) {
+        rig.processor.on_view_resized(*rig.root,
+                                      static_cast<std::uint32_t>(size.first),
+                                      static_cast<std::uint32_t>(size.second));
+    }
+    settle(rig.clock, 32);
+
+    // Same throw-to-read seam the rest of this file uses.
+    int passes = -1;
+    try {
+        rig.bridge().load_script(
+            "throw new Error('PASSES:' + globalThis.__spectrLayoutPasses__);",
+            "spectr-native-layout-pass-read");
+    } catch (const std::exception& error) {
+        const std::string message = error.what();
+        const auto marker = message.find("PASSES:");
+        if (marker != std::string::npos)
+            passes = std::atoi(message.c_str() + marker + 7);
+    }
+    INFO("materialized layout passes during four same-box resizes");
+    CHECK(passes == 0);
+}
+
