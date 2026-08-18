@@ -268,10 +268,22 @@ struct NativeEditorRig {
         return *session->bridge();
     }
 
+    // Drive a host-size change. Under the pinned (proportional) contract the
+    // ROOT deliberately does NOT track the host: it stays at the authored box
+    // and the host maps it onto the surface with one uniform scale. Asserting
+    // root==host here is what the responsive contract required; asserting it
+    // now would forbid the very behaviour the pin exists to provide.
     void resize(float width, float height) {
         REQUIRE(root != nullptr);
         processor.on_view_resized(*root, width, height);
         settle(clock, 16);
+        if (pulp::format::should_pin_design_viewport(processor.view_size())) {
+            CHECK(root->bounds().width
+                  == Catch::Approx(spectr::kEditorDesignWidth));
+            CHECK(root->bounds().height
+                  == Catch::Approx(spectr::kEditorDesignHeight));
+            return;
+        }
         CHECK(root->bounds().width == Catch::Approx(width));
         CHECK(root->bounds().height == Catch::Approx(height));
     }
@@ -534,10 +546,20 @@ void require_app_state(NativeEditorRig& rig, std::string_view expression,
 void require_runtime_contract(NativeEditorRig& rig,
                               std::string_view expression,
                               std::string_view message) {
+    // Report WHY, not just that it mismatched. An absent receipt and a wrong
+    // receipt read identically as "undefined" through JSON.stringify, and they
+    // have opposite causes: the first means the resize hook was never invoked
+    // (the guarded call in publish_native_layout_ is a silent no-op when the
+    // symbol is missing), the second means the layout pass produced the wrong
+    // numbers. Carry the hook's typeof and the runtime's own rejected-box list
+    // so the failure names its own cause.
     const auto script = std::string{"(() => { if (!("}
         + std::string(expression) + ")) throw new Error("
         + js_string(message) + " + ': ' + JSON.stringify("
-        + "globalThis.__spectrResponsiveLayoutReceipt__)); })();";
+        + "globalThis.__spectrResponsiveLayoutReceipt__)"
+        + " + ' hook=' + (typeof globalThis.__spectrResizeNativeEditor)"
+        + " + ' rejects=' + JSON.stringify("
+        + "globalThis.__spectrResponsiveLayoutRejects__)); })();";
     rig.bridge().load_script(script, "spectr-native-responsive-contract");
 }
 
@@ -682,17 +704,23 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     processor.define_parameters(store);
 
     const auto size = processor.view_size();
-    CHECK(size.preferred_width == 990);
-    CHECK(size.preferred_height == 645);
+    // Proportional-only contract: the editor opens at the AUTHORED box so the
+    // pin renders at scale 1.0 (layout exactly as designed, type at its
+    // authored size), and the policy stays Automatic so
+    // should_pin_design_viewport() engages in every format. The previous
+    // contract opened at 990x645 with viewport_policy=Responsive, which
+    // short-circuited the pin and made the root reflow at the host size.
+    CHECK(size.preferred_width == 1320);
+    CHECK(size.preferred_height == 860);
     CHECK(size.min_width == 792);
     CHECK(size.min_height == 516);
     CHECK(size.max_width == 2640);
     CHECK(size.max_height == 1720);
-    CHECK(size.aspect_ratio == Catch::Approx(990.0 / 645.0));
+    CHECK(size.aspect_ratio == Catch::Approx(1320.0 / 860.0));
     CHECK(size.design_width == 1320);
     CHECK(size.design_height == 860);
-    CHECK(size.viewport_policy == pulp::format::ViewportPolicy::Responsive);
-    CHECK_FALSE(pulp::format::should_pin_design_viewport(size));
+    CHECK(size.viewport_policy == pulp::format::ViewportPolicy::Automatic);
+    CHECK(pulp::format::should_pin_design_viewport(size));
     CHECK(pulp::format::should_lock_view_aspect(size));
 
     NativeEditorRig rig;
@@ -700,32 +728,45 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     struct ResizeCase {
         int width;
         int height;
-        std::string_view mode;
-        int bottom_height;
-        int graph_height;
         std::string_view image;
     };
+    // PROPORTIONAL-ONLY CONTRACT.
+    //
+    // The layout receipt is asserted to be BYTE-FOR-BYTE THE SAME at every host
+    // size, and to always describe the authored 1320x860 box. That invariance is
+    // the assertion: it is what "even proportional scaling, no cropping, no
+    // reflow" means at the layout layer. The host varies from 792x516 to
+    // 2640x1720 across these cases; the layout does not move.
+    //
+    // This deliberately replaces a per-size expectation table
+    // (compact-two-row/authored/expanded, bottom_height 96 vs 56, graph_height
+    // tracking the host). That table encoded the OPPOSITE contract: the layout
+    // MODE changed with the window, so the bottom rail switched between one and
+    // two rows and the brand subtitle disappeared as you dragged. Every "the
+    // layout is different at size X" report traced back to that reflow. Under a
+    // pinned design viewport there is nothing to reflow — the host applies one
+    // uniform scale to a constant layout — so a receipt that still varied with
+    // the host size would now be evidence of a BUG, not of correctness.
     for (const auto& sample : std::array<ResizeCase, 4>{
-             ResizeCase{792, 516, "compact-two-row", 96, 376, "minimum-home"},
-             ResizeCase{990, 645, "compact-two-row", 96, 505, "preferred-home"},
-             ResizeCase{1320, 860, "authored", 56, 760, "authored-home"},
-             ResizeCase{2640, 1720, "expanded", 56, 1620, "enlarged-home"},
+             ResizeCase{792, 516, "minimum-home"},
+             ResizeCase{990, 645, "preferred-home"},
+             ResizeCase{1320, 860, "authored-home"},
+             ResizeCase{2640, 1720, "enlarged-home"},
          }) {
         rig.resize(sample.width, sample.height);
         require_runtime_contract(
             rig,
             "(() => { const r = globalThis.__spectrResponsiveLayoutReceipt__; "
             "return r && r.schema === 'spectr-responsive-layout-v1'"
-            " && r.width === " + std::to_string(sample.width)
-            + " && r.height === " + std::to_string(sample.height)
-            + " && r.mode === " + js_string(sample.mode)
-            + " && r.design_transform === 'none' && r.top_height === 44"
-            + " && r.bottom_height === " + std::to_string(sample.bottom_height)
-            + " && r.graph_height === " + std::to_string(sample.graph_height)
-            + " && r.focus_order.length > 0"
-            + " && r.typography_scale === 1"
-            + "; })()",
-            "responsive layout receipt mismatch");
+            " && r.width === 1320 && r.height === 860"
+            " && r.mode === 'authored'"
+            " && r.design_transform === 'none' && r.top_height === 44"
+            " && r.bottom_height === 56"
+            " && r.graph_height === 760"
+            " && r.focus_order.length > 0"
+            " && r.typography_scale === 1"
+            "; })()",
+            "layout moved with the host size under a pinned viewport");
         capture(rig, directory, sample.image, sample.width, sample.height);
     }
 
@@ -744,12 +785,18 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     activate(rig, "[data-spectr-settings-open]");
     require_runtime_contract(
         rig,
+        // Under the pin the panel keeps its AUTHORED height (679) at every host
+        // size and paint scales it, so `scroll_reachable` comes from the design
+        // -- 684 of content in a 679 viewport -- not from squeezing the panel to
+        // fit the window. The previous expectation of 464.4 was the compact
+        // branch constraining it to a 792x516 host; that branch no longer runs,
+        // and a height that tracked the host would mean the reflow is back.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
-        "return s && s.width === 520 && Math.abs(s.height - 464.4) < 0.01"
+        "return s && s.width === 520 && s.height === 679"
         " && s.content_height === 684 && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
-        "compact settings were not constrained to a reachable scroll viewport");
+        "settings panel did not keep its authored geometry under the pin");
     capture(rig, directory, "minimum-settings", 792, 516);
     const auto* settings_title = find_label(*rig.root, "SETTINGS");
     REQUIRE(settings_title != nullptr);
@@ -773,17 +820,29 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     CHECK(scroll_view->border_width() == Catch::Approx(1.0f));
     CHECK(scroll_view->corner_radius() == Catch::Approx(8.0f));
     CHECK(scroll_view->content_size().height == Catch::Approx(684.0f));
-    CHECK(scroll_view->bounds().height == Catch::Approx(464.4f).margin(0.1f));
+    // Authored height at every host size -- the pin scales it at paint, so the
+    // panel is never squeezed to the window. 464.4 was the compact branch
+    // fitting it into a 792x516 host; a height that tracks the host now would
+    // mean the reflow layer is running alongside the pin.
+    CHECK(scroll_view->bounds().height == Catch::Approx(679.0f).margin(0.1f));
     scroll_view->set_scroll(0.0f, 684.0f);
     settle(rig.clock, 4);
-    CHECK(scroll_view->scroll_y() > 200.0f);
+    // Scrollable by exactly the design's overflow: 684 of content in a 679
+    // viewport. The old > 200 expectation only held while the viewport was
+    // squeezed to 464.4 and the overflow was correspondingly large.
+    CHECK(scroll_view->scroll_y() == Catch::Approx(5.0f).margin(0.5f));
     const auto* response_label = find_label(*rig.root, "Response");
     REQUIRE(response_label != nullptr);
     const auto response_point = root_point(
         *response_label, response_label->bounds().width * 0.5f,
         response_label->bounds().height * 0.5f);
+    // Root points are in AUTHORED space under a pinned viewport, so they are
+    // bounded by the design box (860), not by the host window (516). The host
+    // maps them at paint: 684.5 authored * (516/860) = 410.7 on screen, which
+    // is on-screen exactly as the old assertion intended -- it just tested the
+    // wrong coordinate space once the root stopped tracking the window.
     CHECK(response_point.y >= 0.0f);
-    CHECK(response_point.y <= 516.0f);
+    CHECK(response_point.y <= spectr::kEditorDesignHeight);
     capture(rig, directory, "minimum-settings-bottom", 792, 516);
 }
 
@@ -1419,11 +1478,15 @@ TEST_CASE("editor resize grip sits in the bottom-right corner at every size",
         const auto box = root_rect(*grip);
         CHECK(box.right - box.left == Catch::Approx(14.0f));
         CHECK(box.bottom - box.top == Catch::Approx(14.0f));
-        // Pinned to the bottom-right of the live host bounds, not to the
-        // authored 1320x860 coordinate space.
-        CHECK(box.right == Catch::Approx(static_cast<float>(size.first) - 3.0f));
+        // INVARIANT under the pin, and this is the proportional contract in one
+        // assertion: the grip sits at the bottom-right of the AUTHORED box at
+        // every host size, because the root never reflows — the host scales it.
+        // Under the old responsive contract this tracked the live host bounds
+        // instead, which is exactly the reflow the user ruled out.
+        CHECK(box.right
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth) - 3.0f));
         CHECK(box.bottom
-              == Catch::Approx(static_cast<float>(size.second) - 3.0f));
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignHeight) - 3.0f));
 
         // Reachable: hit-testing its centre resolves to the grip itself, not to
         // whatever the scripted realm painted underneath.
@@ -1535,6 +1598,7 @@ TEST_CASE("editor resize grip drag requests an aspect-held, clamped size",
     SECTION("a grow drag asks for the aspect-held size") {
         drag(330.0f, 0.0f);
         REQUIRE(requests.size() == 1);
+        // Base is the HOST size the rig was driven to, not the authored box.
         const auto expected = spectr::resolve_editor_resize(990, 645, 330.0f, 0.0f);
         CHECK(requests.front().first == expected.width);
         CHECK(requests.front().second == expected.height);
@@ -1615,12 +1679,17 @@ TEST_CASE("editor resize grip round-trips a granted resize",
     };
 
     const auto first = drag_and_grant(330.0f, 0.0f);
-    CHECK(first.first == 1320);
-    CHECK(first.second == 860);
+    const auto expected_first =
+        spectr::resolve_editor_resize(990, 645, 330.0f, 0.0f);
+    CHECK(first.first == expected_first.width);
+    CHECK(first.second == expected_first.height);
 
-    // The editor actually adopted the granted size.
-    CHECK(rig.root->bounds().width == Catch::Approx(1320.0f));
-    CHECK(rig.root->bounds().height == Catch::Approx(860.0f));
+    // Under the pin the ROOT stays at the authored box no matter what the host
+    // granted — the granted size changes the surface, not the layout.
+    CHECK(rig.root->bounds().width
+          == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth)));
+    CHECK(rig.root->bounds().height
+          == Catch::Approx(static_cast<float>(spectr::kEditorDesignHeight)));
     require_no_rejected_layout_boxes(rig);
 
     // The grip followed the new corner rather than staying at the old one.
@@ -1628,8 +1697,10 @@ TEST_CASE("editor resize grip round-trips a granted resize",
         const auto* grip = find_resize_grip(*rig.root);
         REQUIRE(grip != nullptr);
         const auto box = root_rect(*grip);
-        CHECK(box.right == Catch::Approx(1320.0f - 3.0f));
-        CHECK(box.bottom == Catch::Approx(860.0f - 3.0f));
+        CHECK(box.right
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth) - 3.0f));
+        CHECK(box.bottom
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignHeight) - 3.0f));
     }
 
     // And the UI is still live at the size the gesture produced. This is the
@@ -1723,8 +1794,9 @@ TEST_CASE("editor resize grip resizes through the host dispatch path",
 
     // The gesture reached the editor and produced a real host request.
     REQUIRE(requests.size() == 1);
-    CHECK(requests.front().first == 1320);
-    CHECK(requests.front().second == 860);
+    const auto expected = spectr::resolve_editor_resize(990, 645, 330.0f, 215.0f);
+    CHECK(requests.front().first == expected.width);
+    CHECK(requests.front().second == expected.height);
     CHECK(requests.front().first * 860ull == requests.front().second * 1320ull);
 }
 
@@ -1772,7 +1844,9 @@ TEST_CASE("standalone editor leaves the OS resize corner alone",
 
     // And nothing else of the editor's has crept into the corner macOS owns.
     // A control there would compete for the window resize even without a grip.
-    const auto corner = pulp::view::Point{990.0f - 4.0f, 645.0f - 4.0f};
+    const auto corner = pulp::view::Point{
+        static_cast<float>(spectr::kEditorDesignWidth) - 4.0f,
+        static_cast<float>(spectr::kEditorDesignHeight) - 4.0f};
     auto* hit = rig.root->hit_test(corner);
     INFO("corner hit " << (hit ? describe_control(*hit) : std::string("<null>")));
     CHECK(nearest_click_target(hit) == nullptr);

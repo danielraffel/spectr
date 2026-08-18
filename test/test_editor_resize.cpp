@@ -7,12 +7,13 @@
 
 using namespace spectr;
 
-TEST_CASE("Spectr editor publishes a smaller fixed-aspect host contract") {
+TEST_CASE("Spectr editor publishes a fixed-aspect host contract") {
     Spectr processor;
     const auto hints = processor.view_size();
 
-    CHECK(hints.preferred_width == 990);
-    CHECK(hints.preferred_height == 645);
+    // Preferred == authored. See the matching note in test_spectr.cpp.
+    CHECK(hints.preferred_width == 1320);
+    CHECK(hints.preferred_height == 860);
     CHECK(hints.min_width == 792);
     CHECK(hints.min_height == 516);
     CHECK(hints.max_width == 2640);

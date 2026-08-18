@@ -282,6 +282,12 @@ private:
     std::filesystem::path native_package_path_{};
     pulp::view::View* native_editor_root_ = nullptr;
     pulp::view::View* native_resize_grip_ = nullptr;
+    // Last host size reported to on_view_resized. Under a pinned viewport the
+    // ROOT is constant at the authored box, so root bounds are useless as a
+    // resize base — every drag would measure from 1320x860 and the grip could
+    // only ever take one step. The host size is the thing that actually moves.
+    std::uint32_t native_host_width_ = 0;
+    std::uint32_t native_host_height_ = 0;
     // Editor size latched at grip mouse-down. `ResizableCorner` reports
     // cumulative deltas from the drag start, so the base must be sampled once
     // per drag rather than read live (reading live would compound).
@@ -296,6 +302,7 @@ private:
     std::uint64_t native_analyzer_sequence_ = 0;
 
     std::unique_ptr<pulp::view::View> create_native_editor_();
+    void publish_native_layout_(std::uint32_t w, std::uint32_t h);
     void open_native_editor_(pulp::view::View& view);
     void close_native_editor_();
     bool tick_native_analyzer_(float dt);

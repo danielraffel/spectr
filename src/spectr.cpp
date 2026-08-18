@@ -206,8 +206,51 @@ void Spectr::on_view_opened(pulp::view::View& view) {
 void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
 #if defined(SPECTR_NATIVE_EDITOR)
     if (&view != native_editor_root_ || w == 0 || h == 0) return;
+    native_host_width_ = w;
+    native_host_height_ = h;
+    if (pulp::format::should_pin_design_viewport(view_size())) {
+        // Pinned viewport: the HOST owns the scale, so the root stays at the
+        // authored box at every host size and paint maps it onto the surface.
+        //
+        // Laying the root out at the host size while a viewport is pinned is
+        // the specific bug that renders content into a FRACTION of the surface
+        // with the remainder unpainted — measured at 1485 of 1980 physical px
+        // (990 design px at 1.5 px/px) with the rest black.
+        //
+        // And no JS relayout: with a pin there is nothing to reflow, and
+        // re-laying out at the host size flashes before the next paint reset
+        // (view-bridge SKILL.md, "Proportional resize with aspect lock"). The
+        // unpainted band during a live drag came from exactly that round trip —
+        // the responsive pass needs ~96 host frames to commit, so the surface
+        // outran the content for the whole gesture.
+        view.set_bounds({0.0f, 0.0f, static_cast<float>(kEditorDesignWidth),
+                         static_cast<float>(kEditorDesignHeight)});
+        view.layout_children();
+        // Still run the materialized pass, but ALWAYS at the authored size.
+        // It does two jobs: applyMaterializedImportMetadata() restores the
+        // captured authored geometry, and only after that does it re-place for
+        // the argument size. Under the pin the re-placement must not track the
+        // host — but the RESTORE is still required, or elements whose position
+        // comes from the import metadata (the canvas-drawn viewport strip) never
+        // receive an authored position at all. Skipping the whole call threw the
+        // restore out with the reflow, which showed up on every open, not just
+        // on resize. Passing the authored box keeps the layout identical at
+        // every host size, which is exactly the proportional contract.
+        publish_native_layout_(kEditorDesignWidth, kEditorDesignHeight);
+        return;
+    }
     view.set_bounds({0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h)});
     view.layout_children();
+    publish_native_layout_(w, h);
+#else
+    if (auto* editor = dynamic_cast<EditorView*>(&view)) {
+        editor->sync_to_host();
+    }
+#endif
+}
+
+#if defined(SPECTR_NATIVE_EDITOR)
+void Spectr::publish_native_layout_(std::uint32_t w, std::uint32_t h) {
     if (native_scripted_ui_ && native_scripted_ui_->bridge()) {
         std::ostringstream script;
         script << "if (typeof globalThis.__spectrResizeNativeEditor === 'function') "

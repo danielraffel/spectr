@@ -123,8 +123,8 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     processor.prepare(prepare);
 
     const auto size = processor.view_size();
-    REQUIRE(size.preferred_width == 990);
-    REQUIRE(size.preferred_height == 645);
+    REQUIRE(size.preferred_width == 1320);
+    REQUIRE(size.preferred_height == 860);
     REQUIRE(size.min_width == 792);
     REQUIRE(size.min_height == 516);
     REQUIRE(size.max_width == 2640);

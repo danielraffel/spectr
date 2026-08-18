@@ -319,30 +319,26 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     grip->flex().preferred_height = kResizeGripSize;
     grip->set_z_index(kResizeGripZIndex);
     grip->on_drag_begin = [this] {
-        const auto bounds = native_editor_root_
-            ? native_editor_root_->bounds()
-            : pulp::view::Rect{};
-        native_resize_base_width_ = bounds.width > 0.0f
-            ? static_cast<std::uint32_t>(std::lround(bounds.width))
-            : kEditorPreferredWidth;
-        native_resize_base_height_ = bounds.height > 0.0f
-            ? static_cast<std::uint32_t>(std::lround(bounds.height))
-            : kEditorPreferredHeight;
+        // Measure from the HOST size, not the root. Under a pinned viewport the
+        // root is constant at the authored box, so basing the drag on root
+        // bounds makes every gesture start from the same number and the grip
+        // can only ever take a single step.
+        native_resize_base_width_ = native_host_width_ > 0
+            ? native_host_width_ : kEditorPreferredWidth;
+        native_resize_base_height_ = native_host_height_ > 0
+            ? native_host_height_ : kEditorPreferredHeight;
         native_resize_refused_ = false;
     };
     grip->on_resize = [this](float dx, float dy) {
         if (native_resize_refused_ || native_resize_base_width_ == 0) return;
         const auto target = resolve_editor_resize(
             native_resize_base_width_, native_resize_base_height_, dx, dy);
-        const auto bounds = native_editor_root_
-            ? native_editor_root_->bounds()
-            : pulp::view::Rect{};
         // Skip the round trip while the drag still resolves to the size the
-        // editor is already at; otherwise a slow drag opens one host
-        // transaction per mouse-move that changes nothing.
-        if (static_cast<std::uint32_t>(std::lround(bounds.width)) == target.width
-            && static_cast<std::uint32_t>(std::lround(bounds.height))
-                   == target.height) {
+        // host is already at; otherwise a slow drag opens one host transaction
+        // per mouse-move that changes nothing. Compared against the host size
+        // for the same reason the base is: the root does not move under a pin.
+        if (native_host_width_ == target.width
+            && native_host_height_ == target.height) {
             return;
         }
         if (!request_editor_resize(target.width, target.height)) {

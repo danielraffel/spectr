@@ -107,9 +107,18 @@ constexpr ViewSize make_editor_view_size() {
         size.design_width = kEditorDesignWidth;
         size.design_height = kEditorDesignHeight;
     }
-    if constexpr (requires(ViewSize value) { value.viewport_policy; }) {
-        size.viewport_policy = decltype(size.viewport_policy)::Responsive;
-    }
+    // Leave viewport_policy at Automatic. With a non-zero aspect and a
+    // resizable min/max, `should_pin_design_viewport()` returns true, so the
+    // host pins the root at the authored box and paint applies one uniform
+    // aspect-correct scale. That is the "proportional only, no cropping"
+    // contract: the layout is identical at every size, just larger or smaller.
+    //
+    // This deliberately replaces an earlier `= Responsive` override. Responsive
+    // short-circuits the pin to false, which made the root reflow via Yoga at
+    // the live host size — layout MODE changed with the window (the bottom rail
+    // switched between one and two rows, the brand subtitle was hidden), and
+    // type stayed at an absolute size instead of scaling. Every "bars are
+    // misaligned at size X" symptom came from that reflow.
     return size;
 }
 
