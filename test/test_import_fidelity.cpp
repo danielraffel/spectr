@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "spectr_editor_assets_data.hpp"
+#ifdef SPECTR_NATIVE_EDITOR
+#include "spectr_native_assets_data.hpp"
+#endif
 
 #include <pulp/runtime/crypto.hpp>
 #include <pulp/view/design_sources.hpp>
@@ -23,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
 constexpr std::string_view kAdapterDigest =
-    "ee955daa9e524f663e497a695768b5c295c085fe75faeb5870dff885ffc68883";
+    "69282c6af57364abd884271b1716949273ddb98b7afdd4e41cf8dfefda88fab6";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -146,6 +149,14 @@ constexpr std::array kPatchNeedles{
     ContractMarker{"canvas-first-paint", "    rafRef.current = requestAnimationFrame(draw);\n    return () => cancelAnimationFrame(rafRef.current);"},
     ContractMarker{"canvas-sized-paint", "        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);\n      }\n    };\n    resize();"},
     ContractMarker{"canvas-render-publication", "  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, hover, marquee, selection, snapshots, morph, dspMode]);\n\n  function drawGrid(ctx, g) {"},
+    // The animation loop pins whichever renderAll existed when its effect last
+    // ran, and its dependency list omits the display-mode selector. The adapter
+    // rewrites this call to go through renderAllRef instead.
+    ContractMarker{"canvas-loop-paint", "      renderAll();\n      rafRef.current = requestAnimationFrame(draw);\n    };"},
+    // The hover readout floats above the cursor and the status banner owns a
+    // fixed slot at the top of the plot; the adapter raises this lower bound so
+    // the two never paint over one another.
+    ContractMarker{"hover-readout-clamp", "    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);"},
 };
 
 constexpr std::array kGestureMarkers{
@@ -300,6 +311,19 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("const renderAllRef = useRef(null)") != adapter.npos);
     CHECK(adapter.find("if (renderAllRef.current) renderAllRef.current()") != adapter.npos);
     CHECK(adapter.find("renderAllRef.current = renderAll") != adapter.npos);
+    // The loop must paint the latest renderer, or a display-only state change
+    // (BARS / RESPONSE / BOTH) never reaches the canvas until an unrelated
+    // dependency remounts the loop.
+    CHECK(adapter.find("animation loop paints the latest canvas renderer")
+          != adapter.npos);
+    CHECK(adapter.find("(renderAllRef.current || renderAll)()") != adapter.npos);
+    // One message at a time: the readout clears the banner's slot, and the
+    // banner replaces its own text rather than letting two messages stack.
+    CHECK(adapter.find("hover readout clears the status banner slot") != adapter.npos);
+    CHECK(adapter.find("clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h)")
+          != adapter.npos);
+    CHECK(adapter.find("status banner replaces one message at a time") != adapter.npos);
+    CHECK(adapter.find("shownRef.current !== display") != adapter.npos);
     CHECK(adapter.find("Apply synchronously when it is ready") != adapter.npos);
     CHECK(adapter.find("-Infinity is categorical state, never an interpolation operand")
           != adapter.npos);
@@ -420,3 +444,61 @@ TEST_CASE("import adapter contract detects native viewport resize mutations") {
         CHECK(contains(resize_errors(mutated), marker.label));
     }
 }
+
+#ifdef SPECTR_NATIVE_EDITOR
+
+// The shipping editor is native-ui/materialized/materialized-document.runtime.json,
+// a generated artifact that no recipe in this repo reproduces
+// (danielraffel/spectr#48), so editor fixes have to be hand-applied to it as
+// well as to resources/editor.html. Nothing else in the build notices when the
+// two drift, and a fix that lands only in the source ships as no fix at all.
+// These assert the emitted document, not the source that should have produced it.
+TEST_CASE("materialized editor document carries the adapter's editor fixes") {
+    const std::string document{
+        reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
+        spectr_native::materialized_document_runtime_json_size};
+
+    SECTION("the animation loop paints the latest canvas renderer") {
+        // Without this the loop keeps calling the renderAll it captured when its
+        // effect last ran, and its dependency list omits the display-mode
+        // selector -- so BARS / RESPONSE / BOTH change nothing on screen until
+        // an unrelated dependency happens to remount the loop.
+        CHECK(count_occurrences(document, "(renderAllRef.current || renderAll)();") == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "      renderAll();\\n      rafRef.current = requestAnimationFrame(draw);")
+              == 0);
+    }
+
+    SECTION("the hover readout clears the status banner's slot") {
+        CHECK(count_occurrences(
+                  document,
+                  "const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);")
+              == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);")
+              == 0);
+    }
+
+    SECTION("the status banner replaces one message at a time") {
+        CHECK(count_occurrences(document, "shownRef.current !== display") == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "const t = setTimeout(() => {\\n      setVisible(false);\\n"
+                  "      setText(\\\"\\\");\\n    }, 1400);")
+              == 0);
+    }
+
+    SECTION("a muted band still rests on the 0 dB line") {
+        // Pins danielraffel/spectr#44 in the emitted document: the response
+        // curve must project a muted band to zeroY, never to the axis floor.
+        CHECK(count_occurrences(
+                  document,
+                  "const y = isMuted(tg[i]) ? g.zeroY : g.zeroY - rendered * g.halfH;")
+              == 1);
+        CHECK(count_occurrences(document, "isMuted(tg[i]) ? g.zeroY + g.halfH") == 0);
+    }
+}
+
+#endif // SPECTR_NATIVE_EDITOR

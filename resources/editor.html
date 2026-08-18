@@ -352,6 +352,16 @@ document.addEventListener('DOMContentLoaded', async function() {
       },
       debugSnapshot() { return nativeAnalyzerFrame; },
     };
+    // The status banner owns a fixed slot at the top of the plot (top 60,
+    // height 26). The hover readout floats 30px above the cursor, so a band
+    // near the top of the plot put the readout underneath the banner and the
+    // two messages painted on top of each other. Reserve the slot: the readout
+    // never rises into the banner's band, so only one message occupies any
+    // point on screen.
+    replaceSpectrSource(
+      String.raw`    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);`,
+      String.raw`    const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);`,
+      'hover readout clears the status banner slot');
     replaceSpectrSource(
       String.raw`  useEffectChrome(() => {
     if (!message) return;
@@ -363,31 +373,43 @@ document.addEventListener('DOMContentLoaded', async function() {
   }, [message]);
   return (
     <div style={{`,
-      String.raw`  useEffectChrome(() => {
-    if (!message) {
-      setVisible(false);
-      setText('');
-      return;
-    }
-    const display = message.split('|')[0].trim();
+      String.raw`  const shownRef = useRefChrome('');
+  useEffectChrome(() => {
+    const display = message ? message.split('|')[0].trim() : '';
     if (!display) {
       setVisible(false);
       setText('');
+      shownRef.current = '';
       return;
     }
-    setText(display);
-    setVisible(true);
-    const t = setTimeout(() => {
+    // One slot, one message. A replacement fades the outgoing text out before
+    // the incoming text fades in, so a burst reads as a single banner changing
+    // rather than two messages stacking.
+    const replacing = !!shownRef.current && shownRef.current !== display;
+    const timers = [];
+    if (replacing) {
+      setVisible(false);
+      timers.push(setTimeout(() => {
+        setText(display);
+        setVisible(true);
+      }, 150));
+    } else {
+      setText(display);
+      setVisible(true);
+    }
+    shownRef.current = display;
+    timers.push(setTimeout(() => {
       setVisible(false);
       setText('');
-    }, 1400);
-    return () => clearTimeout(t);
+      shownRef.current = '';
+    }, replacing ? 1550 : 1400));
+    return () => timers.forEach(clearTimeout);
   }, [message]);
   return (
     <div data-spectr-status-shell="true"
       data-spectr-status-banner={visible && text ? 'true' : undefined}
       role="status" aria-live="polite" style={{`,
-      'status banner keeps stable geometry without painting an empty box');
+      'status banner replaces one message at a time');
     replaceSpectrSource(
       String.raw`      position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',
       padding: '6px 14px',
@@ -404,17 +426,17 @@ document.addEventListener('DOMContentLoaded', async function() {
       String.raw`      position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',
       width: 240, height: 26, padding: 0,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: visible && text ? 'rgba(12,16,22,0.92)' : 'transparent',
-      border: '1px solid ' + (visible && text
+      background: text ? 'rgba(12,16,22,0.92)' : 'transparent',
+      border: '1px solid ' + (text
         ? 'rgba(180,210,255,0.3)' : 'transparent'),
       borderRadius: 3,
       fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 1.5,
-      color: visible && text ? 'rgba(200,220,255,0.95)' : 'transparent',
+      color: text ? 'rgba(200,220,255,0.95)' : 'transparent',
       zIndex: 6, pointerEvents: 'none',
       opacity: visible && text ? 1 : 0,
-      transition: 'opacity 0.2s',
-      backdropFilter: visible && text ? 'blur(8px)' : 'none',
-    }}>{visible && text ? text : ''}</div>`,
+      transition: 'opacity 0.15s ease',
+      backdropFilter: text ? 'blur(8px)' : 'none',
+    }}>{text}</div>`,
       'status banner shell is visually empty while idle');
     window.SpectrNativeState = {
       parse(payload) {
@@ -1092,6 +1114,18 @@ window.FilterBank = FilterBank;`,
       '    rafRef.current = requestAnimationFrame(draw);\n    return () => cancelAnimationFrame(rafRef.current);',
       '    renderAll();\n    rafRef.current = requestAnimationFrame(draw);\n    return () => cancelAnimationFrame(rafRef.current);',
       'deterministic canvas first paint');
+    // The animation loop is mounted by an effect whose dependency list is a
+    // strict subset of renderAll's, so `draw` pins whichever renderAll existed
+    // when the loop last remounted. A display-only input -- the BARS /
+    // RESPONSE / BOTH selector -- is absent from that list, so changing it left
+    // the loop repainting the previous mode until an unrelated dependency
+    // (motionMode, showMinimap, view) happened to remount the loop. Paint
+    // through the same latest-renderer ref the resize path already uses, so
+    // every render input reaches the canvas on the next frame.
+    replaceSpectrSource(
+      '      renderAll();\n      rafRef.current = requestAnimationFrame(draw);\n    };',
+      '      (renderAllRef.current || renderAll)();\n      rafRef.current = requestAnimationFrame(draw);\n    };',
+      'animation loop paints the latest canvas renderer');
     replaceSpectrSource(
       '        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);\n      }\n    };\n    resize();',
       '        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);\n      }\n      if (renderAllRef.current) renderAllRef.current();\n    };\n    resize();',
