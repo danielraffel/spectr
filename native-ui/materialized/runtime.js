@@ -8226,6 +8226,7 @@
     },
     // ── First-mount attachment ──────────────────────────────────────
     appendInitialChild(parentInstance, child) {
+      markMaterializedTreeDirty();
       attach(parentInstance, child);
     },
     finalizeInitialChildren(_instance, _type, _props, _rootContainer, _hostContext) {
@@ -8233,12 +8234,15 @@
     },
     // ── Mutation: append / insert / remove ──────────────────────────
     appendChild(parentInstance, child) {
+      markMaterializedTreeDirty();
       attach(parentInstance, child);
     },
     appendChildToContainer(container, child) {
+      markMaterializedTreeDirty();
       attachToRoot(container, child);
     },
     insertBefore(parentInstance, child, beforeChild) {
+      markMaterializedTreeDirty();
       const beforeIdx = parentInstance.childIds.indexOf(beforeChild.id);
       const sameParent = child.parentId === parentInstance.id && child.onBridge;
       if (sameParent) {
@@ -8256,6 +8260,7 @@
       attach(parentInstance, child, beforeIdx >= 0 ? beforeIdx : void 0);
     },
     insertInContainerBefore(container, child, beforeChild) {
+      markMaterializedTreeDirty();
       attachToRoot(
         container,
         child,
@@ -8265,14 +8270,17 @@
       );
     },
     removeChild(parentInstance, child) {
+      markMaterializedTreeDirty();
       detach(parentInstance, child);
     },
     removeChildFromContainer(_container, child) {
+      markMaterializedTreeDirty();
       if (typeof g4.removeWidget === "function") call2("removeWidget", child.id);
       unregisterDomSubtree(child);
       child.parentId = void 0;
     },
     clearContainer(_container) {
+      markMaterializedTreeDirty();
     },
     // ── Updates ────────────────────────────────────────────────────
     prepareUpdate(_instance, type, oldProps, newProps) {
@@ -8281,6 +8289,7 @@
       return shallowDiff(oldN, newN);
     },
     commitUpdate(instance, _updatePayload, type, oldProps, newProps, _internalHandle) {
+      markMaterializedTreeDirty();
       const oldN = normalizeHostProps(type, oldProps);
       const newN = normalizeHostProps(type, newProps);
       applyChangedProps(instance, oldN, newN);
@@ -8308,6 +8317,7 @@
       }
     },
     commitTextUpdate(_textInstance, _oldText, _newText) {
+      markMaterializedTreeDirty();
     },
     // React's mutation reconciler calls resetTextContent when
     // shouldSetTextContent flips from true to false on an existing
@@ -8315,6 +8325,7 @@
     // <span><em>hi</em></span>. Clear stale text before the new child
     // element mounts.
     resetTextContent(instance) {
+      markMaterializedTreeDirty();
       if (typeof g4.setText === "function") {
         call2("setText", instance.textTargetId ?? instance.id, "");
       }
@@ -8324,8 +8335,25 @@
       return null;
     },
     resetAfterCommit(_container) {
-      const metadataHook = g4.__pulpApplyMaterializedImportMetadata__;
-      if (typeof metadataHook === "function") metadataHook();
+      // A host resize does not arrive as a React commit, but it does change the
+      // metrics every captured inset is derived from, so the root box is part
+      // of the dirty test. getRootSize reads View::bounds() and does NOT force
+      // a layout, unlike every other layout bridge call.
+      let rootSignature = materializedRootSignature;
+      if (typeof g4.getRootSize === "function") {
+        const size = g4.getRootSize();
+        if (size) rootSignature = size.width + "x" + size.height;
+      }
+      const shouldReapply =
+        materializedTreeDirty || rootSignature !== materializedRootSignature;
+      materializedRootSignature = rootSignature;
+      materializedTreeDirty = false;
+      if (shouldReapply) {
+        const metadataHook = g4.__pulpApplyMaterializedImportMetadata__;
+        if (typeof metadataHook === "function") metadataHook();
+      }
+      // The state hook is cheap when the state is unchanged and re-applies the
+      // metadata itself when it is not, so it stays unconditional.
       const stateHook = g4.__pulpRefreshMaterializedState__;
       if (typeof stateHook === "function") stateHook();
       requestLayoutFlush(() => {
@@ -8357,6 +8385,23 @@
       return null;
     }
   };
+  // Re-applying captured import metadata costs ONE FULL ROOT LAYOUT PER
+  // LAYOUT BINDING, because getLayoutBoxMetrics() calls root.layout_children()
+  // on every invocation. This document has 81 layout bindings and reads two
+  // metrics each, so an unconditional re-apply is ~162 whole-tree layout passes
+  // -- and resetAfterCommit ran it on EVERY React commit, including the commits
+  // a canvas-only gain drag produces, which cannot have moved a single native
+  // node. Measured before this guard: 21,401 layout passes outside the frame
+  // loop against 117 inside it, over one 20s capture.
+  //
+  // React already knows the answer. A commit that mutated no host node left the
+  // native tree, and therefore the captured geometry, exactly as it was. Every
+  // mutation path sets this; resetAfterCommit consumes and clears it.
+  let materializedTreeDirty = true;
+  let materializedRootSignature = "";
+  function markMaterializedTreeDirty() {
+    materializedTreeDirty = true;
+  }
   function attach(parent, child, index) {
     const wasAttachedElsewhere = child.parentId !== void 0 && child.parentId !== parent.id;
     child.parentId = parent.id;
