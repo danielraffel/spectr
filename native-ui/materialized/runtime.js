@@ -8874,33 +8874,6 @@
       const id = idOf(node);
       if (id) g5.setVisible(id, visible);
     };
-    // Every compact placement below sizes a control from its own measured box
-    // instead of a constant. The rail carries the authored type at its
-    // authored size in every host - the receipt's typography_scale is 1 and
-    // there is no design transform - so a constant height silently encodes one
-    // type size. When the type is taller than that constant the control does
-    // not centre: the box is top-anchored, so it rides high by exactly
-    // (constant - content) / 2. Measured against the authored rail, a 24px
-    // constant left the SPECTR lockup 4.0px high and the "N bands" run 2.5px
-    // high, while the two segmented pills - whose content happens to be
-    // exactly 24px - looked correct and hid the cause.
-    // Memoized per node because these writes are what a later call would
-    // otherwise measure: once a node carries an absolute override,
-    // getLayoutBoxMetrics reports the override rather than the authored box.
-    const intrinsicBox = (node) => {
-      if (!node) return null;
-      if (node.__spectrIntrinsicBox) return node.__spectrIntrinsicBox;
-      const id = idOf(node);
-      const metrics = id && g5.getLayoutBoxMetrics
-        ? g5.getLayoutBoxMetrics(id) : null;
-      if (!metrics || !Number.isFinite(metrics.offsetWidth)
-          || !Number.isFinite(metrics.offsetHeight)) return null;
-      return (node.__spectrIntrinsicBox = {
-        left: Number.isFinite(metrics.localX) ? metrics.localX : 0,
-        width: metrics.offsetWidth,
-        height: metrics.offsetHeight
-      });
-    };
     const descendantsOf = (ancestor) => values.filter((node) => {
       let current = node;
       while (current) {
@@ -8932,102 +8905,30 @@
       && child !== topRail && child !== bottomRail
       && descendantsOf(child).some((node) =>
         String(node && node.textContent || "").startsWith("CLEARED"))) || null;
+    const compact = width < 1200;
+    setBox(root, 0, 0, width, height);
+    setBox(background, 0, 0, width, height);
+    for (const canvas of descendantsOf(background).filter(
+      (node) => materializedNodeTag(node) === "canvas")) {
+      setBox(canvas, 0, 0, width, compact ? height - 96 : height);
+    }
+    if (status) setBox(status, Math.max(0, (width - 240) * 0.5), 60, 240, 26);
+
     const topChildren = topRail
       ? materializedElementChildren(topRail, new Set(values)) : [];
     const bottomChildren = bottomRail
       ? materializedElementChildren(bottomRail, new Set(values)) : [];
 
-    // One row or two is a question about whether the authored row FITS, and a
-    // round number cannot answer it. The row's left cluster ends at the last
-    // control's measured right edge, and the two corner controls are pinned
-    // 86px off the right edge, so the row fits whenever the host is wider than
-    // their sum. Measured on the authored rail the cluster ends at x=874, so
-    // the row still fits at the standalone's own 990x645 with ~30px to spare -
-    // the previous `width < 1200` wrapped it regardless. Deriving the
-    // threshold keeps it honest if the rail's type or content ever changes,
-    // and it is the same measurement the row itself is built from.
-    // Indices 2, 5, 7 and 14 are the elastic separators and the spacer that
-    // pushes the corner controls right; including 14 would measure the gap
-    // rather than the content and report that nothing ever fits.
-    const BOTTOM_LEFT_CLUSTER = [0, 1, 3, 4, 6, 8, 9, 10, 11, 12, 13];
-    const bottomLeftClusterRight = BOTTOM_LEFT_CLUSTER.reduce((edge, index) => {
-      const box = intrinsicBox(bottomChildren[index]);
-      return box ? Math.max(edge, box.left + box.width) : edge;
-    }, 0);
-    const compact = bottomLeftClusterRight > 0
-      ? width < bottomLeftClusterRight + 86 + 16
-      : width < 1000;
-
-    setBox(root, 0, 0, width, height);
-    setBox(background, 0, 0, width, height);
-    // The graph reserves 120px of bottom padding and spends the last 56 of it
-    // on the rail, so the viewport strip's baseline lands exactly 56px above
-    // the filter surface's bottom edge - which is why it sits flush above the
-    // one-row rail at every height. The two-row rail is 96px and swallows the
-    // strip whole, so it vanished rather than moved. End the surface 40px
-    // earlier whenever the rail is the taller one, so the strip clears it.
-    // The surface, not the canvas, is what the graph measures itself against
-    // (getGeom reads the surface's client box), so both have to move.
-    const surfaceHeight = compact ? height - 40 : height;
-    const filterSurface = typeof g5.__pulpFindMaterializedElement__ === "function"
-      ? g5.__pulpFindMaterializedElement__("[data-spectr-filter-surface]") : null;
-    if (filterSurface) setBox(filterSurface, 0, 0, width, surfaceHeight);
-    for (const canvas of descendantsOf(background).filter(
-      (node) => materializedNodeTag(node) === "canvas")) {
-      setBox(canvas, 0, 0, width, surfaceHeight);
-    }
-    if (status) setBox(status, Math.max(0, (width - 240) * 0.5), 60, 240, 26);
-
     setBox(topRail, 0, 0, width, 44);
-    // Read back what the bridge ACCEPTED rather than echoing what was asked
-    // for: (44 - h) / 2 + h / 2 is 22 for every h, so a receipt derived from
-    // the write is true by algebra and guards nothing. This file already
-    // documents that the bridge coerces geometry silently instead of
-    // reporting it, so the centre worth recording is the measured one.
-    const placedTopGroups = [];
-    // The right edge the packed compact row actually reaches. Packing against
-    // a measured width means the row's extent is no longer a constant anyone
-    // can eyeball, so record it: a row that overruns the host clips its last
-    // run silently, and that is not visible in any other receipt field.
-    let topRowRight = 0;
     if (compact) {
-      // Keep the four actionable top groups at their authored size and pack
-      // them from the left; the elastic separators and the subtitle are the
-      // parts that collapse. Width and height both come from the measured box,
-      // and the group is centred on the rail's own centre line, so the row
-      // stays centred and stays clear of itself at whatever size the type
-      // actually renders. The constants below are only a floor for the case
-      // where the bridge cannot report a box at all.
+      // Keep the four actionable top groups at their authored size. Elastic
+      // separators and the subtitle are the parts that collapse.
+      [[0, 12, 78], [2, 100, 134], [4, 246, 176], [6, 434, 228]].forEach(
+        ([index, left, boxWidth]) => setBox(topChildren[index], left, 9.5, boxWidth, 24));
       [1, 3, 5].forEach((index) => setVisibleNode(topChildren[index], false));
       const brandChildren = topChildren[0]
         ? materializedElementChildren(topChildren[0], new Set(values)) : [];
       [2, 3].forEach((index) => setVisibleNode(brandChildren[index], false));
-      // The brand lockup drops its separator and subtitle here, so its
-      // AUTHORED width is not the width it occupies in this rail - the two
-      // are ~180px apart. Pack against the width it keeps, measured as its
-      // last surviving child's right edge, or the row reserves a hole where
-      // the subtitle used to be and pushes the trailing "RES n/n" run off the
-      // right edge. The hidden children are measured before they collapse,
-      // which is exactly why the group box cannot be asked for this.
-      const brandKeptWidth = [0, 1].reduce((edge, index) => {
-        const box = intrinsicBox(brandChildren[index]);
-        return box ? Math.max(edge, box.left + box.width) : edge;
-      }, 0);
-
-      const TOP_GROUP_FALLBACK_WIDTH = { 0: 78, 2: 134, 4: 176, 6: 228 };
-      let topCursor = 12;
-      for (const index of [0, 2, 4, 6]) {
-        const group = topChildren[index];
-        const box = intrinsicBox(group);
-        const boxWidth = index === 0 && brandKeptWidth > 0 ? brandKeptWidth
-          : box ? box.width : TOP_GROUP_FALLBACK_WIDTH[index];
-        const boxHeight = box ? box.height : 24;
-        if (!setBox(group, topCursor, (44 - boxHeight) / 2, boxWidth, boxHeight))
-          continue;
-        placedTopGroups.push(group);
-        topCursor += boxWidth + 12;
-        topRowRight = topCursor - 12;
-      }
 
       setBox(bottomRail, 0, height - 96, width, 96);
       const bottomRailId = idOf(bottomRail);
@@ -9127,41 +9028,17 @@
     g5.__spectrResponsiveLayoutReceipt__ = {
       schema: "spectr-responsive-layout-v1",
       width, height,
-      // A one-row rail narrower than the authored design is not "expanded";
-      // naming it so was harmless only while every sub-1200 host took the
-      // two-row branch.
-      mode: compact ? "compact-two-row"
-        : width === 1320 && height === 860 ? "authored"
-        : width < 1320 ? "compact-one-row" : "expanded",
+      mode: compact ? "compact-two-row" : width === 1320 && height === 860
+        ? "authored" : "expanded",
       design_transform: "none",
       top_height: 44,
       bottom_height: compact ? 96 : 56,
       graph_height: height - 44 - (compact ? 96 : 56),
       typography_scale: 1,
-      bottom_left_cluster_right: bottomLeftClusterRight,
-      top_group_centres: [],
-      top_row_right: topRowRight,
-      // The strip's baseline sits 56px above the filter surface's bottom edge.
-      viewport_strip_clears_rail:
-        surfaceHeight - 56 <= height - (compact ? 96 : 56),
       settings: settingsReceipt,
       focus_order: visibleButtons.map(idOf).filter(Boolean)
     };
     if (typeof g5.__pulpRuntimeSettle__ === "function") g5.__pulpRuntimeSettle__(2);
-    // Measured after the settle, because that is the first moment the written
-    // boxes are observable. Each entry is a top-rail group's realised centre
-    // line, and every one of them has to be the rail's own centre - a spread
-    // here IS the "logo and tabs are not vertically centred" defect, in the
-    // only form that survives the bridge not reporting a refused write.
-    g5.__spectrResponsiveLayoutReceipt__.top_group_centres = placedTopGroups
-      .map((group) => {
-        const id = idOf(group);
-        const metrics = id && g5.getLayoutBoxMetrics
-          ? g5.getLayoutBoxMetrics(id) : null;
-        return metrics && Number.isFinite(metrics.localY)
-            && Number.isFinite(metrics.offsetHeight)
-          ? metrics.localY + metrics.offsetHeight / 2 : null;
-      });
     return g5.__spectrResponsiveLayoutReceipt__;
   }
   g5.__spectrResizeNativeEditor = function(width, height) {

@@ -707,7 +707,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     };
     for (const auto& sample : std::array<ResizeCase, 4>{
              ResizeCase{792, 516, "compact-two-row", 96, 376, "minimum-home"},
-             ResizeCase{990, 645, "compact-one-row", 56, 545, "preferred-home"},
+             ResizeCase{990, 645, "compact-two-row", 96, 505, "preferred-home"},
              ResizeCase{1320, 860, "authored", 56, 760, "authored-home"},
              ResizeCase{2640, 1720, "expanded", 56, 1620, "enlarged-home"},
          }) {
@@ -724,36 +724,6 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
             + " && r.graph_height === " + std::to_string(sample.graph_height)
             + " && r.focus_order.length > 0"
             + " && r.typography_scale === 1"
-            // Every top-rail group the compact branch places must land on the
-            // rail's own centre line. A spread here is the "logo and tabs are
-            // not vertically centred" defect in measurable form: a constant
-            // group height top-anchors shorter content and it rides high by
-            // half the difference. Vacuous in the branches that leave the
-            // authored flow row alone, which is the correct reading - those
-            // never move a group in the first place.
-            + " && r.top_group_centres.every(c => Math.abs(c - 22) < 0.01)"
-            // .every is vacuously true on an empty array, and the array is
-            // only populated by the branch that actually moves the groups.
-            // Pin the count there so a placement that silently failed for
-            // every group cannot read as four centred ones.
-            + " && (r.mode !== 'compact-two-row' || r.top_group_centres.length === 4)"
-            // Packing against measured widths means the row's extent is no
-            // longer a constant, so it has to be checked rather than read:
-            // measuring the brand lockup before its subtitle collapsed once
-            // reserved ~180px of dead space here and pushed the trailing
-            // "RES n/n" run off the right edge with nothing else going red.
-            + " && r.top_row_right <= r.width"
-            // The row wraps only when it genuinely does not fit: the left
-            // cluster's measured right edge plus the corner controls' 86px
-            // inset plus 16px of clearance. Pins the branch to the
-            // measurement rather than to a round width.
-            + " && r.bottom_left_cluster_right > 0"
-            + " && (r.mode === 'compact-two-row')"
-            + "    === (r.width < r.bottom_left_cluster_right + 102)"
-            // The canvas-drawn viewport strip sits 56px above the filter
-            // surface's bottom edge, so it is only visible while the rail it
-            // has to clear is no taller than the surface leaves room for.
-            + " && r.viewport_strip_clears_rail === true"
             + "; })()",
             "responsive layout receipt mismatch");
         capture(rig, directory, sample.image, sample.width, sample.height);
