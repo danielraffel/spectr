@@ -80,10 +80,32 @@ class EditorResizeGrip : public pulp::view::ResizableCorner {
 public:
     std::function<void()> on_drag_begin;
 
+    // ResizableCorner strokes with the theme's `control.border`, which on this
+    // near-black background is effectively invisible — instrumenting the live
+    // standalone showed paint firing with correct bounds while the corner read
+    // as empty in a screenshot. A grip nobody can see is a grip nobody drags,
+    // so draw it explicitly at a contrast that survives the dark theme.
+    void paint(pulp::canvas::Canvas& canvas) override {
+        const float w = bounds().width, h = bounds().height;
+        canvas.set_line_width(1.5f);
+        for (int i = 0; i < 3; ++i) {
+            const float inset = 2.0f + static_cast<float>(i) * 4.5f;
+            canvas.set_stroke_color(pulp::canvas::Color::rgba8(
+                190, 200, 214, static_cast<uint8_t>(hovered_ ? 235 : 150)));
+            canvas.stroke_line(w - inset, h - 1.0f, w - 1.0f, h - inset);
+        }
+    }
+
+    void on_mouse_enter() override { hovered_ = true; }
+    void on_mouse_leave() override { hovered_ = false; }
+
     void on_mouse_down(pulp::view::Point pos) override {
         if (on_drag_begin) on_drag_begin();
         pulp::view::ResizableCorner::on_mouse_down(pos);
     }
+
+private:
+    bool hovered_ = false;
 };
 struct EmbeddedFile {
     const char* relative_path;
@@ -111,10 +133,55 @@ std::filesystem::path package_path_for(const void* instance) {
     return directory / name.str();
 }
 
+// True when every embedded file is already on disk at exactly its embedded
+// size. Sizes only -- this runs on the editor-open path where the host is
+// blocked, so it must stay a handful of stat() calls and never read content.
+// A regenerated package that happened to preserve every file's size byte for
+// byte would defeat it, which is why the caller ALSO gates on a stamp that
+// changes with the build.
+bool embedded_package_is_current(const std::filesystem::path& path) {
+    std::error_code ec;
+    for (const auto& file : kEmbeddedFiles) {
+        const auto size = std::filesystem::file_size(path / file.relative_path, ec);
+        if (ec || size != file.size) return false;
+    }
+    return true;
+}
+
+// The materialized package is ~8 MB across runtime.js, the materialized
+// document, design.js and the assets, and this used to rewrite all of it with
+// `trunc` on EVERY editor open. In a plug-in host that write is synchronous
+// inside `uiViewForAudioUnit:`, so Logic sat blocked on it before the editor
+// could paint a single frame -- the visible symptom being a two-second sequence
+// of Logic's grey placeholder, then the unpainted NSView's white, then the
+// cleared GPU surface's black, before the UI finally appeared. Rewriting
+// identical bytes on the one path where the host is stalled is pure cost.
+//
+// Skip when the package on disk already matches this build. The stamp carries
+// the file count and total byte count, so adding, removing or resizing any file
+// invalidates it; the per-file size check then catches a partial or interrupted
+// previous write. Anything unexpected falls through to the full write, so the
+// worst case is the old behaviour rather than a stale editor.
 bool write_embedded_package(const std::filesystem::path& path) {
     std::error_code ec;
     std::filesystem::create_directories(path / "assets", ec);
     if (ec) return false;
+
+    std::size_t total = 0;
+    for (const auto& file : kEmbeddedFiles) total += file.size;
+    const auto stamp = std::to_string(kEmbeddedFiles.size()) + ':'
+                       + std::to_string(total);
+    const auto stamp_path = path / ".package-stamp";
+
+    {
+        std::ifstream existing(stamp_path, std::ios::binary);
+        std::string found;
+        if (existing && std::getline(existing, found) && found == stamp
+            && embedded_package_is_current(path)) {
+            return true;
+        }
+    }
+
     for (const auto& file : kEmbeddedFiles) {
         std::ofstream stream(path / file.relative_path,
                              std::ios::binary | std::ios::trunc);
@@ -123,7 +190,14 @@ bool write_embedded_package(const std::filesystem::path& path) {
                      static_cast<std::streamsize>(file.size));
         if (!stream.good()) return false;
     }
-    return true;
+
+    // Written last: a stamp is only meaningful once every file it describes is
+    // on disk, so an interrupted write leaves no stamp and the next open
+    // rewrites rather than trusting a partial package.
+    std::ofstream stamp_out(stamp_path, std::ios::binary | std::ios::trunc);
+    if (!stamp_out) return false;
+    stamp_out << stamp << '\n';
+    return stamp_out.good();
 }
 
 bool finite_spectrum(const pulp::view::SpectrumData& spectrum) noexcept {
@@ -310,7 +384,22 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     // standalone window macOS owns these exact pixels and consumes press and
     // click before the content view is asked, so a grip here is a painted
     // control that can never fire — see set_host_draws_native_resize().
-    if (!host_draws_native_resize()) {
+    // DISABLED. The editor does not own a resize affordance.
+    //
+    // The grip was a workaround for AU v2 having no host->plugin resize
+    // contract, and it fails in both directions: in a standalone macOS owns
+    // the window corner and consumes the events before the view sees them,
+    // and in Logic grabbing it disrupts the editor. Beyond that it is the
+    // wrong shape of fix — resizing belongs to the window corner, not to
+    // chrome inside the plug-in UI.
+    //
+    // Corner resize already works in VST3, CLAP and AU v3, which have real
+    // host-driven resize contracts. AU v2 is the one format without one, and
+    // the answer there is to ship AU v3 rather than to draw our own handle.
+    // Kept behind a constant rather than deleted so the wiring (and its
+    // tests) survive for the AU v3 work.
+    constexpr bool kEditorOwnsResizeGrip = false;
+    if (kEditorOwnsResizeGrip && !host_draws_native_resize()) {
     auto grip = std::make_unique<EditorResizeGrip>();
     grip->set_position(pulp::view::View::Position::absolute);
     grip->set_right(kResizeGripInset);
