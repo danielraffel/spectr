@@ -1746,3 +1746,66 @@ TEST_CASE("editor resize grip resizes through the host dispatch path",
     CHECK(requests.front().second == 860);
     CHECK(requests.front().first * 860ull == requests.front().second * 1320ull);
 }
+
+// ── Host gating ──────────────────────────────────────────────────────────────
+//
+// The grip exists for hosts that provide NO resize affordance — AU v2, where
+// the format has no host->plugin resize contract and Logic's plugin window has
+// no grow area. A standalone window is the opposite: macOS owns the
+// bottom-right corner of a resizable NSWindow and consumes press and click
+// there before the content view is asked. Measured in a live standalone, with
+// the grip present, painted, and correctly placed: the window resized and the
+// grip's mouse channels never fired once.
+//
+// So in a standalone the grip can only ever be a painted control that does
+// nothing, sitting on top of the affordance that does work. This case is the
+// regression guard: it asserts the standalone editor puts NOTHING in the corner
+// macOS owns, which is the check that would have caught it immediately.
+namespace {
+
+// The flag is process-global, so restore it or every later case in this binary
+// inherits whatever the last one set.
+struct ScopedHostDrawsNativeResize {
+    bool previous = spectr::host_draws_native_resize();
+    explicit ScopedHostDrawsNativeResize(bool value) {
+        spectr::set_host_draws_native_resize(value);
+    }
+    ~ScopedHostDrawsNativeResize() {
+        spectr::set_host_draws_native_resize(previous);
+    }
+};
+
+}  // namespace
+
+TEST_CASE("standalone editor leaves the OS resize corner alone",
+          "[native-n1][resize-grip]") {
+    PatternStoragePoison storage;
+    ScopedHostDrawsNativeResize standalone{true};
+
+    NativeEditorRig rig;
+    rig.resize(990, 645);
+    settle(rig.clock, 96);
+
+    // No grip at all — not merely inert, absent.
+    CHECK(find_resize_grip(*rig.root) == nullptr);
+
+    // And nothing else of the editor's has crept into the corner macOS owns.
+    // A control there would compete for the window resize even without a grip.
+    const auto corner = pulp::view::Point{990.0f - 4.0f, 645.0f - 4.0f};
+    auto* hit = rig.root->hit_test(corner);
+    INFO("corner hit " << (hit ? describe_control(*hit) : std::string("<null>")));
+    CHECK(nearest_click_target(hit) == nullptr);
+}
+
+TEST_CASE("hosted editor still gets the grip", "[native-n1][resize-grip]") {
+    PatternStoragePoison storage;
+    ScopedHostDrawsNativeResize hosted{false};
+
+    NativeEditorRig rig;
+    rig.resize(990, 645);
+    settle(rig.clock, 96);
+
+    // The complement of the case above: gating must not silently disable the
+    // grip everywhere, which would make every other grip case vacuous.
+    REQUIRE(find_resize_grip(*rig.root) != nullptr);
+}

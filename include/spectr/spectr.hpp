@@ -41,6 +41,24 @@
 
 namespace spectr {
 
+/// Declare that this process's host already draws a native window-resize
+/// affordance, so the editor must NOT add its own.
+///
+/// AU v2 has no host->plugin resize contract and Logic's plugin window has no
+/// grow area, so a hosted editor owns its resize gesture (see the grip in
+/// `create_native_editor_`). A standalone window is the opposite case: macOS
+/// owns the bottom-right corner of a resizable NSWindow and consumes press and
+/// click there before the content view is asked — measured, with the grip
+/// present, painted, and receiving nothing while the window resized. A grip
+/// there is a painted control that can never fire.
+///
+/// This is declared by the process entry point rather than sniffed.
+/// `pulp::format::detect_host_type()` cannot answer it: it reports
+/// `HostType::Standalone` by matching "pulp" in the process name, and this
+/// product's standalone is "Spectr Native Preview".
+void set_host_draws_native_resize(bool value);
+bool host_draws_native_resize();
+
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
 // SpectralFrameEngine reads through a fixed causal cursor of one complete FFT

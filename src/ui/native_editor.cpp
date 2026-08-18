@@ -11,6 +11,7 @@
 
 #include "spectr_native_assets_data.hpp"
 
+#include <atomic>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -30,6 +31,19 @@
 #endif
 
 namespace spectr {
+
+namespace {
+std::atomic<bool> g_host_draws_native_resize{false};
+}  // namespace
+
+void set_host_draws_native_resize(bool value) {
+    g_host_draws_native_resize.store(value, std::memory_order_relaxed);
+}
+
+bool host_draws_native_resize() {
+    return g_host_draws_native_resize.load(std::memory_order_relaxed);
+}
+
 namespace {
 
 constexpr float kPublishPeriodSeconds = 1.0f / 30.0f;
@@ -292,6 +306,11 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     // fires when the host actually applied the new frame. If the host refuses,
     // nothing here moves, so the internal size and the host window cannot
     // disagree.
+    // Only where the host provides no resize affordance of its own. In a
+    // standalone window macOS owns these exact pixels and consumes press and
+    // click before the content view is asked, so a grip here is a painted
+    // control that can never fire — see set_host_draws_native_resize().
+    if (!host_draws_native_resize()) {
     auto grip = std::make_unique<EditorResizeGrip>();
     grip->set_position(pulp::view::View::Position::absolute);
     grip->set_right(kResizeGripInset);
@@ -337,6 +356,7 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     };
     native_resize_grip_ = grip.get();
     root->add_child(std::move(grip));
+    }
 
     native_editor_root_ = root.get();
     return root;
