@@ -707,7 +707,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     };
     for (const auto& sample : std::array<ResizeCase, 4>{
              ResizeCase{792, 516, "compact-two-row", 96, 376, "minimum-home"},
-             ResizeCase{990, 645, "compact-two-row", 96, 505, "preferred-home"},
+             ResizeCase{990, 645, "compact-one-row", 56, 545, "preferred-home"},
              ResizeCase{1320, 860, "authored", 56, 760, "authored-home"},
              ResizeCase{2640, 1720, "expanded", 56, 1620, "enlarged-home"},
          }) {
@@ -724,6 +724,25 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
             + " && r.graph_height === " + std::to_string(sample.graph_height)
             + " && r.focus_order.length > 0"
             + " && r.typography_scale === 1"
+            // Every top-rail group the compact branch places must land on the
+            // rail's own centre line. A spread here is the "logo and tabs are
+            // not vertically centred" defect in measurable form: a constant
+            // group height top-anchors shorter content and it rides high by
+            // half the difference. Vacuous in the branches that leave the
+            // authored flow row alone, which is the correct reading - those
+            // never move a group in the first place.
+            + " && r.top_group_centres.every(c => Math.abs(c - 22) < 0.01)"
+            // The row wraps only when it genuinely does not fit: the left
+            // cluster's measured right edge plus the corner controls' 86px
+            // inset plus 16px of clearance. Pins the branch to the
+            // measurement rather than to a round width.
+            + " && r.bottom_left_cluster_right > 0"
+            + " && (r.mode === 'compact-two-row')"
+            + "    === (r.width < r.bottom_left_cluster_right + 102)"
+            // The canvas-drawn viewport strip sits 56px above the filter
+            // surface's bottom edge, so it is only visible while the rail it
+            // has to clear is no taller than the surface leaves room for.
+            + " && r.viewport_strip_clears_rail === true"
             + "; })()",
             "responsive layout receipt mismatch");
         capture(rig, directory, sample.image, sample.width, sample.height);
@@ -1657,4 +1676,73 @@ TEST_CASE("editor resize grip round-trips a granted resize",
     const auto second = drag_and_grant(330.0f, 0.0f);
     CHECK(second.first > first.first);
     CHECK(second.first * 860ull == second.second * 1320ull);
+}
+
+
+// ── Host dispatch path ───────────────────────────────────────────────────────
+//
+// The cases above call the grip's methods directly and assert
+// `root->hit_test(centre) == grip`. Both pass while the gesture is completely
+// dead in a real host, which is the trap this file walked into once already:
+// asserting a layer BELOW where the failure lives. The mac host does not call
+// widget methods — it resolves `rootView->hit_test(pt)`, runs the focus
+// protocol through `transfer_input_focus`, and then delivers through
+// `deliver_mouse_down` / `deliver_mouse_drag` (window_host_mac.mm:398-529).
+// This case drives those same entry points, so a target that hit-tests
+// correctly but is dropped by focus transfer or by a delivery channel fails
+// here instead of shipping green.
+//
+// This models the AU editor specifically: an AU v2 Cocoa view is embedded in
+// the host's window, so nothing upstream competes for the corner. In the
+// STANDALONE the same gesture is unreachable — macOS owns the bottom-right of
+// a resizable NSWindow and consumes press and click alike before the content
+// view is asked (measured: no mouse channel on the grip fires at all there,
+// while the window itself resizes). That is not a defect in this wiring, and
+// the standalone does not need the grip because the OS resizes it natively —
+// but it does mean the standalone can NOT verify this path, which is why it is
+// pinned here.
+TEST_CASE("editor resize grip resizes through the host dispatch path",
+          "[native-n1][resize-grip]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.resize(990, 645);
+    settle(rig.clock, 96);
+
+    const auto* grip = find_resize_grip(*rig.root);
+    REQUIRE(grip != nullptr);
+    const auto box = root_rect(*grip);
+    const auto press = pulp::view::Point{(box.left + box.right) * 0.5f,
+                                         (box.top + box.bottom) * 0.5f};
+
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> requests;
+    rig.processor.set_editor_resize_handler(
+        [&](std::uint32_t w, std::uint32_t h) {
+            requests.push_back({w, h});
+            return true;
+        });
+
+    // 1. Target resolution, exactly as the host does it.
+    auto* target = rig.root->hit_test(press);
+    REQUIRE(target == grip);
+
+    // 2. The focus protocol the host runs before it will deliver anything. It
+    //    returning false is how a press gets silently dropped — ResizableCorner
+    //    is deliberately not focusable, so this pins that a non-focusable
+    //    target still survives.
+    REQUIRE(pulp::view::transfer_input_focus(*rig.root, target));
+
+    // 3. Delivery through the portable channels the host actually calls.
+    REQUIRE(pulp::view::deliver_mouse_down(*rig.root, target, press,
+                                           /*modifiers=*/0,
+                                           /*click_count=*/1,
+                                           /*bubble=*/true));
+    pulp::view::deliver_mouse_drag(*rig.root, target,
+                                   {press.x + 330.0f, press.y + 215.0f},
+                                   /*modifiers=*/0);
+
+    // The gesture reached the editor and produced a real host request.
+    REQUIRE(requests.size() == 1);
+    CHECK(requests.front().first == 1320);
+    CHECK(requests.front().second == 860);
+    CHECK(requests.front().first * 860ull == requests.front().second * 1320ull);
 }
