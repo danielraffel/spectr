@@ -1373,3 +1373,288 @@ TEST_CASE("native buttons are tappable across their whole painted bounds",
         }
     }
 }
+
+// ── Editor-owned resize grip (AU v2) ─────────────────────────────────────────
+//
+// AU v2 has no host->plugin resize contract — `AUCocoaUIBase` declares only
+// `interfaceVersion` and `uiViewForAudioUnit:withSize:`, and Logic's plugin
+// window exposes no AXGrowArea and refuses a host-side resize. A resizable AU v2
+// editor must therefore own its gesture and ask the host for a size. These cases
+// cover the three things that are provable without a host: the grip is where it
+// claims to be, it is reachable, and a drag resolves to a legal size.
+namespace {
+
+const View* find_resize_grip(const View& view) {
+    // The grip is the editor's only absolutely-positioned mouse-input child of
+    // the root, so identify it structurally rather than by a type the anonymous
+    // namespace in the plugin TU does not export.
+    for (std::size_t index = 0; index < view.child_count(); ++index) {
+        const auto* child = view.child_at(index);
+        if (child->position() == View::Position::absolute
+            && child->wants_mouse_input()) {
+            return child;
+        }
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+TEST_CASE("editor resize grip sits in the bottom-right corner at every size",
+          "[native-n1][resize-grip]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+
+    for (const auto& size : std::array<std::pair<int, int>, 4>{
+             std::pair{792, 516}, std::pair{990, 645},
+             std::pair{1320, 860}, std::pair{2640, 1720}}) {
+        rig.resize(static_cast<float>(size.first),
+                   static_cast<float>(size.second));
+        settle(rig.clock, 96);
+        INFO("host size " << size.first << 'x' << size.second);
+
+        const auto* grip = find_resize_grip(*rig.root);
+        REQUIRE(grip != nullptr);
+
+        const auto box = root_rect(*grip);
+        CHECK(box.right - box.left == Catch::Approx(14.0f));
+        CHECK(box.bottom - box.top == Catch::Approx(14.0f));
+        // Pinned to the bottom-right of the live host bounds, not to the
+        // authored 1320x860 coordinate space.
+        CHECK(box.right == Catch::Approx(static_cast<float>(size.first) - 3.0f));
+        CHECK(box.bottom
+              == Catch::Approx(static_cast<float>(size.second) - 3.0f));
+
+        // Reachable: hit-testing its centre resolves to the grip itself, not to
+        // whatever the scripted realm painted underneath.
+        const auto centre = pulp::view::Point{(box.left + box.right) * 0.5f,
+                                              (box.top + box.bottom) * 0.5f};
+        const auto* hit = rig.root->hit_test(centre);
+        INFO("hit " << (hit ? describe_control(*hit) : std::string("<null>")));
+        INFO("grip " << describe_control(*grip));
+        CHECK(hit == grip);
+    }
+}
+
+TEST_CASE("editor resize grip outranks the behaviour layer",
+          "[native-n1][resize-grip]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.resize(990, 645);
+    settle(rig.clock, 96);
+
+    const auto* grip = find_resize_grip(*rig.root);
+    REQUIRE(grip != nullptr);
+
+    // The materialized tree paints at z = -20000 and takes interaction at
+    // z = +20000 through a full-bleed behaviour node. The grip is only
+    // reachable while it outranks that node, and the SDK exports no constant
+    // for it — so pin the relationship here rather than trusting a magic
+    // number to stay valid. A materializer that raises its z fails this test
+    // instead of silently killing the gesture.
+    const View* behavior = nullptr;
+    for (std::size_t index = 0; index < rig.root->child_count(); ++index) {
+        const auto* child = rig.root->child_at(index);
+        if (describe_control(*child).find("__pulp_materialized_behavior__")
+            != std::string::npos) {
+            behavior = child;
+        }
+    }
+    REQUIRE(behavior != nullptr);
+    CHECK(grip->z_index() > behavior->z_index());
+}
+
+TEST_CASE("editor resize grip overlaps no other control",
+          "[native-n1][resize-grip]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+
+    // Every declared size, not just the one Logic opens at. The bottom bar
+    // reflows, so the corner is tightest at the authored 1320x860 capture — a
+    // grip validated only at the preferred size lands on the help button there,
+    // which is exactly what `native buttons are tappable across their whole
+    // painted bounds` caught the first time this was wired.
+    for (const auto& size : std::array<std::pair<int, int>, 4>{
+             std::pair{792, 516}, std::pair{990, 645},
+             std::pair{1320, 860}, std::pair{2640, 1720}}) {
+        rig.resize(static_cast<float>(size.first),
+                   static_cast<float>(size.second));
+        settle(rig.clock, 96);
+        INFO("host size " << size.first << 'x' << size.second);
+
+        const auto* grip = find_resize_grip(*rig.root);
+        REQUIRE(grip != nullptr);
+        const auto grip_box = root_rect(*grip);
+
+        std::vector<const View*> controls;
+        collect_click_targets(*rig.root, controls);
+        REQUIRE(controls.size() >= 15);
+
+        for (const auto* control : controls) {
+            if (control == grip) continue;
+            INFO("control " << describe_control(*control));
+            // Compare against the PAINTED extent, not the hit box: the gear and
+            // help buttons are what the grip must visibly clear.
+            const auto painted = painted_extent(*control);
+            CAPTURE(painted.left, painted.top, painted.right, painted.bottom,
+                    grip_box.left, grip_box.top, grip_box.right,
+                    grip_box.bottom);
+            const bool disjoint = painted.right <= grip_box.left
+                                  || painted.left >= grip_box.right
+                                  || painted.bottom <= grip_box.top
+                                  || painted.top >= grip_box.bottom;
+            CHECK(disjoint);
+        }
+    }
+}
+
+TEST_CASE("editor resize grip drag requests an aspect-held, clamped size",
+          "[native-n1][resize-grip]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.resize(990, 645);
+    settle(rig.clock, 96);
+
+    const auto* grip = find_resize_grip(*rig.root);
+    REQUIRE(grip != nullptr);
+    auto& mutable_grip = *const_cast<View*>(grip);
+
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> requests;
+    bool accept = true;
+    rig.processor.set_editor_resize_handler(
+        [&](std::uint32_t w, std::uint32_t h) {
+            requests.push_back({w, h});
+            return accept;
+        });
+
+    const auto drag = [&](float dx, float dy) {
+        mutable_grip.on_mouse_down({0.0f, 0.0f});
+        mutable_grip.on_mouse_drag({dx, dy});
+    };
+
+    SECTION("a grow drag asks for the aspect-held size") {
+        drag(330.0f, 0.0f);
+        REQUIRE(requests.size() == 1);
+        const auto expected = spectr::resolve_editor_resize(990, 645, 330.0f, 0.0f);
+        CHECK(requests.front().first == expected.width);
+        CHECK(requests.front().second == expected.height);
+        // Aspect held exactly against the authored 1320x860 capture.
+        CHECK(requests.front().first * 860ull
+              == requests.front().second * 1320ull);
+    }
+
+    SECTION("a drag past the declared maximum clamps instead of overshooting") {
+        drag(100000.0f, 100000.0f);
+        REQUIRE(requests.size() == 1);
+        CHECK(requests.front().first == spectr::kEditorMaximumWidth);
+        CHECK(requests.front().second == spectr::kEditorMaximumHeight);
+    }
+
+    SECTION("a drag past the declared minimum clamps instead of collapsing") {
+        drag(-100000.0f, -100000.0f);
+        REQUIRE(requests.size() == 1);
+        CHECK(requests.front().first == spectr::kEditorMinimumWidth);
+        CHECK(requests.front().second == spectr::kEditorMinimumHeight);
+    }
+
+    SECTION("a refused request leaves the editor size untouched") {
+        accept = false;
+        const auto before = rig.root->bounds();
+        drag(330.0f, 0.0f);
+        REQUIRE(requests.size() == 1);
+        settle(rig.clock, 16);
+        // The grip only ASKS. Geometry changes solely via on_view_resized, so a
+        // host that refuses cannot leave the editor disagreeing with its window.
+        CHECK(rig.root->bounds().width == Catch::Approx(before.width));
+        CHECK(rig.root->bounds().height == Catch::Approx(before.height));
+
+        // And one refusal ends the gesture's traffic rather than opening a
+        // rejected host transaction per mouse-move.
+        mutable_grip.on_mouse_drag({360.0f, 0.0f});
+        mutable_grip.on_mouse_drag({390.0f, 0.0f});
+        CHECK(requests.size() == 1);
+    }
+}
+
+// The standalone host installs a real editor-resize handler
+// (`install_standalone_editor_resize_handler`) that turns
+// `request_editor_resize` into an actual window resize, and the resized window
+// comes back into the editor as `on_view_resized`. That full loop — ask, host
+// grants, editor adopts — is what dragging the grip in the standalone
+// exercises, and it is the path where a resize can leave the UI dead. The
+// refusal case above only proves nothing moves when the host says no.
+TEST_CASE("editor resize grip round-trips a granted resize",
+          "[native-n1][resize-grip]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.resize(990, 645);
+    settle(rig.clock, 96);
+
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> requests;
+    rig.processor.set_editor_resize_handler(
+        [&](std::uint32_t w, std::uint32_t h) {
+            requests.push_back({w, h});
+            return true;
+        });
+
+    const auto drag_and_grant = [&](float dx, float dy) {
+        const auto* grip = find_resize_grip(*rig.root);
+        REQUIRE(grip != nullptr);
+        auto& mutable_grip = *const_cast<View*>(grip);
+        mutable_grip.on_mouse_down({0.0f, 0.0f});
+        mutable_grip.on_mouse_drag({dx, dy});
+        REQUIRE_FALSE(requests.empty());
+        // The host grants it: the window resizes, and the new size arrives back
+        // through on_view_resized exactly as a real host delivers it — after
+        // the gesture, not re-entrantly inside the mouse handler.
+        const auto granted = requests.back();
+        rig.resize(static_cast<float>(granted.first),
+                   static_cast<float>(granted.second));
+        settle(rig.clock, 96);
+        return granted;
+    };
+
+    const auto first = drag_and_grant(330.0f, 0.0f);
+    CHECK(first.first == 1320);
+    CHECK(first.second == 860);
+
+    // The editor actually adopted the granted size.
+    CHECK(rig.root->bounds().width == Catch::Approx(1320.0f));
+    CHECK(rig.root->bounds().height == Catch::Approx(860.0f));
+    require_no_rejected_layout_boxes(rig);
+
+    // The grip followed the new corner rather than staying at the old one.
+    {
+        const auto* grip = find_resize_grip(*rig.root);
+        REQUIRE(grip != nullptr);
+        const auto box = root_rect(*grip);
+        CHECK(box.right == Catch::Approx(1320.0f - 3.0f));
+        CHECK(box.bottom == Catch::Approx(860.0f - 3.0f));
+    }
+
+    // And the UI is still live at the size the gesture produced. This is the
+    // failure the user would actually hit: a resize that leaves controls dead.
+    {
+        std::vector<const View*> controls;
+        collect_click_targets(*rig.root, controls);
+        REQUIRE(controls.size() >= 15);
+        for (const auto* control : controls) {
+            const auto box = root_rect(*control);
+            if (box.right - box.left <= 0.0f || box.bottom - box.top <= 0.0f)
+                continue;
+            INFO("control " << describe_control(*control));
+            const auto centre = pulp::view::Point{(box.left + box.right) * 0.5f,
+                                                  (box.top + box.bottom) * 0.5f};
+            auto* hit = rig.root->hit_test(centre);
+            REQUIRE(hit != nullptr);
+            CHECK(nearest_click_target(hit) == control);
+        }
+    }
+
+    // A second gesture measures from the size the editor is NOW at. If the base
+    // were still latched at 990 the same delta would ask for 1320 again, and
+    // the grip would feel stuck after one drag.
+    const auto second = drag_and_grant(330.0f, 0.0f);
+    CHECK(second.first > first.first);
+    CHECK(second.first * 860ull == second.second * 1320ull);
+}

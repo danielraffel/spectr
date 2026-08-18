@@ -4,6 +4,7 @@
 
 #include <pulp/runtime/log.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
+#include <pulp/view/buttons.hpp>
 #include <pulp/view/view.hpp>
 
 #include <choc/text/choc_JSON.h>
@@ -32,9 +33,44 @@ namespace spectr {
 namespace {
 
 constexpr float kPublishPeriodSeconds = 1.0f / 30.0f;
+
+// Editor-owned resize affordance. The bottom bar keeps a fixed ~20pt gutter to
+// the right of the help button at every declared size (measured: the button
+// ends at x=1300 of 1320, and at x=2620 of 2640 — the gutter does NOT scale
+// with the editor). Size + inset must therefore stay under that gutter so the
+// grip's left edge clears the button on the x-axis; at 14 + 3 it clears by 3pt
+// at the tightest size. `editor resize grip overlaps no other control` in
+// test_native_state_parity.cpp checks that at all four sizes — an earlier
+// 16 + 6 pass validated only at the preferred size and landed on the help
+// button at the authored 1320x860 capture.
+constexpr float kResizeGripSize = 14.0f;
+constexpr float kResizeGripInset = 3.0f;
+// The materialized DesignIR tree is a sandwich: `__pulp_materialized_surface__`
+// paints at z = -20000 and `__pulp_materialized_behavior__` takes interaction at
+// z = +20000. Native chrome that must own its own rect has to clear the
+// behaviour layer, not merely the surface — at any z below it the grip paints
+// but never receives the press, because `View::hit_test` resolves the
+// full-bleed behaviour node first. The SDK does not export that value, so the
+// relationship is pinned by `editor resize grip outranks the behaviour layer`
+// in test_native_state_parity.cpp: if the materializer ever raises its z, that
+// test fails loudly instead of the grip going quietly dead.
+constexpr int kResizeGripZIndex = 30000;
 constexpr std::size_t kVisibleAnalyzerPointCount = 321;
 constexpr std::size_t kOverviewAnalyzerPointCount = 121;
 constexpr float kAnalyzerCeilingDb = 24.0f;
+
+// `ResizableCorner` reports cumulative deltas from the drag start but does not
+// announce the drag start itself, so the owner cannot latch the size the deltas
+// are relative to. Surface that one edge.
+class EditorResizeGrip : public pulp::view::ResizableCorner {
+public:
+    std::function<void()> on_drag_begin;
+
+    void on_mouse_down(pulp::view::Point pos) override {
+        if (on_drag_begin) on_drag_begin();
+        pulp::view::ResizableCorner::on_mouse_down(pos);
+    }
+};
 struct EmbeddedFile {
     const char* relative_path;
     const unsigned char* data;
@@ -225,6 +261,82 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
             native_scripted_ui_.reset();
         }
     }
+
+    // ── Editor-owned resize grip ────────────────────────────────────────
+    //
+    // AU v2 has no host->plugin resize contract. `AUCocoaUIBase` declares only
+    // `interfaceVersion` and `uiViewForAudioUnit:withSize:` (host->plugin at
+    // creation only), and Logic's AU plugin window reports no AXGrowArea and
+    // refuses a host-side resize outright. Resizable AU v2 editors therefore
+    // draw their own grip and push a size at the host; JUCE's AU wrapper does
+    // exactly this in `resizeHostWindow()`, and reverts host-driven parent
+    // resizes in `parentSizeChanged()`. `Processor::request_editor_resize` is
+    // Pulp's equivalent, and this grip is the gesture that drives it.
+    //
+    // The grip is a native, unregistered child of the editor root rather than a
+    // scripted widget, for two reasons worth recording:
+    //   * Realm teardown is ownership-classified.
+    //     `WidgetBridge::clear_quarantined_realm` seeds the root's direct
+    //     children with `inherited_this_realm = false` and only flips it for
+    //     nodes registered in `owned_widgets_`, so an unregistered native child
+    //     is never retired with the realm. This is NOT a claim that
+    //     Generous-Corp/pulp#7648 is resolved — that issue still needs
+    //     re-verification on its own terms; it is why this particular placement
+    //     is safe.
+    //   * `View::hit_test` walks children topmost-first, so a last-added,
+    //     high-z grip owns its own rect without stealing hits from the
+    //     scripted tree beneath it.
+    //
+    // Failure mode is deliberately inert: the grip only REQUESTS a size. The
+    // editor's own geometry changes solely through `on_view_resized`, which
+    // fires when the host actually applied the new frame. If the host refuses,
+    // nothing here moves, so the internal size and the host window cannot
+    // disagree.
+    auto grip = std::make_unique<EditorResizeGrip>();
+    grip->set_position(pulp::view::View::Position::absolute);
+    grip->set_right(kResizeGripInset);
+    grip->set_bottom(kResizeGripInset);
+    grip->flex().preferred_width = kResizeGripSize;
+    grip->flex().preferred_height = kResizeGripSize;
+    grip->set_z_index(kResizeGripZIndex);
+    grip->on_drag_begin = [this] {
+        const auto bounds = native_editor_root_
+            ? native_editor_root_->bounds()
+            : pulp::view::Rect{};
+        native_resize_base_width_ = bounds.width > 0.0f
+            ? static_cast<std::uint32_t>(std::lround(bounds.width))
+            : kEditorPreferredWidth;
+        native_resize_base_height_ = bounds.height > 0.0f
+            ? static_cast<std::uint32_t>(std::lround(bounds.height))
+            : kEditorPreferredHeight;
+        native_resize_refused_ = false;
+    };
+    grip->on_resize = [this](float dx, float dy) {
+        if (native_resize_refused_ || native_resize_base_width_ == 0) return;
+        const auto target = resolve_editor_resize(
+            native_resize_base_width_, native_resize_base_height_, dx, dy);
+        const auto bounds = native_editor_root_
+            ? native_editor_root_->bounds()
+            : pulp::view::Rect{};
+        // Skip the round trip while the drag still resolves to the size the
+        // editor is already at; otherwise a slow drag opens one host
+        // transaction per mouse-move that changes nothing.
+        if (static_cast<std::uint32_t>(std::lround(bounds.width)) == target.width
+            && static_cast<std::uint32_t>(std::lround(bounds.height))
+                   == target.height) {
+            return;
+        }
+        if (!request_editor_resize(target.width, target.height)) {
+            // One log per gesture, not per mouse-move.
+            native_resize_refused_ = true;
+            pulp::runtime::log_info(
+                "[Spectr native] host refused editor resize to {}x{}; "
+                "keeping the current editor size",
+                target.width, target.height);
+        }
+    };
+    native_resize_grip_ = grip.get();
+    root->add_child(std::move(grip));
 
     native_editor_root_ = root.get();
     return root;

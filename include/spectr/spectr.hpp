@@ -263,6 +263,15 @@ private:
     std::unique_ptr<pulp::view::ScriptedUiSession> native_scripted_ui_{};
     std::filesystem::path native_package_path_{};
     pulp::view::View* native_editor_root_ = nullptr;
+    pulp::view::View* native_resize_grip_ = nullptr;
+    // Editor size latched at grip mouse-down. `ResizableCorner` reports
+    // cumulative deltas from the drag start, so the base must be sampled once
+    // per drag rather than read live (reading live would compound).
+    std::uint32_t native_resize_base_width_ = 0;
+    std::uint32_t native_resize_base_height_ = 0;
+    // Set when the host refuses a request mid-drag, so one refusal doesn't turn
+    // into a rejected transaction per mouse-move for the rest of the gesture.
+    bool native_resize_refused_ = false;
     pulp::view::FrameClock* native_frame_clock_ = nullptr;
     int native_frame_subscription_ = -1;
     float native_analyzer_elapsed_ = 0.0f;
