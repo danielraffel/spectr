@@ -592,6 +592,37 @@ void settle_until_contract(NativeEditorRig& rig,
 }
 
 
+// Re-issue an activation until its EFFECT is observable.
+//
+// settle_until_contract alone assumes the click landed and only the React
+// commit is pending. That is not the failure mode here. The rename-start
+// control mounts unconditionally, so waiting for its PRESENCE proves nothing
+// about the row-selection commit that has to land first; a click delivered
+// against the pre-selection render runs the handler on a row that is about to
+// be replaced, the input never mounts, and no amount of further waiting can
+// recover it -- the budget just expires. Observed ~1 run in 3.
+//
+// The handler is idempotent (onClick={() => setEditName(true)}), so driving it
+// again is safe and is the only thing that actually recovers.
+void activate_until_contract(NativeEditorRig& rig, std::string_view selector,
+                             std::string_view expression,
+                             std::string_view message, int attempts = 4) {
+    for (int attempt = 0; attempt + 1 < attempts; ++attempt) {
+        activate(rig, selector);
+        try {
+            settle_until_contract(rig, expression, message, 64, 8);
+            return;
+        } catch (const std::exception&) {
+            // Effect not observable yet; the click most likely raced the commit
+            // that owns its target. Fall through and drive it again.
+        }
+    }
+    // Final attempt unguarded, on the full budget, so the real diagnostic
+    // surfaces rather than a generic "retries exhausted".
+    activate(rig, selector);
+    settle_until_contract(rig, expression, message);
+}
+
 // C++-side counterpart to settle_until_contract: wait for an OBSERVABLE EFFECT
 // instead of assuming one host frame is enough. Driving a DOM event and then
 // asserting processor state on the next line assumes the React commit and the
@@ -1260,13 +1291,13 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         " && !!globalThis.__pulpFindMaterializedElement__("
         "'[data-spectr-manager-action=\"rename-start\"]')",
         "pattern rename-start control did not mount");
-    activate(rig, "[data-spectr-manager-action=\"rename-start\"]");
     // Entering rename replaces the selected row with a controlled input in a
     // follow-up React commit. Give that commit its own host-frame service
     // window before targeting the new node; otherwise a heavily loaded host
-    // can make the semantic driver race the mount it just requested.
-    settle_until_contract(
-        rig,
+    // can make the semantic driver race the mount it just requested -- and if
+    // the click itself lost the race, re-drive it rather than waiting longer.
+    activate_until_contract(
+        rig, "[data-spectr-manager-action=\"rename-start\"]",
         "typeof globalThis.__pulpFindMaterializedElement__ === 'function'"
         " && !!globalThis.__pulpFindMaterializedElement__('#spectr-manager-rename')",
         "pattern rename input did not mount");
