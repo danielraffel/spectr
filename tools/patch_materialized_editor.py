@@ -37,6 +37,33 @@ EDITS = [
      '      rafRef.current = requestAnimationFrame(draw);\n'
      '    };'),
 
+    # The animation loop paints through renderAllRef (see the entry above), so it
+    # does NOT need re-creating when a render input changes. Listing render
+    # inputs here made every `setView` during a minimap drag tear the loop down
+    # (cancelAnimationFrame) and rebuild it -- once per pointer event, cancelling
+    # the frame already in flight. `view` and `N` were the per-event offenders.
+    #
+    # `motionMode` MUST STAY. `draw` reads it directly out of its closure, not
+    # through a ref: `const k = motionMode === "precision" ? 6 : 22`, the
+    # smoothing rate. With empty deps the closure pins the mount-time value and
+    # toggling PRECISION silently stops changing the smoothing -- i.e. the
+    # toggle appears dead. It changes on a click, not per pointer event, so
+    # keeping it costs nothing. To reach empty deps, add a motionModeRef (the
+    # file already uses editModeRef / dspModeRef / analyzerModeRef for exactly
+    # this) rather than dropping the dependency.
+    ('animation loop is not rebuilt on every render-input change',
+     '}, [N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, '
+     'showMinimap, showRulers, theme, view]);',
+     '}, [motionMode]);'),
+
+    # SAVE CURRENT... and MANAGE... shared one row because `menuItem` sets no
+    # `display`, so the buttons defaulted to inline. MANAGE read as a modifier
+    # on SAVE rather than its own action, and users did not find it. Two rows.
+    ('preset dropdown footer actions get their own rows',
+     'style: { ...menuItem, color: \\"hsl(200,85%,70%)\\" }',
+     'style: { ...menuItem, color: \\"hsl(200,85%,70%)\\", '
+     'display: \\"block\\", width: \\"100%\\" }'),
+
     ('hover readout clears the status banner slot',
      '    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);',
      '    const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);'),

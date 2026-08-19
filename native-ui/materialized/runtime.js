@@ -7847,6 +7847,13 @@
           case "dt":
           case "dd": {
             const txt = asText(props.children);
+            // `txt !== void 0` already means pure-text children. Also requiring
+            // length > 0 made a container that MOUNTS EMPTY materialize as a
+            // bare Col with no text capability, permanently: a later setText on
+            // a plain container View silently no-ops. That is the shape of every
+            // "blank now, filled later" surface -- the status banner painted its
+            // box and never its text for exactly this reason. Element children
+            // still route to createCol, since asText returns undefined there.
             if (txt !== void 0 && txt.length > 0) {
               call2("createLabel", id, txt, parentId);
             } else {
@@ -8316,8 +8323,18 @@
         }
       }
     },
-    commitTextUpdate(_textInstance, _oldText, _newText) {
+    commitTextUpdate(textInstance, _oldText, newText) {
       markMaterializedTreeDirty();
+      // Push the new text to the native widget. This was a no-op, so live text
+      // under a non-text-bearing parent NEVER updated -- the status banner
+      // rendered as an empty bordered box because React, the DOM shim and the
+      // paint were all correct and the string had nowhere to land. The
+      // materialized re-apply cannot substitute: its text bindings match nodes
+      // by their BAKED text and can only re-assert captured values.
+      if (typeof g4.setText === "function" && textInstance) {
+        call2("setText", textInstance.textTargetId || textInstance.id,
+              String(newText == null ? "" : newText));
+      }
     },
     // React's mutation reconciler calls resetTextContent when
     // shouldSetTextContent flips from true to false on an existing
@@ -8463,6 +8480,42 @@
   }
   function attachToRoot(container, child, _index = -1, _before) {
     child.parentId = container.rootId;
+    // Link the DOM-shim edge, mirroring what attach() does for
+    // instance->instance. Without it the rendered tree is an ORPHAN ISLAND:
+    // document.body._children stays EMPTY, so document.querySelector, closest
+    // and the event bubble path are all blind to the entire UI. Menus whose
+    // dismissal effect begins with document.querySelector(...) bail before
+    // registering any listener, which is why Escape and click-outside did
+    // nothing on them.
+    //
+    // Lazily anchors a container element under document.body on first use, so
+    // this is self-contained and a host without a document simply skips it --
+    // the same shape as attach()'s `parentDom && childDom` guard.
+    if (!container._dom && typeof document !== "undefined"
+        && document.body && typeof document.createElement === "function") {
+      var anchor = document.createElement("div");
+      if (anchor && typeof anchor.setAttribute === "function") {
+        anchor.setAttribute("data-pulp-react-root", container.rootId || "");
+      }
+      if (typeof document.body.appendChild === "function") {
+        document.body.appendChild(anchor);
+      }
+      container._dom = anchor;
+    }
+    var containerDom = container._dom;
+    var childDom = child._dom;
+    if (containerDom && childDom) {
+      var oldParent = childDom._parentElement;
+      if (oldParent && Array.isArray(oldParent._children)) {
+        var oldIndex = oldParent._children.indexOf(childDom);
+        if (oldIndex >= 0) oldParent._children.splice(oldIndex, 1);
+      }
+      childDom._parentElement = containerDom;
+      if (!Array.isArray(containerDom._children)) containerDom._children = [];
+      var existing = containerDom._children.indexOf(childDom);
+      if (existing >= 0) containerDom._children.splice(existing, 1);
+      containerDom._children.push(childDom);
+    }
     materializeUnder(container.rootId, child);
   }
   function materialize(parent, child) {
