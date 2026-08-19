@@ -274,12 +274,14 @@ void Spectr::publish_native_layout_(std::uint32_t w, std::uint32_t h) {
                 "[Spectr native] responsive resize rejected: {}", error.what());
         }
     }
-#else
-    if (auto* editor = dynamic_cast<EditorView*>(&view)) {
-        editor->sync_to_host();
-    }
-#endif
 }
+// The non-native editor has no responsive-layout hook to publish to, and this
+// function does not exist in that build: the #if above guards the definition
+// itself. It previously carried an #else branch copied from on_view_resized,
+// which referenced a `view` parameter this function does not take -- dead in
+// the shipping build and a compile error the moment SPECTR_NATIVE_EDITOR is
+// off, i.e. exactly when it would have been reached.
+#endif
 
 void Spectr::on_view_closed(pulp::view::View& view) {
 #if defined(SPECTR_NATIVE_EDITOR)

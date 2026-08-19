@@ -16,8 +16,10 @@ namespace spectr {
 #endif
 
 // Claude Design's 1320 x 860 capture remains the pixel-exact authored
-// reference. The live editor reflows at the host bounds instead of scaling the
-// whole tree, so type and hit targets remain readable at the minimum size.
+// reference, and it is also the LIVE geometry: the root view always lays out at
+// this box and the host applies one uniform scale at paint time. The editor does
+// NOT reflow at the host bounds -- see make_editor_view_size() below for why the
+// earlier reflowing (`viewport_policy = Responsive`) behaviour was replaced.
 inline constexpr std::uint32_t kEditorDesignWidth = SPECTR_AUTHORED_DESIGN_W;
 inline constexpr std::uint32_t kEditorDesignHeight = SPECTR_AUTHORED_DESIGN_H;
 inline constexpr std::uint32_t kEditorPreferredWidth = SPECTR_HOST_PREFERRED_W;
