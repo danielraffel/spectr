@@ -18,13 +18,16 @@ type      = "cmake"
 platforms = ["macos"]
 
 # ── Validation pipeline ────────────────────────────────────────────────────
-# Canonical stages only: configure, build, test. The SDK prefix path is
-# read from pulp.toml's sdk_path when running locally; CI-dispatched
-# lanes set CMAKE_PREFIX_PATH via the runner's env.
+# Canonical stages only: configure, build, test. Shipyard (v0.94.0) has no
+# pulp.toml/sdk_path indirection — it runs this line literally — so the SDK
+# prefix path is the absolute path of the local SDK install. The M5 cutover
+# SDK is ~/Code/pulp-sdk-clean (pulp 98f47381a, 128 past v0.809.1; identified
+# by content hash, never by version.txt). CI-dispatched lanes would set
+# CMAKE_PREFIX_PATH via the runner's env instead.
 
 [validation.default]
 stages    = ["configure", "build", "test"]
-configure = "cmake -S . -B build -DCMAKE_PREFIX_PATH=$HOME/.pulp/sdk/0.47.0 -DCMAKE_BUILD_TYPE=Debug"
+configure = "cmake -S . -B build -DCMAKE_PREFIX_PATH=$HOME/Code/pulp-sdk-clean -DCMAKE_BUILD_TYPE=Debug"
 build     = "cmake --build build --parallel"
 test      = "ctest --test-dir build --output-on-failure"
 

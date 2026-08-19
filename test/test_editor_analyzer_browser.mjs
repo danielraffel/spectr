@@ -4,10 +4,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const [htmlPath, chromePath, mode] = process.argv.slice(2);
+const [htmlPath, chromePath, mode, modeArg] = process.argv.slice(2);
+// --emit-instrumented DIR writes the instrumented oracle page and stops, so
+// it can be driven in a real browser when a headless run cannot be trusted
+// (a Chrome that will not settle fails every lane here identically).
+const emitInstrumentedDir = mode === '--emit-instrumented' ? modeArg : null;
 assert(htmlPath && chromePath, 'usage: test_editor_analyzer_browser.mjs HTML CHROME');
 const resizeOnlyMode = mode === '--resize-only';
 const jsOnlyMode = mode === '--js-only';
+const muteModesMode = mode === '--mute-modes';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-analyzer-browser-'));
 try {
@@ -304,6 +309,7 @@ window.spectrStartOracle = () => {
       const reopened = new URL(location.href).searchParams.has('reopened');
       const jsOnly = new URL(location.href).searchParams.has('js-only');
       const resizeOnly = new URL(location.href).searchParams.has('resize-only');
+      const muteModes = new URL(location.href).searchParams.has('mute-modes');
       step(reopened ? 'reopened-start' : 'initial-start');
       const bodyRect = document.body.getBoundingClientRect();
       if (document.body.clientWidth !== 1320 || document.body.clientHeight !== 860)
@@ -376,6 +382,141 @@ window.spectrStartOracle = () => {
       await spectrWaitFor(() =>
         !document.querySelector('[data-spectr-status-banner]'),
       'expired status banner removal');
+
+      if (muteModes) {
+        // Drawing over a muted band used to mean five different things: SCULPT
+        // and LEVEL cleared the mute, BOOST, FLARE and GLIDE preserved it. One
+        // setting now decides for all of them. Asserting the SHARED DECISION
+        // POINT would prove nothing about that, so this asserts the published
+        // band state after a real drag through each mode's real handler.
+        Object.defineProperty(document, 'hasFocus', {
+          configurable: true, value: () => true,
+        });
+        const canvas = await spectrWaitFor(() => Array.from(
+          document.querySelectorAll('canvas'))
+          .filter(candidate => getComputedStyle(candidate).pointerEvents !== 'none')
+          .sort((a, b) => {
+            const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+            return br.width * br.height - ar.width * ar.height;
+          })[0], 'interactive filter canvas');
+        const target = canvas.parentElement;
+        const rect = target.getBoundingClientRect();
+        const bandX = band => rect.left
+          + (56 + (band + 0.5) * (target.clientWidth - 112) / 32)
+            * rect.width / target.clientWidth;
+        const midY = rect.top + rect.height * 0.46;
+
+        const setRedrawUnmutes = async enabled => {
+          // The toggle lives in the overflow menu, not beside its siblings in
+          // the settings panel: the native materialized runtime paints an
+          // ADDED child at its container's first child position, so a new
+          // settings row overlapped an existing one. See
+          // tools/patch_materialized_editor.py.
+          const root = document.querySelector('[data-spectr-menu-root="overflow"]');
+          if (!root) throw new Error('overflow menu root missing');
+          const host = root.querySelector('[data-spectr-menu-trigger]');
+          const trigger = host.matches('button') ? host : host.querySelector('button');
+          if (!trigger) throw new Error('overflow menu trigger missing');
+          await spectrClick(trigger);
+          const item = await spectrWaitFor(
+            () => document.querySelector('[data-spectr-redraw-unmutes]'),
+            'redraw-unmutes overflow item');
+          if ((item.getAttribute('data-spectr-redraw-unmutes') === 'on') !== enabled)
+            await spectrClick(item);
+          else
+            await spectrClick(trigger);
+          // Absent means on, the same reading every call site uses, so compare
+          // through that rather than against a literal true.
+          await spectrWaitFor(
+            () => (window.__spectrTestHooks.appState?.().settings.unmuteOnDraw
+              !== false) === enabled,
+            'redraw-unmutes reaching settings state');
+          await spectrWaitFor(
+            () => !document.querySelector('[data-spectr-redraw-unmutes]'),
+            'overflow menu dismissal');
+        };
+
+        const MODES = [
+          ['sculpt', '1'], ['level', '2'], ['boost', '3'],
+          ['flare', '4'], ['glide', '5'],
+        ];
+        // Hydration starts every band muted, so the fixture re-mutes only
+        // when a previous mode's edit cleared it. GLIDE reaches four bands
+        // either side, which is exactly why each check re-establishes its own
+        // precondition instead of trusting the band it was handed.
+        const nativeNow = () => spectrLatestState() || window.__spectrNativeState;
+        const ensureMuted = async (x, label) => {
+          let state = nativeNow();
+          const band = Number(label.band);
+          if (!state.muted[band]) {
+            const count = spectrStatePosts().length;
+            await spectrTap(target, x, midY);
+            state = await spectrPublishAfter(count, label.name + ' mute fixture');
+          }
+          if (!state.muted[band])
+            throw new Error(label.name + ': fixture band was not muted');
+          return state;
+        };
+
+        let band = 2;
+        for (const enabled of [true, false]) {
+          await setRedrawUnmutes(enabled);
+          for (const [modeName, digit] of MODES) {
+            spectrKey(digit, 'Digit' + digit);
+            await spectrWaitFor(
+              () => window.__spectrTestHooks.appState?.().editMode === modeName,
+              modeName + ' mode selection');
+            const x = bandX(band);
+            const label = { name: modeName + (enabled ? ' (ON)' : ' (OFF)'), band };
+
+            let state = await ensureMuted(x, label);
+            const mutedDb = state.gain_db[band];
+
+            // A real >3px drag through this mode's own pointer handler.
+            const count = spectrStatePosts().length;
+            spectrPointer(target, 'pointerdown', x, midY);
+            spectrPointer(target, 'pointermove', x, midY - 30);
+            spectrPointer(target, 'pointermove', x, midY - 60);
+            spectrPointer(target, 'pointerup', x, midY - 60);
+            await spectrFrames(3);
+            state = await spectrPublishAfter(count, label.name + ' draw publication');
+
+            if (enabled) {
+              if (state.muted[band])
+                throw new Error(label.name + ': left the band muted');
+              if (!Number.isFinite(state.gain_db[band]))
+                throw new Error(label.name + ': unmuted band has non-finite dB');
+              if (state.gain_db[band] === mutedDb)
+                throw new Error(label.name + ': did not take the drawn gain');
+            } else {
+              if (!state.muted[band])
+                throw new Error(label.name + ': cleared the mute');
+              if (state.gain_db[band] !== mutedDb)
+                throw new Error(label.name + ': disturbed the stashed gain');
+            }
+            if (!spectrFiniteState(state) || !spectrBundleClean())
+              throw new Error(label.name + ': draw produced non-finite state');
+            band += 2;
+          }
+        }
+
+        // An explicit mute command stays a command under either setting: the
+        // policy governs drawing, it is not a veto on saying "mute".
+        for (const enabled of [false, true]) {
+          await setRedrawUnmutes(enabled);
+          const x = bandX(30);
+          const before = nativeNow().muted[30];
+          const count = spectrStatePosts().length;
+          await spectrTap(target, x, midY);
+          const after = await spectrPublishAfter(count, 'single-tap toggle');
+          if (after.muted[30] === before)
+            throw new Error('single-tap mute toggle stopped working with '
+              + 'redraw-unmutes ' + enabled);
+        }
+        result.textContent = 'SPECTR_BROWSER_MUTE_MODES_OK';
+        document.documentElement.dataset.spectrOracle = 'MUTE_MODES_OK';
+        return;
+      }
       await spectrTestNativeResizeSurface();
       step('native-resize-surface-complete');
       await spectrFrames(5);
@@ -1017,6 +1158,11 @@ setTimeout(window.spectrStartOracle, 0);
     + '      window.spectrStartOracle();');
   const instrumented = path.join(temp, 'spectr.html');
   fs.writeFileSync(instrumented, html);
+  if (emitInstrumentedDir) {
+    const emitted = path.join(emitInstrumentedDir, 'spectr-instrumented.html');
+    fs.copyFileSync(instrumented, emitted);
+    console.log(emitted);
+  } else {
 
   const runChrome = (url, profile, width, height) => spawnSync(chromePath, [
     '--headless=new', '--disable-gpu', '--disable-web-security',
@@ -1033,7 +1179,13 @@ setTimeout(window.spectrStartOracle, 0);
     || run.stderr;
 
   const initialUrl = `file://${instrumented}`;
-  if (jsOnlyMode) {
+  if (muteModesMode) {
+    const run = runChrome(initialUrl + '?mute-modes=1',
+      path.join(temp, 'profile-mute-modes'), 1320, 860);
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /data-spectr-oracle="MUTE_MODES_OK"/, failure(run));
+    process.exitCode = 0;
+  } else if (jsOnlyMode) {
     const run = runChrome(initialUrl + '?js-only=1',
       path.join(temp, 'profile-js-only'), 792, 516);
     assert.equal(run.status, 0, run.stderr);
@@ -1083,6 +1235,7 @@ setTimeout(window.spectrStartOracle, 0);
     path.join(temp, 'profile-reopened'), 792, 516);
   assert.equal(reopened.status, 0, reopened.stderr);
   assert.match(reopened.stdout, /data-spectr-oracle="OK"/, failure(reopened));
+  }
   }
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });

@@ -16,8 +16,10 @@ namespace spectr {
 #endif
 
 // Claude Design's 1320 x 860 capture remains the pixel-exact authored
-// reference. The live editor reflows at the host bounds instead of scaling the
-// whole tree, so type and hit targets remain readable at the minimum size.
+// reference, and it is also the LIVE geometry: the root view always lays out at
+// this box and the host applies one uniform scale at paint time. The editor does
+// NOT reflow at the host bounds -- see make_editor_view_size() below for why the
+// earlier reflowing (`viewport_policy = Responsive`) behaviour was replaced.
 inline constexpr std::uint32_t kEditorDesignWidth = SPECTR_AUTHORED_DESIGN_W;
 inline constexpr std::uint32_t kEditorDesignHeight = SPECTR_AUTHORED_DESIGN_H;
 inline constexpr std::uint32_t kEditorPreferredWidth = SPECTR_HOST_PREFERRED_W;
@@ -107,9 +109,18 @@ constexpr ViewSize make_editor_view_size() {
         size.design_width = kEditorDesignWidth;
         size.design_height = kEditorDesignHeight;
     }
-    if constexpr (requires(ViewSize value) { value.viewport_policy; }) {
-        size.viewport_policy = decltype(size.viewport_policy)::Responsive;
-    }
+    // Leave viewport_policy at Automatic. With a non-zero aspect and a
+    // resizable min/max, `should_pin_design_viewport()` returns true, so the
+    // host pins the root at the authored box and paint applies one uniform
+    // aspect-correct scale. That is the "proportional only, no cropping"
+    // contract: the layout is identical at every size, just larger or smaller.
+    //
+    // This deliberately replaces an earlier `= Responsive` override. Responsive
+    // short-circuits the pin to false, which made the root reflow via Yoga at
+    // the live host size — layout MODE changed with the window (the bottom rail
+    // switched between one and two rows, the brand subtitle was hidden), and
+    // type stayed at an absolute size instead of scaling. Every "bars are
+    // misaligned at size X" symptom came from that reflow.
     return size;
 }
 

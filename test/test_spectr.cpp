@@ -539,8 +539,13 @@ TEST_CASE("Spectr imported editor has bounded proportional sizing") {
     spectr::Spectr plugin;
     const auto size = plugin.view_size();
 
-    CHECK(size.preferred_width == 990);
-    CHECK(size.preferred_height == 645);
+    // Opens at the AUTHORED box. Under a pinned design viewport the root is
+    // laid out at 1320x860 at every host size, so opening there is the one
+    // size at which host pixels and design pixels are 1:1 and no scale is
+    // applied at all. Opening smaller (the previous 990x645) only meant every
+    // first paint went through a 0.75 downscale for no gain.
+    CHECK(size.preferred_width == 1320);
+    CHECK(size.preferred_height == 860);
     CHECK(size.min_width == 792);
     CHECK(size.min_height == 516);
     CHECK(size.max_width == 2640);

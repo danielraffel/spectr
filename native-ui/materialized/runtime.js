@@ -7847,6 +7847,13 @@
           case "dt":
           case "dd": {
             const txt = asText(props.children);
+            // `txt !== void 0` already means pure-text children. Also requiring
+            // length > 0 made a container that MOUNTS EMPTY materialize as a
+            // bare Col with no text capability, permanently: a later setText on
+            // a plain container View silently no-ops. That is the shape of every
+            // "blank now, filled later" surface -- the status banner painted its
+            // box and never its text for exactly this reason. Element children
+            // still route to createCol, since asText returns undefined there.
             if (txt !== void 0 && txt.length > 0) {
               call2("createLabel", id, txt, parentId);
             } else {
@@ -8226,6 +8233,7 @@
     },
     // ── First-mount attachment ──────────────────────────────────────
     appendInitialChild(parentInstance, child) {
+      markMaterializedTreeDirty();
       attach(parentInstance, child);
     },
     finalizeInitialChildren(_instance, _type, _props, _rootContainer, _hostContext) {
@@ -8233,12 +8241,15 @@
     },
     // ── Mutation: append / insert / remove ──────────────────────────
     appendChild(parentInstance, child) {
+      markMaterializedTreeDirty();
       attach(parentInstance, child);
     },
     appendChildToContainer(container, child) {
+      markMaterializedTreeDirty();
       attachToRoot(container, child);
     },
     insertBefore(parentInstance, child, beforeChild) {
+      markMaterializedTreeDirty();
       const beforeIdx = parentInstance.childIds.indexOf(beforeChild.id);
       const sameParent = child.parentId === parentInstance.id && child.onBridge;
       if (sameParent) {
@@ -8256,6 +8267,7 @@
       attach(parentInstance, child, beforeIdx >= 0 ? beforeIdx : void 0);
     },
     insertInContainerBefore(container, child, beforeChild) {
+      markMaterializedTreeDirty();
       attachToRoot(
         container,
         child,
@@ -8265,14 +8277,17 @@
       );
     },
     removeChild(parentInstance, child) {
+      markMaterializedTreeDirty();
       detach(parentInstance, child);
     },
     removeChildFromContainer(_container, child) {
+      markMaterializedTreeDirty();
       if (typeof g4.removeWidget === "function") call2("removeWidget", child.id);
       unregisterDomSubtree(child);
       child.parentId = void 0;
     },
     clearContainer(_container) {
+      markMaterializedTreeDirty();
     },
     // ── Updates ────────────────────────────────────────────────────
     prepareUpdate(_instance, type, oldProps, newProps) {
@@ -8281,6 +8296,7 @@
       return shallowDiff(oldN, newN);
     },
     commitUpdate(instance, _updatePayload, type, oldProps, newProps, _internalHandle) {
+      markMaterializedTreeDirty();
       const oldN = normalizeHostProps(type, oldProps);
       const newN = normalizeHostProps(type, newProps);
       applyChangedProps(instance, oldN, newN);
@@ -8307,7 +8323,18 @@
         }
       }
     },
-    commitTextUpdate(_textInstance, _oldText, _newText) {
+    commitTextUpdate(textInstance, _oldText, newText) {
+      markMaterializedTreeDirty();
+      // Push the new text to the native widget. This was a no-op, so live text
+      // under a non-text-bearing parent NEVER updated -- the status banner
+      // rendered as an empty bordered box because React, the DOM shim and the
+      // paint were all correct and the string had nowhere to land. The
+      // materialized re-apply cannot substitute: its text bindings match nodes
+      // by their BAKED text and can only re-assert captured values.
+      if (typeof g4.setText === "function" && textInstance) {
+        call2("setText", textInstance.textTargetId || textInstance.id,
+              String(newText == null ? "" : newText));
+      }
     },
     // React's mutation reconciler calls resetTextContent when
     // shouldSetTextContent flips from true to false on an existing
@@ -8315,6 +8342,7 @@
     // <span><em>hi</em></span>. Clear stale text before the new child
     // element mounts.
     resetTextContent(instance) {
+      markMaterializedTreeDirty();
       if (typeof g4.setText === "function") {
         call2("setText", instance.textTargetId ?? instance.id, "");
       }
@@ -8324,8 +8352,25 @@
       return null;
     },
     resetAfterCommit(_container) {
-      const metadataHook = g4.__pulpApplyMaterializedImportMetadata__;
-      if (typeof metadataHook === "function") metadataHook();
+      // A host resize does not arrive as a React commit, but it does change the
+      // metrics every captured inset is derived from, so the root box is part
+      // of the dirty test. getRootSize reads View::bounds() and does NOT force
+      // a layout, unlike every other layout bridge call.
+      let rootSignature = materializedRootSignature;
+      if (typeof g4.getRootSize === "function") {
+        const size = g4.getRootSize();
+        if (size) rootSignature = size.width + "x" + size.height;
+      }
+      const shouldReapply =
+        materializedTreeDirty || rootSignature !== materializedRootSignature;
+      materializedRootSignature = rootSignature;
+      materializedTreeDirty = false;
+      if (shouldReapply) {
+        const metadataHook = g4.__pulpApplyMaterializedImportMetadata__;
+        if (typeof metadataHook === "function") metadataHook();
+      }
+      // The state hook is cheap when the state is unchanged and re-applies the
+      // metadata itself when it is not, so it stays unconditional.
       const stateHook = g4.__pulpRefreshMaterializedState__;
       if (typeof stateHook === "function") stateHook();
       requestLayoutFlush(() => {
@@ -8357,6 +8402,23 @@
       return null;
     }
   };
+  // Re-applying captured import metadata costs ONE FULL ROOT LAYOUT PER
+  // LAYOUT BINDING, because getLayoutBoxMetrics() calls root.layout_children()
+  // on every invocation. This document has 81 layout bindings and reads two
+  // metrics each, so an unconditional re-apply is ~162 whole-tree layout passes
+  // -- and resetAfterCommit ran it on EVERY React commit, including the commits
+  // a canvas-only gain drag produces, which cannot have moved a single native
+  // node. Measured before this guard: 21,401 layout passes outside the frame
+  // loop against 117 inside it, over one 20s capture.
+  //
+  // React already knows the answer. A commit that mutated no host node left the
+  // native tree, and therefore the captured geometry, exactly as it was. Every
+  // mutation path sets this; resetAfterCommit consumes and clears it.
+  let materializedTreeDirty = true;
+  let materializedRootSignature = "";
+  function markMaterializedTreeDirty() {
+    materializedTreeDirty = true;
+  }
   function attach(parent, child, index) {
     const wasAttachedElsewhere = child.parentId !== void 0 && child.parentId !== parent.id;
     child.parentId = parent.id;
@@ -8418,6 +8480,42 @@
   }
   function attachToRoot(container, child, _index = -1, _before) {
     child.parentId = container.rootId;
+    // Link the DOM-shim edge, mirroring what attach() does for
+    // instance->instance. Without it the rendered tree is an ORPHAN ISLAND:
+    // document.body._children stays EMPTY, so document.querySelector, closest
+    // and the event bubble path are all blind to the entire UI. Menus whose
+    // dismissal effect begins with document.querySelector(...) bail before
+    // registering any listener, which is why Escape and click-outside did
+    // nothing on them.
+    //
+    // Lazily anchors a container element under document.body on first use, so
+    // this is self-contained and a host without a document simply skips it --
+    // the same shape as attach()'s `parentDom && childDom` guard.
+    if (!container._dom && typeof document !== "undefined"
+        && document.body && typeof document.createElement === "function") {
+      var anchor = document.createElement("div");
+      if (anchor && typeof anchor.setAttribute === "function") {
+        anchor.setAttribute("data-pulp-react-root", container.rootId || "");
+      }
+      if (typeof document.body.appendChild === "function") {
+        document.body.appendChild(anchor);
+      }
+      container._dom = anchor;
+    }
+    var containerDom = container._dom;
+    var childDom = child._dom;
+    if (containerDom && childDom) {
+      var oldParent = childDom._parentElement;
+      if (oldParent && Array.isArray(oldParent._children)) {
+        var oldIndex = oldParent._children.indexOf(childDom);
+        if (oldIndex >= 0) oldParent._children.splice(oldIndex, 1);
+      }
+      childDom._parentElement = containerDom;
+      if (!Array.isArray(containerDom._children)) containerDom._children = [];
+      var existing = containerDom._children.indexOf(childDom);
+      if (existing >= 0) containerDom._children.splice(existing, 1);
+      containerDom._children.push(childDom);
+    }
     materializeUnder(container.rootId, child);
   }
   function materialize(parent, child) {
@@ -8710,13 +8808,27 @@
     const clock = g5.__pulpCapturedReplayClock__;
     if (clock.current < clock.target) {
       clock.current = Math.min(clock.target, clock.current + 50);
+      return clock.current;
     }
+    // Replay is complete. The captured clock exists to make a captured document
+    // settle deterministically; once it has, the LIVE app needs real advancing
+    // time or every dt-driven animation is frozen forever (dt === 0).
+    const now = typeof _nativeNow === "number" ? _nativeNow
+      : (typeof __performanceNow__ === "function" ? __performanceNow__() : 0);
+    if (clock.liveBase === void 0) clock.liveBase = now;
+    clock.current = clock.target + (now - clock.liveBase);
     return clock.current;
   };
   g5.__pulpRequestedMaterializedState__ = "";
   g5.performance = {
     now: function() {
-      return g5.__pulpCapturedReplayClock__.current;
+      const clock = g5.__pulpCapturedReplayClock__;
+      if (clock.current >= clock.target && typeof __performanceNow__ === "function") {
+        const now = __performanceNow__();
+        if (clock.liveBase === void 0) clock.liveBase = now;
+        return clock.target + (now - clock.liveBase);
+      }
+      return clock.current;
     }
   };
   function materializedDomRegistryValues() {

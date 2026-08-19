@@ -30,3 +30,7 @@ Spectr_Info.plist.au
 
 # Logs / traces
 *.log
+
+# Bytecode from the tools/ scripts (patch_materialized_editor.py et al).
+__pycache__/
+*.pyc
