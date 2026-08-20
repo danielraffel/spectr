@@ -69,6 +69,16 @@ EDITS = [
      '    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);',
      '    const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);'),
 
+    ('empty status clears the unified banner',
+     '  const fireStatus = useAppC((msg) => {\n'
+     '    setStatus(msg + "|" + Date.now());',
+     '  const fireStatus = useAppC((msg) => {\n'
+     '    if (!msg) {\n'
+     '      setStatus("");\n'
+     '      return;\n'
+     '    }\n'
+     '    setStatus(msg + "|" + Date.now());'),
+
     ('status banner replaces one message at a time',
      '  const [text, setText] = useStateChrome("");\n'
      '  useEffectChrome(() => {\n'

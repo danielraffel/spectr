@@ -1928,7 +1928,7 @@ window.PatternManager = PatternManager;`,
     setUserPatterns(library.patterns);
     setDefaultId(library.defaultId);
     return body;
-  }, [motionMode]);
+  }, []);
   const patternCommand = useAppC((type, payload, fallback) => {
     if (!nativeBridgeAvailable) { fallback && fallback(); return Promise.resolve(null); }
     return Promise.resolve(window.pulp.postMessage(type, payload, 'spectr-' + type))
@@ -2002,19 +2002,15 @@ window.PatternManager = PatternManager;`,
     replaceSpectrSource(
       String.raw`              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: 4, paddingTop: 2 }}>
                 <button onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}
-                  style={{ ...menuItem, color: 'hsl(200,85%,70%)', display: 'block', width: '100%' }}>MANAGE…</button>
+                  style={{ ...menuItem, color: 'hsl(200,85%,70%)' }}>MANAGE…</button>
               </div>`,
       String.raw`              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: 4, paddingTop: 2 }}>
                 <button data-spectr-save-current onClick={() => { onSavePattern(); setPatternMenu(false); }}
                   style={{ ...menuItem, color: 'hsl(200,85%,70%)', display: 'block', width: '100%' }}>SAVE CURRENT…</button>
-                <button onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}
+                <button data-spectr-pattern-manage onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}
                   style={{ ...menuItem, color: 'hsl(200,85%,70%)', display: 'block', width: '100%' }}>MANAGE…</button>
               </div>`,
       'save current dropdown item');
-    replaceSpectrSource(
-      '<button onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}\n                  style={{ ...menuItem, color: \'hsl(200,85%,70%)\' }}>MANAGE…</button>',
-      '<button data-spectr-pattern-manage onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}\n                  style={{ ...menuItem, color: \'hsl(200,85%,70%)\' }}>MANAGE…</button>',
-      'pattern manager dropdown selector');
     replaceSpectrSource(
       "<canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />",
       "<canvas data-spectr-filter-canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />",
@@ -2388,6 +2384,14 @@ window.PatternManager = PatternManager;`,
       'const vw = window.innerWidth, vh = window.innerHeight;',
       "const root = document.getElementById('root');\n  const vw = root ? root.clientWidth : window.innerWidth, vh = root ? root.clientHeight : window.innerHeight;",
       'fixed-design context-menu bounds');
+
+    replaceSpectrSource(
+      String.raw`  const fireStatus = useAppC((msg) => {
+    setStatus(msg + '|' + Date.now());`,
+      String.raw`  const fireStatus = useAppC((msg) => {
+    if (!msg) { setStatus(''); return; }
+    setStatus(msg + '|' + Date.now());`,
+      'empty status clears the unified banner');
 
     replaceSpectrSource(
       [
