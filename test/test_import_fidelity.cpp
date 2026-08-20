@@ -24,9 +24,9 @@ namespace {
 constexpr std::string_view kAssetSetDigest =
     "6215ee5a9f65ade3626e63c4f973e579f123625239ba57c8f5db61121ccc5e0a";
 constexpr std::string_view kTemplateDigest =
-    "22a4a7d78433a20edfc5eee3e2d7b1401b07840457e761e12a0ce45dcad290a6";
+    "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
 constexpr std::string_view kAdapterDigest =
-    "bc6806f342a892c876fc815a947da18b853ec78e209bba8f11e714e9fccad3bb";
+    "b57469d9e7230e763430f54cfffa0492076292196dfb4d7fd9949b40967eb90e";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -247,7 +247,7 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     const auto bundle = pulp::view::parse_claude_bundle(html);
     REQUIRE(bundle.has_value());
     REQUIRE(bundle->assets.size() == 16);
-    REQUIRE(bundle->template_html.size() == 186251);
+    REQUIRE(bundle->template_html.size() == 186383);
 
     const auto canonical = canonicalize(*bundle);
     CHECK(canonical.asset_set_digest == kAssetSetDigest);
@@ -491,15 +491,17 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
               == 0);
     }
 
-    SECTION("the hover readout clears the status banner's slot") {
+    SECTION("hover feedback uses the unified status banner") {
         CHECK(count_occurrences(
                   document,
-                  "const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);")
+                  "const hoverBand = hover && !hover.mini ? hover.band : -1;")
               == 1);
         CHECK(count_occurrences(
                   document,
-                  "const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);")
-              == 0);
+                  "const keepAlive = setInterval(() => onStatus(label), 1e3);")
+              == 1);
+        CHECK(count_occurrences(document, "if (!hover || hover.mini) return;") == 1);
+        CHECK(count_occurrences(document, "const tw = ctx.measureText(label).width + 18;") == 0);
     }
 
     SECTION("the status banner replaces one message at a time") {
@@ -509,6 +511,63 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   "const t = setTimeout(() => {\\n      setVisible(false);\\n"
                   "      setText(\\\"\\\");\\n    }, 1400);")
               == 0);
+    }
+
+    SECTION("the status banner is centered, padded, and smoothly content-sized") {
+        CHECK(count_occurrences(
+                  document,
+                  "width: Math.max(96, Math.min(520, text.length * 8 + 28)),")
+              == 1);
+        CHECK(count_occurrences(document, "padding: \\\"0 14px\\\"") == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "transition: \\\"width 0.18s ease, opacity 0.15s ease\\\"")
+              == 1);
+        CHECK(count_occurrences(document, "width: 240,") == 0);
+    }
+
+    SECTION("edge labels and dropdown controls retain intentional rendering") {
+        CHECK(count_occurrences(document, "ctx.setLineDash([2, 2]);") == 0);
+        CHECK(count_occurrences(
+                  document,
+                  "ctx.font = \\\"10px JetBrains Mono, monospace\\\";\\n"
+                  "        ctx.textAlign = \\\"center\\\";\\n"
+                  "        ctx.textBaseline = \\\"middle\\\";")
+              == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "background: \\\"rgba(255,255,255,0.025)\\\",\\n"
+                  "  border: \\\"1px solid transparent\\\"")
+              == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "display: \\\"inline-flex\\\",\\n"
+                  "    alignItems: \\\"center\\\",\\n"
+                  "    gap: 4,\\n"
+                  "    lineHeight: 1")
+              == 1);
+    }
+
+    SECTION("remaining standalone chrome stays aligned") {
+        CHECK(count_occurrences(document, "top: 76,") == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "height: 26,\\n        display: \\\"inline-flex\\\",\\n"
+                  "        alignItems: \\\"center\\\",\\n"
+                  "        justifyContent: \\\"center\\\",\\n"
+                  "        lineHeight: 1")
+              == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "style: { marginLeft: 6, display: \\\"inline-flex\\\", "
+                  "alignItems: \\\"center\\\", lineHeight: 1 }")
+              == 3);
+        CHECK(count_occurrences(
+                  document,
+                  "\"letter_spacing\":0.5}},\"boxes\":[{\"left\":0,"
+                  "\"top\":3,\"width\":13,\"height\":13,"
+                  "\"start\":0,\"length\":2}]},{\"index\":9")
+              == 1);
     }
 
     SECTION("every edit mode defers its mute decision to one place") {
@@ -552,6 +611,45 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   "const y = isMuted(tg[i]) ? g.zeroY : g.zeroY - rendered * g.halfH;")
               == 1);
         CHECK(count_occurrences(document, "isMuted(tg[i]) ? g.zeroY + g.halfH") == 0);
+    }
+}
+
+TEST_CASE("materialized visual triage contract detects severed fixes") {
+    const std::string document{
+        reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
+        spectr_native::materialized_document_runtime_json_size};
+    constexpr std::array markers{
+        ContractMarker{"unified-hover", "const hoverBand = hover && !hover.mini ? hover.band : -1;"},
+        ContractMarker{"persistent-hover", "const keepAlive = setInterval(() => onStatus(label), 1e3);"},
+        ContractMarker{"guide-only-hover", "if (!hover || hover.mini) return;"},
+        ContractMarker{"content-sized-banner", "width: Math.max(96, Math.min(520, text.length * 8 + 28)),"},
+        ContractMarker{"symmetric-banner-padding", "padding: \\\"0 14px\\\""},
+        ContractMarker{"smooth-banner-resize", "transition: \\\"width 0.18s ease, opacity 0.15s ease\\\""},
+        ContractMarker{"aligned-edge-label", "ctx.font = \\\"10px JetBrains Mono, monospace\\\";\\n        ctx.textAlign = \\\"center\\\";\\n        ctx.textBaseline = \\\"middle\\\";"},
+        ContractMarker{"dropdown-surface", "background: \\\"rgba(255,255,255,0.025)\\\",\\n  border: \\\"1px solid transparent\\\""},
+        ContractMarker{"aligned-band-count", "display: \\\"inline-flex\\\",\\n    alignItems: \\\"center\\\",\\n    gap: 4,\\n    lineHeight: 1"},
+        ContractMarker{"banner-below-plot-line", "top: 76,"},
+        ContractMarker{"centered-rail-button", "height: 26,\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
+        ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 3},
+        ContractMarker{"aligned-band-binding", "\"letter_spacing\":0.5}},\"boxes\":[{\"left\":0,\"top\":3,\"width\":13,\"height\":13,\"start\":0,\"length\":2}]},{\"index\":9"},
+        ContractMarker{"band-dropdown-surface", "background: info.N === n ? \\\"rgba(120,180,255,0.18)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
+        ContractMarker{"edit-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.14)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
+        ContractMarker{"analyzer-dropdown-surface", "background: active ? \\\"rgba(255,255,255,0.08)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
+        ContractMarker{"settings-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.16)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
+    };
+    const auto errors = [&](std::string_view candidate) {
+        std::vector<std::string> result;
+        for (const auto& marker : markers)
+            if (count_occurrences(candidate, marker.text) != marker.expected_count)
+                result.emplace_back(marker.label);
+        return result;
+    };
+    CHECK(errors(document).empty());
+    for (const auto& marker : markers) {
+        INFO(marker.label);
+        auto mutated = document;
+        erase_once(mutated, marker.text);
+        CHECK(contains(errors(mutated), marker.label));
     }
 }
 

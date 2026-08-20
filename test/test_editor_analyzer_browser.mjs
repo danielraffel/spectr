@@ -379,6 +379,18 @@ window.spectrStartOracle = () => {
       'non-empty status banner');
       if (!statusBanner.textContent.trim())
         throw new Error('visible status banner had no message');
+      const bannerStyle = getComputedStyle(statusBanner);
+      if (bannerStyle.display !== 'flex'
+          || bannerStyle.alignItems !== 'center'
+          || bannerStyle.justifyContent !== 'center')
+        throw new Error('status banner content was not centered');
+      if (bannerStyle.paddingLeft !== bannerStyle.paddingRight
+          || parseFloat(bannerStyle.paddingLeft) <= 0)
+        throw new Error('status banner padding was not symmetric');
+      if (!bannerStyle.transitionProperty.split(',').map(value => value.trim()).includes('width'))
+        throw new Error('status banner width did not animate');
+      if (parseFloat(bannerStyle.top) < 70)
+        throw new Error('status banner remained above the plot top line');
       await spectrWaitFor(() =>
         !document.querySelector('[data-spectr-status-banner]'),
       'expired status banner removal');
@@ -692,6 +704,19 @@ window.spectrStartOracle = () => {
       const x = rect.left + rect.width * 0.43;
       const y = rect.top + rect.height * 0.46;
 
+      spectrPointer(target, 'pointermove', x, y);
+      const hoverBanner = await spectrWaitFor(() => {
+        const candidate = document.querySelector('[data-spectr-status-banner]');
+        return candidate && /BAND \d+\/32/.test(candidate.textContent) && candidate;
+      }, 'hover readout in unified status banner');
+      if (window.__spectrCanvasLabels.some(label => /band \d+\/32/i.test(label)))
+        throw new Error('hover readout still painted a floating canvas tooltip');
+      if (!hoverBanner.textContent.trim())
+        throw new Error('unified hover banner was empty');
+      spectrPointer(target, 'pointerleave', x, y);
+      await spectrWaitFor(() => !document.querySelector('[data-spectr-status-banner]'),
+        'hover banner clears on pointer leave');
+
       const brushX = band => rect.left
         + (56 + (band + 0.5) * (target.clientWidth - 112) / 32)
           * rect.width / target.clientWidth;
@@ -900,6 +925,12 @@ window.spectrStartOracle = () => {
       if (visualizationButtons.map(button => button.textContent.trim()).join(',')
           !== 'BARS,RESPONSE,BOTH')
         throw new Error('truthful mask visualization choices are missing');
+      for (const key of ['edit', 'analyzer', 'pattern']) {
+        const trigger = menuTrigger(key);
+        const style = trigger && getComputedStyle(trigger);
+        if (!style || style.display !== 'inline-flex' || style.alignItems !== 'center')
+          throw new Error(key + ' bottom-rail trigger was not vertically centered');
+      }
       for (const label of ['BARS', 'RESPONSE', 'BOTH']) {
         await spectrClick(visualizationButtons.find(button =>
           button.textContent.trim() === label));
