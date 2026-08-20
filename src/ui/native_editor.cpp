@@ -344,6 +344,31 @@ pulp::view::Point Spectr::native_root_to_window_(
     return {root_pt.x * sx + tx, root_pt.y * sy + ty};
 }
 
+std::vector<pulp::view::CommandID> Spectr::commands() const {
+    return {kOpenSettingsCommand};
+}
+
+bool Spectr::perform_command(pulp::view::CommandID id) {
+    if (id != kOpenSettingsCommand || !native_scripted_ui_
+        || !native_scripted_ui_->bridge()) {
+        return false;
+    }
+    try {
+        native_scripted_ui_->bridge()->load_script(
+            "(() => { if (!globalThis.__pulpActivateMaterializedElement__("
+            "'[data-spectr-settings-open]', 'click', null)) "
+            "throw new Error('settings trigger missing'); "
+            "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+            "globalThis.__pulpRuntimeSettle__(8); })();",
+            "spectr-open-settings-command");
+        return true;
+    } catch (const std::exception& error) {
+        pulp::runtime::log_error(
+            "[Spectr native] open-settings command failed: {}", error.what());
+        return false;
+    }
+}
+
 std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     // A fresh editor has published nothing, so the first publish_native_layout_
     // must run even though the size it is handed has not changed since the last
@@ -355,6 +380,7 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     root->set_theme(pulp::view::Theme::dark());
     root->flex().direction = pulp::view::FlexDirection::column;
     root->set_requires_gpu_host(true);
+    pulp::view::route_global_keys(*root, native_command_registry_);
 
     native_package_path_ = package_path_for(this);
     if (native_package_path_.empty()

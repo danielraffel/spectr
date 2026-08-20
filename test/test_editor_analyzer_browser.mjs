@@ -1024,8 +1024,30 @@ window.spectrStartOracle = () => {
       const minimapLabelBottom = miniY + 42 * rect.height / designHeight;
       if (minimapLabelBottom >= footerTop)
         throw new Error('minimap overlaps footer controls');
-      count = spectrStatePosts().length;
+      const cursorAt = async (cursorX, expected, label) => {
+        spectrPointer(target, 'pointermove', cursorX, miniY, 40);
+        await spectrFrames(1);
+        if (getComputedStyle(target).cursor !== expected)
+          throw new Error(label + ' cursor was ' + getComputedStyle(target).cursor
+            + ', expected ' + expected);
+      };
+      const rightHandleX = mapX(rightFraction);
+      const windowX = mapX((leftFraction + rightFraction) * 0.5);
       const trackX = mapX(leftFraction * 0.45);
+      await cursorAt(mapX(leftFraction), 'grab', 'left minimap handle');
+      await cursorAt(rightHandleX, 'grab', 'right minimap handle');
+      await cursorAt(windowX, 'grab', 'minimap window');
+      await cursorAt(trackX, 'grab', 'minimap track');
+      spectrPointer(target, 'pointerdown', windowX, miniY, 40);
+      if (getComputedStyle(target).cursor !== 'grabbing')
+        throw new Error('active minimap cursor was not grabbing');
+      spectrPointer(target, 'pointerup', windowX, miniY, 40);
+      if (getComputedStyle(target).cursor !== 'grab')
+        throw new Error('released minimap cursor did not restore grab');
+      spectrPointer(target, 'pointermove', x, y, 40);
+      if (getComputedStyle(target).cursor !== 'crosshair')
+        throw new Error('band adjustment cursor was not preserved');
+      count = spectrStatePosts().length;
       await spectrTap(target, trackX, miniY);
       state = await spectrPublishAfter(count, 'minimap track publication');
       if (state.min_hz === beforeMinimap.min_hz)

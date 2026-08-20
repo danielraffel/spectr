@@ -17,8 +17,28 @@
 
 namespace spectr {
 
-Spectr::Spectr() : editor_authority_(*this) {}
-Spectr::~Spectr() = default;
+Spectr::Spectr() : editor_authority_(*this) {
+#if defined(SPECTR_NATIVE_EDITOR)
+    pulp::view::CommandInfo settings;
+    settings.id = kOpenSettingsCommand;
+    settings.name = "Settings\u2026";
+    settings.category = "App";
+    settings.default_key = static_cast<pulp::view::KeyCode>(',');
+#if defined(__APPLE__)
+    settings.default_modifiers = pulp::view::kModCmd;
+#else
+    settings.default_modifiers = pulp::view::kModCtrl;
+#endif
+    native_command_registry_.register_command(settings);
+    native_command_registry_.add_handler(this);
+#endif
+}
+
+Spectr::~Spectr() {
+#if defined(SPECTR_NATIVE_EDITOR)
+    native_command_registry_.remove_handler(this);
+#endif
+}
 
 pulp::format::PluginDescriptor Spectr::descriptor() const {
     return make_descriptor();

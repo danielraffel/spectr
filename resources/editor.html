@@ -2372,6 +2372,46 @@ window.PatternManager = PatternManager;`,
       "        cursor: 'crosshair',\n        touchAction: 'none',",
       "        cursor: 'crosshair',\n        touchAction: 'none',\n        userSelect: 'none', WebkitUserSelect: 'none',",
       'canvas interaction does not select text');
+    replaceSpectrSource(
+      String.raw`    const mm = minimapHit(x, y, g);
+    if (mm) {
+      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);`,
+      String.raw`    const mm = minimapHit(x, y, g);
+    if (mm) {
+      wrapRef.current.style.cursor = 'grabbing';
+      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);`,
+      'minimap press uses grabbing cursor');
+    replaceSpectrSource(
+      String.raw`    if (mm) {
+      setHover({ mini: mm, x, y, band: -1 });
+      wrapRef.current.style.cursor = mm === 'left' || mm === 'right' ? 'ew-resize' : mm === 'window' ? 'grab' : 'pointer';`,
+      String.raw`    if (mm) {
+      setHover({ mini: mm, x, y, band: -1 });
+      const activeMini = pointerRef.current
+        && (pointerRef.current.mode === 'minimap-drag'
+          || pointerRef.current.mode === 'minimap-resize');
+      wrapRef.current.style.cursor = activeMini ? 'grabbing' : 'grab';`,
+      'minimap hover and drag cursors');
+    replaceSpectrSource(
+      String.raw`  const onPointerUp = (e) => {
+    const p = pointerRef.current;
+    pointerRef.current = { mode: null };
+    if (!p || !p.mode) {`,
+      String.raw`  const onPointerUp = (e) => {
+    const p = pointerRef.current;
+    pointerRef.current = { mode: null };
+    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize'))
+      wrapRef.current.style.cursor = 'grab';
+    if (!p || !p.mode) {`,
+      'minimap release restores grab cursor');
+    replaceSpectrSource(
+      '      onPointerLeave={() => setHover(null)}',
+      String.raw`      onPointerLeave={() => {
+        setHover(null);
+        if (!pointerRef.current || !pointerRef.current.mode)
+          wrapRef.current.style.cursor = 'default';
+      }}`,
+      'surface leave resets idle cursor');
     replaceAllSpectrSource(
       'const x = e.clientX - rect.left, y = e.clientY - rect.top;',
       'const x = (e.clientX - rect.left) * wrapRef.current.clientWidth / rect.width, y = (e.clientY - rect.top) * wrapRef.current.clientHeight / rect.height;',

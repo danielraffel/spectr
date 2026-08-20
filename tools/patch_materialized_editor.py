@@ -618,6 +618,53 @@ EDITS = [
      'background: active ? "rgba(120,180,255,0.16)" : "transparent",',
      'background: active ? "rgba(120,180,255,0.16)" : "rgba(255,255,255,0.025)",'),
 
+    ('filter surface keeps semantic identity without remapping its native owner',
+     '      ref: wrapRef,\n'
+     '      id: "spectr-filter-surface",\n'
+     '      "data-spectr-filter-surface": true,',
+     '      ref: wrapRef,\n'
+     '      "data-spectr-filter-surface": true,'),
+
+    ('minimap press uses grabbing cursor',
+     '    const mm = minimapHit(x, y, g);\n'
+     '    if (mm) {\n'
+     '      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);',
+     '    const mm = minimapHit(x, y, g);\n'
+     '    if (mm) {\n'
+     '      wrapRef.current.style.cursor = "grabbing";\n'
+     '      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);'),
+
+    ('minimap hover and drag cursors',
+     '    if (mm) {\n'
+     '      setHover({ mini: mm, x, y, band: -1 });\n'
+     '      wrapRef.current.style.cursor = mm === "left" || mm === "right" ? "ew-resize" : mm === "window" ? "grab" : "pointer";',
+     '    if (mm) {\n'
+     '      setHover({ mini: mm, x, y, band: -1 });\n'
+     '      const activeMini = pointerRef.current\n'
+     '        && (pointerRef.current.mode === "minimap-drag"\n'
+     '          || pointerRef.current.mode === "minimap-resize");\n'
+     '      wrapRef.current.style.cursor = activeMini ? "grabbing" : "grab";'),
+
+    ('minimap release restores grab cursor',
+     '  const onPointerUp = (e) => {\n'
+     '    const p = pointerRef.current;\n'
+     '    pointerRef.current = { mode: null };\n'
+     '    if (!p || !p.mode) {',
+     '  const onPointerUp = (e) => {\n'
+     '    const p = pointerRef.current;\n'
+     '    pointerRef.current = { mode: null };\n'
+     '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize"))\n'
+     '      wrapRef.current.style.cursor = "grab";\n'
+     '    if (!p || !p.mode) {'),
+
+    ('surface leave resets idle cursor',
+     '      onPointerLeave: () => setHover(null),',
+     '      onPointerLeave: () => {\n'
+     '        setHover(null);\n'
+     '        if (!pointerRef.current || !pointerRef.current.mode)\n'
+     '          wrapRef.current.style.cursor = "default";\n'
+     '      },'),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an

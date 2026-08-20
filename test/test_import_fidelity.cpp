@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
 constexpr std::string_view kAdapterDigest =
-        "02a979dfe408dcc162e481cade2ba3451a6f5c84a4439b38563b4d5d287dab75";
+        "7a03ccaa6f227bef48bd05a7079113ce2840904bbf4b080b8b854f8ce25aa656";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -548,6 +548,25 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
               == 1);
     }
 
+    SECTION("minimap cursor feedback distinguishes idle drag and band editing") {
+        CHECK(count_occurrences(
+                  document,
+                  "wrapRef.current.style.cursor = activeMini ? \\\"grabbing\\\" : \\\"grab\\\";")
+              == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "wrapRef.current.style.cursor = \\\"grabbing\\\";")
+              == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "wrapRef.current.style.cursor = \\\"crosshair\\\";")
+              == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "mm === \\\"left\\\" || mm === \\\"right\\\" ? \\\"ew-resize\\\"")
+              == 0);
+    }
+
     SECTION("remaining standalone chrome stays aligned") {
         CHECK(count_occurrences(document, "top: 76,") == 1);
         CHECK(count_occurrences(
@@ -643,6 +662,9 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"edit-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.14)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"analyzer-dropdown-surface", "background: active ? \\\"rgba(255,255,255,0.08)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"settings-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.16)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
+        ContractMarker{"minimap-grab-cursor", "wrapRef.current.style.cursor = activeMini ? \\\"grabbing\\\" : \\\"grab\\\";"},
+        ContractMarker{"minimap-press-cursor", "wrapRef.current.style.cursor = \\\"grabbing\\\";"},
+        ContractMarker{"band-crosshair-cursor", "wrapRef.current.style.cursor = \\\"crosshair\\\";"},
     };
     const auto errors = [&](std::string_view candidate) {
         std::vector<std::string> result;

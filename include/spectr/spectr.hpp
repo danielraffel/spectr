@@ -23,6 +23,7 @@
 
 #if defined(SPECTR_NATIVE_EDITOR)
 #include <filesystem>
+#include <pulp/view/command_registry.hpp>
 #include <pulp/view/editor_bridge.hpp>
 #include <pulp/view/frame_clock.hpp>
 #include <pulp/view/scripted_ui.hpp>
@@ -148,7 +149,11 @@ inline pulp::format::PluginDescriptor make_descriptor() {
 
 /// Top-level Spectr plugin. Owns the product state and Pulp's reusable
 /// streaming spectral-mask processor.
-class Spectr : public pulp::format::Processor {
+class Spectr : public pulp::format::Processor
+#if defined(SPECTR_NATIVE_EDITOR)
+             , private pulp::view::CommandHandler
+#endif
+{
 public:
     Spectr();
     ~Spectr() override;
@@ -394,6 +399,14 @@ private:
     static void param_sync_trampoline_(void* ctx, const ParamSyncTask&) noexcept;
 
 #if defined(SPECTR_NATIVE_EDITOR)
+    // Matches Pulp's framework-reserved `PLST` command in pending pulp#7712.
+    // Keeping the consumer on the existing registry surface lets the current
+    // SDK prove Spectr's handler before the host-side Cmd/Ctrl+, fallback lands.
+    static constexpr pulp::view::CommandID kOpenSettingsCommand = 0x504C5354;
+    std::vector<pulp::view::CommandID> commands() const override;
+    bool perform_command(pulp::view::CommandID id) override;
+
+    pulp::view::CommandRegistry native_command_registry_{};
     pulp::view::EditorBridge native_editor_bridge_{};
     bool native_editor_handlers_registered_ = false;
     std::unique_ptr<pulp::view::ScriptedUiSession> native_scripted_ui_{};

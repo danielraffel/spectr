@@ -877,6 +877,94 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     capture(rig, directory, "minimum-settings-bottom", 792, 516);
 }
 
+TEST_CASE("native settings command and minimap cursors reach the shipping runtime",
+          "[native-n1][state-parity][commands][cursor]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    REQUIRE(static_cast<bool>(rig.root->on_global_key));
+    const auto comma = static_cast<pulp::view::KeyCode>(',');
+    CHECK_FALSE(rig.root->on_global_key({
+        .key = comma, .modifiers = pulp::view::kModNone, .is_down = true}));
+    require_home(rig);
+#if defined(__APPLE__)
+    constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+    constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+    REQUIRE(rig.root->on_global_key({
+        .key = comma, .modifiers = primary_modifier, .is_down = true}));
+    settle(rig.clock, 16);
+    require_state(rig, "settings");
+    activate(rig, "[data-spectr-settings-close]");
+    require_home(rig);
+
+    View* surface = nullptr;
+    const std::function<void(View&)> find_surface = [&](View& candidate) {
+        if (candidate.cursor() == View::CursorStyle::crosshair
+            && candidate.on_dom_pointer_event) {
+            REQUIRE(surface == nullptr);
+            surface = &candidate;
+        }
+        for (std::size_t index = 0; index < candidate.child_count(); ++index)
+            find_surface(*candidate.child_at(index));
+    };
+    find_surface(*rig.root);
+    REQUIRE(surface != nullptr);
+    CHECK(surface->cursor() == View::CursorStyle::crosshair);
+    const auto dispatch_minimap = [&](std::string_view event,
+                                      std::string_view hit) {
+        const auto script = std::string{R"js((() => {
+          const selector = '[data-spectr-filter-surface]';
+          const surface = document.querySelector(selector);
+          if (!surface) throw new Error('filter surface missing');
+          const desired = )js"} + js_string(hit) + R"js(;
+          const state = globalThis.__spectrTestHooks?.renderState?.();
+          if (!state) throw new Error('filter state missing');
+          const fullMin = Math.log10(20);
+          const fullSpan = Math.log10(20000) - fullMin;
+          const innerX = 56, innerWidth = surface.clientWidth - 112;
+          const left = (state.view.lmin - fullMin) / fullSpan;
+          const right = (state.view.lmax - fullMin) / fullSpan;
+          const windowX = innerX + (left + right) * 0.5 * innerWidth;
+          const miniY = Array.from({length: surface.clientHeight}, (_, y) => y)
+            .find(y => globalThis.__spectrTestHooks.minimapHit(windowX, y) === 'window');
+          if (!Number.isFinite(miniY)) throw new Error('minimap y missing');
+          const x = desired === 'left' ? innerX + left * innerWidth
+            : desired === 'right' ? innerX + right * innerWidth
+            : desired === 'track' ? innerX + left * 0.45 * innerWidth
+            : windowX;
+          const point = {x, y: miniY};
+          if (globalThis.__spectrTestHooks.minimapHit(point.x, point.y) !== desired)
+            throw new Error('minimap hit missing: ' + desired);
+          if (!globalThis.__pulpActivateMaterializedElement__(selector, )js"
+            + js_string(event) + R"js(, {
+                clientX: point.x, clientY: point.y, pointerId: 71,
+                button: 0, buttons: 1
+              })) throw new Error('minimap cursor activation failed');
+          if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+            globalThis.__pulpRuntimeSettle__(4);
+        })();)js";
+        rig.bridge().load_script(script, "spectr-native-minimap-cursor");
+        settle(rig.clock, 4);
+    };
+
+    dispatch_minimap("pointermove", "left");
+    CHECK(surface->cursor() == View::CursorStyle::grab);
+    dispatch_minimap("pointermove", "right");
+    CHECK(surface->cursor() == View::CursorStyle::grab);
+    dispatch_minimap("pointerdown", "window");
+    CHECK(surface->cursor() == View::CursorStyle::grabbing);
+    dispatch_minimap("pointermove", "window");
+    CHECK(surface->cursor() == View::CursorStyle::grabbing);
+    dispatch_minimap("pointerup", "window");
+    CHECK(surface->cursor() == View::CursorStyle::grab);
+    activate(rig, "[data-spectr-filter-surface]", "pointermove",
+             R"js({clientX:660,clientY:430,pointerId:72,button:0,buttons:0})js");
+    CHECK(surface->cursor() == View::CursorStyle::crosshair);
+}
+
 TEST_CASE("native frozen state atlas interactions and persistence",
           "[native-n1][state-parity]") {
     PatternStoragePoison storage;
@@ -2171,4 +2259,3 @@ TEST_CASE("a resize to an unchanged design box republishes nothing",
     INFO("materialized layout passes during four same-box resizes");
     CHECK(passes == 0);
 }
-
