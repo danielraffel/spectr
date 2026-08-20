@@ -555,4 +555,31 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 }
 
+TEST_CASE("#34 materialized mode publication contract detects every severed lane") {
+    const std::string document{
+        reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
+        spectr_native::materialized_document_runtime_json_size};
+    constexpr std::array markers{
+        ContractMarker{"bridge-message", R"(postMessage(\"mode_set\")"},
+        ContractMarker{"motion", R"(spectrPublishMode(\"motion\")", 3},
+        ContractMarker{"edit", R"(spectrPublishMode(\"edit\")", 3},
+        ContractMarker{"analyzer", R"(spectrPublishMode(\"analyzer\")", 2},
+        ContractMarker{"visualization", R"(spectrPublishMode(\"visualization\")"},
+    };
+    const auto errors = [&](std::string_view candidate) {
+        std::vector<std::string> result;
+        for (const auto& marker : markers)
+            if (count_occurrences(candidate, marker.text) != marker.expected_count)
+                result.emplace_back(marker.label);
+        return result;
+    };
+    CHECK(errors(document).empty());
+    for (const auto& marker : markers) {
+        INFO(marker.label);
+        auto mutated = document;
+        erase_once(mutated, marker.text);
+        CHECK(contains(errors(mutated), marker.label));
+    }
+}
+
 #endif // SPECTR_NATIVE_EDITOR

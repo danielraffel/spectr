@@ -65,6 +65,7 @@ find_package(Pulp 0.801.0 REQUIRED)
 
 set(SPECTR_SOURCES
     src/spectr.cpp
+    src/param_surface.cpp
     src/edit_engine.cpp
     src/editor_authority.cpp
     src/editor_bridge.cpp
@@ -76,6 +77,7 @@ set(SPECTR_SOURCES
 
 set(SPECTR_HEADERS
     include/spectr/spectr.hpp
+    include/spectr/param_surface.hpp
     include/spectr/band_state.hpp
     include/spectr/viewport.hpp
     include/spectr/edit_modes.hpp
@@ -95,6 +97,7 @@ set(SPECTR_HEADERS
 # root rather than silently selecting AutoUi or the WebView baseline.
 set(SPECTR_NATIVE_SOURCES
     src/spectr.cpp
+    src/param_surface.cpp
     src/edit_engine.cpp
     src/editor_authority.cpp
     src/editor_bridge.cpp
@@ -296,6 +299,8 @@ add_executable(Spectr-test
     test/test_import_fidelity.cpp
     test/test_preset.cpp
     test/test_snapshot.cpp
+    test/test_param_surface.cpp
+    test/test_mode_bridge.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE

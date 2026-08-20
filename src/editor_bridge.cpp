@@ -68,6 +68,35 @@ std::optional<float> finite_number_(const choc::value::ValueView& value) {
     return static_cast<float>(number);
 }
 
+struct ModeParamValue {
+    pulp::state::ParamID id;
+    float value;
+};
+
+std::optional<ModeParamValue> parse_mode_param_(std::string_view kind,
+                                                std::string_view value) {
+    if (kind == "motion") {
+        if (value == "live") return ModeParamValue{kParamMotionMode, 0.0f};
+        if (value == "precision") return ModeParamValue{kParamMotionMode, 1.0f};
+    } else if (kind == "analyzer") {
+        if (value == "peak") return ModeParamValue{kParamAnalyzerMode, 0.0f};
+        if (value == "avg") return ModeParamValue{kParamAnalyzerMode, 1.0f};
+        if (value == "both") return ModeParamValue{kParamAnalyzerMode, 2.0f};
+        if (value == "off") return ModeParamValue{kParamAnalyzerMode, 3.0f};
+    } else if (kind == "edit") {
+        if (value == "sculpt") return ModeParamValue{kParamEditMode, 0.0f};
+        if (value == "level") return ModeParamValue{kParamEditMode, 1.0f};
+        if (value == "boost") return ModeParamValue{kParamEditMode, 2.0f};
+        if (value == "flare") return ModeParamValue{kParamEditMode, 3.0f};
+        if (value == "glide") return ModeParamValue{kParamEditMode, 4.0f};
+    } else if (kind == "visualization") {
+        if (value == "bars") return ModeParamValue{kParamVisualization, 0.0f};
+        if (value == "response") return ModeParamValue{kParamVisualization, 1.0f};
+        if (value == "both") return ModeParamValue{kParamVisualization, 2.0f};
+    }
+    return std::nullopt;
+}
+
 choc::value::Value snapshot_projection_(const FieldSnapshot& snapshot,
                                         std::size_t visible) {
     auto result = choc::value::createObject("SpectrSnapshotProjection");
@@ -115,17 +144,18 @@ std::string authority_response_(const Spectr& plugin,
 
 choc::value::Value make_editor_state_payload(const Spectr& plugin,
                                              EditorRevision revision) {
-    const auto n = visible_count(plugin.layout());
+    const auto state = plugin.processing_state_snapshot();
+    const auto n = visible_count(state.layout);
     auto gains = choc::value::createEmptyArray();
     auto muted = choc::value::createEmptyArray();
     for (std::size_t i = 0; i < n; ++i) {
-        gains.addArrayElement(static_cast<double>(plugin.field().bands[i].gain_db));
-        muted.addArrayElement(plugin.field().bands[i].muted);
+        gains.addArrayElement(static_cast<double>(state.field.bands[i].gain_db));
+        muted.addArrayElement(state.field.bands[i].muted);
     }
 
     auto snapshots = choc::value::createObject("SpectrSnapshotState");
-    snapshots.addMember("A", snapshot_projection_(plugin.snapshots().a, n));
-    snapshots.addMember("B", snapshot_projection_(plugin.snapshots().b, n));
+    snapshots.addMember("A", snapshot_projection_(state.snapshots.a, n));
+    snapshots.addMember("B", snapshot_projection_(state.snapshots.b, n));
 
     auto payload = choc::value::createObject("SpectrEditorState");
     payload.addMember("revision", static_cast<std::int64_t>(
@@ -133,8 +163,8 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     payload.addMember("n_visible", static_cast<std::int32_t>(n));
     payload.addMember("gain_db", gains);
     payload.addMember("muted", muted);
-    payload.addMember("min_hz", static_cast<double>(plugin.viewport().min_hz));
-    payload.addMember("max_hz", static_cast<double>(plugin.viewport().max_hz));
+    payload.addMember("min_hz", static_cast<double>(state.viewport.min_hz));
+    payload.addMember("max_hz", static_cast<double>(state.viewport.max_hz));
     payload.addMember("snapshots", snapshots);
     payload.addMember("patterns_json", plugin.patterns().export_json());
     return payload;
@@ -175,7 +205,8 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             if (gains.size() != n_visible || mutes.size() != n_visible)
                 return EditorBridge::err_response("gain_db and muted lengths must equal n_visible");
 
-            auto next = plugin.field();
+            const auto state = plugin.processing_state_snapshot();
+            auto next = state.field;
             for (std::uint32_t i = 0; i < n_visible; ++i) {
                 const auto gain = finite_number_(gains[i]);
                 if (!gain) return EditorBridge::err_response("gain_db values must be finite numbers");
@@ -188,7 +219,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             }
 
             return authority_response_(plugin, authority.replace_processing_state(
-                next, plugin.viewport(), *layout, expected_revision_(p)));
+                next, state.viewport, *layout, expected_revision_(p)));
         });
 
     // Atomic state publication for the imported live editor. Zoom/pan changes
@@ -217,7 +248,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 return EditorBridge::err_response(
                     "gain_db and muted lengths must equal n_visible");
 
-            BandField next = plugin.field();
+            BandField next = plugin.processing_state_snapshot().field;
             for (std::uint32_t i = 0; i < n_visible; ++i) {
                 const auto gain = finite_number_(gains[i]);
                 if (!gain || *gain < kBandGainMinDb || *gain > kBandGainMaxDb)
@@ -328,8 +359,9 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             if (id.empty()) return EditorBridge::err_response("pattern id missing");
             const auto* pat = library.find(id);
             if (!pat) return EditorBridge::err_response("unknown pattern id");
-            pat->apply_to(plugin.field());
-            plugin.publish_field();
+            auto field = plugin.processing_state_snapshot().field;
+            pat->apply_to(field);
+            plugin.replace_field(field);
             return EditorBridge::ok_response();
         });
 
@@ -337,7 +369,8 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         [&library, &plugin](const choc::value::ValueView& p) -> std::string {
             auto name = EditorBridge::get_string(p, "name");
             if (name.size() > 48) name.resize(48);
-            const auto saved = library.save_current(plugin.field(), std::move(name));
+            const auto saved = library.save_current(
+                plugin.processing_state_snapshot().field, std::move(name));
             auto extras = pattern_library_projection_(library);
             extras.addMember("id", saved.id);
             extras.addMember("name", saved.name);
@@ -397,6 +430,20 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             extras.addMember("modified_at",    result.metadata.modified_at);
             extras.addMember("plugin_version", result.plugin_version);
             return EditorBridge::ok_response(extras);
+        });
+
+    // ── Product mode writes ───────────────────────────────────────────
+
+    bridge.add_handler("mode_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject()) return EditorBridge::err_response("mode payload missing");
+            const auto kind = EditorBridge::get_string(p, "kind");
+            const auto value = EditorBridge::get_string(p, "value");
+            const auto parsed = parse_mode_param_(kind, value);
+            if (!parsed) return EditorBridge::err_response("invalid mode kind or value");
+            if (!plugin.set_editor_mode_param(parsed->id, parsed->value))
+                return EditorBridge::err_response("mode parameter unavailable");
+            return EditorBridge::ok_response();
         });
 
     // ── Flat param write ───────────────────────────────────────────────

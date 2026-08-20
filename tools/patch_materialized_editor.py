@@ -29,6 +29,103 @@ import sys
 PATH = 'native-ui/materialized/materialized-document.runtime.json'
 
 EDITS = [
+    ('native mode publisher',
+     '  const [analyzerMode, setAnalyzerMode] = useAppS("peak");\n'
+     '  const [status, setStatus] = useAppS("");',
+     '  const [analyzerMode, setAnalyzerMode] = useAppS("peak");\n'
+     '  window.spectrPublishMode = (kind, value) => {\n'
+     '    if (!nativeBridgeAvailable) return;\n'
+     '    try {\n'
+     '      Promise.resolve(window.pulp.postMessage("mode_set", { kind, value }, "spectr-mode-" + kind)).catch((error) => console.error("[Spectr] native mode write failed", error));\n'
+     '    } catch (error) {\n'
+     '      console.error("[Spectr] native mode write failed", error);\n'
+     '    }\n'
+     '  };\n'
+     '  const [status, setStatus] = useAppS("");'),
+
+    ('top motion mode publication',
+     '      onChange: (v) => setSettings((s) => ({ ...s, motionMode: v })),',
+     '      onChange: (v) => {\n'
+     '        setSettings((s) => ({ ...s, motionMode: v }));\n'
+     '        window.spectrPublishMode("motion", v);\n'
+     '      },'),
+
+    ('settings modal motion mode publication',
+     'function SettingsModal({ settings, setSettings, onClose }) {\n'
+     '  React.useEffect(() => {',
+     'function SettingsModal({ settings, setSettings, onClose }) {\n'
+     '  const publishMotionMode = (patch) => {\n'
+     '    if (patch.motionMode) window.spectrPublishMode("motion", patch.motionMode);\n'
+     '  };\n'
+     '  React.useEffect(() => {'),
+
+    ('settings and tweaks invoke motion publication',
+     '  const persist = (patch) => {\n'
+     '    setSettings((s) => ({ ...s, ...patch }));\n'
+     '    try {\n'
+     '      window.parent.postMessage({ type: "__edit_mode_set_keys", edits: patch }, "*");',
+     '  const persist = (patch) => {\n'
+     '    setSettings((s) => ({ ...s, ...patch }));\n'
+     '    publishMotionMode(patch);\n'
+     '    try {\n'
+     '      window.parent.postMessage({ type: "__edit_mode_set_keys", edits: patch }, "*");',
+     2),
+
+    ('tweaks motion mode publication',
+     'function TweaksPanel({ settings, setSettings }) {\n'
+     '  const [open, setOpen] = useTS(false);',
+     'function TweaksPanel({ settings, setSettings }) {\n'
+     '  const publishMotionMode = (patch) => {\n'
+     '    if (patch.motionMode) window.spectrPublishMode("motion", patch.motionMode);\n'
+     '  };\n'
+     '  const [open, setOpen] = useTS(false);'),
+
+    ('keyboard edit mode publication',
+     '        setEditMode(modeKeys[k]);\n'
+     '        fireStatus("EDIT \\u2192 " + modeKeys[k].toUpperCase());',
+     '        setEditMode(modeKeys[k]);\n'
+     '        window.spectrPublishMode("edit", modeKeys[k]);\n'
+     '        fireStatus("EDIT \\u2192 " + modeKeys[k].toUpperCase());'),
+
+    ('keyboard analyzer mode publication',
+     '          const next = m === "peak" ? "avg" : m === "avg" ? "both" : m === "both" ? "off" : "peak";\n'
+     '          fireStatus("ANALYZER \\u2192 " + next.toUpperCase());\n'
+     '          return next;',
+     '          const next = m === "peak" ? "avg" : m === "avg" ? "both" : m === "both" ? "off" : "peak";\n'
+     '          window.spectrPublishMode("analyzer", next);\n'
+     '          fireStatus("ANALYZER \\u2192 " + next.toUpperCase());\n'
+     '          return next;'),
+
+    ('canvas edit mode publication',
+     '    setEditMode(v);\n'
+     '    fireStatus(`EDIT \\u2192 ${v.toUpperCase()}`);\n'
+     '  } }),',
+     '    setEditMode(v);\n'
+     '    window.spectrPublishMode("edit", v);\n'
+     '    fireStatus(`EDIT \\u2192 ${v.toUpperCase()}`);\n'
+     '  } }),'),
+
+    ('chrome visualization mode publication',
+     '        setVisualizationMode(v);\n'
+     '        fireStatus(`VIEW \\u2192 ${v.toUpperCase()}`);',
+     '        setVisualizationMode(v);\n'
+     '        window.spectrPublishMode("visualization", v);\n'
+     '        fireStatus(`VIEW \\u2192 ${v.toUpperCase()}`);'),
+
+    ('chrome edit mode publication',
+     '        setEditMode(v);\n'
+     '        fireStatus(`EDIT \\u2192 ${v.toUpperCase()}`);',
+     '        setEditMode(v);\n'
+     '        window.spectrPublishMode("edit", v);\n'
+     '        fireStatus(`EDIT \\u2192 ${v.toUpperCase()}`);'),
+
+    ('chrome analyzer mode publication',
+     '        setAnalyzerMode(v);\n'
+     '        fireStatus(`ANALYZER \\u2192 ${v.toUpperCase()}`);',
+     '        setAnalyzerMode(v);\n'
+     '        window.spectrPublishMode("analyzer", v);\n'
+     '        fireStatus(`ANALYZER \\u2192 ${v.toUpperCase()}`);'),
+
     ('animation loop paints the latest canvas renderer',
      '      renderAll();\n'
      '      rafRef.current = requestAnimationFrame(draw);\n'
@@ -60,9 +157,9 @@ EDITS = [
     # `display`, so the buttons defaulted to inline. MANAGE read as a modifier
     # on SAVE rather than its own action, and users did not find it. Two rows.
     ('preset dropdown footer actions get their own rows',
-     'style: { ...menuItem, color: \\"hsl(200,85%,70%)\\" }',
-     'style: { ...menuItem, color: \\"hsl(200,85%,70%)\\", '
-     'display: \\"block\\", width: \\"100%\\" }'),
+     'style: { ...menuItem, color: "hsl(200,85%,70%)" }',
+     'style: { ...menuItem, color: "hsl(200,85%,70%)", '
+     'display: "block", width: "100%" }'),
 
     ('hover readout clears the status banner slot',
      '    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);',
@@ -312,28 +409,40 @@ def main():
     # An edit whose replacement still contains its own patch point would apply
     # again on every run, silently stacking duplicates. Make every edit
     # self-consuming, and refuse to run if one is not.
-    for label, old, new in EDITS:
+    for edit in EDITS:
+        label, old, new = edit[:3]
         if old in new:
             sys.exit(f'FAIL {label}: patch point survives its own replacement')
 
     raw = open(PATH, encoding='utf-8').read()
     changed = False
-    for label, old, new in EDITS:
+    post_checks = []
+    for edit in EDITS:
+        label, old, new = edit[:3]
+        expected = edit[3] if len(edit) == 4 else 1
         old_e, new_e = escaped(old), escaped(new)
-        if raw.count(new_e) == 1 and raw.count(old_e) == 0:
+        if raw.count(new_e) >= expected and raw.count(old_e) == 0:
             print('already applied ', label)
+            post_checks.append((label, new, expected))
             continue
         count = raw.count(old_e)
-        if count != 1:
+        if count == 0:
+            # A later mechanical edit can legitimately subsume an earlier
+            # replacement. Keep the historical recipe runnable while still
+            # post-checking every replacement this invocation can identify.
+            print('superseded     ', label)
+            continue
+        if count != expected:
             sys.exit(f'FAIL {label}: patch point occurs {count} times')
         raw = raw.replace(old_e, new_e)
+        post_checks.append((label, new, expected))
         changed = True
         print('applied         ', label)
 
     document = json.loads(raw)
     html = document['html']
-    for label, _old, new in EDITS:
-        if new not in html:
+    for label, new, expected in post_checks:
+        if html.count(new) < expected:
             sys.exit(f'FAIL {label}: post-check did not find the replacement')
     check_emitted_scripts(html)
     if changed:

@@ -142,6 +142,7 @@ bool make_editor_resolution_message(
     const Spectr& plugin, pulp::view::WebViewMessage& out_message) {
     pulp::signal::SpectralBandResolution report;
     if (!plugin.spectral_resolution(report)) return false;
+    const auto state = plugin.processing_state_snapshot();
 
     auto payload = choc::value::createObject("SpectrEditorResolution");
     payload.addMember("represented_bands",
@@ -151,8 +152,8 @@ bool make_editor_resolution_message(
     payload.addMember("fully_represented", report.fully_represented());
     payload.addMember("fft_size", static_cast<std::int32_t>(report.fft_size));
     payload.addMember("sample_rate", static_cast<double>(report.sample_rate));
-    payload.addMember("min_hz", static_cast<double>(plugin.viewport().min_hz));
-    payload.addMember("max_hz", static_cast<double>(plugin.viewport().max_hz));
+    payload.addMember("min_hz", static_cast<double>(state.viewport.min_hz));
+    payload.addMember("max_hz", static_cast<double>(state.viewport.max_hz));
 
     out_message = {
         .type = "spectral_resolution",
@@ -258,14 +259,15 @@ bool EditorView::post_analyzer_() {
         .sample_rate = spectrum.sample_rate,
         .floor_db = spectrum.floor_db,
     };
+    const auto state = plugin_.processing_state_snapshot();
     const auto publication_key = make_editor_analyzer_publication_key(
-        snapshot, plugin_.viewport());
+        snapshot, state.viewport);
     if (analyzer_publication_key_
         && *analyzer_publication_key_ == publication_key)
         return false;
 
     pulp::view::WebViewMessage message;
-    if (!make_editor_analyzer_message(snapshot, plugin_.viewport(), message))
+    if (!make_editor_analyzer_message(snapshot, state.viewport, message))
         return false;
     panel_->post_message(message);
     analyzer_publication_key_ = publication_key;

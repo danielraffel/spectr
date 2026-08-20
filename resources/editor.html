@@ -2388,6 +2388,53 @@ window.PatternManager = PatternManager;`,
       'const vw = window.innerWidth, vh = window.innerHeight;',
       "const root = document.getElementById('root');\n  const vw = root ? root.clientWidth : window.innerWidth, vh = root ? root.clientHeight : window.innerHeight;",
       'fixed-design context-menu bounds');
+    replaceSpectrSource(
+      "  const [analyzerMode, setAnalyzerMode] = useAppS('peak');\n  const [status, setStatus] = useAppS('');",
+      String.raw`  const [analyzerMode, setAnalyzerMode] = useAppS('peak');
+  window.spectrPublishMode = (kind, value) => {
+    if (!nativeBridgeAvailable) return;
+    try {
+      Promise.resolve(window.pulp.postMessage('mode_set', { kind, value }, 'spectr-mode-' + kind))
+        .catch(error => console.error('[Spectr] native mode write failed', error));
+    } catch (error) {
+      console.error('[Spectr] native mode write failed', error);
+    }
+  };
+  const [status, setStatus] = useAppS('');`,
+      'native mode publisher');
+    replaceSpectrSource(
+      'onChange={(v) => setSettings((s) => ({ ...s, motionMode: v }))}',
+      "onChange={(v) => { setSettings((s) => ({ ...s, motionMode: v })); window.spectrPublishMode('motion', v); }}",
+      'top motion mode publication');
+    replaceAllSpectrSource(
+      '    setSettings(s => ({ ...s, ...patch }));\n    try {',
+      "    setSettings(s => ({ ...s, ...patch }));\n    if (patch.motionMode) window.spectrPublishMode('motion', patch.motionMode);\n    try {",
+      2,
+      'settings motion mode publication');
+    replaceSpectrSource(
+      'onEditModeChange={(v) => { setEditMode(v); fireStatus(`EDIT → ${v.toUpperCase()}`); }}',
+      "onEditModeChange={(v) => { setEditMode(v); window.spectrPublishMode('edit', v); fireStatus(`EDIT → ${v.toUpperCase()}`); }}",
+      'canvas edit mode publication');
+    replaceSpectrSource(
+      'setVisualizationMode={(v) => { setVisualizationMode(v); fireStatus(`VIEW → ${v.toUpperCase()}`); }}',
+      "setVisualizationMode={(v) => { setVisualizationMode(v); window.spectrPublishMode('visualization', v); fireStatus(`VIEW → ${v.toUpperCase()}`); }}",
+      'visualization mode publication');
+    replaceSpectrSource(
+      'setEditMode={(v) => { setEditMode(v); fireStatus(`EDIT → ${v.toUpperCase()}`); }}',
+      "setEditMode={(v) => { setEditMode(v); window.spectrPublishMode('edit', v); fireStatus(`EDIT → ${v.toUpperCase()}`); }}",
+      'chrome edit mode publication');
+    replaceSpectrSource(
+      'setAnalyzerMode={(v) => { setAnalyzerMode(v); fireStatus(`ANALYZER → ${v.toUpperCase()}`); }}',
+      "setAnalyzerMode={(v) => { setAnalyzerMode(v); window.spectrPublishMode('analyzer', v); fireStatus(`ANALYZER → ${v.toUpperCase()}`); }}",
+      'chrome analyzer mode publication');
+    replaceSpectrSource(
+      '        setEditMode(modeKeys[k]);\n        fireStatus',
+      "        setEditMode(modeKeys[k]);\n        window.spectrPublishMode('edit', modeKeys[k]);\n        fireStatus",
+      'keyboard edit mode publication');
+    replaceSpectrSource(
+      "          fireStatus('ANALYZER → ' + next.toUpperCase());\n          return next;",
+      "          window.spectrPublishMode('analyzer', next);\n          fireStatus('ANALYZER → ' + next.toUpperCase());\n          return next;",
+      'keyboard analyzer mode publication');
 
     const resourceScript = '<script>window.__resources = ' +
       JSON.stringify(resourceMap).split('</' + 'script>').join('<\\/' + 'script>') +

@@ -73,6 +73,8 @@
 //  type="load_preset"       — payload: {preset_json: "<serialized>"}
 //                             effect: apply state; echo metadata in extras
 //  type="param_set"         — payload: {id: int, value: float}
+//  type="mode_set"          — payload: {kind: motion|analyzer|edit|visualization,
+//                                       value: the corresponding editor label}
 //                             effect: StateStore::set_value(id, value)
 
 #include <pulp/view/editor_bridge.hpp>

@@ -8,13 +8,18 @@
 // Milestone 4.
 
 #include <pulp/format/processor.hpp>
+#include <pulp/format/background_task_lane.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
 #include <pulp/signal/smoothed_value.hpp>
 #include <pulp/view/ab_compare.hpp>
 #include <pulp/view/visualization_bridge.hpp>
 #include <array>
+#include <atomic>
+#include <bitset>
 #include <memory>
+#include <mutex>
+#include <vector>
 
 #if defined(SPECTR_NATIVE_EDITOR)
 #include <filesystem>
@@ -27,6 +32,7 @@
 #include "spectr/band_state.hpp"
 #include "spectr/edit_modes.hpp"
 #include "spectr/editor_authority.hpp"
+#include "spectr/param_surface.hpp"
 #include "spectr/pattern.hpp"
 #include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
@@ -40,6 +46,13 @@
 #endif
 
 namespace spectr {
+
+struct ProcessingStateSnapshot {
+    BandField field{};
+    Viewport viewport{};
+    Layout layout = Layout::Bands32;
+    SnapshotBank snapshots{};
+};
 
 /// Declare that this build's format gives the user no way to resize the
 /// editor, so the editor must draw its own resize grip (see
@@ -170,7 +183,7 @@ public:
     /// v2 (M8) extends v1 with an optional `snapshots` object holding the
     /// A/B snapshot bank. Absent `snapshots` is legal — reading a v1 blob
     /// is always a reset-to-default for the bank.
-    static constexpr int kPluginStateVersion = 2;
+    static constexpr int kPluginStateVersion = 3;
 
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
@@ -192,11 +205,20 @@ public:
 
     const BandField&  field()     const noexcept { return field_; }
     BandField&        field()           noexcept { return field_; }
+    /// Coherent copy for runtime readers. The reference accessors above are
+    /// retained for construction-time setup and legacy tests; code that can
+    /// overlap host automation must use this snapshot.
+    ProcessingStateSnapshot processing_state_snapshot() const noexcept;
     void replace_field(const BandField& field) noexcept;
     bool replace_processing_state(const BandField& field,
                                   const Viewport& viewport,
                                   Layout layout) noexcept;
     void publish_field() noexcept;
+    /// Publish one of the four editor mode controls to the host parameter
+    /// surface. This is the editor-to-host lane only; host-to-editor mode
+    /// observation remains owned by spectr#37.
+    [[nodiscard]] bool set_editor_mode_param(pulp::state::ParamID id,
+                                             float value) noexcept;
     const Viewport&   viewport()  const noexcept { return viewport_; }
     Viewport&         viewport()        noexcept { return viewport_; }
     Layout            layout()    const noexcept { return layout_; }
@@ -244,6 +266,39 @@ public:
     /// the store). Returns nullptr if the store isn't available yet.
     pulp::view::ABCompare* ab_compare() noexcept;
 
+    // ── Host parameter surface sync (spectr#34) ──────────────────────────
+    //
+    // The StateStore owns the host-visible parameter values; field_/
+    // viewport_/layout_ remain the DSP-facing canonical state. Two
+    // control-thread directions keep them consistent:
+    //
+    //   apply_surface_params() — params → canonical state. Diffs the store
+    //   against the applied-value cache; band gains/mutes, viewport, and
+    //   band count apply directly, the morph parameter (when apply_morph)
+    //   re-derives the field from the snapshot bank, and mode params only
+    //   update the cache (the editor observes them; see spectr#37). Runs on
+    //   the sync worker (spawned from process() on drift) and synchronously
+    //   from prepare().
+    //
+    //   sync_params_from_field() — canonical state → params. Pushes only
+    //   slots that changed since the last sync (delta against synced_*), so
+    //   a paint gesture writes the swept bands and nothing else. UI edits
+    //   thereby become host-visible value changes the adapter can record.
+    //
+    // Both directions are one-way per call site, so there is no echo loop:
+    // the drain never pushes, and the push path marks the applied cache so
+    // the next process()-side sweep sees no drift.
+    void apply_surface_params(bool apply_morph) noexcept;
+    void sync_params_from_field(bool emit_gestures = true) noexcept;
+
+    /// Paint-drag gesture epochs (EditorAuthority drives these from
+    /// begin/end/cancel_band_edit on the UI thread). While an epoch is open,
+    /// the first sync push of each parameter also opens a host gesture, and
+    /// ending the epoch closes them all — one begin/end bracket per touched
+    /// parameter per drag, at gesture rate, instead of per-event brackets.
+    void begin_param_gesture_epoch() noexcept;
+    void end_param_gesture_epoch() noexcept;
+
     // ── Pattern library ────────────────────────────────────────────────
     //
     // Each Spectr owns a PatternLibrary pre-populated with the factory
@@ -287,6 +342,56 @@ private:
     PatternLibrary                        patterns_{};
     std::unique_ptr<pulp::view::ABCompare> ab_{};
     EditorAuthority                       editor_authority_;
+
+    // ── spectr#34 parameter-surface sync state ───────────────────────────
+    // Non-owning store handle so const paths (serialize) can read param
+    // values and control paths can push without going through the const
+    // state() accessor. Set in define_parameters.
+    pulp::state::StateStore* param_store_ = nullptr;
+    // Per-slot mirror of the store value at the last reconciliation, read on
+    // the audio thread by the process() drift sweep and written by both sync
+    // directions. Slot layout: 0..63 gains, 64..127 mutes, 128 morph,
+    // 129 viewport center, 130 viewport width, 131 band count, then motion,
+    // analyzer, edit, and visualization at 132..135.
+    static constexpr std::size_t kSurfaceCacheSlots = 136;
+    static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
+    std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
+    // The canonical state as last pushed to the parameters — the sync delta
+    // base. Morph updates it silently (morph moves the morph parameter only;
+    // pushing 64 resulting band lanes per morph move would double-drive the
+    // field on automation playback).
+    BandField synced_field_{};
+    Viewport  synced_viewport_{};
+    Layout    synced_layout_ = Layout::Bands32;
+    // Serializes every mutation (and the matching mask publish) of field_/
+    // viewport_/layout_ across the control threads that now write them:
+    // UI (EditorAuthority), the sync worker, and host state restore. The
+    // audio thread never takes it — process() reads params and the applied
+    // cache only. Param pushes happen OUTSIDE it: set_value fires listeners
+    // that may read processor state back, and holding the lock there would
+    // self-deadlock. Mutable so const readers (spectral_resolution) can
+    // take a coherent snapshot.
+    mutable std::mutex processing_state_mutex_;
+    // Audio→worker lane: process() spawns on parameter drift, the worker
+    // applies params → canonical state and republishes the mask (table
+    // compilation is a control-thread operation).
+    struct ParamSyncTask { std::uint64_t tag = 0; };
+    pulp::format::BackgroundTaskLane<ParamSyncTask, 8> param_sync_lane_;
+    // Open paint-drag epoch (UI thread only): params already begin-gestured.
+    std::vector<pulp::state::ParamID> epoch_gesture_params_{};
+    bool param_gesture_epoch_open_ = false;
+
+    // A morph derives non-overridden bands from the snapshot bank while the
+    // sparse override mask identifies later band edits whose values live in
+    // StateStore. This makes the v3 supplemental blob non-duplicating: it
+    // stores only the derivation shape, never a second copy of host params.
+    bool morph_derived_ = false;
+    std::bitset<kMaxBands> morph_overrides_{};
+
+    bool surface_params_drifted_() const noexcept;
+    void push_surface_param_(pulp::state::ParamID id, std::size_t slot,
+                             float value, bool emit_gesture = true);
+    static void param_sync_trampoline_(void* ctx, const ParamSyncTask&) noexcept;
 
 #if defined(SPECTR_NATIVE_EDITOR)
     pulp::view::EditorBridge native_editor_bridge_{};
