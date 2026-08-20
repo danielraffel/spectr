@@ -2390,71 +2390,79 @@ window.PatternManager = PatternManager;`,
       'fixed-design context-menu bounds');
 
     replaceSpectrSource(
-      String.raw`  const [hover, setHover] = useState(null); // { band, freq, db, x, y }
-  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, band }`,
-      String.raw`  const [hover, setHover] = useState(null); // { band, freq, db, x, y }
-  const hoverBand = hover && !hover.mini ? hover.band : -1;
-  useEffect(() => {
-    if (!onStatus) return;
-    if (hoverBand < 0) {
-      onStatus('');
-      return;
-    }
-    const f = bandCenterFreq(hoverBand);
-    const rendered = renderGainsRef.current[hoverBand];
-    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;
-    const db = isMuted(targetGainsRef.current[hoverBand]) ? '−∞' : (gv * 24).toFixed(1);
-    const label = `${window.SpectrFreq.fmt(f)}Hz   ${db}${db === '−∞' ? '' : ' dB'}   BAND ${hoverBand + 1}/${N}`;
-    onStatus(label);
-    const keepAlive = setInterval(() => onStatus(label), 1000);
-    return () => clearInterval(keepAlive);
-  }, [hoverBand, N, onStatus]);
-  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, band }`,
+      [
+        "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }",
+        "  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, band }",
+      ].join('\n'),
+      [
+        "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }",
+        "  const hoverBand = hover && !hover.mini ? hover.band : -1;",
+        "  useEffect(() => {",
+        "    if (!onStatus) return;",
+        "    if (hoverBand < 0) {",
+        "      onStatus('');",
+        "      return;",
+        "    }",
+        "    const f = bandCenterFreq(hoverBand);",
+        "    const rendered = renderGainsRef.current[hoverBand];",
+        "    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;",
+        "    const db = isMuted(targetGainsRef.current[hoverBand]) ? '−∞' : (gv * 24).toFixed(1);",
+        "    const label = `${window.SpectrFreq.fmt(f)}Hz   ${db}${db === '−∞' ? '' : ' dB'}   BAND ${hoverBand + 1}/${N}`;",
+        "    onStatus(label);",
+        "    const keepAlive = setInterval(() => onStatus(label), 1000);",
+        "    return () => clearInterval(keepAlive);",
+        "  }, [hoverBand, N, onStatus]);",
+        "  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, band }",
+      ].join('\n'),
       'hover readout uses unified status banner');
     replaceSpectrSource(
-      String.raw`  function drawHover(ctx, g) {
-    if (!hover) return;
-    const { x, y, band } = hover;
-    const f = bandCenterFreq(band);
-    const rendered = renderGainsRef.current[band];
-    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;
-    const db = isMuted(targetGainsRef.current[band]) ? '−∞' : (gv * 24).toFixed(1);
-    const label = `${window.SpectrFreq.fmt(f)}Hz   ${db}${db === '−∞' ? '' : ' dB'}   band ${band + 1}/${N}`;
-    ctx.save();
-    ctx.font = '11px JetBrains Mono, monospace';
-    const tw = ctx.measureText(label).width + 18;
-    const tx = clamp(x - tw / 2, g.inner.x, g.inner.x + g.inner.w - tw);
-    const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);
-    ctx.fillStyle = 'rgba(10,14,20,0.88)';
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.lineWidth = 1;
-    roundRect(ctx, tx, ty, tw, 22, 4);
-    ctx.fill(); ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(label, tx + 9, ty + 11);
-    // crosshair
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-    ctx.setLineDash([2, 3]);
-    ctx.beginPath();
-    ctx.moveTo(x, g.inner.y); ctx.lineTo(x, g.inner.y + g.inner.h);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
-  }`,
-      String.raw`  function drawHover(ctx, g) {
-    if (!hover || hover.mini) return;
-    const { x } = hover;
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-    ctx.setLineDash([2, 3]);
-    ctx.beginPath();
-    ctx.moveTo(x, g.inner.y); ctx.lineTo(x, g.inner.y + g.inner.h);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
-  }`,
+      [
+        "  function drawHover(ctx, g) {",
+        "    if (!hover) return;",
+        "    const { x, y, band } = hover;",
+        "    const f = bandCenterFreq(band);",
+        "    const rendered = renderGainsRef.current[band];",
+        "    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;",
+        "    const db = isMuted(targetGainsRef.current[band]) ? '−∞' : (gv * 24).toFixed(1);",
+        "    const label = `${window.SpectrFreq.fmt(f)}Hz   ${db}${db === '−∞' ? '' : ' dB'}   band ${band + 1}/${N}`;",
+        "    ctx.save();",
+        "    ctx.font = '11px JetBrains Mono, monospace';",
+        "    const tw = ctx.measureText(label).width + 18;",
+        "    const tx = clamp(x - tw / 2, g.inner.x, g.inner.x + g.inner.w - tw);",
+        "    const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);",
+        "    ctx.fillStyle = 'rgba(10,14,20,0.88)';",
+        "    ctx.strokeStyle = 'rgba(255,255,255,0.18)';",
+        "    ctx.lineWidth = 1;",
+        "    roundRect(ctx, tx, ty, tw, 22, 4);",
+        "    ctx.fill(); ctx.stroke();",
+        "    ctx.fillStyle = 'rgba(255,255,255,0.9)';",
+        "    ctx.textAlign = 'left';",
+        "    ctx.textBaseline = 'middle';",
+        "    ctx.fillText(label, tx + 9, ty + 11);",
+        "    // crosshair",
+        "    ctx.strokeStyle = 'rgba(255,255,255,0.15)';",
+        "    ctx.setLineDash([2, 3]);",
+        "    ctx.beginPath();",
+        "    ctx.moveTo(x, g.inner.y); ctx.lineTo(x, g.inner.y + g.inner.h);",
+        "    ctx.stroke();",
+        "    ctx.setLineDash([]);",
+        "    ctx.restore();",
+        "  }",
+      ].join('\n'),
+      [
+        "  function drawHover(ctx, g) {",
+        "    if (!hover || hover.mini) return;",
+        "    const { x } = hover;",
+        "    ctx.save();",
+        "    ctx.strokeStyle = 'rgba(255,255,255,0.15)';",
+        "    ctx.setLineDash([2, 3]);",
+        "    ctx.beginPath();",
+        "    ctx.moveTo(x, g.inner.y); ctx.lineTo(x, g.inner.y + g.inner.h);",
+        "    ctx.stroke();",
+        "    ctx.setLineDash([]);",
+        "    ctx.restore();",
+        "  }",
+      ].join('\n'),
       'hover canvas keeps guide but not floating tooltip');
     replaceSpectrSource(
       String.raw`      // Edge band wall treatment

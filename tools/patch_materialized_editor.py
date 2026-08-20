@@ -27,6 +27,7 @@ import shutil
 import sys
 
 PATH = 'native-ui/materialized/materialized-document.runtime.json'
+SOURCE_PATH = 'resources/editor.html'
 
 EDITS = [
     ('animation loop paints the latest canvas renderer',
@@ -519,26 +520,17 @@ def escaped(value):
     return json.dumps(value)[1:-1]
 
 
-def check_emitted_scripts(html):
-    """Parse every emitted script block.
-
-    A replacement that is one parenthesis out still substitutes cleanly and
-    still passes a substring post-check, but QuickJS then rejects the whole
-    document and the native editor quietly falls back to the generic auto-UI
-    panel. Node is the same parser the browser oracle uses.
-    """
-    import re
+def check_script_blocks(label, blocks):
+    """Parse JavaScript blocks with the same Node parser as the browser oracle."""
     import subprocess
     import tempfile
 
     node = shutil.which('node')
     if not node:
-        print('warn: node not found; skipped the emitted-script parse check')
+        print(f'warn: node not found; skipped the {label} script parse check')
         return
-    blocks = re.findall(
-        r'<script(?: type="text/javascript")?>(.*?)</script>', html, re.S)
     if not blocks:
-        sys.exit('FAIL: no script blocks found in the emitted document')
+        sys.exit(f'FAIL: no {label} script blocks found')
     for index, block in enumerate(blocks):
         with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as handle:
             handle.write(block)
@@ -547,12 +539,38 @@ def check_emitted_scripts(html):
                                 capture_output=True, text=True)
         os.unlink(path)
         if result.returncode != 0:
-            sys.exit(f'FAIL: emitted script block {index} does not parse\n'
+            sys.exit(f'FAIL: {label} script block {index} does not parse\n'
                      + result.stderr)
-    print(f'parsed {len(blocks)} emitted script blocks')
+    print(f'parsed {len(blocks)} {label} script blocks')
+
+
+def check_bootstrap_scripts():
+    """Parse executable scripts in the authored bootstrap document."""
+    import re
+
+    source = open(SOURCE_PATH, encoding='utf-8').read()
+    blocks = re.findall(
+        r'<script(?: type="text/javascript")?>(.*?)</script>', source, re.S)
+    check_script_blocks('bootstrap', blocks)
+
+
+def check_emitted_scripts(html):
+    """Parse every emitted application script block.
+
+    A replacement that is one parenthesis out still substitutes cleanly and
+    still passes a substring post-check, but QuickJS then rejects the whole
+    document and the native editor quietly falls back to the generic auto-UI
+    panel. Node is the same parser the browser oracle uses.
+    """
+    import re
+    blocks = re.findall(
+        r'<script(?: type="text/javascript")?>(.*?)</script>', html, re.S)
+    check_script_blocks('emitted application', blocks)
 
 
 def main():
+    check_bootstrap_scripts()
+
     # An edit whose replacement still contains its own patch point would apply
     # again on every run, silently stacking duplicates. Make every edit
     # self-consuming, and refuse to run if one is not.

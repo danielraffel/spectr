@@ -707,9 +707,9 @@ window.spectrStartOracle = () => {
       spectrPointer(target, 'pointermove', x, y);
       const hoverBanner = await spectrWaitFor(() => {
         const candidate = document.querySelector('[data-spectr-status-banner]');
-        return candidate && /BAND \d+\/32/.test(candidate.textContent) && candidate;
+        return candidate && /BAND \\d+\\/32/.test(candidate.textContent) && candidate;
       }, 'hover readout in unified status banner');
-      if (window.__spectrCanvasLabels.some(label => /band \d+\/32/i.test(label)))
+      if (window.__spectrCanvasLabels.some(label => /band \\d+\\/32/i.test(label)))
         throw new Error('hover readout still painted a floating canvas tooltip');
       if (!hoverBanner.textContent.trim())
         throw new Error('unified hover banner was empty');
