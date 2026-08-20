@@ -1277,11 +1277,15 @@ window.FilterBank = FilterBank;`,
   useEffectChrome(() => {
     const key = openMenu || (helpOpen ? 'help' : null);
     if (!key) return;
-    const root = document.querySelector('[data-spectr-menu-root="' + key + '"]');
+    const rootSelector = '[data-spectr-menu-root="' + key + '"]';
+    const root = document.querySelector(rootSelector);
     if (!root) return;
-    const triggerHost = root.querySelector('[data-spectr-menu-trigger]');
-    const trigger = triggerHost && (triggerHost.matches('button')
-      ? triggerHost : triggerHost.querySelector('button'));
+    // The native materialized DOM intentionally exposes selectors on document,
+    // not on every element wrapper. Keep these scoped through the root selector
+    // so the same menu contract works in both native and browser hosts.
+    const triggerHost = document.querySelector(rootSelector + ' [data-spectr-menu-trigger]');
+    const trigger = triggerHost && (triggerHost.tagName === 'BUTTON'
+      ? triggerHost : document.querySelector(rootSelector + ' [data-spectr-menu-trigger] button'));
     const close = (returnFocus) => {
       restoreMenuFocus.current = !!returnFocus;
       if (key === 'help') setHelpOpen(false); else setOpenMenu(null);
@@ -1296,7 +1300,8 @@ window.FilterBank = FilterBank;`,
         close(true);
         return;
       }
-      const options = Array.from(root.querySelectorAll('[data-spectr-menu-options] button:not([disabled])'));
+      const options = Array.from(document.querySelectorAll(
+        rootSelector + ' [data-spectr-menu-options] button:not([disabled])'));
       if (!options.length) return;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp'
           || event.key === 'Home' || event.key === 'End') {
@@ -1928,7 +1933,7 @@ window.PatternManager = PatternManager;`,
     setUserPatterns(library.patterns);
     setDefaultId(library.defaultId);
     return body;
-  }, [motionMode]);
+  }, []);
   const patternCommand = useAppC((type, payload, fallback) => {
     if (!nativeBridgeAvailable) { fallback && fallback(); return Promise.resolve(null); }
     return Promise.resolve(window.pulp.postMessage(type, payload, 'spectr-' + type))
@@ -2002,19 +2007,15 @@ window.PatternManager = PatternManager;`,
     replaceSpectrSource(
       String.raw`              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: 4, paddingTop: 2 }}>
                 <button onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}
-                  style={{ ...menuItem, color: 'hsl(200,85%,70%)', display: 'block', width: '100%' }}>MANAGE…</button>
+                  style={{ ...menuItem, color: 'hsl(200,85%,70%)' }}>MANAGE…</button>
               </div>`,
       String.raw`              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: 4, paddingTop: 2 }}>
                 <button data-spectr-save-current onClick={() => { onSavePattern(); setPatternMenu(false); }}
                   style={{ ...menuItem, color: 'hsl(200,85%,70%)', display: 'block', width: '100%' }}>SAVE CURRENT…</button>
-                <button onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}
+                <button data-spectr-pattern-manage onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}
                   style={{ ...menuItem, color: 'hsl(200,85%,70%)', display: 'block', width: '100%' }}>MANAGE…</button>
               </div>`,
       'save current dropdown item');
-    replaceSpectrSource(
-      '<button onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}\n                  style={{ ...menuItem, color: \'hsl(200,85%,70%)\' }}>MANAGE…</button>',
-      '<button data-spectr-pattern-manage onClick={() => { onOpenPatternManager(); setPatternMenu(false); }}\n                  style={{ ...menuItem, color: \'hsl(200,85%,70%)\' }}>MANAGE…</button>',
-      'pattern manager dropdown selector');
     replaceSpectrSource(
       "<canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />",
       "<canvas data-spectr-filter-canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />",
@@ -2435,6 +2436,188 @@ window.PatternManager = PatternManager;`,
       "          fireStatus('ANALYZER → ' + next.toUpperCase());\n          return next;",
       "          window.spectrPublishMode('analyzer', next);\n          fireStatus('ANALYZER → ' + next.toUpperCase());\n          return next;",
       'keyboard analyzer mode publication');
+
+    replaceSpectrSource(
+      String.raw`  const fireStatus = useAppC((msg) => {
+    setStatus(msg + '|' + Date.now());`,
+      String.raw`  const fireStatus = useAppC((msg) => {
+    if (!msg) { setStatus(''); return; }
+    setStatus(msg + '|' + Date.now());`,
+      'empty status clears the unified banner');
+
+    replaceSpectrSource(
+      [
+        "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }",
+        "  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, band }",
+      ].join('\n'),
+      [
+        "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }",
+        "  const hoverBand = hover && !hover.mini ? hover.band : -1;",
+        "  useEffect(() => {",
+        "    if (!onStatus) return;",
+        "    if (hoverBand < 0) {",
+        "      onStatus('');",
+        "      return;",
+        "    }",
+        "    const f = bandCenterFreq(hoverBand);",
+        "    const rendered = renderGainsRef.current[hoverBand];",
+        "    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;",
+        "    const db = isMuted(targetGainsRef.current[hoverBand]) ? '−∞' : (gv * 24).toFixed(1);",
+        "    const label = `${window.SpectrFreq.fmt(f)}Hz   ${db}${db === '−∞' ? '' : ' dB'}   BAND ${hoverBand + 1}/${N}`;",
+        "    onStatus(label);",
+        "    const keepAlive = setInterval(() => onStatus(label), 1000);",
+        "    return () => clearInterval(keepAlive);",
+        "  }, [hoverBand, N, onStatus]);",
+        "  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, band }",
+      ].join('\n'),
+      'hover readout uses unified status banner');
+    replaceSpectrSource(
+      [
+        "  function drawHover(ctx, g) {",
+        "    if (!hover) return;",
+        "    const { x, y, band } = hover;",
+        "    const f = bandCenterFreq(band);",
+        "    const rendered = renderGainsRef.current[band];",
+        "    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;",
+        "    const db = isMuted(targetGainsRef.current[band]) ? '−∞' : (gv * 24).toFixed(1);",
+        "    const label = `${window.SpectrFreq.fmt(f)}Hz   ${db}${db === '−∞' ? '' : ' dB'}   band ${band + 1}/${N}`;",
+        "    ctx.save();",
+        "    ctx.font = '11px JetBrains Mono, monospace';",
+        "    const tw = ctx.measureText(label).width + 18;",
+        "    const tx = clamp(x - tw / 2, g.inner.x, g.inner.x + g.inner.w - tw);",
+        "    const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);",
+        "    ctx.fillStyle = 'rgba(10,14,20,0.88)';",
+        "    ctx.strokeStyle = 'rgba(255,255,255,0.18)';",
+        "    ctx.lineWidth = 1;",
+        "    roundRect(ctx, tx, ty, tw, 22, 4);",
+        "    ctx.fill(); ctx.stroke();",
+        "    ctx.fillStyle = 'rgba(255,255,255,0.9)';",
+        "    ctx.textAlign = 'left';",
+        "    ctx.textBaseline = 'middle';",
+        "    ctx.fillText(label, tx + 9, ty + 11);",
+        "    // crosshair",
+        "    ctx.strokeStyle = 'rgba(255,255,255,0.15)';",
+        "    ctx.setLineDash([2, 3]);",
+        "    ctx.beginPath();",
+        "    ctx.moveTo(x, g.inner.y); ctx.lineTo(x, g.inner.y + g.inner.h);",
+        "    ctx.stroke();",
+        "    ctx.setLineDash([]);",
+        "    ctx.restore();",
+        "  }",
+      ].join('\n'),
+      [
+        "  function drawHover(ctx, g) {",
+        "    if (!hover || hover.mini) return;",
+        "    const { x } = hover;",
+        "    ctx.save();",
+        "    ctx.strokeStyle = 'rgba(255,255,255,0.15)';",
+        "    ctx.setLineDash([2, 3]);",
+        "    ctx.beginPath();",
+        "    ctx.moveTo(x, g.inner.y); ctx.lineTo(x, g.inner.y + g.inner.h);",
+        "    ctx.stroke();",
+        "    ctx.setLineDash([]);",
+        "    ctx.restore();",
+        "  }",
+      ].join('\n'),
+      'hover canvas keeps guide but not floating tooltip');
+    replaceSpectrSource(
+      String.raw`      // Edge band wall treatment
+      if (G.edge) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.38)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.strokeRect(
+          Math.round(G.cx - G.innerW / 2) - 1.5,
+          Math.round(Math.min(G.topY, G.botY)) - 1.5,
+          Math.round(G.innerW) + 3,
+          Math.round(Math.abs(G.botY - G.topY)) + 3
+        );
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.font = '9px JetBrains Mono, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(i === 0 ? 'HPF' : 'LPF', G.cx, g.inner.y + g.inner.h + 14);
+      }`,
+      String.raw`      // Edge bands use labels without selection-like dashed boxes.
+      if (G.edge) {
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.font = '10px JetBrains Mono, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(i === 0 ? 'HPF' : 'LPF', G.cx, g.inner.y + g.inner.h + 14);
+      }`,
+      'edge labels have a stable baseline without dashed boxes');
+    replaceSpectrSource(
+      String.raw`              fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.5,
+              cursor: 'pointer',
+            }} title="Click to change band count">
+              <span className="tnum">{info.N}</span> bands ▾`,
+      String.raw`              fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.5,
+              cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4,
+              lineHeight: 1,
+            }} title="Click to change band count">
+              <span className="tnum" style={{ display: 'inline-flex', alignItems: 'center', lineHeight: 1 }}>{info.N}</span> bands ▾`,
+      'band count label shares one vertical center');
+    replaceSpectrSource(
+      String.raw`const menuItem = {
+  background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.85)',
+  fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: 0.8,
+  padding: '7px 10px', textAlign: 'left', cursor: 'pointer',
+  borderRadius: 2,
+};`,
+      String.raw`const menuItem = {
+  background: 'rgba(255,255,255,0.025)', border: '1px solid transparent', color: 'rgba(255,255,255,0.85)',
+  fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: 0.8,
+  padding: '7px 10px', minHeight: 30, width: '100%', boxSizing: 'border-box',
+  display: 'flex', alignItems: 'center', gap: 6,
+  textAlign: 'left', cursor: 'pointer', borderRadius: 3,
+};`,
+      'dropdown items use a consistent native-friendly surface');
+    replaceSpectrSource(
+      String.raw`      width: 240, height: 26, padding: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',`,
+      String.raw`      width: Math.max(96, Math.min(520, text.length * 8 + 28)),
+      height: 26, padding: '0 14px', boxSizing: 'border-box',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap',`,
+      'status banner is content-sized with symmetric padding');
+    replaceSpectrSource(
+      "      transition: 'opacity 0.15s ease',",
+      "      transition: 'width 0.18s ease, opacity 0.15s ease',",
+      'status banner resizes smoothly');
+    replaceSpectrSource(
+      "      position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',",
+      "      position: 'absolute', top: 76, left: '50%', transform: 'translateX(-50%)',",
+      'status banner sits below the plot top line');
+    replaceSpectrSource(
+      String.raw`        borderRadius: 3, cursor: 'pointer',
+        height: 26,
+        transition: 'background 0.15s, border-color 0.15s',`,
+      String.raw`        borderRadius: 3, cursor: 'pointer',
+        height: 26, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        lineHeight: 1,
+        transition: 'background 0.15s, border-color 0.15s',`,
+      'bottom rail controls center glyphs text and chevrons');
+    replaceAllSpectrSource(
+      '<span style={{ marginLeft: 6 }}>',
+      "<span style={{ marginLeft: 6, display: 'inline-flex', alignItems: 'center', lineHeight: 1 }}>",
+      3,
+      'bottom rail labels share one chevron baseline');
+    replaceSpectrSource(
+      "background: info.N === n ? 'rgba(120,180,255,0.18)' : 'transparent',",
+      "background: info.N === n ? 'rgba(120,180,255,0.18)' : 'rgba(255,255,255,0.025)',",
+      'band dropdown inactive items retain a surface');
+    replaceSpectrSource(
+      "background: active ? 'rgba(120,180,255,0.14)' : 'transparent',",
+      "background: active ? 'rgba(120,180,255,0.14)' : 'rgba(255,255,255,0.025)',",
+      'edit dropdown inactive items retain a surface');
+    replaceSpectrSource(
+      "background: active ? 'rgba(255,255,255,0.08)' : 'transparent',",
+      "background: active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.025)',",
+      'analyzer dropdown inactive items retain a surface');
+    replaceSpectrSource(
+      "background: active ? 'rgba(120,180,255,0.16)' : 'transparent',",
+      "background: active ? 'rgba(120,180,255,0.16)' : 'rgba(255,255,255,0.025)',",
+      'settings dropdown inactive items retain a surface');
 
     const resourceScript = '<script>window.__resources = ' +
       JSON.stringify(resourceMap).split('</' + 'script>').join('<\\/' + 'script>') +

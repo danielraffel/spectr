@@ -379,6 +379,18 @@ window.spectrStartOracle = () => {
       'non-empty status banner');
       if (!statusBanner.textContent.trim())
         throw new Error('visible status banner had no message');
+      const bannerStyle = getComputedStyle(statusBanner);
+      if (bannerStyle.display !== 'flex'
+          || bannerStyle.alignItems !== 'center'
+          || bannerStyle.justifyContent !== 'center')
+        throw new Error('status banner content was not centered');
+      if (bannerStyle.paddingLeft !== bannerStyle.paddingRight
+          || parseFloat(bannerStyle.paddingLeft) <= 0)
+        throw new Error('status banner padding was not symmetric');
+      if (!bannerStyle.transitionProperty.split(',').map(value => value.trim()).includes('width'))
+        throw new Error('status banner width did not animate');
+      if (parseFloat(bannerStyle.top) < 70)
+        throw new Error('status banner remained above the plot top line');
       await spectrWaitFor(() =>
         !document.querySelector('[data-spectr-status-banner]'),
       'expired status banner removal');
@@ -692,6 +704,21 @@ window.spectrStartOracle = () => {
       const x = rect.left + rect.width * 0.43;
       const y = rect.top + rect.height * 0.46;
 
+      spectrPointer(target, 'pointermove', x, y);
+      const hoverBanner = await spectrWaitFor(() => {
+        const candidate = document.querySelector('[data-spectr-status-banner]');
+        return candidate && /BAND \\d+\\/32/.test(candidate.textContent) && candidate;
+      }, 'hover readout in unified status banner');
+      if (window.__spectrCanvasLabels.some(label => /band \\d+\\/32/i.test(label)))
+        throw new Error('hover readout still painted a floating canvas tooltip');
+      if (!hoverBanner.textContent.trim())
+        throw new Error('unified hover banner was empty');
+      // React synthesizes onPointerLeave from the bubbling pointerout event;
+      // dispatching native pointerleave directly bypasses its delegated handler.
+      spectrPointer(target, 'pointerout', x, y);
+      await spectrWaitFor(() => !document.querySelector('[data-spectr-status-banner]'),
+        'hover banner clears on pointer leave');
+
       const brushX = band => rect.left
         + (56 + (band + 0.5) * (target.clientWidth - 112) / 32)
           * rect.width / target.clientWidth;
@@ -900,6 +927,12 @@ window.spectrStartOracle = () => {
       if (visualizationButtons.map(button => button.textContent.trim()).join(',')
           !== 'BARS,RESPONSE,BOTH')
         throw new Error('truthful mask visualization choices are missing');
+      for (const key of ['edit', 'analyzer', 'pattern']) {
+        const trigger = menuTrigger(key);
+        const style = trigger && getComputedStyle(trigger);
+        if (!style || style.display !== 'inline-flex' || style.alignItems !== 'center')
+          throw new Error(key + ' bottom-rail trigger was not vertically centered');
+      }
       for (const label of ['BARS', 'RESPONSE', 'BOTH']) {
         await spectrClick(visualizationButtons.find(button =>
           button.textContent.trim() === label));
@@ -1164,30 +1197,30 @@ setTimeout(window.spectrStartOracle, 0);
     console.log(emitted);
   } else {
 
-  const runChrome = (url, profile, width, height) => spawnSync(chromePath, [
+  // Chrome 151 for Testing hangs before navigation when native headless is
+  // given a brand-new --user-data-dir on macOS. Let native headless create its
+  // own ephemeral profile and add incognito explicitly: each call remains an
+  // isolated process, while avoiding the broken explicit-profile startup path.
+  const runChrome = (url, width, height) => spawnSync(chromePath, [
     '--headless=new', '--disable-gpu', '--disable-web-security',
     '--disable-background-networking', '--disable-component-update',
-    '--disable-domain-reliability', '--disable-sync',
+    '--disable-domain-reliability', '--disable-sync', '--incognito',
     '--allow-file-access-from-files', '--no-first-run', '--no-default-browser-check',
     `--window-size=${width},${height}`,
-    '--virtual-time-budget=15000', `--user-data-dir=${profile}`,
-    '--dump-dom', url,
-  ], { encoding: 'utf8', timeout: 45000 });
-  const failure = run => run.stdout.match(/SPECTR_BROWSER_ORACLE_FAIL:[^<]*/)?.[0]
-    || run.stdout.match(/data-spectr-oracle="FAIL:[^"]*/)?.[0]
-    || run.stdout.match(/<pre id="__spectr_browser_oracle"[^>]*>/)?.[0]
+    '--virtual-time-budget=15000', '--dump-dom', url,
+  ], { encoding: 'utf8', timeout: 45000, maxBuffer: 64 * 1024 * 1024 });
+  const failure = run => run.stdout.match(/data-spectr-oracle="FAIL:[^"]*/)?.[0]
+    || run.stdout.match(/<pre id="__spectr_browser_oracle"[^>]*>([^<]*)<\/pre>/)?.[1]
     || run.stderr;
 
   const initialUrl = `file://${instrumented}`;
   if (muteModesMode) {
-    const run = runChrome(initialUrl + '?mute-modes=1',
-      path.join(temp, 'profile-mute-modes'), 1320, 860);
+    const run = runChrome(initialUrl + '?mute-modes=1', 1320, 860);
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /data-spectr-oracle="MUTE_MODES_OK"/, failure(run));
     process.exitCode = 0;
   } else if (jsOnlyMode) {
-    const run = runChrome(initialUrl + '?js-only=1',
-      path.join(temp, 'profile-js-only'), 792, 516);
+    const run = runChrome(initialUrl + '?js-only=1', 792, 516);
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /data-spectr-oracle="JS_ONLY_OK"/, failure(run));
     process.exitCode = 0;
@@ -1198,41 +1231,35 @@ setTimeout(window.spectrStartOracle, 0);
       ['authored', 1320, 860],
       ['enlarged', 1980, 1290],
     ]) {
-      const run = runChrome(initialUrl + '?resize-only=1',
-        path.join(temp, 'profile-resize-' + label), width, height);
+      const run = runChrome(initialUrl + '?resize-only=1', width, height);
       assert.equal(run.status, 0, run.stderr);
       assert.match(run.stdout, /data-spectr-oracle="RESIZE_OK"/, failure(run));
     }
     process.exitCode = 0;
   } else {
-  const initial = runChrome(initialUrl, path.join(temp, 'profile-initial'), 1320, 860);
+  const initial = runChrome(initialUrl, 1320, 860);
   assert.equal(initial.status, 0, initial.stderr);
   assert.match(initial.stdout, /data-spectr-oracle="INITIAL_OK"/, failure(initial));
 
-  const scaled = runChrome(initialUrl + '?scaled=1',
-    path.join(temp, 'profile-scaled'), 792, 516);
+  const scaled = runChrome(initialUrl + '?scaled=1', 792, 516);
   assert.equal(scaled.status, 0, scaled.stderr);
   assert.match(scaled.stdout, /data-spectr-oracle="INITIAL_OK"/, failure(scaled));
 
-  const preferred = runChrome(initialUrl + '?preferred=1',
-    path.join(temp, 'profile-preferred'), 990, 645);
+  const preferred = runChrome(initialUrl + '?preferred=1', 990, 645);
   assert.equal(preferred.status, 0, preferred.stderr);
   assert.match(preferred.stdout, /data-spectr-oracle="INITIAL_OK"/, failure(preferred));
 
-  const enlarged = runChrome(initialUrl + '?enlarged=1',
-    path.join(temp, 'profile-enlarged'), 1980, 1290);
+  const enlarged = runChrome(initialUrl + '?enlarged=1', 1980, 1290);
   assert.equal(enlarged.status, 0, enlarged.stderr);
   assert.match(enlarged.stdout, /data-spectr-oracle="INITIAL_OK"/, failure(enlarged));
 
-  const jsOnly = runChrome(initialUrl + '?js-only=1',
-    path.join(temp, 'profile-js-only'), 792, 516);
+  const jsOnly = runChrome(initialUrl + '?js-only=1', 792, 516);
   assert.equal(jsOnly.status, 0, jsOnly.stderr);
   assert.match(jsOnly.stdout, /data-spectr-oracle="JS_ONLY_OK"/, failure(jsOnly));
 
   // A second browser document models closing and reopening the native editor:
   // all JS state is gone, and only the finite native hydration may restore it.
-  const reopened = runChrome(initialUrl + '?reopened=1',
-    path.join(temp, 'profile-reopened'), 792, 516);
+  const reopened = runChrome(initialUrl + '?reopened=1', 792, 516);
   assert.equal(reopened.status, 0, reopened.stderr);
   assert.match(reopened.stdout, /data-spectr-oracle="OK"/, failure(reopened));
   }
