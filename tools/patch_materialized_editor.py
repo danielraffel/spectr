@@ -27,6 +27,7 @@ import shutil
 import sys
 
 PATH = 'native-ui/materialized/materialized-document.runtime.json'
+SOURCE_PATH = 'resources/editor.html'
 
 EDITS = [
     ('animation loop paints the latest canvas renderer',
@@ -60,13 +61,23 @@ EDITS = [
     # `display`, so the buttons defaulted to inline. MANAGE read as a modifier
     # on SAVE rather than its own action, and users did not find it. Two rows.
     ('preset dropdown footer actions get their own rows',
-     'style: { ...menuItem, color: \\"hsl(200,85%,70%)\\" }',
-     'style: { ...menuItem, color: \\"hsl(200,85%,70%)\\", '
-     'display: \\"block\\", width: \\"100%\\" }'),
+     'style: { ...menuItem, color: "hsl(200,85%,70%)" }',
+     'style: { ...menuItem, color: "hsl(200,85%,70%)", '
+     'display: "block", width: "100%" }'),
 
     ('hover readout clears the status banner slot',
      '    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);',
      '    const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);'),
+
+    ('empty status clears the unified banner',
+     '  const fireStatus = useAppC((msg) => {\n'
+     '    setStatus(msg + "|" + Date.now());',
+     '  const fireStatus = useAppC((msg) => {\n'
+     '    if (!msg) {\n'
+     '      setStatus("");\n'
+     '      return;\n'
+     '    }\n'
+     '    setStatus(msg + "|" + Date.now());'),
 
     ('status banner replaces one message at a time',
      '  const [text, setText] = useStateChrome("");\n'
@@ -268,6 +279,250 @@ EDITS = [
      '        }\n'
      '        commitDrawnGains(map);'),
 
+    ('hover readout uses unified status banner',
+     'const [hover, setHover] = useState(null);\n'
+     '  const hoverBand = hover && !hover.mini ? hover.band : -1;\n'
+     '  useEffect(() => {\n'
+     '    if (!onStatus) return;\n'
+     '    if (hoverBand < 0) {\n'
+     '      onStatus("");\n'
+     '      return;\n'
+     '    }\n'
+     '    const f = bandCenterFreq(hoverBand);\n'
+     '    const rendered = renderGainsRef.current[hoverBand];\n'
+     '    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;\n'
+     '    const db = isMuted(targetGainsRef.current[hoverBand]) ? "\\u2212\\u221E" : (gv * 24).toFixed(1);\n'
+     '    onStatus(`${window.SpectrFreq.fmt(f)}Hz   ${db}${db === "\\u2212\\u221E" ? "" : " dB"}   BAND ${hoverBand + 1}/${N}`);\n'
+     '  }, [hoverBand, N, onStatus]);\n'
+     '  const [ctxMenu, setCtxMenu] = useState(null);',
+     'const [hover, setHover] = useState(null);\n'
+     '  const hoverBand = hover && !hover.mini ? hover.band : -1;\n'
+     '  useEffect(() => {\n'
+     '    if (!onStatus) return;\n'
+     '    if (hoverBand < 0) {\n'
+     '      onStatus("");\n'
+     '      return;\n'
+     '    }\n'
+     '    const f = bandCenterFreq(hoverBand);\n'
+     '    const rendered = renderGainsRef.current[hoverBand];\n'
+     '    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;\n'
+     '    const db = isMuted(targetGainsRef.current[hoverBand]) ? "\\u2212\\u221E" : (gv * 24).toFixed(1);\n'
+     '    const label = `${window.SpectrFreq.fmt(f)}Hz   ${db}${db === "\\u2212\\u221E" ? "" : " dB"}   BAND ${hoverBand + 1}/${N}`;\n'
+     '    onStatus(label);\n'
+     '    const keepAlive = setInterval(() => onStatus(label), 1e3);\n'
+     '    return () => clearInterval(keepAlive);\n'
+     '  }, [hoverBand, N, onStatus]);\n'
+     '  const [ctxMenu, setCtxMenu] = useState(null);'),
+
+    ('hover canvas keeps guide but not floating tooltip',
+     '  function drawHover(ctx, g) {\n'
+     '    if (!hover) return;\n'
+     '    const { x, y, band } = hover;\n'
+     '    const f = bandCenterFreq(band);\n'
+     '    const rendered = renderGainsRef.current[band];\n'
+     '    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;\n'
+     '    const db = isMuted(targetGainsRef.current[band]) ? "\\u2212\\u221E" : (gv * 24).toFixed(1);\n'
+     '    const label = `${window.SpectrFreq.fmt(f)}Hz   ${db}${db === "\\u2212\\u221E" ? "" : " dB"}   band ${band + 1}/${N}`;\n'
+     '    ctx.save();\n'
+     '    ctx.font = "11px JetBrains Mono, monospace";\n'
+     '    const tw = ctx.measureText(label).width + 18;\n'
+     '    const tx = clamp(x - tw / 2, g.inner.x, g.inner.x + g.inner.w - tw);\n'
+     '    const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);\n'
+     '    ctx.fillStyle = "rgba(10,14,20,0.88)";\n'
+     '    ctx.strokeStyle = "rgba(255,255,255,0.18)";\n'
+     '    ctx.lineWidth = 1;\n'
+     '    roundRect(ctx, tx, ty, tw, 22, 4);\n'
+     '    ctx.fill();\n'
+     '    ctx.stroke();\n'
+     '    ctx.fillStyle = "rgba(255,255,255,0.9)";\n'
+     '    ctx.textAlign = "left";\n'
+     '    ctx.textBaseline = "middle";\n'
+     '    ctx.fillText(label, tx + 9, ty + 11);\n'
+     '    ctx.strokeStyle = "rgba(255,255,255,0.15)";\n'
+     '    ctx.setLineDash([2, 3]);\n'
+     '    ctx.beginPath();\n'
+     '    ctx.moveTo(x, g.inner.y);\n'
+     '    ctx.lineTo(x, g.inner.y + g.inner.h);\n'
+     '    ctx.stroke();\n'
+     '    ctx.setLineDash([]);\n'
+     '    ctx.restore();\n'
+     '  }',
+     '  function drawHover(ctx, g) {\n'
+     '    if (!hover || hover.mini) return;\n'
+     '    const { x } = hover;\n'
+     '    ctx.save();\n'
+     '    ctx.strokeStyle = "rgba(255,255,255,0.15)";\n'
+     '    ctx.setLineDash([2, 3]);\n'
+     '    ctx.beginPath();\n'
+     '    ctx.moveTo(x, g.inner.y);\n'
+     '    ctx.lineTo(x, g.inner.y + g.inner.h);\n'
+     '    ctx.stroke();\n'
+     '    ctx.setLineDash([]);\n'
+     '    ctx.restore();\n'
+     '  }'),
+
+    ('edge labels have a stable baseline without dashed boxes',
+     '      if (G.edge) {\n'
+     '        ctx.strokeStyle = "rgba(255,255,255,0.38)";\n'
+     '        ctx.lineWidth = 1;\n'
+     '        ctx.setLineDash([2, 2]);\n'
+     '        ctx.strokeRect(\n'
+     '          Math.round(G.cx - G.innerW / 2) - 1.5,\n'
+     '          Math.round(Math.min(G.topY, G.botY)) - 1.5,\n'
+     '          Math.round(G.innerW) + 3,\n'
+     '          Math.round(Math.abs(G.botY - G.topY)) + 3\n'
+     '        );\n'
+     '        ctx.setLineDash([]);\n'
+     '        ctx.fillStyle = "rgba(255,255,255,0.55)";\n'
+     '        ctx.font = "9px JetBrains Mono, monospace";\n'
+     '        ctx.textAlign = "center";\n'
+     '        ctx.fillText(i === 0 ? "HPF" : "LPF", G.cx, g.inner.y + g.inner.h + 14);\n'
+     '      }',
+     '      if (G.edge) {\n'
+     '        ctx.fillStyle = "rgba(255,255,255,0.55)";\n'
+     '        ctx.font = "10px JetBrains Mono, monospace";\n'
+     '        ctx.textAlign = "center";\n'
+     '        ctx.textBaseline = "middle";\n'
+     '        ctx.fillText(i === 0 ? "HPF" : "LPF", G.cx, g.inner.y + g.inner.h + 14);\n'
+     '      }'),
+
+    ('band count label shares one vertical center',
+     '    letterSpacing: 0.5,\n'
+     '    cursor: "pointer",\n'
+     '    display: "inline-flex",\n'
+     '    alignItems: "center",\n'
+     '    gap: 4,\n'
+     '    lineHeight: 1\n'
+     '  }, title: "Click to change band count" }, /* @__PURE__ */ React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, info.N), /* @__PURE__ */ React.createElement("span", { style: { lineHeight: 1 } }, "bands \\u25BE"))',
+     '    letterSpacing: 0.5,\n'
+     '    cursor: "pointer",\n'
+     '    display: "inline-flex",\n'
+     '    alignItems: "center",\n'
+     '    gap: 4,\n'
+     '    lineHeight: 1\n'
+     '  }, title: "Click to change band count" }, /* @__PURE__ */ React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, info.N), " bands \\u25BE")'),
+
+    ('dropdown items use a consistent native-friendly surface',
+     'const menuItem = {\n'
+     '  background: "transparent",\n'
+     '  border: "none",\n'
+     '  color: "rgba(255,255,255,0.85)",\n'
+     '  fontFamily: "var(--mono)",\n'
+     '  fontSize: 10.5,\n'
+     '  letterSpacing: 0.8,\n'
+     '  padding: "7px 10px",\n'
+     '  textAlign: "left",\n'
+     '  cursor: "pointer",\n'
+     '  borderRadius: 2\n'
+     '};',
+     'const menuItem = {\n'
+     '  background: "rgba(255,255,255,0.025)",\n'
+     '  border: "1px solid transparent",\n'
+     '  color: "rgba(255,255,255,0.85)",\n'
+     '  fontFamily: "var(--mono)",\n'
+     '  fontSize: 10.5,\n'
+     '  letterSpacing: 0.8,\n'
+     '  padding: "7px 10px",\n'
+     '  minHeight: 30,\n'
+     '  width: "100%",\n'
+     '  boxSizing: "border-box",\n'
+     '  display: "flex",\n'
+     '  alignItems: "center",\n'
+     '  gap: 6,\n'
+     '  textAlign: "left",\n'
+     '  cursor: "pointer",\n'
+     '  borderRadius: 3\n'
+     '};'),
+
+    ('status banner is content-sized with symmetric padding',
+     '        width: Math.max(96, Math.min(520, text.length * 7 + 28)),\n'
+     '        height: 26,\n'
+     '        padding: "0 14px",\n'
+     '        boxSizing: "border-box",\n'
+     '        display: "flex",\n'
+     '        alignItems: "center",\n'
+     '        justifyContent: "center",\n'
+     '        whiteSpace: "nowrap",',
+     '        width: Math.max(96, Math.min(520, text.length * 8 + 28)),\n'
+     '        height: 26,\n'
+     '        padding: "0 14px",\n'
+     '        boxSizing: "border-box",\n'
+     '        display: "flex",\n'
+     '        alignItems: "center",\n'
+     '        justifyContent: "center",\n'
+     '        whiteSpace: "nowrap",'),
+
+    ('status banner resizes smoothly',
+     '        transition: "opacity 0.15s ease",',
+     '        transition: "width 0.18s ease, opacity 0.15s ease",'),
+
+    ('status banner sits below the plot top line',
+     '        top: 60,',
+     '        top: 76,'),
+
+    ('bottom rail controls center glyphs text and chevrons',
+     '        borderRadius: 3,\n'
+     '        cursor: "pointer",\n'
+     '        height: 26,\n'
+     '        transition: "background 0.15s, border-color 0.15s"',
+     '        borderRadius: 3,\n'
+     '        cursor: "pointer",\n'
+     '        height: 26,\n'
+     '        display: "inline-flex",\n'
+     '        alignItems: "center",\n'
+     '        justifyContent: "center",\n'
+     '        lineHeight: 1,\n'
+     '        transition: "background 0.15s, border-color 0.15s"'),
+
+    ('edit rail label shares one chevron baseline',
+     'React.createElement("span", { style: { marginLeft: 6 } }, editMode.toUpperCase(), " \\u25BE")',
+     'React.createElement("span", { style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1 } }, editMode.toUpperCase(), " \\u25BE")'),
+
+    ('analyzer rail label shares one chevron baseline',
+     'React.createElement("span", { style: { marginLeft: 6 } }, analyzerMode.toUpperCase(), " \\u25BE")',
+     'React.createElement("span", { style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1 } }, analyzerMode.toUpperCase(), " \\u25BE")'),
+
+    ('preset rail label shares one chevron baseline',
+     'React.createElement("span", { style: { marginLeft: 6 } }, "PRESETS \\u25BE")',
+     'React.createElement("span", { style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1 } }, "PRESETS \\u25BE")'),
+
+    ('band dropdown inactive items retain a surface',
+     'background: info.N === n ? "rgba(120,180,255,0.18)" : "transparent",',
+     'background: info.N === n ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.025)",'),
+
+    ('edit dropdown inactive items retain a surface',
+     'background: active ? "rgba(120,180,255,0.14)" : "transparent",',
+     'background: active ? "rgba(120,180,255,0.14)" : "rgba(255,255,255,0.025)",'),
+
+    ('analyzer dropdown inactive items retain a surface',
+     'background: active ? "rgba(255,255,255,0.08)" : "transparent",',
+     'background: active ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.025)",'),
+
+    ('settings dropdown inactive items retain a surface',
+     'background: active ? "rgba(120,180,255,0.16)" : "transparent",',
+     'background: active ? "rgba(120,180,255,0.16)" : "rgba(255,255,255,0.025)",'),
+
+]
+
+# A later edit may deliberately consume the exact replacement image of an
+# earlier one. These named sentinels keep reruns strict without pretending the
+# superseded intermediate text must remain in the final shipping document.
+SUPERSEDED_SENTINELS = {
+    'hover readout clears the status banner slot':
+        'if (!hover || hover.mini) return;',
+    'status banner chrome survives the fade-out':
+        '"data-spectr-status-text": "true"',
+}
+
+# Generated bindings live outside the escaped `html` string. Keep these
+# materialization-only corrections explicit rather than teaching HTML edits to
+# rewrite unrelated top-level document data.
+DOCUMENT_EDITS = [
+    ('band-count binding shares the suffix baseline',
+     '"letter_spacing":0.5}},"boxes":[{"left":0,"top":0,"width":13,'
+     '"height":13,"start":0,"length":2}]},{"index":9',
+     '"letter_spacing":0.5}},"boxes":[{"left":0,"top":3,"width":13,'
+     '"height":13,"start":0,"length":2}]},{"index":9'),
 ]
 
 
@@ -275,26 +530,17 @@ def escaped(value):
     return json.dumps(value)[1:-1]
 
 
-def check_emitted_scripts(html):
-    """Parse every emitted script block.
-
-    A replacement that is one parenthesis out still substitutes cleanly and
-    still passes a substring post-check, but QuickJS then rejects the whole
-    document and the native editor quietly falls back to the generic auto-UI
-    panel. Node is the same parser the browser oracle uses.
-    """
-    import re
+def check_script_blocks(label, blocks):
+    """Parse JavaScript blocks with the same Node parser as the browser oracle."""
     import subprocess
     import tempfile
 
     node = shutil.which('node')
     if not node:
-        print('warn: node not found; skipped the emitted-script parse check')
+        print(f'warn: node not found; skipped the {label} script parse check')
         return
-    blocks = re.findall(
-        r'<script(?: type="text/javascript")?>(.*?)</script>', html, re.S)
     if not blocks:
-        sys.exit('FAIL: no script blocks found in the emitted document')
+        sys.exit(f'FAIL: no {label} script blocks found')
     for index, block in enumerate(blocks):
         with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as handle:
             handle.write(block)
@@ -303,12 +549,38 @@ def check_emitted_scripts(html):
                                 capture_output=True, text=True)
         os.unlink(path)
         if result.returncode != 0:
-            sys.exit(f'FAIL: emitted script block {index} does not parse\n'
+            sys.exit(f'FAIL: {label} script block {index} does not parse\n'
                      + result.stderr)
-    print(f'parsed {len(blocks)} emitted script blocks')
+    print(f'parsed {len(blocks)} {label} script blocks')
+
+
+def check_bootstrap_scripts():
+    """Parse executable scripts in the authored bootstrap document."""
+    import re
+
+    source = open(SOURCE_PATH, encoding='utf-8').read()
+    blocks = re.findall(
+        r'<script(?: type="text/javascript")?>(.*?)</script>', source, re.S)
+    check_script_blocks('bootstrap', blocks)
+
+
+def check_emitted_scripts(html):
+    """Parse every emitted application script block.
+
+    A replacement that is one parenthesis out still substitutes cleanly and
+    still passes a substring post-check, but QuickJS then rejects the whole
+    document and the native editor quietly falls back to the generic auto-UI
+    panel. Node is the same parser the browser oracle uses.
+    """
+    import re
+    blocks = re.findall(
+        r'<script(?: type="text/javascript")?>(.*?)</script>', html, re.S)
+    check_script_blocks('emitted application', blocks)
 
 
 def main():
+    check_bootstrap_scripts()
+
     # An edit whose replacement still contains its own patch point would apply
     # again on every run, silently stacking duplicates. Make every edit
     # self-consuming, and refuse to run if one is not.
@@ -320,8 +592,16 @@ def main():
     changed = False
     for label, old, new in EDITS:
         old_e, new_e = escaped(old), escaped(new)
-        if raw.count(new_e) == 1 and raw.count(old_e) == 0:
+        sentinel = SUPERSEDED_SENTINELS.get(label)
+        sentinel_e = escaped(sentinel) if sentinel else None
+        # One JSX patch point can transpile into repeated identical literals
+        # (for example the two preset footer buttons). Once the old image is
+        # gone, any emitted replacement count proves this edit was applied.
+        if raw.count(new_e) >= 1 and raw.count(old_e) == 0:
             print('already applied ', label)
+            continue
+        if raw.count(old_e) == 0 and sentinel_e and sentinel_e in raw:
+            print('superseded     ', label)
             continue
         count = raw.count(old_e)
         if count != 1:
@@ -330,11 +610,26 @@ def main():
         changed = True
         print('applied         ', label)
 
+    for label, old, new in DOCUMENT_EDITS:
+        if raw.count(new) == 1 and raw.count(old) == 0:
+            print('already applied ', label)
+            continue
+        count = raw.count(old)
+        if count != 1:
+            sys.exit(f'FAIL {label}: document patch point occurs {count} times')
+        raw = raw.replace(old, new)
+        changed = True
+        print('applied         ', label)
+
     document = json.loads(raw)
     html = document['html']
     for label, _old, new in EDITS:
-        if new not in html:
+        sentinel = SUPERSEDED_SENTINELS.get(label)
+        if new not in html and (not sentinel or sentinel not in html):
             sys.exit(f'FAIL {label}: post-check did not find the replacement')
+    for label, _old, new in DOCUMENT_EDITS:
+        if new not in raw:
+            sys.exit(f'FAIL {label}: document post-check did not find the replacement')
     check_emitted_scripts(html)
     if changed:
         open(PATH, 'w', encoding='utf-8').write(raw)
