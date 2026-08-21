@@ -364,7 +364,7 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     // styling can paint over the captured text while this screen's one button
     // still happens to satisfy its shaping contract, so exercise each role in
     // the settings hierarchy and require one authoritative painter per string.
-    for (const auto text : {"SETTINGS ×", "APPEARANCE", "Theme", "Bloom",
+    for (const auto text : {"SETTINGS", "APPEARANCE", "Theme", "Bloom",
                             "Spectral"}) {
         std::vector<const pulp::view::Label*> labels;
         find_labels(*root, text, labels);
@@ -376,7 +376,7 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
                     label->bounds().width, label->bounds().height);
         }
         REQUIRE(labels.size() == 1);
-        if (text == std::string_view("SETTINGS ×")) {
+        if (text == std::string_view("SETTINGS")) {
             REQUIRE(labels.front()->font_size() == Catch::Approx(14.0f));
             REQUIRE(labels.front()->font_weight() == 600);
         } else {
@@ -389,7 +389,7 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
         // Variable-font weight instances retain the source PostScript prefix
         // and append a deterministic axis suffix (for example the 600-weight
         // SETTINGS title). Regular 400 text resolves to the unsuffixed face.
-        if (text != std::string_view("SETTINGS ×"))
+        if (text != std::string_view("SETTINGS"))
             REQUIRE(resolved_face.starts_with("JetBrainsMono-Regular"));
     }
     if (const auto* capture_path =

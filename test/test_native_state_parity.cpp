@@ -833,12 +833,12 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     activate(rig, "[data-spectr-settings-open]");
     require_runtime_contract(
         rig,
-        // Under the pin the panel keeps its authored height at every host size.
-        // Its live child-derived content extent must fit without clipping, so
-        // the native ScrollView has no reachable false-scroll range.
+        // The panel remains pinned to the authored viewport. The appended
+        // Feedback group makes its live child-derived content genuinely taller,
+        // so the native ScrollView exposes only that real overflow.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height <= s.height && s.scroll_reachable === false"
+        " && s.content_height === 728 && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
         "settings panel did not keep its authored geometry under the pin");
@@ -866,15 +866,15 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     CHECK(scroll_view->border_width() == Catch::Approx(1.0f));
     CHECK(scroll_view->corner_radius() == Catch::Approx(8.0f));
     CHECK(scroll_view->content_size().height
-          <= scroll_view->bounds().height + 0.5f);
+          > scroll_view->bounds().height + 0.5f);
     // Authored height at every host size -- the pin scales it at paint, so the
     // panel is never squeezed to the window. 464.4 was the compact branch
     // fitting it into a 792x516 host; a height that tracks the host now would
     // mean the reflow layer is running alongside the pin.
     CHECK(scroll_view->bounds().height == Catch::Approx(679.0f).margin(0.1f));
-    scroll_view->set_scroll(0.0f, 684.0f);
+    scroll_view->set_scroll(0.0f, 728.0f);
     settle(rig.clock, 4);
-    CHECK(scroll_view->scroll_y() == Catch::Approx(0.0f).margin(0.1f));
+    CHECK(scroll_view->scroll_y() > 0.0f);
     const auto* response_label = find_label(*rig.root, "Response");
     REQUIRE(response_label != nullptr);
     const auto response_point = root_point(
@@ -1455,8 +1455,7 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         "return s && s.width === 520 && s.height === 679"
         " && s.top === 90.5 && s.authored_skin === true; })()",
         "authored settings geometry drifted from the frozen 1320x860 capture");
-    const auto* authored_settings_title = find_label(
-        *rig.root, "SETTINGS ×");
+    const auto* authored_settings_title = find_label(*rig.root, "SETTINGS");
     REQUIRE(authored_settings_title != nullptr);
     const View* authored_settings_panel = authored_settings_title;
     while (authored_settings_panel != nullptr
@@ -1472,38 +1471,93 @@ TEST_CASE("native frozen state atlas interactions and persistence",
           == Catch::Approx(520.0f).margin(0.01f));
     CHECK(authored_settings_panel->bounds().height
           == Catch::Approx(679.0f).margin(0.01f));
+    const auto panel_rect = root_rect(*authored_settings_panel);
+    const auto* close_label = find_label(*rig.root, "×");
+    REQUIRE(close_label != nullptr);
+    const auto* close_target = nearest_click_target(close_label);
+    REQUIRE(close_target != nullptr);
+    const auto close_rect = root_rect(*close_target);
+    CHECK(close_rect.top >= panel_rect.top + 20.0f);
+    CHECK(close_rect.bottom <= panel_rect.top + 64.0f);
+    CHECK(panel_rect.right - close_rect.right >= 20.0f);
+    CHECK(panel_rect.right - close_rect.right <= 60.0f);
+    require_runtime_contract(
+        rig,
+        "document.querySelectorAll('[data-spectr-settings-group=\"feedback\"]')?.length === 1",
+        "feedback group lost its stable materialized identity");
     require_app_state(rig, "s.settings.statusInfo !== false",
                       "status info did not default on");
-    const auto require_centered_status_label = [&](std::string_view text) {
-        const auto* label = find_label(*rig.root, text);
-        REQUIRE(label != nullptr);
-        REQUIRE(label->parent() != nullptr);
-        const auto label_bounds = label->bounds();
-        const auto control_bounds = label->parent()->bounds();
-        CHECK(label_bounds.x + label_bounds.width * 0.5f
-              == Catch::Approx(control_bounds.width * 0.5f).margin(0.75f));
-        CHECK(label_bounds.y + label_bounds.height * 0.5f
-              == Catch::Approx(control_bounds.height * 0.5f).margin(0.75f));
-        REQUIRE(label->cached_line_boxes().size() == 1);
-        const auto& line = label->cached_line_boxes().front();
-        CHECK(line.left + line.width * 0.5f
-              == Catch::Approx(control_bounds.width * 0.5f).margin(0.75f));
-        CHECK(line.top + line.height * 0.5f
-              == Catch::Approx(control_bounds.height * 0.5f).margin(0.75f));
+    const auto* feedback_label = find_label(*rig.root, "FEEDBACK");
+    const auto* status_info_label = find_label(*rig.root, "Status info");
+    const auto* response_label = find_label(*rig.root, "Response");
+    REQUIRE(feedback_label != nullptr);
+    REQUIRE(status_info_label != nullptr);
+    REQUIRE(response_label != nullptr);
+    const auto direct_panel_child = [&](const View* node) {
+        while (node != nullptr && node->parent() != authored_settings_panel)
+            node = node->parent();
+        return node;
     };
-    require_centered_status_label("STATUS INFO ON");
-    activate(rig, "[data-spectr-status-info-toggle]");
+    const auto* feedback_group = direct_panel_child(feedback_label);
+    const auto* response_group = direct_panel_child(response_label);
+    REQUIRE(feedback_group != nullptr);
+    REQUIRE(response_group != nullptr);
+    const auto feedback_rect = root_rect(*feedback_group);
+    const auto response_rect = root_rect(*response_group);
+    CHECK(feedback_rect.top > response_rect.bottom);
+    CHECK(feedback_rect.left >= panel_rect.left + 20.0f);
+    CHECK(feedback_rect.right <= panel_rect.right - 20.0f);
+    capture(rig, directory, "settings-top");
+    auto* settings_scroll = dynamic_cast<pulp::view::ScrollView*>(
+        const_cast<View*>(authored_settings_panel));
+    REQUIRE(settings_scroll != nullptr);
+    // The production host performs layout immediately before its first paint.
+    // Drive that same boundary explicitly so automatic child-derived extent is
+    // observable even when this test is run without screenshot capture.
+    rig.root->layout_children();
+    CHECK(settings_scroll->content_size().height
+          > settings_scroll->bounds().height + 0.5f);
+    settings_scroll->set_scroll(0.0f, 10000.0f);
+    settle(rig.clock, 4);
+    CHECK(settings_scroll->scroll_y() > 0.0f);
+    capture(rig, directory, "settings-feedback");
+    const pulp::view::Point sticky_close_point{
+        (close_rect.left + close_rect.right) * 0.5f,
+        (close_rect.top + close_rect.bottom) * 0.5f};
+    CHECK(nearest_click_target(rig.root->hit_test(sticky_close_point))
+          == close_target);
+    require_runtime_contract(
+        rig,
+        "String(document.getElementById('spectr-status-info-toggle')?.getAttribute('aria-checked')) === 'true'",
+        "status info toggle did not expose its enabled state");
+    activate(rig, "#spectr-status-info-toggle");
     require_app_state(rig, "s.settings.statusInfo === false",
                       "status info toggle did not disable messages");
-    require_centered_status_label("STATUS INFO OFF");
+    require_runtime_contract(
+        rig,
+        "String(document.getElementById('spectr-status-info-toggle')?.getAttribute('aria-checked')) === 'false'",
+        "status info toggle did not expose its disabled state");
     require_runtime_contract(
         rig,
         "!document.querySelector('[data-spectr-status-banner]')",
         "disabling status info left the banner painted");
-    activate(rig, "[data-spectr-status-info-toggle]");
+    activate(rig, "#spectr-status-info-toggle");
     require_app_state(rig, "s.settings.statusInfo === true",
                       "status info toggle did not restore messages");
-    require_centered_status_label("STATUS INFO ON");
+    require_runtime_contract(
+        rig,
+        "String(document.getElementById('spectr-status-info-toggle')?.getAttribute('aria-checked')) === 'true'",
+        "status info toggle did not restore its enabled state");
+    activate(rig, "[data-spectr-settings-close]", "pointerenter");
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-settings-close]')?.getAttribute('data-spectr-close-state') === 'hover'",
+        "settings close did not expose hover feedback");
+    activate(rig, "[data-spectr-settings-close]", "pointerdown");
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-settings-close]')?.getAttribute('data-spectr-close-state') === 'pressed'",
+        "settings close did not expose pressed feedback");
     capture(rig, directory, "settings");
     activate(rig, "[data-spectr-setting-option=\"warm\"]");
     activate(rig, "[data-spectr-setting-toggle]");
@@ -1523,6 +1577,11 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         "s.settings.theme === 'spectral' && s.settings.showMinimap === true"
         " && s.settings.bloom === 1",
         "settings controls did not restore deterministic atlas defaults");
+    rig.root->simulate_click(sticky_close_point);
+    settle(rig.clock, 12);
+    require_home(rig);
+    activate(rig, "[data-spectr-settings-open]");
+    require_state(rig, "settings");
     activate(rig, "[data-spectr-settings-close]");
     require_home(rig);
 

@@ -1262,8 +1262,8 @@ EDITS = [
     ('settings groups fit the authored viewport without clipping rows',
      'function SpectrSettingsGroup({ title, subtitle, children }) {\n'
      '  return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } },',
-     'function SpectrSettingsGroup({ title, subtitle, children }) {\n'
-     '  return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } },'),
+     'function SpectrSettingsGroup({ title, subtitle, children, marker }) {\n'
+     '  return /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-group": marker, style: { marginBottom: 18 } },'),
 
     ('status info no longer adds an uncaptured settings row',
      ')), /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Rulers", hint: "Frequency labels along the bottom axis" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { value: settings.showRulers, onChange: (v) => persist({ showRulers: v }) })), /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Show hover, mute, and drag feedback" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) }))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { title: "MOTION",',
@@ -1402,13 +1402,19 @@ EDITS = [
      '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-close": true, role: "button", "aria-label": "Close settings", onClick: (event) => { event.stopPropagation(); onClose(); }, style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, letterSpacing: 2, fontWeight: 600 } }, "SETTINGS ×"))',
      '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-close": true, role: "button", "aria-label": "Close settings", onClick: (event) => { event.stopPropagation(); onClose(); }, style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true, style: { fontSize: 14, letterSpacing: 2, fontWeight: 600 } }, "SETTINGS ×"))'),
 
+    ('settings header exposes stable sticky identity',
+     '/* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true,',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-header": true, style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true,'),
+
     ('ordinary settings toggles stay generic',
      'function SpectrSettingsToggle({ value, onChange, statusInfo }) {\n'
      '  return /* @__PURE__ */ React.createElement(\n'
      '    "button",\n'
      '    {\n'
+     '      id: statusInfo ? "spectr-status-info-toggle" : void 0,\n'
      '      "data-spectr-setting-toggle": true,\n'
-     '      "data-spectr-status-info-toggle": statusInfo ? value ? "on" : "off" : void 0,\n'
+     '      "data-spectr-status-info-toggle": statusInfo ? "true" : void 0,\n'
+     '      "data-spectr-status-info-state": statusInfo ? value ? "on" : "off" : void 0,\n'
      '      role: "switch",',
      'function SpectrSettingsToggle({ value, onChange }) {\n'
      '  return /* @__PURE__ */ React.createElement(\n'
@@ -1416,6 +1422,100 @@ EDITS = [
      '    {\n'
      '      "data-spectr-setting-toggle": true,\n'
      '      role: "switch",'),
+
+    ('settings close interaction state is local to the modal',
+     '  }, [onClose]);\n'
+     '  const persist = (patch) => {',
+     '  }, [onClose]);\n'
+     '  const [closeState, setCloseState] = React.useState("idle");\n'
+     '  const persist = (patch) => {'),
+
+    ('settings status semantics follow persisted state',
+     '  const [closeState, setCloseState] = React.useState("idle");\n'
+     '  const persist = (patch) => {',
+     '  const [closeState, setCloseState] = React.useState("idle");\n'
+     '  React.useEffect(() => {\n'
+     '    const toggle = document.getElementById("spectr-status-info-toggle");\n'
+     '    if (!toggle) return;\n'
+     '    const enabled = settings.statusInfo !== false;\n'
+     '    toggle.setAttribute("aria-checked", enabled ? "true" : "false");\n'
+     '    toggle.setAttribute("data-spectr-status-info-state", enabled ? "on" : "off");\n'
+     '  }, [settings.statusInfo]);\n'
+     '  const persist = (patch) => {'),
+
+    ('settings header restores a separate title and close action',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-close": true, role: "button", "aria-label": "Close settings", onClick: (event) => { event.stopPropagation(); onClose(); }, style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true, style: { fontSize: 14, letterSpacing: 2, fontWeight: 600 } }, "SETTINGS ×"))',
+     '/* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true, style: { fontSize: 14, letterSpacing: 2, fontWeight: 600 } }, "SETTINGS"))'),
+
+    ('settings close action restores hover and pressed feedback',
+     '/* @__PURE__ */ React.createElement("button", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: {\n'
+     '    background: settings.statusInfo === false ? "rgba(255,255,255,0.03)" : "rgba(120,180,255,0.18)",\n'
+     '    border: "1px solid " + (settings.statusInfo === false ? "rgba(255,255,255,0.1)" : "rgba(180,210,255,0.4)"),\n'
+     '    color: settings.statusInfo === false ? "rgba(255,255,255,0.55)" : "rgba(220,235,255,0.95)",\n'
+     '    cursor: "pointer", fontFamily: "var(--mono)", fontSize: 9, fontWeight: 600,\n'
+     '    letterSpacing: 0.8, padding: "0 10px", lineHeight: 1, width: 150, height: 32,\n'
+     '    borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center"\n'
+     '  } }, settings.statusInfo === false ? "STATUS INFO OFF" : "STATUS INFO ON")',
+     '/* @__PURE__ */ React.createElement("button", { "data-spectr-settings-close": true, "data-spectr-close-state": closeState, "aria-label": "Close settings", onPointerEnter: () => setCloseState("hover"), onPointerLeave: () => setCloseState("idle"), onPointerDown: (event) => { event.stopPropagation(); setCloseState("pressed"); }, onPointerUp: () => setCloseState("hover"), onClick: (event) => { event.stopPropagation(); onClose(); }, style: {\n'
+     '    background: closeState === "pressed" ? "rgba(180,220,255,0.22)" : closeState === "hover" ? "rgba(255,255,255,0.10)" : "transparent",\n'
+     '    border: "1px solid " + (closeState === "pressed" ? "rgba(200,230,255,0.55)" : closeState === "hover" ? "rgba(255,255,255,0.18)" : "transparent"),\n'
+     '    color: closeState === "idle" ? "rgba(255,255,255,0.6)" : "#fff",\n'
+     '    cursor: "pointer", fontSize: 20, padding: 0, lineHeight: 1, width: 32, height: 32,\n'
+     '    borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center"\n'
+     '  } }, "\\xD7")'),
+
+    ('status info is appended as a standard scrollable field',
+     '  )))));\n'
+     '}',
+     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag details in the top banner" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })))));\n'
+     '}'),
+
+    ('status info toggle exposes its semantic state',
+     'function SpectrSettingsToggle({ value, onChange }) {\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "button",\n'
+     '    {\n'
+     '      "data-spectr-setting-toggle": true,\n'
+     '      role: "switch",',
+     'function SpectrSettingsToggle({ value, onChange, statusInfo = false }) {\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "button",\n'
+     '    {\n'
+     '      "data-spectr-setting-toggle": true,\n'
+     '      "data-spectr-status-info-toggle": statusInfo ? value ? "on" : "off" : void 0,\n'
+     '      role: "switch",'),
+
+    ('feedback field marks its status info toggle',
+     'React.createElement(SpectrSettingsToggle, { value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })',
+     'React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })'),
+
+    ('status info selector stays stable while its state changes',
+     '      "data-spectr-status-info-toggle": statusInfo ? value ? "on" : "off" : void 0,\n',
+     '      "data-spectr-status-info-toggle": statusInfo ? "true" : void 0,\n'
+     '      "data-spectr-status-info-state": statusInfo ? value ? "on" : "off" : void 0,\n'),
+
+    ('status info toggle has a stable id',
+     'function SpectrSettingsToggle({ value, onChange, statusInfo = false }) {\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "button",\n'
+     '    {\n'
+     '      "data-spectr-setting-toggle": true,',
+     'function SpectrSettingsToggle({ value, onChange, statusInfo = false }) {\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "button",\n'
+     '    {\n'
+     '      id: statusInfo ? "spectr-status-info-toggle" : void 0,\n'
+     '      "data-spectr-setting-toggle": true,'),
+
+    ('settings groups retain stable materialized identity',
+     'function SpectrSettingsGroup({ title, subtitle, children }) {\n'
+     '  return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } },',
+     'function SpectrSettingsGroup({ title, subtitle, children, marker }) {\n'
+     '  return /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-group": marker, style: { marginBottom: 18 } },'),
+
+    ('feedback group registers its stable materialized identity',
+     'React.createElement(SpectrSettingsGroup, { title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." },',
+     'React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." },'),
 
 ]
 
@@ -1467,6 +1567,8 @@ SUPERSEDED_SENTINELS = {
         'if (disabled) {',
     'settings title exposes the persistent status control':
         'data-spectr-settings-close',
+    'settings status control reuses the captured title node':
+        'data-spectr-settings-header',
     'settings status label stays stable across toggle repaint':
         'SETTINGS            STATUS INFO',
     'settings status title uses color without a frozen-width box':
@@ -1493,6 +1595,18 @@ SUPERSEDED_SENTINELS = {
         'data-spectr-settings-title',
     'settings switch label is centered within its control':
         'STATUS INFO OFF',
+    'settings action slot is an intentional status switch':
+        'data-spectr-close-state',
+    'settings switch names its actual state':
+        'title: "FEEDBACK"',
+    'settings title has a direct materialized font target':
+        'data-spectr-close-state',
+    'ordinary settings toggles stay generic':
+        'statusInfo = false',
+    'status info toggle exposes its semantic state':
+        'data-spectr-status-info-state',
+    'settings close interaction state is local to the modal':
+        'toggle.setAttribute("aria-checked"',
 }
 
 # Generated bindings live outside the escaped `html` string. Keep these
@@ -1510,13 +1624,7 @@ DOCUMENT_EDITS = [
 ]
 
 RUNTIME_EDITS = [
-    ('settings switch uses authored flex width',
-     '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
-     '      ? metadata.layout_bindings : []).filter((binding) => {\n'
-     '        const box = binding && binding.box;\n'
-     '        return !(activeCapturedState === "settings" && box\n'
-     '          && box.width === 32 && box.height === 32);\n'
-     '      });',
+    ('settings live form descendants bypass stale captured geometry',
      '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
      '      ? metadata.layout_bindings : []).map((binding) => {\n'
      '        const box = binding && binding.box;\n'
@@ -1525,23 +1633,9 @@ RUNTIME_EDITS = [
      '          return { ...binding, box: { ...box, left: 316, width: 150 } };\n'
      '        return binding;\n'
      '      });',
-     'box: { ...box, left: 316, width: 150 }'),
-    ('settings switch capture binding keeps live layout stable',
-     '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
-     '      ? metadata.layout_bindings : []).filter((binding) => {\n'
-     '        const box = binding && binding.box;\n'
-     '        return !(activeCapturedState === "settings" && box\n'
-     '          && box.width === 32 && box.height === 32);\n'
-     '      });',
-     '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
-     '      ? metadata.layout_bindings : []).map((binding) => {\n'
-     '        const box = binding && binding.box;\n'
-     '        if (activeCapturedState === "settings" && box\n'
-     '            && box.width === 32 && box.height === 32)\n'
-     '          return { ...binding, box: { ...box, left: 316, width: 150 } };\n'
-     '        return binding;\n'
-     '      });',
-     'box: { ...box, left: 316, width: 150 }'),
+     '    const activeLayoutBindings = Array.isArray(metadata && metadata.layout_bindings)\n'
+     '      ? metadata.layout_bindings : [];',
+     'const activeLayoutBindings = Array.isArray(metadata'),
     ('dynamic selected preset bypasses the frozen text binding',
      '    const activeTextBindings = Array.isArray(metadata && metadata.text_bindings) ? metadata.text_bindings : [];',
      '    // Selected preset names are authored state, not frozen capture text.\n'
@@ -1552,15 +1646,17 @@ RUNTIME_EDITS = [
     ('settings auto extent replaces the stale manual capture height',
      '      const panelHeight = authored ? 679\n'
      '        : Math.min(684, Math.max(240, height * 0.9));',
-     '      const authoredContentHeight = 672;\n'
+     '      const authoredContentHeight = 728;\n'
      '      const panelHeight = authored ? 679\n'
      '        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));',
-     'const authoredContentHeight = 672;'),
+     'const authoredContentHeight = 728;'),
     ('settings scroll view derives its content from live children',
      '        if (typeof g5.setScrollContentSize === "function")\n'
      '          g5.setScrollContentSize(panelId, panelWidth, 684);',
-     '        // Leave content size automatic: the ScrollView unions its live children.\n',
-     'Leave content size automatic: the ScrollView unions its live children.'),
+     '        // Leave content size automatic: the ScrollView unions its live children.\n'
+     '        if (typeof g5.setScrollContentSize === "function")\n'
+     '          g5.setScrollContentSize(panelId);\n',
+     'g5.setScrollContentSize(panelId);'),
     ('settings receipt reports the compact authored content extent',
      '        content_height: 684, scroll_reachable: panelHeight < 684,',
      '        content_height: authoredContentHeight,\n'
@@ -1655,6 +1751,78 @@ RUNTIME_EDITS = [
      '        ? titleNode.__pulpAnonymousTextTargets : [];\n'
      '      const titleId = titleNode?.__pulpTextTargetId || titleTargets[0]?.id;',
      'const titleId = titleNode?.__pulpTextTargetId || titleTargets[0]?.id'),
+    ('settings feedback toggle no longer impersonates the header action',
+     '    if (activeCapturedState === "settings"\n'
+     '        && typeof g5.setCapturedLineBoxes === "function") {\n'
+     '      const statusNode = globalThis.document?.querySelector?.("[data-spectr-status-info-toggle]");\n'
+     '      const targets = Array.isArray(statusNode?.__pulpAnonymousTextTargets)\n'
+     '        ? statusNode.__pulpAnonymousTextTargets : [];\n'
+     '      const target = targets[0];\n'
+     '      const statusValue = statusNode?.getAttribute?.("data-spectr-status-info-toggle");\n'
+     '      const label = statusValue === "off" ? "STATUS INFO OFF" : "STATUS INFO ON";\n'
+     '      const targetId = target?.id || statusNode?.__pulpTextTargetId;\n'
+     '      if (targetId && statusNode) {\n'
+     '        const id = String(targetId);\n'
+     '        const textWidth = label.length * 6.2;\n'
+     '        if (typeof g5.setPosition === "function") g5.setPosition(id, "absolute");\n'
+     '        if (typeof g5.setLeft === "function") g5.setLeft(id, -1);\n'
+     '        if (typeof g5.setTop === "function") g5.setTop(id, -1);\n'
+     '        if (typeof g5.setFlex === "function") {\n'
+     '          g5.setFlex(id, "width", 150);\n'
+     '          g5.setFlex(id, "height", 32);\n'
+     '        }\n'
+     '        if (typeof g5.setFontSize === "function") g5.setFontSize(id, 9);\n'
+     '        if (typeof g5.setFontWeight === "function") g5.setFontWeight(id, 600);\n'
+     '        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(id, 0.8);\n'
+     '        g5.setCapturedLineBoxes(id, [{ left: (150 - textWidth) / 2, top: 9.5,\n'
+     '          width: textWidth, height: 13, start: 0, length: label.length }],\n'
+     '          150, "JetBrainsMono-Regular", false);\n'
+     '      }\n'
+     '    }\n',
+     '',
+     'const statusValue = statusNode?.getAttribute?.'),
+    ('appended settings feedback receives a stable captured slot',
+     '    if (activeCapturedState === "settings") {\n'
+     '      const feedback = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="feedback"]\');\n'
+     '      if (feedback) setBox(feedback, 27, 652, 466, 76);\n'
+     '    }',
+     '    if (activeCapturedState === "settings") {\n'
+     '      const feedback = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="feedback"]\');\n'
+     '      const feedbackId = feedback && (feedback.__pulpId || feedback.id);\n'
+     '      if (feedbackId) {\n'
+     '        g5.setPosition(String(feedbackId), "absolute");\n'
+     '        g5.setLeft(String(feedbackId), 27);\n'
+     '        g5.setTop(String(feedbackId), 652);\n'
+     '        g5.setFlex(String(feedbackId), "width", 466);\n'
+     '        g5.setFlex(String(feedbackId), "height", 76);\n'
+     '      }\n'
+     '    }',
+     'g5.setTop(String(feedbackId), 652)'),
+    ('settings header remains fixed while its body scrolls',
+     '    if (activeCapturedState === "settings") {\n'
+     '      const feedback = globalThis.document?.querySelector?.(\n',
+     '    if (activeCapturedState === "settings") {\n'
+     '      const header = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-header]\');\n'
+     '      const headerId = header && (header.__pulpId || header.id);\n'
+     '      if (headerId) {\n'
+     '        g5.setPosition(String(headerId), "sticky");\n'
+     '        g5.setBackground(String(headerId), "rgba(14,18,25,1)");\n'
+     '      }\n'
+     '      const feedback = globalThis.document?.querySelector?.(\n',
+     'g5.setPosition(String(headerId), "sticky")'),
+    ('settings feedback extends the authored scroll extent',
+     '      const authoredContentHeight = 672;',
+     '      const authoredContentHeight = 728;',
+     'const authoredContentHeight = 728;'),
+    ('settings live scroll extent refreshes after native upgrade',
+     '        // Leave content size automatic: the ScrollView unions its live children.\n\n',
+     '        // Leave content size automatic: the ScrollView unions its live children.\n'
+     '        if (typeof g5.setScrollContentSize === "function")\n'
+     '          g5.setScrollContentSize(panelId);\n\n',
+     'g5.setScrollContentSize(panelId);'),
 ]
 
 

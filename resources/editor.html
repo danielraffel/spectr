@@ -1427,8 +1427,8 @@ window.FilterBank = FilterBank;`,
       'settings modal semantics');
     replaceSpectrSource(
       'function SettingsModal({ settings, setSettings, onClose }) {',
-      String.raw`function SpectrSettingsGroup({ title, subtitle, children }) {
-  return <div style={{ marginBottom: 18 }}>
+      String.raw`function SpectrSettingsGroup({ title, subtitle, children, marker }) {
+  return <div data-spectr-settings-group={marker} style={{ marginBottom: 18 }}>
     <div style={{ fontSize: 9, letterSpacing: 2, opacity: 0.5, marginBottom: 4 }}>{title}</div>
     {subtitle && <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 10, fontFamily: 'var(--sans)' }}>{subtitle}</div>}
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
@@ -1468,8 +1468,12 @@ function SpectrSettingsSlider({ value, min, max, step, onChange, fmt }) {
     </span>
   </div>;
 }
-function SpectrSettingsToggle({ value, onChange }) {
-  return <button data-spectr-setting-toggle role="switch" aria-checked={value}
+function SpectrSettingsToggle({ value, onChange, statusInfo = false }) {
+  return <button id={statusInfo ? 'spectr-status-info-toggle' : undefined}
+    data-spectr-setting-toggle
+    data-spectr-status-info-toggle={statusInfo ? 'true' : undefined}
+    data-spectr-status-info-state={statusInfo ? (value ? 'on' : 'off') : undefined}
+    role="switch" aria-checked={value}
     onClick={() => onChange(!value)} style={{
       width: 40, height: 20, borderRadius: 11,
       background: value ? 'hsl(200,70%,45%)' : 'rgba(255,255,255,0.1)',
@@ -2347,30 +2351,69 @@ window.PatternManager = PatternManager;`,
       String.raw`          <div>
             <div style={{ fontSize: 14, letterSpacing: 2, fontWeight: 600 }}>SETTINGS</div>
           </div>`,
-      String.raw`          <div data-spectr-settings-close role="button" aria-label="Close settings"
-            onClick={event => { event.stopPropagation(); onClose(); }}
-            style={{ cursor: 'pointer' }}>
-            <div data-spectr-settings-title style={{ fontSize: 14, letterSpacing: 2, fontWeight: 600 }}>SETTINGS ×</div>
+      String.raw`          <div>
+            <div data-spectr-settings-title style={{ fontSize: 14, letterSpacing: 2, fontWeight: 600 }}>SETTINGS</div>
           </div>`,
-      'settings title remains explicit and closes without changing the captured tree');
+      'settings title remains separate from the close action');
+    replaceSpectrSource(
+      String.raw`        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22 }}>`,
+      String.raw`        <div data-spectr-settings-header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22 }}>`,
+      'settings header exposes stable sticky identity');
+    replaceSpectrSource(
+      String.raw`  const persist = (patch) => {`,
+      String.raw`  const [closeState, setCloseState] = React.useState('idle');
+  React.useEffect(() => {
+    const toggle = document.getElementById('spectr-status-info-toggle');
+    if (!toggle) return;
+    const enabled = settings.statusInfo !== false;
+    toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+    toggle.setAttribute('data-spectr-status-info-state', enabled ? 'on' : 'off');
+  }, [settings.statusInfo]);
+  const persist = (patch) => {`,
+      'settings close interaction state');
     replaceSpectrSource(
       String.raw`<button data-spectr-settings-close aria-label="Close settings" onClick={event => { event.stopPropagation(); onClose(); }} style={{
             background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.6)',
             cursor: 'pointer', fontSize: 20, padding: 0, lineHeight: 1, width: 32, height: 32,`,
-      String.raw`<button data-spectr-status-info-toggle={settings.statusInfo === false ? 'off' : 'on'}
-          role="switch" aria-checked={settings.statusInfo !== false}
-          onClick={() => persist({ statusInfo: settings.statusInfo === false })} style={{
-            background: settings.statusInfo === false ? 'rgba(255,255,255,0.03)' : 'rgba(120,180,255,0.18)',
-            border: '1px solid ' + (settings.statusInfo === false ? 'rgba(255,255,255,0.1)' : 'rgba(180,210,255,0.4)'),
-            color: settings.statusInfo === false ? 'rgba(255,255,255,0.55)' : 'rgba(220,235,255,0.95)',
-            cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 9, fontWeight: 600,
-            letterSpacing: 0.8, padding: '0 10px', lineHeight: 1, width: 150, height: 32,
+      String.raw`<button data-spectr-settings-close data-spectr-close-state={closeState}
+          aria-label="Close settings"
+          onPointerEnter={() => setCloseState('hover')}
+          onPointerLeave={() => setCloseState('idle')}
+          onPointerDown={event => { event.stopPropagation(); setCloseState('pressed'); }}
+          onPointerUp={() => setCloseState('hover')}
+          onClick={event => { event.stopPropagation(); onClose(); }} style={{
+            background: closeState === 'pressed' ? 'rgba(180,220,255,0.22)'
+              : closeState === 'hover' ? 'rgba(255,255,255,0.10)' : 'transparent',
+            border: '1px solid ' + (closeState === 'pressed' ? 'rgba(200,230,255,0.55)'
+              : closeState === 'hover' ? 'rgba(255,255,255,0.18)' : 'transparent'),
+            color: closeState === 'idle' ? 'rgba(255,255,255,0.6)' : '#fff',
+            cursor: 'pointer', fontSize: 20, padding: 0, lineHeight: 1, width: 32, height: 32,
             borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center',`,
-      'settings header uses its existing action slot for status info');
+      'settings close action has hover and pressed feedback');
     replaceSpectrSource(
       String.raw`          }}>×</button>`,
-      String.raw`          }}>{settings.statusInfo === false ? 'STATUS INFO OFF' : 'STATUS INFO ON'}</button>`,
-      'settings status label remains stable across toggle repaint');
+      String.raw`          }}>×</button>`,
+      'settings close glyph remains stable');
+    replaceSpectrSource(
+      String.raw`        <SpectrSettingsGroup title="MOTION" subtitle="How gain changes smooth over time.">
+          <SpectrSettingsField label="Response" hint="Live = snappy, Precision = eased">
+            <SpectrSettingsChips value={settings.motionMode} onChange={v => persist({ motionMode: v })}
+              opts={[['live', 'Live'], ['precision', 'Precision']]} />
+          </SpectrSettingsField>
+        </SpectrSettingsGroup>`,
+      String.raw`        <SpectrSettingsGroup title="MOTION" subtitle="How gain changes smooth over time.">
+          <SpectrSettingsField label="Response" hint="Live = snappy, Precision = eased">
+            <SpectrSettingsChips value={settings.motionMode} onChange={v => persist({ motionMode: v })}
+              opts={[['live', 'Live'], ['precision', 'Precision']]} />
+          </SpectrSettingsField>
+        </SpectrSettingsGroup>
+        <SpectrSettingsGroup marker="feedback" title="FEEDBACK" subtitle="Choose which interaction details Spectr shows.">
+          <SpectrSettingsField label="Status info" hint="Hover, mute, and drag details in the top banner">
+            <SpectrSettingsToggle statusInfo value={settings.statusInfo !== false}
+              onChange={v => persist({ statusInfo: v })} />
+          </SpectrSettingsField>
+        </SpectrSettingsGroup>`,
+      'status info is a normal scrollable settings field');
     replaceSpectrSource(
       String.raw`  const fireStatus = useAppC((msg) => {
     if (!msg) {`,
