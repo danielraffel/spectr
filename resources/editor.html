@@ -1253,8 +1253,6 @@ window.FilterBank = FilterBank;`,
     replaceSpectrSource(
       '  const setAnalyzerMenu = (v) => setOpenMenu(typeof v === \'function\' ? (v(analyzerMenu) ? \'analyzer\' : null) : (v ? \'analyzer\' : null));\n\n  const act = (fn) => () => {',
       String.raw`  const setAnalyzerMenu = (v) => setOpenMenu(typeof v === 'function' ? (v(analyzerMenu) ? 'analyzer' : null) : (v ? 'analyzer' : null));
-  const restoreMenuFocus = useRefChrome(false);
-
   useEffectChrome(() => {
     if (openMenu) {
       setHelpOpen(false);
@@ -1274,65 +1272,6 @@ window.FilterBank = FilterBank;`,
     }
   }, [settingsOpen]);
 
-  useEffectChrome(() => {
-    const key = openMenu || (helpOpen ? 'help' : null);
-    if (!key) return;
-    const rootSelector = '[data-spectr-menu-root="' + key + '"]';
-    const root = document.querySelector(rootSelector);
-    if (!root) return;
-    // The native materialized DOM intentionally exposes selectors on document,
-    // not on every element wrapper. Keep these scoped through the root selector
-    // so the same menu contract works in both native and browser hosts.
-    const triggerHost = document.querySelector(rootSelector + ' [data-spectr-menu-trigger]');
-    const trigger = triggerHost && (triggerHost.tagName === 'BUTTON'
-      ? triggerHost : document.querySelector(rootSelector + ' [data-spectr-menu-trigger] button'));
-    const close = (returnFocus) => {
-      restoreMenuFocus.current = !!returnFocus;
-      if (key === 'help') setHelpOpen(false); else setOpenMenu(null);
-    };
-    const onPointer = (event) => {
-      if (!root.contains(event.target)) close(false);
-    };
-    const onKey = (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        close(true);
-        return;
-      }
-      const options = Array.from(document.querySelectorAll(
-        rootSelector + ' [data-spectr-menu-options] button:not([disabled])'));
-      if (!options.length) return;
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp'
-          || event.key === 'Home' || event.key === 'End') {
-        event.preventDefault();
-        event.stopPropagation();
-        const current = options.indexOf(document.activeElement);
-        const next = event.key === 'Home' ? 0
-          : event.key === 'End' ? options.length - 1
-          : event.key === 'ArrowDown' ? (current + 1 + options.length) % options.length
-          : (current - 1 + options.length) % options.length;
-        options[next].focus();
-      } else if ((event.key === 'Enter' || event.key === ' ')
-                 && options.includes(document.activeElement)) {
-        event.preventDefault();
-        event.stopPropagation();
-        restoreMenuFocus.current = true;
-        document.activeElement.click();
-      }
-    };
-    document.addEventListener('mousedown', onPointer);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('mousedown', onPointer);
-      document.removeEventListener('keydown', onKey, true);
-      if (restoreMenuFocus.current) {
-        restoreMenuFocus.current = false;
-        requestAnimationFrame(() => trigger && trigger.focus());
-      }
-    };
-  }, [openMenu, helpOpen]);
-
   const act = (fn) => () => {`,
       'rich popup keyboard and dismissal contract');
     replaceSpectrSource(
@@ -1345,7 +1284,7 @@ window.FilterBank = FilterBank;`,
       'bands popup options');
     replaceSpectrSource(
       '<RailBtn onClick={onClearAll}>CLEAR</RailBtn>\n        <div style={{ position: \'relative\' }}>\n          <RailBtn onClick={() => setOverflowMenu(v => !v)} active={overflowMenu}>⋯</RailBtn>',
-      '<RailBtn onClick={onClearAll}>CLEAR</RailBtn>\n        <div data-spectr-menu-root="overflow" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn onClick={() => setOverflowMenu(v => !v)} active={overflowMenu}>⋯</RailBtn></span>',
+      '<RailBtn onClick={onClearAll}>CLEAR</RailBtn>\n        <div data-spectr-menu-root="overflow" style={{ position: \'relative\' }}>\n          <span><RailBtn onClick={() => setOverflowMenu(v => !v)} active={overflowMenu}>⋯</RailBtn></span>',
       'overflow popup trigger');
     replaceSpectrSource(
       '{overflowMenu && (\n            <div style={{',
@@ -1353,7 +1292,7 @@ window.FilterBank = FilterBank;`,
       'overflow popup options');
     replaceSpectrSource(
       '{/* EDIT MODE dropdown */}\n        <div style={{ position: \'relative\' }}>\n          <RailBtn onClick={() => toggleMenu(\'edit\')} active={editMenu}>',
-      '{/* EDIT MODE dropdown */}\n        <div data-spectr-menu-root="edit" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn onClick={() => toggleMenu(\'edit\')} active={editMenu}>',
+      '{/* EDIT MODE dropdown */}\n        <div data-spectr-menu-root="edit" style={{ position: \'relative\' }}>\n          <span><RailBtn onClick={() => toggleMenu(\'edit\')} active={editMenu}>',
       'edit popup trigger open');
     replaceSpectrSource(
       '<span style={{ marginLeft: 6 }}>{editMode.toUpperCase()} ▾</span>\n          </RailBtn>',
@@ -1361,7 +1300,7 @@ window.FilterBank = FilterBank;`,
       'edit popup trigger close');
     replaceSpectrSource(
       '{/* ANALYZER dropdown */}\n        <div style={{ position: \'relative\' }}>\n          <RailBtn onClick={() => toggleMenu(\'analyzer\')} active={analyzerMenu}>',
-      '{/* ANALYZER dropdown */}\n        <div data-spectr-menu-root="analyzer" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn onClick={() => toggleMenu(\'analyzer\')} active={analyzerMenu}>',
+      '{/* ANALYZER dropdown */}\n        <div data-spectr-menu-root="analyzer" style={{ position: \'relative\' }}>\n          <span><RailBtn onClick={() => toggleMenu(\'analyzer\')} active={analyzerMenu}>',
       'analyzer popup trigger open');
     replaceSpectrSource(
       '<span style={{ marginLeft: 6 }}>{analyzerMode.toUpperCase()} ▾</span>\n          </RailBtn>',
@@ -1369,7 +1308,7 @@ window.FilterBank = FilterBank;`,
       'analyzer popup trigger close');
     replaceSpectrSource(
       '<div style={{ position: \'relative\' }}>\n          <RailBtn onClick={() => setPatternMenu(v => !v)} active={patternMenu}>',
-      '<div data-spectr-menu-root="pattern" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn onClick={() => setPatternMenu(v => !v)} active={patternMenu}>',
+      '<div data-spectr-menu-root="pattern" style={{ position: \'relative\' }}>\n          <span><RailBtn onClick={() => setPatternMenu(v => !v)} active={patternMenu}>',
       'pattern popup trigger open');
     replaceSpectrSource(
       '<span style={{ marginLeft: 6 }}>PRESETS ▾</span>\n          </RailBtn>',
@@ -1449,40 +1388,6 @@ window.FilterBank = FilterBank;`,
   const ref = React.useRef(null);
   const triggerRef = React.useRef(null);
   const listRef = React.useRef(null);
-  React.useEffect(() => {
-    if (!open) return;
-    const selected = Math.max(0, options.findIndex(o => o.k === value));
-    setActiveIndex(selected);
-    requestAnimationFrame(() => {
-      const buttons = listRef.current ? Array.from(listRef.current.querySelectorAll('button:not([disabled])')) : [];
-      if (buttons[selected]) buttons[selected].focus();
-    });
-    const close = (returnFocus) => {
-      setOpen(false);
-      if (returnFocus) requestAnimationFrame(() => triggerRef.current && triggerRef.current.focus());
-    };
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) close(false); };
-    const onKey = (e) => {
-      if (e.key === 'Escape') {
-        e.preventDefault(); e.stopPropagation(); close(true); return;
-      }
-      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp'
-          && e.key !== 'Home' && e.key !== 'End') return;
-      e.preventDefault(); e.stopPropagation();
-      const next = e.key === 'Home' ? 0 : e.key === 'End' ? options.length - 1
-        : e.key === 'ArrowDown' ? (activeIndex + 1) % options.length
-        : (activeIndex - 1 + options.length) % options.length;
-      setActiveIndex(next);
-      const buttons = listRef.current ? Array.from(listRef.current.querySelectorAll('button:not([disabled])')) : [];
-      if (buttons[next]) buttons[next].focus();
-    };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  }, [open, activeIndex, options, value]);
   const current = options.find(o => o.k === value) || options[0];`,
       'settings picker keyboard contract');
     replaceSpectrSource(
@@ -1523,7 +1428,7 @@ window.FilterBank = FilterBank;`,
     replaceSpectrSource(
       'function SettingsModal({ settings, setSettings, onClose }) {',
       String.raw`function SpectrSettingsGroup({ title, subtitle, children }) {
-  return <div style={{ marginBottom: 22 }}>
+  return <div style={{ marginBottom: 18 }}>
     <div style={{ fontSize: 9, letterSpacing: 2, opacity: 0.5, marginBottom: 4 }}>{title}</div>
     {subtitle && <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 10, fontFamily: 'var(--sans)' }}>{subtitle}</div>}
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
@@ -2390,7 +2295,9 @@ window.PatternManager = PatternManager;`,
       const activeMini = pointerRef.current
         && (pointerRef.current.mode === 'minimap-drag'
           || pointerRef.current.mode === 'minimap-resize');
-      wrapRef.current.style.cursor = activeMini ? 'grabbing' : 'grab';`,
+      wrapRef.current.style.cursor = mm === 'left' || mm === 'right'
+        ? 'ew-resize'
+        : activeMini ? 'grabbing' : mm === 'window' ? 'grab' : 'pointer';`,
       'minimap hover and drag cursors');
     replaceSpectrSource(
       String.raw`  const onPointerUp = (e) => {
@@ -2400,10 +2307,153 @@ window.PatternManager = PatternManager;`,
       String.raw`  const onPointerUp = (e) => {
     const p = pointerRef.current;
     pointerRef.current = { mode: null };
-    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize'))
-      wrapRef.current.style.cursor = 'grab';
+    if (p && p.mode === 'minimap-drag') wrapRef.current.style.cursor = 'grab';
+    if (p && p.mode === 'minimap-resize') wrapRef.current.style.cursor = 'ew-resize';
     if (!p || !p.mode) {`,
       'minimap release restores grab cursor');
+    replaceSpectrSource(
+      String.raw`      for (let i = 0; i <= N; i++) {
+        const x = inner.x + i * (bandW + bandGap) + 0.5;`,
+      String.raw`      for (let i = 1; i < N; i++) {
+        const x = inner.x + i * (bandW + bandGap) + 0.5;`,
+      'response ticks omit first and last edges');
+    replaceSpectrSource(
+      "      wrapRef.current.style.cursor = activeMini ? 'grabbing' : 'grab';",
+      String.raw`      wrapRef.current.style.cursor = mm === 'left' || mm === 'right'
+        ? 'ew-resize'
+        : activeMini ? 'grabbing' : mm === 'window' ? 'grab' : 'pointer';`,
+      'minimap edges retain horizontal resize cursor');
+    replaceSpectrSource(
+      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize'))
+      wrapRef.current.style.cursor = 'grab';`,
+      String.raw`    if (p && p.mode === 'minimap-drag') wrapRef.current.style.cursor = 'grab';
+    if (p && p.mode === 'minimap-resize') wrapRef.current.style.cursor = 'ew-resize';`,
+      'minimap release retains physical cursor');
+    replaceSpectrSource(
+      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize')) {
+      setView({ ...viewRef.current });
+      wrapRef.current.style.cursor = 'grab';
+    }`,
+      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize')) {
+      setView({ ...viewRef.current });
+      wrapRef.current.style.cursor = p.mode === 'minimap-resize' ? 'ew-resize' : 'grab';
+    }`,
+      'minimap deferred release retains physical cursor');
+    replaceSpectrSource(
+      '  "showRulers": true,\n  "scheme": "midnight",',
+      '  "showRulers": true,\n  "statusInfo": true,\n  "scheme": "midnight",',
+      'status info defaults on');
+    replaceSpectrSource(
+      String.raw`          <div>
+            <div style={{ fontSize: 14, letterSpacing: 2, fontWeight: 600 }}>SETTINGS</div>
+          </div>`,
+      String.raw`          <div data-spectr-settings-close role="button" aria-label="Close settings"
+            onClick={event => { event.stopPropagation(); onClose(); }}
+            style={{ cursor: 'pointer' }}>
+            <div data-spectr-settings-title style={{ fontSize: 14, letterSpacing: 2, fontWeight: 600 }}>SETTINGS ×</div>
+          </div>`,
+      'settings title remains explicit and closes without changing the captured tree');
+    replaceSpectrSource(
+      String.raw`<button data-spectr-settings-close aria-label="Close settings" onClick={event => { event.stopPropagation(); onClose(); }} style={{
+            background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.6)',
+            cursor: 'pointer', fontSize: 20, padding: 0, lineHeight: 1, width: 32, height: 32,`,
+      String.raw`<button data-spectr-status-info-toggle={settings.statusInfo === false ? 'off' : 'on'}
+          role="switch" aria-checked={settings.statusInfo !== false}
+          onClick={() => persist({ statusInfo: settings.statusInfo === false })} style={{
+            background: settings.statusInfo === false ? 'rgba(255,255,255,0.03)' : 'rgba(120,180,255,0.18)',
+            border: '1px solid ' + (settings.statusInfo === false ? 'rgba(255,255,255,0.1)' : 'rgba(180,210,255,0.4)'),
+            color: settings.statusInfo === false ? 'rgba(255,255,255,0.55)' : 'rgba(220,235,255,0.95)',
+            cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 9, fontWeight: 600,
+            letterSpacing: 0.8, padding: '0 10px', lineHeight: 1, width: 150, height: 32,
+            borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center',`,
+      'settings header uses its existing action slot for status info');
+    replaceSpectrSource(
+      String.raw`          }}>×</button>`,
+      String.raw`          }}>{settings.statusInfo === false ? 'STATUS INFO OFF' : 'STATUS INFO ON'}</button>`,
+      'settings status label remains stable across toggle repaint');
+    replaceSpectrSource(
+      String.raw`  const fireStatus = useAppC((msg) => {
+    if (!msg) {`,
+      String.raw`  const fireStatus = useAppC((msg) => {
+    if (settings.statusInfo === false) {
+      setStatus('');
+      return;
+    }
+    if (!msg) {`,
+      'disabled status info suppresses all messages');
+    replaceSpectrSource(
+      '  }, []);\n  const applyPattern = useAppC((p) => {',
+      String.raw`  }, [settings.statusInfo]);
+  useAppE(() => {
+    if (settings.statusInfo === false) setStatus('');
+  }, [settings.statusInfo]);
+  const [selectedPatternName, setSelectedPatternName] = useAppS('PRESETS');
+  const applyPattern = useAppC((p) => {`,
+      'status disable clears immediately and selected preset is retained');
+    replaceSpectrSource(
+      '    b.setGains(gains);\n    fireStatus(`APPLIED "${p.name}"`);',
+      '    b.setGains(gains);\n    setSelectedPatternName(p.name);\n    fireStatus(`APPLIED "${p.name}"`);',
+      'selected preset name updates with applied state');
+    replaceSpectrSource(
+      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode,',
+      'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode,',
+      'chrome receives selected preset name');
+    replaceSpectrSource(
+      '<span style={{ marginLeft: 6, display: \'inline-flex\', alignItems: \'center\', lineHeight: 1 }}>PRESETS ▾</span>',
+      '<span data-spectr-selected-preset style={{ marginLeft: 6, display: \'inline-flex\', alignItems: \'center\', lineHeight: 1 }}>{selectedPatternName} ▾</span>',
+      'preset trigger shows selected name');
+    replaceSpectrSource(
+      '        status={status}\n        dspMode={dspMode}',
+      '        status={status}\n        selectedPatternName={selectedPatternName}\n        dspMode={dspMode}',
+      'selected preset name reaches chrome');
+    replaceSpectrSource(
+      String.raw`function RailBtn({ children, onClick, active }) {
+  const [flash, setFlash] = useStateChrome(false);`,
+      String.raw`function RailBtn({ children, onClick, active, popupKind }) {
+  const [flash, setFlash] = useStateChrome(false);`,
+      'rail buttons accept semantic popup kind');
+    replaceSpectrSource(
+      '<button onClick={handle}\n      style={{',
+      '<button data-spectr-menu-trigger={popupKind ? true : undefined} aria-haspopup={popupKind || undefined} aria-expanded={popupKind ? active : undefined} onClick={handle}\n      style={{',
+      'rail popup trigger semantics');
+    replaceSpectrSource(
+      '<RailBtn onClick={() => setOverflowMenu(v => !v)} active={overflowMenu}>',
+      '<RailBtn popupKind="menu" onClick={() => setOverflowMenu(v => !v)} active={overflowMenu}>',
+      'overflow popup semantics');
+    replaceSpectrSource(
+      '<RailBtn onClick={() => toggleMenu(\'edit\')} active={editMenu}>',
+      '<RailBtn popupKind="listbox" onClick={() => toggleMenu(\'edit\')} active={editMenu}>',
+      'edit popup semantics');
+    replaceSpectrSource(
+      '<RailBtn onClick={() => toggleMenu(\'analyzer\')} active={analyzerMenu}>',
+      '<RailBtn popupKind="listbox" onClick={() => toggleMenu(\'analyzer\')} active={analyzerMenu}>',
+      'analyzer popup semantics');
+    replaceSpectrSource(
+      '<RailBtn onClick={() => setPatternMenu(v => !v)} active={patternMenu}>',
+      '<RailBtn popupKind="menu" onClick={() => setPatternMenu(v => !v)} active={patternMenu}>',
+      'preset popup semantics');
+    replaceSpectrSource(
+      String.raw`function RailBtn({ children, onClick, active, popupKind }) {
+  const [flash, setFlash] = useStateChrome(false);
+  const handle = (e) => {
+    setFlash(true);
+    setTimeout(() => setFlash(false), 180);
+    onClick && onClick(e);
+  };
+  return (
+    <button onClick={handle}`,
+      String.raw`function RailBtn({ children, onClick, active, popupKind }) {
+  const [flash, setFlash] = useStateChrome(false);
+  const handle = (e) => {
+    setFlash(true);
+    setTimeout(() => setFlash(false), 180);
+    onClick && onClick(e);
+  };
+  return (
+    <button data-spectr-menu-trigger={popupKind ? true : undefined}
+      aria-haspopup={popupKind || undefined} aria-expanded={popupKind ? active : undefined}
+      onClick={handle}`,
+      'rail popup semantics survive source ordering');
     replaceSpectrSource(
       '      onPointerLeave={() => setHover(null)}',
       String.raw`      onPointerLeave={() => {
@@ -2596,7 +2646,7 @@ window.PatternManager = PatternManager;`,
               cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4,
               lineHeight: 1,
             }} title="Click to change band count">
-              <span className="tnum" style={{ display: 'inline-flex', alignItems: 'center', lineHeight: 1 }}>{info.N}</span> bands ▾`,
+              <span className="tnum" style={{ display: 'inline-flex', alignItems: 'center', lineHeight: 1 }}>{settings.bandCount}</span> bands ▾`,
       'band count label shares one vertical center');
     replaceSpectrSource(
       String.raw`const menuItem = {
@@ -2847,6 +2897,31 @@ window.PatternManager = PatternManager;`,
     return () => clearTimeout(timer);
   }, [message]);`,
       'status clear is cancellable and repaints its old bounds');
+    replaceSpectrSource(
+      'function StatusBanner({ message }) {',
+      'function StatusBanner({ message, disabled }) {',
+      'status banner accepts the persistent disable state');
+    replaceSpectrSource(
+      String.raw`    const generation = ++generationRef.current;
+    const display = message ? message.split('|')[0].trim() : '';`,
+      String.raw`    const generation = ++generationRef.current;
+    if (disabled) {
+      setVisible(false);
+      setText('');
+      shownRef.current = '';
+      requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+      return;
+    }
+    const display = message ? message.split('|')[0].trim() : '';`,
+      'disabled status banner clears synchronously');
+    replaceSpectrSource(
+      '  }, [message]);\n  return (',
+      '  }, [message, disabled]);\n  return (',
+      'status disable invalidates pending banner effects');
+    replaceSpectrSource(
+      '<StatusBanner message={status} />',
+      '<StatusBanner message={status} disabled={settings.statusInfo === false} />',
+      'status banner receives the persistent setting');
 
     const resourceScript = '<script>window.__resources = ' +
       JSON.stringify(resourceMap).split('</' + 'script>').join('<\\/' + 'script>') +

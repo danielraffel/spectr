@@ -540,6 +540,9 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 
     SECTION("edge labels and dropdown controls retain intentional rendering") {
+        CHECK(document.find("restoreMenuFocus") == document.npos);
+        CHECK(count_occurrences(document, "popupKind: \\\"listbox\\\"") == 2);
+        CHECK(count_occurrences(document, "popupKind: \\\"menu\\\"") == 2);
         CHECK(count_occurrences(document, "ctx.setLineDash([2, 2]);") == 0);
         CHECK(count_occurrences(
                   document,
@@ -562,10 +565,7 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 
     SECTION("minimap cursor feedback distinguishes idle drag and band editing") {
-        CHECK(count_occurrences(
-                  document,
-                  "wrapRef.current.style.cursor = activeMini ? \\\"grabbing\\\" : \\\"grab\\\";")
-              == 1);
+        CHECK(count_occurrences(document, "? \\\"ew-resize\\\"") == 1);
         CHECK(count_occurrences(
                   document,
                   "wrapRef.current.style.cursor = \\\"grabbing\\\";")
@@ -576,8 +576,10 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
               == 1);
         CHECK(count_occurrences(
                   document,
-                  "mm === \\\"left\\\" || mm === \\\"right\\\" ? \\\"ew-resize\\\"")
-              == 0);
+                  "mm === \\\"left\\\" || mm === \\\"right\\\"\n        ? \\\"ew-resize\\\"")
+              == 1);
+        CHECK(document.find("for (let i = 1; i < N; i++)") != document.npos);
+        CHECK(document.find("for (let i = 0; i <= N; i++)") == document.npos);
     }
 
     SECTION("remaining standalone chrome stays aligned") {
@@ -694,9 +696,12 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"edit-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.14)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"analyzer-dropdown-surface", "background: active ? \\\"rgba(255,255,255,0.08)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"settings-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.16)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
-        ContractMarker{"minimap-grab-cursor", "wrapRef.current.style.cursor = activeMini ? \\\"grabbing\\\" : \\\"grab\\\";"},
+        ContractMarker{"minimap-edge-resize-cursor", "mm === \\\"left\\\" || mm === \\\"right\\\"\n        ? \\\"ew-resize\\\""},
         ContractMarker{"minimap-press-cursor", "wrapRef.current.style.cursor = \\\"grabbing\\\";"},
         ContractMarker{"band-crosshair-cursor", "wrapRef.current.style.cursor = \\\"crosshair\\\";"},
+        ContractMarker{"status-info-toggle", "data-spectr-status-info-toggle"},
+        ContractMarker{"status-info-suppression", "settings.statusInfo === false"},
+        ContractMarker{"selected-preset-label", "data-spectr-selected-preset"},
     };
     const auto errors = [&](std::string_view candidate) {
         std::vector<std::string> result;

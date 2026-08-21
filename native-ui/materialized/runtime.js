@@ -9087,8 +9087,9 @@
       const nativeScrollView = ensureSpectrNativeScrollView(settingsPanel, values);
       const authored = width === 1320 && height === 860;
       const panelWidth = Math.min(520, Math.max(360, width - 40));
+      const authoredContentHeight = 672;
       const panelHeight = authored ? 679
-        : Math.min(684, Math.max(240, height * 0.9));
+        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));
       const panelTop = authored ? 90.5
         : compact ? 16 : Math.max(16, (height - panelHeight) * 0.5);
       const settingsOverlay = settingsPanel.parentElement
@@ -9110,12 +9111,13 @@
         g5.setBorderStyle(panelId, "solid");
         g5.setBorderRadius(panelId, 8);
         g5.setOverflow(panelId, "scroll");
-        if (typeof g5.setScrollContentSize === "function")
-          g5.setScrollContentSize(panelId, panelWidth, 684);
+        // Leave content size automatic: the ScrollView unions its live children.
+
       }
       settingsReceipt = {
         width: panelWidth, height: panelHeight, top: panelTop,
-        content_height: 684, scroll_reachable: panelHeight < 684,
+        content_height: authoredContentHeight,
+        scroll_reachable: panelHeight < authoredContentHeight,
         native_scroll_view: nativeScrollView,
         authored_skin: true
       };
@@ -9153,8 +9155,20 @@
   }
   function applyMaterializedImportMetadata(metadata) {
     const values = materializedDomRegistryValues();
-    const activeLayoutBindings = Array.isArray(metadata && metadata.layout_bindings) ? metadata.layout_bindings : [];
-    const activeTextBindings = Array.isArray(metadata && metadata.text_bindings) ? metadata.text_bindings : [];
+    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)
+      ? metadata.layout_bindings : []).map((binding) => {
+        const box = binding && binding.box;
+        if (activeCapturedState === "settings" && box
+            && box.width === 32 && box.height === 32)
+          return { ...binding, box: { ...box, left: 316, width: 150 } };
+        return binding;
+      });
+    // Selected preset names are authored state, not frozen capture text.
+    const activeTextBindings = (Array.isArray(metadata && metadata.text_bindings)
+      ? metadata.text_bindings : []).filter(
+        (binding) => binding.text !== "PRESETS \u25BE"
+          && binding.text !== "SETTINGS"
+          && binding.text !== "\u00D7");
     const activePaintBindings = Array.isArray(metadata && metadata.paint_bindings) ? metadata.paint_bindings : [];
     let applied = 0;
     const diagnostics = {
@@ -9323,6 +9337,47 @@
       ++applied;
       if (optional) ++diagnostics.text_optional_applied;
       else ++diagnostics.text_applied;
+    }
+    if (activeCapturedState === "settings"
+        && typeof g5.setCapturedLineBoxes === "function") {
+      const statusNode = globalThis.document?.querySelector?.("[data-spectr-status-info-toggle]");
+      const targets = Array.isArray(statusNode?.__pulpAnonymousTextTargets)
+        ? statusNode.__pulpAnonymousTextTargets : [];
+      const target = targets[0];
+      const statusValue = statusNode?.getAttribute?.("data-spectr-status-info-toggle");
+      const label = statusValue === "off" ? "STATUS INFO OFF" : "STATUS INFO ON";
+      const targetId = target?.id || statusNode?.__pulpTextTargetId;
+      if (targetId && statusNode) {
+        const id = String(targetId);
+        const textWidth = label.length * 6.2;
+        if (typeof g5.setPosition === "function") g5.setPosition(id, "absolute");
+        if (typeof g5.setLeft === "function") g5.setLeft(id, -1);
+        if (typeof g5.setTop === "function") g5.setTop(id, -1);
+        if (typeof g5.setFlex === "function") {
+          g5.setFlex(id, "width", 150);
+          g5.setFlex(id, "height", 32);
+        }
+        if (typeof g5.setFontSize === "function") g5.setFontSize(id, 9);
+        if (typeof g5.setFontWeight === "function") g5.setFontWeight(id, 600);
+        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(id, 0.8);
+        g5.setCapturedLineBoxes(id, [{ left: (150 - textWidth) / 2, top: 9.5,
+          width: textWidth, height: 13, start: 0, length: label.length }],
+          150, "JetBrainsMono-Regular", false);
+      }
+    }
+    if (activeCapturedState === "settings") {
+      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");
+      const titleTargets = Array.isArray(titleNode?.__pulpAnonymousTextTargets)
+        ? titleNode.__pulpAnonymousTextTargets : [];
+      const titleId = titleNode?.__pulpTextTargetId || titleTargets[0]?.id;
+      const titleBinding = Array.isArray(metadata?.text_bindings)
+        ? metadata.text_bindings.find((binding) => binding.text === "SETTINGS") : null;
+      if (titleId && titleBinding && typeof g5.setFontFamily === "function") {
+        g5.setFontFamily(String(titleId), materializedRuntimeFontStack(titleBinding));
+        if (typeof g5.setFontSize === "function") g5.setFontSize(String(titleId), 14);
+        if (typeof g5.setFontWeight === "function") g5.setFontWeight(String(titleId), 600);
+        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(titleId), 2);
+      }
     }
     g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;
     return applied;

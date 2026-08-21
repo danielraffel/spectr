@@ -27,6 +27,7 @@ import shutil
 import sys
 
 PATH = 'native-ui/materialized/materialized-document.runtime.json'
+RUNTIME_PATH = 'native-ui/materialized/runtime.js'
 SOURCE_PATH = 'resources/editor.html'
 
 EDITS = [
@@ -517,7 +518,11 @@ EDITS = [
      '    alignItems: "center",\n'
      '    gap: 4,\n'
      '    lineHeight: 1\n'
-     '  }, title: "Click to change band count" }, /* @__PURE__ */ React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, info.N), " bands \\u25BE")'),
+     '  }, title: "Click to change band count" }, /* @__PURE__ */ React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, settings.bandCount), " bands \\u25BE")'),
+
+    ('band count trigger reflects selection immediately',
+     'React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, info.N), " bands \\u25BE"',
+     'React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, settings.bandCount), " bands \\u25BE"'),
 
     ('dropdown items use a consistent native-friendly surface',
      'const menuItem = {\n'
@@ -644,7 +649,9 @@ EDITS = [
      '      const activeMini = pointerRef.current\n'
      '        && (pointerRef.current.mode === "minimap-drag"\n'
      '          || pointerRef.current.mode === "minimap-resize");\n'
-     '      wrapRef.current.style.cursor = activeMini ? "grabbing" : "grab";'),
+     '      wrapRef.current.style.cursor = mm === "left" || mm === "right"\n'
+     '        ? "ew-resize"\n'
+     '        : activeMini ? "grabbing" : mm === "window" ? "grab" : "pointer";'),
 
     ('minimap release restores grab cursor',
      '  const onPointerUp = (e) => {\n'
@@ -654,9 +661,232 @@ EDITS = [
      '  const onPointerUp = (e) => {\n'
      '    const p = pointerRef.current;\n'
      '    pointerRef.current = { mode: null };\n'
-     '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize"))\n'
-     '      wrapRef.current.style.cursor = "grab";\n'
+     '    if (p && p.mode === "minimap-drag") wrapRef.current.style.cursor = "grab";\n'
+     '    if (p && p.mode === "minimap-resize") wrapRef.current.style.cursor = "ew-resize";\n'
      '    if (!p || !p.mode) {'),
+
+    ('response ticks omit first and last edges',
+     '      for (let i = 0; i <= N; i++) {\n'
+     '        const x = inner.x + i * (bandW + bandGap) + 0.5;',
+     '      for (let i = 1; i < N; i++) {\n'
+     '        const x = inner.x + i * (bandW + bandGap) + 0.5;'),
+
+    ('minimap edges retain horizontal resize cursor',
+     '      wrapRef.current.style.cursor = activeMini ? "grabbing" : "grab";',
+     '      wrapRef.current.style.cursor = mm === "left" || mm === "right"\n'
+     '        ? "ew-resize"\n'
+     '        : activeMini ? "grabbing" : mm === "window" ? "grab" : "pointer";'),
+
+    ('minimap release retains physical cursor',
+     '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize"))\n'
+     '      wrapRef.current.style.cursor = "grab";',
+     '    if (p && p.mode === "minimap-drag") wrapRef.current.style.cursor = "grab";\n'
+     '    if (p && p.mode === "minimap-resize") wrapRef.current.style.cursor = "ew-resize";'),
+
+    ('minimap deferred release retains physical cursor',
+     '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize")) {\n'
+     '      setView({ ...viewRef.current });\n'
+     '      wrapRef.current.style.cursor = "grab";\n'
+     '    }',
+     '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize")) {\n'
+     '      setView({ ...viewRef.current });\n'
+     '      wrapRef.current.style.cursor = p.mode === "minimap-resize" ? "ew-resize" : "grab";\n'
+     '    }'),
+
+    ('status info defaults on',
+     '  "showRulers": true,\n  "scheme": "midnight",',
+     '  "showRulers": true,\n  "statusInfo": true,\n  "scheme": "midnight",'),
+
+    ('disabled status info suppresses all messages',
+     '  const fireStatus = useAppC((msg) => {\n'
+     '    if (!msg) {',
+     '  const fireStatus = useAppC((msg) => {\n'
+     '    if (settings.statusInfo === false) {\n'
+     '      setStatus("");\n'
+     '      return;\n'
+     '    }\n'
+     '    if (!msg) {'),
+
+    ('status disable clears immediately and selected preset is retained',
+     '  }, []);\n'
+     '  const applyPattern = useAppC((p) => {',
+     '  }, [settings.statusInfo]);\n'
+     '  useAppE(() => {\n'
+     '    if (settings.statusInfo === false) setStatus("");\n'
+     '  }, [settings.statusInfo]);\n'
+     '  const [selectedPatternName, setSelectedPatternName] = useAppS("PRESETS");\n'
+     '  const applyPattern = useAppC((p) => {'),
+
+    ('selected preset name updates with applied state',
+     '    b.setGains(gains);\n'
+     '    fireStatus(`APPLIED "${p.name}"`);',
+     '    b.setGains(gains);\n'
+     '    setSelectedPatternName(p.name);\n'
+     '    fireStatus(`APPLIED "${p.name}"`);'),
+
+    ('chrome receives selected preset name',
+     'function Chrome({ settings, setSettings, bankRef, info, status, dspMode,',
+     'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode,'),
+
+    ('preset trigger shows selected name',
+     'React.createElement("span", { style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1 } }, "PRESETS \\u25BE")',
+     'React.createElement("span", { "data-spectr-selected-preset": true, style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1 } }, selectedPatternName, " \\u25BE")'),
+
+    ('selected preset name reaches chrome',
+     '      status,\n'
+     '      dspMode,',
+     '      status,\n'
+     '      selectedPatternName,\n'
+     '      dspMode,'),
+
+    ('rail buttons accept semantic popup kind',
+     'function RailBtn({ children, onClick, active }) {\n'
+     '  const [flash, setFlash] = useStateChrome(false);',
+     'function RailBtn({ children, onClick, active, popupKind }) {\n'
+     '  const [flash, setFlash] = useStateChrome(false);'),
+
+    ('rail popup trigger semantics',
+     '  return /* @__PURE__ */ React.createElement("button", { onClick: handle, style: {',
+     '  return /* @__PURE__ */ React.createElement("button", { "data-spectr-menu-trigger": popupKind ? true : void 0, "aria-haspopup": popupKind || void 0, "aria-expanded": popupKind ? active : void 0, onClick: handle, style: {'),
+
+    ('overflow popup semantics',
+     'React.createElement(RailBtn, { onClick: () => setOverflowMenu((v) => !v), active: overflowMenu },',
+     'React.createElement(RailBtn, { popupKind: "menu", onClick: () => setOverflowMenu((v) => !v), active: overflowMenu },'),
+
+    ('edit popup semantics',
+     'React.createElement(RailBtn, { onClick: () => toggleMenu("edit"), active: editMenu },',
+     'React.createElement(RailBtn, { popupKind: "listbox", onClick: () => toggleMenu("edit"), active: editMenu },'),
+
+    ('analyzer popup semantics',
+     'React.createElement(RailBtn, { onClick: () => toggleMenu("analyzer"), active: analyzerMenu },',
+     'React.createElement(RailBtn, { popupKind: "listbox", onClick: () => toggleMenu("analyzer"), active: analyzerMenu },'),
+
+    ('preset popup semantics',
+     'React.createElement(RailBtn, { onClick: () => setPatternMenu((v) => !v), active: patternMenu },',
+     'React.createElement(RailBtn, { popupKind: "menu", onClick: () => setPatternMenu((v) => !v), active: patternMenu },'),
+
+    ('rail popup semantics survive source ordering',
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "button",\n'
+     '    {\n'
+     '      onClick: handle,',
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "button",\n'
+     '    {\n'
+     '      "data-spectr-menu-trigger": popupKind ? true : void 0,\n'
+     '      "aria-haspopup": popupKind || void 0,\n'
+     '      "aria-expanded": popupKind ? active : void 0,\n'
+     '      onClick: handle,'),
+
+    ('rail popup trigger is the interactive button',
+     'React.createElement("span", { "data-spectr-menu-trigger": true }, /* @__PURE__ */ React.createElement(RailBtn',
+     'React.createElement("span", null, /* @__PURE__ */ React.createElement(RailBtn',
+     4),
+
+    ('generic Pulp popup owns keyboard and outside dismissal',
+     '  useEffectChrome(() => {\n'
+     '    const key = openMenu || (helpOpen ? "help" : null);\n'
+     '    if (!key) return;\n'
+     '    const rootSelector = \'[data-spectr-menu-root="\' + key + \'"]\';\n'
+     '    const root = document.querySelector(rootSelector);\n'
+     '    if (!root) return;\n'
+     '    // The native materialized DOM intentionally exposes selectors on document,\n'
+     '    // not on every element wrapper. Keep these scoped through the root selector\n'
+     '    // so the same menu contract works in both native and browser hosts.\n'
+     '    const triggerHost = document.querySelector(rootSelector + " [data-spectr-menu-trigger]");\n'
+     '    const trigger = triggerHost && (triggerHost.tagName === "BUTTON" ? triggerHost : document.querySelector(rootSelector + " [data-spectr-menu-trigger] button"));\n'
+     '    const close = (returnFocus) => {\n'
+     '      restoreMenuFocus.current = !!returnFocus;\n'
+     '      if (key === "help") setHelpOpen(false);\n'
+     '      else setOpenMenu(null);\n'
+     '    };\n'
+     '    const onPointer = (event) => {\n'
+     '      if (!root.contains(event.target)) close(false);\n'
+     '    };\n'
+     '    const onKey = (event) => {\n'
+     '      if (event.key === "Escape") {\n'
+     '        event.preventDefault();\n'
+     '        event.stopPropagation();\n'
+     '        close(true);\n'
+     '        return;\n'
+     '      }\n'
+     '      const options = Array.from(document.querySelectorAll(\n'
+     '        rootSelector + " [data-spectr-menu-options] button:not([disabled])"));\n'
+     '      if (!options.length) return;\n'
+     '      if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {\n'
+     '        event.preventDefault();\n'
+     '        event.stopPropagation();\n'
+     '        const current = options.indexOf(document.activeElement);\n'
+     '        const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : event.key === "ArrowDown" ? (current + 1 + options.length) % options.length : (current - 1 + options.length) % options.length;\n'
+     '        options[next].focus();\n'
+     '      } else if ((event.key === "Enter" || event.key === " ") && options.includes(document.activeElement)) {\n'
+     '        event.preventDefault();\n'
+     '        event.stopPropagation();\n'
+     '        restoreMenuFocus.current = true;\n'
+     '        document.activeElement.click();\n'
+     '      }\n'
+     '    };\n'
+     '    document.addEventListener("mousedown", onPointer);\n'
+     '    document.addEventListener("keydown", onKey, true);\n'
+     '    return () => {\n'
+     '      document.removeEventListener("mousedown", onPointer);\n'
+     '      document.removeEventListener("keydown", onKey, true);\n'
+     '      if (restoreMenuFocus.current) {\n'
+     '        restoreMenuFocus.current = false;\n'
+     '        requestAnimationFrame(() => trigger && trigger.focus());\n'
+     '      }\n'
+     '    };\n'
+     '  }, [openMenu, helpOpen]);\n',
+     ''),
+
+    ('generic Pulp popup owns focus restoration',
+     '  const restoreMenuFocus = useRefChrome(false);\n',
+     ''),
+
+    ('generic Pulp popup owns settings picker navigation',
+     '  React.useEffect(() => {\n'
+     '    if (!open) return;\n'
+     '    const selected = Math.max(0, options.findIndex((o) => o.k === value));\n'
+     '    setActiveIndex(selected);\n'
+     '    requestAnimationFrame(() => {\n'
+     '      const buttons = listRef.current ? Array.from(listRef.current.querySelectorAll("button:not([disabled])")) : [];\n'
+     '      if (buttons[selected]) buttons[selected].focus();\n'
+     '    });\n'
+     '    const close = (returnFocus) => {\n'
+     '      setOpen(false);\n'
+     '      if (returnFocus) requestAnimationFrame(() => triggerRef.current && triggerRef.current.focus());\n'
+     '    };\n'
+     '    const onDoc = (e) => {\n'
+     '      if (ref.current && !ref.current.contains(e.target)) close(false);\n'
+     '    };\n'
+     '    const onKey = (e) => {\n'
+     '      if (e.key === "Escape") {\n'
+     '        e.preventDefault();\n'
+     '        e.stopPropagation();\n'
+     '        close(true);\n'
+     '        return;\n'
+     '      }\n'
+     '      if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;\n'
+     '      e.preventDefault();\n'
+     '      e.stopPropagation();\n'
+     '      const next = e.key === "Home" ? 0 : e.key === "End" ? options.length - 1 : e.key === "ArrowDown" ? (activeIndex + 1) % options.length : (activeIndex - 1 + options.length) % options.length;\n'
+     '      setActiveIndex(next);\n'
+     '      const buttons = listRef.current ? Array.from(listRef.current.querySelectorAll("button:not([disabled])")) : [];\n'
+     '      if (buttons[next]) buttons[next].focus();\n'
+     '    };\n'
+     '    document.addEventListener("mousedown", onDoc);\n'
+     '    document.addEventListener("keydown", onKey, true);\n'
+     '    return () => {\n'
+     '      document.removeEventListener("mousedown", onDoc);\n'
+     '      document.removeEventListener("keydown", onKey, true);\n'
+     '    };\n'
+     '  }, [open, activeIndex, options, value]);\n',
+     ''),
+
+    ('generic Pulp popup restores settings trigger focus',
+     '          setOpen(false);\n'
+     '          requestAnimationFrame(() => triggerRef.current && triggerRef.current.focus());',
+     '          setOpen(false);'),
 
     ('surface leave resets idle cursor',
      '      onPointerLeave: () => setHover(null),',
@@ -996,12 +1226,219 @@ EDITS = [
      '    return () => clearTimeout(timer);\n'
      '  }, [message]);'),
 
+    ('status banner accepts the persistent disable state',
+     'function StatusBanner({ message }) {',
+     'function StatusBanner({ message, disabled }) {'),
+
+    ('disabled status banner clears synchronously',
+     '    const generation = ++generationRef.current;\n'
+     '    const display = message ? message.split("|")[0].trim() : "";',
+     '    const generation = ++generationRef.current;\n'
+     '    if (disabled) {\n'
+     '      setVisible(false);\n'
+     '      setText("");\n'
+     '      shownRef.current = "";\n'
+     '      requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));\n'
+     '      return;\n'
+     '    }\n'
+     '    const display = message ? message.split("|")[0].trim() : "";'),
+
+    ('status disable invalidates pending banner effects',
+     '  }, [message]);\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "div",\n'
+     '    {\n'
+     '      "data-spectr-status-shell": "true",',
+     '  }, [message, disabled]);\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "div",\n'
+     '    {\n'
+     '      "data-spectr-status-shell": "true",'),
+
+    ('status banner receives the persistent setting',
+     'React.createElement(StatusBanner, { message: status })',
+     'React.createElement(StatusBanner, { message: status, disabled: settings.statusInfo === false })'),
+
+    ('settings groups fit the authored viewport without clipping rows',
+     'function SpectrSettingsGroup({ title, subtitle, children }) {\n'
+     '  return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } },',
+     'function SpectrSettingsGroup({ title, subtitle, children }) {\n'
+     '  return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } },'),
+
+    ('status info no longer adds an uncaptured settings row',
+     ')), /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Rulers", hint: "Frequency labels along the bottom axis" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { value: settings.showRulers, onChange: (v) => persist({ showRulers: v }) })), /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Show hover, mute, and drag feedback" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) }))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { title: "MOTION",',
+     ')), /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Rulers", hint: "Frequency labels along the bottom axis" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { value: settings.showRulers, onChange: (v) => persist({ showRulers: v }) }))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { title: "MOTION",'),
+
+    ('settings status control preserves the captured child count',
+     '    position: "relative",\n'
+     '    width: 520,',
+     '    width: 520,'),
+
+    ('settings status control reuses the captured title node',
+     '  } }, /* @__PURE__ */ React.createElement("button", {\n'
+     '    "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on",\n'
+     '    role: "switch",\n'
+     '    "aria-checked": settings.statusInfo !== false,\n'
+     '    onClick: () => persist({ statusInfo: settings.statusInfo === false }),\n'
+     '    style: {\n'
+     '      position: "absolute", top: 26, right: 68, height: 32, padding: "0 10px",\n'
+     '      borderRadius: 3, cursor: "pointer",\n'
+     '      background: settings.statusInfo === false ? "rgba(255,255,255,0.03)" : "rgba(120,180,255,0.18)",\n'
+     '      border: "1px solid " + (settings.statusInfo === false ? "rgba(255,255,255,0.1)" : "rgba(180,210,255,0.4)"),\n'
+     '      color: settings.statusInfo === false ? "rgba(255,255,255,0.65)" : "#fff",\n'
+     '      fontFamily: "var(--mono)", fontSize: 9, letterSpacing: 1\n'
+     '    }\n'
+     '  }, "STATUS INFO · ", settings.statusInfo === false ? "OFF" : "ON"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 } },',
+     '  } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 } },'),
+
+    ('settings title exposes the persistent status control',
+     '/* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, letterSpacing: 2, fontWeight: 600 } }, "SETTINGS"))',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, letterSpacing: 1.2, fontWeight: 600, color: settings.statusInfo === false ? "rgba(255,255,255,0.45)" : "rgba(200,220,255,0.95)" } }, "SETTINGS · STATUS INFO"))'),
+
+    ('settings status label stays stable across toggle repaint',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, letterSpacing: 1.2, fontWeight: 600, padding: "7px 10px", borderRadius: 3, background: settings.statusInfo === false ? "rgba(255,255,255,0.03)" : "rgba(120,180,255,0.18)", border: "1px solid " + (settings.statusInfo === false ? "rgba(255,255,255,0.1)" : "rgba(180,210,255,0.4)") } }, "SETTINGS · STATUS INFO ", settings.statusInfo === false ? "OFF" : "ON"))',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, letterSpacing: 1.2, fontWeight: 600, color: settings.statusInfo === false ? "rgba(255,255,255,0.45)" : "rgba(200,220,255,0.95)" } }, "SETTINGS · STATUS INFO"))'),
+
+    ('settings status title uses color without a frozen-width box',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, letterSpacing: 1.2, fontWeight: 600, padding: "7px 10px", borderRadius: 3, background: settings.statusInfo === false ? "rgba(255,255,255,0.03)" : "rgba(120,180,255,0.18)", border: "1px solid " + (settings.statusInfo === false ? "rgba(255,255,255,0.1)" : "rgba(180,210,255,0.4)") } }, "SETTINGS · STATUS INFO"))',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, letterSpacing: 1.2, fontWeight: 600, color: settings.statusInfo === false ? "rgba(255,255,255,0.45)" : "rgba(200,220,255,0.95)" } }, "SETTINGS · STATUS INFO"))'),
+
+    ('settings header separates title and status control in one captured line',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, letterSpacing: 1.2, fontWeight: 600, color: settings.statusInfo === false ? "rgba(255,255,255,0.45)" : "rgba(200,220,255,0.95)" } }, "SETTINGS · STATUS INFO"))',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, letterSpacing: 1.2, fontWeight: 600, whiteSpace: "pre", color: settings.statusInfo === false ? "rgba(255,255,255,0.45)" : "rgba(200,220,255,0.95)" } }, "SETTINGS            STATUS INFO ON/OFF"))'),
+
+    ('settings toggle does not reshape text during materialized updates',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, letterSpacing: 1.2, fontWeight: 600, whiteSpace: "pre", color: settings.statusInfo === false ? "rgba(255,255,255,0.45)" : "rgba(200,220,255,0.95)" } }, "SETTINGS            STATUS INFO: " + (settings.statusInfo === false ? "OFF" : "ON ")))',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, letterSpacing: 1.2, fontWeight: 600, whiteSpace: "pre", color: settings.statusInfo === false ? "rgba(255,255,255,0.45)" : "rgba(200,220,255,0.95)" } }, "SETTINGS            STATUS INFO ON/OFF"))'),
+
+    ('settings title is distinct from the status control',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, letterSpacing: 1.2, fontWeight: 600, whiteSpace: "pre", color: settings.statusInfo === false ? "rgba(255,255,255,0.45)" : "rgba(200,220,255,0.95)" } }, "SETTINGS            STATUS INFO ON/OFF"))',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-close": true, role: "button", "aria-label": "Close settings", onClick: (event) => { event.stopPropagation(); onClose(); }, style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, letterSpacing: 2, fontWeight: 600 } }, "SETTINGS ×"))'),
+
+    ('settings action slot is an intentional status switch',
+     '/* @__PURE__ */ React.createElement("button", { "data-spectr-settings-close": true, "aria-label": "Close settings", onClick: (event) => {\n'
+     '    event.stopPropagation();\n'
+     '    onClose();\n'
+     '  }, style: {\n'
+     '    background: "transparent",\n'
+     '    border: "none",\n'
+     '    color: "rgba(255,255,255,0.6)",\n'
+     '    cursor: "pointer",\n'
+     '    fontSize: 20,\n'
+     '    padding: 0,\n'
+     '    lineHeight: 1,\n'
+     '    width: 32,\n'
+     '    height: 32\n'
+     '  } }, "\\xD7")',
+     '/* @__PURE__ */ React.createElement("button", { "data-spectr-status-info-toggle": settings.statusInfo === false ? "off" : "on", role: "switch", "aria-checked": settings.statusInfo !== false, onClick: () => persist({ statusInfo: settings.statusInfo === false }), style: {\n'
+     '    background: settings.statusInfo === false ? "rgba(255,255,255,0.03)" : "rgba(120,180,255,0.18)",\n'
+     '    border: "1px solid " + (settings.statusInfo === false ? "rgba(255,255,255,0.1)" : "rgba(180,210,255,0.4)"),\n'
+     '    color: settings.statusInfo === false ? "rgba(255,255,255,0.55)" : "rgba(220,235,255,0.95)",\n'
+     '    cursor: "pointer", fontFamily: "var(--mono)", fontSize: 9, fontWeight: 600,\n'
+     '    letterSpacing: 0.8, padding: "0 10px", lineHeight: 1, width: 150, height: 32,\n'
+     '    borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center"\n'
+     '  } }, settings.statusInfo === false ? "STATUS INFO OFF" : "STATUS INFO ON")'),
+
+    ('settings status label extends inward from the captured action slot',
+     '    cursor: "pointer", fontFamily: "var(--mono)", fontSize: 9, fontWeight: 600,\n'
+     '    letterSpacing: 0.8, padding: "0 10px", lineHeight: 1, width: 150, height: 32, borderRadius: 3\n',
+     '    cursor: "pointer", fontFamily: "var(--mono)", fontSize: 9, fontWeight: 600,\n'
+     '    letterSpacing: 0.8, padding: 0, lineHeight: 1, width: 32, height: 32, borderRadius: 3,\n'
+     '    textIndent: "-122px", textAlign: "left", whiteSpace: "nowrap", overflow: "visible"\n'),
+
+    ('settings switch occupies an intentional position in the header',
+     '    textIndent: "-122px", textAlign: "left", whiteSpace: "nowrap", overflow: "visible"\n',
+     '    transform: "translateX(-122px)", textIndent: "40px", textAlign: "left",\n'
+     '    whiteSpace: "nowrap", overflow: "visible"\n'),
+
+    ('settings switch label fits the captured action slot',
+     '    transform: "translateX(-122px)", textIndent: "40px", textAlign: "left",\n'
+     '    whiteSpace: "nowrap", overflow: "visible"\n'
+     '  } }, "STATUS INFO ON/OFF")',
+     '    textAlign: "center", whiteSpace: "pre-line", overflow: "hidden"\n'
+     '  } }, "STATUS", String.fromCharCode(10), "INFO ON/OFF")'),
+
+    ('settings switch type fits without clipping',
+     '    cursor: "pointer", fontFamily: "var(--mono)", fontSize: 9, fontWeight: 600,\n'
+     '    letterSpacing: 0.8, padding: 0, lineHeight: 1, width: 32, height: 32, borderRadius: 3,\n',
+     '    cursor: "pointer", fontFamily: "var(--mono)", fontSize: 5.5, fontWeight: 700,\n'
+     '    letterSpacing: 0.1, padding: 0, lineHeight: 1.3, width: 32, height: 32, borderRadius: 3,\n'),
+
+    ('settings switch uses authored width after stale binding removal',
+     '    cursor: "pointer", fontFamily: "var(--mono)", fontSize: 5.5, fontWeight: 700,\n'
+     '    letterSpacing: 0.1, padding: 0, lineHeight: 1.3, width: 32, height: 32, borderRadius: 3,\n'
+     '    textAlign: "center", whiteSpace: "pre-line", overflow: "hidden"\n'
+     '  } }, "STATUS", String.fromCharCode(10), "INFO ON/OFF")',
+     '    cursor: "pointer", fontFamily: "var(--mono)", fontSize: 9, fontWeight: 600,\n'
+     '    letterSpacing: 0.8, padding: "0 10px", lineHeight: 1, width: 150, height: 32, borderRadius: 3\n'
+     '  } }, "STATUS INFO ON/OFF")'),
+
+    ('settings switch aligns to the header action edge',
+     '    letterSpacing: 0.8, padding: "0 10px", lineHeight: 1, width: 150, height: 32, borderRadius: 3\n'
+     '  } }, "STATUS INFO ON/OFF")',
+     '    letterSpacing: 0.8, padding: "0 10px", lineHeight: 1, width: 150, height: 32,\n'
+     '    borderRadius: 3, transform: "translateX(316px)"\n'
+     '  } }, "STATUS INFO ON/OFF")'),
+
+    ('settings switch position comes from the corrected capture binding',
+     '    letterSpacing: 0.8, padding: "0 10px", lineHeight: 1, width: 150, height: 32,\n'
+     '    borderRadius: 3, transform: "translateX(316px)"\n'
+     '  } }, "STATUS INFO ON/OFF")',
+     '    letterSpacing: 0.8, padding: "0 10px", lineHeight: 1, width: 150, height: 32, borderRadius: 3\n'
+     '  } }, "STATUS INFO ON/OFF")'),
+
+    ('settings switch label is centered within its control',
+     '    letterSpacing: 0.8, padding: "0 10px", lineHeight: 1, width: 150, height: 32, borderRadius: 3\n'
+     '  } }, "STATUS INFO ON/OFF")',
+     '    letterSpacing: 0.8, padding: "0 10px", lineHeight: 1, width: 150, height: 32,\n'
+     '    borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center"\n'
+     '  } }, "STATUS INFO ON/OFF")'),
+
+    ('settings switch names its actual state',
+     '  } }, "STATUS INFO ON/OFF")',
+     '  } }, settings.statusInfo === false ? "STATUS INFO OFF" : "STATUS INFO ON")'),
+
+    ('settings title has a direct materialized font target',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-close": true, role: "button", "aria-label": "Close settings", onClick: (event) => { event.stopPropagation(); onClose(); }, style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, letterSpacing: 2, fontWeight: 600 } }, "SETTINGS ×"))',
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-close": true, role: "button", "aria-label": "Close settings", onClick: (event) => { event.stopPropagation(); onClose(); }, style: { cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true, style: { fontSize: 14, letterSpacing: 2, fontWeight: 600 } }, "SETTINGS ×"))'),
+
+    ('ordinary settings toggles stay generic',
+     'function SpectrSettingsToggle({ value, onChange, statusInfo }) {\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "button",\n'
+     '    {\n'
+     '      "data-spectr-setting-toggle": true,\n'
+     '      "data-spectr-status-info-toggle": statusInfo ? value ? "on" : "off" : void 0,\n'
+     '      role: "switch",',
+     'function SpectrSettingsToggle({ value, onChange }) {\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "button",\n'
+     '    {\n'
+     '      "data-spectr-setting-toggle": true,\n'
+     '      role: "switch",'),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an
 # earlier one. These named sentinels keep reruns strict without pretending the
 # superseded intermediate text must remain in the final shipping document.
 SUPERSEDED_SENTINELS = {
+    'native menu lookup uses the document selector surface':
+        'popupKind: "listbox"',
+    'native menu option lookup uses the document selector surface':
+        'popupKind: "listbox"',
+    'empty status clears the unified banner':
+        'settings.statusInfo === false',
+    'preset rail label shares one chevron baseline':
+        'data-spectr-selected-preset',
+    'settings exposes status info toggle':
+        'data-spectr-status-info-toggle',
+    'status info toggle carries its native marker':
+        'data-spectr-status-info-toggle',
+    'status info toggle has a stable native selector':
+        'data-spectr-status-info-toggle',
+    'compiled status toggle receives its marker':
+        'data-spectr-status-info-toggle',
     'animation loop paints the latest canvas renderer':
         'updateLiveHoverStatus();',
     'drawn gain edits share one mute decision':
@@ -1026,17 +1463,198 @@ SUPERSEDED_SENTINELS = {
         '"data-spectr-status-text": "true"',
     'status banner replaces one message at a time':
         'const generationRef = useRefChrome(0);',
+    'status clear is cancellable and repaints its old bounds':
+        'if (disabled) {',
+    'settings title exposes the persistent status control':
+        'data-spectr-settings-close',
+    'settings status label stays stable across toggle repaint':
+        'SETTINGS            STATUS INFO',
+    'settings status title uses color without a frozen-width box':
+        'SETTINGS            STATUS INFO',
+    'settings header separates title and status control in one captured line':
+        'data-spectr-settings-close',
+    'settings toggle does not reshape text during materialized updates':
+        'STATUS INFO ON/OFF',
+    'settings status label extends inward from the captured action slot':
+        'STATUS INFO ON/OFF',
+    'settings switch occupies an intentional position in the header':
+        'STATUS INFO ON/OFF',
+    'settings switch label fits the captured action slot':
+        'STATUS INFO ON/OFF',
+    'settings switch type fits without clipping':
+        'width: 150',
+    'settings switch uses authored width after stale binding removal':
+        'width: 150',
+    'settings switch aligns to the header action edge':
+        'STATUS INFO ON/OFF',
+    'settings switch position comes from the corrected capture binding':
+        'justifyContent: "center"',
+    'settings title is distinct from the status control':
+        'data-spectr-settings-title',
+    'settings switch label is centered within its control':
+        'STATUS INFO OFF',
 }
 
 # Generated bindings live outside the escaped `html` string. Keep these
 # materialization-only corrections explicit rather than teaching HTML edits to
 # rewrite unrelated top-level document data.
 DOCUMENT_EDITS = [
+    ('selected preset binding reflects the deterministic default',
+     '{"index":14,"anchor":"#root","path":[{"tag":"div","index":0},{"tag":"div","index":3},{"tag":"div","index":6},{"tag":"span","index":0},{"tag":"button","index":0},{"tag":"span","index":1}],"text":"PRESETS ▾","basis":{"width":63.03125,"resolved_face":"JetBrainsMono-Regular","resolved_faces":[{"family_name":"Menlo","post_script_name":"Menlo-Regular","is_custom_font":false,"glyph_count":1},{"family_name":"JetBrains Mono","post_script_name":"JetBrainsMono-Regular","is_custom_font":true,"glyph_count":8}],"requested":{"font_family":"\\\"JetBrains Mono\\\", ui-monospace, monospace","font_size":10,"font_weight":400,"font_slant":0,"letter_spacing":1}},"boxes":[{"left":0,"top":0,"width":63.03125,"height":13,"start":0,"length":9}]}',
+     '{"index":14,"anchor":"#root","path":[{"tag":"div","index":0},{"tag":"div","index":3},{"tag":"div","index":6},{"tag":"span","index":0},{"tag":"button","index":0},{"tag":"span","index":1}],"text":"FLAT ▾","basis":{"width":42.04257793060037,"resolved_face":"JetBrainsMono-Regular","resolved_faces":[{"family_name":"Menlo","post_script_name":"Menlo-Regular","is_custom_font":false,"glyph_count":1},{"family_name":"JetBrains Mono","post_script_name":"JetBrainsMono-Regular","is_custom_font":true,"glyph_count":5}],"requested":{"font_family":"\\\"JetBrains Mono\\\", ui-monospace, monospace","font_size":10,"font_weight":400,"font_slant":0,"letter_spacing":1}},"boxes":[{"left":0,"top":0,"width":42.04257793060037,"height":13.017578125000114,"start":0,"length":6}]}'),
     ('band-count binding shares the suffix baseline',
      '"letter_spacing":0.5}},"boxes":[{"left":0,"top":0,"width":13,'
      '"height":13,"start":0,"length":2}]},{"index":9',
      '"letter_spacing":0.5}},"boxes":[{"left":0,"top":3,"width":13,'
      '"height":13,"start":0,"length":2}]},{"index":9'),
+]
+
+RUNTIME_EDITS = [
+    ('settings switch uses authored flex width',
+     '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
+     '      ? metadata.layout_bindings : []).filter((binding) => {\n'
+     '        const box = binding && binding.box;\n'
+     '        return !(activeCapturedState === "settings" && box\n'
+     '          && box.width === 32 && box.height === 32);\n'
+     '      });',
+     '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
+     '      ? metadata.layout_bindings : []).map((binding) => {\n'
+     '        const box = binding && binding.box;\n'
+     '        if (activeCapturedState === "settings" && box\n'
+     '            && box.width === 32 && box.height === 32)\n'
+     '          return { ...binding, box: { ...box, left: 316, width: 150 } };\n'
+     '        return binding;\n'
+     '      });',
+     'box: { ...box, left: 316, width: 150 }'),
+    ('settings switch capture binding keeps live layout stable',
+     '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
+     '      ? metadata.layout_bindings : []).filter((binding) => {\n'
+     '        const box = binding && binding.box;\n'
+     '        return !(activeCapturedState === "settings" && box\n'
+     '          && box.width === 32 && box.height === 32);\n'
+     '      });',
+     '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
+     '      ? metadata.layout_bindings : []).map((binding) => {\n'
+     '        const box = binding && binding.box;\n'
+     '        if (activeCapturedState === "settings" && box\n'
+     '            && box.width === 32 && box.height === 32)\n'
+     '          return { ...binding, box: { ...box, left: 316, width: 150 } };\n'
+     '        return binding;\n'
+     '      });',
+     'box: { ...box, left: 316, width: 150 }'),
+    ('dynamic selected preset bypasses the frozen text binding',
+     '    const activeTextBindings = Array.isArray(metadata && metadata.text_bindings) ? metadata.text_bindings : [];',
+     '    // Selected preset names are authored state, not frozen capture text.\n'
+     '    const activeTextBindings = (Array.isArray(metadata && metadata.text_bindings)\n'
+     '      ? metadata.text_bindings : []).filter(\n'
+     '        (binding) => binding.text !== "PRESETS \\u25BE");',
+     'Selected preset names are authored state, not frozen capture text.'),
+    ('settings auto extent replaces the stale manual capture height',
+     '      const panelHeight = authored ? 679\n'
+     '        : Math.min(684, Math.max(240, height * 0.9));',
+     '      const authoredContentHeight = 672;\n'
+     '      const panelHeight = authored ? 679\n'
+     '        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));',
+     'const authoredContentHeight = 672;'),
+    ('settings scroll view derives its content from live children',
+     '        if (typeof g5.setScrollContentSize === "function")\n'
+     '          g5.setScrollContentSize(panelId, panelWidth, 684);',
+     '        // Leave content size automatic: the ScrollView unions its live children.\n',
+     'Leave content size automatic: the ScrollView unions its live children.'),
+    ('settings receipt reports the compact authored content extent',
+     '        content_height: 684, scroll_reachable: panelHeight < 684,',
+     '        content_height: authoredContentHeight,\n'
+     '        scroll_reachable: panelHeight < authoredContentHeight,',
+     'content_height: authoredContentHeight,'),
+    ('dynamic settings title bypasses the frozen capture text',
+     '        (binding) => binding.text !== "PRESETS \\u25BE");',
+     '        (binding) => binding.text !== "PRESETS \\u25BE"\n'
+     '          && binding.text !== "SETTINGS");',
+     'binding.text !== "SETTINGS"'),
+    ('settings action label bypasses the frozen close glyph',
+     '          && binding.text !== "SETTINGS");',
+     '          && binding.text !== "SETTINGS"\n'
+     '          && binding.text !== "\\u00D7");',
+     'binding.text !== "\\u00D7"'),
+    ('settings switch text is centered independently of the stale close glyph',
+     '    g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;\n'
+     '    return applied;',
+     '    if (activeCapturedState === "settings"\n'
+     '        && typeof g5.setCapturedLineBoxes === "function") {\n'
+     '      const statusNode = globalThis.document?.querySelector?.("[data-spectr-status-info-toggle]");\n'
+     '      const targets = Array.isArray(statusNode?.__pulpAnonymousTextTargets)\n'
+     '        ? statusNode.__pulpAnonymousTextTargets : [];\n'
+     '      const target = targets[0];\n'
+     '      const label = String(statusNode?.textContent || "");\n'
+     '      if (target && label.startsWith("STATUS INFO ")) {\n'
+     '        const id = String(target.id);\n'
+     '        const textWidth = label.length * 6.2;\n'
+     '        if (typeof g5.setPosition === "function") g5.setPosition(id, "absolute");\n'
+     '        if (typeof g5.setLeft === "function") g5.setLeft(id, 0);\n'
+     '        if (typeof g5.setTop === "function") g5.setTop(id, 0);\n'
+     '        if (typeof g5.setFlex === "function") {\n'
+     '          g5.setFlex(id, "width", 150);\n'
+     '          g5.setFlex(id, "height", 32);\n'
+     '        }\n'
+     '        if (typeof g5.setFontSize === "function") g5.setFontSize(id, 9);\n'
+     '        if (typeof g5.setFontWeight === "function") g5.setFontWeight(id, 600);\n'
+     '        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(id, 0.8);\n'
+     '        g5.setCapturedLineBoxes(id, [{ left: (150 - textWidth) / 2, top: 9.5,\n'
+     '          width: textWidth, height: 13, start: 0, length: label.length }],\n'
+     '          150, "JetBrainsMono-Regular", false);\n'
+     '      }\n'
+     '    }\n'
+     '    g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;\n'
+     '    return applied;',
+     'const statusValue = statusNode?.getAttribute?.'),
+    ('settings switch centering reads its semantic state',
+     '      const label = String(statusNode?.textContent || "");\n'
+     '      if (target && label.startsWith("STATUS INFO ")) {',
+     '      const statusValue = statusNode?.getAttribute?.("data-spectr-status-info-toggle");\n'
+     '      const label = statusValue === "off" ? "STATUS INFO OFF" : "STATUS INFO ON";\n'
+     '      if (target && statusNode) {',
+     'const statusValue = statusNode?.getAttribute?.'),
+    ('settings switch centers direct text-bearing targets',
+     '      if (target && statusNode) {\n'
+     '        const id = String(target.id);',
+     '      const targetId = target?.id || statusNode?.__pulpTextTargetId;\n'
+     '      if (targetId && statusNode) {\n'
+     '        const id = String(targetId);',
+     'const targetId = target?.id || statusNode?.__pulpTextTargetId'),
+    ('settings switch text accounts for the one-pixel border inset',
+     '        if (typeof g5.setLeft === "function") g5.setLeft(id, 0);\n'
+     '        if (typeof g5.setTop === "function") g5.setTop(id, 0);',
+     '        if (typeof g5.setLeft === "function") g5.setLeft(id, -1);\n'
+     '        if (typeof g5.setTop === "function") g5.setTop(id, -1);',
+     'g5.setLeft(id, -1)'),
+    ('settings title keeps the captured font authority',
+     '    g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;\n'
+     '    return applied;',
+     '    if (activeCapturedState === "settings") {\n'
+     '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-close]");\n'
+     '      const titleId = titleNode?.__pulpTextTargetId;\n'
+     '      const titleBinding = Array.isArray(metadata?.text_bindings)\n'
+     '        ? metadata.text_bindings.find((binding) => binding.text === "SETTINGS") : null;\n'
+     '      if (titleId && titleBinding && typeof g5.setFontFamily === "function") {\n'
+     '        g5.setFontFamily(String(titleId), materializedRuntimeFontStack(titleBinding));\n'
+     '        if (typeof g5.setFontSize === "function") g5.setFontSize(String(titleId), 14);\n'
+     '        if (typeof g5.setFontWeight === "function") g5.setFontWeight(String(titleId), 600);\n'
+     '        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(titleId), 2);\n'
+     '      }\n'
+     '    }\n'
+     '    g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;\n'
+     '    return applied;',
+     'const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]")'),
+    ('settings title font targets the authored text node',
+     '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-close]");',
+     '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");',
+     'querySelector?.("[data-spectr-settings-title]")'),
+    ('settings title font reaches direct and anonymous text targets',
+     '      const titleId = titleNode?.__pulpTextTargetId;',
+     '      const titleTargets = Array.isArray(titleNode?.__pulpAnonymousTextTargets)\n'
+     '        ? titleNode.__pulpAnonymousTextTargets : [];\n'
+     '      const titleId = titleNode?.__pulpTextTargetId || titleTargets[0]?.id;',
+     'const titleId = titleNode?.__pulpTextTargetId || titleTargets[0]?.id'),
 ]
 
 
@@ -1164,6 +1782,22 @@ def main():
         print('written', PATH)
     else:
         print('no change needed')
+
+    runtime_raw = open(RUNTIME_PATH, encoding='utf-8').read()
+    runtime_changed = False
+    for label, old, new, sentinel in RUNTIME_EDITS:
+        if sentinel in runtime_raw:
+            print('already applied ', label)
+            continue
+        count = runtime_raw.count(old)
+        if count != 1:
+            sys.exit(f'FAIL {label}: runtime patch point occurs {count} times')
+        runtime_raw = runtime_raw.replace(old, new)
+        runtime_changed = True
+        print('applied         ', label)
+    if runtime_changed:
+        open(RUNTIME_PATH, 'w', encoding='utf-8').write(runtime_raw)
+        print('written', RUNTIME_PATH)
 
 
 if __name__ == '__main__':

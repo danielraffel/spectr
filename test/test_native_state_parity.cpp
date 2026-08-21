@@ -13,6 +13,7 @@
 #include <pulp/view/window_host.hpp>
 #include <pulp/view/widgets.hpp>
 #include <pulp/view/widgets/svg_rect.hpp>
+#include <pulp/view/widget_bridge.hpp>
 
 #include <algorithm>
 #include <array>
@@ -802,7 +803,8 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     }
 
     rig.resize(792, 516);
-    for (const auto text : {"CLEAR", "SCULPT ▾", "PEAK ▾", "PRESETS ▾"}) {
+    for (const auto text : {"CLEAR", "SCULPT ▾", "PEAK ▾"}) {
+        CAPTURE(text);
         const auto* label = find_label(*rig.root, text);
         REQUIRE(label != nullptr);
         CHECK(label->font_size() >= 10.0f);
@@ -812,24 +814,32 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         REQUIRE(target != nullptr);
         CHECK(target->bounds().height >= 24.0f);
     }
+    const auto* selected_preset = find_label(*rig.root, "FLAT ▾");
+    if (selected_preset == nullptr)
+        selected_preset = find_label(*rig.root, "PRESETS ▾");
+    REQUIRE(selected_preset != nullptr);
+    CHECK(selected_preset->font_size() >= 10.0f);
+    auto* preset_target = selected_preset->parent();
+    while (preset_target != nullptr && !preset_target->on_click)
+        preset_target = preset_target->parent();
+    REQUIRE(preset_target != nullptr);
+    CHECK(preset_target->bounds().height >= 24.0f);
 
     activate(rig, "[data-spectr-settings-open]");
     require_runtime_contract(
         rig,
-        // Under the pin the panel keeps its AUTHORED height (679) at every host
-        // size and paint scales it, so `scroll_reachable` comes from the design
-        // -- 684 of content in a 679 viewport -- not from squeezing the panel to
-        // fit the window. The previous expectation of 464.4 was the compact
-        // branch constraining it to a 792x516 host; that branch no longer runs,
-        // and a height that tracked the host would mean the reflow is back.
+        // Under the pin the panel keeps its authored height at every host size.
+        // Its live child-derived content extent must fit without clipping, so
+        // the native ScrollView has no reachable false-scroll range.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height === 684 && s.scroll_reachable === true"
+        " && s.content_height <= s.height && s.scroll_reachable === false"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
         "settings panel did not keep its authored geometry under the pin");
     capture(rig, directory, "minimum-settings", 792, 516);
-    const auto* settings_title = find_label(*rig.root, "SETTINGS");
+    const auto* settings_title = find_label(
+        *rig.root, "SETTINGS ×");
     REQUIRE(settings_title != nullptr);
     auto* settings_scroll = const_cast<View*>(
         static_cast<const View*>(settings_title));
@@ -850,7 +860,8 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     CHECK(scroll_view->border_color().a8() == 26);
     CHECK(scroll_view->border_width() == Catch::Approx(1.0f));
     CHECK(scroll_view->corner_radius() == Catch::Approx(8.0f));
-    CHECK(scroll_view->content_size().height == Catch::Approx(684.0f));
+    CHECK(scroll_view->content_size().height
+          <= scroll_view->bounds().height + 0.5f);
     // Authored height at every host size -- the pin scales it at paint, so the
     // panel is never squeezed to the window. 464.4 was the compact branch
     // fitting it into a 792x516 host; a height that tracks the host now would
@@ -858,10 +869,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     CHECK(scroll_view->bounds().height == Catch::Approx(679.0f).margin(0.1f));
     scroll_view->set_scroll(0.0f, 684.0f);
     settle(rig.clock, 4);
-    // Scrollable by exactly the design's overflow: 684 of content in a 679
-    // viewport. The old > 200 expectation only held while the viewport was
-    // squeezed to 464.4 and the overflow was correspondingly large.
-    CHECK(scroll_view->scroll_y() == Catch::Approx(5.0f).margin(0.5f));
+    CHECK(scroll_view->scroll_y() == Catch::Approx(0.0f).margin(0.1f));
     const auto* response_label = find_label(*rig.root, "Response");
     REQUIRE(response_label != nullptr);
     const auto response_point = root_point(
@@ -951,9 +959,9 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     };
 
     dispatch_minimap("pointermove", "left");
-    CHECK(surface->cursor() == View::CursorStyle::grab);
+    CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
     dispatch_minimap("pointermove", "right");
-    CHECK(surface->cursor() == View::CursorStyle::grab);
+    CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
     dispatch_minimap("pointerdown", "window");
     CHECK(surface->cursor() == View::CursorStyle::grabbing);
     dispatch_minimap("pointermove", "window");
@@ -1066,6 +1074,120 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
         throw new Error('replacement hover caused an intermediate blank repaint');
     })();)js", "spectr-native-band-drag-react-budget");
     settle(rig.clock, 4);
+}
+
+TEST_CASE("native semantic popup navigation owns one visible highlight and selection",
+          "[native-n1][state-parity][dropdown]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    const auto dispatch = [&](pulp::view::KeyCode key) {
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(key), pulp::view::kModNone, true));
+        settle(rig.clock, 6);
+    };
+    const auto focus_and_open = [&] {
+        rig.bridge().load_script(
+            "document.querySelector('[data-spectr-menu-root=\"bands\"] "
+            "[data-spectr-menu-trigger]').focus()",
+            "spectr-native-focus-band-trigger");
+        dispatch(pulp::view::KeyCode::down);
+    };
+
+    focus_and_open();
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-pulp-popup-active=\"true\"]')?.textContent.trim() === '32'",
+        "ArrowDown did not open with a visible authoritative highlight");
+    dispatch(pulp::view::KeyCode::down);
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-pulp-popup-active=\"true\"]')?.textContent.trim() === '40'",
+        "ArrowDown did not paint the same authoritative highlight as pointer hover");
+    dispatch(pulp::view::KeyCode::enter);
+    require_app_state(rig, "s.settings.bandCount === 40",
+                      "Enter did not invoke the highlighted option callback");
+    REQUIRE(spectr::visible_count(rig.processor.layout()) == 40);
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-spectr-menu-root=\"bands\"] [data-spectr-menu-options]')",
+        "Enter selected but did not close the popup");
+    require_runtime_contract(
+        rig,
+        "(() => { const text = document.querySelector('[data-spectr-menu-root=\"bands\"] "
+        "[data-spectr-menu-trigger] .tnum')?.textContent || ''; "
+        "if (!text.includes('40')) throw new Error('stale band trigger: ' + text); return true; })()",
+        "Enter selected but did not update the trigger immediately");
+
+    focus_and_open();
+    dispatch(pulp::view::KeyCode::escape);
+    REQUIRE(spectr::visible_count(rig.processor.layout()) == 40);
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-spectr-menu-root=\"bands\"] [data-spectr-menu-options]')",
+        "Escape did not dismiss without changing selection");
+
+    focus_and_open();
+    const pulp::view::Point outside{660.0f, 430.0f};
+    auto* outside_target = rig.root->hit_test(outside);
+    REQUIRE(outside_target != nullptr);
+    REQUIRE(pulp::view::transfer_input_focus(*rig.root, outside_target));
+    REQUIRE(pulp::view::deliver_mouse_down(*rig.root, outside_target, outside,
+                                           /*modifiers=*/0,
+                                           /*click_count=*/1,
+                                           /*bubble=*/true));
+    settle(rig.clock, 10);
+    REQUIRE(spectr::visible_count(rig.processor.layout()) == 40);
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-spectr-menu-root=\"bands\"] [data-spectr-menu-options]')",
+        "outside pointer did not dismiss without changing selection");
+    storage.require_unchanged();
+}
+
+TEST_CASE("native Flare keeps below-zero bands negative while pushing them outward",
+          "[native-n1][state-parity][flare]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.close();
+    for (auto& band : rig.processor.field().bands) {
+        band.gain_db = -4.0f;
+        band.muted = false;
+    }
+    rig.open();
+    require_home(rig);
+    activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-edit-mode=\"flare\"]");
+    require_app_state(rig, "s.editMode === 'flare'", "Flare mode did not become authoritative");
+
+    rig.bridge().load_script(R"js((() => {
+      const selector = '[data-spectr-filter-surface]';
+      const fire = (type, x, y, buttons) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+          clientX: x, clientY: y, pointerId: 94, button: 0, buttons
+        })) throw new Error('Flare activation failed: ' + type);
+      };
+      fire('pointerdown', 660, 430, 1);
+      fire('pointermove', 660, 350, 1);
+      fire('pointerup', 660, 350, 0);
+      if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+        globalThis.__pulpRuntimeSettle__(6);
+      const gains = globalThis.__spectrTestHooks.renderState().targetGains;
+      if (!gains.some(value => Number.isFinite(value) && value < (-4 / 24)))
+        throw new Error('Flare did not push a negative band farther below zero');
+      if (gains.some(value => Number.isFinite(value) && value > 0))
+        throw new Error('Flare flipped a below-zero band positive');
+    })();)js", "spectr-native-flare-negative");
+    settle(rig.clock, 8);
+    const auto visible = spectr::visible_count(rig.processor.layout());
+    REQUIRE(std::any_of(rig.processor.field().bands.begin(),
+                        rig.processor.field().bands.begin() + visible,
+                        [](const auto& band) { return band.gain_db < -4.01f; }));
+    REQUIRE(std::none_of(rig.processor.field().bands.begin(),
+                         rig.processor.field().bands.begin() + visible,
+                         [](const auto& band) { return band.gain_db > 0.0f; }));
+    storage.require_unchanged();
 }
 
 TEST_CASE("native frozen state atlas interactions and persistence",
@@ -1305,6 +1427,17 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     REQUIRE(std::any_of(rig.processor.field().bands.begin(),
                         rig.processor.field().bands.begin() + 32,
                         [](const auto& band) { return std::abs(band.gain_db) > 0.1f; }));
+    REQUIRE(std::any_of(rig.processor.field().bands.begin(),
+                        rig.processor.field().bands.begin() + 32,
+                        [](const auto& band) { return band.gain_db < -0.1f; }));
+    REQUIRE(std::any_of(rig.processor.field().bands.begin(),
+                        rig.processor.field().bands.begin() + 32,
+                        [](const auto& band) { return band.gain_db > 0.1f; }));
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-selected-preset]')?.textContent"
+        ".includes('DOWNWARD TILT') === true",
+        "selected factory preset name did not remain on the trigger");
     activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
     activate(rig, "[data-spectr-pattern-menu-id=\"factory:flat\"]");
     require_home(rig);
@@ -1317,7 +1450,8 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         "return s && s.width === 520 && s.height === 679"
         " && s.top === 90.5 && s.authored_skin === true; })()",
         "authored settings geometry drifted from the frozen 1320x860 capture");
-    const auto* authored_settings_title = find_label(*rig.root, "SETTINGS");
+    const auto* authored_settings_title = find_label(
+        *rig.root, "SETTINGS ×");
     REQUIRE(authored_settings_title != nullptr);
     const View* authored_settings_panel = authored_settings_title;
     while (authored_settings_panel != nullptr
@@ -1333,6 +1467,38 @@ TEST_CASE("native frozen state atlas interactions and persistence",
           == Catch::Approx(520.0f).margin(0.01f));
     CHECK(authored_settings_panel->bounds().height
           == Catch::Approx(679.0f).margin(0.01f));
+    require_app_state(rig, "s.settings.statusInfo !== false",
+                      "status info did not default on");
+    const auto require_centered_status_label = [&](std::string_view text) {
+        const auto* label = find_label(*rig.root, text);
+        REQUIRE(label != nullptr);
+        REQUIRE(label->parent() != nullptr);
+        const auto label_bounds = label->bounds();
+        const auto control_bounds = label->parent()->bounds();
+        CHECK(label_bounds.x + label_bounds.width * 0.5f
+              == Catch::Approx(control_bounds.width * 0.5f).margin(0.75f));
+        CHECK(label_bounds.y + label_bounds.height * 0.5f
+              == Catch::Approx(control_bounds.height * 0.5f).margin(0.75f));
+        REQUIRE(label->cached_line_boxes().size() == 1);
+        const auto& line = label->cached_line_boxes().front();
+        CHECK(line.left + line.width * 0.5f
+              == Catch::Approx(control_bounds.width * 0.5f).margin(0.75f));
+        CHECK(line.top + line.height * 0.5f
+              == Catch::Approx(control_bounds.height * 0.5f).margin(0.75f));
+    };
+    require_centered_status_label("STATUS INFO ON");
+    activate(rig, "[data-spectr-status-info-toggle]");
+    require_app_state(rig, "s.settings.statusInfo === false",
+                      "status info toggle did not disable messages");
+    require_centered_status_label("STATUS INFO OFF");
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-spectr-status-banner]')",
+        "disabling status info left the banner painted");
+    activate(rig, "[data-spectr-status-info-toggle]");
+    require_app_state(rig, "s.settings.statusInfo === true",
+                      "status info toggle did not restore messages");
+    require_centered_status_label("STATUS INFO ON");
     capture(rig, directory, "settings");
     activate(rig, "[data-spectr-setting-option=\"warm\"]");
     activate(rig, "[data-spectr-setting-toggle]");
@@ -1358,9 +1524,8 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
     require_state(rig, "help");
     capture(rig, directory, "help");
-    // Native document/window keyboard listeners are not yet fed by Pulp's
-    // focused-view key path. The same trigger is the product's deterministic
-    // native close interaction; Chromium separately proves Escape.
+    // Help is a persistent rail panel rather than a semantic popup. Reusing
+    // its trigger is its deterministic native close interaction.
     activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
     require_home(rig);
 
