@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
 constexpr std::string_view kAdapterDigest =
-        "7a03ccaa6f227bef48bd05a7079113ce2840904bbf4b080b8b854f8ce25aa656";
+        "113753b8a1c4bf3fcae4631d10b397771288312d238f57dc838638bbab994980";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -511,6 +511,14 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   "const t = setTimeout(() => {\\n      setVisible(false);\\n"
                   "      setText(\\\"\\\");\\n    }, 1400);")
               == 0);
+        CHECK(document.find("const generationRef = useRefChrome(0);") != document.npos);
+        CHECK(document.find("if (generation !== generationRef.current) return;")
+              != document.npos);
+        CHECK(document.find("const timer = hide(120);") != document.npos);
+        CHECK(document.find(
+                  "requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));")
+              != document.npos);
+        CHECK(document.find("shell.style.width = Math.max") == document.npos);
     }
 
     SECTION("the status banner is centered, padded, and smoothly content-sized") {
@@ -596,6 +604,15 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         // that lane fail, but only here does the SHIPPING document say so.
         CHECK(count_occurrences(document, "const commitDrawnGains = (map) => {") == 1);
         CHECK(count_occurrences(document, "commitDrawnGains(map);") == 6);
+        CHECK(count_occurrences(document, "commitMany(map, true);") == 1);
+        CHECK(count_occurrences(document, "commitMany(held, true);") == 1);
+        CHECK(count_occurrences(document, "if (!deferReact) setGains") == 2);
+        CHECK(count_occurrences(document,
+                  "setGains(targetGainsRef.current.slice());") == 1);
+        CHECK(count_occurrences(document,
+                  "reactGains: Array.from(gains)") == 1);
+        CHECK(count_occurrences(document,
+                  "updateLiveHoverStatus();") == 1);
         CHECK(count_occurrences(document, "const editBaseGain = (value, index) => {") == 1);
         CHECK(count_occurrences(document, "unmuteOnDrawRef.current") == 2);
         // No drawn-edit site may short-circuit a muted band to the sentinel

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -376,6 +377,14 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     // normal and the fail-closed construction share.
     native_published_width_ = 0;
     native_published_height_ = 0;
+    // Test-only performance fixture: seed the worst supported layout before
+    // the authored document mounts. The external harness still drives the
+    // gesture through AppKit/WindowHost; this avoids making dropdown geometry
+    // part of a Bands rendering benchmark.
+    if (const auto* fixture = std::getenv("SPECTR_BANDS_PERF_FIXTURE");
+        fixture && std::string_view{fixture} == "1") {
+        state().set_value(kParamBandCount, 64.0f);
+    }
     auto root = std::make_unique<pulp::view::View>();
     root->set_theme(pulp::view::Theme::dark());
     root->flex().direction = pulp::view::FlexDirection::column;
@@ -450,6 +459,18 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                 "if (typeof globalThis.__pulpBindMaterializedCanvases__ === 'function') "
                 "globalThis.__pulpBindMaterializedCanvases__();",
                 "spectr-materialized-bind");
+            if (const auto* fixture = std::getenv("SPECTR_BANDS_PERF_FIXTURE");
+                fixture && std::string_view{fixture} == "1") {
+                bridge->load_script(
+                    "globalThis.__pulpActivateMaterializedElement__("
+                    "'[data-spectr-menu-root=\\\"bands\\\"] [data-spectr-menu-trigger]',"
+                    "'click', null);"
+                    "globalThis.__pulpRuntimeSettle__(4);"
+                    "globalThis.__pulpActivateMaterializedElement__("
+                    "'[data-spectr-band-count=\\\"64\\\"]','click',null);"
+                    "globalThis.__pulpRuntimeSettle__(8);",
+                    "spectr-bands-perf-fixture-layout");
+            }
         } catch (const std::exception& error) {
             pulp::runtime::log_error(
                 "[Spectr native] DesignIR materialization failed: {}; editor is fail-closed",

@@ -631,7 +631,7 @@ window.FilterBank = FilterBank;`,
       console.error('[Spectr] native direct-edit publication failed', error);
     });
   };
-  const commitGain = (idx, value) => {
+  const commitGain = (idx, value, deferReact = false) => {
     // A real pointer edit is authoritative even if it arrives before the
     // hydration echo-suppression effect has consumed its one-shot latch.
     nativeEditPendingRef.current = true;
@@ -645,14 +645,14 @@ window.FilterBank = FilterBank;`,
       unmutePulseRef.current[idx] = 1;
     }
     targetGainsRef.current[idx] = value;
-    setGains(prev => {
+    if (!deferReact) setGains(prev => {
       const nxt = prev.slice();
       nxt[idx] = value;
       return nxt;
     });
     queueNativeProcessingStatePublication();
   };
-  const commitMany = (map) => {
+  const commitMany = (map, deferReact = false) => {
     nativeEditPendingRef.current = true;
     const nextTarget = targetGainsRef.current.slice();
     for (const [k, v] of map) {
@@ -666,7 +666,7 @@ window.FilterBank = FilterBank;`,
       nextTarget[k] = v;
     }
     targetGainsRef.current = nextTarget;
-    setGains(prev => {
+    if (!deferReact) setGains(prev => {
       const nextState = prev.slice();
       for (const [k, v] of map) nextState[k] = v;
       return nextState;
@@ -683,11 +683,11 @@ window.FilterBank = FilterBank;`,
   // through commitMany and are deliberately unaffected: this is a policy for
   // drawing, not a veto on saying "mute".
   const commitDrawnGains = (map) => {
-    if (unmuteOnDrawRef.current) { commitMany(map); return; }
+    if (unmuteOnDrawRef.current) { commitMany(map, true); return; }
     const held = new Map();
     for (const [index, value] of map)
       held.set(index, isMuted(targetGainsRef.current[index]) ? -Infinity : value);
-    commitMany(held);
+    commitMany(held, true);
   };
   // A muted band's authored gain is stashed, not destroyed. Modes that scale or
   // blend an existing value need a finite operand or -Infinity swallows the
@@ -2225,7 +2225,7 @@ window.PatternManager = PatternManager;`,
         const restored = Number.isFinite(mutedGainDbRef.current[index])
           ? clamp(mutedGainDbRef.current[index] / 24, -1, 1) : 0;
         commitGain(index, shouldMute ? -Infinity
-          : (isMuted(current) ? restored : current));
+          : (isMuted(current) ? restored : current), true);
       };
       brush.paint(band);
       pointerRef.current = brush;
@@ -2407,7 +2407,7 @@ window.PatternManager = PatternManager;`,
     replaceSpectrSource(
       '      onPointerLeave={() => setHover(null)}',
       String.raw`      onPointerLeave={() => {
-        setHover(null);
+        updatePointerHover(null);
         if (!pointerRef.current || !pointerRef.current.mode)
           wrapRef.current.style.cursor = 'default';
       }}`,
@@ -2658,6 +2658,139 @@ window.PatternManager = PatternManager;`,
       "background: active ? 'rgba(120,180,255,0.16)' : 'transparent',",
       "background: active ? 'rgba(120,180,255,0.16)' : 'rgba(255,255,255,0.025)',",
       'settings dropdown inactive items retain a surface');
+
+    // Pointer drawing owns refs and native state continuously. React state is
+    // a semantic snapshot, not the paint clock: publishing it for every raw
+    // sample reconciles the full authored tree and stalls the next sample.
+    replaceSpectrSource(
+      "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }\n  const hoverBand = hover && !hover.mini ? hover.band : -1;",
+      String.raw`  const [hover, setHover] = useState(null); // { band, freq, db, x, y }
+  const hoverRef = useRef(null);
+  const hoverBand = hover && !hover.mini ? hover.band : -1;
+  const updatePointerHover = next => {
+    hoverRef.current = next;
+    if (!pointerRef.current || !pointerRef.current.mode) setHover(next);
+  };
+  const liveHoverLabel = current => {
+    if (!current || current.mini) return '';
+    const band = current.band;
+    const rendered = renderGainsRef.current[band];
+    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;
+    const db = isMuted(targetGainsRef.current[band]) ? '−∞' : (gv * 24).toFixed(1);
+    return window.SpectrFreq.fmt(bandCenterFreq(band)) + 'Hz   '
+      + db + (db === '−∞' ? '' : ' dB') + '   BAND ' + (band + 1) + '/' + N;
+  };
+  const updateLiveHoverStatus = () => {
+    const current = hoverRef.current;
+    const pointer = pointerRef.current;
+    if (!current || current.mini || !pointer
+        || (pointer.mode !== 'gain' && pointer.mode !== 'mute-brush')) return;
+    const label = liveHoverLabel(current);
+    const text = document.querySelector('[data-spectr-status-text]');
+    if (!text) return;
+    text.textContent = label;
+  };`,
+      'drawing keeps live hover outside React reconciliation');
+    replaceSpectrSource(
+      '      (renderAllRef.current || renderAll)();',
+      '      (renderAllRef.current || renderAll)();\n      updateLiveHoverStatus();',
+      'live drawing status follows the paint clock');
+    replaceSpectrSource(
+      "    if (!hover || hover.mini) return;\n    const { x } = hover;",
+      "    const currentHover = hoverRef.current;\n    if (!currentHover || currentHover.mini) return;\n    const { x } = currentHover;",
+      'hover guide reads the pointer-owned ref');
+    replaceSpectrSource(
+      String.raw`    if (mm) {
+      setHover({ mini: mm, x, y, band: -1 });`,
+      String.raw`    if (mm) {
+      updatePointerHover({ mini: mm, x, y, band: -1 });`,
+      'minimap hover uses the pointer-owned ref');
+    replaceSpectrSource(
+      "      setHover({ band: bandH, x, y });\n      wrapRef.current.style.cursor = 'crosshair';",
+      "      updatePointerHover({ band: bandH, x, y });\n      wrapRef.current.style.cursor = 'crosshair';",
+      'band hover uses the pointer-owned ref');
+    replaceSpectrSource(
+      "      setHover(null);\n      wrapRef.current.style.cursor = 'default';",
+      "      updatePointerHover(null);\n      wrapRef.current.style.cursor = 'default';",
+      'idle hover clearing uses the pointer-owned ref');
+    replaceSpectrSource(
+      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize'))
+      wrapRef.current.style.cursor = 'grab';
+    if (!p || !p.mode) {
+      setMarquee(null);`,
+      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize'))
+      wrapRef.current.style.cursor = 'grab';
+    if (p && (p.mode === 'gain' || p.mode === 'mute-brush')) {
+      setGains(targetGainsRef.current.slice());
+      setHover(hoverRef.current);
+      if (onStatus) onStatus(liveHoverLabel(hoverRef.current));
+    }
+    if (!p || !p.mode) {
+      setMarquee(null);`,
+      'pointer release publishes one final React snapshot');
+    replaceSpectrSource(
+      '      gains: Array.from(renderGainsRef.current),\n      targetGains: Array.from(targetGainsRef.current),',
+      '      gains: Array.from(renderGainsRef.current),\n      reactGains: Array.from(gains),\n      targetGains: Array.from(targetGainsRef.current),',
+      'browser oracle exposes the semantic React snapshot');
+    replaceSpectrSource(
+      String.raw`  const shownRef = useRefChrome('');
+  useEffectChrome(() => {
+    const display = message ? message.split('|')[0].trim() : '';
+    if (!display) {
+      setVisible(false);
+      setText('');
+      shownRef.current = '';
+      return;
+    }
+    // One slot, one message. A replacement fades the outgoing text out before
+    // the incoming text fades in, so a burst reads as a single banner changing
+    // rather than two messages stacking.
+    const replacing = !!shownRef.current && shownRef.current !== display;
+    const timers = [];
+    if (replacing) {
+      setVisible(false);
+      timers.push(setTimeout(() => {
+        setText(display);
+        setVisible(true);
+      }, 150));
+    } else {
+      setText(display);
+      setVisible(true);
+    }
+    shownRef.current = display;
+    timers.push(setTimeout(() => {
+      setVisible(false);
+      setText('');
+      shownRef.current = '';
+    }, replacing ? 1550 : 1400));
+    return () => timers.forEach(clearTimeout);
+  }, [message]);`,
+      String.raw`  const shownRef = useRefChrome('');
+  const generationRef = useRefChrome(0);
+  useEffectChrome(() => {
+    const generation = ++generationRef.current;
+    const display = message ? message.split('|')[0].trim() : '';
+    const hide = delay => setTimeout(() => {
+      if (generation !== generationRef.current) return;
+      setVisible(false);
+      setText('');
+      shownRef.current = '';
+      requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    }, delay);
+    if (!display) {
+      const timer = hide(120);
+      return () => clearTimeout(timer);
+    }
+    // New truth replaces immediately. A brief clear grace prevents pointer
+    // boundary churn from flashing a blank slot, and the generation check
+    // prevents an older timer from erasing newer content.
+    setText(display);
+    setVisible(true);
+    shownRef.current = display;
+    const timer = hide(1400);
+    return () => clearTimeout(timer);
+  }, [message]);`,
+      'status clear is cancellable and repaints its old bounds');
 
     const resourceScript = '<script>window.__resources = ' +
       JSON.stringify(resourceMap).split('</' + 'script>').join('<\\/' + 'script>') +

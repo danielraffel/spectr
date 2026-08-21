@@ -1,4 +1,6 @@
 #include "spectr/spectr.hpp"
+
+#include <pulp/runtime/trace.hpp>
 #if !defined(SPECTR_NATIVE_EDITOR)
 #include "spectr/ui/editor_view.hpp"
 #endif
@@ -145,15 +147,22 @@ ProcessingStateSnapshot Spectr::processing_state_snapshot() const noexcept {
 bool Spectr::replace_processing_state(const BandField& field,
                                       const Viewport& viewport,
                                       Layout layout) noexcept {
+    PULP_TRACE_SCOPE_NAMED("state", "spectr_replace_processing_state");
     if (!viewport.valid()) return false;
     {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         field_ = field;
         viewport_ = viewport;
         layout_ = layout;
-        publish_processing_state_();
+        {
+            PULP_TRACE_SCOPE_NAMED("state", "spectr_mask_publish");
+            publish_processing_state_();
+        }
     }
-    sync_params_from_field();
+    {
+        PULP_TRACE_SCOPE_NAMED("state", "spectr_host_param_sync");
+        sync_params_from_field();
+    }
     return true;
 }
 

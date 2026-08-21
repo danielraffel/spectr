@@ -963,6 +963,57 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     activate(rig, "[data-spectr-filter-surface]", "pointermove",
              R"js({clientX:660,clientY:430,pointerId:72,button:0,buttons:0})js");
     CHECK(surface->cursor() == View::CursorStyle::crosshair);
+
+    rig.bridge().load_script(R"js((() => {
+      const selector = '[data-spectr-filter-surface]';
+      const hooks = globalThis.__spectrTestHooks;
+      const before = hooks.renderState().reactGains.slice();
+      const fire = (type, x, y, buttons) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+          clientX: x, clientY: y, pointerId: 73, button: 0, buttons
+        })) throw new Error('band drag activation failed: ' + type);
+      };
+      fire('pointerdown', 660, 430, 1);
+      fire('pointermove', 700, 365, 1);
+      if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+        globalThis.__pulpRuntimeSettle__(2);
+      const during = hooks.renderState();
+      if (during.targetGains.every((value, index) => value === before[index]))
+        throw new Error('band drag did not update live target');
+      if (during.reactGains.some((value, index) => value !== before[index]))
+        throw new Error('band drag reconciled React state before release');
+      const status = document.querySelector('[data-spectr-status-text]');
+      if (!status || !status.textContent.includes('BAND'))
+        throw new Error('band drag did not update live hover status');
+      fire('pointerup', 700, 365, 0);
+      if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+        globalThis.__pulpRuntimeSettle__(4);
+      const released = hooks.renderState();
+      if (released.reactGains.some((value, index) =>
+          Math.abs(value - released.targetGains[index]) > 1e-9))
+        throw new Error('band release did not publish final React state');
+
+      // A transient leave between related drag/hover updates must not flash an
+      // empty banner, and its stale clear timer must not erase the replacement.
+      let repaintSignals = 0;
+      window.addEventListener('resize', () => { repaintSignals += 1; });
+      fire('pointerleave', 700, 365, 0);
+      if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+        globalThis.__pulpRuntimeSettle__(4);
+      fire('pointermove', 720, 350, 0);
+      if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+        globalThis.__pulpRuntimeSettle__(12);
+      if (!status.textContent.includes('BAND'))
+        throw new Error('stale status clear erased replacement hover');
+
+      // The materialized test clock intentionally does not advance wall-clock
+      // timers. The source contract separately pins the eventual hide's resize
+      // invalidation; this executed assertion covers cancellation of the stale
+      // clear while the replacement remains immediately truthful.
+      if (repaintSignals != 0)
+        throw new Error('replacement hover caused an intermediate blank repaint');
+    })();)js", "spectr-native-band-drag-react-budget");
+    settle(rig.clock, 4);
 }
 
 TEST_CASE("native frozen state atlas interactions and persistence",

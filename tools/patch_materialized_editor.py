@@ -151,6 +151,7 @@ EDITS = [
      '      rafRef.current = requestAnimationFrame(draw);\n'
      '    };',
      '      (renderAllRef.current || renderAll)();\n'
+     '      updateLiveHoverStatus();\n'
      '      rafRef.current = requestAnimationFrame(draw);\n'
      '    };'),
 
@@ -309,13 +310,13 @@ EDITS = [
      '  };\n'
      '  const commitDrawnGains = (map) => {\n'
      '    if (unmuteOnDrawRef.current) {\n'
-     '      commitMany(map);\n'
+     '      commitMany(map, true);\n'
      '      return;\n'
      '    }\n'
      '    const held = /* @__PURE__ */ new Map();\n'
      '    for (const [index, value] of map)\n'
      '      held.set(index, isMuted(targetGainsRef.current[index]) ? -Infinity : value);\n'
-     '    commitMany(held);\n'
+     '    commitMany(held, true);\n'
      '  };\n'
      '  const editBaseGain = (value, index) => {\n'
      '    if (!isMuted(value)) return value;\n'
@@ -665,16 +666,307 @@ EDITS = [
      '          wrapRef.current.style.cursor = "default";\n'
      '      },'),
 
+    ('draw commits defer React state until release',
+     '  const commitGain = (idx, value) => {',
+     '  const commitGain = (idx, value, deferReact = false) => {'),
+
+    ('single gain commit can skip React reconciliation',
+     '    setGains((prev) => {\n'
+     '      const nxt = prev.slice();\n'
+     '      nxt[idx] = value;\n'
+     '      return nxt;\n'
+     '    });\n'
+     '    queueNativeProcessingStatePublication();',
+     '    if (!deferReact) setGains((prev) => {\n'
+     '      const nxt = prev.slice();\n'
+     '      nxt[idx] = value;\n'
+     '      return nxt;\n'
+     '    });\n'
+     '    queueNativeProcessingStatePublication();'),
+
+    ('multi gain commits defer React state until release',
+     '  const commitMany = (map) => {',
+     '  const commitMany = (map, deferReact = false) => {'),
+
+    ('multi gain commit can skip React reconciliation',
+     '    targetGainsRef.current = nextTarget;\n'
+     '    setGains((prev) => {',
+     '    targetGainsRef.current = nextTarget;\n'
+     '    if (!deferReact) setGains((prev) => {'),
+
+    ('unmuted drawing defers React reconciliation',
+     '      commitMany(map);\n'
+     '      return;',
+     '      commitMany(map, true);\n'
+     '      return;'),
+
+    ('held-muted drawing defers React reconciliation',
+     '    commitMany(held);\n'
+     '  };\n'
+     '  const editBaseGain',
+     '    commitMany(held, true);\n'
+     '  };\n'
+     '  const editBaseGain'),
+
+    ('mute brush defers React reconciliation',
+     '        commitGain(index, shouldMute ? -Infinity : isMuted(current) ? restored : current);',
+     '        commitGain(index, shouldMute ? -Infinity : isMuted(current) ? restored : current, true);'),
+
+    ('drawing keeps live hover outside React reconciliation',
+     '  const [hover, setHover] = useState(null);\n'
+     '  const hoverBand = hover && !hover.mini ? hover.band : -1;',
+     '  const [hover, setHover] = useState(null);\n'
+     '  const hoverRef = useRef(null);\n'
+     '  const hoverBand = hover && !hover.mini ? hover.band : -1;\n'
+     '  const updatePointerHover = (next) => {\n'
+     '    hoverRef.current = next;\n'
+     '    if (!pointerRef.current || !pointerRef.current.mode) setHover(next);\n'
+     '  };\n'
+     '    if (!pointerRef.current || !pointerRef.current.mode) setHover(next);\n'
+     '  };\n'
+     '  const updateLiveHoverStatus = () => {\n'
+     '    const current = hoverRef.current;\n'
+     '    const pointer = pointerRef.current;\n'
+     '    if (!current || current.mini || !pointer || pointer.mode !== "gain" && pointer.mode !== "mute-brush") return;\n'
+     '    const band = current.band;\n'
+     '    const rendered = renderGainsRef.current[band];\n'
+     '    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;\n'
+     '    const db = isMuted(targetGainsRef.current[band]) ? "\\u2212\\u221E" : (gv * 24).toFixed(1);\n'
+     '    const label = `${window.SpectrFreq.fmt(bandCenterFreq(band))}Hz   ${db}${db === "\\u2212\\u221E" ? "" : " dB"}   BAND ${band + 1}/${N}`;\n'
+     '    const shell = document.querySelector("[data-spectr-status-shell]");\n'
+     '    const text = document.querySelector("[data-spectr-status-text]");\n'
+     '    if (!shell || !text) return;\n'
+     '    text.textContent = label;\n'
+     '    shell.dataset.spectrStatusBanner = "true";\n'
+     '    shell.style.width = Math.max(96, Math.min(520, label.length * 8 + 28)) + "px";\n'
+     '    shell.style.opacity = "1";\n'
+     '    shell.style.background = "rgba(12,16,22,0.92)";\n'
+     '    shell.style.borderColor = "rgba(180,210,255,0.3)";\n'
+     '    shell.style.color = "rgba(200,220,255,0.95)";\n'
+     '  };'),
+
+    ('live drawing status follows the paint clock',
+     '      (renderAllRef.current || renderAll)();\n'
+     '      rafRef.current = requestAnimationFrame(draw);',
+     '      (renderAllRef.current || renderAll)();\n'
+     '      updateLiveHoverStatus();\n'
+     '      rafRef.current = requestAnimationFrame(draw);'),
+
+    ('hover guide reads the pointer-owned ref',
+     '    if (!hover || hover.mini) return;\n'
+     '    const { x } = hover;',
+     '    const currentHover = hoverRef.current || hover;\n'
+     '    if (!currentHover || currentHover.mini) return;\n'
+     '    const { x } = currentHover;'),
+
+    ('minimap hover uses the pointer-owned ref',
+     '    if (mm) {\n'
+     '      setHover({ mini: mm, x, y, band: -1 });',
+     '    if (mm) {\n'
+     '      updatePointerHover({ mini: mm, x, y, band: -1 });'),
+
+    ('band hover uses the pointer-owned ref',
+     '      setHover({ band: bandH, x, y });\n'
+     '      wrapRef.current.style.cursor = "crosshair";',
+     '      updatePointerHover({ band: bandH, x, y });\n'
+     '      wrapRef.current.style.cursor = "crosshair";'),
+
+    ('idle hover clearing uses the pointer-owned ref',
+     '      setHover(null);\n'
+     '      wrapRef.current.style.cursor = "default";',
+     '      updatePointerHover(null);\n'
+     '      wrapRef.current.style.cursor = "default";'),
+
+    ('pointer release publishes one final React snapshot',
+     '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize"))\n'
+     '      wrapRef.current.style.cursor = "grab";\n'
+     '    if (!p || !p.mode) {\n'
+     '      setMarquee(null);',
+     '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize"))\n'
+     '      wrapRef.current.style.cursor = "grab";\n'
+     '    if (p && (p.mode === "gain" || p.mode === "mute-brush")) {\n'
+     '      setGains(targetGainsRef.current.slice());\n'
+     '      setHover(hoverRef.current);\n'
+     '    }\n'
+     '    if (!p || !p.mode) {\n'
+     '      setMarquee(null);'),
+
+    ('browser oracle exposes the semantic React snapshot',
+     '      gains: Array.from(renderGainsRef.current),\n'
+     '      targetGains: Array.from(targetGainsRef.current),',
+     '      gains: Array.from(renderGainsRef.current),\n'
+     '      reactGains: Array.from(gains),\n'
+     '      targetGains: Array.from(targetGainsRef.current),'),
+
+    ('live hover label has one immediate source',
+     '    if (!pointerRef.current || !pointerRef.current.mode) setHover(next);\n'
+     '  };\n'
+     '  const updateLiveHoverStatus = () => {\n'
+     '    const current = hoverRef.current;\n'
+     '    const pointer = pointerRef.current;',
+     '    if (!pointerRef.current || !pointerRef.current.mode) setHover(next);\n'
+     '  };\n'
+     '  const liveHoverLabel = (current) => {\n'
+     '    if (!current || current.mini) return "";\n'
+     '    const band = current.band;\n'
+     '    const rendered = renderGainsRef.current[band];\n'
+     '    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;\n'
+     '    const db = isMuted(targetGainsRef.current[band]) ? "\\u2212\\u221E" : (gv * 24).toFixed(1);\n'
+     '    return window.SpectrFreq.fmt(bandCenterFreq(band)) + "Hz   " + db + (db === "\\u2212\\u221E" ? "" : " dB") + "   BAND " + (band + 1) + "/" + N;\n'
+     '  };\n'
+     '  const updateLiveHoverStatus = () => {\n'
+     '    const current = hoverRef.current;\n'
+     '    const pointer = pointerRef.current;'),
+
+    ('live hover status reuses the current label',
+     '    const band = current.band;\n'
+     '    const rendered = renderGainsRef.current[band];\n'
+     '    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;\n'
+     '    const db = isMuted(targetGainsRef.current[band]) ? "\\u2212\\u221E" : (gv * 24).toFixed(1);\n'
+     '    const label = `${window.SpectrFreq.fmt(bandCenterFreq(band))}Hz   ${db}${db === "\\u2212\\u221E" ? "" : " dB"}   BAND ${band + 1}/${N}`;',
+     '    const label = liveHoverLabel(current);'),
+
+    ('live status leaves visibility chrome React-owned',
+     '    text.textContent = label;\n'
+     '    shell.dataset.spectrStatusBanner = "true";\n'
+     '    shell.style.width = Math.max(96, Math.min(520, label.length * 8 + 28)) + "px";\n'
+     '    shell.style.opacity = "1";\n'
+     '    shell.style.background = "rgba(12,16,22,0.92)";\n'
+     '    shell.style.borderColor = "rgba(180,210,255,0.3)";\n'
+     '    shell.style.color = "rgba(200,220,255,0.95)";',
+     '    const text = document.querySelector("[data-spectr-status-text]");\n'
+     '    if (!text) return;\n'
+     '    text.textContent = label;'),
+
+    ('release returns live status ownership to React',
+     '      setGains(targetGainsRef.current.slice());\n'
+     '      setHover(hoverRef.current);\n'
+     '    }\n'
+     '    if (!p || !p.mode) {',
+     '      setGains(targetGainsRef.current.slice());\n'
+     '      setHover(hoverRef.current);\n'
+     '      if (onStatus) onStatus(liveHoverLabel(hoverRef.current));\n'
+     '    }\n'
+     '    if (!p || !p.mode) {'),
+
+    ('live status uses the materialized text surface only',
+     '    const shell = document.querySelector("[data-spectr-status-shell]");\n'
+     '    const text = document.querySelector("[data-spectr-status-text]");\n'
+     '    if (!shell || !text) return;\n'
+     '    text.textContent = label;\n'
+     '    shell.style.width = Math.max(96, Math.min(520, label.length * 8 + 28)) + "px";',
+     '    const text = document.querySelector("[data-spectr-status-text]");\n'
+     '    if (!text) return;\n'
+     '    text.textContent = label;'),
+
+    ('live status avoids descendant queries in the emitted runtime',
+     '    const shell = document.querySelector("[data-spectr-status-shell]");\n'
+     '    const text = shell && shell.querySelector("[data-spectr-status-text]");\n'
+     '    if (!shell || !text) return;\n'
+     '    text.textContent = label;\n'
+     '    shell.style.width = Math.max(96, Math.min(520, label.length * 8 + 28)) + "px";',
+     '    const text = document.querySelector("[data-spectr-status-text]");\n'
+     '    if (!text) return;\n'
+     '    text.textContent = label;'),
+
+    ('performance fixture remains outside the shipping authored state',
+     '  const [settings, setSettings] = useAppS(() => globalThis.__spectrBandsPerfFixture\n'
+     '    ? { ...defaults, bandCount: 64 } : defaults);',
+     '  const [settings, setSettings] = useAppS(defaults);'),
+
+    ('hover guide treats cleared ref as authoritative',
+     '    const currentHover = hoverRef.current || hover;',
+     '    const currentHover = hoverRef.current;'),
+
+    ('surface leave clears the pointer hover ref',
+     '      onPointerLeave: () => {\n'
+     '        setHover(null);',
+     '      onPointerLeave: () => {\n'
+     '        updatePointerHover(null);'),
+
+    ('status clear is cancellable and repaints its old bounds',
+     '  const shownRef = useRefChrome("");\n'
+     '  useEffectChrome(() => {\n'
+     '    const display = message ? message.split("|")[0].trim() : "";\n'
+     '    if (!display) {\n'
+     '      setVisible(false);\n'
+     '      setText("");\n'
+     '      shownRef.current = "";\n'
+     '      return;\n'
+     '    }\n'
+     '    const replacing = !!shownRef.current && shownRef.current !== display;\n'
+     '    const timers = [];\n'
+     '    if (replacing) {\n'
+     '      setVisible(false);\n'
+     '      timers.push(setTimeout(() => {\n'
+     '        setText(display);\n'
+     '        setVisible(true);\n'
+     '      }, 150));\n'
+     '    } else {\n'
+     '      setText(display);\n'
+     '      setVisible(true);\n'
+     '    }\n'
+     '    shownRef.current = display;\n'
+     '    timers.push(setTimeout(() => {\n'
+     '      setVisible(false);\n'
+     '      setText("");\n'
+     '      shownRef.current = "";\n'
+     '    }, replacing ? 1550 : 1400));\n'
+     '    return () => timers.forEach(clearTimeout);\n'
+     '  }, [message]);',
+     '  const shownRef = useRefChrome("");\n'
+     '  const generationRef = useRefChrome(0);\n'
+     '  useEffectChrome(() => {\n'
+     '    const generation = ++generationRef.current;\n'
+     '    const display = message ? message.split("|")[0].trim() : "";\n'
+     '    const hide = (delay) => setTimeout(() => {\n'
+     '      if (generation !== generationRef.current) return;\n'
+     '      setVisible(false);\n'
+     '      setText("");\n'
+     '      shownRef.current = "";\n'
+     '      requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));\n'
+     '    }, delay);\n'
+     '    if (!display) {\n'
+     '      const timer2 = hide(120);\n'
+     '      return () => clearTimeout(timer2);\n'
+     '    }\n'
+     '    setText(display);\n'
+     '    setVisible(true);\n'
+     '    shownRef.current = display;\n'
+     '    const timer = hide(1400);\n'
+     '    return () => clearTimeout(timer);\n'
+     '  }, [message]);'),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an
 # earlier one. These named sentinels keep reruns strict without pretending the
 # superseded intermediate text must remain in the final shipping document.
 SUPERSEDED_SENTINELS = {
+    'animation loop paints the latest canvas renderer':
+        'updateLiveHoverStatus();',
+    'drawn gain edits share one mute decision':
+        'commitMany(map, true);',
     'hover readout clears the status banner slot':
-        'if (!hover || hover.mini) return;',
+        'const hoverRef = useRef(null);',
+    'hover readout uses unified status banner':
+        'const hoverRef = useRef(null);',
+    'hover canvas keeps guide but not floating tooltip':
+        'const currentHover = hoverRef.current;',
+    'hover guide reads the pointer-owned ref':
+        'const currentHover = hoverRef.current;',
+    'minimap hover and drag cursors':
+        'updatePointerHover({ mini: mm, x, y, band: -1 });',
+    'minimap release restores grab cursor':
+        'setGains(targetGainsRef.current.slice());',
+    'pointer release publishes one final React snapshot':
+        'onStatus(liveHoverLabel(hoverRef.current));',
+    'surface leave resets idle cursor':
+        'updatePointerHover(null);',
     'status banner chrome survives the fade-out':
         '"data-spectr-status-text": "true"',
+    'status banner replaces one message at a time':
+        'const generationRef = useRefChrome(0);',
 }
 
 # Generated bindings live outside the escaped `html` string. Keep these
@@ -800,6 +1092,9 @@ def main():
     html = document['html']
     for label, new, expected in post_checks:
         if html.count(new) < expected:
+            sentinel = SUPERSEDED_SENTINELS.get(label)
+            if sentinel and sentinel in html:
+                continue
             sys.exit(f'FAIL {label}: post-check did not find the replacement')
     for label, _old, new in DOCUMENT_EDITS:
         if new not in raw:

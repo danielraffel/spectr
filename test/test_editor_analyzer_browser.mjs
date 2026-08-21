@@ -793,11 +793,29 @@ window.spectrStartOracle = () => {
       state = await spectrPublishAfter(count, 'pre-drag unmute publication');
       if (state.muted[restoredBand]) throw new Error('pre-drag tap did not unmute band');
       const preDragGain = state.gain_db[restoredBand];
+      const preDragReact = window.__spectrTestHooks.renderState().reactGains.slice();
       count = spectrStatePosts().length;
       spectrPointer(target, 'pointerdown', x, y);
       spectrPointer(target, 'pointermove', x, y - 24);
+      await spectrFrames(2);
+      const duringDrag = window.__spectrTestHooks.renderState();
+      if (duringDrag.targetGains.every((value, index) => value === preDragReact[index]))
+        throw new Error('drag did not update the live target before release');
+      if (duringDrag.reactGains.some((value, index) => value !== preDragReact[index]))
+        throw new Error('drag reconciled React state before release');
+      const firstLiveStatus = document.querySelector('[data-spectr-status-text]')?.textContent;
+      spectrPointer(target, 'pointermove', x, y - 48);
+      await spectrFrames(2);
+      const secondLiveStatus = document.querySelector('[data-spectr-status-text]')?.textContent;
+      if (!firstLiveStatus?.includes('BAND') || !secondLiveStatus?.includes('BAND')
+          || firstLiveStatus === secondLiveStatus)
+        throw new Error('live hover gain status did not follow the drag');
       spectrPointer(target, 'pointerup', x, y - 24);
       await spectrFrames(3);
+      const releasedDrag = window.__spectrTestHooks.renderState();
+      if (releasedDrag.reactGains.some((value, index) =>
+        Math.abs(value - releasedDrag.targetGains[index]) > 1e-9))
+        throw new Error('pointer release did not publish the final React snapshot');
       state = await spectrPublishAfter(count, '>3px drag publication');
       if (state.muted[restoredBand]) throw new Error('drag toggled mute');
       if (state.gain_db[restoredBand] === preDragGain)
