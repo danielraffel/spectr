@@ -966,6 +966,58 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
 
     rig.bridge().load_script(R"js((() => {
       const selector = '[data-spectr-filter-surface]';
+      const surface = document.querySelector(selector);
+      const hooks = globalThis.__spectrTestHooks;
+      const fire = (type, x, y, pointerId, buttons) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+          clientX: x, clientY: y, pointerId, button: 0, buttons
+        })) throw new Error('minimap perf activation failed: ' + type);
+      };
+      const gesture = (hit, delta, pointerId) => {
+        const before = hooks.renderState();
+        const fullMin = Math.log10(20);
+        const fullSpan = Math.log10(20000) - fullMin;
+        const innerX = 56, innerWidth = surface.clientWidth - 112;
+        const left = (before.view.lmin - fullMin) / fullSpan;
+        const right = (before.view.lmax - fullMin) / fullSpan;
+        const x = hit === 'left' ? innerX + left * innerWidth
+          : hit === 'right' ? innerX + right * innerWidth
+          : innerX + (left + right) * 0.5 * innerWidth;
+        const y = Array.from({length: surface.clientHeight}, (_, candidate) => candidate)
+          .find(candidate => hooks.minimapHit(x, candidate) === hit);
+        if (!Number.isFinite(y)) throw new Error('minimap perf hit missing: ' + hit);
+        const postCount = globalThis.__spectrNativeDispatchTrace.filter(
+          entry => entry.type === 'processing_state_set').length;
+        fire('pointerdown', x, y, pointerId, 1);
+        fire('pointermove', x + delta, y, pointerId, 1);
+        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+          globalThis.__pulpRuntimeSettle__(2);
+        const during = hooks.renderState();
+        if (during.view.lmin === before.view.lmin
+            && during.view.lmax === before.view.lmax)
+          throw new Error(hit + ' did not update the live viewport');
+        if (during.reactView.lmin !== before.reactView.lmin
+            || during.reactView.lmax !== before.reactView.lmax)
+          throw new Error(hit + ' reconciled React before release');
+        if (globalThis.__spectrNativeDispatchTrace.filter(
+              entry => entry.type === 'processing_state_set').length <= postCount)
+          throw new Error(hit + ' did not publish native viewport state');
+        fire('pointerup', x + delta, y, pointerId, 0);
+        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+          globalThis.__pulpRuntimeSettle__(4);
+        const released = hooks.renderState();
+        if (Math.abs(released.reactView.lmin - released.view.lmin) > 1e-9
+            || Math.abs(released.reactView.lmax - released.view.lmax) > 1e-9)
+          throw new Error(hit + ' release lost the final React viewport');
+      };
+      gesture('left', 40, 74);
+      gesture('right', -40, 75);
+      gesture('window', 35, 76);
+    })();)js", "spectr-native-minimap-react-budget");
+    settle(rig.clock, 4);
+
+    rig.bridge().load_script(R"js((() => {
+      const selector = '[data-spectr-filter-surface]';
       const hooks = globalThis.__spectrTestHooks;
       const before = hooks.renderState().reactGains.slice();
       const fire = (type, x, y, buttons) => {

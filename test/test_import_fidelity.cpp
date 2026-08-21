@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
 constexpr std::string_view kAdapterDigest =
-        "113753b8a1c4bf3fcae4631d10b397771288312d238f57dc838638bbab994980";
+        "c42f74b1a0091dded4b8e7b180c81f51cb02989e6b9a66cb404afce3e0e399f9";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -185,6 +185,11 @@ constexpr std::array kResizeMarkers{
     ContractMarker{"native-viewport-resize", "window.addEventListener('resize', resizeFixedDesign);"},
     ContractMarker{"fixed-design-center", "'translate(-50%, -50%) scale(' + scale + ')'"},
     ContractMarker{"resize-text-selection", "input:not([type]), input[type=\"text\"], input[type=\"search\"], textarea,"},
+    ContractMarker{"live-viewport-ref", "const [reactView, setReactView] = useState(initialView);"},
+    ContractMarker{"live-left-right-resize", "commitLiveViewport({ lmin, lmax });"},
+    ContractMarker{"live-center-pan", "commitLiveViewport({ lmin, lmax: lmin + span });"},
+    ContractMarker{"final-viewport-snapshot", "setView({ ...viewRef.current });"},
+    ContractMarker{"viewport-oracle-snapshot", "reactView: { ...reactView }"},
 };
 
 constexpr std::array kForbiddenProductResizeMarkers{
@@ -613,6 +618,16 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   "reactGains: Array.from(gains)") == 1);
         CHECK(count_occurrences(document,
                   "updateLiveHoverStatus();") == 1);
+        CHECK(count_occurrences(document,
+                  "const commitLiveViewport = (next) => {") == 1);
+        CHECK(count_occurrences(document,
+                  "commitLiveViewport({ lmin, lmax });") == 1);
+        CHECK(count_occurrences(document,
+                  "commitLiveViewport({ lmin, lmax: lmin + span });") == 1);
+        CHECK(count_occurrences(document,
+                  "setView({ ...viewRef.current });") == 1);
+        CHECK(count_occurrences(document,
+                  "reactView: { ...reactView }") == 1);
         CHECK(count_occurrences(document, "const editBaseGain = (value, index) => {") == 1);
         CHECK(count_occurrences(document, "unmuteOnDrawRef.current") == 2);
         // No drawn-edit site may short-circuit a muted band to the sentinel

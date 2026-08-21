@@ -798,6 +798,65 @@ EDITS = [
      '      reactGains: Array.from(gains),\n'
      '      targetGains: Array.from(targetGainsRef.current),'),
 
+    ('viewport keeps a live ref beside its React snapshot',
+     '  const [view, setView] = useState({ lmin: Math.log10(20), lmax: Math.log10(2e4) });',
+     '  const initialView = { lmin: Math.log10(20), lmax: Math.log10(2e4) };\n'
+     '  const [reactView, setReactView] = useState(initialView);\n'
+     '  const viewRef = useRef({ ...initialView });\n'
+     '  const view = viewRef.current;\n'
+     '  const setView = (next) => {\n'
+     '    const resolved = typeof next === "function" ? next(viewRef.current) : next;\n'
+     '    viewRef.current = { ...resolved };\n'
+     '    setReactView({ ...resolved });\n'
+     '  };'),
+
+    ('minimap viewport publishes without reconciling React',
+     '  };\n'
+     '  const commitGain = (idx, value, deferReact = false) => {',
+     '  };\n'
+     '  const commitLiveViewport = (next) => {\n'
+     '    viewRef.current.lmin = next.lmin;\n'
+     '    viewRef.current.lmax = next.lmax;\n'
+     '    queueNativeProcessingStatePublication();\n'
+     '  };\n'
+     '  // Gain commits are independent of the live viewport publication lane.\n'
+     '  const commitGain = (idx, value, deferReact = false) => {'),
+
+    ('minimap handle resize stays off the React hot path',
+     '      if (p.edge === "left") lmin = clamp(f, fullMin, lmax - 0.1);\n'
+     '      else lmax = clamp(f, lmin + 0.1, fullMax);\n'
+     '      setView({ lmin, lmax });\n'
+     '      return;',
+     '      if (p.edge === "left") lmin = clamp(f, fullMin, lmax - 0.1);\n'
+     '      else lmax = clamp(f, lmin + 0.1, fullMax);\n'
+     '      commitLiveViewport({ lmin, lmax });\n'
+     '      return;'),
+
+    ('minimap center pan stays off the React hot path',
+     '      let lmin = clamp(p.viewStart.lmin + shift, fullMin, fullMax - span);\n'
+     '      setView({ lmin, lmax: lmin + span });\n'
+     '      return;',
+     '      let lmin = clamp(p.viewStart.lmin + shift, fullMin, fullMax - span);\n'
+     '      commitLiveViewport({ lmin, lmax: lmin + span });\n'
+     '      return;'),
+
+    ('minimap release publishes one final React viewport',
+     '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize"))\n'
+     '      wrapRef.current.style.cursor = "grab";\n'
+     '    if (p && (p.mode === "gain" || p.mode === "mute-brush")) {',
+     '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize")) {\n'
+     '      setView({ ...viewRef.current });\n'
+     '      wrapRef.current.style.cursor = "grab";\n'
+     '    }\n'
+     '    if (p && (p.mode === "gain" || p.mode === "mute-brush")) {'),
+
+    ('viewport oracle exposes live and React snapshots',
+     '      view: { ...view },\n'
+     '      nVisible: N,',
+     '      view: { ...viewRef.current },\n'
+     '      reactView: { ...reactView },\n'
+     '      nVisible: N,'),
+
     ('live hover label has one immediate source',
      '    if (!pointerRef.current || !pointerRef.current.mode) setHover(next);\n'
      '  };\n'

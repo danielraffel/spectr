@@ -2733,6 +2733,62 @@ window.PatternManager = PatternManager;`,
       '      gains: Array.from(renderGainsRef.current),\n      reactGains: Array.from(gains),\n      targetGains: Array.from(targetGainsRef.current),',
       'browser oracle exposes the semantic React snapshot');
     replaceSpectrSource(
+      '  const [view, setView] = useState({ lmin: Math.log10(20), lmax: Math.log10(2e4) });',
+      String.raw`  const initialView = { lmin: Math.log10(20), lmax: Math.log10(2e4) };
+  const [reactView, setReactView] = useState(initialView);
+  const viewRef = useRef({ ...initialView });
+  const view = viewRef.current;
+  const setView = (next) => {
+    const resolved = typeof next === 'function' ? next(viewRef.current) : next;
+    viewRef.current = { ...resolved };
+    setReactView({ ...resolved });
+  };`,
+      'viewport keeps a live ref beside its React snapshot');
+    replaceSpectrSource(
+      String.raw`  };
+  const commitGain = (idx, value, deferReact = false) => {`,
+      String.raw`  };
+  const commitLiveViewport = (next) => {
+    viewRef.current.lmin = next.lmin;
+    viewRef.current.lmax = next.lmax;
+    queueNativeProcessingStatePublication();
+  };
+  // Gain commits are independent of the live viewport publication lane.
+  const commitGain = (idx, value, deferReact = false) => {`,
+      'minimap viewport publishes without reconciling React');
+    replaceSpectrSource(
+      String.raw`      if (p.edge === 'left') lmin = clamp(f, fullMin, lmax - 0.1);
+      else lmax = clamp(f, lmin + 0.1, fullMax);
+      setView({ lmin, lmax });
+      return;`,
+      String.raw`      if (p.edge === 'left') lmin = clamp(f, fullMin, lmax - 0.1);
+      else lmax = clamp(f, lmin + 0.1, fullMax);
+      commitLiveViewport({ lmin, lmax });
+      return;`,
+      'minimap handle resize stays off the React hot path');
+    replaceSpectrSource(
+      String.raw`      let lmin = clamp(p.viewStart.lmin + shift, fullMin, fullMax - span);
+      setView({ lmin, lmax: lmin + span });
+      return;`,
+      String.raw`      let lmin = clamp(p.viewStart.lmin + shift, fullMin, fullMax - span);
+      commitLiveViewport({ lmin, lmax: lmin + span });
+      return;`,
+      'minimap center pan stays off the React hot path');
+    replaceSpectrSource(
+      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize'))
+      wrapRef.current.style.cursor = 'grab';
+    if (p && (p.mode === 'gain' || p.mode === 'mute-brush')) {`,
+      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize')) {
+      setView({ ...viewRef.current });
+      wrapRef.current.style.cursor = 'grab';
+    }
+    if (p && (p.mode === 'gain' || p.mode === 'mute-brush')) {`,
+      'minimap release publishes one final React viewport');
+    replaceSpectrSource(
+      '      view: { ...view },\n      nVisible: N,',
+      '      view: { ...viewRef.current },\n      reactView: { ...reactView },\n      nVisible: N,',
+      'viewport oracle exposes live and React snapshots');
+    replaceSpectrSource(
       String.raw`  const shownRef = useRefChrome('');
   useEffectChrome(() => {
     const display = message ? message.split('|')[0].trim() : '';
