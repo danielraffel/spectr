@@ -685,13 +685,18 @@ void click_each_point_exactly_once(NativeEditorRig& rig, View& button,
                                    std::string_view glyph_text,
                                    bool capture_button) {
     REQUIRE(button.pointer_events() == View::PointerEvents::box_only);
+    const auto button_id = button.id();
     const auto points = snapshot_hit_points(button, glyph_text, capture_button);
     REQUIRE(points.size() == 7);
     for (std::size_t index = 0; index < points.size(); ++index) {
-        INFO("semantic point index " << index << " on " << button.id());
+        // Each click publishes state and may synchronously replace the React
+        // host view. Never retain or dereference the previous generation.
+        auto* current = rig.bridge().widget(button_id);
+        REQUIRE(current != nullptr);
+        INFO("semantic point index " << index << " on " << button_id);
         auto* target = rig.root->hit_test(points[index]);
         REQUIRE(target != nullptr);
-        REQUIRE(target->id() == button.id());
+        REQUIRE(target == current);
         const auto revision = rig.processor.native_editor_revision();
         rig.root->simulate_click(points[index]);
         settle(rig.clock, 12);
