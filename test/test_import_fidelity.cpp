@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
 constexpr std::string_view kAdapterDigest =
-        "c42f74b1a0091dded4b8e7b180c81f51cb02989e6b9a66cb404afce3e0e399f9";
+        "20117024a82a45472744e97c6789ec420ecd57d8cd578bc7928c5ac5e8e98dd2";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -188,7 +188,7 @@ constexpr std::array kResizeMarkers{
     ContractMarker{"live-viewport-ref", "const [reactView, setReactView] = useState(initialView);"},
     ContractMarker{"live-left-right-resize", "commitLiveViewport({ lmin, lmax });"},
     ContractMarker{"live-center-pan", "commitLiveViewport({ lmin, lmax: lmin + span });"},
-    ContractMarker{"final-viewport-snapshot", "setView({ ...viewRef.current });"},
+    ContractMarker{"final-viewport-snapshot", "setView({ ...viewRef.current });\n      wrapRef.current.style.cursor = p.mode === 'minimap-resize' ? 'ew-resize' : 'grab';"},
     ContractMarker{"viewport-oracle-snapshot", "reactView: { ...reactView }"},
 };
 
@@ -261,6 +261,9 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     const auto adapter = outer_adapter(html);
     REQUIRE_FALSE(adapter.empty());
     CHECK(pulp::runtime::sha256_hex(adapter) == kAdapterDigest);
+    auto mutated_adapter = adapter;
+    mutated_adapter.front() ^= 1;
+    CHECK(pulp::runtime::sha256_hex(mutated_adapter) != kAdapterDigest);
     CHECK(adapter.find("throw new Error('Spectr source patch point missing: ' + label)") != adapter.npos);
     CHECK(adapter.find("new DOMParser().parseFromString(template, 'text/html')") != adapter.npos);
     CHECK(adapter.find("window.Babel.transformScriptTags()") != adapter.npos);
@@ -289,7 +292,14 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("nativeAnalyzerFrame = null") != adapter.npos);
     CHECK(adapter.find("rejected malformed native analyzer frame") != adapter.npos);
     CHECK(adapter.find("data-spectr-menu-root") != adapter.npos);
-    CHECK(adapter.find("document.activeElement.click()") != adapter.npos);
+    // Native popup activation belongs to Pulp's root-scoped semantic popup
+    // dispatcher. The app contributes semantic triggers/options only and must
+    // not reintroduce the old document-global keyboard click service.
+    CHECK(adapter.find("document.activeElement.click()") == adapter.npos);
+    CHECK(adapter.find("data-spectr-menu-trigger aria-haspopup=\"listbox\"")
+          != adapter.npos);
+    CHECK(adapter.find("data-spectr-menu-options data-spectr-overlay=\"true\"")
+          != adapter.npos);
     CHECK(adapter.find("fixedDesignSurface.style.transform") != adapter.npos);
     CHECK(adapter.find("wrapRef.current.clientWidth / rect.width") != adapter.npos);
     CHECK(adapter.find("truthful mask visualization selector") != adapter.npos);
@@ -397,7 +407,12 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(structure_errors(bundle->template_html).empty());
     CHECK(patch_errors(bundle->template_html).empty());
     CHECK(gesture_errors(bundle->template_html).empty());
-    CHECK(resize_errors(adapter).empty());
+    const auto resize_contract_errors = resize_errors(adapter);
+    for (const auto& error : resize_contract_errors) {
+        INFO("resize contract error: " << error);
+        CHECK(error.empty());
+    }
+    CHECK(resize_contract_errors.empty());
 }
 
 TEST_CASE("import fidelity oracle detects payload mutations") {
