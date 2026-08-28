@@ -94,6 +94,26 @@
     window.SpectrNativeState = nativeState;
     window.SpectrNativePatterns = nativePatterns;
   }
+  const perfDiagnostics = globalThis.SpectrPerfDiagnostics || {
+    active: null,
+    enable() {
+      this.active = {
+        rawPointerSamples: 0, analyzerSamples: 0, analyzerGridHits: 0,
+        analyzerGridMisses: 0, animationFrames: 0,
+        canvasRedraws: 0, statePublications: 0,
+        frameIntervalsMs: [], drawDurationsMs: [], inputToPublicationMs: [],
+        lastFrameMs: null, latestInputMs: null,
+      };
+      return this.snapshot();
+    },
+    disable() { const result = this.snapshot(); this.active = null; return result; },
+    snapshot() {
+      if (!this.active) return null;
+      return JSON.parse(JSON.stringify(this.active));
+    },
+  };
+  globalThis.SpectrPerfDiagnostics = perfDiagnostics;
+  if (typeof window !== 'undefined') window.SpectrPerfDiagnostics = perfDiagnostics;
   const validTrace = (trace, expectedLength) => trace
     && Number.isFinite(trace.min_hz) && trace.min_hz > 0
     && Number.isFinite(trace.max_hz) && trace.max_hz > trace.min_hz
@@ -118,9 +138,9 @@
     analyzerFrame = {
       ...payload,
       visible: { ...payload.visible,
-        magnitude_db: payload.visible.magnitude_db.slice() },
+        magnitude_db: Object.freeze(payload.visible.magnitude_db.slice()) },
       overview: { ...payload.overview,
-        magnitude_db: payload.overview.magnitude_db.slice() },
+        magnitude_db: Object.freeze(payload.overview.magnitude_db.slice()) },
     };
     return true;
   };
@@ -152,6 +172,7 @@
   const analyzer = {
     native: true,
     sample(logFrequency, _time, traceName = 'visible') {
+      if (perfDiagnostics.active) perfDiagnostics.active.analyzerSamples += 1;
       if (!analyzerFrame) return 0;
       return sampleTrace(traceName === 'overview'
         ? analyzerFrame.overview : analyzerFrame.visible,
@@ -163,6 +184,18 @@
     normalizeDb(db) {
       const scale = this.scale();
       return normalizeAnalyzerDb(db, scale.floor, scale.ceiling);
+    },
+    grid(traceName, minHz, maxHz, pointCount) {
+      if (!analyzerFrame) return null;
+      const trace = traceName === 'overview'
+        ? analyzerFrame.overview : analyzerFrame.visible;
+      const close = (a, b) => Math.abs(a - b)
+        <= Math.max(0.001, Math.abs(b) * 1e-6);
+      const matches = trace.magnitude_db.length === pointCount
+          && close(trace.min_hz, minHz) && close(trace.max_hz, maxHz)
+      if (perfDiagnostics.active)
+        perfDiagnostics.active[matches ? 'analyzerGridHits' : 'analyzerGridMisses'] += 1;
+      return matches ? trace.magnitude_db : null;
     },
     project(amount, zeroY, halfH) {
       return projectAnalyzerAmount(amount, zeroY, halfH);

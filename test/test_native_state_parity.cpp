@@ -896,7 +896,11 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     REQUIRE(rig.root->on_global_key({
         .key = comma, .modifiers = primary_modifier, .is_down = true}));
     settle(rig.clock, 16);
-    require_state(rig, "settings");
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-settings-close]') !== null "
+        "&& globalThis.__pulpMaterializedMetadataDiagnostics__?.state_id === 'settings'",
+        "Settings command did not open the shipping settings surface");
     activate(rig, "[data-spectr-settings-close]");
     require_home(rig);
 
@@ -951,9 +955,15 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     };
 
     dispatch_minimap("pointermove", "left");
-    CHECK(surface->cursor() == View::CursorStyle::grab);
+    CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
     dispatch_minimap("pointermove", "right");
-    CHECK(surface->cursor() == View::CursorStyle::grab);
+    CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
+    dispatch_minimap("pointerdown", "left");
+    CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
+    dispatch_minimap("pointermove", "left");
+    CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
+    dispatch_minimap("pointerup", "left");
+    CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
     dispatch_minimap("pointerdown", "window");
     CHECK(surface->cursor() == View::CursorStyle::grabbing);
     dispatch_minimap("pointermove", "window");
@@ -963,6 +973,210 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     activate(rig, "[data-spectr-filter-surface]", "pointermove",
              R"js({clientX:660,clientY:430,pointerId:72,button:0,buttons:0})js");
     CHECK(surface->cursor() == View::CursorStyle::crosshair);
+}
+
+TEST_CASE("native owning-root keys and outside clicks drive the shipping bands menu",
+          "[native-n1][state-parity][dropdown]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    constexpr std::string_view menu_root =
+        "[data-spectr-menu-root=\"bands\"]";
+    constexpr std::string_view trigger =
+        "[data-spectr-menu-root=\"bands\"] [data-spectr-menu-trigger]";
+    const auto require_active = [&](std::string_view expected) {
+        rig.bridge().load_script(
+            std::string{"(() => { const rows = Array.from(document.querySelectorAll('"}
+                + std::string(menu_root)
+                + " [data-spectr-menu-options] button')).filter(row => !row.disabled); "
+                  "const active = globalThis.__pulpPopupDefaultState__?.activeIndex ?? -1; "
+                  "if (!(rows.length > 1 && "
+                + std::string(expected)
+                + ")) throw new Error('shipping bands menu active row mismatch: '"
+                  " + JSON.stringify({length: rows.length, active, attrs: rows.map(row => "
+                  "row.getAttribute('data-pulp-popup-active')), backgrounds: rows.map(row => "
+                  "row.style.background)})); })();",
+            "spectr-native-bands-menu-active");
+    };
+    const auto require_closed = [&] {
+        require_runtime_contract(
+            rig,
+            std::string{"document.querySelector('"} + std::string(menu_root)
+                + " [data-spectr-menu-options]') === null",
+            "shipping bands menu remained open");
+    };
+    const auto key_down = [&](pulp::view::KeyCode key) {
+        REQUIRE(rig.root->accepts_navigation_input());
+        REQUIRE(pulp::view::focused_input_under_root(*rig.root) == rig.root.get());
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(key), pulp::view::kModNone, true));
+        settle(rig.clock, 8);
+    };
+    const auto open_menu = [&] {
+        rig.bridge().load_script(
+            "(() => { const host = document.querySelector("
+            "'[data-spectr-menu-root=\"bands\"] [data-spectr-menu-trigger]'); "
+            "const button = host && (host.tagName === 'BUTTON' ? host : "
+            "document.querySelector('[data-spectr-menu-root=\"bands\"] "
+            "[data-spectr-menu-trigger] button')); "
+            "if (!button) throw new Error('bands trigger button missing'); "
+            "__dispatch__(button._id, 'pointerdown', {clientX:1,clientY:1,"
+            "pointerId:90,button:0,buttons:1}); "
+            "if (!globalThis.__pulpActivateMaterializedElement__("
+            "'[data-spectr-menu-root=\"bands\"] [data-spectr-menu-trigger]',"
+            "'click', null)) throw new Error('bands trigger activation failed'); "
+            "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+            "globalThis.__pulpRuntimeSettle__(8); })();",
+            "spectr-native-bands-menu-open");
+        settle(rig.clock, 8);
+    };
+
+    open_menu();
+    require_active("active === 0");
+
+    const auto* hover_label = find_label(*rig.root, "48");
+    REQUIRE(hover_label != nullptr);
+    REQUIRE_FALSE(hover_label->cached_line_boxes().empty());
+    const auto& hover_line = hover_label->cached_line_boxes().front();
+    rig.root->simulate_hover(root_point(*hover_label,
+        hover_line.left + hover_line.width * 0.5f,
+        hover_line.top + hover_line.height * 0.5f));
+    settle(rig.clock, 2);
+    require_active("active === 2");
+
+    // Native pointer and keyboard delivery update one authoritative highlight.
+    key_down(pulp::view::KeyCode::down);
+    require_active("active === 3");
+    const auto row_for_label = [&](std::string_view label) {
+        const View* row = find_label(*rig.root, label);
+        while (row != nullptr && !row->has_background_color()) row = row->parent();
+        return row;
+    };
+    auto* active_row = row_for_label("56");
+    auto* previous_row = row_for_label("40");
+    REQUIRE(active_row != nullptr);
+    REQUIRE(previous_row != nullptr);
+    REQUIRE(active_row->has_background_color());
+    CHECK(active_row->background_color() != previous_row->background_color());
+    key_down(pulp::view::KeyCode::end_);
+    require_active("active === rows.length - 1");
+    key_down(pulp::view::KeyCode::home);
+    require_active("active === 0");
+    key_down(pulp::view::KeyCode::up);
+    require_active("active === rows.length - 1");
+
+    key_down(pulp::view::KeyCode::escape);
+    require_closed();
+    CHECK(rig.root->accepts_navigation_input());
+    CHECK(pulp::view::focused_input_under_root(*rig.root) == rig.root.get());
+
+    open_menu();
+    key_down(pulp::view::KeyCode::down);
+    require_active("active === 1");
+    key_down(pulp::view::KeyCode::enter);
+    require_closed();
+    CHECK(rig.processor.layout() == spectr::Layout::Bands40);
+    CHECK(find_label(*rig.root, "40") != nullptr);
+    require_runtime_contract(
+        rig,
+        "(() => { const host = document.querySelector("
+        "'[data-spectr-menu-root=\"bands\"] [data-spectr-menu-trigger]'); "
+        "const button = host && (host.tagName === 'BUTTON' ? host : "
+        "document.querySelector('[data-spectr-menu-root=\"bands\"] "
+        "[data-spectr-menu-trigger] button')); "
+        "return document.activeElement === button; })()",
+        "Enter did not restore focus to the band-count trigger");
+
+    open_menu();
+    require_active("active === 0");
+    REQUIRE(rig.root->accepts_navigation_input());
+    const auto layout_before_outside = rig.processor.layout();
+    const auto field_before_outside = rig.processor.field();
+    // A real owning-root pointer sequence must reach the document listener;
+    // a JS-only dispatch would not prove native outside-click delivery.
+    rig.root->simulate_click({660.0f, 430.0f});
+    settle(rig.clock, 12);
+    require_closed();
+    CHECK(rig.processor.layout() == layout_before_outside);
+    REQUIRE(rig.processor.field().bands.size() ==
+            field_before_outside.bands.size());
+    for (std::size_t band = 0; band < field_before_outside.bands.size(); ++band) {
+        CHECK(rig.processor.field().bands[band].gain_db ==
+              Catch::Approx(field_before_outside.bands[band].gain_db));
+        CHECK(rig.processor.field().bands[band].muted ==
+              field_before_outside.bands[band].muted);
+    }
+    CHECK_FALSE(rig.root->accepts_navigation_input());
+    CHECK(pulp::view::focused_input_under_root(*rig.root) == nullptr);
+}
+
+TEST_CASE("native semantic band drag reconstructs its span without backlog",
+          "[native-n1][state-parity][responsiveness]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // The materialized semantic driver settles React/rAF after each injected
+    // event, so this is intentionally above the platform PointerCoalescer and
+    // cannot claim that 96 samples share one host frame. It still proves the
+    // shipping gesture reconstructs every crossed band and never publishes
+    // more state updates than the frames the driver actually advanced.
+    rig.bridge().load_script(R"js((() => {
+      const diagnostics = globalThis.SpectrPerfDiagnostics;
+      if (!diagnostics || typeof diagnostics.enable !== 'function')
+        throw new Error('Spectr performance diagnostics missing');
+      diagnostics.enable();
+      const selector = '[data-spectr-filter-surface]';
+      const surface = document.querySelector(selector);
+      if (!surface) throw new Error('filter surface missing');
+      const innerX = 56;
+      const innerWidth = surface.clientWidth - 112;
+      const xForBand = band => innerX + (band + 0.5) * innerWidth / 32;
+      const startX = xForBand(2), endX = xForBand(25);
+      const y = surface.clientHeight * 0.46;
+      const send = (event, x, buttons) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, event, {
+              clientX: x, clientY: y, pointerId: 93,
+              button: 0, buttons,
+            })) throw new Error('native drag event failed: ' + event);
+      };
+      send('pointerdown', startX, 1);
+      for (let sample = 1; sample <= 96; ++sample)
+        send('pointermove', startX + (endX - startX) * sample / 96, 1);
+      send('pointerup', endX, 0);
+      const beforeFrame = diagnostics.snapshot();
+      if (!beforeFrame || beforeFrame.rawPointerSamples !== 96
+          || beforeFrame.animationFrames < 96
+          || beforeFrame.statePublications > beforeFrame.animationFrames)
+        throw new Error('semantic drag cadence mismatch: '
+          + JSON.stringify(beforeFrame));
+    })();)js", "spectr-native-coalesced-drag");
+
+    rig.clock.tick(1.0f / 60.0f);
+    require_runtime_contract(
+        rig,
+        "(() => { const p = globalThis.SpectrPerfDiagnostics?.snapshot?.(); "
+        "if (p) globalThis.__spectrPublicationsAfterDrag = p.statePublications; "
+        "return p && p.rawPointerSamples === 96 "
+        "&& p.statePublications <= p.animationFrames "
+        "&& p.inputToPublicationMs.every(v => v >= 0) "
+        "&& p.inputToPublicationMs.length <= 512; })()",
+        "semantic drag exceeded its observed frame cadence");
+
+    settle(rig.clock, 4);
+    require_runtime_contract(
+        rig,
+        "(() => { const p = globalThis.SpectrPerfDiagnostics?.snapshot?.(); "
+        "return p && p.statePublications === globalThis.__spectrPublicationsAfterDrag "
+        "&& p.frameIntervalsMs.length <= 512 "
+        "&& p.drawDurationsMs.length <= 512; })()",
+        "semantic drag left a growing publication backlog");
+    for (int band = 2; band <= 25; ++band) {
+        INFO("reconstructed band " << band);
+        CHECK_FALSE(rig.processor.field().bands[band].muted);
+        CHECK(std::isfinite(rig.processor.field().bands[band].gain_db));
+    }
 }
 
 TEST_CASE("native frozen state atlas interactions and persistence",

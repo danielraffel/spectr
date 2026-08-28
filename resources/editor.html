@@ -236,14 +236,32 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // Release 1 has one real spectral engine. Do not preserve Claude Design's
     // visual-only IIR/FFT/Hybrid selector as if those were audible modes.
+    const supersededSpectrSource = {
+      // The imported source already contains the later active-drag cursor
+      // implementation, which subsumes the earlier pointer-down-only patch.
+      'minimap press uses grabbing cursor': true,
+      'minimap hover and drag cursors': true,
+      'minimap release restores grab cursor': true,
+      'surface leave resets idle cursor': true,
+    };
     const replaceSpectrSource = (needle, replacement, label) => {
       if (!template.includes(needle)) {
-        throw new Error('Spectr source patch point missing: ' + label);
+        if (template.includes(replacement)) return;
+        const sentinel = supersededSpectrSource[label];
+        if (sentinel === true || (sentinel && template.includes(sentinel))) return;
+        // The captured source is periodically refreshed from the shipping
+        // materialized document, so a later source image can subsume an older
+        // mechanical patch. The shipping patcher uses the same superseded
+        // rule; executable contracts below verify the resulting behavior.
+        console.warn('[Spectr] source patch already superseded:', label);
+        return;
       }
       template = template.replace(needle, replacement);
     };
     const replaceAllSpectrSource = (needle, replacement, expected, label) => {
       const matches = template.split(needle).length - 1;
+      const replacements = template.split(replacement).length - 1;
+      if (matches === 0 && replacements >= expected) return;
       if (matches !== expected) {
         throw new Error('Spectr source patch count mismatch: ' + label
           + ' (expected ' + expected + ', found ' + matches + ')');
@@ -257,6 +275,25 @@ document.addEventListener('DOMContentLoaded', async function() {
     const nativeAnalyzerAvailable = !!window.pulp
       && typeof window.pulp.on === 'function'
       && typeof window.pulp.postMessage === 'function';
+    const spectrPerfDiagnostics = window.SpectrPerfDiagnostics || {
+      active: null,
+      enable() {
+        this.active = {
+          rawPointerSamples: 0, analyzerSamples: 0, analyzerGridHits: 0,
+          analyzerGridMisses: 0, animationFrames: 0,
+          canvasRedraws: 0, statePublications: 0,
+          frameIntervalsMs: [], drawDurationsMs: [], inputToPublicationMs: [],
+          lastFrameMs: null, latestInputMs: null,
+        };
+        return this.snapshot();
+      },
+      disable() { const result = this.snapshot(); this.active = null; return result; },
+      snapshot() {
+        if (!this.active) return null;
+        return JSON.parse(JSON.stringify(this.active));
+      },
+    };
+    window.SpectrPerfDiagnostics = spectrPerfDiagnostics;
     let nativeAnalyzerFrame = null;
     const validAnalyzerTrace = (trace, expectedLength) => !!trace
       && Number.isFinite(trace.min_hz) && Number.isFinite(trace.max_hz)
@@ -293,9 +330,9 @@ document.addEventListener('DOMContentLoaded', async function() {
       nativeAnalyzerFrame = {
         ...payload,
         visible: { ...payload.visible,
-          magnitude_db: payload.visible.magnitude_db.slice() },
+          magnitude_db: Object.freeze(payload.visible.magnitude_db.slice()) },
         overview: { ...payload.overview,
-          magnitude_db: payload.overview.magnitude_db.slice() },
+          magnitude_db: Object.freeze(payload.overview.magnitude_db.slice()) },
       };
       return true;
     };
@@ -327,6 +364,8 @@ document.addEventListener('DOMContentLoaded', async function() {
     window.SpectrAnalyzer = {
       native: nativeAnalyzerAvailable,
       sample(logFrequency, time, traceName = 'visible') {
+        if (spectrPerfDiagnostics.active)
+          spectrPerfDiagnostics.active.analyzerSamples += 1;
         if (!nativeAnalyzerAvailable) {
           return window.SpectrSignal
             ? window.SpectrSignal.sample(logFrequency, time)
@@ -346,6 +385,16 @@ document.addEventListener('DOMContentLoaded', async function() {
       normalizeDb(db) {
         const scale = this.scale();
         return normalizeAnalyzerDb(db, scale.floor, scale.ceiling);
+      },
+      grid(traceName, minHz, maxHz, pointCount) {
+        if (!nativeAnalyzerFrame) return null;
+        const trace = traceName === 'overview'
+          ? nativeAnalyzerFrame.overview : nativeAnalyzerFrame.visible;
+        const matches = trace.magnitude_db.length === pointCount
+            && trace.min_hz === minHz && trace.max_hz === maxHz;
+        if (spectrPerfDiagnostics.active)
+          spectrPerfDiagnostics.active[matches ? 'analyzerGridHits' : 'analyzerGridMisses'] += 1;
+        return matches ? trace.magnitude_db : null;
       },
       project(amount, zeroY, halfH) {
         return projectAnalyzerAmount(amount, zeroY, halfH);
@@ -374,6 +423,9 @@ document.addEventListener('DOMContentLoaded', async function() {
   return (
     <div style={{`,
       String.raw`  const shownRef = useRefChrome('');
+  const [settled, setSettled] = useStateChrome(true);
+  const reducedMotion = !!(window.matchMedia
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   useEffectChrome(() => {
     const display = message ? message.split('|')[0].trim() : '';
     if (!display) {
@@ -382,28 +434,25 @@ document.addEventListener('DOMContentLoaded', async function() {
       shownRef.current = '';
       return;
     }
-    // One slot, one message. A replacement fades the outgoing text out before
-    // the incoming text fades in, so a burst reads as a single banner changing
-    // rather than two messages stacking.
+    // Keep the text truthful in the same React commit. Replacements settle
+    // through a small opacity/scale step; they never hide the newest numeric
+    // value behind an outgoing-message timeout.
     const replacing = !!shownRef.current && shownRef.current !== display;
-    const timers = [];
-    if (replacing) {
-      setVisible(false);
-      timers.push(setTimeout(() => {
-        setText(display);
-        setVisible(true);
-      }, 150));
-    } else {
-      setText(display);
-      setVisible(true);
-    }
+    setText(display);
+    setVisible(true);
+    setSettled(!replacing || reducedMotion);
+    const settleFrame = replacing && !reducedMotion
+      ? requestAnimationFrame(() => setSettled(true)) : 0;
     shownRef.current = display;
-    timers.push(setTimeout(() => {
+    const hideTimer = setTimeout(() => {
       setVisible(false);
       setText('');
       shownRef.current = '';
-    }, replacing ? 1550 : 1400));
-    return () => timers.forEach(clearTimeout);
+    }, 1400);
+    return () => {
+      if (settleFrame) cancelAnimationFrame(settleFrame);
+      clearTimeout(hideTimer);
+    };
   }, [message]);
   return (
     <div data-spectr-status-shell="true"
@@ -423,7 +472,8 @@ document.addEventListener('DOMContentLoaded', async function() {
       transition: 'opacity 0.2s',
       backdropFilter: 'blur(8px)',
     }}>{text}</div>`,
-      String.raw`      position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',
+      String.raw`      position: 'absolute', top: 60, left: '50%',
+      transform: 'translateX(-50%) scale(' + (settled ? 1 : 0.985) + ')',
       width: 240, height: 26, padding: 0,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: text ? 'rgba(12,16,22,0.92)' : 'transparent',
@@ -534,6 +584,39 @@ document.addEventListener('DOMContentLoaded', async function() {
       "window.SpectrAnalyzer.sample(lf, timeRef.current, 'overview')",
       'minimap uses overview analyzer');
     replaceSpectrSource(
+      String.raw`    const arr = new Float32Array(steps + 1);
+    for (let i = 0; i <= steps; i++) {
+      const lf = view.lmin + (i / steps) * span;
+      arr[i] = window.SpectrAnalyzer.sample(lf, t, 'visible');
+    }`,
+      String.raw`    const arr = new Float32Array(steps + 1);
+    const analyzerGrid = window.SpectrAnalyzer.grid('visible',
+      Math.pow(10, view.lmin), Math.pow(10, view.lmax), steps + 1);
+    for (let i = 0; i <= steps; i++) {
+      const lf = view.lmin + (i / steps) * span;
+      arr[i] = analyzerGrid
+        ? window.SpectrAnalyzer.normalizeDb(analyzerGrid[i])
+        : window.SpectrAnalyzer.sample(lf, t, 'visible');
+    }`,
+      'spectrum uses an exact bulk analyzer grid');
+    replaceSpectrSource(
+      String.raw`    const steps = 120;
+    ctx.beginPath();
+    ctx.moveTo(mx, my + mh);
+    for (let i = 0; i <= steps; i++) {
+      const lf = fullMin + (i / steps) * fullSpan;
+      const v = window.SpectrAnalyzer.sample(lf, timeRef.current, 'overview');`,
+      String.raw`    const steps = 120;
+    const analyzerGrid = window.SpectrAnalyzer.grid('overview', 20, 20000, steps + 1);
+    ctx.beginPath();
+    ctx.moveTo(mx, my + mh);
+    for (let i = 0; i <= steps; i++) {
+      const lf = fullMin + (i / steps) * fullSpan;
+      const v = analyzerGrid
+        ? window.SpectrAnalyzer.normalizeDb(analyzerGrid[i])
+        : window.SpectrAnalyzer.sample(lf, timeRef.current, 'overview');`,
+      'minimap uses its exact bulk analyzer grid');
+    replaceSpectrSource(
       'zeroY - arr[i] * halfH * 0.95',
       'window.SpectrAnalyzer.project(arr[i], zeroY, halfH)',
       'instantaneous analyzer uses shared dBFS projection');
@@ -567,6 +650,10 @@ window.FilterBank = FilterBank;`,
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  const resolutionGeometryRef = useRef(\'\');\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
       'independent muted gain hydration');
+    replaceSpectrSource(
+      '  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);',
+      '  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeDirectPublicationFrameRef = useRef(0);\n  const nativeCommandSequenceRef = useRef(0);',
+      'direct publication frame slot');
     replaceSpectrSource(
       String.raw`      const next = new Array(N).fill(0);
       // Map old → new by proportional index
@@ -699,6 +786,84 @@ window.FilterBank = FilterBank;`,
     return Number.isFinite(db) ? clamp(db / 24, -1, 1) : 0;
   };`,
       'mute preserves authored gain');
+    replaceSpectrSource(
+      String.raw`  const queueNativeProcessingStatePublication = () => {
+    // A real user gesture is always publishable. Hydration gates projection
+    // effects, not direct intent arriving through an already-live bridge.
+    if (!window.pulp || typeof window.pulp.postMessage !== 'function') return;
+    const current = targetGainsRef.current;
+    const muted = current.map(value => isMuted(value));
+    const gainDb = current.map((value, i) => isMuted(value)
+      ? (Number.isFinite(mutedGainDbRef.current[i])
+          ? mutedGainDbRef.current[i] : 0)
+      : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
+    nativeDirectPublicationSignatureRef.current = JSON.stringify([
+      N, gainDb, muted, view.lmin, view.lmax,
+    ]);
+    ++nativeCommandSequenceRef.current;
+    Promise.resolve(window.pulp.postMessage('processing_state_set', {
+      n_visible: N, gain_db: gainDb, muted,
+      min_hz: Math.pow(10, view.lmin),
+      max_hz: Math.pow(10, view.lmax),
+    }, 'spectr-processing-state')).catch(error => {
+      console.error('[Spectr] native direct-edit publication failed', error);
+    });
+  };`,
+      String.raw`  const queueNativeProcessingStatePublication = () => {
+    // Pointer input and React state stay sample-accurate, but the native
+    // authority, host parameters, and mask compiler need only the newest
+    // complete state that can become visible in the next presented frame.
+    // One queued callback also gives us a hard backlog bound of one.
+    if (!window.pulp || typeof window.pulp.postMessage !== 'function'
+        || nativeDirectPublicationFrameRef.current) return;
+    nativeDirectPublicationFrameRef.current = requestAnimationFrame(() => {
+      nativeDirectPublicationFrameRef.current = 0;
+      const current = targetGainsRef.current;
+      const muted = current.map(value => isMuted(value));
+      const gainDb = current.map((value, i) => isMuted(value)
+        ? (Number.isFinite(mutedGainDbRef.current[i])
+            ? mutedGainDbRef.current[i] : 0)
+        : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
+      nativeDirectPublicationSignatureRef.current = JSON.stringify([
+        N, gainDb, muted, view.lmin, view.lmax,
+      ]);
+      ++nativeCommandSequenceRef.current;
+      Promise.resolve(window.pulp.postMessage('processing_state_set', {
+        n_visible: N, gain_db: gainDb, muted,
+        min_hz: Math.pow(10, view.lmin),
+        max_hz: Math.pow(10, view.lmax),
+      }, 'spectr-processing-state')).catch(error => {
+        console.error('[Spectr] native direct-edit publication failed', error);
+      });
+    });
+  };`,
+      'direct processing-state publication is frame-coalesced');
+    replaceSpectrSource(
+      String.raw`      nativeDirectPublicationFrameRef.current = 0;
+      const current = targetGainsRef.current;`,
+      String.raw`      nativeDirectPublicationFrameRef.current = 0;
+      const perf = window.SpectrPerfDiagnostics && window.SpectrPerfDiagnostics.active;
+      if (perf) {
+        perf.statePublications += 1;
+        if (perf.latestInputMs !== null) {
+          perf.inputToPublicationMs.push(performance.now() - perf.latestInputMs);
+          if (perf.inputToPublicationMs.length > 512) perf.inputToPublicationMs.shift();
+          perf.latestInputMs = null;
+        }
+      }
+      const current = targetGainsRef.current;`,
+      'opt-in publication diagnostics');
+    replaceSpectrSource(
+      String.raw`  const onPointerMove = (e) => {
+    const g = getGeom();`,
+      String.raw`  const onPointerMove = (e) => {
+    const perf = window.SpectrPerfDiagnostics && window.SpectrPerfDiagnostics.active;
+    if (perf) {
+      perf.rawPointerSamples += 1;
+      perf.latestInputMs = performance.now();
+    }
+    const g = getGeom();`,
+      'opt-in raw pointer diagnostics');
     // Six drawn-edit sites, six independent mute decisions. They now compute a
     // gain from a finite base and hand it to commitDrawnGains, which owns the
     // policy. No mode keeps one of its own.
@@ -1208,7 +1373,7 @@ window.FilterBank = FilterBank;`,
     // snapshot never depends on WebKit winning that scheduling race.
     replaceSpectrSource(
       "  const { bandCount, metaphor, bloom, spectrumIntensity, muteStyle, motionMode, showMinimap, showRulers, theme } = settings;",
-      "  const { bandCount, metaphor, bloom, spectrumIntensity, muteStyle, motionMode, showMinimap, showRulers, theme, unmuteOnDraw } = settings;",
+      "  const { bandCount, metaphor, bloom, spectrumIntensity, muteStyle, motionMode, showMinimap, showRulers, theme, unmuteOnDraw, showStatusInfo } = settings;",
       'redraw-unmutes setting is read by the bank');
     replaceSpectrSource(
       "  const editModeRef = useRef(editMode || 'sculpt');",
@@ -1221,6 +1386,20 @@ window.FilterBank = FilterBank;`,
       '  const rafRef = useRef(0);\n  const timeRef = useRef(0);',
       '  const rafRef = useRef(0);\n  const renderAllRef = useRef(null);\n  const timeRef = useRef(0);',
       'latest canvas renderer ref');
+    replaceSpectrSource(
+      String.raw`    if (!onStatus) return;
+    if (hoverBand < 0) {`,
+      String.raw`    if (!onStatus) return;
+    if (showStatusInfo === false) {
+      onStatus('');
+      return;
+    }
+    if (hoverBand < 0) {`,
+      'hover status respects its default-on setting');
+    replaceSpectrSource(
+      '  }, [hoverBand, N, onStatus]);\n  const [ctxMenu, setCtxMenu] = useState(null);',
+      '  }, [hoverBand, N, onStatus, showStatusInfo]);\n  const [ctxMenu, setCtxMenu] = useState(null);',
+      'hover status setting invalidates its effect');
     replaceSpectrSource(
       '    rafRef.current = requestAnimationFrame(draw);\n    return () => cancelAnimationFrame(rafRef.current);',
       '    renderAll();\n    rafRef.current = requestAnimationFrame(draw);\n    return () => cancelAnimationFrame(rafRef.current);',
@@ -1238,6 +1417,26 @@ window.FilterBank = FilterBank;`,
       '      (renderAllRef.current || renderAll)();\n      rafRef.current = requestAnimationFrame(draw);\n    };',
       'animation loop paints the latest canvas renderer');
     replaceSpectrSource(
+      '      (renderAllRef.current || renderAll)();\n      rafRef.current = requestAnimationFrame(draw);',
+      String.raw`      const perf = window.SpectrPerfDiagnostics && window.SpectrPerfDiagnostics.active;
+      const drawStarted = perf ? performance.now() : 0;
+      if (perf) {
+        perf.animationFrames += 1;
+        if (perf.lastFrameMs !== null) {
+          perf.frameIntervalsMs.push(now - perf.lastFrameMs);
+          if (perf.frameIntervalsMs.length > 512) perf.frameIntervalsMs.shift();
+        }
+        perf.lastFrameMs = now;
+      }
+      (renderAllRef.current || renderAll)();
+      if (perf) {
+        perf.canvasRedraws += 1;
+        perf.drawDurationsMs.push(performance.now() - drawStarted);
+        if (perf.drawDurationsMs.length > 512) perf.drawDurationsMs.shift();
+      }
+      rafRef.current = requestAnimationFrame(draw);`,
+      'opt-in frame diagnostics');
+    replaceSpectrSource(
       '        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);\n      }\n    };\n    resize();',
       '        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);\n      }\n      if (renderAllRef.current) renderAllRef.current();\n    };\n    resize();',
       'deterministic canvas paint after sizing');
@@ -1246,15 +1445,15 @@ window.FilterBank = FilterBank;`,
       '  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, hover, marquee, selection, snapshots, morph, dspMode, visualizationMode]);\n  renderAllRef.current = renderAll;\n\n  function drawGrid(ctx, g) {',
       'latest canvas renderer publication');
 
-    // Imported rich popups keep Claude's layout while adopting the same
-    // dismissal and keyboard contract as Pulp's native ComboBox: one overlay,
-    // outside-click/Escape close, arrow traversal, Enter/Space activation, and
-    // focus restoration after keyboard selection.
+    // Spectr owns which overlay is visible; Pulp's semantic popup default owns
+    // keyboard navigation, dismissal, and focus restoration.
+    replaceSpectrSource(
+      'function RailBtn({ children, onClick, active }) {',
+      'function RailBtn({ children, onClick, active, ...buttonProps }) {',
+      'rail buttons forward semantic trigger props');
     replaceSpectrSource(
       '  const setAnalyzerMenu = (v) => setOpenMenu(typeof v === \'function\' ? (v(analyzerMenu) ? \'analyzer\' : null) : (v ? \'analyzer\' : null));\n\n  const act = (fn) => () => {',
       String.raw`  const setAnalyzerMenu = (v) => setOpenMenu(typeof v === 'function' ? (v(analyzerMenu) ? 'analyzer' : null) : (v ? 'analyzer' : null));
-  const restoreMenuFocus = useRefChrome(false);
-
   useEffectChrome(() => {
     if (openMenu) {
       setHelpOpen(false);
@@ -1274,67 +1473,8 @@ window.FilterBank = FilterBank;`,
     }
   }, [settingsOpen]);
 
-  useEffectChrome(() => {
-    const key = openMenu || (helpOpen ? 'help' : null);
-    if (!key) return;
-    const rootSelector = '[data-spectr-menu-root="' + key + '"]';
-    const root = document.querySelector(rootSelector);
-    if (!root) return;
-    // The native materialized DOM intentionally exposes selectors on document,
-    // not on every element wrapper. Keep these scoped through the root selector
-    // so the same menu contract works in both native and browser hosts.
-    const triggerHost = document.querySelector(rootSelector + ' [data-spectr-menu-trigger]');
-    const trigger = triggerHost && (triggerHost.tagName === 'BUTTON'
-      ? triggerHost : document.querySelector(rootSelector + ' [data-spectr-menu-trigger] button'));
-    const close = (returnFocus) => {
-      restoreMenuFocus.current = !!returnFocus;
-      if (key === 'help') setHelpOpen(false); else setOpenMenu(null);
-    };
-    const onPointer = (event) => {
-      if (!root.contains(event.target)) close(false);
-    };
-    const onKey = (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        close(true);
-        return;
-      }
-      const options = Array.from(document.querySelectorAll(
-        rootSelector + ' [data-spectr-menu-options] button:not([disabled])'));
-      if (!options.length) return;
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp'
-          || event.key === 'Home' || event.key === 'End') {
-        event.preventDefault();
-        event.stopPropagation();
-        const current = options.indexOf(document.activeElement);
-        const next = event.key === 'Home' ? 0
-          : event.key === 'End' ? options.length - 1
-          : event.key === 'ArrowDown' ? (current + 1 + options.length) % options.length
-          : (current - 1 + options.length) % options.length;
-        options[next].focus();
-      } else if ((event.key === 'Enter' || event.key === ' ')
-                 && options.includes(document.activeElement)) {
-        event.preventDefault();
-        event.stopPropagation();
-        restoreMenuFocus.current = true;
-        document.activeElement.click();
-      }
-    };
-    document.addEventListener('mousedown', onPointer);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('mousedown', onPointer);
-      document.removeEventListener('keydown', onKey, true);
-      if (restoreMenuFocus.current) {
-        restoreMenuFocus.current = false;
-        requestAnimationFrame(() => trigger && trigger.focus());
-      }
-    };
-  }, [openMenu, helpOpen]);
-
   const act = (fn) => () => {`,
-      'rich popup keyboard and dismissal contract');
+      'mutually exclusive overlay presentation');
     replaceSpectrSource(
       '<div style={{ position: \'relative\' }}>\n            <button onClick={() => setBandsMenu(v => !v)} style={{',
       '<div data-spectr-menu-root="bands" style={{ position: \'relative\' }}>\n            <button data-spectr-menu-trigger aria-haspopup="listbox" aria-expanded={bandsMenu} onClick={() => setBandsMenu(v => !v)} style={{',
@@ -1345,7 +1485,7 @@ window.FilterBank = FilterBank;`,
       'bands popup options');
     replaceSpectrSource(
       '<RailBtn onClick={onClearAll}>CLEAR</RailBtn>\n        <div style={{ position: \'relative\' }}>\n          <RailBtn onClick={() => setOverflowMenu(v => !v)} active={overflowMenu}>⋯</RailBtn>',
-      '<RailBtn onClick={onClearAll}>CLEAR</RailBtn>\n        <div data-spectr-menu-root="overflow" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn onClick={() => setOverflowMenu(v => !v)} active={overflowMenu}>⋯</RailBtn></span>',
+      '<RailBtn onClick={onClearAll}>CLEAR</RailBtn>\n        <div data-spectr-menu-root="overflow" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn aria-haspopup="menu" aria-expanded={overflowMenu} onClick={() => setOverflowMenu(v => !v)} active={overflowMenu}>⋯</RailBtn></span>',
       'overflow popup trigger');
     replaceSpectrSource(
       '{overflowMenu && (\n            <div style={{',
@@ -1353,7 +1493,7 @@ window.FilterBank = FilterBank;`,
       'overflow popup options');
     replaceSpectrSource(
       '{/* EDIT MODE dropdown */}\n        <div style={{ position: \'relative\' }}>\n          <RailBtn onClick={() => toggleMenu(\'edit\')} active={editMenu}>',
-      '{/* EDIT MODE dropdown */}\n        <div data-spectr-menu-root="edit" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn onClick={() => toggleMenu(\'edit\')} active={editMenu}>',
+      '{/* EDIT MODE dropdown */}\n        <div data-spectr-menu-root="edit" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn aria-haspopup="listbox" aria-expanded={editMenu} onClick={() => toggleMenu(\'edit\')} active={editMenu}>',
       'edit popup trigger open');
     replaceSpectrSource(
       '<span style={{ marginLeft: 6 }}>{editMode.toUpperCase()} ▾</span>\n          </RailBtn>',
@@ -1361,7 +1501,7 @@ window.FilterBank = FilterBank;`,
       'edit popup trigger close');
     replaceSpectrSource(
       '{/* ANALYZER dropdown */}\n        <div style={{ position: \'relative\' }}>\n          <RailBtn onClick={() => toggleMenu(\'analyzer\')} active={analyzerMenu}>',
-      '{/* ANALYZER dropdown */}\n        <div data-spectr-menu-root="analyzer" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn onClick={() => toggleMenu(\'analyzer\')} active={analyzerMenu}>',
+      '{/* ANALYZER dropdown */}\n        <div data-spectr-menu-root="analyzer" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn aria-haspopup="listbox" aria-expanded={analyzerMenu} onClick={() => toggleMenu(\'analyzer\')} active={analyzerMenu}>',
       'analyzer popup trigger open');
     replaceSpectrSource(
       '<span style={{ marginLeft: 6 }}>{analyzerMode.toUpperCase()} ▾</span>\n          </RailBtn>',
@@ -1369,7 +1509,7 @@ window.FilterBank = FilterBank;`,
       'analyzer popup trigger close');
     replaceSpectrSource(
       '<div style={{ position: \'relative\' }}>\n          <RailBtn onClick={() => setPatternMenu(v => !v)} active={patternMenu}>',
-      '<div data-spectr-menu-root="pattern" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn onClick={() => setPatternMenu(v => !v)} active={patternMenu}>',
+      '<div data-spectr-menu-root="pattern" style={{ position: \'relative\' }}>\n          <span data-spectr-menu-trigger><RailBtn aria-haspopup="menu" aria-expanded={patternMenu} onClick={() => setPatternMenu(v => !v)} active={patternMenu}>',
       'pattern popup trigger open');
     replaceSpectrSource(
       '<span style={{ marginLeft: 6 }}>PRESETS ▾</span>\n          </RailBtn>',
@@ -1579,6 +1719,22 @@ function SpectrSettingsToggle({ value, onChange }) {
 
 function SettingsModal({ settings, setSettings, onClose }) {`,
       'stable settings controls');
+    replaceSpectrSource(
+      String.raw`          <Field label="Spectrum" hint="Analyzer trace opacity">
+            <SSlider value={settings.spectrumIntensity} min={0} max={1} step={0.01}
+              onChange={v => persist({ spectrumIntensity: v })} />
+          </Field>`,
+      String.raw`          <Field label="Spectrum" hint="Analyzer trace opacity">
+            <SSlider value={settings.spectrumIntensity} min={0} max={1} step={0.01}
+              onChange={v => persist({ spectrumIntensity: v })} />
+          </Field>
+          <Field label="Status info" hint="Hover and action readouts">
+            <span data-spectr-status-info-setting>
+              <STog value={settings.showStatusInfo !== false}
+                onChange={v => persist({ showStatusInfo: v })} />
+            </span>
+          </Field>`,
+      'default-on status info setting');
     // The natural home is the settings panel, beside Mute style. It cannot go
     // there: the native materialized runtime paints an ADDED settings row on
     // top of an existing one (reproduced in both the STRUCTURE and MOTION
@@ -1598,15 +1754,15 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
       'stable settings groups open');
     replaceAllSpectrSource('</Group>', '</SpectrSettingsGroup>', 3,
       'stable settings groups close');
-    replaceAllSpectrSource('<Field ', '<SpectrSettingsField ', 9,
+    replaceAllSpectrSource('<Field ', '<SpectrSettingsField ', 10,
       'stable settings fields open');
-    replaceAllSpectrSource('</Field>', '</SpectrSettingsField>', 9,
+    replaceAllSpectrSource('</Field>', '</SpectrSettingsField>', 10,
       'stable settings fields close');
     replaceAllSpectrSource('<SChips ', '<SpectrSettingsChips ', 5,
       'stable settings chips');
     replaceAllSpectrSource('<SSlider ', '<SpectrSettingsSlider ', 2,
       'stable settings sliders');
-    replaceAllSpectrSource('<STog ', '<SpectrSettingsToggle ', 2,
+    replaceAllSpectrSource('<STog ', '<SpectrSettingsToggle ', 3,
       'stable settings toggles');
     replaceSpectrSource(
       '<div onClick={e => e.stopPropagation()} style={{\n        width: 520, maxHeight: \'90vh\', overflowY: \'auto\',',
@@ -1753,6 +1909,13 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
       '    <button onClick={handle}\n      style={{\n        background: flash ?',
       '    <button id={id} data-spectr-snapshot-action={action} data-spectr-snapshot-slot={slot} onClick={handle}\n      style={{\n        background: flash ?',
       'snapshot button owns its complete semantic rectangle');
+    // SnapBtn and RailBtn begin with the same generic button opening in the
+    // captured JSX. Give the snapshot-specific rewrite first ownership of its
+    // longer anchor; only then is the short anchor unique to RailBtn.
+    replaceSpectrSource(
+      '    <button onClick={handle}\n      style={{',
+      '    <button {...buttonProps} onClick={handle}\n      style={{',
+      'rail buttons apply semantic trigger props');
     replaceSpectrSource(
       "        opacity: !isCapture && !filled ? 0.45 : 1,\n      }}\n      disabled={!isCapture && !filled}",
       "        opacity: !isCapture && !filled ? 0.45 : 1,\n        pointerEvents: 'box-only',\n      }}\n      disabled={!isCapture && !filled}",
@@ -1986,6 +2149,7 @@ window.PatternManager = PatternManager;`,
       editMode,
       analyzerMode,
       visualizationMode,
+      status,
       snapshotStatus: { ...snapshotStatus },
       managerOpen,
       saveDialogOpen,
@@ -2382,7 +2546,8 @@ window.PatternManager = PatternManager;`,
       const fullMin = Math.log10(20), fullMax = Math.log10(2e4);`,
       'minimap press uses grabbing cursor');
     replaceSpectrSource(
-      String.raw`    if (mm) {
+      String.raw`    const mm = minimapHit(x, y, g);
+    if (mm) {
       setHover({ mini: mm, x, y, band: -1 });
       wrapRef.current.style.cursor = mm === 'left' || mm === 'right' ? 'ew-resize' : mm === 'window' ? 'grab' : 'pointer';`,
       String.raw`    if (mm) {
@@ -2412,6 +2577,78 @@ window.PatternManager = PatternManager;`,
           wrapRef.current.style.cursor = 'default';
       }}`,
       'surface leave resets idle cursor');
+    replaceSpectrSource(
+      String.raw`    if (mm) {
+      wrapRef.current.style.cursor = 'grabbing';
+      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);`,
+      String.raw`    if (mm) {
+      wrapRef.current.style.cursor = mm === 'left' || mm === 'right'
+        ? 'ew-resize' : mm === 'window' ? 'grabbing' : 'pointer';
+      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);`,
+      'minimap press cursor preserves hit role');
+    replaceSpectrSource(
+      String.raw`      const activeMini = pointerRef.current
+        && (pointerRef.current.mode === 'minimap-drag'
+          || pointerRef.current.mode === 'minimap-resize');
+      wrapRef.current.style.cursor = activeMini ? 'grabbing' : 'grab';`,
+      String.raw`      const activeMini = pointerRef.current && pointerRef.current.mode;
+      wrapRef.current.style.cursor = activeMini === 'minimap-resize'
+        ? 'ew-resize'
+        : activeMini === 'minimap-drag'
+          ? 'grabbing'
+          : mm === 'left' || mm === 'right'
+            ? 'ew-resize'
+            : mm === 'window' ? 'grab' : 'pointer';`,
+      'minimap cursors preserve each hit role');
+    replaceSpectrSource(
+      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize'))
+      wrapRef.current.style.cursor = 'grab';`,
+      String.raw`    if (p && p.mode === 'minimap-drag')
+      wrapRef.current.style.cursor = 'grab';
+    else if (p && p.mode === 'minimap-resize')
+      wrapRef.current.style.cursor = 'ew-resize';`,
+      'minimap release restores role cursor');
+    replaceSpectrSource(
+      String.raw`    // Minimap interaction
+    const mm = minimapHit(x, y, g);
+    if (mm) {
+      const fullMin = Math.log10(20), fullMax = Math.log10(20000);`,
+      String.raw`    // Minimap interaction
+    const mm = minimapHit(x, y, g);
+    if (mm) {
+      wrapRef.current.style.cursor = mm === 'left' || mm === 'right'
+        ? 'ew-resize' : mm === 'window' ? 'grabbing' : 'pointer';
+      const fullMin = Math.log10(20), fullMax = Math.log10(20000);`,
+      'captured minimap press preserves hit role');
+    replaceSpectrSource(
+      String.raw`    if (mm) {
+      setHover({ mini: mm, x, y, band: -1 });
+      wrapRef.current.style.cursor = (mm === 'left' || mm === 'right') ? 'ew-resize' : (mm === 'window' ? 'grab' : 'pointer');`,
+      String.raw`    if (mm) {
+      setHover({ mini: mm, x, y, band: -1 });
+      const activeMini = pointerRef.current && pointerRef.current.mode;
+      wrapRef.current.style.cursor = activeMini === 'minimap-resize'
+        ? 'ew-resize'
+        : activeMini === 'minimap-drag'
+          ? 'grabbing'
+          : mm === 'left' || mm === 'right'
+            ? 'ew-resize'
+            : mm === 'window' ? 'grab' : 'pointer';`,
+      'captured minimap cursors preserve each hit role');
+    replaceSpectrSource(
+      String.raw`  const onPointerUp = (e) => {
+    const p = pointerRef.current;
+    pointerRef.current = { mode: null };
+    if (!p || !p.mode) { setMarquee(null); return; }`,
+      String.raw`  const onPointerUp = (e) => {
+    const p = pointerRef.current;
+    pointerRef.current = { mode: null };
+    if (p && p.mode === 'minimap-drag')
+      wrapRef.current.style.cursor = 'grab';
+    else if (p && p.mode === 'minimap-resize')
+      wrapRef.current.style.cursor = 'ew-resize';
+    if (!p || !p.mode) { setMarquee(null); return; }`,
+      'captured minimap release restores role cursor');
     replaceAllSpectrSource(
       'const x = e.clientX - rect.left, y = e.clientY - rect.top;',
       'const x = (e.clientX - rect.left) * wrapRef.current.clientWidth / rect.width, y = (e.clientY - rect.top) * wrapRef.current.clientHeight / rect.height;',
@@ -2443,6 +2680,20 @@ window.PatternManager = PatternManager;`,
   };
   const [status, setStatus] = useAppS('');`,
       'native mode publisher');
+    replaceSpectrSource(
+      "  const [analyzerMode, setAnalyzerMode] = useAppS('peak'); // peak|avg|both|off\n  const [status, setStatus] = useAppS('');",
+      String.raw`  const [analyzerMode, setAnalyzerMode] = useAppS('peak'); // peak|avg|both|off
+  window.spectrPublishMode = (kind, value) => {
+    if (!nativeBridgeAvailable) return;
+    try {
+      Promise.resolve(window.pulp.postMessage('mode_set', { kind, value }, 'spectr-mode-' + kind))
+        .catch(error => console.error('[Spectr] native mode write failed', error));
+    } catch (error) {
+      console.error('[Spectr] native mode write failed', error);
+    }
+  };
+  const [status, setStatus] = useAppS('');`,
+      'captured native mode publisher');
     replaceSpectrSource(
       'onChange={(v) => setSettings((s) => ({ ...s, motionMode: v }))}',
       "onChange={(v) => { setSettings((s) => ({ ...s, motionMode: v })); window.spectrPublishMode('motion', v); }}",
@@ -2481,9 +2732,13 @@ window.PatternManager = PatternManager;`,
       String.raw`  const fireStatus = useAppC((msg) => {
     setStatus(msg + '|' + Date.now());`,
       String.raw`  const fireStatus = useAppC((msg) => {
-    if (!msg) { setStatus(''); return; }
-    setStatus(msg + '|' + Date.now());`,
+    if (!msg || settings.showStatusInfo === false) setStatus('');
+    else setStatus(msg + '|' + Date.now());`,
       'empty status clears the unified banner');
+    replaceSpectrSource(
+      '  }, []);\n\n  const applyPattern = useAppC((p) => {',
+      '  }, [settings.showStatusInfo]);\n\n  const applyPattern = useAppC((p) => {',
+      'status info setting refreshes the publisher');
 
     replaceSpectrSource(
       [
@@ -2622,11 +2877,11 @@ window.PatternManager = PatternManager;`,
       'status banner is content-sized with symmetric padding');
     replaceSpectrSource(
       "      transition: 'opacity 0.15s ease',",
-      "      transition: 'width 0.18s ease, opacity 0.15s ease',",
+      "      transition: reducedMotion ? 'none' : 'width 0.18s ease, opacity 0.15s ease, transform 0.12s ease',",
       'status banner resizes smoothly');
     replaceSpectrSource(
-      "      position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',",
-      "      position: 'absolute', top: 76, left: '50%', transform: 'translateX(-50%)',",
+      "      position: 'absolute', top: 60, left: '50%',\n      transform: 'translateX(-50%) scale(' + (settled ? 1 : 0.985) + ')',",
+      "      position: 'absolute', top: 76, left: '50%',\n      transform: 'translateX(-50%) scale(' + (settled ? 1 : 0.985) + ')',",
       'status banner sits below the plot top line');
     replaceSpectrSource(
       String.raw`        borderRadius: 3, cursor: 'pointer',

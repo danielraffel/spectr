@@ -13,6 +13,10 @@ assert(htmlPath && chromePath, 'usage: test_editor_analyzer_browser.mjs HTML CHR
 const resizeOnlyMode = mode === '--resize-only';
 const jsOnlyMode = mode === '--js-only';
 const muteModesMode = mode === '--mute-modes';
+const responsivenessMode = mode === '--responsiveness';
+const cursorsMode = mode === '--cursors';
+const dropdownsMode = mode === '--dropdowns';
+const bannerMode = mode === '--banner';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-analyzer-browser-'));
 try {
@@ -25,10 +29,19 @@ window.__spectrCanvasLabels = [];
 window.__spectrRuntimeErrors = [];
 window.confirm = () => true;
 window.addEventListener('error', event => {
-  window.__spectrRuntimeErrors.push(String(event.message || event.error || event.type));
+  window.__spectrRuntimeErrors.push({
+    message: String(event.message || event.error || event.type),
+    source: String(event.filename || ''),
+    line: Number(event.lineno) || 0,
+    column: Number(event.colno) || 0,
+    stack: String(event.error && event.error.stack || ''),
+  });
 });
 window.addEventListener('unhandledrejection', event => {
-  window.__spectrRuntimeErrors.push(String(event.reason || 'unhandled rejection'));
+  window.__spectrRuntimeErrors.push({
+    message: String(event.reason || 'unhandled rejection'),
+    stack: String(event.reason && event.reason.stack || ''),
+  });
 });
 const spectrOriginalFillText = CanvasRenderingContext2D.prototype.fillText;
 CanvasRenderingContext2D.prototype.fillText = function(text, ...args) {
@@ -310,6 +323,10 @@ window.spectrStartOracle = () => {
       const jsOnly = new URL(location.href).searchParams.has('js-only');
       const resizeOnly = new URL(location.href).searchParams.has('resize-only');
       const muteModes = new URL(location.href).searchParams.has('mute-modes');
+      const responsiveness = new URL(location.href).searchParams.has('responsiveness');
+      const cursors = new URL(location.href).searchParams.has('cursors');
+      const dropdowns = new URL(location.href).searchParams.has('dropdowns');
+      const banner = new URL(location.href).searchParams.has('banner');
       step(reopened ? 'reopened-start' : 'initial-start');
       const bodyRect = document.body.getBoundingClientRect();
       if (document.body.clientWidth !== 1320 || document.body.clientHeight !== 860)
@@ -360,14 +377,314 @@ window.spectrStartOracle = () => {
         document.documentElement.dataset.spectrOracle = 'JS_ONLY_OK';
         return;
       }
+      const hydrationLabel = reopened
+        ? 'finite reopened hydration' : 'finite initial hydration';
       const hydrated = await spectrWaitFor(() => {
         const state = window.__spectrTestHooks.renderState?.();
         return state && state.nVisible === 32
           && state.targetGains.length === 32
           && state.targetGains.every(value => value === -Infinity)
           && state.mutedGainDb.every(Number.isFinite) && state;
-      }, reopened ? 'finite reopened hydration' : 'finite initial hydration');
+      }, hydrationLabel).catch(error => {
+        const state = window.__spectrTestHooks.renderState?.();
+        throw new Error(error.message
+          + '; state=' + JSON.stringify(state)
+          + '; posts=' + JSON.stringify(window.__spectrPosts)
+          + '; runtimeErrors=' + JSON.stringify(window.__spectrRuntimeErrors));
+      });
       step(reopened ? 'reopened-hydrated' : 'initial-hydrated');
+      if (cursors) {
+        const canvas = Array.from(document.querySelectorAll('canvas'))
+          .filter(candidate => getComputedStyle(candidate).pointerEvents !== 'none')
+          .sort((a, b) => b.width * b.height - a.width * a.height)[0];
+        const target = canvas && canvas.parentElement;
+        if (!target) throw new Error('cursor canvas missing');
+        const rect = target.getBoundingClientRect();
+        const state = window.__spectrTestHooks.renderState();
+        const fullMin = Math.log10(20);
+        const fullSpan = Math.log10(20000) - fullMin;
+        const left = (state.view.lmin - fullMin) / fullSpan;
+        const right = (state.view.lmax - fullMin) / fullSpan;
+        const mapX = fraction => rect.left
+          + (56 + fraction * (target.clientWidth - 112))
+            * rect.width / target.clientWidth;
+        const centerX = mapX((left + right) * 0.5);
+        const miniDesignY = Array.from({length: target.clientHeight}, (_, y) => y)
+          .find(y => window.__spectrTestHooks.minimapHit(
+            56 + (left + right) * 0.5 * (target.clientWidth - 112), y) === 'window');
+        if (!Number.isFinite(miniDesignY)) throw new Error('cursor minimap y missing');
+        const miniY = rect.top + miniDesignY * rect.height / target.clientHeight;
+        const expectCursor = (x, expected, label) => {
+          spectrPointer(target, 'pointermove', x, miniY, 82);
+          const actual = getComputedStyle(target).cursor;
+          if (actual !== expected) throw new Error(label + ' cursor was ' + actual);
+        };
+        for (const [x, label] of [[mapX(left), 'left'], [mapX(right), 'right']]) {
+          expectCursor(x, 'ew-resize', label + ' handle hover');
+          spectrPointer(target, 'pointerdown', x, miniY, 82);
+          if (getComputedStyle(target).cursor !== 'ew-resize')
+            throw new Error(label + ' handle press changed cursor');
+          spectrPointer(target, 'pointerup', x, miniY, 82);
+          if (getComputedStyle(target).cursor !== 'ew-resize')
+            throw new Error(label + ' handle release changed cursor');
+        }
+        expectCursor(centerX, 'grab', 'viewport center hover');
+        await spectrFrames(1);
+        if (getComputedStyle(target).cursor !== 'grab')
+          throw new Error('viewport center hover did not settle as grab');
+        spectrPointer(target, 'pointerdown', centerX, miniY, 82);
+        if (getComputedStyle(target).cursor !== 'grabbing')
+          throw new Error('viewport center press was not grabbing');
+        spectrPointer(target, 'pointermove', centerX + 8, miniY, 82);
+        if (getComputedStyle(target).cursor !== 'grabbing')
+          throw new Error('viewport center drag was not grabbing');
+        spectrPointer(target, 'pointerup', centerX + 8, miniY, 82);
+        const bandX = rect.left + rect.width * 0.5;
+        const bandY = rect.top + rect.height * 0.45;
+        spectrPointer(target, 'pointermove', bandX, bandY, 84);
+        if (getComputedStyle(target).cursor !== 'crosshair')
+          throw new Error('band draw surface was not crosshair');
+        result.textContent = 'SPECTR_BROWSER_CURSORS_OK';
+        document.documentElement.dataset.spectrOracle = 'CURSORS_OK';
+        return;
+      }
+      if (dropdowns) {
+        const root = document.querySelector('[data-spectr-menu-root="bands"]');
+        const triggerHost = root && root.querySelector('[data-spectr-menu-trigger]');
+        const trigger = triggerHost && (triggerHost.matches('button')
+          ? triggerHost : triggerHost.querySelector('button'));
+        if (!trigger) throw new Error('band-count trigger missing');
+        const triggerStyle = getComputedStyle(trigger);
+        if (triggerStyle.display !== 'inline-flex' || triggerStyle.alignItems !== 'center')
+          throw new Error('band-count trigger lost its centered inline-flex layout');
+        const number = trigger.querySelector('.tnum');
+        if (!number) throw new Error('band-count number missing');
+        const numberRect = number.getBoundingClientRect();
+        const triggerRect = trigger.getBoundingClientRect();
+        if (Math.abs((numberRect.top + numberRect.bottom)
+            - (triggerRect.top + triggerRect.bottom)) > 1.5)
+          throw new Error('band-count number is not vertically centered');
+        await spectrClick(trigger);
+        const popup = await spectrWaitFor(() => root.querySelector(
+          '[data-spectr-menu-options]'), 'band-count popup');
+        const options = Array.from(popup.querySelectorAll('button:not([disabled])'));
+        if (options.length !== 5) throw new Error('band-count options changed');
+        for (const option of options) {
+          if (getComputedStyle(option).backgroundColor === 'rgba(0, 0, 0, 0)')
+            throw new Error('dropdown item has no visible surface');
+        }
+        // Browser mode proves Spectr's semantic presentation and selection
+        // callback. Pulp's owning-root N1 suite proves the framework-owned
+        // hover/keyboard/outside-dismiss behavior on the shipping native path.
+        await spectrClick(options[1]);
+        await spectrWaitFor(() => !root.querySelector('[data-spectr-menu-options]'),
+          'band-count selection dismissal');
+        await spectrWaitFor(() => trigger.textContent.includes('40') && trigger,
+          'band-count selected value projection');
+        result.textContent = 'SPECTR_BROWSER_DROPDOWNS_OK';
+        document.documentElement.dataset.spectrOracle = 'DROPDOWNS_OK';
+        return;
+      }
+      if (banner) {
+        Object.defineProperty(document, 'hasFocus', {
+          configurable: true, value: () => true,
+        });
+        const editRoot = document.querySelector('[data-spectr-menu-root="edit"]');
+        const editTriggerHost = editRoot.querySelector('[data-spectr-menu-trigger]');
+        const editTrigger = editTriggerHost.querySelector('button');
+        const chooseEdit = async mode => {
+          editTrigger.click();
+          await Promise.resolve();
+          const option = await spectrWaitFor(() => editRoot.querySelector(
+            '[data-spectr-edit-mode="' + mode + '"]'), mode + ' edit option');
+          option.click();
+          await Promise.resolve();
+        };
+        await chooseEdit('level');
+        let status = await spectrWaitFor(() => document.querySelector(
+          '[data-spectr-status-banner]'), 'initial action status');
+        if (!/EDIT/.test(status.textContent))
+          throw new Error('action status text was not truthful');
+        const firstWidth = status.getBoundingClientRect().width;
+        const replacementStarted = performance.now();
+        await chooseEdit('boost');
+        status = await spectrWaitFor(() => {
+          const candidate = document.querySelector('[data-spectr-status-banner]');
+          return candidate && /BOOST/.test(candidate.textContent) ? candidate : null;
+        }, 'truthful replacement status');
+        if (performance.now() - replacementStarted > 100)
+          throw new Error('replacement status delayed the newest value');
+        const motion = getComputedStyle(status);
+        const durations = motion.transitionDuration.split(',').map(value =>
+          value.trim().endsWith('ms') ? parseFloat(value) : parseFloat(value) * 1000);
+        if (!motion.transitionProperty.split(',').map(value => value.trim()).includes('transform')
+            || Math.max(...durations) > 200)
+          throw new Error('status replacement motion exceeded its subtle bound');
+        const transform = motion.transform;
+        if (transform !== 'none') {
+          const values = transform.match(/matrix\\(([^)]+)\\)/)?.[1].split(',').map(Number);
+          if (values && (values[0] < 0.98 || values[0] > 1.001))
+            throw new Error('status replacement local scale step was an outlier');
+        }
+        await spectrFrames(2);
+        status = document.querySelector('[data-spectr-status-banner]');
+        if (!status || getComputedStyle(status).transform.includes('0.985'))
+          throw new Error('status replacement did not settle');
+        const canvas = Array.from(document.querySelectorAll('canvas'))
+          .filter(candidate => getComputedStyle(candidate).pointerEvents !== 'none')
+          .sort((a, b) => b.width * b.height - a.width * a.height)[0];
+        const target = canvas && canvas.parentElement;
+        if (!target) throw new Error('status hover canvas missing');
+        const rect = target.getBoundingClientRect();
+        spectrPointer(target, 'pointermove', rect.left + rect.width * 0.25,
+          rect.top + rect.height * 0.45, 91);
+        await spectrFrames(1);
+        status = document.querySelector('[data-spectr-status-banner]');
+        if (!status || !/BAND \\d+\\/32/.test(status.textContent)
+            || /BOOST/.test(status.textContent))
+          throw new Error('hover did not immediately replace action status');
+        if (status.getBoundingClientRect().top <= rect.top + 60 * rect.height / target.clientHeight)
+          throw new Error('status banner overlaps the graph top rule');
+        const hoverWidth = status.getBoundingClientRect().width;
+        const statusStyle = getComputedStyle(status);
+        const leftPadding = parseFloat(statusStyle.paddingLeft);
+        const rightPadding = parseFloat(statusStyle.paddingRight);
+        if (firstWidth === hoverWidth || Math.abs(leftPadding - rightPadding) > 0.01)
+          throw new Error('status width/padding did not follow content symmetrically: '
+            + JSON.stringify({ firstWidth, hoverWidth, leftPadding, rightPadding,
+              text: status.textContent }));
+        const settingsOpen = document.querySelector('[data-spectr-settings-open]');
+        await spectrClick(settingsOpen);
+        const setting = await spectrWaitFor(() => document.querySelector(
+          '[data-spectr-status-info-setting] [role="switch"]'), 'status info setting');
+        if (setting.getAttribute('aria-checked') !== 'true')
+          throw new Error('status info setting was not default-on');
+        await spectrClick(setting);
+        await spectrWaitFor(() => !document.querySelector('[data-spectr-status-banner]'),
+          'status info disablement');
+        const close = document.querySelector('[data-spectr-settings-close]');
+        await spectrClick(close);
+        spectrPointer(target, 'pointermove', rect.left + rect.width * 0.55,
+          rect.top + rect.height * 0.45, 91);
+        await chooseEdit('level');
+        await spectrFrames(3);
+        if (document.querySelector('[data-spectr-status-banner]'))
+          throw new Error('disabled status info still showed hover/action text');
+        await spectrClick(settingsOpen);
+        const disabledSetting = await spectrWaitFor(() => document.querySelector(
+          '[data-spectr-status-info-setting] [role="switch"]'), 'disabled status setting');
+        await spectrClick(disabledSetting);
+        await spectrClick(document.querySelector('[data-spectr-settings-close]'));
+        const originalMatchMedia = window.matchMedia;
+        window.matchMedia = query => query.includes('prefers-reduced-motion')
+          ? { matches: true } : originalMatchMedia(query);
+        await chooseEdit('boost');
+        status = await spectrWaitFor(() => document.querySelector(
+          '[data-spectr-status-banner]'), 'reduced-motion status');
+        if (getComputedStyle(status).transitionDuration !== '0s')
+          throw new Error('status banner ignored reduced motion');
+        result.textContent = 'SPECTR_BROWSER_BANNER_OK';
+        document.documentElement.dataset.spectrOracle = 'BANNER_OK';
+        return;
+      }
+      if (responsiveness) {
+        const canvas = Array.from(document.querySelectorAll('canvas'))
+          .filter(candidate => getComputedStyle(candidate).pointerEvents !== 'none')
+          .sort((a, b) => {
+            const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+            return br.width * br.height - ar.width * ar.height;
+          })[0];
+        const target = canvas && canvas.parentElement;
+        if (!target) throw new Error('responsive-drag canvas missing');
+        const perfDiagnostics = window.SpectrPerfDiagnostics;
+        if (!perfDiagnostics || typeof perfDiagnostics.enable !== 'function')
+          throw new Error('opt-in performance diagnostics were unavailable');
+        perfDiagnostics.enable();
+        const perfVisible = Array.from({ length: 321 }, (_, index) => -120 + index * 144 / 320);
+        const perfOverview = Array.from({ length: 121 }, (_, index) => -120 + index * 144 / 120);
+        window.__spectrEmit('analyzer_frame', {
+          schema_version: 1, epoch: 1, sequence_number: 1,
+          dropped_frames: 0, source_channels: 2, fft_size: 8192,
+          sample_rate: 48000, floor_db: -120, ceiling_db: 24,
+          visible: { min_hz: 100, max_hz: 10000, magnitude_db: perfVisible },
+          overview: { min_hz: 20, max_hz: 20000, magnitude_db: perfOverview },
+        });
+        const assertGridEquivalent = (name, minHz, maxHz, values) => {
+          const grid = window.SpectrAnalyzer.grid(name, minHz, maxHz, values.length);
+          if (!grid || !Object.isFrozen(grid))
+            throw new Error(name + ' exact analyzer grid was unavailable or mutable');
+          for (const index of [0, 1, Math.floor((grid.length - 1) / 2),
+            grid.length - 2, grid.length - 1]) {
+            const fraction = index / (grid.length - 1);
+            const logFrequency = Math.log10(minHz)
+              + fraction * (Math.log10(maxHz) - Math.log10(minHz));
+            const scalar = window.SpectrAnalyzer.sample(logFrequency, 0, name);
+            const bulk = window.SpectrAnalyzer.normalizeDb(grid[index]);
+            if (Math.abs(scalar - bulk) > 1e-7)
+              throw new Error(name + ' analyzer bulk/scalar mismatch at ' + index);
+          }
+        };
+        assertGridEquivalent('visible', 100, 10000, perfVisible);
+        assertGridEquivalent('overview', 20, 20000, perfOverview);
+        if (window.SpectrAnalyzer.grid('visible', 100.00005, 10000, 321) !== null
+            || window.SpectrAnalyzer.grid('visible', 20, 20000, 321) !== null
+            || window.SpectrAnalyzer.grid('visible', 100, 10000, 320) !== null)
+          throw new Error('analyzer grid accepted a range/count mismatch');
+        await spectrFrames(3);
+        const rect = target.getBoundingClientRect();
+        const designX = value => rect.left + value * rect.width / target.clientWidth;
+        const designY = value => rect.top + value * rect.height / target.clientHeight;
+        const startX = designX(56 + 2.5 * (target.clientWidth - 112) / 32);
+        const endX = designX(56 + 25.5 * (target.clientWidth - 112) / 32);
+        const startY = designY(target.clientHeight * 0.62);
+        const endY = designY(target.clientHeight * 0.34);
+        const before = spectrStatePosts().length;
+        const rawSamples = 96;
+        spectrPointer(target, 'pointerdown', startX, startY, 73);
+        for (let sample = 1; sample <= rawSamples; ++sample) {
+          const t = sample / rawSamples;
+          spectrPointer(target, 'pointermove',
+            startX + (endX - startX) * t,
+            startY + (endY - startY) * t, 73);
+        }
+        spectrPointer(target, 'pointerup', endX, endY, 73);
+        if (spectrStatePosts().length !== before)
+          throw new Error('raw drag samples crossed the native bridge before a frame');
+        const publication = await spectrPublishAfter(before,
+          'frame-coalesced responsive drag');
+        if (spectrStatePosts().length - before !== 1)
+          throw new Error('one drag frame produced '
+            + (spectrStatePosts().length - before) + ' native publications');
+        await spectrFrames(2);
+        if (spectrStatePosts().length - before !== 1)
+          throw new Error('responsive drag left a growing publication backlog');
+        // The endpoint-only framework coalescer is safe because SCULPT fills
+        // every band between the last delivered band and the newest one. This
+        // pins that reconstruction: no gaps may appear across the collapsed
+        // 23-band span.
+        for (let band = 2; band <= 25; ++band) {
+          if (publication.muted[band] || !Number.isFinite(publication.gain_db[band]))
+            throw new Error('coalesced drag left a gap at band ' + band);
+        }
+        const perf = perfDiagnostics.snapshot();
+        if (!perf || perf.rawPointerSamples !== rawSamples
+            || perf.statePublications !== 1)
+          throw new Error('diagnostics did not preserve raw/publication counts: '
+            + JSON.stringify(perf));
+        if (perf.animationFrames < 3 || perf.canvasRedraws !== perf.animationFrames
+            || perf.analyzerSamples <= 0
+            || perf.analyzerGridHits < perf.animationFrames
+            || perf.analyzerGridMisses < 2)
+          throw new Error('diagnostics did not cover frame/render/analyzer work');
+        if (perf.inputToPublicationMs.length !== 1
+            || !perf.inputToPublicationMs.every(value => Number.isFinite(value) && value >= 0))
+          throw new Error('diagnostics did not record bounded input-to-publication latency');
+        if (perf.frameIntervalsMs.length > 512 || perf.drawDurationsMs.length > 512)
+          throw new Error('diagnostic sample buffers exceeded their bound');
+        result.textContent = 'SPECTR_BROWSER_RESPONSIVENESS_OK';
+        document.documentElement.dataset.spectrOracle = 'RESPONSIVENESS_OK';
+        return;
+      }
       if (document.querySelector('[data-spectr-status-banner]'))
         throw new Error('empty status banner was mounted');
       Object.defineProperty(document, 'hasFocus', {
@@ -642,6 +959,27 @@ window.spectrStartOracle = () => {
       };
       window.__spectrEmit('analyzer_frame', payload);
       if (sampleAt1k() < 0.95) throw new Error('valid live peak was not sampled');
+      const assertExactGrid = (name, trace, minHz, maxHz) => {
+        const grid = window.SpectrAnalyzer.grid(
+          name, minHz, maxHz, trace.magnitude_db.length);
+        if (!grid || !Object.isFrozen(grid))
+          throw new Error(name + ' exact bulk analyzer grid was unavailable or mutable');
+        for (const index of [0, 1, Math.floor((grid.length - 1) / 2),
+          grid.length - 2, grid.length - 1]) {
+          const fraction = index / (grid.length - 1);
+          const logFrequency = Math.log10(minHz)
+            + fraction * (Math.log10(maxHz) - Math.log10(minHz));
+          const scalar = window.SpectrAnalyzer.sample(logFrequency, 0, name);
+          const bulk = window.SpectrAnalyzer.normalizeDb(grid[index]);
+          if (Math.abs(scalar - bulk) > 1e-7)
+            throw new Error(name + ' bulk/scalar mismatch at ' + index);
+        }
+      };
+      assertExactGrid('visible', payload.visible, 20, 20000);
+      assertExactGrid('overview', payload.overview, 20, 20000);
+      if (window.SpectrAnalyzer.grid('visible', 100, 10000, 321) !== null
+          || window.SpectrAnalyzer.grid('visible', 20, 20000, 320) !== null)
+        throw new Error('bulk analyzer grid accepted a zoom/count mismatch');
       const expectedDbfsMapping = [
         [-120, 0], [-90, 30 / 144], [-60, 60 / 144],
         [-30, 90 / 144], [0, 120 / 144], [24, 1],
@@ -1034,10 +1372,10 @@ window.spectrStartOracle = () => {
       const rightHandleX = mapX(rightFraction);
       const windowX = mapX((leftFraction + rightFraction) * 0.5);
       const trackX = mapX(leftFraction * 0.45);
-      await cursorAt(mapX(leftFraction), 'grab', 'left minimap handle');
-      await cursorAt(rightHandleX, 'grab', 'right minimap handle');
+      await cursorAt(mapX(leftFraction), 'ew-resize', 'left minimap handle');
+      await cursorAt(rightHandleX, 'ew-resize', 'right minimap handle');
       await cursorAt(windowX, 'grab', 'minimap window');
-      await cursorAt(trackX, 'grab', 'minimap track');
+      await cursorAt(trackX, 'pointer', 'minimap track');
       spectrPointer(target, 'pointerdown', windowX, miniY, 40);
       if (getComputedStyle(target).cursor !== 'grabbing')
         throw new Error('active minimap cursor was not grabbing');
@@ -1072,8 +1410,14 @@ window.spectrStartOracle = () => {
       count = spectrStatePosts().length;
       const leftHandleX = mapX(shiftedLeftFraction);
       spectrPointer(target, 'pointerdown', leftHandleX, miniY, 42);
+      if (getComputedStyle(target).cursor !== 'ew-resize')
+        throw new Error('active minimap resize cursor was not horizontal resize');
       spectrPointer(target, 'pointermove', leftHandleX + rect.width * 0.025, miniY, 42);
+      if (getComputedStyle(target).cursor !== 'ew-resize')
+        throw new Error('dragged minimap resize cursor changed role');
       spectrPointer(target, 'pointerup', leftHandleX + rect.width * 0.025, miniY, 42);
+      if (getComputedStyle(target).cursor !== 'ew-resize')
+        throw new Error('released minimap resize cursor did not remain horizontal resize');
       const resizedView = await spectrPublishAfter(count, 'minimap resize publication');
       if (Math.abs(Math.log(resizedView.max_hz / resizedView.min_hz) - afterSpan) < 0.02)
         throw new Error('minimap handle did not resize viewport');
@@ -1233,10 +1577,30 @@ setTimeout(window.spectrStartOracle, 0);
   ], { encoding: 'utf8', timeout: 45000, maxBuffer: 64 * 1024 * 1024 });
   const failure = run => run.stdout.match(/data-spectr-oracle="FAIL:[^"]*/)?.[0]
     || run.stdout.match(/<pre id="__spectr_browser_oracle"[^>]*>([^<]*)<\/pre>/)?.[1]
-    || run.stderr;
+    || run.error?.stack || run.stderr || 'Chrome exited without diagnostics';
 
   const initialUrl = `file://${instrumented}`;
-  if (muteModesMode) {
+  if (cursorsMode) {
+    const run = runChrome(initialUrl + '?cursors=1', 1320, 860);
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /data-spectr-oracle="CURSORS_OK"/, failure(run));
+    process.exitCode = 0;
+  } else if (dropdownsMode) {
+    const run = runChrome(initialUrl + '?dropdowns=1', 1320, 860);
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /data-spectr-oracle="DROPDOWNS_OK"/, failure(run));
+    process.exitCode = 0;
+  } else if (bannerMode) {
+    const run = runChrome(initialUrl + '?banner=1', 1320, 860);
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /data-spectr-oracle="BANNER_OK"/, failure(run));
+    process.exitCode = 0;
+  } else if (responsivenessMode) {
+    const run = runChrome(initialUrl + '?responsiveness=1', 1320, 860);
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /data-spectr-oracle="RESPONSIVENESS_OK"/, failure(run));
+    process.exitCode = 0;
+  } else if (muteModesMode) {
     const run = runChrome(initialUrl + '?mute-modes=1', 1320, 860);
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /data-spectr-oracle="MUTE_MODES_OK"/, failure(run));

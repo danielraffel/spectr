@@ -387,6 +387,16 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${SPECTR_CHROME_EXECUTABLE}
             --mute-modes)
     set_tests_properties(Spectr-browser-mute-modes PROPERTIES TIMEOUT 180)
+    foreach(SPECTR_BROWSER_MODE IN ITEMS responsiveness cursors dropdowns banner)
+        add_test(NAME Spectr-browser-${SPECTR_BROWSER_MODE}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+                ${SPECTR_CHROME_EXECUTABLE}
+                --${SPECTR_BROWSER_MODE})
+        set_tests_properties(Spectr-browser-${SPECTR_BROWSER_MODE}
+            PROPERTIES TIMEOUT 90)
+    endforeach()
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────
