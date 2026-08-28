@@ -336,9 +336,13 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
         // unpainted band during a live drag came from exactly that round trip —
         // the responsive pass needs ~96 host frames to commit, so the surface
         // outran the content for the whole gesture.
-        view.set_bounds({0.0f, 0.0f, static_cast<float>(kEditorDesignWidth),
-                         static_cast<float>(kEditorDesignHeight)});
-        view.layout_children();
+        const pulp::view::Rect authored_bounds{
+            0.0f, 0.0f, static_cast<float>(kEditorDesignWidth),
+            static_cast<float>(kEditorDesignHeight)};
+        if (view.bounds() != authored_bounds) {
+            view.set_bounds(authored_bounds);
+            view.layout_children();
+        }
         // Still run the materialized pass, but ALWAYS at the authored size.
         // It does two jobs: applyMaterializedImportMetadata() restores the
         // captured authored geometry, and only after that does it re-place for
@@ -352,8 +356,12 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
         publish_native_layout_(kEditorDesignWidth, kEditorDesignHeight);
         return;
     }
-    view.set_bounds({0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h)});
-    view.layout_children();
+    const pulp::view::Rect host_bounds{
+        0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h)};
+    if (view.bounds() != host_bounds) {
+        view.set_bounds(host_bounds);
+        view.layout_children();
+    }
     publish_native_layout_(w, h);
 #else
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {

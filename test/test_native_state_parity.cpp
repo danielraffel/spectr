@@ -2566,7 +2566,8 @@ TEST_CASE("a resize to an unchanged design box republishes nothing",
 
     // Drive the resize path the way a drag does. Under the pin every one of
     // these publishes the authored box, so after the first there is nothing new
-    // to say and the JS pass must not run again.
+    // to say: neither the native tree nor the JS pass should run again.
+    const auto layouts_before = pulp::view::View::layout_pass_count();
     for (const auto& size : std::array<std::pair<int, int>, 4>{
              std::pair{1400, 912}, std::pair{1480, 964},
              std::pair{1560, 1016}, std::pair{1640, 1068}}) {
@@ -2574,6 +2575,7 @@ TEST_CASE("a resize to an unchanged design box republishes nothing",
                                       static_cast<std::uint32_t>(size.first),
                                       static_cast<std::uint32_t>(size.second));
     }
+    CHECK(pulp::view::View::layout_pass_count() - layouts_before == 0);
     settle(rig.clock, 32);
 
     // Same throw-to-read seam the rest of this file uses.
