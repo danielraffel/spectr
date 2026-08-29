@@ -1066,8 +1066,8 @@ window.FilterBank = FilterBank;`,
       'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, visualizationMode, onEditModeChange, nativeHydrated, onNativeState }) {',
       'visualization mode filter prop');
     replaceSpectrSource(
-      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted, resolution }) {',
-      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted, resolution }) {',
+      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
+      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
       'visualization mode chrome prop');
     replaceSpectrSource(
       "const [dspMode, setDspMode] = useAppS('iir');",
@@ -1920,8 +1920,8 @@ window.PatternManager = PatternManager;`,
   // always hydrated from host state instead.`,
       'same-commit native UI state oracle');
     replaceSpectrSource(
-      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted, resolution }) {',
-      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onSavePattern, onClearAll, onResetAll, allMuted, resolution }) {',
+      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
+      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onSavePattern, onClearAll, onResetAll, allMuted }) {',
       'preset dropdown save action prop');
     replaceSpectrSource(
       String.raw`              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: 4, paddingTop: 2 }}>
@@ -2650,7 +2650,7 @@ window.PatternManager = PatternManager;`,
               cursor: 'pointer',
             }} title="Click to change band count">
               <span className="tnum">{info.N}</span> bands ▾`,
-      String.raw`              padding: '5px 10px', width: 92, flexShrink: 0, minHeight: 26, boxSizing: 'border-box', borderRadius: 3,
+      String.raw`              padding: '5px 10px', width: 92, flexShrink: 0, minHeight: 22, boxSizing: 'border-box', borderRadius: 3,
               fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.8,
               cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
               lineHeight: 1,

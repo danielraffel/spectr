@@ -396,6 +396,8 @@ void install_click_dispatch_counter(NativeEditorRig& rig) {
     })();)js", "spectr-native-click-dispatch-counter");
 }
 
+std::string js_string(std::string_view value);
+
 // The bridge has no evaluate-with-result seam, so read the counter back the way
 // the rest of this file reads runtime state: throw it and parse the message.
 int click_dispatch_count(NativeEditorRig& rig) {
@@ -411,6 +413,24 @@ int click_dispatch_count(NativeEditorRig& rig) {
     }
     FAIL("click dispatch counter was not readable");
     return -1;
+}
+
+std::string runtime_string(NativeEditorRig& rig, std::string_view expression,
+                           std::string_view label) {
+    const std::string marker = "SPECTR_RUNTIME_VALUE:";
+    try {
+        rig.bridge().load_script(
+            "throw new Error(" + js_string(marker) + " + String("
+                + std::string(expression) + "));",
+            std::string(label));
+    } catch (const std::exception& error) {
+        const std::string message = error.what();
+        const auto offset = message.find(marker);
+        if (offset != std::string::npos)
+            return message.substr(offset + marker.size());
+    }
+    FAIL("runtime string was not readable for " << label);
+    return {};
 }
 
 // The responsive layer refuses to write a non-finite box and records it. An
@@ -899,8 +919,8 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
 
     require_runtime_contract(
         rig,
-        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 5.5"
-        " && globalThis.__spectrBandCountCenteringReceipt__.trigger.height === 24"
+        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 3.5"
+        " && globalThis.__spectrBandCountCenteringReceipt__.trigger.height === 20"
         " && Math.abs(globalThis.__spectrBandCountCenteringReceipt__.trigger.left"
         " - 9.484375) < 0.001",
         "band trigger text was not optically centered");
@@ -911,7 +931,7 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     CHECK(trigger_label->cached_line_boxes().front().left
           == Catch::Approx(9.484375f).margin(0.01f));
     CHECK(trigger_label->cached_line_boxes().front().top
-          == Catch::Approx(5.5f).margin(0.01f));
+          == Catch::Approx(3.5f).margin(0.01f));
 
     REQUIRE(static_cast<bool>(rig.root->on_global_key));
     const auto comma = static_cast<pulp::view::KeyCode>(',');
@@ -1155,6 +1175,29 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
     PatternStoragePoison storage;
     NativeEditorRig rig;
     require_home(rig);
+    const auto directory = atlas_directory();
+    capture(rig, directory, "band-header-closed");
+
+    const auto* band_label = find_label(*rig.root, "32 bands ▾");
+    const auto* peer_label = find_label(*rig.root, "BOTH");
+    REQUIRE(band_label != nullptr);
+    REQUIRE(peer_label != nullptr);
+    const auto clickable_ancestor = [](const View* view) {
+        while (view != nullptr && !view->on_click) view = view->parent();
+        return view;
+    };
+    const auto* band_button = clickable_ancestor(band_label);
+    const auto* peer_button = clickable_ancestor(peer_label);
+    REQUIRE(band_button != nullptr);
+    REQUIRE(peer_button != nullptr);
+    const auto band_top = root_point(*band_button, 0.0f, 0.0f);
+    const auto band_bottom = root_point(
+        *band_button, 0.0f, band_button->bounds().height);
+    const auto peer_top = root_point(*peer_button, 0.0f, 0.0f);
+    const auto peer_bottom = root_point(
+        *peer_button, 0.0f, peer_button->bounds().height);
+    CHECK(band_top.y == Catch::Approx(peer_top.y).margin(0.01f));
+    CHECK(band_bottom.y == Catch::Approx(peer_bottom.y).margin(0.01f));
 
     const auto dispatch = [&](pulp::view::KeyCode key) {
         REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
@@ -1164,9 +1207,21 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
     rig.bridge().load_script(R"js((() => {
       const trigger = document.querySelector(
         '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
-      if (!trigger) throw new Error('band header trigger missing');
+      if (!trigger) {
+        const buttons = Array.from(document.querySelectorAll('button')).map(
+          button => ({ text: button.textContent.trim(),
+            trigger: button.getAttribute('data-spectr-menu-trigger'),
+            parentRoot: button.parentElement &&
+              button.parentElement.getAttribute('data-spectr-menu-root') }));
+        throw new Error('band header trigger missing: ' + JSON.stringify(buttons));
+      }
       globalThis.__spectrBandHeaderBefore = {
         trigger: trigger.getBoundingClientRect(),
+        separator: Array.from(document.querySelectorAll('span'))
+          .map(span => ({ text: span.textContent.trim(), rect: span.getBoundingClientRect() }))
+          .filter(entry => entry.text === '·'
+            && entry.rect.left >= trigger.getBoundingClientRect().right - 0.5)
+          .sort((a, b) => a.rect.left - b.rect.left)[0]?.rect,
         peer: Array.from(document.querySelectorAll(
           '[data-spectr-visualization] button')).find(
           button => button.textContent.trim() === 'BOTH')?.getBoundingClientRect(),
@@ -1183,6 +1238,7 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
     };
 
     focus_and_open();
+    capture(rig, directory, "band-header-open");
     REQUIRE(rig.root->interaction().active_overlay != nullptr);
     REQUIRE(rig.root->interaction().active_overlay->overlay_consumes_outside_click());
     require_runtime_contract(
@@ -1225,12 +1281,17 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
           || Math.abs(triggerRect.left - before.trigger.left) > 0.5
           || Math.abs(triggerRect.width - before.trigger.width) > 0.5)
         throw new Error('band popup reflowed its header');
-      if (!before.peer || Math.abs(triggerRect.top - before.peer.top) > 0.5)
-        throw new Error('band trigger missed segmented-control top edge: trigger='
+      if (!before.peer
+          || Math.abs(triggerRect.top - before.peer.top) > 0.5
+          || Math.abs(triggerRect.bottom - before.peer.bottom) > 0.5)
+        throw new Error('band trigger missed segmented-control rail: trigger='
           + triggerRect.top + '..' + triggerRect.bottom + ' peer='
-          + before.peer.top + '..' + before.peer.bottom);
+          + before.peer?.top + '..' + before.peer?.bottom);
+      if (!before.separator || triggerRect.right > before.separator.left - 3.5)
+        throw new Error('band trigger failed to reserve separator gap: triggerRight='
+          + triggerRect.right + ' separatorLeft=' + before.separator?.left);
       if (!before.zoom || triggerRect.right > before.zoom.left + 0.5)
-        throw new Error('band trigger overlaps zoom readout: triggerRight='
+        throw new Error('band trigger overlaps the zoom readout: triggerRight='
           + triggerRect.right + ' zoomLeft=' + before.zoom?.left);
       if (popupRect.top < triggerRect.bottom - 0.5)
         throw new Error('band popup does not overlay below its trigger');
@@ -1299,6 +1360,51 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
     storage.require_unchanged();
 }
 
+TEST_CASE("native selected tabs inherit hover through their label ancestry",
+          "[native-n1][state-parity][hover]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    const auto* label = find_label(*rig.root, "BOTH");
+    REQUIRE(label != nullptr);
+    const View* button = nearest_click_target(label);
+    REQUIRE(button != nullptr);
+    CHECK(button->opacity() == Catch::Approx(1.0f));
+    require_app_state(rig, "s.visualizationMode === 'both'",
+                      "the selected visualization tab was not BOTH");
+
+    const auto point = root_point(
+        *label, label->bounds().width * 0.5f, label->bounds().height * 0.5f);
+    const View* feedback_owner = rig.root->hit_test(point);
+    std::string ancestry;
+    for (const View* node = feedback_owner; node != nullptr; node = node->parent()) {
+        if (!ancestry.empty()) ancestry += " <- ";
+        ancestry += node->id();
+        ancestry += "{role=" + std::to_string(static_cast<int>(node->access_role()));
+        ancestry += ",default=" + std::to_string(node->default_hover_feedback());
+        ancestry += ",click=" + std::to_string(static_cast<bool>(node->on_click));
+        ancestry += "}";
+    }
+    INFO("hover ancestry: " << ancestry);
+    while (feedback_owner != nullptr &&
+           !feedback_owner->default_hover_feedback()) {
+        feedback_owner = feedback_owner->parent();
+    }
+    REQUIRE(feedback_owner != nullptr);
+    CHECK(feedback_owner->access_role() == View::AccessRole::button);
+    capture(rig, atlas_directory(), "selected-tab-resting");
+
+    rig.root->simulate_hover(point);
+    settle(rig.clock, 4);
+    CHECK(button->is_hovered());
+    CHECK(feedback_owner->is_hovered());
+    capture(rig, atlas_directory(), "selected-tab-hover");
+    require_app_state(rig, "s.visualizationMode === 'both'",
+                      "hover changed the selected visualization tab");
+    storage.require_unchanged();
+}
+
 TEST_CASE("every native dropdown dismisses by Escape and outside press",
           "[native-n1][state-parity][dropdown][dismissal]") {
     PatternStoragePoison storage;
@@ -1344,6 +1450,59 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
         require_runtime_contract(
             rig, "!document.querySelector(" + js_string(options) + ")",
             "outside press left a dropdown open");
+
+        // The same Pulp-owned active state must drive keyboard traversal and
+        // pointer hover for every Spectr popup, not just the band selector.
+        // Keeping this in the all-menu loop prevents a semantically incomplete
+        // imported dropdown from silently falling back to click-only behavior.
+        open_from_keyboard();
+        require_runtime_contract(
+            rig,
+            "(() => { const popup = document.querySelector("
+                + js_string(options)
+                + "); const items = popup ? Array.from(document.querySelectorAll("
+                + js_string(options + " button") + ")) : []; "
+                  "return items.length >= 3 "
+                  "&& document.querySelector('[data-pulp-popup-active=\"true\"]') === items[0]; })()",
+            "ArrowDown did not open the dropdown with one visible highlight");
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 4);
+        require_runtime_contract(
+            rig,
+            "(() => { const items = Array.from(document.querySelectorAll("
+                + js_string(options + " button") + ")); "
+                  "return document.querySelector('[data-pulp-popup-active=\"true\"]') === items[1]; })()",
+            "ArrowDown did not move the authoritative dropdown highlight");
+        const auto hover_point = runtime_string(
+            rig,
+            "(() => { const rect = Array.from(document.querySelectorAll("
+                + js_string(options + " button")
+                + "))[2].getBoundingClientRect(); "
+                  "return (rect.left + rect.width / 2) + ','"
+                  " + (rect.top + rect.height / 2); })()",
+            "spectr-native-hover-menu-option-point");
+        const auto comma = hover_point.find(',');
+        REQUIRE(comma != std::string::npos);
+        rig.root->simulate_hover({
+            std::stof(hover_point.substr(0, comma)),
+            std::stof(hover_point.substr(comma + 1))});
+        settle(rig.clock, 4);
+        require_runtime_contract(
+            rig,
+            "(() => { const items = Array.from(document.querySelectorAll("
+                + js_string(options + " button") + ")); const hovered = items[2]; "
+                  "return document.querySelector('[data-pulp-popup-active=\"true\"]') === hovered "
+                  "&& hovered.style.backgroundColor === 'rgba(120,180,255,0.18)'; })()",
+            "pointer hover did not move and visibly paint the dropdown highlight");
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::enter),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 8);
+        require_runtime_contract(
+            rig, "!document.querySelector(" + js_string(options) + ")",
+            "Return did not select the highlighted option and close the dropdown");
     }
     storage.require_unchanged();
 }

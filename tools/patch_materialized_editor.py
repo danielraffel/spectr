@@ -335,7 +335,7 @@ EDITS = [
     ('preset dropdown footer actions get their own rows',
      'style: { ...menuItem, color: "hsl(200,85%,70%)" }',
      'style: { ...menuItem, color: "hsl(200,85%,70%)", '
-     'display: "block", width: "100%" }'),
+     'display: "block", width: "100%" }', 2),
 
     ('hover readout clears the status banner slot',
      '    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);',
@@ -744,6 +744,22 @@ EDITS = [
      '    flexShrink: 0,\n'
      '    minHeight: 26,'),
 
+    ('band trigger shares the segmented tab painted height',
+     '    padding: "5px 10px",\n'
+     '    width: 92,\n'
+     '    flexShrink: 0,\n'
+     '    minHeight: 26,\n'
+     '    boxSizing: "border-box",',
+     '    padding: "5px 10px",\n'
+     '    width: 92,\n'
+     '    flexShrink: 0,\n'
+     '    minHeight: 22,\n'
+     '    boxSizing: "border-box",'),
+
+    ('band root reserves the metadata separator gap',
+     '"data-spectr-menu-root": "bands", style: { position: "relative" }',
+     '"data-spectr-menu-root": "bands", style: { position: "relative", marginRight: 4 }'),
+
     ('band dropdown matches settings chip metrics',
      '        background: info.N === n ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.025)",\n'
      '        border: "1px solid " + (info.N === n ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.06)"),\n'
@@ -986,7 +1002,7 @@ EDITS = [
     ('minimap trims use the mac resizeleftright cursor',
      '"ew-resize"',
      '"col-resize"',
-     2),
+     1),
 
     ('minimap trim press retains resizeleftright cursor',
      '      wrapRef.current.style.cursor = "grabbing";\n'
@@ -1254,16 +1270,16 @@ EDITS = [
 
     ('drawing keeps live hover outside React reconciliation',
      '  const [hover, setHover] = useState(null);\n'
-     '  const hoverBand = hover && !hover.mini ? hover.band : -1;',
+     '  const [ctxMenu, setCtxMenu] = useState(null);\n'
+     '  const edgeGlowRef = useRef({ left: 0, right: 0, top: 0, bottom: 0 });',
      '  const [hover, setHover] = useState(null);\n'
+     '  const [ctxMenu, setCtxMenu] = useState(null);\n'
      '  const hoverRef = useRef(null);\n'
-     '  const hoverBand = hover && !hover.mini ? hover.band : -1;\n'
      '  const updatePointerHover = (next) => {\n'
      '    hoverRef.current = next;\n'
      '    if (!pointerRef.current || !pointerRef.current.mode) setHover(next);\n'
      '  };\n'
-     '    if (!pointerRef.current || !pointerRef.current.mode) setHover(next);\n'
-     '  };\n'
+     '  const edgeGlowRef = useRef({ left: 0, right: 0, top: 0, bottom: 0 });\n'
      '  const updateLiveHoverStatus = () => {\n'
      '    const current = hoverRef.current;\n'
      '    const pointer = pointerRef.current;\n'
@@ -1918,6 +1934,12 @@ SUPERSEDED_SENTINELS = {
         'minWidth: 40',
     'band count trigger reflects selection immediately':
         'minWidth: 40',
+    'band trigger matches settings chip metrics':
+        'minHeight: 22',
+    'band trigger reserves deterministic native width':
+        'minHeight: 22',
+    'band root reserves the metadata separator gap':
+        '"data-spectr-menu-root": "bands", style: { position: "relative", marginRight: 4 }',
     'band trigger suffix shares the centered flex line':
         'paddingLeft: 4',
     'band trigger suffix uses native-supported spacing':
@@ -2018,16 +2040,23 @@ DOCUMENT_EDITS = [
      '{"tag":"button","index":0}],"anonymous_text_index":0,"text":" bands ▾"',
      '{"tag":"button","index":0},{"tag":"span","index":1}],"text":"bands ▾"'),
     ('selected preset binding reflects the deterministic default',
-     '{"index":14,"anchor":"#root","path":[{"tag":"div","index":0},{"tag":"div","index":3},{"tag":"div","index":6},{"tag":"span","index":0},{"tag":"button","index":0},{"tag":"span","index":1}],"text":"PRESETS ▾","basis":{"width":63.03125,"resolved_face":"JetBrainsMono-Regular","resolved_faces":[{"family_name":"Menlo","post_script_name":"Menlo-Regular","is_custom_font":false,"glyph_count":1},{"family_name":"JetBrains Mono","post_script_name":"JetBrainsMono-Regular","is_custom_font":true,"glyph_count":8}],"requested":{"font_family":"\\\"JetBrains Mono\\\", ui-monospace, monospace","font_size":10,"font_weight":400,"font_slant":0,"letter_spacing":1}},"boxes":[{"left":0,"top":0,"width":63.03125,"height":13,"start":0,"length":9}]}',
-     '{"index":14,"anchor":"#root","path":[{"tag":"div","index":0},{"tag":"div","index":3},{"tag":"div","index":6},{"tag":"span","index":0},{"tag":"button","index":0},{"tag":"span","index":1}],"text":"FLAT ▾","basis":{"width":42.04257793060037,"resolved_face":"JetBrainsMono-Regular","resolved_faces":[{"family_name":"Menlo","post_script_name":"Menlo-Regular","is_custom_font":false,"glyph_count":1},{"family_name":"JetBrains Mono","post_script_name":"JetBrainsMono-Regular","is_custom_font":true,"glyph_count":5}],"requested":{"font_family":"\\\"JetBrains Mono\\\", ui-monospace, monospace","font_size":10,"font_weight":400,"font_slant":0,"letter_spacing":1}},"boxes":[{"left":0,"top":0,"width":42.04257793060037,"height":13.017578125000114,"start":0,"length":6}]}'),
-    ('band-count binding shares the suffix baseline',
-     '"letter_spacing":0.5}},"boxes":[{"left":0,"top":0,"width":13,'
-     '"height":13,"start":0,"length":2}]},{"index":9',
-     '"letter_spacing":0.5}},"boxes":[{"left":0,"top":3,"width":13,'
-     '"height":13,"start":0,"length":2}]},{"index":9'),
+     '],"text":"PRESETS ▾","basis":{"width":63.05546845843935,',
+     '],"text":"FLAT ▾","basis":{"width":42.04257793060037,'),
 ]
 
 RUNTIME_EDITS = [
+    ('imported HTML buttons inherit Pulp semantic hover',
+     '            call2("setPointerEvents", textId, "none");\n'
+     '            return;\n'
+     '          }\n'
+     '          case "input": {',
+     '            call2("setPointerEvents", textId, "none");\n'
+     '            call2("setAccessibilityRole", id, "button");\n'
+     '            if (text) call2("setAccessibilityLabel", id, text);\n'
+     '            return;\n'
+     '          }\n'
+     '          case "input": {',
+     'call2("setAccessibilityRole", id, "button")'),
     ('semantic popup roles consume their outside dismissal press',
      '        if (r === "dialog" || r === "alertdialog" || r === "menu" || r === "listbox") {\n'
      '          call("claimOverlay", id);\n'
@@ -2571,11 +2600,27 @@ RUNTIME_EDITS = [
      '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);\n'
      '    }\n'
      '    const nativeTextOwner = (owner) => values.find((candidate) => {',
-     'g5.setFlex(String(bandRootId), "width", 94);'),
+     'const bandRootId = bandRoot && (bandRoot.__pulpId || bandRoot.id);'),
+    ('band trigger reserves metadata gap and exact peer baseline',
+     '      g5.setFlex(String(bandRootId), "width", 94);\n'
+     '      g5.setFlex(String(bandRootId), "height", 24);\n'
+     '    }\n'
+     '    if (bandTriggerId) {\n'
+     '      g5.setFlex(String(bandTriggerId), "width", 92);\n'
+     '      g5.setFlex(String(bandTriggerId), "height", 24);\n'
+     '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);\n',
+     '      g5.setFlex(String(bandRootId), "width", 104);\n'
+     '      g5.setFlex(String(bandRootId), "height", 24);\n'
+     '    }\n'
+     '    if (bandTriggerId) {\n'
+     '      g5.setFlex(String(bandTriggerId), "width", 92);\n'
+     '      g5.setFlex(String(bandTriggerId), "height", 20);\n'
+     '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);\n',
+     'g5.setFlex(String(bandRootId), "width", 104);'),
     ('band trigger text centers in the common 24px rail',
-     '        92, 73.03125),',
      '        92, 73.03125, 24, 5.5),',
-     '92, 73.03125, 24, 5.5'),
+     '        92, 73.03125, 20, 3.5),',
+     '92, 73.03125, 20, 3.5'),
     ('dropdown optical centering follows every selected label',
      '      const label = descendants.find(\n'
      '        (node) => String(node && node.textContent || "") === correction.text\n'

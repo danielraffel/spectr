@@ -7905,6 +7905,8 @@
             call2("setBottom", textId, 0);
             call2("setLeft", textId, 0);
             call2("setPointerEvents", textId, "none");
+            call2("setAccessibilityRole", id, "button");
+            if (text) call2("setAccessibilityLabel", id, text);
             return;
           }
           case "input": {
@@ -9521,12 +9523,12 @@
     // header's normal flex alignment establish the shared baseline. Reserve
     // the trigger's full painted width so it cannot overlap the zoom readout.
     if (bandRootId) {
-      g5.setFlex(String(bandRootId), "width", 94);
+      g5.setFlex(String(bandRootId), "width", 104);
       g5.setFlex(String(bandRootId), "height", 24);
     }
     if (bandTriggerId) {
       g5.setFlex(String(bandTriggerId), "width", 92);
-      g5.setFlex(String(bandTriggerId), "height", 24);
+      g5.setFlex(String(bandTriggerId), "height", 20);
       g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);
     }
     const nativeTextOwner = (owner) => values.find((candidate) => {
@@ -9538,7 +9540,7 @@
     const bandCountReceipt = {
       trigger: centerBandText(
         nativeTextOwner(bandTrigger), liveBandCount + " bands \u25BE",
-        92, 73.03125, 24, 5.5),
+        92, 73.03125, 20, 3.5),
       options: []
     };
     const bandOptions = bandRoot ? Array.from(globalThis.document?.querySelectorAll?.(
