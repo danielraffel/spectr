@@ -60,6 +60,22 @@ or substituted SDK before Spectr compiles. Release/distribution builds should
 use a provenance-marked, distribution-eligible release SDK from the same exact
 accepted Pulp commit, not the development profile.
 
+For the exact-head M5 interaction gate, build a tracing-enabled development SDK
+from the same merged Pulp commit, configure Spectr in Release with that SHA, and
+run the two isolated live-host workloads:
+
+```bash
+tools/verify_interaction_perf.sh \
+  build-native <exact-spectr-sha> <exact-pulp-sdk-sha> artifacts/perf
+```
+
+The command captures separate band-edit and minimap Perfetto traces, GPU
+screenshots, and JSON receipts. It fails closed when provenance differs, a
+required AppKit/QuickJS/Skia stage is absent, layout or paint repeats more than
+once per delivered input, or the M5 trace misses the 120 Hz p95 / 60 Hz p99
+frame budgets. These are development artifacts; traced binaries must never be
+packaged for distribution.
+
 ### Spectral build profiles
 
 New build directories use the **Balanced** product default: an 8192-sample FFT
