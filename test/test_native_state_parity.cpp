@@ -1335,6 +1335,86 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
     storage.require_unchanged();
 }
 
+TEST_CASE("native settings modal dismisses by Escape and outside press",
+          "[native-n1][state-parity][settings][dismissal]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    // Match the production host boundary: the first frame lays out the mounted
+    // document before a user can invoke the modal command.
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+    const auto comma = static_cast<pulp::view::KeyCode>(',');
+    CHECK_FALSE(rig.root->on_global_key({
+        .key = comma,
+        .modifiers = pulp::view::kModNone,
+        .is_down = true}));
+    require_home(rig);
+
+    const auto open_settings = [&] {
+#if defined(__APPLE__)
+        constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+        constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+        REQUIRE(rig.root->on_global_key({
+            .key = comma,
+            .modifiers = primary_modifier,
+            .is_down = true}));
+        settle(rig.clock, 16);
+        require_state(rig, "settings");
+        REQUIRE(rig.root->interaction().active_overlay != nullptr);
+    };
+
+    INFO("phase=open-for-escape");
+    open_settings();
+    REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+        *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+        pulp::view::kModNone, true));
+    settle(rig.clock, 8);
+    require_home(rig);
+
+    INFO("phase=open-for-outside");
+    open_settings();
+    const auto* title = find_label(*rig.root, "SETTINGS");
+    REQUIRE(title != nullptr);
+    const auto title_rect = root_rect(*title);
+    const pulp::view::Point title_point{
+        (title_rect.left + title_rect.right) * 0.5f,
+        (title_rect.top + title_rect.bottom) * 0.5f};
+    CAPTURE(describe_control(*rig.root->interaction().active_overlay));
+    REQUIRE(rig.root->interaction().active_overlay->overlay_contains(title_point));
+    const auto inside = pulp::view::route_press_to_active_overlay(
+        *rig.root, title_point);
+    REQUIRE(inside.routing == pulp::view::OverlayPressRouting::routed);
+    REQUIRE(inside.target != nullptr);
+    REQUIRE(static_cast<bool>(rig.root->interaction().active_overlay
+                                  ->on_overlay_dismissed));
+    require_runtime_contract(
+        rig,
+        "(() => { const panel = document.querySelector('[data-spectr-settings-panel]');"
+        " const key = panel && panel.__pulpId + ':dismiss';"
+        " return !!key && globalThis.__pulpReactEventCallbacks__.has(key); })()",
+        "settings panel lost its native dismiss callback");
+    settle(rig.clock, 8);
+    INFO("phase=inside-positive-control");
+    require_state(rig, "settings");
+
+    // The authored panel occupies x=400..920. This point is on the modal
+    // scrim, proving the outside path rather than reusing the close button.
+    const auto outside = pulp::view::route_press_to_active_overlay(
+        *rig.root, {1200.0f, 430.0f});
+    REQUIRE(outside.routing == pulp::view::OverlayPressRouting::dismissed);
+    // The portable router deliberately reports dismissal and lets every host
+    // continue through its normal hit-test path. Mirror that second half: the
+    // Settings scrim receives the click and closes its modal state.
+    rig.root->simulate_click({1200.0f, 430.0f});
+    settle(rig.clock, 8);
+    INFO("phase=outside-dismissal");
+    require_home(rig);
+    storage.require_unchanged();
+}
+
 TEST_CASE("native Flare keeps below-zero bands negative while pushing them outward",
           "[native-n1][state-parity][flare]") {
     PatternStoragePoison storage;

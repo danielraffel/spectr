@@ -1422,7 +1422,7 @@ window.FilterBank = FilterBank;`,
       'settings modal Escape');
     replaceSpectrSource(
       '<div onClick={onClose} style={{\n      position: \'absolute\', inset: 0, zIndex: 50,',
-      '<div data-spectr-overlay="true" role="dialog" aria-modal="true" aria-label="Settings" onClick={onClose} style={{\n      position: \'absolute\', inset: 0, zIndex: 50,',
+      '<div data-spectr-overlay="true" role="dialog" aria-modal="true" aria-label="Settings" onClick={event => { if (event.target === event.currentTarget) onClose(); }} style={{\n      position: \'absolute\', inset: 0, zIndex: 50,',
       'settings modal semantics');
     replaceSpectrSource(
       'function SettingsModal({ settings, setSettings, onClose }) {',
@@ -1518,7 +1518,7 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
       'stable settings toggles');
     replaceSpectrSource(
       '<div onClick={e => e.stopPropagation()} style={{\n        width: 520, maxHeight: \'90vh\', overflowY: \'auto\',',
-      '<div data-spectr-settings-panel onClick={e => e.stopPropagation()} style={{\n        width: 520, maxHeight: \'90vh\', overflowY: \'auto\',',
+      '<div data-spectr-settings-panel data-spectr-overlay="true" onClick={e => e.stopPropagation()} style={{\n        width: 520, maxHeight: \'90vh\', overflowY: \'auto\',',
       'settings panel hit target');
     replaceSpectrSource(
       '<button onClick={onClose} style={{\n            background: \'transparent\', border: \'none\', color: \'rgba(255,255,255,0.6)\',\n            cursor: \'pointer\', fontSize: 20, padding: 0, lineHeight: 1,',

@@ -9099,6 +9099,10 @@
              panelWidth, panelHeight);
       const panelId = idOf(settingsPanel);
       if (panelId) {
+        // React claimed the captured View before this ScrollView upgrade.
+        // Re-claim the stable id on the replacement so the framework
+        // routes Escape and outside presses against the panel bounds.
+        if (typeof g5.claimOverlay === "function") g5.claimOverlay(panelId);
         // Replacing the captured overflow container with a real native
         // ScrollView intentionally preserves its DOM identity, but the newly
         // allocated native view has no paint state. Replay the authored panel

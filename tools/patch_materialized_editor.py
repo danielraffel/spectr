@@ -31,6 +31,23 @@ RUNTIME_PATH = 'native-ui/materialized/runtime.js'
 SOURCE_PATH = 'resources/editor.html'
 
 EDITS = [
+    # The full-screen settings scrim owns the modal. Guard its click handler so
+    # bubbled clicks from inert panel content cannot be mistaken for an outside
+    # press; a direct scrim press still dismisses in browser and native hosts.
+    ('settings backdrop only dismisses a true outside click',
+     'React.createElement("div", { "data-spectr-overlay": "true", role: "dialog", "aria-modal": "true", "aria-label": "Settings", onClick: onClose, style: {',
+     'React.createElement("div", { "data-spectr-overlay": "true", role: "dialog", "aria-modal": "true", "aria-label": "Settings", onClick: (event) => { if (event.target === event.currentTarget) onClose(); }, style: {'),
+
+    # Migration for the short-lived panel-owned implementation. On a fresh
+    # materialization the replacement is already present and this is a no-op.
+    ('settings backdrop migration retains overlay identity',
+     'React.createElement("div", { role: "dialog", "aria-modal": "true", "aria-label": "Settings", onClick: (event) => { if (event.target === event.currentTarget) onClose(); }, style: {',
+     'React.createElement("div", { "data-spectr-overlay": "true", role: "dialog", "aria-modal": "true", "aria-label": "Settings", onClick: (event) => { if (event.target === event.currentTarget) onClose(); }, style: {'),
+
+    ('settings panel owns native overlay containment',
+     'React.createElement("div", { "data-spectr-settings-panel": true, onClick: (e) => e.stopPropagation(), style: {',
+     'React.createElement("div", { "data-spectr-settings-panel": true, "data-spectr-overlay": "true", overlay: true, onDismiss: onClose, onClick: (e) => e.stopPropagation(), style: {'),
+
     ('normal chrome does not expose spectral resolution diagnostics',
      '  )))), /* @__PURE__ */ React.createElement("span", null, "\\xB7"), /* @__PURE__ */ React.createElement("span", { className: "tnum" }, info.zoom, "\\xD7 zoom"), /* @__PURE__ */ React.createElement("span", null, "\\xB7"), /* @__PURE__ */ React.createElement("span", { "data-spectr-resolution": true, className: "tnum", title: "Distinct FFT-bin coverage; all bands remain editable", "aria-label": "Spectral resolution", onPointerEnter: () => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + "/" + resolution.active : "\\u2014/\\u2014"} DISTINCT \\xB7 ALL BANDS EDITABLE`), onClick: () => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + "/" + resolution.active : "\\u2014/\\u2014"} DISTINCT \\xB7 ALL BANDS EDITABLE`), style: {\n'
      '    color: resolution && resolution.represented < resolution.active ? "rgba(255,176,96,0.88)" : "rgba(255,255,255,0.38)"\n'
@@ -2476,6 +2493,16 @@ RUNTIME_EDITS = [
      '        if (typeof g5.setScrollContentSize === "function")\n'
      '          g5.setScrollContentSize(panelId);\n\n',
      'g5.setScrollContentSize(panelId);'),
+    ('settings scroll upgrade restores native overlay ownership',
+     '      if (panelId) {\n'
+     '        // Replacing the captured overflow container with a real native\n',
+     '      if (panelId) {\n'
+     '        // React claimed the captured View before this ScrollView upgrade.\n'
+     '        // Re-claim the stable id on the replacement so the framework\n'
+     '        // routes Escape and outside presses against the panel bounds.\n'
+     '        if (typeof g5.claimOverlay === "function") g5.claimOverlay(panelId);\n'
+     '        // Replacing the captured overflow container with a real native\n',
+     'g5.claimOverlay(panelId);'),
 ]
 
 
