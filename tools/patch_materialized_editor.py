@@ -30,80 +30,6 @@ PATH = 'native-ui/materialized/materialized-document.runtime.json'
 SOURCE_PATH = 'resources/editor.html'
 
 EDITS = [
-    ('opt-in performance diagnostics surface',
-     '  }\n'
-     '  const validTrace = (trace, expectedLength) => trace',
-     '  }\n'
-     '  const perfDiagnostics = globalThis.SpectrPerfDiagnostics || {\n'
-     '    active: null,\n'
-     '    enable() {\n'
-     '      this.active = { rawPointerSamples: 0, analyzerSamples: 0, animationFrames: 0,\n'
-     '        canvasRedraws: 0, statePublications: 0, frameIntervalsMs: [],\n'
-     '        drawDurationsMs: [], inputToPublicationMs: [], lastFrameMs: null,\n'
-     '        latestInputMs: null };\n'
-     '      return this.snapshot();\n'
-     '    },\n'
-     '    disable() { const result = this.snapshot(); this.active = null; return result; },\n'
-     '    snapshot() { return this.active ? JSON.parse(JSON.stringify(this.active)) : null; },\n'
-     '  };\n'
-     '  globalThis.SpectrPerfDiagnostics = perfDiagnostics;\n'
-     '  if (typeof window !== "undefined") window.SpectrPerfDiagnostics = perfDiagnostics;\n'
-     '  const validTrace = (trace, expectedLength) => trace'),
-
-    ('accepted analyzer grids are immutable',
-     'magnitude_db: payload.visible.magnitude_db.slice() },\n'
-     '      overview: { ...payload.overview,\n'
-     '        magnitude_db: payload.overview.magnitude_db.slice() },',
-     'magnitude_db: Object.freeze(payload.visible.magnitude_db.slice()) },\n'
-     '      overview: { ...payload.overview,\n'
-     '        magnitude_db: Object.freeze(payload.overview.magnitude_db.slice()) },'),
-
-    ('analyzer grid diagnostic counters',
-     'this.active = { rawPointerSamples: 0, analyzerSamples: 0, animationFrames: 0,',
-     'this.active = { rawPointerSamples: 0, analyzerSamples: 0, analyzerGridHits: 0,\n'
-     '        analyzerGridMisses: 0, animationFrames: 0,'),
-
-    ('analyzer diagnostics count scalar samples',
-     "    sample(logFrequency, _time, traceName = 'visible') {\n"
-     '      if (!analyzerFrame) return 0;',
-     "    sample(logFrequency, _time, traceName = 'visible') {\n"
-     '      if (perfDiagnostics.active) perfDiagnostics.active.analyzerSamples += 1;\n'
-     '      if (!analyzerFrame) return 0;'),
-
-    ('exact analyzer grid lookup',
-     '    project(amount, zeroY, halfH) {\n'
-     '      return projectAnalyzerAmount(amount, zeroY, halfH);\n'
-     '    },\n'
-     '    debugSnapshot() {',
-     '    project(amount, zeroY, halfH) {\n'
-     '      return projectAnalyzerAmount(amount, zeroY, halfH);\n'
-     '    },\n'
-     '    grid(traceName, minHz, maxHz, pointCount) {\n'
-     '      if (!analyzerFrame) return null;\n'
-     "      const trace = traceName === 'overview' ? analyzerFrame.overview : analyzerFrame.visible;\n"
-     '      return trace.magnitude_db.length === pointCount\n'
-     '          && trace.min_hz === minHz && trace.max_hz === maxHz\n'
-     '        ? trace.magnitude_db : null;\n'
-     '    },\n'
-     '    debugSnapshot() {'),
-
-    ('analyzer grid diagnostics record eligibility',
-     '      return trace.magnitude_db.length === pointCount\n'
-     '          && close(trace.min_hz, minHz) && close(trace.max_hz, maxHz)\n'
-     '        ? trace.magnitude_db : null;',
-     '      const matches = trace.magnitude_db.length === pointCount\n'
-     '          && trace.min_hz === minHz && trace.max_hz === maxHz;\n'
-     '      if (perfDiagnostics.active)\n'
-     '        perfDiagnostics.active[matches ? "analyzerGridHits" : "analyzerGridMisses"] += 1;\n'
-     '      return matches ? trace.magnitude_db : null;'),
-
-    ('analyzer grids require identical endpoints',
-     '      const close = (a, b) => Math.abs(a - b)\n'
-     '        <= Math.max(0.001, Math.abs(b) * 1e-6);\n'
-     '      const matches = trace.magnitude_db.length === pointCount\n'
-     '          && close(trace.min_hz, minHz) && close(trace.max_hz, maxHz)\n',
-     '      const matches = trace.magnitude_db.length === pointCount\n'
-     '          && trace.min_hz === minHz && trace.max_hz === maxHz;\n'),
     ('native menu lookup uses the document selector surface',
      '    const root = document.querySelector(\'[data-spectr-menu-root="\' + key + \'"]\');\n'
      '    if (!root) return;\n'
@@ -122,191 +48,6 @@ EDITS = [
      '      const options = Array.from(root.querySelectorAll("[data-spectr-menu-options] button:not([disabled])"));',
      '      const options = Array.from(document.querySelectorAll(\n'
      '        rootSelector + " [data-spectr-menu-options] button:not([disabled])"));'),
-
-    ('popup keyboard and pointer share one visible active item',
-     '    const onPointer = (event) => {\n'
-     '      if (!root.contains(event.target)) close(false);\n'
-     '    };\n'
-     '    const onKey = (event) => {\n'
-     '      if (event.key === "Escape") {\n'
-     '        event.preventDefault();\n'
-     '        event.stopPropagation();\n'
-     '        close(true);\n'
-     '        return;\n'
-     '      }\n'
-     '      const options = Array.from(document.querySelectorAll(\n'
-     '        rootSelector + " [data-spectr-menu-options] button:not([disabled])"));\n'
-     '      if (!options.length) return;\n'
-     '      if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {\n'
-     '        event.preventDefault();\n'
-     '        event.stopPropagation();\n'
-     '        const current = options.indexOf(document.activeElement);\n'
-     '        const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : event.key === "ArrowDown" ? (current + 1 + options.length) % options.length : (current - 1 + options.length) % options.length;\n'
-     '        options[next].focus();\n'
-     '      } else if ((event.key === "Enter" || event.key === " ") && options.includes(document.activeElement)) {\n'
-     '        event.preventDefault();\n'
-     '        event.stopPropagation();\n'
-     '        restoreMenuFocus.current = true;\n'
-     '        document.activeElement.click();\n'
-     '      }\n'
-     '    };\n'
-     '    document.addEventListener("mousedown", onPointer);\n'
-     '    document.addEventListener("keydown", onKey, true);\n'
-     '    return () => {\n'
-     '      document.removeEventListener("mousedown", onPointer);\n'
-     '      document.removeEventListener("keydown", onKey, true);',
-     '    const options = Array.from(document.querySelectorAll(\n'
-     '      rootSelector + " [data-spectr-menu-options] button:not([disabled])"));\n'
-     '    const menuState = {activeIndex: -1};\n'
-     '    globalThis.__spectrTestHooks = globalThis.__spectrTestHooks || {};\n'
-     '    globalThis.__spectrTestHooks.menuState = globalThis.__spectrTestHooks.menuState || {};\n'
-     '    globalThis.__spectrTestHooks.menuState[key] = menuState;\n'
-     '    const markActive = (index, moveFocus) => {\n'
-     '      menuState.activeIndex = index;\n'
-     '      options.forEach((option, optionIndex) => {\n'
-     '        if (option.__spectrMenuBaseBackground === void 0) {\n'
-     '          option.__spectrMenuBaseBackground = option.style.background || "";\n'
-     '          option.__spectrMenuBaseBorderColor = option.style.borderColor || "";\n'
-     '        }\n'
-     '        const active = optionIndex === index;\n'
-     '        option.setAttribute("data-spectr-menu-active", active ? "true" : "false");\n'
-     '        option.setAttribute("aria-selected", active ? "true" : "false");\n'
-     '        option.style.background = active ? "rgba(120,180,255,0.18)" : option.__spectrMenuBaseBackground;\n'
-     '        option.style.borderColor = active ? "rgba(180,210,255,0.42)" : option.__spectrMenuBaseBorderColor;\n'
-     '      });\n'
-     '      if (moveFocus && options[index]) options[index].focus();\n'
-     '    };\n'
-     '    const hoverHandlers = options.map((option, index) => {\n'
-     '      const onEnter = () => markActive(index, false);\n'
-     '      option.addEventListener("pointerenter", onEnter);\n'
-     '      return onEnter;\n'
-     '    });\n'
-     '    if (options.length) markActive(0, false);\n'
-     '    const navigationFocusClaimed =\n'
-     '      typeof globalThis.claimDocumentNavigationFocus !== "function"\n'
-     '      || globalThis.claimDocumentNavigationFocus();\n'
-     '    if (!navigationFocusClaimed) return;\n'
-     '    const onPointer = (event) => {\n'
-     '      if (!root.contains(event.target)) close(false);\n'
-     '    };\n'
-     '    const onKey = (event) => {\n'
-     '      if (event.key === "Escape") {\n'
-     '        event.preventDefault();\n'
-     '        event.stopPropagation();\n'
-     '        close(true);\n'
-     '        return;\n'
-     '      }\n'
-     '      if (!options.length) return;\n'
-     '      if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {\n'
-     '        event.preventDefault();\n'
-     '        event.stopPropagation();\n'
-     '        const current = menuState.activeIndex;\n'
-     '        const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : event.key === "ArrowDown" ? (current + 1 + options.length) % options.length : (current - 1 + options.length) % options.length;\n'
-     '        markActive(next, true);\n'
-     '      } else if ((event.key === "Enter" || event.key === " ") && options.includes(document.activeElement)) {\n'
-     '        event.preventDefault();\n'
-     '        event.stopPropagation();\n'
-     '        restoreMenuFocus.current = true;\n'
-     '        document.activeElement.click();\n'
-     '      }\n'
-     '    };\n'
-     '    document.addEventListener("mousedown", onPointer);\n'
-     '    document.addEventListener("pointerdown", onPointer);\n'
-     '    document.addEventListener("keydown", onKey, true);\n'
-     '    return () => {\n'
-     '      document.removeEventListener("mousedown", onPointer);\n'
-     '      document.removeEventListener("pointerdown", onPointer);\n'
-     '      document.removeEventListener("keydown", onKey, true);\n'
-     '      options.forEach((option, index) => {\n'
-     '        option.removeEventListener("pointerenter", hoverHandlers[index]);\n'
-     '      });\n'
-     '      if (globalThis.__spectrTestHooks?.menuState?.[key] === menuState)\n'
-     '        delete globalThis.__spectrTestHooks.menuState[key];\n'
-     '      if (typeof globalThis.releaseDocumentNavigationFocus === "function")\n'
-     '        globalThis.releaseDocumentNavigationFocus();'),
-
-    ('native menu avoids unsupported negation selector',
-     '    const options = Array.from(document.querySelectorAll(\n'
-     '      rootSelector + " [data-spectr-menu-options] button:not([disabled])"));',
-     '    const options = Array.from(document.querySelectorAll(\n'
-     '      rootSelector + " [data-spectr-menu-options] button"))\n'
-     '      .filter(option => !option.disabled);'),
-
-    ('native menu tracks active row independently of mutable attributes',
-     '    const markActive = (index, moveFocus) => {\n'
-     '      options.forEach((option, optionIndex) => {',
-     '    const menuState = {activeIndex: -1};\n'
-     '    globalThis.__spectrTestHooks = globalThis.__spectrTestHooks || {};\n'
-     '    globalThis.__spectrTestHooks.menuState = globalThis.__spectrTestHooks.menuState || {};\n'
-     '    globalThis.__spectrTestHooks.menuState[key] = menuState;\n'
-     '    const markActive = (index, moveFocus) => {\n'
-     '      menuState.activeIndex = index;\n'
-     '      options.forEach((option, optionIndex) => {'),
-
-    ('native menu effect exposes its bounded test receipt',
-     '    const key = openMenu || (helpOpen ? "help" : null);\n'
-     '    if (!key) return;\n'
-     '    const rootSelector =',
-     '    const key = openMenu || (helpOpen ? "help" : null);\n'
-     '    if (!key) return;\n'
-     '    globalThis.__spectrTestHooks = globalThis.__spectrTestHooks || {};\n'
-     '    globalThis.__spectrTestHooks.menuEffectKey = key;\n'
-     '    const rootSelector ='),
-
-    ('native bootstrap service leaves React popup effects authoritative',
-     '    if (globalThis.__spectrNativeMenuService) return;\n'
-     '    globalThis.__spectrTestHooks =',
-     '    globalThis.__spectrTestHooks ='),
-
-    ('native menu navigation reads authoritative active row',
-     '        const current = options.findIndex((option) => option.getAttribute("data-spectr-menu-active") === "true");',
-     '        const current = menuState.activeIndex;'),
-
-    ('native menu clears active-row test receipt on teardown',
-     '      options.forEach((option, index) => {\n'
-     '        option.removeEventListener("pointerenter", hoverHandlers[index]);\n'
-     '      });\n'
-     '      if (typeof globalThis.releaseDocumentNavigationFocus === "function")',
-     '      options.forEach((option, index) => {\n'
-     '        option.removeEventListener("pointerenter", hoverHandlers[index]);\n'
-     '      });\n'
-     '      if (globalThis.__spectrTestHooks?.menuState?.[key] === menuState)\n'
-     '        delete globalThis.__spectrTestHooks.menuState[key];\n'
-     '      if (globalThis.__spectrTestHooks?.menuEffectKey === key)\n'
-     '        delete globalThis.__spectrTestHooks.menuEffectKey;\n'
-     '      if (typeof globalThis.releaseDocumentNavigationFocus === "function")'),
-
-    ('native menu clears effect test receipt on teardown',
-     '      if (globalThis.__spectrTestHooks?.menuState?.[key] === menuState)\n'
-     '        delete globalThis.__spectrTestHooks.menuState[key];\n'
-     '      if (typeof globalThis.releaseDocumentNavigationFocus === "function")',
-     '      if (globalThis.__spectrTestHooks?.menuState?.[key] === menuState)\n'
-     '        delete globalThis.__spectrTestHooks.menuState[key];\n'
-     '      if (globalThis.__spectrTestHooks?.menuEffectKey === key)\n'
-     '        delete globalThis.__spectrTestHooks.menuEffectKey;\n'
-     '      if (typeof globalThis.releaseDocumentNavigationFocus === "function")'),
-
-    ('materialized popup claims bounded native navigation focus',
-     '    if (options.length) markActive(0, false);\n'
-     '    const onPointer = (event) => {',
-     '    if (options.length) markActive(0, false);\n'
-     '    const navigationFocusClaimed =\n'
-     '      typeof globalThis.claimDocumentNavigationFocus !== "function"\n'
-     '      || globalThis.claimDocumentNavigationFocus();\n'
-     '    if (!navigationFocusClaimed) return;\n'
-     '    const onPointer = (event) => {'),
-
-    ('materialized popup releases native navigation focus',
-     '      options.forEach((option, index) => {\n'
-     '        option.removeEventListener("pointerenter", hoverHandlers[index]);\n'
-     '      });\n'
-     '      if (restoreMenuFocus.current) {',
-     '      options.forEach((option, index) => {\n'
-     '        option.removeEventListener("pointerenter", hoverHandlers[index]);\n'
-     '      });\n'
-     '      if (typeof globalThis.releaseDocumentNavigationFocus === "function")\n'
-     '        globalThis.releaseDocumentNavigationFocus();\n'
-     '      if (restoreMenuFocus.current) {'),
 
     ('native mode publisher',
      '  const [analyzerMode, setAnalyzerMode] = useAppS("peak");\n'
@@ -413,27 +154,6 @@ EDITS = [
      '      rafRef.current = requestAnimationFrame(draw);\n'
      '    };'),
 
-    ('opt-in frame diagnostics',
-     '      (renderAllRef.current || renderAll)();\n'
-     '      rafRef.current = requestAnimationFrame(draw);',
-     '      const perf = window.SpectrPerfDiagnostics && window.SpectrPerfDiagnostics.active;\n'
-     '      const drawStarted = perf ? performance.now() : 0;\n'
-     '      if (perf) {\n'
-     '        perf.animationFrames += 1;\n'
-     '        if (perf.lastFrameMs !== null) {\n'
-     '          perf.frameIntervalsMs.push(now - perf.lastFrameMs);\n'
-     '          if (perf.frameIntervalsMs.length > 512) perf.frameIntervalsMs.shift();\n'
-     '        }\n'
-     '        perf.lastFrameMs = now;\n'
-     '      }\n'
-     '      (renderAllRef.current || renderAll)();\n'
-     '      if (perf) {\n'
-     '        perf.canvasRedraws += 1;\n'
-     '        perf.drawDurationsMs.push(performance.now() - drawStarted);\n'
-     '        if (perf.drawDurationsMs.length > 512) perf.drawDurationsMs.shift();\n'
-     '      }\n'
-     '      rafRef.current = requestAnimationFrame(draw);'),
-
     # The animation loop paints through renderAllRef (see the entry above), so it
     # does NOT need re-creating when a render input changes. Listing render
     # inputs here made every `setView` during a minimap drag tear the loop down
@@ -453,134 +173,6 @@ EDITS = [
      'showMinimap, showRulers, theme, view]);',
      '}, [motionMode]);'),
 
-    ('direct publication frame slot',
-     '  const nativeDirectPublicationSignatureRef = useRef("");\n'
-     '  const nativeCommandSequenceRef = useRef(0);',
-     '  const nativeDirectPublicationSignatureRef = useRef("");\n'
-     '  const nativeDirectPublicationFrameRef = useRef(0);\n'
-     '  const nativeCommandSequenceRef = useRef(0);'),
-
-    ('direct processing-state publication is frame-coalesced',
-     'const queueNativeProcessingStatePublication = () => {\n'
-     '    if (!window.pulp || typeof window.pulp.postMessage !== "function") return;\n'
-     '    const current = targetGainsRef.current;\n'
-     '    const muted = current.map((value) => isMuted(value));\n'
-     '    const gainDb2 = current.map((value, i) => isMuted(value) ? Number.isFinite(mutedGainDbRef.current[i]) ? mutedGainDbRef.current[i] : 0 : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);\n'
-     '    nativeDirectPublicationSignatureRef.current = JSON.stringify([\n'
-     '      N, gainDb2, muted, view.lmin, view.lmax\n'
-     '    ]);\n'
-     '    ++nativeCommandSequenceRef.current;\n'
-     '    Promise.resolve(window.pulp.postMessage("processing_state_set", {\n'
-     '      n_visible: N,\n'
-     '      gain_db: gainDb2,\n'
-     '      muted,\n'
-     '      min_hz: Math.pow(10, view.lmin),\n'
-     '      max_hz: Math.pow(10, view.lmax)\n'
-     '    }, "spectr-processing-state")).catch((error) => {\n'
-     '      console.error("[Spectr] native direct-edit publication failed", error);\n'
-     '    });\n'
-     '  };',
-     'const queueNativeProcessingStatePublication = () => {\n'
-     '    if (!window.pulp || typeof window.pulp.postMessage !== "function"\n'
-     '        || nativeDirectPublicationFrameRef.current) return;\n'
-     '    nativeDirectPublicationFrameRef.current = requestAnimationFrame(() => {\n'
-     '      nativeDirectPublicationFrameRef.current = 0;\n'
-     '      const current = targetGainsRef.current;\n'
-     '      const muted = current.map((value) => isMuted(value));\n'
-     '      const gainDb2 = current.map((value, i) => isMuted(value) ? Number.isFinite(mutedGainDbRef.current[i]) ? mutedGainDbRef.current[i] : 0 : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);\n'
-     '      nativeDirectPublicationSignatureRef.current = JSON.stringify([\n'
-     '        N, gainDb2, muted, view.lmin, view.lmax\n'
-     '      ]);\n'
-     '      ++nativeCommandSequenceRef.current;\n'
-     '      Promise.resolve(window.pulp.postMessage("processing_state_set", {\n'
-     '        n_visible: N,\n'
-     '        gain_db: gainDb2,\n'
-     '        muted,\n'
-     '        min_hz: Math.pow(10, view.lmin),\n'
-     '        max_hz: Math.pow(10, view.lmax)\n'
-     '      }, "spectr-processing-state")).catch((error) => {\n'
-     '        console.error("[Spectr] native direct-edit publication failed", error);\n'
-     '      });\n'
-     '    });\n'
-     '  };'),
-
-    ('opt-in publication diagnostics',
-     '      nativeDirectPublicationFrameRef.current = 0;\n'
-     '      const current = targetGainsRef.current;',
-     '      nativeDirectPublicationFrameRef.current = 0;\n'
-     '      const perf = window.SpectrPerfDiagnostics && window.SpectrPerfDiagnostics.active;\n'
-     '      if (perf) {\n'
-     '        perf.statePublications += 1;\n'
-     '        if (perf.latestInputMs !== null) {\n'
-     '          perf.inputToPublicationMs.push(performance.now() - perf.latestInputMs);\n'
-     '          if (perf.inputToPublicationMs.length > 512) perf.inputToPublicationMs.shift();\n'
-     '          perf.latestInputMs = null;\n'
-     '        }\n'
-     '      }\n'
-     '      const current = targetGainsRef.current;'),
-
-    ('opt-in raw pointer diagnostics',
-     '  const onPointerMove = (e) => {\n'
-     '    const g = getGeom();',
-     '  const onPointerMove = (e) => {\n'
-     '    const perf = window.SpectrPerfDiagnostics && window.SpectrPerfDiagnostics.active;\n'
-     '    if (perf) {\n'
-     '      perf.rawPointerSamples += 1;\n'
-     '      perf.latestInputMs = Number.isFinite(e.timeStamp) ? e.timeStamp : performance.now();\n'
-     '    }\n'
-     '    const g = getGeom();'),
-
-    ('input diagnostics use the performance clock',
-     '      perf.latestInputMs = Number.isFinite(e.timeStamp) ? e.timeStamp : performance.now();',
-     '      perf.latestInputMs = performance.now();'),
-
-    ('spectrum uses an exact bulk analyzer grid',
-     '    const arr = new Float32Array(steps + 1);\n'
-     '    for (let i = 0; i <= steps; i++) {\n'
-     '      const lf = view.lmin + i / steps * span;\n'
-     '      arr[i] = window.SpectrAnalyzer.sample(lf, t, "visible");\n'
-     '    }',
-     '    const arr = new Float32Array(steps + 1);\n'
-     '    const analyzerGrid = window.SpectrAnalyzer.grid("visible",\n'
-     '      Math.pow(10, view.lmin), Math.pow(10, view.lmax), steps + 1);\n'
-     '    for (let i = 0; i <= steps; i++) {\n'
-     '      const lf = view.lmin + i / steps * span;\n'
-     '      arr[i] = analyzerGrid\n'
-     '        ? window.SpectrAnalyzer.normalizeDb(analyzerGrid[i])\n'
-     '        : window.SpectrAnalyzer.sample(lf, t, "visible");\n'
-     '    }'),
-
-    ('spectrum bulk grid is capability guarded',
-     '    const analyzerGrid = window.SpectrAnalyzer.grid("visible",\n'
-     '      Math.pow(10, view.lmin), Math.pow(10, view.lmax), steps + 1);',
-     '    const analyzerGrid = typeof window.SpectrAnalyzer.grid === "function"\n'
-     '      ? window.SpectrAnalyzer.grid("visible", Math.pow(10, view.lmin),\n'
-     '          Math.pow(10, view.lmax), steps + 1)\n'
-     '      : null;'),
-
-    ('minimap uses its exact bulk analyzer grid',
-     '    const steps = 120;\n'
-     '    ctx.beginPath();\n'
-     '    ctx.moveTo(mx, my + mh);\n'
-     '    for (let i = 0; i <= steps; i++) {\n'
-     '      const lf = fullMin + i / steps * fullSpan;\n'
-     '      const v = window.SpectrAnalyzer.sample(lf, timeRef.current, "overview");',
-     '    const steps = 120;\n'
-     '    const analyzerGrid = window.SpectrAnalyzer.grid("overview", 20, 20000, steps + 1);\n'
-     '    ctx.beginPath();\n'
-     '    ctx.moveTo(mx, my + mh);\n'
-     '    for (let i = 0; i <= steps; i++) {\n'
-     '      const lf = fullMin + i / steps * fullSpan;\n'
-     '      const v = analyzerGrid\n'
-     '        ? window.SpectrAnalyzer.normalizeDb(analyzerGrid[i])\n'
-     '        : window.SpectrAnalyzer.sample(lf, timeRef.current, "overview");'),
-
-    ('minimap bulk grid is capability guarded',
-     '    const analyzerGrid = window.SpectrAnalyzer.grid("overview", 20, 20000, steps + 1);',
-     '    const analyzerGrid = typeof window.SpectrAnalyzer.grid === "function"\n'
-     '      ? window.SpectrAnalyzer.grid("overview", 20, 20000, steps + 1)\n'
-     '      : null;'),
-
     # SAVE CURRENT... and MANAGE... shared one row because `menuItem` sets no
     # `display`, so the buttons defaulted to inline. MANAGE read as a modifier
     # on SAVE rather than its own action, and users did not find it. Two rows.
@@ -588,10 +180,6 @@ EDITS = [
      'style: { ...menuItem, color: "hsl(200,85%,70%)" }',
      'style: { ...menuItem, color: "hsl(200,85%,70%)", '
      'display: "block", width: "100%" }'),
-
-    ('default-on status info setting',
-     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { title: "STRUCTURE", subtitle: "Band count, mute behavior, chrome." }',
-     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover and action readouts" }, /* @__PURE__ */ React.createElement("span", { "data-spectr-status-info-setting": true }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { value: settings.showStatusInfo !== false, onChange: (v) => persist({ showStatusInfo: v }) }))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { title: "STRUCTURE", subtitle: "Band count, mute behavior, chrome." }'),
 
     ('hover readout clears the status banner slot',
      '    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);',
@@ -606,94 +194,6 @@ EDITS = [
      '      return;\n'
      '    }\n'
      '    setStatus(msg + "|" + Date.now());'),
-
-    ('status info setting gates the publisher without skipping actions',
-     '  const fireStatus = useAppC((msg) => {\n'
-     '    if (!msg) {\n'
-     '      setStatus("");\n'
-     '      return;\n'
-     '    }\n'
-     '    setStatus(msg + "|" + Date.now());',
-     '  const fireStatus = useAppC((msg) => {\n'
-     '    if (!msg || settings.showStatusInfo === false) setStatus("");\n'
-     '    else setStatus(msg + "|" + Date.now());'),
-
-    ('status info setting refreshes the publisher',
-     '  }, []);\n'
-     '  const applyPattern = useAppC((p) => {',
-     '  }, [settings.showStatusInfo]);\n'
-     '  const applyPattern = useAppC((p) => {'),
-
-    ('test hook reports current unified status',
-     '      editMode,\n'
-     '      analyzerMode,\n'
-     '      visualizationMode,\n'
-     '      snapshotStatus:',
-     '      editMode,\n'
-     '      analyzerMode,\n'
-     '      visualizationMode,\n'
-     '      status,\n'
-     '      snapshotStatus:'),
-
-    ('status banner replacements keep newest value immediate',
-     '  const [text, setText] = useStateChrome("");\n'
-     '  const shownRef = useRefChrome("");\n'
-     '  useEffectChrome(() => {\n'
-     '    const display = message ? message.split("|")[0].trim() : "";\n'
-     '    if (!display) {\n'
-     '      setVisible(false);\n'
-     '      setText("");\n'
-     '      shownRef.current = "";\n'
-     '      return;\n'
-     '    }\n'
-     '    const replacing = !!shownRef.current && shownRef.current !== display;\n'
-     '    const timers = [];\n'
-     '    if (replacing) {\n'
-     '      setVisible(false);\n'
-     '      timers.push(setTimeout(() => {\n'
-     '        setText(display);\n'
-     '        setVisible(true);\n'
-     '      }, 150));\n'
-     '    } else {\n'
-     '      setText(display);\n'
-     '      setVisible(true);\n'
-     '    }\n'
-     '    shownRef.current = display;\n'
-     '    timers.push(setTimeout(() => {\n'
-     '      setVisible(false);\n'
-     '      setText("");\n'
-     '      shownRef.current = "";\n'
-     '    }, replacing ? 1550 : 1400));\n'
-     '    return () => timers.forEach(clearTimeout);\n'
-     '  }, [message]);',
-     '  const [text, setText] = useStateChrome("");\n'
-     '  const shownRef = useRefChrome("");\n'
-     '  const [settled, setSettled] = useStateChrome(true);\n'
-     '  const reducedMotion = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);\n'
-     '  useEffectChrome(() => {\n'
-     '    const display = message ? message.split("|")[0].trim() : "";\n'
-     '    if (!display) {\n'
-     '      setVisible(false);\n'
-     '      setText("");\n'
-     '      shownRef.current = "";\n'
-     '      return;\n'
-     '    }\n'
-     '    const replacing = !!shownRef.current && shownRef.current !== display;\n'
-     '    setText(display);\n'
-     '    setVisible(true);\n'
-     '    setSettled(!replacing || reducedMotion);\n'
-     '    const settleFrame = replacing && !reducedMotion ? requestAnimationFrame(() => setSettled(true)) : 0;\n'
-     '    shownRef.current = display;\n'
-     '    const hideTimer = setTimeout(() => {\n'
-     '      setVisible(false);\n'
-     '      setText("");\n'
-     '      shownRef.current = "";\n'
-     '    }, 1400);\n'
-     '    return () => {\n'
-     '      if (settleFrame) cancelAnimationFrame(settleFrame);\n'
-     '      clearTimeout(hideTimer);\n'
-     '    };\n'
-     '  }, [message]);'),
 
     ('status banner replaces one message at a time',
      '  const [text, setText] = useStateChrome("");\n'
@@ -784,26 +284,12 @@ EDITS = [
      '    text\n'
      '  );'),
 
-    ('status banner settles without delaying text',
-     '        transform: "translateX(-50%)",\n'
-     '        width: Math.max(96, Math.min(520, text.length * 8 + 28)),',
-     '        transform: "translateX(-50%) scale(" + (settled ? 1 : 0.985) + ")",\n'
-     '        width: Math.max(96, Math.min(520, text.length * 8 + 28)),'),
-
-    ('status banner honors reduced motion',
-     '        transition: "width 0.18s ease, opacity 0.15s ease",',
-     '        transition: reducedMotion ? "none" : "width 0.18s ease, opacity 0.15s ease, transform 0.12s ease",'),
-
     # ----------------------------- task 4: mute consistency across edit modes
     ('redraw-unmutes setting is read by the bank',
      '  const { bandCount, metaphor, bloom, spectrumIntensity, muteStyle, '
      'motionMode, showMinimap, showRulers, theme } = settings;',
      '  const { bandCount, metaphor, bloom, spectrumIntensity, muteStyle, '
      'motionMode, showMinimap, showRulers, theme, unmuteOnDraw } = settings;'),
-
-    ('status info setting is read by the bank',
-     'motionMode, showMinimap, showRulers, theme, unmuteOnDraw } = settings;',
-     'motionMode, showMinimap, showRulers, theme, unmuteOnDraw, showStatusInfo } = settings;'),
 
     ('redraw-unmutes pointer-stable ref',
      '  const N = bandCount;\n'
@@ -942,22 +428,6 @@ EDITS = [
      '    const keepAlive = setInterval(() => onStatus(label), 1e3);\n'
      '    return () => clearInterval(keepAlive);\n'
      '  }, [hoverBand, N, onStatus]);\n'
-     '  const [ctxMenu, setCtxMenu] = useState(null);'),
-
-    ('hover status respects its default-on setting',
-     '    if (!onStatus) return;\n'
-     '    if (hoverBand < 0) {',
-     '    if (!onStatus) return;\n'
-     '    if (showStatusInfo === false) {\n'
-     '      onStatus("");\n'
-     '      return;\n'
-     '    }\n'
-     '    if (hoverBand < 0) {'),
-
-    ('hover status setting invalidates its effect',
-     '  }, [hoverBand, N, onStatus]);\n'
-     '  const [ctxMenu, setCtxMenu] = useState(null);',
-     '  }, [hoverBand, N, onStatus, showStatusInfo]);\n'
      '  const [ctxMenu, setCtxMenu] = useState(null);'),
 
     ('hover canvas keeps guide but not floating tooltip',
@@ -1195,144 +665,16 @@ EDITS = [
      '          wrapRef.current.style.cursor = "default";\n'
      '      },'),
 
-    ('minimap press cursor preserves hit role',
-     '    if (mm) {\n'
-     '      wrapRef.current.style.cursor = "grabbing";\n'
-     '      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);',
-     '    if (mm) {\n'
-     '      wrapRef.current.style.cursor = mm === "left" || mm === "right"\n'
-     '        ? "ew-resize" : mm === "window" ? "grabbing" : "pointer";\n'
-     '      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);'),
-
-    ('minimap cursors preserve each hit role',
-     '      const activeMini = pointerRef.current\n'
-     '        && (pointerRef.current.mode === "minimap-drag"\n'
-     '          || pointerRef.current.mode === "minimap-resize");\n'
-     '      wrapRef.current.style.cursor = activeMini ? "grabbing" : "grab";',
-     '      const activeMini = pointerRef.current && pointerRef.current.mode;\n'
-     '      wrapRef.current.style.cursor = activeMini === "minimap-resize"\n'
-     '        ? "ew-resize"\n'
-     '        : activeMini === "minimap-drag"\n'
-     '          ? "grabbing"\n'
-     '          : mm === "left" || mm === "right"\n'
-     '            ? "ew-resize"\n'
-     '            : mm === "window" ? "grab" : "pointer";'),
-
-    ('minimap release restores role cursor',
-     '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize"))\n'
-     '      wrapRef.current.style.cursor = "grab";',
-     '    if (p && p.mode === "minimap-drag")\n'
-     '      wrapRef.current.style.cursor = "grab";\n'
-     '    else if (p && p.mode === "minimap-resize")\n'
-     '      wrapRef.current.style.cursor = "ew-resize";'),
-
-    ('overflow popup exposes semantic trigger state',
-     'React.createElement("span", { "data-spectr-menu-trigger": true }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => setOverflowMenu((v) => !v), active: overflowMenu }',
-     'React.createElement("span", { "data-spectr-menu-trigger": true, "aria-haspopup": "menu", "aria-expanded": overflowMenu }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => setOverflowMenu((v) => !v), active: overflowMenu }'),
-
-    ('edit popup exposes semantic trigger state',
-     'React.createElement("span", { "data-spectr-menu-trigger": true }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => toggleMenu("edit"), active: editMenu }',
-     'React.createElement("span", { "data-spectr-menu-trigger": true, "aria-haspopup": "listbox", "aria-expanded": editMenu }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => toggleMenu("edit"), active: editMenu }'),
-
-    ('analyzer popup exposes semantic trigger state',
-     'React.createElement("span", { "data-spectr-menu-trigger": true }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => toggleMenu("analyzer"), active: analyzerMenu }',
-     'React.createElement("span", { "data-spectr-menu-trigger": true, "aria-haspopup": "listbox", "aria-expanded": analyzerMenu }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => toggleMenu("analyzer"), active: analyzerMenu }'),
-
-    ('pattern popup exposes semantic trigger state',
-     'React.createElement("span", { "data-spectr-menu-trigger": true }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => setPatternMenu((v) => !v), active: patternMenu }',
-     'React.createElement("span", { "data-spectr-menu-trigger": true, "aria-haspopup": "menu", "aria-expanded": patternMenu }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => setPatternMenu((v) => !v), active: patternMenu }'),
-
-    ('rail buttons accept semantic trigger properties',
-     'function RailBtn({ children, onClick, active }) {',
-     'function RailBtn({ children, onClick, active, ...buttonProps }) {'),
-
-    ('rail buttons forward semantic trigger properties',
-     '    {\n      onClick: handle,\n      style: {',
-     '    {\n      ...buttonProps,\n      onClick: handle,\n      style: {'),
-
-    ('overflow semantics reach the focusable trigger',
-     'React.createElement("span", { "data-spectr-menu-trigger": true, "aria-haspopup": "menu", "aria-expanded": overflowMenu }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => setOverflowMenu((v) => !v), active: overflowMenu }',
-     'React.createElement("span", { "data-spectr-menu-trigger": true }, /* @__PURE__ */ React.createElement(RailBtn, { "aria-haspopup": "menu", "aria-expanded": overflowMenu, onClick: () => setOverflowMenu((v) => !v), active: overflowMenu }'),
-
-    ('edit semantics reach the focusable trigger',
-     'React.createElement("span", { "data-spectr-menu-trigger": true, "aria-haspopup": "listbox", "aria-expanded": editMenu }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => toggleMenu("edit"), active: editMenu }',
-     'React.createElement("span", { "data-spectr-menu-trigger": true }, /* @__PURE__ */ React.createElement(RailBtn, { "aria-haspopup": "listbox", "aria-expanded": editMenu, onClick: () => toggleMenu("edit"), active: editMenu }'),
-
-    ('analyzer semantics reach the focusable trigger',
-     'React.createElement("span", { "data-spectr-menu-trigger": true, "aria-haspopup": "listbox", "aria-expanded": analyzerMenu }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => toggleMenu("analyzer"), active: analyzerMenu }',
-     'React.createElement("span", { "data-spectr-menu-trigger": true }, /* @__PURE__ */ React.createElement(RailBtn, { "aria-haspopup": "listbox", "aria-expanded": analyzerMenu, onClick: () => toggleMenu("analyzer"), active: analyzerMenu }'),
-
-    ('pattern semantics reach the focusable trigger',
-     'React.createElement("span", { "data-spectr-menu-trigger": true, "aria-haspopup": "menu", "aria-expanded": patternMenu }, /* @__PURE__ */ React.createElement(RailBtn, { onClick: () => setPatternMenu((v) => !v), active: patternMenu }',
-     'React.createElement("span", { "data-spectr-menu-trigger": true }, /* @__PURE__ */ React.createElement(RailBtn, { "aria-haspopup": "menu", "aria-expanded": patternMenu, onClick: () => setPatternMenu((v) => !v), active: patternMenu }'),
-
 ]
-
-# These recipes migrated an app-specific popup controller that is now owned by
-# Pulp's semantic materialized-control default. Keep them out of the active
-# patch stream while the cleanup below removes already-emitted legacy code.
-OBSOLETE_POPUP_EDITS = {
-    'native menu lookup uses the document selector surface',
-    'native menu option lookup uses the document selector surface',
-    'popup keyboard and pointer share one visible active item',
-    'native menu avoids unsupported negation selector',
-    'native menu tracks active row independently of mutable attributes',
-    'native menu effect exposes its bounded test receipt',
-    'native bootstrap service leaves React popup effects authoritative',
-    'native menu navigation reads authoritative active row',
-    'native menu clears active-row test receipt on teardown',
-    'native menu clears effect test receipt on teardown',
-    'materialized popup claims bounded native navigation focus',
-    'materialized popup releases native navigation focus',
-}
-EDITS = [edit for edit in EDITS if edit[0] not in OBSOLETE_POPUP_EDITS]
 
 # A later edit may deliberately consume the exact replacement image of an
 # earlier one. These named sentinels keep reruns strict without pretending the
 # superseded intermediate text must remain in the final shipping document.
 SUPERSEDED_SENTINELS = {
-    'opt-in performance diagnostics surface':
-        'analyzerGridHits',
-    'exact analyzer grid lookup':
-        'analyzerGridMisses',
-    'spectrum uses an exact bulk analyzer grid':
-        'typeof window.SpectrAnalyzer.grid === "function"',
-    'minimap uses its exact bulk analyzer grid':
-        'window.SpectrAnalyzer.grid("overview", 20, 20000, steps + 1)',
-    'native menu option lookup uses the document selector surface':
-        'const markActive = (index, moveFocus)',
-    'popup keyboard and pointer share one visible active item':
-        '.filter(option => !option.disabled)',
-    'empty status clears the unified banner':
-        'settings.showStatusInfo === false',
-    'redraw-unmutes setting is read by the bank':
-        'unmuteOnDraw, showStatusInfo',
-    'hover readout uses unified status banner':
-        'showStatusInfo === false',
-    'animation loop paints the latest canvas renderer':
-        'perf.animationFrames += 1',
-    'direct processing-state publication is frame-coalesced':
-        'perf.statePublications += 1',
-    'opt-in raw pointer diagnostics':
-        'perf.latestInputMs = performance.now()',
     'hover readout clears the status banner slot':
         'if (!hover || hover.mini) return;',
     'status banner chrome survives the fade-out':
         '"data-spectr-status-text": "true"',
-    'minimap hover and drag cursors':
-        'activeMini === "minimap-resize"',
-    'minimap release restores grab cursor':
-        'else if (p && p.mode === "minimap-resize")',
-    'minimap press uses grabbing cursor':
-        'mm === "left" || mm === "right"',
-    'overflow popup exposes semantic trigger state':
-        '"aria-expanded": overflowMenu',
-    'edit popup exposes semantic trigger state':
-        '"aria-expanded": editMenu',
-    'analyzer popup exposes semantic trigger state':
-        '"aria-expanded": analyzerMenu',
-    'pattern popup exposes semantic trigger state':
-        '"aria-expanded": patternMenu',
 }
 
 # Generated bindings live outside the escaped `html` string. Keep these
@@ -1413,33 +755,6 @@ def main():
     raw = open(PATH, encoding='utf-8').read()
     changed = False
     post_checks = []
-    # Remove the short-lived app-specific popup service. Popup keyboard and
-    # dismissal behavior belongs to Pulp's generic materialized control layer;
-    # Spectr contributes only semantic trigger/options markup.
-    legacy_start = escaped(
-        '  // Dynamic React effects are not a reliable lifecycle seam')
-    legacy_end = escaped('  globalThis.__spectrPublishNativeMessage = emit;\n')
-    if legacy_start in raw:
-        start = raw.index(legacy_start)
-        end = raw.index(legacy_end, start)
-        raw = raw[:start] + raw[end:]
-        changed = True
-        print('removed         app-specific native rich-menu service')
-    legacy_ref = escaped('  const restoreMenuFocus = useRefChrome(false);\n')
-    if legacy_ref in raw:
-        raw = raw.replace(legacy_ref, '', 1)
-        changed = True
-        print('removed         app-specific rich-menu focus state')
-    legacy_effect_start = escaped(
-        '  useEffectChrome(() => {\n'
-        '    const key = openMenu || (helpOpen ? "help" : null);\n')
-    legacy_effect_end = escaped('  }, [openMenu, helpOpen]);\n')
-    if legacy_effect_start in raw:
-        start = raw.index(legacy_effect_start)
-        end = raw.index(legacy_effect_end, start) + len(legacy_effect_end)
-        raw = raw[:start] + raw[end:]
-        changed = True
-        print('removed         app-specific rich-menu event effect')
     for edit in EDITS:
         label, old, new = edit[:3]
         expected = edit[3] if len(edit) == 4 else 1
@@ -1485,9 +800,6 @@ def main():
     html = document['html']
     for label, new, expected in post_checks:
         if html.count(new) < expected:
-            sentinel = SUPERSEDED_SENTINELS.get(label)
-            if sentinel and sentinel in html:
-                continue
             sys.exit(f'FAIL {label}: post-check did not find the replacement')
     for label, _old, new in DOCUMENT_EDITS:
         if new not in raw:
