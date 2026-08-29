@@ -60,11 +60,17 @@ or substituted SDK before Spectr compiles. Release/distribution builds should
 use a provenance-marked, distribution-eligible release SDK from the same exact
 accepted Pulp commit, not the development profile.
 
-For the exact-head M5 interaction gate, build a tracing-enabled development SDK
-from the same merged Pulp commit, configure Spectr in Release with that SHA, and
-run the two isolated live-host workloads:
+For the exact-head M5 interaction gate, install a tracing-enabled development
+SDK from the same merged Pulp commit, configure Spectr in Release with that
+exact SDK and SHA, and run the two isolated live-host workloads:
 
 ```bash
+TracePrefix="$(tools/install_trace_sdk.sh /path/to/exact-clean-pulp-worktree)"
+Pulp_SHA="$(git -C /path/to/exact-clean-pulp-worktree rev-parse HEAD)"
+cmake -S . -B build-native -DCMAKE_BUILD_TYPE=Release \
+  -DPulp_DIR="$TracePrefix/lib/cmake/Pulp" \
+  -DSPECTR_EXPECTED_PULP_SDK_SHA="$Pulp_SHA"
+cmake --build build-native --target Spectr_Standalone
 tools/verify_interaction_perf.sh \
   build-native <exact-spectr-sha> <exact-pulp-sdk-sha> artifacts/perf
 ```
