@@ -9528,8 +9528,8 @@
     }
     if (bandTriggerId) {
       g5.setFlex(String(bandTriggerId), "width", 92);
-      g5.setFlex(String(bandTriggerId), "height", 24);
-      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, 0);
+      g5.setFlex(String(bandTriggerId), "height", 22);
+      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);
     }
     const nativeTextOwner = (owner) => values.find((candidate) => {
       const parent = candidate?.parentElement || candidate?._parentElement || null;
@@ -9540,7 +9540,7 @@
     const bandCountReceipt = {
       trigger: centerBandText(
         nativeTextOwner(bandTrigger), liveBandCount + " bands \u25BE",
-        92, 73.03125, 24, 5.5),
+        92, 73.03125, 22, 4.5),
       options: []
     };
     const bandOptions = bandRoot ? Array.from(globalThis.document?.querySelectorAll?.(

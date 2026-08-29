@@ -2648,18 +2648,19 @@ RUNTIME_EDITS = [
      '      g5.setFlex(String(bandTriggerId), "height", 20);\n'
      '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);\n',
      'g5.setFlex(String(bandRootId), "width", 104);'),
-    ('band trigger uses the full peer rail without an optical offset',
+    ('band trigger uses the measured peer painted rail',
      '      g5.setFlex(String(bandTriggerId), "width", 92);\n'
      '      g5.setFlex(String(bandTriggerId), "height", 20);\n'
      '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);',
      '      g5.setFlex(String(bandTriggerId), "width", 92);\n'
-     '      g5.setFlex(String(bandTriggerId), "height", 24);\n'
-     '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, 0);',
-     'g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, 0)'),
+     '      g5.setFlex(String(bandTriggerId), "height", 22);\n'
+     '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);',
+     'g5.setFlex(String(bandTriggerId), "height", 22);\n'
+     '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5)'),
     ('band trigger text centers in the common 24px rail',
      '        92, 73.03125, 20, 3.5),',
-     '        92, 73.03125, 24, 5.5),',
-     '92, 73.03125, 24, 5.5'),
+     '        92, 73.03125, 22, 4.5),',
+     '92, 73.03125, 22, 4.5'),
     ('dropdown optical centering follows every selected label',
      '      const label = descendants.find(\n'
      '        (node) => String(node && node.textContent || "") === correction.text\n'
@@ -2881,6 +2882,42 @@ def main():
 
     runtime_raw = open(RUNTIME_PATH, encoding='utf-8').read()
     runtime_changed = False
+    # 04d9ac3 already materialized a 24px trigger with a zero Y transform.
+    # Normalize that one stale output back to this recipe's preceding state so
+    # the measured -1.5px rail correction below is both replayable on a fresh
+    # import and applicable to an editor patched by the older recipe.
+    stale_band_rail = (
+        '      g5.setFlex(String(bandTriggerId), "width", 92);\n'
+        '      g5.setFlex(String(bandTriggerId), "height", 24);\n'
+        '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, 0);')
+    replayable_band_rail = (
+        '      g5.setFlex(String(bandTriggerId), "width", 92);\n'
+        '      g5.setFlex(String(bandTriggerId), "height", 20);\n'
+        '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);')
+    previous_band_rail = (
+        '      g5.setFlex(String(bandTriggerId), "width", 92);\n'
+        '      g5.setFlex(String(bandTriggerId), "height", 24);\n'
+        '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);')
+    desired_band_rail = (
+        '      g5.setFlex(String(bandTriggerId), "width", 92);\n'
+        '      g5.setFlex(String(bandTriggerId), "height", 22);\n'
+        '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);')
+    if desired_band_rail not in runtime_raw:
+        for stale in (stale_band_rail, previous_band_rail):
+            if stale in runtime_raw:
+                runtime_raw = runtime_raw.replace(stale, replayable_band_rail, 1)
+                runtime_changed = True
+                print('normalized      band trigger rail regression')
+                break
+    previous_band_text = '        92, 73.03125, 24, 5.5),'
+    replayable_band_text = '        92, 73.03125, 20, 3.5),'
+    desired_band_text = '        92, 73.03125, 22, 4.5),'
+    if (desired_band_text not in runtime_raw
+            and previous_band_text in runtime_raw):
+        runtime_raw = runtime_raw.replace(
+            previous_band_text, replayable_band_text, 1)
+        runtime_changed = True
+        print('normalized      band trigger text regression')
     for label, old, new, sentinel in RUNTIME_EDITS:
         if sentinel in runtime_raw:
             print('already applied ', label)
