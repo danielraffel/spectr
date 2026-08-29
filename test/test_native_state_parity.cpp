@@ -1156,6 +1156,32 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
     };
 
     focus_and_open();
+    REQUIRE(rig.root->interaction().active_overlay != nullptr);
+    REQUIRE(rig.root->interaction().active_overlay->overlay_consumes_outside_click());
+    rig.bridge().load_script(R"js((() => {
+      const trigger = document.querySelector(
+        '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
+      const popup = document.querySelector(
+        '[data-spectr-menu-root="bands"] [data-spectr-menu-options]');
+      const options = Array.from(document.querySelectorAll(
+        '[data-spectr-menu-root="bands"] [data-spectr-menu-options] button'));
+      if (!trigger || !popup || options.length !== 5)
+        throw new Error('band popup geometry subjects missing');
+      const triggerRect = trigger.getBoundingClientRect();
+      const popupRect = popup.getBoundingClientRect();
+      const rects = options.map(option => option.getBoundingClientRect());
+      if (triggerRect.width < 80 || rects.some(rect => rect.width < 43))
+        throw new Error('band geometry trigger=' + triggerRect.width
+          + ' options=' + rects.map(rect => rect.width).join(','));
+      for (let index = 1; index < rects.length; ++index) {
+        if (rects[index].left < rects[index - 1].right - 0.5)
+          throw new Error('band options overlap at ' + index + ': '
+            + rects.map(rect => rect.left + '..' + rect.right).join(','));
+      }
+      if (popupRect.width < rects.reduce((sum, rect) => sum + rect.width, 0) - 1)
+        throw new Error('band popup clips option row');
+    })();)js", "spectr-native-band-menu-geometry");
+    settle(rig.clock, 4);
     require_runtime_contract(
         rig,
         "document.querySelector('[data-pulp-popup-active=\"true\"]')?.textContent.trim() === '32'",
@@ -1187,6 +1213,17 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
         rig,
         "!document.querySelector('[data-spectr-menu-root=\"bands\"] [data-spectr-menu-options]')",
         "Escape did not dismiss without changing selection");
+
+    focus_and_open();
+    REQUIRE(rig.root->interaction().active_overlay != nullptr);
+    REQUIRE(rig.root->interaction().active_overlay->overlay_consumes_outside_click());
+    pulp::view::View::dismiss_active_overlay(*rig.root);
+    settle(rig.clock, 10);
+    REQUIRE(rig.root->interaction().active_overlay == nullptr);
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-spectr-menu-root=\"bands\"] [data-spectr-menu-options]')",
+        "native overlay dismissal did not close the authored popup");
 
     focus_and_open();
     const pulp::view::Point outside{660.0f, 430.0f};

@@ -919,6 +919,11 @@ EDITS = [
      'React.createElement("span", null, /* @__PURE__ */ React.createElement(RailBtn',
      4),
 
+    ('semantic popup surfaces claim native dismissal ownership',
+     '"data-spectr-menu-options": true, "data-spectr-overlay": "true", role:',
+     '"data-spectr-menu-options": true, "data-spectr-overlay": "true", overlay: true, onDismiss: () => setOpenMenu(null), role:',
+     5),
+
     ('generic Pulp popup owns keyboard and outside dismissal',
      '  useEffectChrome(() => {\n'
      '    const key = openMenu || (helpOpen ? "help" : null);\n'
@@ -1852,6 +1857,16 @@ DOCUMENT_EDITS = [
 ]
 
 RUNTIME_EDITS = [
+    ('semantic popup roles consume their outside dismissal press',
+     '        if (r === "dialog" || r === "alertdialog" || r === "menu" || r === "listbox") {\n'
+     '          call("claimOverlay", id);\n'
+     '          return true;\n'
+     '        }',
+     '        if (r === "dialog" || r === "alertdialog" || r === "menu" || r === "listbox") {\n'
+     '          call("claimOverlay", id, r === "menu" || r === "listbox");\n'
+     '          return true;\n'
+     '        }',
+     'call("claimOverlay", id, r === "menu" || r === "listbox")'),
     ('settings live form descendants bypass stale captured geometry',
      '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
      '      ? metadata.layout_bindings : []).map((binding) => {\n'
@@ -1863,7 +1878,29 @@ RUNTIME_EDITS = [
      '      });',
      '    const activeLayoutBindings = Array.isArray(metadata && metadata.layout_bindings)\n'
      '      ? metadata.layout_bindings : [];',
-     'const activeLayoutBindings = Array.isArray(metadata'),
+     'if (activeCapturedState !== "bands" || !binding?.box)'),
+    ('band popup uses the authored option geometry',
+     '    const activeLayoutBindings = Array.isArray(metadata && metadata.layout_bindings)\n'
+     '      ? metadata.layout_bindings : [];',
+     '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
+     '      ? metadata.layout_bindings : []).map((binding) => {\n'
+     '        if (activeCapturedState !== "bands" || !binding?.box) return binding;\n'
+     '        const box = binding.box;\n'
+     '        const path = Array.isArray(binding.path) ? binding.path : [];\n'
+     '        const tail = path[path.length - 1] || {};\n'
+     '        if (box.width === 166 && box.height === 31)\n'
+     '          return { ...binding, box: { ...box, left: -154.96875, width: 236 } };\n'
+     '        if (box.width === 30 && box.height === 23 && tail.tag === "button")\n'
+     '          return { ...binding, box: { ...box, left: 4 + tail.index * 46, width: 44 } };\n'
+     '        if (box.width === 228.53125 && box.height === 19)\n'
+     '          return { ...binding, box: { ...box, width: 239.53125 } };\n'
+     '        if (box.width === 81.03125 && box.height === 19)\n'
+     '          return { ...binding, box: { ...box, width: 92 } };\n'
+     '        if (box.top === 3 && box.left >= 87.03125)\n'
+     '          return { ...binding, box: { ...box, left: box.left + 10.96875 } };\n'
+     '        return binding;\n'
+     '      });',
+     'if (activeCapturedState !== "bands" || !binding?.box)'),
     ('dynamic selected preset bypasses the frozen text binding',
      '    const activeTextBindings = Array.isArray(metadata && metadata.text_bindings) ? metadata.text_bindings : [];',
      '    // Selected preset names are authored state, not frozen capture text.\n'
