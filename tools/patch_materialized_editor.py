@@ -2622,10 +2622,18 @@ RUNTIME_EDITS = [
      '      g5.setFlex(String(bandTriggerId), "height", 20);\n'
      '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);\n',
      'g5.setFlex(String(bandRootId), "width", 104);'),
+    ('band trigger uses the full peer rail without an optical offset',
+     '      g5.setFlex(String(bandTriggerId), "width", 92);\n'
+     '      g5.setFlex(String(bandTriggerId), "height", 20);\n'
+     '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);',
+     '      g5.setFlex(String(bandTriggerId), "width", 92);\n'
+     '      g5.setFlex(String(bandTriggerId), "height", 24);\n'
+     '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, 0);',
+     'g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, 0)'),
     ('band trigger text centers in the common 24px rail',
-     '        92, 73.03125, 24, 5.5),',
      '        92, 73.03125, 20, 3.5),',
-     '92, 73.03125, 20, 3.5'),
+     '        92, 73.03125, 24, 5.5),',
+     '92, 73.03125, 24, 5.5'),
     ('dropdown optical centering follows every selected label',
      '      const label = descendants.find(\n'
      '        (node) => String(node && node.textContent || "") === correction.text\n'

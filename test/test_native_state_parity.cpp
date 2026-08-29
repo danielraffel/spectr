@@ -919,8 +919,8 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
 
     require_runtime_contract(
         rig,
-        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 3.5"
-        " && globalThis.__spectrBandCountCenteringReceipt__.trigger.height === 20"
+        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 5.5"
+        " && globalThis.__spectrBandCountCenteringReceipt__.trigger.height === 24"
         " && Math.abs(globalThis.__spectrBandCountCenteringReceipt__.trigger.left"
         " - 9.484375) < 0.001",
         "band trigger text was not optically centered");
@@ -931,7 +931,7 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     CHECK(trigger_label->cached_line_boxes().front().left
           == Catch::Approx(9.484375f).margin(0.01f));
     CHECK(trigger_label->cached_line_boxes().front().top
-          == Catch::Approx(3.5f).margin(0.01f));
+          == Catch::Approx(5.5f).margin(0.01f));
 
     REQUIRE(static_cast<bool>(rig.root->on_global_key));
     const auto comma = static_cast<pulp::view::KeyCode>(',');
