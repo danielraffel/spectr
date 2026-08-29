@@ -2735,6 +2735,7 @@ window.PatternManager = PatternManager;`,
       "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }\n  const hoverBand = hover && !hover.mini ? hover.band : -1;",
       String.raw`  const [hover, setHover] = useState(null); // { band, freq, db, x, y }
   const hoverRef = useRef(null);
+  const statusRefreshAtRef = useRef(0);
   const hoverBand = hover && !hover.mini ? hover.band : -1;
   const updatePointerHover = next => {
     hoverRef.current = next;
@@ -2758,6 +2759,15 @@ window.PatternManager = PatternManager;`,
     const text = document.querySelector('[data-spectr-status-text]');
     if (!text) return;
     text.textContent = label;
+    // Keep the banner alive while input is still changing without moving the
+    // 60 Hz paint path back through React. The direct text update stays
+    // frame-current; this low-rate publication only renews the inactivity
+    // deadline and content-sized shell.
+    const now = performance.now();
+    if (onStatus && now - statusRefreshAtRef.current >= 700) {
+      statusRefreshAtRef.current = now;
+      onStatus(label);
+    }
   };`,
       'drawing keeps live hover outside React reconciliation');
     replaceSpectrSource(

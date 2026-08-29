@@ -1550,6 +1550,28 @@ EDITS = [
      '    if (!text) return;\n'
      '    text.textContent = label;'),
 
+    ('live status renews its inactivity deadline off the paint hot path',
+     '  const hoverRef = useRef(null);\n'
+     '  const hoverBand = hover && !hover.mini ? hover.band : -1;',
+     '  const hoverRef = useRef(null);\n'
+     '  const statusRefreshAtRef = useRef(0);\n'
+     '  const hoverBand = hover && !hover.mini ? hover.band : -1;'),
+
+    ('live status deadline refresh is throttled',
+     '    const text = document.querySelector("[data-spectr-status-text]");\n'
+     '    if (!text) return;\n'
+     '    text.textContent = label;\n'
+     '  };',
+     '    const text = document.querySelector("[data-spectr-status-text]");\n'
+     '    if (!text) return;\n'
+     '    text.textContent = label;\n'
+     '    const now = performance.now();\n'
+     '    if (onStatus && now - statusRefreshAtRef.current >= 700) {\n'
+     '      statusRefreshAtRef.current = now;\n'
+     '      onStatus(label);\n'
+     '    }\n'
+     '  };'),
+
     ('live status avoids descendant queries in the emitted runtime',
      '    const shell = document.querySelector("[data-spectr-status-shell]");\n'
      '    const text = shell && shell.querySelector("[data-spectr-status-text]");\n'
@@ -1967,6 +1989,10 @@ SUPERSEDED_SENTINELS = {
         'data-spectr-status-info-toggle',
     'animation loop paints the latest canvas renderer':
         'updateLiveHoverStatus();',
+    'live status renews its inactivity deadline off the paint hot path':
+        'const statusRefreshAtRef = useRef(0);',
+    'live status deadline refresh is throttled':
+        'now - statusRefreshAtRef.current >= 700',
     'drawn gain edits share one mute decision':
         'commitMany(map, true);',
     'hover readout clears the status banner slot':

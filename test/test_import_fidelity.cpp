@@ -523,6 +523,7 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
 
     SECTION("the status banner replaces one message at a time") {
         CHECK(count_occurrences(document, "const generationRef = useRefChrome(0);") == 1);
+        CHECK(count_occurrences(document, "const statusRefreshAtRef = useRef(0);") == 1);
         CHECK(count_occurrences(
                   document,
                   "const t = setTimeout(() => {\\n      setVisible(false);\\n"
@@ -531,6 +532,10 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(document.find("if (generation !== generationRef.current) return;")
               != document.npos);
         CHECK(document.find("const timer2 = hide(120);") != document.npos);
+        CHECK(document.find("now - statusRefreshAtRef.current >= 700")
+              != document.npos);
+        CHECK(document.find("statusRefreshAtRef.current = now;") != document.npos);
+        CHECK(document.find("}, 150);") == document.npos);
         CHECK(document.find(
                   "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2000 : 1400;")
               != document.npos);
@@ -699,6 +704,7 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"live-hover-publication", "updateLiveHoverStatus();"},
         ContractMarker{"guide-only-hover", "if (!currentHover || currentHover.mini) return;"},
         ContractMarker{"generation-safe-status", "const generationRef = useRefChrome(0);"},
+        ContractMarker{"active-status-renewal", "now - statusRefreshAtRef.current >= 700"},
         ContractMarker{"inactivity-status-clear", "const timer2 = hide(120);"},
         ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2000 : 1400;"},
         ContractMarker{"content-sized-banner", "width: Math.max(96, Math.min(520, text.length * 8 + 28)),"},

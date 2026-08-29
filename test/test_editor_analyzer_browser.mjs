@@ -810,6 +810,16 @@ window.spectrStartOracle = () => {
       if (!firstLiveStatus?.includes('BAND') || !secondLiveStatus?.includes('BAND')
           || firstLiveStatus === secondLiveStatus)
         throw new Error('live hover gain status did not follow the drag');
+      // A sustained edit must not outlive the banner's inactivity timer. Move
+      // often enough to represent active input, but long enough that the old
+      // one-shot 1.4 s timeout would have removed the banner mid-gesture.
+      for (let activeFrame = 0; activeFrame < 4; ++activeFrame) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        spectrPointer(target, 'pointermove', x, y - 48 - activeFrame);
+        await spectrFrames(2);
+        if (!document.querySelector('[data-spectr-status-banner]'))
+          throw new Error('active drag outlived the status inactivity deadline');
+      }
       spectrPointer(target, 'pointerup', x, y - 24);
       await spectrFrames(3);
       const releasedDrag = window.__spectrTestHooks.renderState();
