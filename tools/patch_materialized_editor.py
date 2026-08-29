@@ -568,6 +568,14 @@ EDITS = [
      'React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, settings.bandCount), " bands \\u25BE")',
      'React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, settings.bandCount), /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, "bands \\u25BE"))'),
 
+    ('band trigger suffix uses native-supported spacing',
+     'React.createElement("span", { style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, "bands \\u25BE"))',
+     'React.createElement("span", { style: { display: "inline-flex", alignItems: "center", lineHeight: 1, marginLeft: 4 } }, "bands \\u25BE"))'),
+
+    ('band trigger suffix spacing survives materialization',
+     'React.createElement("span", { style: { display: "inline-flex", alignItems: "center", lineHeight: 1, marginLeft: 4 } }, "bands \\u25BE"))',
+     'React.createElement("span", { style: { display: "inline-flex", alignItems: "center", lineHeight: 1, paddingLeft: 4 } }, "bands \\u25BE"))'),
+
     ('band dropdown matches settings chip metrics',
      '        background: info.N === n ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.025)",\n'
      '        border: "1px solid " + (info.N === n ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.06)"),\n'
@@ -1620,6 +1628,10 @@ SUPERSEDED_SENTINELS = {
         'minWidth: 40',
     'band count trigger reflects selection immediately':
         'minWidth: 40',
+    'band trigger suffix shares the centered flex line':
+        'paddingLeft: 4',
+    'band trigger suffix uses native-supported spacing':
+        'paddingLeft: 4',
     'band dropdown inactive items retain a surface':
         'minWidth: 40',
     'settings exposes status info toggle':

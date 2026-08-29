@@ -707,6 +707,7 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"aligned-edge-label", "ctx.font = \\\"10px JetBrains Mono, monospace\\\";\\n        ctx.textAlign = \\\"center\\\";\\n        ctx.textBaseline = \\\"middle\\\";"},
         ContractMarker{"dropdown-surface", "background: \\\"rgba(255,255,255,0.025)\\\",\\n  border: \\\"1px solid transparent\\\""},
         ContractMarker{"aligned-band-count", "minWidth: 40,\\n        minHeight: 26,\\n        boxSizing: \\\"border-box\\\",\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
+        ContractMarker{"native-band-count-spacing", "lineHeight: 1, paddingLeft: 4"},
         ContractMarker{"banner-below-plot-line", "top: 76,"},
         ContractMarker{"centered-rail-button", "height: 26,\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
         ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 3},
