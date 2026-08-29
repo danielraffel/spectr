@@ -866,7 +866,13 @@ TEST_CASE("M9.5 bridge load_preset: applies and echoes metadata") {
     // Build a preset from one rig, load it into another.
     Rig a;
     a.store.set_value(spectr::kMix, 18.0f);
-    a.proc->field().bands[10].gain_db = -3.0f;
+    // Presets serialize the StateStore-authoritative processing state. Seed
+    // the band through the same editor bridge used by the shipping UI rather
+    // than mutating the processor's derived field cache behind that authority.
+    REQUIRE(response_ok(a.dispatch(
+        processing_state_envelope(32, 20.0f, 20000.0f, 10, -3.0f))));
+    // A stale direct cache mutation must not override the authoritative value.
+    a.proc->field().bands[10].gain_db = -11.0f;
     spectr::PresetMetadata meta;
     meta.name = "Bridge Load";
     meta.author = "Test";

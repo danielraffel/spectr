@@ -1,4 +1,6 @@
 #include "spectr/spectr.hpp"
+
+#include <pulp/runtime/trace.hpp>
 #if !defined(SPECTR_NATIVE_EDITOR)
 #include "spectr/ui/editor_view.hpp"
 #endif
@@ -145,15 +147,22 @@ ProcessingStateSnapshot Spectr::processing_state_snapshot() const noexcept {
 bool Spectr::replace_processing_state(const BandField& field,
                                       const Viewport& viewport,
                                       Layout layout) noexcept {
+    PULP_TRACE_SCOPE_NAMED("state", "spectr_replace_processing_state");
     if (!viewport.valid()) return false;
     {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         field_ = field;
         viewport_ = viewport;
         layout_ = layout;
-        publish_processing_state_();
+        {
+            PULP_TRACE_SCOPE_NAMED("state", "spectr_mask_publish");
+            publish_processing_state_();
+        }
     }
-    sync_params_from_field();
+    {
+        PULP_TRACE_SCOPE_NAMED("state", "spectr_host_param_sync");
+        sync_params_from_field();
+    }
     return true;
 }
 
@@ -327,9 +336,13 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
         // unpainted band during a live drag came from exactly that round trip —
         // the responsive pass needs ~96 host frames to commit, so the surface
         // outran the content for the whole gesture.
-        view.set_bounds({0.0f, 0.0f, static_cast<float>(kEditorDesignWidth),
-                         static_cast<float>(kEditorDesignHeight)});
-        view.layout_children();
+        const pulp::view::Rect authored_bounds{
+            0.0f, 0.0f, static_cast<float>(kEditorDesignWidth),
+            static_cast<float>(kEditorDesignHeight)};
+        if (view.bounds() != authored_bounds) {
+            view.set_bounds(authored_bounds);
+            view.layout_children();
+        }
         // Still run the materialized pass, but ALWAYS at the authored size.
         // It does two jobs: applyMaterializedImportMetadata() restores the
         // captured authored geometry, and only after that does it re-place for
@@ -343,8 +356,12 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
         publish_native_layout_(kEditorDesignWidth, kEditorDesignHeight);
         return;
     }
-    view.set_bounds({0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h)});
-    view.layout_children();
+    const pulp::view::Rect host_bounds{
+        0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h)};
+    if (view.bounds() != host_bounds) {
+        view.set_bounds(host_bounds);
+        view.layout_children();
+    }
     publish_native_layout_(w, h);
 #else
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {

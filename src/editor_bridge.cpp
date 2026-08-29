@@ -8,6 +8,7 @@
 #include "spectr/snapshot.hpp"
 
 #include <pulp/state/store.hpp>
+#include <pulp/runtime/trace.hpp>
 #include <pulp/view/editor_bridge.hpp>
 
 #include <choc/containers/choc_Value.h>
@@ -227,6 +228,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     // cross the bridge together and compile into one complete Pulp mask table.
     bridge.add_handler("processing_state_set",
         [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
+            PULP_TRACE_SCOPE_NAMED("state", "spectr_processing_state_set");
             if (!p.isObject())
                 return EditorBridge::err_response("payload must be object");
 

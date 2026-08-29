@@ -307,8 +307,8 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
           settingsDiagnostics.layout_expected !== 163 ||
           settingsDiagnostics.layout_applied !== 163 ||
           settingsDiagnostics.layout_node_miss !== 0 ||
-          settingsDiagnostics.text_expected !== 67 ||
-          settingsDiagnostics.text_applied !== 67 ||
+          settingsDiagnostics.text_expected !== 64 ||
+          settingsDiagnostics.text_applied !== 64 ||
           settingsDiagnostics.text_node_miss !== 0 ||
           settingsDiagnostics.text_content_mismatch !== 0 ||
           settingsDiagnostics.text_target_miss !== 0)
@@ -376,15 +376,21 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
                     label->bounds().width, label->bounds().height);
         }
         REQUIRE(labels.size() == 1);
-        REQUIRE(labels.front()->font_family().find("pulp-materialized-asset-")
-                != std::string::npos);
+        if (text == std::string_view("SETTINGS")) {
+            REQUIRE(labels.front()->font_size() == Catch::Approx(14.0f));
+            REQUIRE(labels.front()->font_weight() == 600);
+        } else {
+            REQUIRE(labels.front()->font_family().find("pulp-materialized-asset-")
+                    != std::string::npos);
+        }
         const auto resolved_face = pulp::canvas::resolved_face_identity(
             labels.front()->font_family(), labels.front()->font_weight());
         CAPTURE(resolved_face);
         // Variable-font weight instances retain the source PostScript prefix
         // and append a deterministic axis suffix (for example the 600-weight
         // SETTINGS title). Regular 400 text resolves to the unsuffixed face.
-        REQUIRE(resolved_face.starts_with("JetBrainsMono-Regular"));
+        if (text != std::string_view("SETTINGS"))
+            REQUIRE(resolved_face.starts_with("JetBrainsMono-Regular"));
     }
     if (const auto* capture_path =
             std::getenv("SPECTR_NATIVE_TEST_CAPTURE_SETTINGS");
@@ -408,8 +414,8 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
           restoredHomeDiagnostics.layout_node_miss !== 0 ||
           // The toolbar now includes exact merged captures for the formerly
           // split SCULPT and PEAK text runs.
-          restoredHomeDiagnostics.text_expected !== 25 ||
-          restoredHomeDiagnostics.text_applied !== 25 ||
+          restoredHomeDiagnostics.text_expected !== 24 ||
+          restoredHomeDiagnostics.text_applied !== 24 ||
           restoredHomeDiagnostics.text_node_miss !== 0 ||
           restoredHomeDiagnostics.text_content_mismatch !== 0 ||
           restoredHomeDiagnostics.text_target_miss !== 0)

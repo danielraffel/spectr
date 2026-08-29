@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
 constexpr std::string_view kAdapterDigest =
-        "7a03ccaa6f227bef48bd05a7079113ce2840904bbf4b080b8b854f8ce25aa656";
+        "20117024a82a45472744e97c6789ec420ecd57d8cd578bc7928c5ac5e8e98dd2";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -185,6 +185,11 @@ constexpr std::array kResizeMarkers{
     ContractMarker{"native-viewport-resize", "window.addEventListener('resize', resizeFixedDesign);"},
     ContractMarker{"fixed-design-center", "'translate(-50%, -50%) scale(' + scale + ')'"},
     ContractMarker{"resize-text-selection", "input:not([type]), input[type=\"text\"], input[type=\"search\"], textarea,"},
+    ContractMarker{"live-viewport-ref", "const [reactView, setReactView] = useState(initialView);"},
+    ContractMarker{"live-left-right-resize", "commitLiveViewport({ lmin, lmax });"},
+    ContractMarker{"live-center-pan", "commitLiveViewport({ lmin, lmax: lmin + span });"},
+    ContractMarker{"final-viewport-snapshot", "setView({ ...viewRef.current });\n      wrapRef.current.style.cursor = p.mode === 'minimap-resize' ? 'ew-resize' : 'grab';"},
+    ContractMarker{"viewport-oracle-snapshot", "reactView: { ...reactView }"},
 };
 
 constexpr std::array kForbiddenProductResizeMarkers{
@@ -256,6 +261,9 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     const auto adapter = outer_adapter(html);
     REQUIRE_FALSE(adapter.empty());
     CHECK(pulp::runtime::sha256_hex(adapter) == kAdapterDigest);
+    auto mutated_adapter = adapter;
+    mutated_adapter.front() ^= 1;
+    CHECK(pulp::runtime::sha256_hex(mutated_adapter) != kAdapterDigest);
     CHECK(adapter.find("throw new Error('Spectr source patch point missing: ' + label)") != adapter.npos);
     CHECK(adapter.find("new DOMParser().parseFromString(template, 'text/html')") != adapter.npos);
     CHECK(adapter.find("window.Babel.transformScriptTags()") != adapter.npos);
@@ -284,7 +292,14 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("nativeAnalyzerFrame = null") != adapter.npos);
     CHECK(adapter.find("rejected malformed native analyzer frame") != adapter.npos);
     CHECK(adapter.find("data-spectr-menu-root") != adapter.npos);
-    CHECK(adapter.find("document.activeElement.click()") != adapter.npos);
+    // Native popup activation belongs to Pulp's root-scoped semantic popup
+    // dispatcher. The app contributes semantic triggers/options only and must
+    // not reintroduce the old document-global keyboard click service.
+    CHECK(adapter.find("document.activeElement.click()") == adapter.npos);
+    CHECK(adapter.find("data-spectr-menu-trigger aria-haspopup=\"listbox\"")
+          != adapter.npos);
+    CHECK(adapter.find("data-spectr-menu-options data-spectr-overlay=\"true\"")
+          != adapter.npos);
     CHECK(adapter.find("fixedDesignSurface.style.transform") != adapter.npos);
     CHECK(adapter.find("wrapRef.current.clientWidth / rect.width") != adapter.npos);
     CHECK(adapter.find("truthful mask visualization selector") != adapter.npos);
@@ -392,7 +407,12 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(structure_errors(bundle->template_html).empty());
     CHECK(patch_errors(bundle->template_html).empty());
     CHECK(gesture_errors(bundle->template_html).empty());
-    CHECK(resize_errors(adapter).empty());
+    const auto resize_contract_errors = resize_errors(adapter);
+    for (const auto& error : resize_contract_errors) {
+        INFO("resize contract error: " << error);
+        CHECK(error.empty());
+    }
+    CHECK(resize_contract_errors.empty());
 }
 
 TEST_CASE("import fidelity oracle detects payload mutations") {
@@ -511,6 +531,14 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   "const t = setTimeout(() => {\\n      setVisible(false);\\n"
                   "      setText(\\\"\\\");\\n    }, 1400);")
               == 0);
+        CHECK(document.find("const generationRef = useRefChrome(0);") != document.npos);
+        CHECK(document.find("if (generation !== generationRef.current) return;")
+              != document.npos);
+        CHECK(document.find("const timer = hide(120);") != document.npos);
+        CHECK(document.find(
+                  "requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));")
+              != document.npos);
+        CHECK(document.find("shell.style.width = Math.max") == document.npos);
     }
 
     SECTION("the status banner is centered, padded, and smoothly content-sized") {
@@ -527,6 +555,9 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 
     SECTION("edge labels and dropdown controls retain intentional rendering") {
+        CHECK(document.find("restoreMenuFocus") == document.npos);
+        CHECK(count_occurrences(document, "popupKind: \\\"listbox\\\"") == 2);
+        CHECK(count_occurrences(document, "popupKind: \\\"menu\\\"") == 2);
         CHECK(count_occurrences(document, "ctx.setLineDash([2, 2]);") == 0);
         CHECK(count_occurrences(
                   document,
@@ -549,10 +580,7 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 
     SECTION("minimap cursor feedback distinguishes idle drag and band editing") {
-        CHECK(count_occurrences(
-                  document,
-                  "wrapRef.current.style.cursor = activeMini ? \\\"grabbing\\\" : \\\"grab\\\";")
-              == 1);
+        CHECK(count_occurrences(document, "? \\\"ew-resize\\\"") == 1);
         CHECK(count_occurrences(
                   document,
                   "wrapRef.current.style.cursor = \\\"grabbing\\\";")
@@ -563,8 +591,10 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
               == 1);
         CHECK(count_occurrences(
                   document,
-                  "mm === \\\"left\\\" || mm === \\\"right\\\" ? \\\"ew-resize\\\"")
-              == 0);
+                  "mm === \\\"left\\\" || mm === \\\"right\\\"\n        ? \\\"ew-resize\\\"")
+              == 1);
+        CHECK(document.find("for (let i = 1; i < N; i++)") != document.npos);
+        CHECK(document.find("for (let i = 0; i <= N; i++)") == document.npos);
     }
 
     SECTION("remaining standalone chrome stays aligned") {
@@ -596,6 +626,25 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         // that lane fail, but only here does the SHIPPING document say so.
         CHECK(count_occurrences(document, "const commitDrawnGains = (map) => {") == 1);
         CHECK(count_occurrences(document, "commitDrawnGains(map);") == 6);
+        CHECK(count_occurrences(document, "commitMany(map, true);") == 1);
+        CHECK(count_occurrences(document, "commitMany(held, true);") == 1);
+        CHECK(count_occurrences(document, "if (!deferReact) setGains") == 2);
+        CHECK(count_occurrences(document,
+                  "setGains(targetGainsRef.current.slice());") == 1);
+        CHECK(count_occurrences(document,
+                  "reactGains: Array.from(gains)") == 1);
+        CHECK(count_occurrences(document,
+                  "updateLiveHoverStatus();") == 1);
+        CHECK(count_occurrences(document,
+                  "const commitLiveViewport = (next) => {") == 1);
+        CHECK(count_occurrences(document,
+                  "commitLiveViewport({ lmin, lmax });") == 1);
+        CHECK(count_occurrences(document,
+                  "commitLiveViewport({ lmin, lmax: lmin + span });") == 1);
+        CHECK(count_occurrences(document,
+                  "setView({ ...viewRef.current });") == 1);
+        CHECK(count_occurrences(document,
+                  "reactView: { ...reactView }") == 1);
         CHECK(count_occurrences(document, "const editBaseGain = (value, index) => {") == 1);
         CHECK(count_occurrences(document, "unmuteOnDrawRef.current") == 2);
         // No drawn-edit site may short-circuit a muted band to the sentinel
@@ -662,9 +711,12 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"edit-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.14)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"analyzer-dropdown-surface", "background: active ? \\\"rgba(255,255,255,0.08)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"settings-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.16)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
-        ContractMarker{"minimap-grab-cursor", "wrapRef.current.style.cursor = activeMini ? \\\"grabbing\\\" : \\\"grab\\\";"},
+        ContractMarker{"minimap-edge-resize-cursor", "mm === \\\"left\\\" || mm === \\\"right\\\"\n        ? \\\"ew-resize\\\""},
         ContractMarker{"minimap-press-cursor", "wrapRef.current.style.cursor = \\\"grabbing\\\";"},
         ContractMarker{"band-crosshair-cursor", "wrapRef.current.style.cursor = \\\"crosshair\\\";"},
+        ContractMarker{"status-info-toggle", "data-spectr-status-info-toggle"},
+        ContractMarker{"status-info-suppression", "settings.statusInfo === false"},
+        ContractMarker{"selected-preset-label", "data-spectr-selected-preset"},
     };
     const auto errors = [&](std::string_view candidate) {
         std::vector<std::string> result;
