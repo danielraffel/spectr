@@ -2825,31 +2825,27 @@ window.PatternManager = PatternManager;`,
       '      brush.paint(band);\n      pointerRef.current = brush;\n      hoverRef.current = { band, x, y };\n      if (onStatus) onStatus(liveHoverLabel(hoverRef.current));\n      return;',
       'mute brush publishes status on pointer down');
     replaceSpectrSource(
-      '      didDrag: false,\n    };\n  };',
-      '      didDrag: false,\n    };\n    hoverRef.current = { band, x, y };\n    if (onStatus) onStatus(liveHoverLabel(hoverRef.current));\n  };',
+      '      didDrag: false,\n    };\n    // Immediate gain update on mouse-down for sculpt/level',
+      '      didDrag: false,\n    };\n    hoverRef.current = { band, x, y };\n    if (onStatus) onStatus(liveHoverLabel(hoverRef.current));\n    // Immediate gain update on mouse-down for sculpt/level',
       'gain drag publishes status on pointer down');
     replaceSpectrSource(
       '      (renderAllRef.current || renderAll)();',
       '      (renderAllRef.current || renderAll)();\n      updateLiveHoverStatus();',
       'live drawing status follows the paint clock');
     replaceSpectrSource(
-      '  const viewRef = useRef({ ...initialView });\n  const view = viewRef.current;',
-      '  const viewRef = useRef({ ...initialView });\n  const wheelCommitRef = useRef(0);\n  const view = viewRef.current;',
-      'wheel zoom owns one deferred semantic commit');
-    replaceSpectrSource(
-      String.raw`    const anchor = view.lmin + (x - g.inner.x) / g.inner.w * (view.lmax - view.lmin);
+      String.raw`    const anchor = view.lmin + ((x - g.inner.x) / g.inner.w) * (view.lmax - view.lmin);
     let span = (view.lmax - view.lmin) * factor;
-    span = clamp(span, 0.1, Math.log10(2e4) - Math.log10(20));
+    span = clamp(span, 0.10, Math.log10(20000) - Math.log10(20)); // ~0.1 decade min
     const t = (anchor - view.lmin) / (view.lmax - view.lmin);`,
       String.raw`    const liveView = viewRef.current;
-    const anchor = liveView.lmin + (x - g.inner.x) / g.inner.w * (liveView.lmax - liveView.lmin);
+    const anchor = liveView.lmin + ((x - g.inner.x) / g.inner.w) * (liveView.lmax - liveView.lmin);
     let span = (liveView.lmax - liveView.lmin) * factor;
-    span = clamp(span, 0.1, Math.log10(2e4) - Math.log10(20));
+    span = clamp(span, 0.10, Math.log10(20000) - Math.log10(20)); // ~0.1 decade min
     const t = (anchor - liveView.lmin) / (liveView.lmax - liveView.lmin);`,
       'wheel zoom reads the live viewport');
     replaceSpectrSource(
       String.raw`    const delta = e.deltaY;
-    const factor = Math.exp(delta * 12e-4);
+    const factor = Math.exp(delta * 0.0012);
     const liveView = viewRef.current;`,
       String.raw`    const liveView = viewRef.current;
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
@@ -2867,8 +2863,8 @@ window.PatternManager = PatternManager;`,
     const factor = Math.exp(delta * 12e-4);`,
       'horizontal trackpad motion pans the minimap rigidly');
     replaceSpectrSource(
-      '    setView({ lmin, lmax });\n  };\n  useEffect(() => {\n    if (!nativeHydrated) return;',
-      '    commitLiveViewport({ lmin, lmax });\n    clearTimeout(wheelCommitRef.current);\n    wheelCommitRef.current = setTimeout(() => setReactView({ ...viewRef.current }), 80);\n  };\n  useEffect(() => () => clearTimeout(wheelCommitRef.current), []);\n  useEffect(() => {\n    if (!nativeHydrated) return;',
+      '    setView({ lmin, lmax });\n  };',
+      '    commitLiveViewport({ lmin, lmax });\n    clearTimeout(wheelCommitRef.current);\n    wheelCommitRef.current = setTimeout(() => setReactView({ ...viewRef.current }), 80);\n  };\n  useEffect(() => () => clearTimeout(wheelCommitRef.current), []);',
       'wheel zoom defers one semantic viewport snapshot');
     replaceSpectrSource(
       "    if (!hover || hover.mini) return;\n    const { x } = hover;",
@@ -2917,6 +2913,10 @@ window.PatternManager = PatternManager;`,
     setReactView({ ...resolved });
   };`,
       'viewport keeps a live ref beside its React snapshot');
+    replaceSpectrSource(
+      '  const viewRef = useRef({ ...initialView });\n  const view = viewRef.current;',
+      '  const viewRef = useRef({ ...initialView });\n  const wheelCommitRef = useRef(0);\n  const view = viewRef.current;',
+      'wheel zoom owns one deferred semantic commit');
     replaceSpectrSource(
       String.raw`  };
   const commitGain = (idx, value, deferReact = false) => {`,

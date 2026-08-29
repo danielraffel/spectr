@@ -1147,6 +1147,16 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
             *rig.root, static_cast<int>(key), pulp::view::kModNone, true));
         settle(rig.clock, 6);
     };
+    rig.bridge().load_script(R"js((() => {
+      const trigger = document.querySelector(
+        '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
+      const resolution = document.querySelector('[data-spectr-resolution]');
+      if (!trigger || !resolution) throw new Error('band header subjects missing');
+      globalThis.__spectrBandHeaderBefore = {
+        trigger: trigger.getBoundingClientRect(),
+        resolution: resolution.getBoundingClientRect()
+      };
+    })();)js", "spectr-native-band-header-before-open");
     const auto focus_and_open = [&] {
         rig.bridge().load_script(
             "document.querySelector('[data-spectr-menu-root=\"bands\"] "
@@ -1170,6 +1180,9 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
       const triggerRect = trigger.getBoundingClientRect();
       const popupRect = popup.getBoundingClientRect();
       const rects = options.map(option => option.getBoundingClientRect());
+      const before = globalThis.__spectrBandHeaderBefore;
+      const resolution = document.querySelector('[data-spectr-resolution]')
+        ?.getBoundingClientRect();
       if (triggerRect.width < 80 || rects.some(rect => rect.width < 43))
         throw new Error('band geometry trigger=' + triggerRect.width
           + ' options=' + rects.map(rect => rect.width).join(','));
@@ -1180,6 +1193,15 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
       }
       if (popupRect.width < rects.reduce((sum, rect) => sum + rect.width, 0) - 1)
         throw new Error('band popup clips option row');
+      if (!before || !resolution
+          || Math.abs(triggerRect.left - before.trigger.left) > 0.5
+          || Math.abs(triggerRect.width - before.trigger.width) > 0.5
+          || Math.abs(resolution.left - before.resolution.left) > 0.5)
+        throw new Error('band popup reflowed its header');
+      if (popupRect.top < triggerRect.bottom - 0.5)
+        throw new Error('band popup does not overlay below its trigger');
+      if (resolution.right > globalThis.innerWidth + 0.5)
+        throw new Error('band popup clipped spectral resolution');
     })();)js", "spectr-native-band-menu-geometry");
     settle(rig.clock, 4);
     require_runtime_contract(
@@ -1226,7 +1248,7 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
         "native overlay dismissal did not close the authored popup");
 
     focus_and_open();
-    const pulp::view::Point outside{660.0f, 430.0f};
+    const pulp::view::Point outside{1200.0f, 430.0f};
     auto* outside_target = rig.root->hit_test(outside);
     REQUIRE(outside_target != nullptr);
     REQUIRE(pulp::view::transfer_input_focus(*rig.root, outside_target));
@@ -1240,6 +1262,55 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
         rig,
         "!document.querySelector('[data-spectr-menu-root=\"bands\"] [data-spectr-menu-options]')",
         "outside pointer did not dismiss without changing selection");
+    storage.require_unchanged();
+}
+
+TEST_CASE("every native dropdown dismisses by Escape and outside press",
+          "[native-n1][state-parity][dropdown][dismissal]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    const std::array<std::string_view, 5> menus{
+        "bands", "edit", "analyzer", "overflow", "pattern"};
+    const pulp::view::Point outside{660.0f, 430.0f};
+    for (const auto menu : menus) {
+        INFO("menu=" << menu);
+        const auto root = std::string{"[data-spectr-menu-root=\""}
+            + std::string(menu) + "\"]";
+        const auto trigger = root + " [data-spectr-menu-trigger]";
+        const auto options = root + " [data-spectr-menu-options]";
+
+        const auto open_from_keyboard = [&] {
+            rig.bridge().load_script(
+                "document.querySelector(" + js_string(trigger) + ").focus()",
+                "spectr-native-focus-menu-trigger");
+            REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+                *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+                pulp::view::kModNone, true));
+            settle(rig.clock, 8);
+        };
+        open_from_keyboard();
+        REQUIRE(rig.root->interaction().active_overlay != nullptr);
+        REQUIRE(rig.root->interaction().active_overlay->overlay_consumes_outside_click());
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 8);
+        require_runtime_contract(
+            rig, "!document.querySelector(" + js_string(options) + ")",
+            "Escape left a dropdown open");
+
+        open_from_keyboard();
+        REQUIRE(rig.root->interaction().active_overlay != nullptr);
+        CAPTURE(describe_control(*rig.root->interaction().active_overlay));
+        REQUIRE_FALSE(rig.root->interaction().active_overlay->overlay_contains(outside));
+        rig.root->simulate_click(outside);
+        settle(rig.clock, 8);
+        require_runtime_contract(
+            rig, "!document.querySelector(" + js_string(options) + ")",
+            "outside press left a dropdown open");
+    }
     storage.require_unchanged();
 }
 
@@ -1768,6 +1839,45 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     require_app_state(rig,
         "s.managerOpen === true && s.userPatterns.length === 1",
         "saved preset was not available in the native pattern manager");
+    activate(rig, "[data-spectr-pattern-id=\"factory:tilt\"]");
+    rig.bridge().load_script(R"js((() => {
+      const manager = document.querySelector(
+        '[data-spectr-overlay="true"][aria-label="Pattern manager"]');
+      if (!manager) throw new Error('pattern manager overlay missing');
+      const heading = document.querySelector('[data-spectr-manager-heading]');
+      const bands = document.querySelector('[data-spectr-manager-meta]');
+      const actions = ['apply', 'set-default', 'duplicate',
+        'export-file', 'export-clip'];
+      const labels = ['APPLY', 'SET AS DEFAULT', 'DUPLICATE',
+        'EXPORT (FILE)', 'EXPORT (CLIP)'];
+      const buttons = actions.map(action => document.querySelector(
+        '[data-spectr-manager-action="' + action + '"]'));
+      if (!heading || !bands || buttons.some(button => !button))
+        throw new Error('selected preset detail subjects missing');
+      const managerRect = manager.getBoundingClientRect();
+      const headingRect = heading.getBoundingClientRect();
+      const bandsRect = bands.getBoundingClientRect();
+      const buttonRects = buttons.map(button => button.getBoundingClientRect());
+      if (headingRect.bottom > bandsRect.top)
+        throw new Error('selected preset title overlaps its metadata');
+      for (const rect of buttonRects) {
+        if (rect.left < managerRect.left - 0.5 || rect.right > managerRect.right + 0.5
+            || rect.top < managerRect.top - 0.5 || rect.bottom > managerRect.bottom + 0.5)
+          throw new Error('selected preset action escaped the manager');
+      }
+      for (let a = 0; a < buttonRects.length; ++a) {
+        for (let b = a + 1; b < buttonRects.length; ++b) {
+          const xOverlap = Math.min(buttonRects[a].right, buttonRects[b].right)
+            - Math.max(buttonRects[a].left, buttonRects[b].left);
+          const yOverlap = Math.min(buttonRects[a].bottom, buttonRects[b].bottom)
+            - Math.max(buttonRects[a].top, buttonRects[b].top);
+          if (xOverlap > 0.5 && yOverlap > 0.5)
+            throw new Error('selected preset actions overlap: '
+              + labels[a] + ' / ' + labels[b]);
+        }
+      }
+    })();)js", "spectr-native-pattern-manager-selected-layout");
+    settle(rig.clock, 4);
     std::vector<const pulp::view::SvgRectWidget*> preview_rects;
     collect_svg_rects(*rig.root, preview_rects);
     const auto distributed_preview_bars = std::count_if(

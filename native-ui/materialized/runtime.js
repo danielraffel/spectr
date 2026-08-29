@@ -9157,27 +9157,18 @@
   }
   function applyMaterializedImportMetadata(metadata) {
     const values = materializedDomRegistryValues();
-    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)
-      ? metadata.layout_bindings : []).map((binding) => {
-        if (activeCapturedState !== "bands" || !binding?.box) return binding;
-        const box = binding.box;
-        const path = Array.isArray(binding.path) ? binding.path : [];
-        const tail = path[path.length - 1] || {};
-        if (box.width === 166 && box.height === 31)
-          return { ...binding, box: { ...box, left: -154.96875, width: 236 } };
-        if (box.width === 30 && box.height === 23 && tail.tag === "button")
-          return { ...binding, box: { ...box, left: 4 + tail.index * 46, width: 44 } };
-        if (box.width === 228.53125 && box.height === 19)
-          return { ...binding, box: { ...box, width: 239.53125 } };
-        if (box.width === 81.03125 && box.height === 19)
-          return { ...binding, box: { ...box, width: 92 } };
-        if (box.top === 3 && box.left >= 87.03125)
-          return { ...binding, box: { ...box, left: box.left + 10.96875 } };
-        return binding;
-      });
+    // These states are live, responsive UI. Their capture metadata is useful
+    // as a visual oracle, but applying its fixed boxes at runtime makes the
+    // header reflow and collapses the selected-preset action layout.
+    const authoredLayoutState = activeCapturedState === "bands";
+    const activeLayoutBindings = authoredLayoutState ? []
+      : (Array.isArray(metadata && metadata.layout_bindings)
+          ? metadata.layout_bindings : []);
     // Selected preset names are authored state, not frozen capture text.
-    const activeTextBindings = (Array.isArray(metadata && metadata.text_bindings)
-      ? metadata.text_bindings : []).filter(
+    const authoredTextState = activeCapturedState === "bands";
+    const activeTextBindings = (authoredTextState ? []
+      : (Array.isArray(metadata && metadata.text_bindings)
+          ? metadata.text_bindings : [])).filter(
         (binding) => binding.text !== "PRESETS \u25BE"
           && binding.text !== "SETTINGS"
           && binding.text !== "\u00D7"

@@ -627,6 +627,32 @@ EDITS = [
      '        flexShrink: 0,\n'
      '        minHeight: 26,'),
 
+    ('selected preset detail owns one stable live-layout subtree',
+     '  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, editName && !isFactory ?',
+     '  return /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-detail": true, style: { flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-heading": true, style: { display: "flex", alignItems: "center", gap: 8, minHeight: 26 } }, editName && !isFactory ?'),
+
+    ('selected preset preview has a stable semantic subject',
+     '), !isFactory && !editName && /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": "rename-start", onClick: () => setEditName(true), style: iconBtn }, "\\u270E")), /* @__PURE__ */ React.createElement("div", { style: {\n'
+     '    background: "rgba(0,0,0,0.35)",',
+     '), !isFactory && !editName && /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": "rename-start", onClick: () => setEditName(true), style: iconBtn }, "\\u270E")), /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-preview": true, style: {\n'
+     '    background: "rgba(0,0,0,0.35)",'),
+
+    ('selected preset metadata has a stable semantic subject',
+     '} }, /* @__PURE__ */ React.createElement(MiniPreview, { gains, w: 380, h: 86 })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, opacity: 0.55, display: "flex", gap: 14, flexWrap: "wrap" } },',
+     '} }, /* @__PURE__ */ React.createElement(MiniPreview, { gains, w: 380, h: 86 })), /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-meta": true, style: { fontSize: 9.5, opacity: 0.55, display: "flex", gap: 14, flexWrap: "wrap" } },'),
+
+    ('selected preset actions have one stable live-layout row',
+     '), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },',
+     '), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 12 } }), /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-actions": true, style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", minHeight: 58 } },'),
+
+    ('selected preset actions are individually addressable',
+     'React.createElement(MBtn, { onClick: onSetDefault }, isDefault ? "\\u2605 DEFAULT" : "SET AS DEFAULT"), /* @__PURE__ */ React.createElement(MBtn, { onClick: onDuplicate }, "DUPLICATE"),',
+     'React.createElement(MBtn, { action: "set-default", onClick: onSetDefault }, isDefault ? "\\u2605 DEFAULT" : "SET AS DEFAULT"), /* @__PURE__ */ React.createElement(MBtn, { action: "duplicate", onClick: onDuplicate }, "DUPLICATE"),'),
+
+    ('selected preset export actions are individually addressable',
+     'React.createElement(MBtn, { onClick: () => onExport("file") }, "EXPORT (FILE)"), /* @__PURE__ */ React.createElement(MBtn, { onClick: () => onExport("clipboard") }, "EXPORT (CLIP)")))',
+     'React.createElement(MBtn, { action: "export-file", onClick: () => onExport("file") }, "EXPORT (FILE)"), /* @__PURE__ */ React.createElement(MBtn, { action: "export-clip", onClick: () => onExport("clipboard") }, "EXPORT (CLIP)")))'),
+
     ('dropdown items use a consistent native-friendly surface',
      'const menuItem = {\n'
      '  background: "transparent",\n'
@@ -1878,7 +1904,7 @@ RUNTIME_EDITS = [
      '      });',
      '    const activeLayoutBindings = Array.isArray(metadata && metadata.layout_bindings)\n'
      '      ? metadata.layout_bindings : [];',
-     'if (activeCapturedState !== "bands" || !binding?.box)'),
+     'const authoredLayoutState = activeCapturedState === "bands"'),
     ('band popup uses the authored option geometry',
      '    const activeLayoutBindings = Array.isArray(metadata && metadata.layout_bindings)\n'
      '      ? metadata.layout_bindings : [];',
@@ -1900,7 +1926,34 @@ RUNTIME_EDITS = [
      '          return { ...binding, box: { ...box, left: box.left + 10.96875 } };\n'
      '        return binding;\n'
      '      });',
-     'if (activeCapturedState !== "bands" || !binding?.box)'),
+     'const authoredLayoutState = activeCapturedState === "bands"'),
+    ('dynamic popup and manager states keep authored live layout',
+     '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
+     '      ? metadata.layout_bindings : []).map((binding) => {\n'
+     '        if (activeCapturedState !== "bands" || !binding?.box) return binding;\n'
+     '        const box = binding.box;\n'
+     '        const path = Array.isArray(binding.path) ? binding.path : [];\n'
+     '        const tail = path[path.length - 1] || {};\n'
+     '        if (box.width === 166 && box.height === 31)\n'
+     '          return { ...binding, box: { ...box, left: -154.96875, width: 236 } };\n'
+     '        if (box.width === 30 && box.height === 23 && tail.tag === "button")\n'
+     '          return { ...binding, box: { ...box, left: 4 + tail.index * 46, width: 44 } };\n'
+     '        if (box.width === 228.53125 && box.height === 19)\n'
+     '          return { ...binding, box: { ...box, width: 239.53125 } };\n'
+     '        if (box.width === 81.03125 && box.height === 19)\n'
+     '          return { ...binding, box: { ...box, width: 92 } };\n'
+     '        if (box.top === 3 && box.left >= 87.03125)\n'
+     '          return { ...binding, box: { ...box, left: box.left + 10.96875 } };\n'
+     '        return binding;\n'
+     '      });',
+     '    // These states are live, responsive UI. Their capture metadata is useful\n'
+     '    // as a visual oracle, but applying its fixed boxes at runtime makes the\n'
+     '    // header reflow and collapses the selected-preset action layout.\n'
+     '    const authoredLayoutState = activeCapturedState === "bands";\n'
+     '    const activeLayoutBindings = authoredLayoutState ? []\n'
+     '      : (Array.isArray(metadata && metadata.layout_bindings)\n'
+     '          ? metadata.layout_bindings : []);',
+     'const authoredLayoutState = activeCapturedState === "bands"'),
     ('dynamic selected preset bypasses the frozen text binding',
      '    const activeTextBindings = Array.isArray(metadata && metadata.text_bindings) ? metadata.text_bindings : [];',
      '    // Selected preset names are authored state, not frozen capture text.\n'
@@ -1908,6 +1961,14 @@ RUNTIME_EDITS = [
      '      ? metadata.text_bindings : []).filter(\n'
      '        (binding) => binding.text !== "PRESETS \\u25BE");',
      'Selected preset names are authored state, not frozen capture text.'),
+    ('dynamic popup and manager states keep authored live text layout',
+     '    const activeTextBindings = (Array.isArray(metadata && metadata.text_bindings)\n'
+     '      ? metadata.text_bindings : []).filter(',
+     '    const authoredTextState = activeCapturedState === "bands";\n'
+     '    const activeTextBindings = (authoredTextState ? []\n'
+     '      : (Array.isArray(metadata && metadata.text_bindings)\n'
+     '          ? metadata.text_bindings : [])).filter(',
+     'const authoredTextState = activeCapturedState === "bands"'),
     ('settings auto extent replaces the stale manual capture height',
      '      const panelHeight = authored ? 679\n'
      '        : Math.min(684, Math.max(240, height * 0.9));',
