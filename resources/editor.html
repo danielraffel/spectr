@@ -398,11 +398,12 @@ document.addEventListener('DOMContentLoaded', async function() {
       setVisible(true);
     }
     shownRef.current = display;
+    const holdMs = /\b(?:MUTED|UNMUTED)\b/.test(display) ? 2000 : 1400;
     timers.push(setTimeout(() => {
       setVisible(false);
       setText('');
       shownRef.current = '';
-    }, replacing ? 1550 : 1400));
+    }, holdMs + (replacing ? 150 : 0)));
     return () => timers.forEach(clearTimeout);
   }, [message]);
   return (
@@ -1271,6 +1272,67 @@ window.FilterBank = FilterBank;`,
       setHelpOpen(false);
     }
   }, [settingsOpen]);
+  const restoreMenuFocus = useRefChrome(false);
+  useEffectChrome(() => {
+    // Browser previews need this contract locally because they do not run
+    // through Pulp's native event dispatcher. The materialization patcher
+    // removes this fallback from the shipping native artifact.
+    const key = openMenu || (helpOpen ? 'help' : null);
+    if (!key) return;
+    const rootSelector = '[data-spectr-menu-root="' + key + '"]';
+    const root = document.querySelector(rootSelector);
+    if (!root) return;
+    const triggerHost = document.querySelector(rootSelector + ' [data-spectr-menu-trigger]');
+    const trigger = triggerHost && (triggerHost.matches('button')
+      ? triggerHost : triggerHost.querySelector('button'));
+    const close = (returnFocus) => {
+      restoreMenuFocus.current = !!returnFocus;
+      if (key === 'help') setHelpOpen(false);
+      else setOpenMenu(null);
+    };
+    const onPointer = (event) => {
+      if (!root.contains(event.target)) close(false);
+    };
+    const onKey = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        close(true);
+        return;
+      }
+      const options = Array.from(document.querySelectorAll(
+        rootSelector + ' [data-spectr-menu-options] button:not([disabled])'));
+      if (!options.length) return;
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp'
+          || event.key === 'Home' || event.key === 'End') {
+        event.preventDefault();
+        event.stopPropagation();
+        const current = options.indexOf(document.activeElement);
+        const next = event.key === 'Home' ? 0
+          : event.key === 'End' ? options.length - 1
+          : event.key === 'ArrowDown'
+            ? (current + 1 + options.length) % options.length
+            : (current - 1 + options.length) % options.length;
+        options[next].focus();
+      } else if ((event.key === 'Enter' || event.key === ' ')
+          && options.includes(document.activeElement)) {
+        event.preventDefault();
+        event.stopPropagation();
+        restoreMenuFocus.current = true;
+        document.activeElement.click();
+      }
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey, true);
+      if (restoreMenuFocus.current) {
+        restoreMenuFocus.current = false;
+        requestAnimationFrame(() => trigger && trigger.focus());
+      }
+    };
+  }, [openMenu, helpOpen]);
 
   const act = (fn) => () => {`,
       'rich popup keyboard and dismissal contract');
@@ -2284,23 +2346,23 @@ window.PatternManager = PatternManager;`,
     replaceSpectrSource(
       String.raw`    const mm = minimapHit(x, y, g);
     if (mm) {
-      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);`,
+      const fullMin = Math.log10(20), fullMax = Math.log10(20000);`,
       String.raw`    const mm = minimapHit(x, y, g);
     if (mm) {
-      wrapRef.current.style.cursor = 'grabbing';
-      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);`,
+      wrapRef.current.style.cursor = mm === 'left' || mm === 'right' ? 'col-resize' : 'grabbing';
+      const fullMin = Math.log10(20), fullMax = Math.log10(20000);`,
       'minimap press uses grabbing cursor');
     replaceSpectrSource(
       String.raw`    if (mm) {
       setHover({ mini: mm, x, y, band: -1 });
-      wrapRef.current.style.cursor = mm === 'left' || mm === 'right' ? 'ew-resize' : mm === 'window' ? 'grab' : 'pointer';`,
+      wrapRef.current.style.cursor = (mm === 'left' || mm === 'right') ? 'ew-resize' : (mm === 'window' ? 'grab' : 'pointer');`,
       String.raw`    if (mm) {
       setHover({ mini: mm, x, y, band: -1 });
       const activeMini = pointerRef.current
         && (pointerRef.current.mode === 'minimap-drag'
           || pointerRef.current.mode === 'minimap-resize');
       wrapRef.current.style.cursor = mm === 'left' || mm === 'right'
-        ? 'ew-resize'
+        ? 'col-resize'
         : activeMini ? 'grabbing' : mm === 'window' ? 'grab' : 'pointer';`,
       'minimap hover and drag cursors');
     replaceSpectrSource(
@@ -2312,7 +2374,7 @@ window.PatternManager = PatternManager;`,
     const p = pointerRef.current;
     pointerRef.current = { mode: null };
     if (p && p.mode === 'minimap-drag') wrapRef.current.style.cursor = 'grab';
-    if (p && p.mode === 'minimap-resize') wrapRef.current.style.cursor = 'ew-resize';
+    if (p && p.mode === 'minimap-resize') wrapRef.current.style.cursor = 'col-resize';
     if (!p || !p.mode) {`,
       'minimap release restores grab cursor');
     replaceSpectrSource(
@@ -2321,28 +2383,6 @@ window.PatternManager = PatternManager;`,
       String.raw`      for (let i = 1; i < N; i++) {
         const x = inner.x + i * (bandW + bandGap) + 0.5;`,
       'response ticks omit first and last edges');
-    replaceSpectrSource(
-      "      wrapRef.current.style.cursor = activeMini ? 'grabbing' : 'grab';",
-      String.raw`      wrapRef.current.style.cursor = mm === 'left' || mm === 'right'
-        ? 'ew-resize'
-        : activeMini ? 'grabbing' : mm === 'window' ? 'grab' : 'pointer';`,
-      'minimap edges retain horizontal resize cursor');
-    replaceSpectrSource(
-      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize'))
-      wrapRef.current.style.cursor = 'grab';`,
-      String.raw`    if (p && p.mode === 'minimap-drag') wrapRef.current.style.cursor = 'grab';
-    if (p && p.mode === 'minimap-resize') wrapRef.current.style.cursor = 'ew-resize';`,
-      'minimap release retains physical cursor');
-    replaceSpectrSource(
-      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize')) {
-      setView({ ...viewRef.current });
-      wrapRef.current.style.cursor = 'grab';
-    }`,
-      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize')) {
-      setView({ ...viewRef.current });
-      wrapRef.current.style.cursor = p.mode === 'minimap-resize' ? 'ew-resize' : 'grab';
-    }`,
-      'minimap deferred release retains physical cursor');
     replaceSpectrSource(
       '  "showRulers": true,\n  "scheme": "midnight",',
       '  "showRulers": true,\n  "statusInfo": true,\n  "scheme": "midnight",',
@@ -2408,7 +2448,7 @@ window.PatternManager = PatternManager;`,
           </SpectrSettingsField>
         </SpectrSettingsGroup>
         <SpectrSettingsGroup marker="feedback" title="FEEDBACK" subtitle="Choose which interaction details Spectr shows.">
-          <SpectrSettingsField label="Status info" hint="Hover, mute, and drag details in the top banner">
+          <SpectrSettingsField label="Status info" hint="Hover, mute, and drag">
             <SpectrSettingsToggle statusInfo value={settings.statusInfo !== false}
               onChange={v => persist({ statusInfo: v })} />
           </SpectrSettingsField>
@@ -2416,16 +2456,20 @@ window.PatternManager = PatternManager;`,
       'status info is a normal scrollable settings field');
     replaceSpectrSource(
       String.raw`  const fireStatus = useAppC((msg) => {
-    if (!msg) {`,
+    setStatus(msg + '|' + Date.now());`,
       String.raw`  const fireStatus = useAppC((msg) => {
     if (settings.statusInfo === false) {
       setStatus('');
       return;
     }
-    if (!msg) {`,
+    if (!msg) {
+      setStatus('');
+      return;
+    }
+    setStatus(msg + '|' + Date.now());`,
       'disabled status info suppresses all messages');
     replaceSpectrSource(
-      '  }, []);\n  const applyPattern = useAppC((p) => {',
+      '  }, []);\n\n  const applyPattern = useAppC((p) => {',
       String.raw`  }, [settings.statusInfo]);
   useAppE(() => {
     if (settings.statusInfo === false) setStatus('');
@@ -2442,7 +2486,7 @@ window.PatternManager = PatternManager;`,
       'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode,',
       'chrome receives selected preset name');
     replaceSpectrSource(
-      '<span style={{ marginLeft: 6, display: \'inline-flex\', alignItems: \'center\', lineHeight: 1 }}>PRESETS ▾</span>',
+      '<span style={{ marginLeft: 6 }}>PRESETS ▾</span>',
       '<span data-spectr-selected-preset style={{ marginLeft: 6, display: \'inline-flex\', alignItems: \'center\', lineHeight: 1 }}>{selectedPatternName} ▾</span>',
       'preset trigger shows selected name');
     replaceSpectrSource(
@@ -2476,28 +2520,6 @@ window.PatternManager = PatternManager;`,
       '<RailBtn popupKind="menu" onClick={() => setPatternMenu(v => !v)} active={patternMenu}>',
       'preset popup semantics');
     replaceSpectrSource(
-      String.raw`function RailBtn({ children, onClick, active, popupKind }) {
-  const [flash, setFlash] = useStateChrome(false);
-  const handle = (e) => {
-    setFlash(true);
-    setTimeout(() => setFlash(false), 180);
-    onClick && onClick(e);
-  };
-  return (
-    <button onClick={handle}`,
-      String.raw`function RailBtn({ children, onClick, active, popupKind }) {
-  const [flash, setFlash] = useStateChrome(false);
-  const handle = (e) => {
-    setFlash(true);
-    setTimeout(() => setFlash(false), 180);
-    onClick && onClick(e);
-  };
-  return (
-    <button data-spectr-menu-trigger={popupKind ? true : undefined}
-      aria-haspopup={popupKind || undefined} aria-expanded={popupKind ? active : undefined}
-      onClick={handle}`,
-      'rail popup semantics survive source ordering');
-    replaceSpectrSource(
       '      onPointerLeave={() => setHover(null)}',
       String.raw`      onPointerLeave={() => {
         updatePointerHover(null);
@@ -2523,7 +2545,7 @@ window.PatternManager = PatternManager;`,
       "const root = document.getElementById('root');\n  const vw = root ? root.clientWidth : window.innerWidth, vh = root ? root.clientHeight : window.innerHeight;",
       'fixed-design context-menu bounds');
     replaceSpectrSource(
-      "  const [analyzerMode, setAnalyzerMode] = useAppS('peak');\n  const [status, setStatus] = useAppS('');",
+      "  const [analyzerMode, setAnalyzerMode] = useAppS('peak'); // peak|avg|both|off\n  const [status, setStatus] = useAppS('');",
       String.raw`  const [analyzerMode, setAnalyzerMode] = useAppS('peak');
   window.spectrPublishMode = (kind, value) => {
     if (!nativeBridgeAvailable) return;
@@ -2537,8 +2559,8 @@ window.PatternManager = PatternManager;`,
   const [status, setStatus] = useAppS('');`,
       'native mode publisher');
     replaceSpectrSource(
-      'onChange={(v) => setSettings((s) => ({ ...s, motionMode: v }))}',
-      "onChange={(v) => { setSettings((s) => ({ ...s, motionMode: v })); window.spectrPublishMode('motion', v); }}",
+      'onChange={(v) => setSettings(s => ({ ...s, motionMode: v }))}',
+      "onChange={(v) => { setSettings(s => ({ ...s, motionMode: v })); window.spectrPublishMode('motion', v); }}",
       'top motion mode publication');
     replaceAllSpectrSource(
       '    setSettings(s => ({ ...s, ...patch }));\n    try {',
@@ -2571,14 +2593,6 @@ window.PatternManager = PatternManager;`,
       'keyboard analyzer mode publication');
 
     replaceSpectrSource(
-      String.raw`  const fireStatus = useAppC((msg) => {
-    setStatus(msg + '|' + Date.now());`,
-      String.raw`  const fireStatus = useAppC((msg) => {
-    if (!msg) { setStatus(''); return; }
-    setStatus(msg + '|' + Date.now());`,
-      'empty status clears the unified banner');
-
-    replaceSpectrSource(
       [
         "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }",
         "  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, band }",
@@ -2598,8 +2612,6 @@ window.PatternManager = PatternManager;`,
         "    const db = isMuted(targetGainsRef.current[hoverBand]) ? '−∞' : (gv * 24).toFixed(1);",
         "    const label = `${window.SpectrFreq.fmt(f)}Hz   ${db}${db === '−∞' ? '' : ' dB'}   BAND ${hoverBand + 1}/${N}`;",
         "    onStatus(label);",
-        "    const keepAlive = setInterval(() => onStatus(label), 1000);",
-        "    return () => clearInterval(keepAlive);",
         "  }, [hoverBand, N, onStatus]);",
         "  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, band }",
       ].join('\n'),
@@ -2681,16 +2693,33 @@ window.PatternManager = PatternManager;`,
       }`,
       'edge labels have a stable baseline without dashed boxes');
     replaceSpectrSource(
-      String.raw`              fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.5,
+      String.raw`              padding: '2px 7px', borderRadius: 3,
+              fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.5,
               cursor: 'pointer',
             }} title="Click to change band count">
               <span className="tnum">{info.N}</span> bands ▾`,
-      String.raw`              fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.5,
-              cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4,
+      String.raw`              padding: '5px 10px', minHeight: 26, boxSizing: 'border-box', borderRadius: 3,
+              fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.8,
+              cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
               lineHeight: 1,
             }} title="Click to change band count">
-              <span className="tnum" style={{ display: 'inline-flex', alignItems: 'center', lineHeight: 1 }}>{settings.bandCount}</span> bands ▾`,
+              <span className="tnum" style={{ display: 'inline-flex', alignItems: 'center', lineHeight: 1 }}>{settings.bandCount}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', lineHeight: 1 }}>bands ▾</span>`,
       'band count label shares one vertical center');
+    replaceSpectrSource(
+      String.raw`                      background: info.N === n ? 'rgba(120,180,255,0.18)' : 'transparent',
+                      border: '1px solid ' + (info.N === n ? 'rgba(180,210,255,0.4)' : 'rgba(255,255,255,0.06)'),
+                      color: '#fff', padding: '4px 8px', borderRadius: 2,
+                      fontFamily: 'var(--mono)', fontSize: 10, cursor: 'pointer',
+                      minWidth: 28,`,
+      String.raw`                      background: info.N === n ? 'rgba(120,180,255,0.18)' : 'rgba(255,255,255,0.03)',
+                      border: '1px solid ' + (info.N === n ? 'rgba(180,210,255,0.4)' : 'rgba(255,255,255,0.1)'),
+                      color: info.N === n ? '#fff' : 'rgba(255,255,255,0.7)',
+                      padding: '5px 10px', borderRadius: 3,
+                      fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.8, cursor: 'pointer',
+                      minWidth: 40, minHeight: 26, boxSizing: 'border-box',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,`,
+      'band dropdown matches settings chip metrics');
     replaceSpectrSource(
       String.raw`const menuItem = {
   background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.85)',
@@ -2733,12 +2762,8 @@ window.PatternManager = PatternManager;`,
     replaceAllSpectrSource(
       '<span style={{ marginLeft: 6 }}>',
       "<span style={{ marginLeft: 6, display: 'inline-flex', alignItems: 'center', lineHeight: 1 }}>",
-      3,
+      2,
       'bottom rail labels share one chevron baseline');
-    replaceSpectrSource(
-      "background: info.N === n ? 'rgba(120,180,255,0.18)' : 'transparent',",
-      "background: info.N === n ? 'rgba(120,180,255,0.18)' : 'rgba(255,255,255,0.025)',",
-      'band dropdown inactive items retain a surface');
     replaceSpectrSource(
       "background: active ? 'rgba(120,180,255,0.14)' : 'transparent',",
       "background: active ? 'rgba(120,180,255,0.14)' : 'rgba(255,255,255,0.025)',",
@@ -2807,26 +2832,24 @@ window.PatternManager = PatternManager;`,
       "      updatePointerHover(null);\n      wrapRef.current.style.cursor = 'default';",
       'idle hover clearing uses the pointer-owned ref');
     replaceSpectrSource(
-      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize'))
-      wrapRef.current.style.cursor = 'grab';
-    if (!p || !p.mode) {
-      setMarquee(null);`,
-      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize'))
-      wrapRef.current.style.cursor = 'grab';
+      String.raw`    if (p && p.mode === 'minimap-drag') wrapRef.current.style.cursor = 'grab';
+    if (p && p.mode === 'minimap-resize') wrapRef.current.style.cursor = 'col-resize';
+    if (!p || !p.mode) { setMarquee(null); return; }`,
+      String.raw`    if (p && p.mode === 'minimap-drag') wrapRef.current.style.cursor = 'grab';
+    if (p && p.mode === 'minimap-resize') wrapRef.current.style.cursor = 'col-resize';
     if (p && (p.mode === 'gain' || p.mode === 'mute-brush')) {
       setGains(targetGainsRef.current.slice());
       setHover(hoverRef.current);
       if (onStatus) onStatus(liveHoverLabel(hoverRef.current));
     }
-    if (!p || !p.mode) {
-      setMarquee(null);`,
+    if (!p || !p.mode) { setMarquee(null); return; }`,
       'pointer release publishes one final React snapshot');
     replaceSpectrSource(
       '      gains: Array.from(renderGainsRef.current),\n      targetGains: Array.from(targetGainsRef.current),',
       '      gains: Array.from(renderGainsRef.current),\n      reactGains: Array.from(gains),\n      targetGains: Array.from(targetGainsRef.current),',
       'browser oracle exposes the semantic React snapshot');
     replaceSpectrSource(
-      '  const [view, setView] = useState({ lmin: Math.log10(20), lmax: Math.log10(2e4) });',
+      '  const [view, setView] = useState({ lmin: Math.log10(20), lmax: Math.log10(20000) });',
       String.raw`  const initialView = { lmin: Math.log10(20), lmax: Math.log10(2e4) };
   const [reactView, setReactView] = useState(initialView);
   const viewRef = useRef({ ...initialView });
@@ -2868,12 +2891,12 @@ window.PatternManager = PatternManager;`,
       return;`,
       'minimap center pan stays off the React hot path');
     replaceSpectrSource(
-      String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize'))
-      wrapRef.current.style.cursor = 'grab';
+      String.raw`    if (p && p.mode === 'minimap-drag') wrapRef.current.style.cursor = 'grab';
+    if (p && p.mode === 'minimap-resize') wrapRef.current.style.cursor = 'col-resize';
     if (p && (p.mode === 'gain' || p.mode === 'mute-brush')) {`,
       String.raw`    if (p && (p.mode === 'minimap-drag' || p.mode === 'minimap-resize')) {
       setView({ ...viewRef.current });
-      wrapRef.current.style.cursor = 'grab';
+      wrapRef.current.style.cursor = p.mode === 'minimap-resize' ? 'col-resize' : 'grab';
     }
     if (p && (p.mode === 'gain' || p.mode === 'mute-brush')) {`,
       'minimap release publishes one final React viewport');
@@ -2907,11 +2930,12 @@ window.PatternManager = PatternManager;`,
       setVisible(true);
     }
     shownRef.current = display;
+    const holdMs = /\b(?:MUTED|UNMUTED)\b/.test(display) ? 2000 : 1400;
     timers.push(setTimeout(() => {
       setVisible(false);
       setText('');
       shownRef.current = '';
-    }, replacing ? 1550 : 1400));
+    }, holdMs + (replacing ? 150 : 0)));
     return () => timers.forEach(clearTimeout);
   }, [message]);`,
       String.raw`  const shownRef = useRefChrome('');
@@ -2936,10 +2960,15 @@ window.PatternManager = PatternManager;`,
     setText(display);
     setVisible(true);
     shownRef.current = display;
-    const timer = hide(1400);
+    const holdMs = /\b(?:MUTED|UNMUTED)\b/.test(display) ? 2000 : 1400;
+    const timer = hide(holdMs);
     return () => clearTimeout(timer);
   }, [message]);`,
       'status clear is cancellable and repaints its old bounds');
+    replaceSpectrSource(
+      "    }}>{text}</div>",
+      "    }}><span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%' }}>{text}</span></div>",
+      'status banner exposes a stable live text surface');
     replaceSpectrSource(
       'function StatusBanner({ message }) {',
       'function StatusBanner({ message, disabled }) {',

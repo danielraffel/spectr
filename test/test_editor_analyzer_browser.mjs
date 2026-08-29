@@ -1052,10 +1052,17 @@ window.spectrStartOracle = () => {
       const rightHandleX = mapX(rightFraction);
       const windowX = mapX((leftFraction + rightFraction) * 0.5);
       const trackX = mapX(leftFraction * 0.45);
-      await cursorAt(mapX(leftFraction), 'grab', 'left minimap handle');
-      await cursorAt(rightHandleX, 'grab', 'right minimap handle');
+      const leftHandleX = mapX(leftFraction);
+      await cursorAt(leftHandleX, 'col-resize', 'left minimap handle');
+      await cursorAt(rightHandleX, 'col-resize', 'right minimap handle');
       await cursorAt(windowX, 'grab', 'minimap window');
-      await cursorAt(trackX, 'grab', 'minimap track');
+      await cursorAt(trackX, 'pointer', 'minimap track');
+      spectrPointer(target, 'pointerdown', leftHandleX, miniY, 41);
+      if (getComputedStyle(target).cursor !== 'col-resize')
+        throw new Error('active minimap trim did not retain col-resize');
+      spectrPointer(target, 'pointerup', leftHandleX, miniY, 41);
+      if (getComputedStyle(target).cursor !== 'col-resize')
+        throw new Error('released minimap trim did not retain col-resize');
       spectrPointer(target, 'pointerdown', windowX, miniY, 40);
       if (getComputedStyle(target).cursor !== 'grabbing')
         throw new Error('active minimap cursor was not grabbing');
@@ -1088,10 +1095,10 @@ window.spectrStartOracle = () => {
         throw new Error('minimap drag selected text');
       const shiftedLeftFraction = (Math.log10(state.min_hz) - fullMin) / fullSpan;
       count = spectrStatePosts().length;
-      const leftHandleX = mapX(shiftedLeftFraction);
-      spectrPointer(target, 'pointerdown', leftHandleX, miniY, 42);
-      spectrPointer(target, 'pointermove', leftHandleX + rect.width * 0.025, miniY, 42);
-      spectrPointer(target, 'pointerup', leftHandleX + rect.width * 0.025, miniY, 42);
+      const shiftedLeftHandleX = mapX(shiftedLeftFraction);
+      spectrPointer(target, 'pointerdown', shiftedLeftHandleX, miniY, 42);
+      spectrPointer(target, 'pointermove', shiftedLeftHandleX + rect.width * 0.025, miniY, 42);
+      spectrPointer(target, 'pointerup', shiftedLeftHandleX + rect.width * 0.025, miniY, 42);
       const resizedView = await spectrPublishAfter(count, 'minimap resize publication');
       if (Math.abs(Math.log(resizedView.max_hz / resizedView.min_hz) - afterSpan) < 0.02)
         throw new Error('minimap handle did not resize viewport');

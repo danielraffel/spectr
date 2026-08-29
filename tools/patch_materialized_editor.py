@@ -243,11 +243,12 @@ EDITS = [
      '      setVisible(true);\n'
      '    }\n'
      '    shownRef.current = display;\n'
+     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2000 : 1400;\n'
      '    timers.push(setTimeout(() => {\n'
      '      setVisible(false);\n'
      '      setText("");\n'
      '      shownRef.current = "";\n'
-     '    }, replacing ? 1550 : 1400));\n'
+     '    }, holdMs + (replacing ? 150 : 0)));\n'
      '    return () => timers.forEach(clearTimeout);\n'
      '  }, [message]);\n'),
 
@@ -285,6 +286,22 @@ EDITS = [
      '    },\n'
      '    text\n'
      '  );'),
+
+    ('hover status expires after inactivity',
+     '    const keepAlive = setInterval(() => onStatus(label), 1e3);\n'
+     '    return () => clearInterval(keepAlive);\n',
+     ''),
+
+    ('mute status gets a longer independent hold',
+     '    const timer = hide(1400);\n'
+     '    return () => clearTimeout(timer);',
+     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2000 : 1400;\n'
+     '    const timer = hide(holdMs);\n'
+     '    return () => clearTimeout(timer);'),
+
+    ('status info hint fits the settings field',
+     'hint: "Hover, mute, and drag details in the top banner"',
+     'hint: "Hover, mute, and drag"'),
 
     # ----------------------------- task 4: mute consistency across edit modes
     ('redraw-unmutes setting is read by the bank',
@@ -427,8 +444,6 @@ EDITS = [
      '    const db = isMuted(targetGainsRef.current[hoverBand]) ? "\\u2212\\u221E" : (gv * 24).toFixed(1);\n'
      '    const label = `${window.SpectrFreq.fmt(f)}Hz   ${db}${db === "\\u2212\\u221E" ? "" : " dB"}   BAND ${hoverBand + 1}/${N}`;\n'
      '    onStatus(label);\n'
-     '    const keepAlive = setInterval(() => onStatus(label), 1e3);\n'
-     '    return () => clearInterval(keepAlive);\n'
      '  }, [hoverBand, N, onStatus]);\n'
      '  const [ctxMenu, setCtxMenu] = useState(null);'),
 
@@ -523,6 +538,62 @@ EDITS = [
     ('band count trigger reflects selection immediately',
      'React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, info.N), " bands \\u25BE"',
      'React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, settings.bandCount), " bands \\u25BE"'),
+
+    ('band trigger matches settings chip metrics',
+     '    padding: "2px 7px",\n'
+     '    borderRadius: 3,\n'
+     '    fontFamily: "var(--mono)",\n'
+     '    fontSize: 10,\n'
+     '    letterSpacing: 0.5,\n'
+     '    cursor: "pointer",\n'
+     '    display: "inline-flex",\n'
+     '    alignItems: "center",\n'
+     '    gap: 4,\n'
+     '    lineHeight: 1',
+     '    padding: "5px 10px",\n'
+     '    minHeight: 26,\n'
+     '    boxSizing: "border-box",\n'
+     '    borderRadius: 3,\n'
+     '    fontFamily: "var(--mono)",\n'
+     '    fontSize: 10,\n'
+     '    letterSpacing: 0.8,\n'
+     '    cursor: "pointer",\n'
+     '    display: "inline-flex",\n'
+     '    alignItems: "center",\n'
+     '    justifyContent: "center",\n'
+     '    gap: 4,\n'
+     '    lineHeight: 1'),
+
+    ('band trigger suffix shares the centered flex line',
+     'React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, settings.bandCount), " bands \\u25BE")',
+     'React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, settings.bandCount), /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, "bands \\u25BE"))'),
+
+    ('band dropdown matches settings chip metrics',
+     '        background: info.N === n ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.025)",\n'
+     '        border: "1px solid " + (info.N === n ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.06)"),\n'
+     '        color: "#fff",\n'
+     '        padding: "4px 8px",\n'
+     '        borderRadius: 2,\n'
+     '        fontFamily: "var(--mono)",\n'
+     '        fontSize: 10,\n'
+     '        cursor: "pointer",\n'
+     '        minWidth: 28',
+     '        background: info.N === n ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)",\n'
+     '        border: "1px solid " + (info.N === n ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"),\n'
+     '        color: info.N === n ? "#fff" : "rgba(255,255,255,0.7)",\n'
+     '        padding: "5px 10px",\n'
+     '        borderRadius: 3,\n'
+     '        fontFamily: "var(--mono)",\n'
+     '        fontSize: 10,\n'
+     '        letterSpacing: 0.8,\n'
+     '        cursor: "pointer",\n'
+     '        minWidth: 40,\n'
+     '        minHeight: 26,\n'
+     '        boxSizing: "border-box",\n'
+     '        display: "inline-flex",\n'
+     '        alignItems: "center",\n'
+     '        justifyContent: "center",\n'
+     '        lineHeight: 1'),
 
     ('dropdown items use a consistent native-friendly surface',
      'const menuItem = {\n'
@@ -637,20 +708,20 @@ EDITS = [
      '      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);',
      '    const mm = minimapHit(x, y, g);\n'
      '    if (mm) {\n'
-     '      wrapRef.current.style.cursor = "grabbing";\n'
+     '      wrapRef.current.style.cursor = mm === "left" || mm === "right" ? "col-resize" : "grabbing";\n'
      '      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);'),
 
     ('minimap hover and drag cursors',
      '    if (mm) {\n'
      '      setHover({ mini: mm, x, y, band: -1 });\n'
-     '      wrapRef.current.style.cursor = mm === "left" || mm === "right" ? "ew-resize" : mm === "window" ? "grab" : "pointer";',
+     '      wrapRef.current.style.cursor = mm === "left" || mm === "right" ? "col-resize" : mm === "window" ? "grab" : "pointer";',
      '    if (mm) {\n'
      '      setHover({ mini: mm, x, y, band: -1 });\n'
      '      const activeMini = pointerRef.current\n'
      '        && (pointerRef.current.mode === "minimap-drag"\n'
      '          || pointerRef.current.mode === "minimap-resize");\n'
      '      wrapRef.current.style.cursor = mm === "left" || mm === "right"\n'
-     '        ? "ew-resize"\n'
+     '        ? "col-resize"\n'
      '        : activeMini ? "grabbing" : mm === "window" ? "grab" : "pointer";'),
 
     ('minimap release restores grab cursor',
@@ -662,7 +733,7 @@ EDITS = [
      '    const p = pointerRef.current;\n'
      '    pointerRef.current = { mode: null };\n'
      '    if (p && p.mode === "minimap-drag") wrapRef.current.style.cursor = "grab";\n'
-     '    if (p && p.mode === "minimap-resize") wrapRef.current.style.cursor = "ew-resize";\n'
+     '    if (p && p.mode === "minimap-resize") wrapRef.current.style.cursor = "col-resize";\n'
      '    if (!p || !p.mode) {'),
 
     ('response ticks omit first and last edges',
@@ -674,14 +745,14 @@ EDITS = [
     ('minimap edges retain horizontal resize cursor',
      '      wrapRef.current.style.cursor = activeMini ? "grabbing" : "grab";',
      '      wrapRef.current.style.cursor = mm === "left" || mm === "right"\n'
-     '        ? "ew-resize"\n'
+     '        ? "col-resize"\n'
      '        : activeMini ? "grabbing" : mm === "window" ? "grab" : "pointer";'),
 
     ('minimap release retains physical cursor',
      '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize"))\n'
      '      wrapRef.current.style.cursor = "grab";',
      '    if (p && p.mode === "minimap-drag") wrapRef.current.style.cursor = "grab";\n'
-     '    if (p && p.mode === "minimap-resize") wrapRef.current.style.cursor = "ew-resize";'),
+     '    if (p && p.mode === "minimap-resize") wrapRef.current.style.cursor = "col-resize";'),
 
     ('minimap deferred release retains physical cursor',
      '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize")) {\n'
@@ -690,8 +761,22 @@ EDITS = [
      '    }',
      '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize")) {\n'
      '      setView({ ...viewRef.current });\n'
-     '      wrapRef.current.style.cursor = p.mode === "minimap-resize" ? "ew-resize" : "grab";\n'
+     '      wrapRef.current.style.cursor = p.mode === "minimap-resize" ? "col-resize" : "grab";\n'
      '    }'),
+
+    # The macOS cursor catalog names this shape `resizeleftright`, whose CSS
+    # semantic is `col-resize`. Pulp maps it to the native horizontal-resize
+    # cursor; keep both the hover and post-release paths on that exact keyword.
+    ('minimap trims use the mac resizeleftright cursor',
+     '"ew-resize"',
+     '"col-resize"',
+     2),
+
+    ('minimap trim press retains resizeleftright cursor',
+     '      wrapRef.current.style.cursor = "grabbing";\n'
+     '      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);',
+     '      wrapRef.current.style.cursor = mm === "left" || mm === "right" ? "col-resize" : "grabbing";\n'
+     '      const fullMin = Math.log10(20), fullMax = Math.log10(2e4);'),
 
     ('status info defaults on',
      '  "showRulers": true,\n  "scheme": "midnight",',
@@ -1467,7 +1552,7 @@ EDITS = [
     ('status info is appended as a standard scrollable field',
      '  )))));\n'
      '}',
-     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag details in the top banner" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })))));\n'
+     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })))));\n'
      '}'),
 
     ('status info toggle exposes its semantic state',
@@ -1531,6 +1616,12 @@ SUPERSEDED_SENTINELS = {
         'settings.statusInfo === false',
     'preset rail label shares one chevron baseline':
         'data-spectr-selected-preset',
+    'band count label shares one vertical center':
+        'minWidth: 40',
+    'band count trigger reflects selection immediately':
+        'minWidth: 40',
+    'band dropdown inactive items retain a surface':
+        'minWidth: 40',
     'settings exposes status info toggle':
         'data-spectr-status-info-toggle',
     'status info toggle carries its native marker':
