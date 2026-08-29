@@ -968,7 +968,7 @@ window.spectrStartOracle = () => {
           throw new Error('mask visualization failed: ' + label);
       }
 
-      const presetsButton = spectrButton('PRESETS ▾');
+      const presetsButton = menuTrigger('pattern');
       if (!presetsButton) throw new Error('preset dropdown trigger missing');
       await spectrClick(presetsButton);
       const saveCurrent = await spectrWaitFor(() =>
