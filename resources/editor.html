@@ -1772,6 +1772,17 @@ function PatternManager({ open, onClose, userPatterns, setUserPatterns, defaultI
       String.raw`function PatternSaveDialog({ open, defaultName, onSave, onCancel }) {
   const [draft, setDraft] = usePM(defaultName);
   usePE(() => { if (open) setDraft(defaultName); }, [open, defaultName]);
+  usePE(() => {
+    if (!open) return;
+    const dismiss = event => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCancel();
+    };
+    document.addEventListener('keydown', dismiss, true);
+    return () => document.removeEventListener('keydown', dismiss, true);
+  }, [open, onCancel]);
   if (!open) return null;
   const submit = () => {
     const name = draft.trim().slice(0, 48);
@@ -2426,6 +2437,10 @@ window.PatternManager = PatternManager;`,
       '<span style={{ marginLeft: 6 }}>PRESETS ▾</span>',
       '<span data-spectr-selected-preset style={{ marginLeft: 6, display: \'inline-flex\', alignItems: \'center\', lineHeight: 1 }}>{selectedPatternName} ▾</span>',
       'preset trigger shows selected name');
+    replaceSpectrSource(
+      '<span data-spectr-selected-preset style={{ marginLeft: 6, display: \'inline-flex\', alignItems: \'center\', lineHeight: 1 }}>{selectedPatternName} ▾</span>',
+      '<span data-spectr-selected-preset title={selectedPatternName} style={{ marginLeft: 6, display: \'inline-flex\', alignItems: \'center\', lineHeight: 1, width: 63, overflow: \'hidden\', whiteSpace: \'nowrap\' }}>{selectedPatternName.length > 6 ? selectedPatternName.slice(0, 6) + \'… ▾\' : selectedPatternName + \' ▾\'}</span>',
+      'selected preset trigger truncates without losing its full title');
     replaceSpectrSource(
       '        status={status}\n        dspMode={dspMode}',
       '        status={status}\n        selectedPatternName={selectedPatternName}\n        dspMode={dspMode}',

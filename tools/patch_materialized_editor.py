@@ -31,6 +31,27 @@ RUNTIME_PATH = 'native-ui/materialized/runtime.js'
 SOURCE_PATH = 'resources/editor.html'
 
 EDITS = [
+    ('save dialog inherits global Escape dismissal',
+     '  usePE(() => {\n'
+     '    if (open) setDraft(defaultName);\n'
+     '  }, [open, defaultName]);\n'
+     '  if (!open) return null;',
+     '  usePE(() => {\n'
+     '    if (open) setDraft(defaultName);\n'
+     '  }, [open, defaultName]);\n'
+     '  usePE(() => {\n'
+     '    if (!open) return;\n'
+     '    const dismiss = (event) => {\n'
+     '      if (event.key !== "Escape") return;\n'
+     '      event.preventDefault();\n'
+     '      event.stopPropagation();\n'
+     '      onCancel();\n'
+     '    };\n'
+     '    document.addEventListener("keydown", dismiss, true);\n'
+     '    return () => document.removeEventListener("keydown", dismiss, true);\n'
+     '  }, [open, onCancel]);\n'
+     '  if (!open) return null;'),
+
     # The full-screen settings scrim owns the modal. Guard its click handler so
     # bubbled clicks from inert panel content cannot be mistaken for an outside
     # press; a direct scrim press still dismisses in browser and native hosts.
@@ -1012,6 +1033,10 @@ EDITS = [
      'React.createElement("span", { style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1 } }, "PRESETS \\u25BE")',
      'React.createElement("span", { "data-spectr-selected-preset": true, style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1 } }, selectedPatternName, " \\u25BE")'),
 
+    ('selected preset trigger truncates without losing its full title',
+     'React.createElement("span", { "data-spectr-selected-preset": true, style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1 } }, selectedPatternName, " \\u25BE")',
+     'React.createElement("span", { "data-spectr-selected-preset": true, title: selectedPatternName, style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1, width: 63, overflow: "hidden", whiteSpace: "nowrap" } }, selectedPatternName.length > 6 ? selectedPatternName.slice(0, 6) + "\u2026 \\u25BE" : selectedPatternName + " \\u25BE")'),
+
     ('selected preset name reaches chrome',
      '      status,\n'
      '      dspMode,',
@@ -1879,6 +1904,8 @@ EDITS = [
 # earlier one. These named sentinels keep reruns strict without pretending the
 # superseded intermediate text must remain in the final shipping document.
 SUPERSEDED_SENTINELS = {
+    'preset trigger shows selected name':
+        'selectedPatternName.length > 6',
     'native menu lookup uses the document selector surface':
         'popupKind: "listbox"',
     'native menu option lookup uses the document selector surface':
@@ -2176,7 +2203,7 @@ RUNTIME_EDITS = [
      '        "JetBrainsMono-Regular", false);\n'
      '      return { label, left, top: 6.5, width, text_width: textWidth };\n'
      '    };',
-     'const centerBandText = (owner, label, width, textWidth)'),
+     'const nativeTextOwner = (owner)'),
     ('band count centering labels flattened native owners explicitly',
      '    const bandTriggerLabel = bandTrigger && values.find((candidate) =>\n'
      '      belongsTo(candidate, bandTrigger)\n'
@@ -2503,6 +2530,100 @@ RUNTIME_EDITS = [
      '        if (typeof g5.claimOverlay === "function") g5.claimOverlay(panelId);\n'
      '        // Replacing the captured overflow container with a real native\n',
      'g5.claimOverlay(panelId);'),
+    ('band trigger shares the segmented-control header baseline',
+     '    const centerBandText = (owner, label, width, textWidth) => {\n'
+     '      if (!owner || typeof g5.setCapturedLineBoxes !== "function") return null;',
+     '    const centerBandText = (owner, label, width, textWidth,\n'
+     '                            height = 26, lineTop = 6.5) => {\n'
+     '      if (!owner || typeof g5.setCapturedLineBoxes !== "function") return null;',
+     'height = 26, lineTop = 6.5'),
+    ('band text height is explicit per control',
+     '      g5.setFlex(id, "height", 26);',
+     '      g5.setFlex(id, "height", height);',
+     'g5.setFlex(id, "height", height);'),
+    ('band text receipt records its control geometry',
+     '      g5.setCapturedLineBoxes(id, [{ left, top: 6.5, width: textWidth,\n'
+     '        height: 13, start: 0, length: label.length }], width,\n'
+     '        "JetBrainsMono-Regular", false);\n'
+     '      return { label, left, top: 6.5, width, text_width: textWidth };',
+     '      g5.setCapturedLineBoxes(id, [{ left, top: lineTop, width: textWidth,\n'
+     '        height: 13, start: 0, length: label.length }], width,\n'
+     '        "JetBrainsMono-Regular", false);\n'
+     '      return { label, left, top: lineTop, width, height,\n'
+     '               text_width: textWidth };',
+     'return { label, left, top: lineTop, width, height'),
+    ('band trigger rail aligns with header peers',
+     '    const nativeTextOwner = (owner) => values.find((candidate) => {',
+     '    const bandRootId = bandRoot && (bandRoot.__pulpId || bandRoot.id);\n'
+     '    const bandTriggerId = bandTrigger\n'
+     '      && (bandTrigger.__pulpId || bandTrigger.id);\n'
+     '    // The captured band control was 19px tall and sat 2.5px below the two\n'
+     '    // 24px segmented controls. Give its trigger the same 24px rail and let the\n'
+     '    // header\'s normal flex alignment establish the shared baseline. Reserve\n'
+     '    // the trigger\'s full painted width so it cannot overlap the zoom readout.\n'
+     '    if (bandRootId) {\n'
+     '      g5.setFlex(String(bandRootId), "width", 94);\n'
+     '      g5.setFlex(String(bandRootId), "height", 24);\n'
+     '    }\n'
+     '    if (bandTriggerId) {\n'
+     '      g5.setFlex(String(bandTriggerId), "width", 92);\n'
+     '      g5.setFlex(String(bandTriggerId), "height", 24);\n'
+     '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);\n'
+     '    }\n'
+     '    const nativeTextOwner = (owner) => values.find((candidate) => {',
+     'g5.setFlex(String(bandRootId), "width", 94);'),
+    ('band trigger text centers in the common 24px rail',
+     '        92, 73.03125),',
+     '        92, 73.03125, 24, 5.5),',
+     '92, 73.03125, 24, 5.5'),
+    ('dropdown optical centering follows every selected label',
+     '      const label = descendants.find(\n'
+     '        (node) => String(node && node.textContent || "") === correction.text\n'
+     '      );',
+     '      const label = descendants.find((node) => {\n'
+     '        if (materializedNodeTag(node) !== "span"\n'
+     '            || !/\\u25BE$/.test(String(node?.textContent || "").trim()))\n'
+     '          return false;\n'
+     '        return !descendants.some((candidate) => {\n'
+     '          const parent = candidate?.parentElement\n'
+     '            || candidate?._parentElement || null;\n'
+     '          return parent === node && materializedNodeTag(candidate) === "span"\n'
+     '            && /\\u25BE$/.test(String(candidate?.textContent || "").trim());\n'
+     '        });\n'
+     '      });',
+     '!/\\u25BE$/.test(String(node?.textContent || "").trim())'),
+    ('preset menu actions use separate full-width rows',
+     '    g5.__spectrToolbarOpticalCenteringReceipt__ = receipt;\n'
+     '    return receipt.length;',
+     '    g5.__spectrToolbarOpticalCenteringReceipt__ = receipt;\n'
+     '    if (activeCapturedState === "pattern") {\n'
+     '      const popup = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-menu-root="pattern"] [data-spectr-menu-options]\');\n'
+     '      const save = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-save-current]\');\n'
+     '      const manage = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-pattern-manage]\');\n'
+     '      const footer = save && (save.parentElement || save._parentElement);\n'
+     '      const setBox = (node, left, top, width, height) => {\n'
+     '        const id = node && (node.__pulpId || node.id);\n'
+     '        if (!id) return false;\n'
+     '        g5.setPosition(String(id), "absolute");\n'
+     '        g5.setLeft(String(id), left);\n'
+     '        g5.setTop(String(id), top);\n'
+     '        g5.setFlex(String(id), "width", width);\n'
+     '        g5.setFlex(String(id), "height", height);\n'
+     '        return true;\n'
+     '      };\n'
+     '      const patternReceipt = {\n'
+     '        popup: setBox(popup, 0, -336, 220, 334),\n'
+     '        footer: setBox(footer, 5, 264, 210, 63),\n'
+     '        save: setBox(save, 0, 3, 210, 28),\n'
+     '        manage: setBox(manage, 0, 33, 210, 28)\n'
+     '      };\n'
+     '      g5.__spectrPatternMenuLayoutReceipt__ = patternReceipt;\n'
+     '    }\n'
+     '    return receipt.length;',
+     '__spectrPatternMenuLayoutReceipt__'),
 ]
 
 

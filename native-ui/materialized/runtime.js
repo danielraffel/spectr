@@ -9485,7 +9485,8 @@
       }
       return false;
     };
-    const centerBandText = (owner, label, width, textWidth) => {
+    const centerBandText = (owner, label, width, textWidth,
+                            height = 26, lineTop = 6.5) => {
       if (!owner || typeof g5.setCapturedLineBoxes !== "function") return null;
       const targets = Array.isArray(owner.__pulpAnonymousTextTargets)
         ? owner.__pulpAnonymousTextTargets : [];
@@ -9497,20 +9498,37 @@
       g5.setLeft(id, 0);
       g5.setTop(id, 0);
       g5.setFlex(id, "width", width);
-      g5.setFlex(id, "height", 26);
+      g5.setFlex(id, "height", height);
       if (typeof g5.setFontSize === "function") g5.setFontSize(id, 10);
       if (typeof g5.setFontWeight === "function") g5.setFontWeight(id, 400);
       if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(id, 0.8);
       const left = (width - textWidth) / 2;
-      g5.setCapturedLineBoxes(id, [{ left, top: 6.5, width: textWidth,
+      g5.setCapturedLineBoxes(id, [{ left, top: lineTop, width: textWidth,
         height: 13, start: 0, length: label.length }], width,
         "JetBrainsMono-Regular", false);
-      return { label, left, top: 6.5, width, text_width: textWidth };
+      return { label, left, top: lineTop, width, height,
+               text_width: textWidth };
     };
     const bandRoot = globalThis.document?.querySelector?.(
       '[data-spectr-menu-root="bands"]');
     const bandTrigger = globalThis.document?.querySelector?.(
       '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
+    const bandRootId = bandRoot && (bandRoot.__pulpId || bandRoot.id);
+    const bandTriggerId = bandTrigger
+      && (bandTrigger.__pulpId || bandTrigger.id);
+    // The captured band control was 19px tall and sat 2.5px below the two
+    // 24px segmented controls. Give its trigger the same 24px rail and let the
+    // header's normal flex alignment establish the shared baseline. Reserve
+    // the trigger's full painted width so it cannot overlap the zoom readout.
+    if (bandRootId) {
+      g5.setFlex(String(bandRootId), "width", 94);
+      g5.setFlex(String(bandRootId), "height", 24);
+    }
+    if (bandTriggerId) {
+      g5.setFlex(String(bandTriggerId), "width", 92);
+      g5.setFlex(String(bandTriggerId), "height", 24);
+      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);
+    }
     const nativeTextOwner = (owner) => values.find((candidate) => {
       const parent = candidate?.parentElement || candidate?._parentElement || null;
       return parent === owner && materializedNodeTag(candidate) === "span";
@@ -9520,7 +9538,7 @@
     const bandCountReceipt = {
       trigger: centerBandText(
         nativeTextOwner(bandTrigger), liveBandCount + " bands \u25BE",
-        92, 73.03125),
+        92, 73.03125, 24, 5.5),
       options: []
     };
     const bandOptions = bandRoot ? Array.from(globalThis.document?.querySelectorAll?.(
@@ -9543,9 +9561,17 @@
       const svg = descendants.find(
         (node) => materializedNodeTag(node) === "svg"
       );
-      const label = descendants.find(
-        (node) => String(node && node.textContent || "") === correction.text
-      );
+      const label = descendants.find((node) => {
+        if (materializedNodeTag(node) !== "span"
+            || !/\u25BE$/.test(String(node?.textContent || "").trim()))
+          return false;
+        return !descendants.some((candidate) => {
+          const parent = candidate?.parentElement
+            || candidate?._parentElement || null;
+          return parent === node && materializedNodeTag(candidate) === "span"
+            && /\u25BE$/.test(String(candidate?.textContent || "").trim());
+        });
+      });
       const applyGeometry = (node, top, xShift, yShift) => {
         const id = node && (node.__pulpId || node.id);
         if (!id) return false;
@@ -9569,6 +9595,32 @@
       });
     }
     g5.__spectrToolbarOpticalCenteringReceipt__ = receipt;
+    if (activeCapturedState === "pattern") {
+      const popup = globalThis.document?.querySelector?.(
+        '[data-spectr-menu-root="pattern"] [data-spectr-menu-options]');
+      const save = globalThis.document?.querySelector?.(
+        '[data-spectr-save-current]');
+      const manage = globalThis.document?.querySelector?.(
+        '[data-spectr-pattern-manage]');
+      const footer = save && (save.parentElement || save._parentElement);
+      const setBox = (node, left, top, width, height) => {
+        const id = node && (node.__pulpId || node.id);
+        if (!id) return false;
+        g5.setPosition(String(id), "absolute");
+        g5.setLeft(String(id), left);
+        g5.setTop(String(id), top);
+        g5.setFlex(String(id), "width", width);
+        g5.setFlex(String(id), "height", height);
+        return true;
+      };
+      const patternReceipt = {
+        popup: setBox(popup, 0, -336, 220, 334),
+        footer: setBox(footer, 5, 264, 210, 63),
+        save: setBox(save, 0, 3, 210, 28),
+        manage: setBox(manage, 0, 33, 210, 28)
+      };
+      g5.__spectrPatternMenuLayoutReceipt__ = patternReceipt;
+    }
     return receipt.length;
   }
   function applySpectrHeaderOpticalCentering() {

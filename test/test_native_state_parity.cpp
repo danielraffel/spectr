@@ -899,7 +899,8 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
 
     require_runtime_contract(
         rig,
-        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 6.5"
+        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 5.5"
+        " && globalThis.__spectrBandCountCenteringReceipt__.trigger.height === 24"
         " && Math.abs(globalThis.__spectrBandCountCenteringReceipt__.trigger.left"
         " - 9.484375) < 0.001",
         "band trigger text was not optically centered");
@@ -910,7 +911,7 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     CHECK(trigger_label->cached_line_boxes().front().left
           == Catch::Approx(9.484375f).margin(0.01f));
     CHECK(trigger_label->cached_line_boxes().front().top
-          == Catch::Approx(6.5f).margin(0.01f));
+          == Catch::Approx(5.5f).margin(0.01f));
 
     REQUIRE(static_cast<bool>(rig.root->on_global_key));
     const auto comma = static_cast<pulp::view::KeyCode>(',');
@@ -1165,7 +1166,12 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
         '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
       if (!trigger) throw new Error('band header trigger missing');
       globalThis.__spectrBandHeaderBefore = {
-        trigger: trigger.getBoundingClientRect()
+        trigger: trigger.getBoundingClientRect(),
+        peer: Array.from(document.querySelectorAll(
+          '[data-spectr-visualization] button')).find(
+          button => button.textContent.trim() === 'BOTH')?.getBoundingClientRect(),
+        zoom: Array.from(document.querySelectorAll('span')).find(
+          span => span.textContent.trim().endsWith('× zoom'))?.getBoundingClientRect()
       };
     })();)js", "spectr-native-band-header-before-open");
     const auto focus_and_open = [&] {
@@ -1219,6 +1225,13 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
           || Math.abs(triggerRect.left - before.trigger.left) > 0.5
           || Math.abs(triggerRect.width - before.trigger.width) > 0.5)
         throw new Error('band popup reflowed its header');
+      if (!before.peer || Math.abs(triggerRect.top - before.peer.top) > 0.5)
+        throw new Error('band trigger missed segmented-control top edge: trigger='
+          + triggerRect.top + '..' + triggerRect.bottom + ' peer='
+          + before.peer.top + '..' + before.peer.bottom);
+      if (!before.zoom || triggerRect.right > before.zoom.left + 0.5)
+        throw new Error('band trigger overlaps zoom readout: triggerRight='
+          + triggerRect.right + ' zoomLeft=' + before.zoom?.left);
       if (popupRect.top < triggerRect.bottom - 0.5)
         throw new Error('band popup does not overlay below its trigger');
       if (popupRect.right > globalThis.innerWidth + 0.5)
@@ -1597,6 +1610,7 @@ TEST_CASE("native frozen state atlas interactions and persistence",
                                                       float icon_y_shift,
                                                       float label_x_shift,
                                                       float label_y_shift) {
+        CAPTURE(text);
         const auto* label = find_label(*rig.root, text);
         REQUIRE(label != nullptr);
         const auto* button = label->parent();
@@ -1639,10 +1653,9 @@ TEST_CASE("native frozen state atlas interactions and persistence",
                                    7.25f, 22.0f, 16.0f,
                                    11.0f, 39.0f,
                                    -1.0f, 0.0f, -1.0f, 0.0f);
-    require_toolbar_child_geometry("PRESETS ▾", 6.375f,
-                                   7.375f, 18.0f, 13.0f,
-                                   11.0f, 35.0f,
-                                   0.25f, 0.0f, 0.25f, 0.0f);
+    // The preset label is processor-owned and can change before the first
+    // painted frame. Its live geometry is covered by the optical-centering
+    // receipt above rather than by a frozen initial-label lookup.
     feed_tone(rig);
     capture(rig, directory, "home");
 
@@ -1656,13 +1669,28 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     activate(rig, "[data-spectr-band-count=\"32\"]");
     REQUIRE(rig.processor.layout() == spectr::Layout::Bands32);
 
+    const auto require_selected_toolbar_baseline = [&] (std::string_view root,
+                                                         std::string_view attribute,
+                                                         std::string_view value) {
+        activate(rig, "[data-spectr-menu-root=\"" + std::string(root)
+                      + "\"] [data-spectr-menu-trigger]");
+        activate(rig, "[" + std::string(attribute) + "=\""
+                      + std::string(value) + "\"]");
+        require_runtime_contract(
+            rig,
+            "globalThis.__spectrToolbarOpticalCenteringReceipt__.find("
+            "entry => entry.root === '" + std::string(root)
+            + "')?.label_top === 6.25",
+            "selected " + std::string(root) + " label lost its optical baseline");
+    };
+
     activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
     require_state(rig, "edit");
     capture(rig, directory, "edit");
     activate(rig, "[data-spectr-edit-mode=\"level\"]");
     require_app_state(rig, "s.editMode === 'level'", "edit mode menu selection failed");
-    activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
-    activate(rig, "[data-spectr-edit-mode=\"sculpt\"]");
+    for (const auto* mode : {"boost", "flare", "glide", "sculpt"})
+        require_selected_toolbar_baseline("edit", "data-spectr-edit-mode", mode);
     // The idle status shell stays in the tree without painting, so transient
     // messages cannot shift materialized state paths.
     require_home(rig);
@@ -1672,8 +1700,9 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     capture(rig, directory, "analyzer");
     activate(rig, "[data-spectr-analyzer-mode=\"avg\"]");
     require_app_state(rig, "s.analyzerMode === 'avg'", "analyzer menu selection failed");
-    activate(rig, "[data-spectr-menu-root=\"analyzer\"] [data-spectr-menu-trigger]");
-    activate(rig, "[data-spectr-analyzer-mode=\"peak\"]");
+    for (const auto* mode : {"both", "off", "peak"})
+        require_selected_toolbar_baseline(
+            "analyzer", "data-spectr-analyzer-mode", mode);
     require_home(rig);
 
     activate(rig, "[data-spectr-menu-root=\"overflow\"] [data-spectr-menu-trigger]");
@@ -1691,6 +1720,23 @@ TEST_CASE("native frozen state atlas interactions and persistence",
 
     activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
     require_state(rig, "pattern");
+    require_runtime_contract(rig, R"js((() => {
+      const popup = document.querySelector(
+        '[data-spectr-menu-root="pattern"] [data-spectr-menu-options]');
+      const save = document.querySelector('[data-spectr-save-current]');
+      const manage = document.querySelector('[data-spectr-pattern-manage]');
+      if (!popup || !save || !manage) return false;
+      const p = popup.getBoundingClientRect();
+      const s = save.getBoundingClientRect();
+      const m = manage.getBoundingClientRect();
+      const valid = Math.abs(s.left - m.left) < 0.5
+        && Math.abs(s.width - m.width) < 0.5
+        && m.top >= s.bottom - 0.5
+        && s.left >= p.left - 0.5 && m.right <= p.right + 0.5
+        && m.bottom <= p.bottom + 0.5;
+      if (!valid) throw new Error(JSON.stringify({ popup: p, save: s, manage: m }));
+      return true;
+    })())js", "preset actions were not separate full-width rows");
     capture(rig, directory, "pattern");
     activate(rig, "[data-spectr-pattern-menu-id=\"factory:tilt\"]");
     REQUIRE(std::any_of(rig.processor.field().bands.begin(),
@@ -1705,8 +1751,8 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     require_runtime_contract(
         rig,
         "document.querySelector('[data-spectr-selected-preset]')?.textContent"
-        ".includes('DOWNWARD TILT') === true",
-        "selected factory preset name did not remain on the trigger");
+        " === 'DOWNWA\u2026 \u25BE'",
+        "selected factory preset name was not safely truncated on the trigger");
     activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
     activate(rig, "[data-spectr-pattern-menu-id=\"factory:flat\"]");
     require_home(rig);
@@ -1909,6 +1955,15 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     capture(rig, directory, "save-dialog");
     require_app_state(rig, "s.saveDialogOpen === true",
                       "save command did not open its native dialog");
+    REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+        *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+        pulp::view::kModNone, true));
+    settle(rig.clock, 8);
+    require_app_state(rig, "s.saveDialogOpen === false",
+                      "Escape left the save dialog open");
+    activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-save-current]");
+    require_state(rig, "save-dialog");
     activate(rig, "#spectr-save-name", "change",
              R"js({value:'STATE ATLAS MASK',target:{value:'STATE ATLAS MASK'},currentTarget:{value:'STATE ATLAS MASK'}})js");
     activate(rig, "[data-spectr-manager-action=\"save-submit\"]");
