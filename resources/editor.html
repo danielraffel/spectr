@@ -199,27 +199,13 @@ document.addEventListener('DOMContentLoaded', async function() {
         // A later direct edit supersedes any in-flight native capture/recall/
         // morph projection even if that older response arrives afterward.
         ++nativeCommandSequenceRef.current;
-        const publication = window.pulp.postMessage('processing_state_set', {
+        window.pulp.postMessage('processing_state_set', {
           n_visible: N,
           gain_db: gainDb,
           muted,
           min_hz: Math.pow(10, view.lmin),
           max_hz: Math.pow(10, view.lmax),
         }, 'spectr-processing-state');
-        const geometryKey = N + ':' + view.lmin + ':' + view.lmax;
-        if (resolutionGeometryRef.current !== geometryKey) {
-          Promise.resolve(publication).then(response => {
-            if (!response || response.ok !== true || !response.payload
-                || response.payload.ok !== true) {
-              throw new Error('processing state rejected');
-            }
-            resolutionGeometryRef.current = geometryKey;
-            window.pulp.postMessage('spectral_resolution_request', {},
-              'spectr-spectral-resolution-request');
-          }).catch(error => {
-            console.error('[Spectr] native resolution request failed', error);
-          });
-        }
       } catch (error) {
         console.error('[Spectr] native processing-state publication failed', error);
       }
@@ -566,7 +552,7 @@ window.FilterBank = FilterBank;`,
       'band context menu ignores analyzer-only parent renders');
     replaceSpectrSource(
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
-      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  const resolutionGeometryRef = useRef(\'\');\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
+      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
       'independent muted gain hydration');
     replaceSpectrSource(
       String.raw`      const next = new Array(N).fill(0);
@@ -939,7 +925,6 @@ window.FilterBank = FilterBank;`,
     && typeof window.pulp.postMessage === 'function';
   const [nativeHydrated, setNativeHydrated] = useAppS(!nativeBridgeAvailable);
   const [nativeHydration, setNativeHydration] = useAppS(null);
-  const [resolution, setResolution] = useAppS(null);
   const acceptNativeState = useAppC((state) => {
     setNativeHydrated(false);
     setNativeHydration(state);
@@ -965,34 +950,6 @@ window.FilterBank = FilterBank;`,
       }
       acceptNativeState(state);
     });
-    const unsubscribeResolution = window.pulp.on('spectral_resolution', (message) => {
-      const payload = message && message.payload;
-      const represented = payload && Number(payload.represented_bands);
-      const active = payload && Number(payload.active_bands);
-      const minHz = payload && Number(payload.min_hz);
-      const maxHz = payload && Number(payload.max_hz);
-      if (!Number.isInteger(represented) || !Number.isInteger(active)
-          || active <= 0 || represented < 0 || represented > active
-          || !Number.isFinite(minHz) || !Number.isFinite(maxHz)) {
-        console.error('[Spectr] rejected malformed resolution payload');
-        return;
-      }
-      const bank = bankRef.current;
-      if (bank) {
-        const expectedMin = Math.pow(10, bank.view.lmin);
-        const expectedMax = Math.pow(10, bank.view.lmax);
-        const closeEnough = (a, b) => Math.abs(a - b) <= Math.max(0.001, b * 1e-5);
-        if (bank.N !== active || !closeEnough(minHz, expectedMin)
-            || !closeEnough(maxHz, expectedMax)) return;
-      }
-      setResolution({ represented, active });
-    });
-    const resolutionRefresh = setInterval(() => {
-      try {
-        Promise.resolve(window.pulp.postMessage('spectral_resolution_request', {},
-          'spectr-spectral-resolution-refresh')).catch(() => {});
-      } catch {}
-    }, 1000);
     try {
       window.pulp.postMessage('editor_ready', {}, 'spectr-editor-ready');
     } catch (error) {
@@ -1000,8 +957,6 @@ window.FilterBank = FilterBank;`,
     }
     return () => {
       if (typeof unsubscribeHydration === 'function') unsubscribeHydration();
-      if (typeof unsubscribeResolution === 'function') unsubscribeResolution();
-      clearInterval(resolutionRefresh);
     };
   }, [acceptNativeState]);
 
@@ -1068,24 +1023,6 @@ window.FilterBank = FilterBank;`,
       },
       getGains: () => targetGainsRef.current.slice(),`,
       'atomic native field hydration');
-    replaceSpectrSource(
-      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
-      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted, resolution }) {',
-      'resolution readout prop');
-    replaceSpectrSource(
-      '<span className="tnum">{info.zoom}× zoom</span>',
-      String.raw`<span className="tnum">{info.zoom}× zoom</span>
-          <span>·</span>
-          <span className="tnum" title="Spectral bands represented by distinct FFT bins" style={{
-            color: resolution && resolution.represented < resolution.active
-              ? 'rgba(255,176,96,0.88)'
-              : 'rgba(255,255,255,0.38)',
-          }}>RES {resolution ? (resolution.represented + '/' + resolution.active) : '—/—'}</span>`,
-      'compact resolution disclosure');
-    replaceSpectrSource(
-      '      <Chrome\n        settings={settings}',
-      '      <Chrome\n        resolution={resolution}\n        settings={settings}',
-      'resolution readout value');
     replaceSpectrSource(
       "const dspModeRef = useRef(dspMode || 'iir');",
       "const dspModeRef = useRef(dspMode || 'fft');",
@@ -2493,18 +2430,6 @@ window.PatternManager = PatternManager;`,
       '        status={status}\n        dspMode={dspMode}',
       '        status={status}\n        selectedPatternName={selectedPatternName}\n        dspMode={dspMode}',
       'selected preset name reaches chrome');
-    replaceSpectrSource(
-      'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode,',
-      'function Chrome({ settings, setSettings, bankRef, info, status, onStatus, selectedPatternName, dspMode,',
-      'chrome can explain spectral resolution');
-    replaceSpectrSource(
-      '        status={status}\n        selectedPatternName={selectedPatternName}',
-      '        status={status}\n        onStatus={fireStatus}\n        selectedPatternName={selectedPatternName}',
-      'resolution explanation reaches unified status');
-    replaceSpectrSource(
-      '<span className="tnum" title="Spectral bands represented by distinct FFT bins" style={{',
-      '<span data-spectr-resolution className="tnum" title="Distinct FFT-bin coverage; all bands remain editable" aria-label="Spectral resolution" onPointerEnter={() => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + \'/\' + resolution.active : \'—/—\'} DISTINCT · ALL BANDS EDITABLE`)} onClick={() => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + \'/\' + resolution.active : \'—/—\'} DISTINCT · ALL BANDS EDITABLE`)} style={{',
-      'resolution readout explains itself');
     replaceSpectrSource(
       String.raw`function RailBtn({ children, onClick, active }) {
   const [flash, setFlash] = useStateChrome(false);`,

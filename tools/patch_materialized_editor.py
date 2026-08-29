@@ -31,6 +31,122 @@ RUNTIME_PATH = 'native-ui/materialized/runtime.js'
 SOURCE_PATH = 'resources/editor.html'
 
 EDITS = [
+    ('normal chrome does not expose spectral resolution diagnostics',
+     '  )))), /* @__PURE__ */ React.createElement("span", null, "\\xB7"), /* @__PURE__ */ React.createElement("span", { className: "tnum" }, info.zoom, "\\xD7 zoom"), /* @__PURE__ */ React.createElement("span", null, "\\xB7"), /* @__PURE__ */ React.createElement("span", { "data-spectr-resolution": true, className: "tnum", title: "Distinct FFT-bin coverage; all bands remain editable", "aria-label": "Spectral resolution", onPointerEnter: () => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + "/" + resolution.active : "\\u2014/\\u2014"} DISTINCT \\xB7 ALL BANDS EDITABLE`), onClick: () => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + "/" + resolution.active : "\\u2014/\\u2014"} DISTINCT \\xB7 ALL BANDS EDITABLE`), style: {\n'
+     '    color: resolution && resolution.represented < resolution.active ? "rgba(255,176,96,0.88)" : "rgba(255,255,255,0.38)"\n'
+     '  } }, "RES ", resolution ? resolution.represented + "/" + resolution.active : "\\u2014/\\u2014")))',
+     '  )))), /* @__PURE__ */ React.createElement("span", null, "\\xB7"), /* @__PURE__ */ React.createElement("span", { className: "tnum" }, info.zoom, "\\xD7 zoom"), /* @__PURE__ */ React.createElement("span", { "aria-hidden": true, style: { width: 0, height: 0, opacity: 0, overflow: "hidden", fontSize: 0 } }, "\\xB7"), /* @__PURE__ */ React.createElement("span", { "aria-hidden": true, style: { width: 0, height: 0, opacity: 0, overflow: "hidden", fontSize: 0 } }, "\\u200B")))'),
+
+    # The materialized capture expects the former separator and readout nodes.
+    # Keep zero-size inert nodes so removing product chrome does not invalidate
+    # the captured topology; neither node exposes text or an interaction hook.
+    ('normal chrome preserves inert captured topology',
+     '  )))), /* @__PURE__ */ React.createElement("span", null, "\\xB7"), /* @__PURE__ */ React.createElement("span", { className: "tnum" }, info.zoom, "\\xD7 zoom")))',
+     '  )))), /* @__PURE__ */ React.createElement("span", null, "\\xB7"), /* @__PURE__ */ React.createElement("span", { className: "tnum" }, info.zoom, "\\xD7 zoom"), /* @__PURE__ */ React.createElement("span", { "aria-hidden": true, style: { width: 0, height: 0, opacity: 0, overflow: "hidden", fontSize: 0 } }, "\\xB7"), /* @__PURE__ */ React.createElement("span", { "aria-hidden": true, style: { width: 0, height: 0, opacity: 0, overflow: "hidden", fontSize: 0 } }, "\\u200B")))'),
+
+    ('hidden separator retains captured text receipt',
+     'React.createElement("span", { "aria-hidden": true, style: { width: 0, height: 0, opacity: 0, overflow: "hidden", fontSize: 0 } }, "\\u200B"), /* @__PURE__ */ React.createElement("span", { "aria-hidden": true, style: { width: 0, height: 0, opacity: 0, overflow: "hidden", fontSize: 0 } }, "\\u200B")))',
+     'React.createElement("span", { "aria-hidden": true, style: { width: 0, height: 0, opacity: 0, overflow: "hidden", fontSize: 0 } }, "\\xB7"), /* @__PURE__ */ React.createElement("span", { "aria-hidden": true, style: { width: 0, height: 0, opacity: 0, overflow: "hidden", fontSize: 0 } }, "\\u200B")))'),
+
+    ('chrome drops unused resolution props',
+     'function Chrome({ settings, setSettings, bankRef, info, status, onStatus, selectedPatternName, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onSavePattern, onClearAll, onResetAll, allMuted, resolution }) {',
+     'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onSavePattern, onClearAll, onResetAll, allMuted }) {'),
+
+    ('app drops unused resolution chrome props',
+     '      resolution,\n'
+     '      settings,\n'
+     '      setSettings,\n'
+     '      bankRef,\n'
+     '      info,\n'
+     '      status,\n'
+     '      onStatus: fireStatus,\n'
+     '      selectedPatternName,',
+     '      settings,\n'
+     '      setSettings,\n'
+     '      bankRef,\n'
+     '      info,\n'
+     '      status,\n'
+     '      selectedPatternName,'),
+
+    ('normal app drops resolution state and polling',
+     '  const [resolution, setResolution] = useAppS(null);\n',
+     ''),
+
+    ('normal app drops resolution listener and refresh timer',
+     '    const unsubscribeResolution = window.pulp.on("spectral_resolution", (message) => {\n'
+     '      const payload = message && message.payload;\n'
+     '      const represented = payload && Number(payload.represented_bands);\n'
+     '      const active = payload && Number(payload.active_bands);\n'
+     '      const minHz = payload && Number(payload.min_hz);\n'
+     '      const maxHz = payload && Number(payload.max_hz);\n'
+     '      if (!Number.isInteger(represented) || !Number.isInteger(active) || active <= 0 || represented < 0 || represented > active || !Number.isFinite(minHz) || !Number.isFinite(maxHz)) {\n'
+     '        console.error("[Spectr] rejected malformed resolution payload");\n'
+     '        return;\n'
+     '      }\n'
+     '      const bank = bankRef.current;\n'
+     '      if (bank) {\n'
+     '        const expectedMin = Math.pow(10, bank.view.lmin);\n'
+     '        const expectedMax = Math.pow(10, bank.view.lmax);\n'
+     '        const closeEnough = (a, b) => Math.abs(a - b) <= Math.max(1e-3, b * 1e-5);\n'
+     '        if (bank.N !== active || !closeEnough(minHz, expectedMin) || !closeEnough(maxHz, expectedMax)) return;\n'
+     '      }\n'
+     '      setResolution({ represented, active });\n'
+     '    });\n'
+     '    const resolutionRefresh = setInterval(() => {\n'
+     '      try {\n'
+     '        Promise.resolve(window.pulp.postMessage(\n'
+     '          "spectral_resolution_request",\n'
+     '          {},\n'
+     '          "spectr-spectral-resolution-refresh"\n'
+     '        )).catch(() => {\n'
+     '        });\n'
+     '      } catch {\n'
+     '      }\n'
+     '    }, 1e3);\n',
+     ''),
+
+    ('normal app cleanup drops resolution subscriptions',
+     '      if (typeof unsubscribeHydration === "function") unsubscribeHydration();\n'
+     '      if (typeof unsubscribeResolution === "function") unsubscribeResolution();\n'
+     '      clearInterval(resolutionRefresh);',
+     '      if (typeof unsubscribeHydration === "function") unsubscribeHydration();'),
+
+    ('processing publication does not request UI resolution diagnostics',
+     '        const publication = window.pulp.postMessage("processing_state_set", {\n'
+     '          n_visible: N,\n'
+     '          gain_db: gainDb2,\n'
+     '          muted,\n'
+     '          min_hz: Math.pow(10, view.lmin),\n'
+     '          max_hz: Math.pow(10, view.lmax)\n'
+     '        }, "spectr-processing-state");\n'
+     '        const geometryKey = N + ":" + view.lmin + ":" + view.lmax;\n'
+     '        if (resolutionGeometryRef.current !== geometryKey) {\n'
+     '          Promise.resolve(publication).then((response) => {\n'
+     '            if (!response || response.ok !== true || !response.payload || response.payload.ok !== true) {\n'
+     '              throw new Error("processing state rejected");\n'
+     '            }\n'
+     '            resolutionGeometryRef.current = geometryKey;\n'
+     '            window.pulp.postMessage(\n'
+     '              "spectral_resolution_request",\n'
+     '              {},\n'
+     '              "spectr-spectral-resolution-request"\n'
+     '            );\n'
+     '          }).catch((error) => {\n'
+     '            console.error("[Spectr] native resolution request failed", error);\n'
+     '          });\n'
+     '        }',
+     '        window.pulp.postMessage("processing_state_set", {\n'
+     '          n_visible: N,\n'
+     '          gain_db: gainDb2,\n'
+     '          muted,\n'
+     '          min_hz: Math.pow(10, view.lmin),\n'
+     '          max_hz: Math.pow(10, view.lmax)\n'
+     '        }, "spectr-processing-state");'),
+
+    ('filter bank drops unused resolution geometry ref',
+     '  const resolutionGeometryRef = useRef("");\n',
+     ''),
+
     ('native menu lookup uses the document selector surface',
      '    const root = document.querySelector(\'[data-spectr-menu-root="\' + key + \'"]\');\n'
      '    if (!root) return;\n'
@@ -885,21 +1001,6 @@ EDITS = [
      '      status,\n'
      '      selectedPatternName,\n'
      '      dspMode,'),
-
-    ('chrome can explain spectral resolution',
-     'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode,',
-     'function Chrome({ settings, setSettings, bankRef, info, status, onStatus, selectedPatternName, dspMode,'),
-
-    ('resolution explanation reaches unified status',
-     '      status,\n'
-     '      selectedPatternName,',
-     '      status,\n'
-     '      onStatus: fireStatus,\n'
-     '      selectedPatternName,'),
-
-    ('resolution readout explains itself',
-     'React.createElement("span", { className: "tnum", title: "Spectral bands represented by distinct FFT bins", style: {',
-     'React.createElement("span", { "data-spectr-resolution": true, className: "tnum", title: "Distinct FFT-bin coverage; all bands remain editable", "aria-label": "Spectral resolution", onPointerEnter: () => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + "/" + resolution.active : "\\u2014/\\u2014"} DISTINCT \\xB7 ALL BANDS EDITABLE`), onClick: () => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + "/" + resolution.active : "\\u2014/\\u2014"} DISTINCT \\xB7 ALL BANDS EDITABLE`), style: {'),
 
     ('rail buttons accept semantic popup kind',
      'function RailBtn({ children, onClick, active }) {\n'
@@ -1927,6 +2028,188 @@ RUNTIME_EDITS = [
      '        return binding;\n'
      '      });',
      'const authoredLayoutState = activeCapturedState === "bands"'),
+    ('band count text is optically centered in trigger and popup cells',
+     '    const belongsTo = (node, root) => {\n'
+     '      let current = node;\n'
+     '      while (current) {\n'
+     '        if (current === root) return true;\n'
+     '        current = current.parentElement || current._parentElement || null;\n'
+     '      }\n'
+     '      return false;\n'
+     '    };\n'
+     '    const receipt = [];',
+     '    const belongsTo = (node, root) => {\n'
+     '      let current = node;\n'
+     '      while (current) {\n'
+     '        if (current === root) return true;\n'
+     '        current = current.parentElement || current._parentElement || null;\n'
+     '      }\n'
+     '      return false;\n'
+     '    };\n'
+     '    const centerBandText = (owner, width, textWidth, positionOwner) => {\n'
+     '      if (!owner || typeof g5.setCapturedLineBoxes !== "function") return null;\n'
+     '      const ownerId = owner.__pulpId || owner.id;\n'
+     '      const targets = Array.isArray(owner.__pulpAnonymousTextTargets)\n'
+     '        ? owner.__pulpAnonymousTextTargets : [];\n'
+     '      const targetId = owner.__pulpTextTargetId || targets[0]?.id;\n'
+     '      if (!targetId) return null;\n'
+     '      if (positionOwner && ownerId) {\n'
+     '        g5.setPosition(String(ownerId), "absolute");\n'
+     '        g5.setLeft(String(ownerId), 0);\n'
+     '        g5.setTop(String(ownerId), 0);\n'
+     '        g5.setFlex(String(ownerId), "width", width);\n'
+     '        g5.setFlex(String(ownerId), "height", 26);\n'
+     '      }\n'
+     '      const id = String(targetId);\n'
+     '      g5.setPosition(id, "absolute");\n'
+     '      g5.setLeft(id, 0);\n'
+     '      g5.setTop(id, 0);\n'
+     '      g5.setFlex(id, "width", width);\n'
+     '      g5.setFlex(id, "height", 26);\n'
+     '      if (typeof g5.setFontSize === "function") g5.setFontSize(id, 10);\n'
+     '      if (typeof g5.setFontWeight === "function") g5.setFontWeight(id, 400);\n'
+     '      if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(id, 0.8);\n'
+     '      const label = String(owner.textContent || "").trim();\n'
+     '      const left = (width - textWidth) / 2;\n'
+     '      g5.setCapturedLineBoxes(id, [{ left, top: 6.5, width: textWidth,\n'
+     '        height: 13, start: 0, length: label.length }], width,\n'
+     '        "JetBrainsMono-Regular", false);\n'
+     '      return { label, left, top: 6.5, width, text_width: textWidth };\n'
+     '    };\n'
+     '    const bandRoot = globalThis.document?.querySelector?.(\n'
+     '      \'[data-spectr-menu-root="bands"]\');\n'
+     '    const bandTrigger = globalThis.document?.querySelector?.(\n'
+     '      \'[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]\');\n'
+     '    const bandTriggerLabel = bandTrigger && values.find((candidate) =>\n'
+     '      belongsTo(candidate, bandTrigger)\n'
+     '        && /^(32|40|48|56|64) bands \\u25BE$/.test(\n'
+     '          String(candidate && candidate.textContent || "")));\n'
+     '    const bandCountReceipt = {\n'
+     '      trigger: centerBandText(bandTriggerLabel, 92, 73.03125, true),\n'
+     '      options: []\n'
+     '    };\n'
+     '    const bandOptions = bandRoot ? Array.from(globalThis.document?.querySelectorAll?.(\n'
+     '      \'[data-spectr-menu-root="bands"] [data-spectr-band-count]\') || []) : [];\n'
+     '    for (const option of bandOptions) {\n'
+     '      const centered = centerBandText(option, 44, 13, false);\n'
+     '      if (centered) bandCountReceipt.options.push(centered);\n'
+     '    }\n'
+     '    g5.__spectrBandCountCenteringReceipt__ = bandCountReceipt;\n'
+     '    const receipt = [];',
+     '__spectrBandCountCenteringReceipt__'),
+    ('band count centering uses the document selector surface',
+     '    const bandRoot = g5.__pulpFindMaterializedElement__(\n'
+     '      \'[data-spectr-menu-root="bands"]\');\n'
+     '    const bandTrigger = g5.__pulpFindMaterializedElement__(\n'
+     '      \'[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]\');',
+     '    const bandRoot = globalThis.document?.querySelector?.(\n'
+     '      \'[data-spectr-menu-root="bands"]\');\n'
+     '    const bandTrigger = globalThis.document?.querySelector?.(\n'
+     '      \'[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]\');',
+     'const bandRoot = globalThis.document?.querySelector?.'),
+    ('band count centering targets flattened native text owners',
+     '    const centerBandText = (owner, width, textWidth, positionOwner) => {\n'
+     '      if (!owner || typeof g5.setCapturedLineBoxes !== "function") return null;\n'
+     '      const ownerId = owner.__pulpId || owner.id;\n'
+     '      const targets = Array.isArray(owner.__pulpAnonymousTextTargets)\n'
+     '        ? owner.__pulpAnonymousTextTargets : [];\n'
+     '      const targetId = owner.__pulpTextTargetId || targets[0]?.id;\n'
+     '      if (!targetId) return null;\n'
+     '      if (positionOwner && ownerId) {\n'
+     '        g5.setPosition(String(ownerId), "absolute");\n'
+     '        g5.setLeft(String(ownerId), 0);\n'
+     '        g5.setTop(String(ownerId), 0);\n'
+     '        g5.setFlex(String(ownerId), "width", width);\n'
+     '        g5.setFlex(String(ownerId), "height", 26);\n'
+     '      }\n'
+     '      const id = String(targetId);\n'
+     '      g5.setPosition(id, "absolute");\n'
+     '      g5.setLeft(id, 0);\n'
+     '      g5.setTop(id, 0);\n'
+     '      g5.setFlex(id, "width", width);\n'
+     '      g5.setFlex(id, "height", 26);\n'
+     '      if (typeof g5.setFontSize === "function") g5.setFontSize(id, 10);\n'
+     '      if (typeof g5.setFontWeight === "function") g5.setFontWeight(id, 400);\n'
+     '      if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(id, 0.8);\n'
+     '      const label = String(owner.textContent || "").trim();\n'
+     '      const left = (width - textWidth) / 2;\n'
+     '      g5.setCapturedLineBoxes(id, [{ left, top: 6.5, width: textWidth,\n'
+     '        height: 13, start: 0, length: label.length }], width,\n'
+     '        "JetBrainsMono-Regular", false);\n'
+     '      return { label, left, top: 6.5, width, text_width: textWidth };\n'
+     '    };',
+     '    const centerBandText = (owner, label, width, textWidth) => {\n'
+     '      if (!owner || typeof g5.setCapturedLineBoxes !== "function") return null;\n'
+     '      const targets = Array.isArray(owner.__pulpAnonymousTextTargets)\n'
+     '        ? owner.__pulpAnonymousTextTargets : [];\n'
+     '      const targetId = owner.__pulpTextTargetId || targets[0]?.id;\n'
+     '      if (!targetId) return null;\n'
+     '      const id = String(targetId);\n'
+     '      g5.setPosition(id, "absolute");\n'
+     '      g5.setLeft(id, 0);\n'
+     '      g5.setTop(id, 0);\n'
+     '      g5.setFlex(id, "width", width);\n'
+     '      g5.setFlex(id, "height", 26);\n'
+     '      if (typeof g5.setFontSize === "function") g5.setFontSize(id, 10);\n'
+     '      if (typeof g5.setFontWeight === "function") g5.setFontWeight(id, 400);\n'
+     '      if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(id, 0.8);\n'
+     '      const left = (width - textWidth) / 2;\n'
+     '      g5.setCapturedLineBoxes(id, [{ left, top: 6.5, width: textWidth,\n'
+     '        height: 13, start: 0, length: label.length }], width,\n'
+     '        "JetBrainsMono-Regular", false);\n'
+     '      return { label, left, top: 6.5, width, text_width: textWidth };\n'
+     '    };',
+     'const centerBandText = (owner, label, width, textWidth)'),
+    ('band count centering labels flattened native owners explicitly',
+     '    const bandTriggerLabel = bandTrigger && values.find((candidate) =>\n'
+     '      belongsTo(candidate, bandTrigger)\n'
+     '        && /^(32|40|48|56|64) bands \\u25BE$/.test(\n'
+     '          String(candidate && candidate.textContent || "")));\n'
+     '    const bandCountReceipt = {\n'
+     '      trigger: centerBandText(bandTriggerLabel, 92, 73.03125, true),\n'
+     '      options: []\n'
+     '    };',
+     '    const liveBandCount = Number(\n'
+     '      globalThis.__spectrTestHooks?.appState?.()?.settings?.bandCount) || 32;\n'
+     '    const bandCountReceipt = {\n'
+     '      trigger: centerBandText(\n'
+     '        bandTrigger, liveBandCount + " bands \\u25BE", 92, 73.03125),\n'
+     '      options: []\n'
+     '    };',
+     'liveBandCount + " bands \\u25BE"'),
+    ('band popup centering labels flattened option owners explicitly',
+     '      const centered = centerBandText(option, 44, 13, false);',
+     '      const optionLabel = String(option.getAttribute?.(\n'
+     '        "data-spectr-band-count") || "");\n'
+     '      const centered = centerBandText(option, optionLabel, 44, 13);',
+     'const optionLabel = String(option.getAttribute?.'),
+    ('band count centering can target a flattened native label directly',
+     '      const targetId = owner.__pulpTextTargetId || targets[0]?.id;',
+     '      const targetId = owner.__pulpTextTargetId || targets[0]?.id\n'
+     '        || owner.__pulpId || owner.id;',
+     'targets[0]?.id\n        || owner.__pulpId || owner.id'),
+    ('band count centering resolves the painted native child',
+     '    const liveBandCount = Number(\n'
+     '      globalThis.__spectrTestHooks?.appState?.()?.settings?.bandCount) || 32;\n'
+     '    const bandCountReceipt = {\n'
+     '      trigger: centerBandText(\n'
+     '        bandTrigger, liveBandCount + " bands \\u25BE", 92, 73.03125),',
+     '    const nativeTextOwner = (owner) => values.find((candidate) => {\n'
+     '      const parent = candidate?.parentElement || candidate?._parentElement || null;\n'
+     '      return parent === owner && materializedNodeTag(candidate) === "span";\n'
+     '    }) || owner;\n'
+     '    const liveBandCount = Number(\n'
+     '      globalThis.__spectrTestHooks?.appState?.()?.settings?.bandCount) || 32;\n'
+     '    const bandCountReceipt = {\n'
+     '      trigger: centerBandText(\n'
+     '        nativeTextOwner(bandTrigger), liveBandCount + " bands \\u25BE",\n'
+     '        92, 73.03125),',
+     'const nativeTextOwner = (owner) => values.find'),
+    ('band popup centering resolves each painted native child',
+     '      const centered = centerBandText(option, optionLabel, 44, 13);',
+     '      const centered = centerBandText(\n'
+     '        nativeTextOwner(option), optionLabel, 44, 13);',
+     'nativeTextOwner(option), optionLabel, 44, 13'),
     ('dynamic popup and manager states keep authored live layout',
      '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
      '      ? metadata.layout_bindings : []).map((binding) => {\n'

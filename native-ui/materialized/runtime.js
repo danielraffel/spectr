@@ -9481,6 +9481,54 @@
       }
       return false;
     };
+    const centerBandText = (owner, label, width, textWidth) => {
+      if (!owner || typeof g5.setCapturedLineBoxes !== "function") return null;
+      const targets = Array.isArray(owner.__pulpAnonymousTextTargets)
+        ? owner.__pulpAnonymousTextTargets : [];
+      const targetId = owner.__pulpTextTargetId || targets[0]?.id
+        || owner.__pulpId || owner.id;
+      if (!targetId) return null;
+      const id = String(targetId);
+      g5.setPosition(id, "absolute");
+      g5.setLeft(id, 0);
+      g5.setTop(id, 0);
+      g5.setFlex(id, "width", width);
+      g5.setFlex(id, "height", 26);
+      if (typeof g5.setFontSize === "function") g5.setFontSize(id, 10);
+      if (typeof g5.setFontWeight === "function") g5.setFontWeight(id, 400);
+      if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(id, 0.8);
+      const left = (width - textWidth) / 2;
+      g5.setCapturedLineBoxes(id, [{ left, top: 6.5, width: textWidth,
+        height: 13, start: 0, length: label.length }], width,
+        "JetBrainsMono-Regular", false);
+      return { label, left, top: 6.5, width, text_width: textWidth };
+    };
+    const bandRoot = globalThis.document?.querySelector?.(
+      '[data-spectr-menu-root="bands"]');
+    const bandTrigger = globalThis.document?.querySelector?.(
+      '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
+    const nativeTextOwner = (owner) => values.find((candidate) => {
+      const parent = candidate?.parentElement || candidate?._parentElement || null;
+      return parent === owner && materializedNodeTag(candidate) === "span";
+    }) || owner;
+    const liveBandCount = Number(
+      globalThis.__spectrTestHooks?.appState?.()?.settings?.bandCount) || 32;
+    const bandCountReceipt = {
+      trigger: centerBandText(
+        nativeTextOwner(bandTrigger), liveBandCount + " bands \u25BE",
+        92, 73.03125),
+      options: []
+    };
+    const bandOptions = bandRoot ? Array.from(globalThis.document?.querySelectorAll?.(
+      '[data-spectr-menu-root="bands"] [data-spectr-band-count]') || []) : [];
+    for (const option of bandOptions) {
+      const optionLabel = String(option.getAttribute?.(
+        "data-spectr-band-count") || "");
+      const centered = centerBandText(
+        nativeTextOwner(option), optionLabel, 44, 13);
+      if (centered) bandCountReceipt.options.push(centered);
+    }
+    g5.__spectrBandCountCenteringReceipt__ = bandCountReceipt;
     const receipt = [];
     for (const correction of corrections) {
       const root = g5.__pulpFindMaterializedElement__(

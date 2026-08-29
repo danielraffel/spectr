@@ -897,6 +897,21 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     NativeEditorRig rig;
     require_home(rig);
 
+    require_runtime_contract(
+        rig,
+        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 6.5"
+        " && Math.abs(globalThis.__spectrBandCountCenteringReceipt__.trigger.left"
+        " - 9.484375) < 0.001",
+        "band trigger text was not optically centered");
+    const auto* trigger_label = find_label(*rig.root, "32 bands ▾");
+    REQUIRE(trigger_label != nullptr);
+    CAPTURE(trigger_label->id(), trigger_label->parent()->id());
+    REQUIRE(trigger_label->cached_line_boxes().size() == 1);
+    CHECK(trigger_label->cached_line_boxes().front().left
+          == Catch::Approx(9.484375f).margin(0.01f));
+    CHECK(trigger_label->cached_line_boxes().front().top
+          == Catch::Approx(6.5f).margin(0.01f));
+
     REQUIRE(static_cast<bool>(rig.root->on_global_key));
     const auto comma = static_cast<pulp::view::KeyCode>(',');
     CHECK_FALSE(rig.root->on_global_key({
@@ -914,16 +929,14 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     activate(rig, "[data-spectr-settings-close]");
     require_home(rig);
 
-    // Product-acceptance gate: the compact RES readout explains that it is
-    // FFT-bin representation, not a restriction on editing the visible bands.
-    activate(rig, "[data-spectr-resolution]");
+    // Spectral resolution remains a diagnostic bridge contract. It must not
+    // leak into the normal product chrome as a cryptic RES counter.
     require_runtime_contract(
         rig,
-        "document.querySelector('[data-spectr-status-text]')?.textContent"
-        ".includes('SPECTRAL RESOLUTION:')"
-        " && document.querySelector('[data-spectr-status-text]')?.textContent"
-        ".includes('ALL BANDS EDITABLE')",
-        "RES readout did not explain distinct FFT-bin coverage");
+        "!document.querySelector('[data-spectr-resolution]')"
+        " && !Array.from(document.querySelectorAll('span'))"
+        ".some(node => /^RES\\s+\\d+\\/\\d+$/.test(node.textContent.trim()))",
+        "diagnostic spectral resolution leaked into product chrome");
 
     View* surface = nullptr;
     const std::function<void(View&)> find_surface = [&](View& candidate) {
@@ -1150,11 +1163,9 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
     rig.bridge().load_script(R"js((() => {
       const trigger = document.querySelector(
         '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
-      const resolution = document.querySelector('[data-spectr-resolution]');
-      if (!trigger || !resolution) throw new Error('band header subjects missing');
+      if (!trigger) throw new Error('band header trigger missing');
       globalThis.__spectrBandHeaderBefore = {
-        trigger: trigger.getBoundingClientRect(),
-        resolution: resolution.getBoundingClientRect()
+        trigger: trigger.getBoundingClientRect()
       };
     })();)js", "spectr-native-band-header-before-open");
     const auto focus_and_open = [&] {
@@ -1168,6 +1179,19 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
     focus_and_open();
     REQUIRE(rig.root->interaction().active_overlay != nullptr);
     REQUIRE(rig.root->interaction().active_overlay->overlay_consumes_outside_click());
+    require_runtime_contract(
+        rig,
+        "globalThis.__spectrBandCountCenteringReceipt__?.options?.length === 5"
+        " && globalThis.__spectrBandCountCenteringReceipt__.options.every("
+        "entry => entry.top === 6.5 && Math.abs(entry.left - 15.5) < 0.001)",
+        "band popup option text was not optically centered");
+    const auto* option_label = find_label(*rig.root, "32");
+    REQUIRE(option_label != nullptr);
+    REQUIRE(option_label->cached_line_boxes().size() == 1);
+    CHECK(option_label->cached_line_boxes().front().left
+          == Catch::Approx(15.5f).margin(0.01f));
+    CHECK(option_label->cached_line_boxes().front().top
+          == Catch::Approx(6.5f).margin(0.01f));
     rig.bridge().load_script(R"js((() => {
       const trigger = document.querySelector(
         '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
@@ -1181,8 +1205,6 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
       const popupRect = popup.getBoundingClientRect();
       const rects = options.map(option => option.getBoundingClientRect());
       const before = globalThis.__spectrBandHeaderBefore;
-      const resolution = document.querySelector('[data-spectr-resolution]')
-        ?.getBoundingClientRect();
       if (triggerRect.width < 80 || rects.some(rect => rect.width < 43))
         throw new Error('band geometry trigger=' + triggerRect.width
           + ' options=' + rects.map(rect => rect.width).join(','));
@@ -1193,15 +1215,14 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
       }
       if (popupRect.width < rects.reduce((sum, rect) => sum + rect.width, 0) - 1)
         throw new Error('band popup clips option row');
-      if (!before || !resolution
+      if (!before
           || Math.abs(triggerRect.left - before.trigger.left) > 0.5
-          || Math.abs(triggerRect.width - before.trigger.width) > 0.5
-          || Math.abs(resolution.left - before.resolution.left) > 0.5)
+          || Math.abs(triggerRect.width - before.trigger.width) > 0.5)
         throw new Error('band popup reflowed its header');
       if (popupRect.top < triggerRect.bottom - 0.5)
         throw new Error('band popup does not overlay below its trigger');
-      if (resolution.right > globalThis.innerWidth + 0.5)
-        throw new Error('band popup clipped spectral resolution');
+      if (popupRect.right > globalThis.innerWidth + 0.5)
+        throw new Error('band popup clipped at the app edge');
     })();)js", "spectr-native-band-menu-geometry");
     settle(rig.clock, 4);
     require_runtime_contract(

@@ -467,8 +467,8 @@ TEST_CASE("embedded editor gates default publication until native hydration") {
     CHECK(html.find("hydrateProcessingState(nativeHydration)")
           != std::string::npos);
     CHECK(html.find("spectral_resolution_request") != std::string::npos);
-    CHECK(html.find("RES {resolution ?") != std::string::npos);
-    CHECK(html.find("rgba(255,176,96,0.88)") != std::string::npos);
+    CHECK(html.find("RES {resolution ?") == std::string::npos);
+    CHECK(html.find("data-spectr-resolution") == std::string::npos);
 }
 
 TEST_CASE("native editor bridge rejects invalid zoom without partial mutation") {
