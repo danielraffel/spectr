@@ -3858,10 +3858,13 @@
         {
           "tag": "button",
           "index": 0
+        },
+        {
+          "tag": "span",
+          "index": 1
         }
       ],
-      "anonymous_text_index": 0,
-      "text": " bands ▾",
+      "text": "bands ▾",
       "basis": {
         "width": 81.03125,
         "resolved_face": "JetBrainsMono-Regular",

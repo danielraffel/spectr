@@ -21,6 +21,7 @@ document is what surfaces the control, and at that point this note goes away.
 
 Idempotent: re-running it after a successful pass reports "already applied".
 """
+import glob
 import json
 import os
 import shutil
@@ -29,6 +30,10 @@ import sys
 PATH = 'native-ui/materialized/materialized-document.runtime.json'
 RUNTIME_PATH = 'native-ui/materialized/runtime.js'
 SOURCE_PATH = 'resources/editor.html'
+CAPTURE_DOCUMENT_PATHS = [
+    'native-ui/materialized/materialized-document.json',
+    *sorted(glob.glob('native-ui/materialized/states/*.materialized.json')),
+]
 
 EDITS = [
     ('save dialog inherits global Escape dismissal',
@@ -2676,6 +2681,32 @@ def escaped(value):
     return json.dumps(value)[1:-1]
 
 
+def repair_capture_band_count_binding(document, path):
+    """Point the captured suffix binding at the span used by live HTML."""
+    stale = [binding for binding in document.get('text_bindings', [])
+             if binding.get('text') == ' bands ▾'
+             and binding.get('anonymous_text_index') == 0]
+    current = [binding for binding in document.get('text_bindings', [])
+               if binding.get('text') == 'bands ▾'
+               and binding.get('path', [])[-1:] == [{'tag': 'span', 'index': 1}]
+               and 'anonymous_text_index' not in binding]
+    if not stale:
+        if len(current) != 1:
+            sys.exit(
+                f'FAIL band-count suffix binding: {path} has '
+                f'{len(current)} current bindings')
+        return False
+    if len(stale) != 1 or current:
+        sys.exit(
+            f'FAIL band-count suffix binding: {path} has '
+            f'{len(stale)} stale and {len(current)} current bindings')
+    binding = stale[0]
+    binding['path'].append({'tag': 'span', 'index': 1})
+    del binding['anonymous_text_index']
+    binding['text'] = 'bands ▾'
+    return True
+
+
 def check_script_blocks(label, blocks):
     """Parse JavaScript blocks with the same Node parser as the browser oracle."""
     import subprocess
@@ -2796,6 +2827,23 @@ def main():
         print('written', PATH)
     else:
         print('no change needed')
+
+    # The runtime document is the shipping surface, while the unexecuted
+    # document and captured-state metadata are the visual/test authorities.
+    # Keep structural binding corrections identical across all three; leaving
+    # the capture copies pointed at a removed anonymous text node makes a later
+    # materialization silently restore the old band-selector regression.
+    for capture_path in CAPTURE_DOCUMENT_PATHS:
+        capture_raw = open(capture_path, encoding='utf-8').read()
+        capture_document = json.loads(capture_raw)
+        capture_changed = repair_capture_band_count_binding(
+            capture_document, capture_path)
+        if capture_changed:
+            with open(capture_path, 'w', encoding='utf-8') as handle:
+                json.dump(capture_document, handle, ensure_ascii=False, indent=2)
+                handle.write('\n')
+            print('applied          band-count suffix binding', capture_path)
+            print('written', capture_path)
 
     runtime_raw = open(RUNTIME_PATH, encoding='utf-8').read()
     runtime_changed = False
