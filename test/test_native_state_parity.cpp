@@ -914,6 +914,17 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     activate(rig, "[data-spectr-settings-close]");
     require_home(rig);
 
+    // Product-acceptance gate: the compact RES readout explains that it is
+    // FFT-bin representation, not a restriction on editing the visible bands.
+    activate(rig, "[data-spectr-resolution]");
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-status-text]')?.textContent"
+        ".includes('SPECTRAL RESOLUTION:')"
+        " && document.querySelector('[data-spectr-status-text]')?.textContent"
+        ".includes('ALL BANDS EDITABLE')",
+        "RES readout did not explain distinct FFT-bin coverage");
+
     View* surface = nullptr;
     const std::function<void(View&)> find_surface = [&](View& candidate) {
         if (candidate.cursor() == View::CursorStyle::crosshair
@@ -1028,6 +1039,49 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
       gesture('right', -40, 75);
       gesture('window', 35, 76);
     })();)js", "spectr-native-minimap-react-budget");
+    settle(rig.clock, 4);
+
+    // Product-acceptance gate: a horizontal two-finger gesture pans the
+    // selected minimap window as one rigid body. Endpoint overscroll must be
+    // absorbed instead of resizing the opposite trim.
+    rig.bridge().load_script(R"js((() => {
+      const selector = '[data-spectr-filter-surface]';
+      const surface = document.querySelector(selector);
+      const hooks = globalThis.__spectrTestHooks;
+      const fullMin = Math.log10(20), fullMax = Math.log10(20000);
+      const x = surface.clientWidth * 0.5;
+      const wheel = (deltaX) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, 'wheel', {
+          clientX: x, clientY: surface.clientHeight * 0.5,
+          deltaX, deltaY: 0, preventDefault() {}
+        })) throw new Error('horizontal minimap wheel activation failed');
+      };
+      const spanOf = (state) => state.view.lmax - state.view.lmin;
+      const near = (a, b) => Math.abs(a - b) < 1e-9;
+
+      const initialSpan = spanOf(hooks.renderState());
+      wheel(100000);
+      const atRight = hooks.renderState();
+      if (!near(atRight.view.lmax, fullMax)
+          || !near(spanOf(atRight), initialSpan))
+        throw new Error('right endpoint pan changed viewport width');
+      wheel(100000);
+      const heldRight = hooks.renderState();
+      if (!near(heldRight.view.lmin, atRight.view.lmin)
+          || !near(heldRight.view.lmax, atRight.view.lmax))
+        throw new Error('right endpoint overscroll bounced opposite trim');
+
+      wheel(-100000);
+      const atLeft = hooks.renderState();
+      if (!near(atLeft.view.lmin, fullMin)
+          || !near(spanOf(atLeft), initialSpan))
+        throw new Error('left endpoint pan changed viewport width');
+      wheel(-100000);
+      const heldLeft = hooks.renderState();
+      if (!near(heldLeft.view.lmin, atLeft.view.lmin)
+          || !near(heldLeft.view.lmax, atLeft.view.lmax))
+        throw new Error('left endpoint overscroll bounced opposite trim');
+    })();)js", "spectr-native-minimap-horizontal-endpoint-invariant");
     settle(rig.clock, 4);
 
     rig.bridge().load_script(R"js((() => {

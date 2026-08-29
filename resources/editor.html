@@ -2494,6 +2494,18 @@ window.PatternManager = PatternManager;`,
       '        status={status}\n        selectedPatternName={selectedPatternName}\n        dspMode={dspMode}',
       'selected preset name reaches chrome');
     replaceSpectrSource(
+      'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode,',
+      'function Chrome({ settings, setSettings, bankRef, info, status, onStatus, selectedPatternName, dspMode,',
+      'chrome can explain spectral resolution');
+    replaceSpectrSource(
+      '        status={status}\n        selectedPatternName={selectedPatternName}',
+      '        status={status}\n        onStatus={fireStatus}\n        selectedPatternName={selectedPatternName}',
+      'resolution explanation reaches unified status');
+    replaceSpectrSource(
+      '<span className="tnum" title="Spectral bands represented by distinct FFT bins" style={{',
+      '<span data-spectr-resolution className="tnum" title="Distinct FFT-bin coverage; all bands remain editable" aria-label="Spectral resolution" onPointerEnter={() => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + \'/\' + resolution.active : \'—/—\'} DISTINCT · ALL BANDS EDITABLE`)} onClick={() => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + \'/\' + resolution.active : \'—/—\'} DISTINCT · ALL BANDS EDITABLE`)} style={{',
+      'resolution readout explains itself');
+    replaceSpectrSource(
       String.raw`function RailBtn({ children, onClick, active }) {
   const [flash, setFlash] = useStateChrome(false);`,
       String.raw`function RailBtn({ children, onClick, active, popupKind }) {
@@ -2698,13 +2710,12 @@ window.PatternManager = PatternManager;`,
               cursor: 'pointer',
             }} title="Click to change band count">
               <span className="tnum">{info.N}</span> bands ▾`,
-      String.raw`              padding: '5px 10px', minHeight: 26, boxSizing: 'border-box', borderRadius: 3,
+      String.raw`              padding: '5px 10px', width: 92, flexShrink: 0, minHeight: 26, boxSizing: 'border-box', borderRadius: 3,
               fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.8,
               cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
               lineHeight: 1,
             }} title="Click to change band count">
-              <span className="tnum" style={{ display: 'inline-flex', alignItems: 'center', lineHeight: 1 }}>{settings.bandCount}</span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', lineHeight: 1 }}>bands ▾</span>`,
+              <span className="tnum" style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>{settings.bandCount + ' bands ▾'}</span>`,
       'band count label shares one vertical center');
     replaceSpectrSource(
       String.raw`                      background: info.N === n ? 'rgba(120,180,255,0.18)' : 'transparent',
@@ -2717,7 +2728,7 @@ window.PatternManager = PatternManager;`,
                       color: info.N === n ? '#fff' : 'rgba(255,255,255,0.7)',
                       padding: '5px 10px', borderRadius: 3,
                       fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: 0.8, cursor: 'pointer',
-                      minWidth: 40, minHeight: 26, boxSizing: 'border-box',
+                      width: 44, minWidth: 44, flexShrink: 0, minHeight: 26, boxSizing: 'border-box',
                       display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,`,
       'band dropdown matches settings chip metrics');
     replaceSpectrSource(
@@ -2748,7 +2759,7 @@ window.PatternManager = PatternManager;`,
       'status banner resizes smoothly');
     replaceSpectrSource(
       "      position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',",
-      "      position: 'absolute', top: 76, left: '50%', transform: 'translateX(-50%)',",
+      "      position: 'absolute', top: 84, left: '50%', transform: 'translateX(-50%)',",
       'status banner sits below the plot top line');
     replaceSpectrSource(
       String.raw`        borderRadius: 3, cursor: 'pointer',
@@ -2810,9 +2821,55 @@ window.PatternManager = PatternManager;`,
   };`,
       'drawing keeps live hover outside React reconciliation');
     replaceSpectrSource(
+      '      brush.paint(band);\n      pointerRef.current = brush;\n      return;',
+      '      brush.paint(band);\n      pointerRef.current = brush;\n      hoverRef.current = { band, x, y };\n      if (onStatus) onStatus(liveHoverLabel(hoverRef.current));\n      return;',
+      'mute brush publishes status on pointer down');
+    replaceSpectrSource(
+      '      didDrag: false,\n    };\n  };',
+      '      didDrag: false,\n    };\n    hoverRef.current = { band, x, y };\n    if (onStatus) onStatus(liveHoverLabel(hoverRef.current));\n  };',
+      'gain drag publishes status on pointer down');
+    replaceSpectrSource(
       '      (renderAllRef.current || renderAll)();',
       '      (renderAllRef.current || renderAll)();\n      updateLiveHoverStatus();',
       'live drawing status follows the paint clock');
+    replaceSpectrSource(
+      '  const viewRef = useRef({ ...initialView });\n  const view = viewRef.current;',
+      '  const viewRef = useRef({ ...initialView });\n  const wheelCommitRef = useRef(0);\n  const view = viewRef.current;',
+      'wheel zoom owns one deferred semantic commit');
+    replaceSpectrSource(
+      String.raw`    const anchor = view.lmin + (x - g.inner.x) / g.inner.w * (view.lmax - view.lmin);
+    let span = (view.lmax - view.lmin) * factor;
+    span = clamp(span, 0.1, Math.log10(2e4) - Math.log10(20));
+    const t = (anchor - view.lmin) / (view.lmax - view.lmin);`,
+      String.raw`    const liveView = viewRef.current;
+    const anchor = liveView.lmin + (x - g.inner.x) / g.inner.w * (liveView.lmax - liveView.lmin);
+    let span = (liveView.lmax - liveView.lmin) * factor;
+    span = clamp(span, 0.1, Math.log10(2e4) - Math.log10(20));
+    const t = (anchor - liveView.lmin) / (liveView.lmax - liveView.lmin);`,
+      'wheel zoom reads the live viewport');
+    replaceSpectrSource(
+      String.raw`    const delta = e.deltaY;
+    const factor = Math.exp(delta * 12e-4);
+    const liveView = viewRef.current;`,
+      String.raw`    const liveView = viewRef.current;
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+      const panFullMin = Math.log10(20), panFullMax = Math.log10(2e4);
+      const panFullSpan = panFullMax - panFullMin;
+      const span = liveView.lmax - liveView.lmin;
+      const shift = e.deltaX / g.inner.w * panFullSpan;
+      const lmin = clamp(liveView.lmin + shift, panFullMin, panFullMax - span);
+      commitLiveViewport({ lmin, lmax: lmin + span });
+      clearTimeout(wheelCommitRef.current);
+      wheelCommitRef.current = setTimeout(() => setReactView({ ...viewRef.current }), 80);
+      return;
+    }
+    const delta = e.deltaY;
+    const factor = Math.exp(delta * 12e-4);`,
+      'horizontal trackpad motion pans the minimap rigidly');
+    replaceSpectrSource(
+      '    setView({ lmin, lmax });\n  };\n  useEffect(() => {\n    if (!nativeHydrated) return;',
+      '    commitLiveViewport({ lmin, lmax });\n    clearTimeout(wheelCommitRef.current);\n    wheelCommitRef.current = setTimeout(() => setReactView({ ...viewRef.current }), 80);\n  };\n  useEffect(() => () => clearTimeout(wheelCommitRef.current), []);\n  useEffect(() => {\n    if (!nativeHydrated) return;',
+      'wheel zoom defers one semantic viewport snapshot');
     replaceSpectrSource(
       "    if (!hover || hover.mini) return;\n    const { x } = hover;",
       "    const currentHover = hoverRef.current;\n    if (!currentHover || currentHover.mini) return;\n    const { x } = currentHover;",

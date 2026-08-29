@@ -9164,20 +9164,19 @@
       ? metadata.text_bindings : []).filter(
         (binding) => binding.text !== "PRESETS \u25BE"
           && binding.text !== "SETTINGS"
-          && binding.text !== "\u00D7").map((binding) => {
-        // Band count is live state and the authored control now uses a flex gap
-        // instead of a captured leading space. Preserve the captured vertical
-        // line boxes while matching the current semantic text exactly.
+          && binding.text !== "\u00D7"
+          && binding.text !== "bands \u25BE"
+          && binding.text !== " bands \u25BE").map((binding) => {
+        // Band count is live state and now owns one non-wrapping text node.
+        // Merge the old number and suffix captures into one stable line box.
         if (binding.text === "32") {
           const node = materializedNodeAtPath(binding, values);
           const text = String(node?.textContent || "");
-          if (/^(32|40|48|56|64)$/.test(text)) return { ...binding, text };
-        }
-        if (binding.text === " bands \u25BE"
-            && binding.anonymous_text_index === 0) {
-          const { anonymous_text_index, ...rest } = binding;
-          return { ...rest, path: [...(binding.path || []),
-            { tag: "span", index: 1 }], text: "bands \u25BE" };
+          if (/^(32|40|48|56|64) bands \u25BE$/.test(text)) return {
+            ...binding, text, basis: { ...binding.basis, width: 73.03125 },
+            boxes: [{ left: 0, top: 3, width: 73.03125, height: 13,
+              start: 0, length: text.length }],
+          };
         }
         return binding;
       });

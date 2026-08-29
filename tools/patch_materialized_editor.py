@@ -551,6 +551,8 @@ EDITS = [
      '    gap: 4,\n'
      '    lineHeight: 1',
      '    padding: "5px 10px",\n'
+     '    width: 92,\n'
+     '    flexShrink: 0,\n'
      '    minHeight: 26,\n'
      '    boxSizing: "border-box",\n'
      '    borderRadius: 3,\n'
@@ -576,6 +578,18 @@ EDITS = [
      'React.createElement("span", { style: { display: "inline-flex", alignItems: "center", lineHeight: 1, marginLeft: 4 } }, "bands \\u25BE"))',
      'React.createElement("span", { style: { display: "inline-flex", alignItems: "center", lineHeight: 1, paddingLeft: 4 } }, "bands \\u25BE"))'),
 
+    ('band trigger uses one deterministic native label',
+     'React.createElement("span", { className: "tnum", style: { display: "inline-flex", alignItems: "center", lineHeight: 1 } }, settings.bandCount), /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", lineHeight: 1, paddingLeft: 4 } }, "bands \\u25BE"))',
+     'React.createElement("span", { className: "tnum", style: { lineHeight: 1, whiteSpace: "nowrap" } }, settings.bandCount + " bands \\u25BE"))'),
+
+    ('band trigger reserves deterministic native width',
+     '    padding: "5px 10px",\n'
+     '    minHeight: 26,',
+     '    padding: "5px 10px",\n'
+     '    width: 92,\n'
+     '    flexShrink: 0,\n'
+     '    minHeight: 26,'),
+
     ('band dropdown matches settings chip metrics',
      '        background: info.N === n ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.025)",\n'
      '        border: "1px solid " + (info.N === n ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.06)"),\n'
@@ -595,13 +609,23 @@ EDITS = [
      '        fontSize: 10,\n'
      '        letterSpacing: 0.8,\n'
      '        cursor: "pointer",\n'
-     '        minWidth: 40,\n'
+     '        width: 44,\n'
+     '        minWidth: 44,\n'
+     '        flexShrink: 0,\n'
      '        minHeight: 26,\n'
      '        boxSizing: "border-box",\n'
      '        display: "inline-flex",\n'
      '        alignItems: "center",\n'
      '        justifyContent: "center",\n'
      '        lineHeight: 1'),
+
+    ('band dropdown options reserve deterministic native widths',
+     '        minWidth: 40,\n'
+     '        minHeight: 26,',
+     '        width: 44,\n'
+     '        minWidth: 44,\n'
+     '        flexShrink: 0,\n'
+     '        minHeight: 26,'),
 
     ('dropdown items use a consistent native-friendly surface',
      'const menuItem = {\n'
@@ -659,7 +683,11 @@ EDITS = [
 
     ('status banner sits below the plot top line',
      '        top: 60,',
-     '        top: 76,'),
+     '        top: 84,'),
+
+    ('status banner clears the ruler line',
+     '        top: 76,',
+     '        top: 84,'),
 
     ('bottom rail controls center glyphs text and chevrons',
      '        borderRadius: 3,\n'
@@ -831,6 +859,21 @@ EDITS = [
      '      status,\n'
      '      selectedPatternName,\n'
      '      dspMode,'),
+
+    ('chrome can explain spectral resolution',
+     'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode,',
+     'function Chrome({ settings, setSettings, bankRef, info, status, onStatus, selectedPatternName, dspMode,'),
+
+    ('resolution explanation reaches unified status',
+     '      status,\n'
+     '      selectedPatternName,',
+     '      status,\n'
+     '      onStatus: fireStatus,\n'
+     '      selectedPatternName,'),
+
+    ('resolution readout explains itself',
+     'React.createElement("span", { className: "tnum", title: "Spectral bands represented by distinct FFT bins", style: {',
+     'React.createElement("span", { "data-spectr-resolution": true, className: "tnum", title: "Distinct FFT-bin coverage; all bands remain editable", "aria-label": "Spectral resolution", onPointerEnter: () => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + "/" + resolution.active : "\\u2014/\\u2014"} DISTINCT \\xB7 ALL BANDS EDITABLE`), onClick: () => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + "/" + resolution.active : "\\u2014/\\u2014"} DISTINCT \\xB7 ALL BANDS EDITABLE`), style: {'),
 
     ('rail buttons accept semantic popup kind',
      'function RailBtn({ children, onClick, active }) {\n'
@@ -1126,6 +1169,7 @@ EDITS = [
      '  const initialView = { lmin: Math.log10(20), lmax: Math.log10(2e4) };\n'
      '  const [reactView, setReactView] = useState(initialView);\n'
      '  const viewRef = useRef({ ...initialView });\n'
+     '  const wheelCommitRef = useRef(0);\n'
      '  const view = viewRef.current;\n'
      '  const setView = (next) => {\n'
      '    const resolved = typeof next === "function" ? next(viewRef.current) : next;\n'
@@ -1162,6 +1206,56 @@ EDITS = [
      '      let lmin = clamp(p.viewStart.lmin + shift, fullMin, fullMax - span);\n'
      '      commitLiveViewport({ lmin, lmax: lmin + span });\n'
      '      return;'),
+
+    ('wheel zoom reads and writes the live viewport lane',
+     '    const anchor = view.lmin + (x - g.inner.x) / g.inner.w * (view.lmax - view.lmin);\n'
+     '    let span = (view.lmax - view.lmin) * factor;\n'
+     '    span = clamp(span, 0.1, Math.log10(2e4) - Math.log10(20));\n'
+     '    const t = (anchor - view.lmin) / (view.lmax - view.lmin);',
+     '    const liveView = viewRef.current;\n'
+     '    const anchor = liveView.lmin + (x - g.inner.x) / g.inner.w * (liveView.lmax - liveView.lmin);\n'
+     '    let span = (liveView.lmax - liveView.lmin) * factor;\n'
+     '    span = clamp(span, 0.1, Math.log10(2e4) - Math.log10(20));\n'
+     '    const t = (anchor - liveView.lmin) / (liveView.lmax - liveView.lmin);'),
+
+    ('horizontal trackpad motion pans the minimap rigidly',
+     '    const delta = e.deltaY;\n'
+     '    const factor = Math.exp(delta * 12e-4);\n'
+     '    const liveView = viewRef.current;',
+     '    const liveView = viewRef.current;\n'
+     '    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {\n'
+     '      const panFullMin = Math.log10(20), panFullMax = Math.log10(2e4);\n'
+     '      const panFullSpan = panFullMax - panFullMin;\n'
+     '      const span = liveView.lmax - liveView.lmin;\n'
+     '      const shift = e.deltaX / g.inner.w * panFullSpan;\n'
+     '      const lmin = clamp(liveView.lmin + shift, panFullMin, panFullMax - span);\n'
+     '      commitLiveViewport({ lmin, lmax: lmin + span });\n'
+     '      clearTimeout(wheelCommitRef.current);\n'
+     '      wheelCommitRef.current = setTimeout(() => setReactView({ ...viewRef.current }), 80);\n'
+     '      return;\n'
+     '    }\n'
+     '    const delta = e.deltaY;\n'
+     '    const factor = Math.exp(delta * 12e-4);'),
+
+    ('wheel zoom owns one deferred semantic commit',
+     '  const viewRef = useRef({ ...initialView });\n'
+     '  const view = viewRef.current;',
+     '  const viewRef = useRef({ ...initialView });\n'
+     '  const wheelCommitRef = useRef(0);\n'
+     '  const view = viewRef.current;'),
+
+    ('wheel zoom defers one semantic viewport snapshot',
+     '    setView({ lmin, lmax });\n'
+     '  };\n'
+     '  useEffect(() => {\n'
+     '    if (!nativeHydrated) return;',
+     '    commitLiveViewport({ lmin, lmax });\n'
+     '    clearTimeout(wheelCommitRef.current);\n'
+     '    wheelCommitRef.current = setTimeout(() => setReactView({ ...viewRef.current }), 80);\n'
+     '  };\n'
+     '  useEffect(() => () => clearTimeout(wheelCommitRef.current), []);\n'
+     '  useEffect(() => {\n'
+     '    if (!nativeHydrated) return;'),
 
     ('minimap release publishes one final React viewport',
      '    if (p && (p.mode === "minimap-drag" || p.mode === "minimap-resize"))\n'
@@ -1230,6 +1324,26 @@ EDITS = [
      '      if (onStatus) onStatus(liveHoverLabel(hoverRef.current));\n'
      '    }\n'
      '    if (!p || !p.mode) {'),
+
+    ('mute brush publishes status on pointer down',
+     '      brush.paint(band);\n'
+     '      pointerRef.current = brush;\n'
+     '      return;',
+     '      brush.paint(band);\n'
+     '      pointerRef.current = brush;\n'
+     '      hoverRef.current = { band, x, y };\n'
+     '      if (onStatus) onStatus(liveHoverLabel(hoverRef.current));\n'
+     '      return;'),
+
+    ('gain drag publishes status on pointer down',
+     '      didDrag: false\n'
+     '    };\n'
+     '  };',
+     '      didDrag: false\n'
+     '    };\n'
+     '    hoverRef.current = { band, x, y };\n'
+     '    if (onStatus) onStatus(liveHoverLabel(hoverRef.current));\n'
+     '  };'),
 
     ('live status uses the materialized text surface only',
      '    const shell = document.querySelector("[data-spectr-status-shell]");\n'
@@ -1632,6 +1746,12 @@ SUPERSEDED_SENTINELS = {
         'paddingLeft: 4',
     'band trigger suffix uses native-supported spacing':
         'paddingLeft: 4',
+    'band trigger suffix spacing survives materialization':
+        'settings.bandCount + " bands \\u25BE"',
+    'chrome receives selected preset name':
+        'onStatus, selectedPatternName',
+    'selected preset name reaches chrome':
+        'onStatus: fireStatus',
     'band dropdown inactive items retain a surface':
         'minWidth: 40',
     'settings exposes status info toggle':
@@ -1654,6 +1774,8 @@ SUPERSEDED_SENTINELS = {
         'const currentHover = hoverRef.current;',
     'hover guide reads the pointer-owned ref':
         'const currentHover = hoverRef.current;',
+    'wheel zoom reads and writes the live viewport lane':
+        'const anchor = liveView.lmin +',
     'minimap hover and drag cursors':
         'updatePointerHover({ mini: mm, x, y, band: -1 });',
     'minimap release restores grab cursor':
@@ -1780,24 +1902,23 @@ RUNTIME_EDITS = [
      'binding.text !== "\\u00D7"'),
     ('live band count keeps captured vertical text alignment',
      '          && binding.text !== "\\u00D7");',
-     '          && binding.text !== "\\u00D7").map((binding) => {\n'
-     '        // Band count is live state and the authored control now uses a flex gap\n'
-     '        // instead of a captured leading space. Preserve the captured vertical\n'
-     '        // line boxes while matching the current semantic text exactly.\n'
+     '          && binding.text !== "\\u00D7"\n'
+     '          && binding.text !== "bands \\u25BE"\n'
+     '          && binding.text !== " bands \\u25BE").map((binding) => {\n'
+     '        // Band count is live state and now owns one non-wrapping text node.\n'
+     '        // Merge the old number and suffix captures into one stable line box.\n'
      '        if (binding.text === "32") {\n'
      '          const node = materializedNodeAtPath(binding, values);\n'
      '          const text = String(node?.textContent || "");\n'
-     '          if (/^(32|40|48|56|64)$/.test(text)) return { ...binding, text };\n'
-     '        }\n'
-     '        if (binding.text === " bands \\u25BE"\n'
-     '            && binding.anonymous_text_index === 0) {\n'
-     '          const { anonymous_text_index, ...rest } = binding;\n'
-     '          return { ...rest, path: [...(binding.path || []),\n'
-     '            { tag: "span", index: 1 }], text: "bands \\u25BE" };\n'
+     '          if (/^(32|40|48|56|64) bands \\u25BE$/.test(text)) return {\n'
+     '            ...binding, text, basis: { ...binding.basis, width: 73.03125 },\n'
+     '            boxes: [{ left: 0, top: 3, width: 73.03125, height: 13,\n'
+     '              start: 0, length: text.length }],\n'
+     '          };\n'
      '        }\n'
      '        return binding;\n'
      '      });',
-     'Band count is live state'),
+     'Merge the old number and suffix captures into one stable line box.'),
     ('materialized text mismatches name the stale binding',
      '      text_content_mismatch: 0,\n'
      '      text_target_miss: 0,',
