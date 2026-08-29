@@ -1704,6 +1704,9 @@ SUPERSEDED_SENTINELS = {
 # materialization-only corrections explicit rather than teaching HTML edits to
 # rewrite unrelated top-level document data.
 DOCUMENT_EDITS = [
+    ('band-count suffix binding follows its live child span',
+     '{"tag":"button","index":0}],"anonymous_text_index":0,"text":" bands ▾"',
+     '{"tag":"button","index":0},{"tag":"span","index":1}],"text":"bands ▾"'),
     ('selected preset binding reflects the deterministic default',
      '{"index":14,"anchor":"#root","path":[{"tag":"div","index":0},{"tag":"div","index":3},{"tag":"div","index":6},{"tag":"span","index":0},{"tag":"button","index":0},{"tag":"span","index":1}],"text":"PRESETS ▾","basis":{"width":63.03125,"resolved_face":"JetBrainsMono-Regular","resolved_faces":[{"family_name":"Menlo","post_script_name":"Menlo-Regular","is_custom_font":false,"glyph_count":1},{"family_name":"JetBrains Mono","post_script_name":"JetBrainsMono-Regular","is_custom_font":true,"glyph_count":8}],"requested":{"font_family":"\\\"JetBrains Mono\\\", ui-monospace, monospace","font_size":10,"font_weight":400,"font_slant":0,"letter_spacing":1}},"boxes":[{"left":0,"top":0,"width":63.03125,"height":13,"start":0,"length":9}]}',
      '{"index":14,"anchor":"#root","path":[{"tag":"div","index":0},{"tag":"div","index":3},{"tag":"div","index":6},{"tag":"span","index":0},{"tag":"button","index":0},{"tag":"span","index":1}],"text":"FLAT ▾","basis":{"width":42.04257793060037,"resolved_face":"JetBrainsMono-Regular","resolved_faces":[{"family_name":"Menlo","post_script_name":"Menlo-Regular","is_custom_font":false,"glyph_count":1},{"family_name":"JetBrains Mono","post_script_name":"JetBrainsMono-Regular","is_custom_font":true,"glyph_count":5}],"requested":{"font_family":"\\\"JetBrains Mono\\\", ui-monospace, monospace","font_size":10,"font_weight":400,"font_slant":0,"letter_spacing":1}},"boxes":[{"left":0,"top":0,"width":42.04257793060037,"height":13.017578125000114,"start":0,"length":6}]}'),
@@ -1763,6 +1766,51 @@ RUNTIME_EDITS = [
      '          && binding.text !== "SETTINGS"\n'
      '          && binding.text !== "\\u00D7");',
      'binding.text !== "\\u00D7"'),
+    ('live band count keeps captured vertical text alignment',
+     '          && binding.text !== "\\u00D7");',
+     '          && binding.text !== "\\u00D7").map((binding) => {\n'
+     '        // Band count is live state and the authored control now uses a flex gap\n'
+     '        // instead of a captured leading space. Preserve the captured vertical\n'
+     '        // line boxes while matching the current semantic text exactly.\n'
+     '        if (binding.text === "32") {\n'
+     '          const node = materializedNodeAtPath(binding, values);\n'
+     '          const text = String(node?.textContent || "");\n'
+     '          if (/^(32|40|48|56|64)$/.test(text)) return { ...binding, text };\n'
+     '        }\n'
+     '        if (binding.text === " bands \\u25BE"\n'
+     '            && binding.anonymous_text_index === 0) {\n'
+     '          const { anonymous_text_index, ...rest } = binding;\n'
+     '          return { ...rest, path: [...(binding.path || []),\n'
+     '            { tag: "span", index: 1 }], text: "bands \\u25BE" };\n'
+     '        }\n'
+     '        return binding;\n'
+     '      });',
+     'Band count is live state'),
+    ('materialized text mismatches name the stale binding',
+     '      text_content_mismatch: 0,\n'
+     '      text_target_miss: 0,',
+     '      text_content_mismatch: 0,\n'
+     '      text_mismatches: [],\n'
+     '      text_target_miss: 0,',
+     'text_mismatches: []'),
+    ('anonymous text mismatch diagnostics preserve expected and actual text',
+     '        if (String(anonymousTarget.text || "") !== binding.text) {\n'
+     '          if (optional) ++diagnostics.text_optional_miss;',
+     '        if (String(anonymousTarget.text || "") !== binding.text) {\n'
+     '          diagnostics.text_mismatches.push({ index: binding.index,\n'
+     '            expected: binding.text, actual: String(anonymousTarget.text || ""),\n'
+     '            anonymous: true });\n'
+     '          if (optional) ++diagnostics.text_optional_miss;',
+     'anonymous: true'),
+    ('direct text mismatch diagnostics preserve expected and actual text',
+     '      } else if (String(node.textContent || "") !== binding.text) {\n'
+     '        if (optional) ++diagnostics.text_optional_miss;',
+     '      } else if (String(node.textContent || "") !== binding.text) {\n'
+     '        diagnostics.text_mismatches.push({ index: binding.index,\n'
+     '          expected: binding.text, actual: String(node.textContent || ""),\n'
+     '          anonymous: false });\n'
+     '        if (optional) ++diagnostics.text_optional_miss;',
+     'anonymous: false'),
     ('settings switch text is centered independently of the stale close glyph',
      '    g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;\n'
      '    return applied;',

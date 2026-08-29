@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
 constexpr std::string_view kAdapterDigest =
-        "20117024a82a45472744e97c6789ec420ecd57d8cd578bc7928c5ac5e8e98dd2";
+        "be530437fac55f44ca401cb31bc5cc2ebc970a202597e4791107b1905fc4a103";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -188,7 +188,7 @@ constexpr std::array kResizeMarkers{
     ContractMarker{"live-viewport-ref", "const [reactView, setReactView] = useState(initialView);"},
     ContractMarker{"live-left-right-resize", "commitLiveViewport({ lmin, lmax });"},
     ContractMarker{"live-center-pan", "commitLiveViewport({ lmin, lmax: lmin + span });"},
-    ContractMarker{"final-viewport-snapshot", "setView({ ...viewRef.current });\n      wrapRef.current.style.cursor = p.mode === 'minimap-resize' ? 'ew-resize' : 'grab';"},
+    ContractMarker{"final-viewport-snapshot", "setView({ ...viewRef.current });\n      wrapRef.current.style.cursor = p.mode === 'minimap-resize' ? 'col-resize' : 'grab';"},
     ContractMarker{"viewport-oracle-snapshot", "reactView: { ...reactView }"},
 };
 
@@ -292,10 +292,12 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("nativeAnalyzerFrame = null") != adapter.npos);
     CHECK(adapter.find("rejected malformed native analyzer frame") != adapter.npos);
     CHECK(adapter.find("data-spectr-menu-root") != adapter.npos);
-    // Native popup activation belongs to Pulp's root-scoped semantic popup
-    // dispatcher. The app contributes semantic triggers/options only and must
-    // not reintroduce the old document-global keyboard click service.
-    CHECK(adapter.find("document.activeElement.click()") == adapter.npos);
+    // Browser previews do not run through Pulp's native semantic popup
+    // dispatcher, so the authored adapter retains a browser-only fallback.
+    // The materialization patcher removes it from the shipping native document,
+    // whose popupKind assertions below pin native Pulp ownership.
+    CHECK(count_occurrences(adapter, "document.activeElement.click()") == 1);
+    CHECK(adapter.find("Browser previews need this contract locally") != adapter.npos);
     CHECK(adapter.find("data-spectr-menu-trigger aria-haspopup=\"listbox\"")
           != adapter.npos);
     CHECK(adapter.find("data-spectr-menu-options data-spectr-overlay=\"true\"")
@@ -488,12 +490,10 @@ TEST_CASE("import adapter contract detects native viewport resize mutations") {
 
 #ifdef SPECTR_NATIVE_EDITOR
 
-// The shipping editor is native-ui/materialized/materialized-document.runtime.json,
-// a generated artifact that no recipe in this repo reproduces
-// (danielraffel/spectr#48), so editor fixes have to be hand-applied to it as
-// well as to resources/editor.html. Nothing else in the build notices when the
-// two drift, and a fix that lands only in the source ships as no fix at all.
-// These assert the emitted document, not the source that should have produced it.
+// The shipping editor is native-ui/materialized/materialized-document.runtime.json.
+// tools/patch_materialized_editor.py is its idempotent compatibility recipe;
+// these checks assert the emitted document as a separate shipping surface so a
+// source-only fix cannot be mistaken for a native fix.
 TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     const std::string document{
         reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
@@ -512,31 +512,30 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 
     SECTION("hover feedback uses the unified status banner") {
-        CHECK(count_occurrences(
-                  document,
-                  "const hoverBand = hover && !hover.mini ? hover.band : -1;")
+        CHECK(count_occurrences(document, "const hoverRef = useRef(null);") == 1);
+        CHECK(count_occurrences(document, "const currentHover = hoverRef.current;") == 1);
+        CHECK(count_occurrences(document,
+                                "if (!currentHover || currentHover.mini) return;")
               == 1);
-        CHECK(count_occurrences(
-                  document,
-                  "const keepAlive = setInterval(() => onStatus(label), 1e3);")
-              == 1);
-        CHECK(count_occurrences(document, "if (!hover || hover.mini) return;") == 1);
+        CHECK(count_occurrences(document, "updateLiveHoverStatus();") == 1);
         CHECK(count_occurrences(document, "const tw = ctx.measureText(label).width + 18;") == 0);
     }
 
     SECTION("the status banner replaces one message at a time") {
-        CHECK(count_occurrences(document, "shownRef.current !== display") == 1);
+        CHECK(count_occurrences(document, "const generationRef = useRefChrome(0);") == 1);
         CHECK(count_occurrences(
                   document,
                   "const t = setTimeout(() => {\\n      setVisible(false);\\n"
                   "      setText(\\\"\\\");\\n    }, 1400);")
               == 0);
-        CHECK(document.find("const generationRef = useRefChrome(0);") != document.npos);
         CHECK(document.find("if (generation !== generationRef.current) return;")
               != document.npos);
-        CHECK(document.find("const timer = hide(120);") != document.npos);
+        CHECK(document.find("const timer2 = hide(120);") != document.npos);
         CHECK(document.find(
-                  "requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));")
+                  "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2000 : 1400;")
+              != document.npos);
+        CHECK(document.find(
+                  "requestAnimationFrame(() => window.dispatchEvent(new Event(\\\"resize\\\")));")
               != document.npos);
         CHECK(document.find("shell.style.width = Math.max") == document.npos);
     }
@@ -572,18 +571,20 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
               == 1);
         CHECK(count_occurrences(
                   document,
-                  "display: \\\"inline-flex\\\",\\n"
-                  "    alignItems: \\\"center\\\",\\n"
-                  "    gap: 4,\\n"
-                  "    lineHeight: 1")
+                  "minWidth: 40,\\n"
+                  "        minHeight: 26,\\n"
+                  "        boxSizing: \\\"border-box\\\",\\n"
+                  "        display: \\\"inline-flex\\\",\\n"
+                  "        alignItems: \\\"center\\\",\\n"
+                  "        justifyContent: \\\"center\\\",\\n"
+                  "        lineHeight: 1")
               == 1);
     }
 
     SECTION("minimap cursor feedback distinguishes idle drag and band editing") {
-        CHECK(count_occurrences(document, "? \\\"ew-resize\\\"") == 1);
         CHECK(count_occurrences(
                   document,
-                  "wrapRef.current.style.cursor = \\\"grabbing\\\";")
+                  "wrapRef.current.style.cursor = mm === \\\"left\\\" || mm === \\\"right\\\" ? \\\"col-resize\\\" : \\\"grabbing\\\";")
               == 1);
         CHECK(count_occurrences(
                   document,
@@ -591,7 +592,7 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
               == 1);
         CHECK(count_occurrences(
                   document,
-                  "mm === \\\"left\\\" || mm === \\\"right\\\"\n        ? \\\"ew-resize\\\"")
+                  "mm === \\\"left\\\" || mm === \\\"right\\\"\\n        ? \\\"col-resize\\\"")
               == 1);
         CHECK(document.find("for (let i = 1; i < N; i++)") != document.npos);
         CHECK(document.find("for (let i = 0; i <= N; i++)") == document.npos);
@@ -692,30 +693,33 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"edit", R"(spectrPublishMode(\"edit\")", 3},
         ContractMarker{"analyzer", R"(spectrPublishMode(\"analyzer\")", 2},
         ContractMarker{"visualization", R"(spectrPublishMode(\"visualization\")"},
-        ContractMarker{"document-scoped-menu-trigger", "const triggerHost = document.querySelector(rootSelector + \\\" [data-spectr-menu-trigger]\\\");"},
-        ContractMarker{"document-scoped-menu-options", "const options = Array.from(document.querySelectorAll(\\n        rootSelector + \\\" [data-spectr-menu-options] button:not([disabled])\\\"));"},
-        ContractMarker{"unified-hover", "const hoverBand = hover && !hover.mini ? hover.band : -1;"},
-        ContractMarker{"persistent-hover", "const keepAlive = setInterval(() => onStatus(label), 1e3);"},
-        ContractMarker{"guide-only-hover", "if (!hover || hover.mini) return;"},
+        ContractMarker{"native-listbox-popup-ownership", "popupKind: \\\"listbox\\\"", 2},
+        ContractMarker{"native-menu-popup-ownership", "popupKind: \\\"menu\\\"", 2},
+        ContractMarker{"pointer-owned-hover", "const currentHover = hoverRef.current;"},
+        ContractMarker{"live-hover-publication", "updateLiveHoverStatus();"},
+        ContractMarker{"guide-only-hover", "if (!currentHover || currentHover.mini) return;"},
+        ContractMarker{"generation-safe-status", "const generationRef = useRefChrome(0);"},
+        ContractMarker{"inactivity-status-clear", "const timer2 = hide(120);"},
+        ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2000 : 1400;"},
         ContractMarker{"content-sized-banner", "width: Math.max(96, Math.min(520, text.length * 8 + 28)),"},
         ContractMarker{"symmetric-banner-padding", "padding: \\\"0 14px\\\""},
         ContractMarker{"smooth-banner-resize", "transition: \\\"width 0.18s ease, opacity 0.15s ease\\\""},
         ContractMarker{"aligned-edge-label", "ctx.font = \\\"10px JetBrains Mono, monospace\\\";\\n        ctx.textAlign = \\\"center\\\";\\n        ctx.textBaseline = \\\"middle\\\";"},
         ContractMarker{"dropdown-surface", "background: \\\"rgba(255,255,255,0.025)\\\",\\n  border: \\\"1px solid transparent\\\""},
-        ContractMarker{"aligned-band-count", "display: \\\"inline-flex\\\",\\n    alignItems: \\\"center\\\",\\n    gap: 4,\\n    lineHeight: 1"},
+        ContractMarker{"aligned-band-count", "minWidth: 40,\\n        minHeight: 26,\\n        boxSizing: \\\"border-box\\\",\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
         ContractMarker{"banner-below-plot-line", "top: 76,"},
         ContractMarker{"centered-rail-button", "height: 26,\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
         ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 3},
         ContractMarker{"aligned-band-binding", "\"letter_spacing\":0.5}},\"boxes\":[{\"left\":0,\"top\":3,\"width\":13,\"height\":13,\"start\":0,\"length\":2}]},{\"index\":9"},
-        ContractMarker{"band-dropdown-surface", "background: info.N === n ? \\\"rgba(120,180,255,0.18)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
+        ContractMarker{"band-dropdown-surface", "background: info.N === n ? \\\"rgba(120,180,255,0.18)\\\" : \\\"rgba(255,255,255,0.03)\\\","},
         ContractMarker{"edit-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.14)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"analyzer-dropdown-surface", "background: active ? \\\"rgba(255,255,255,0.08)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"settings-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.16)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
-        ContractMarker{"minimap-edge-resize-cursor", "mm === \\\"left\\\" || mm === \\\"right\\\"\n        ? \\\"ew-resize\\\""},
-        ContractMarker{"minimap-press-cursor", "wrapRef.current.style.cursor = \\\"grabbing\\\";"},
+        ContractMarker{"minimap-edge-resize-cursor", "mm === \\\"left\\\" || mm === \\\"right\\\"\\n        ? \\\"col-resize\\\""},
+        ContractMarker{"minimap-press-cursor", "wrapRef.current.style.cursor = mm === \\\"left\\\" || mm === \\\"right\\\" ? \\\"col-resize\\\" : \\\"grabbing\\\";"},
         ContractMarker{"band-crosshair-cursor", "wrapRef.current.style.cursor = \\\"crosshair\\\";"},
         ContractMarker{"status-info-toggle", "data-spectr-status-info-toggle"},
-        ContractMarker{"status-info-suppression", "settings.statusInfo === false"},
+        ContractMarker{"status-info-suppression", "settings.statusInfo === false", 3},
         ContractMarker{"selected-preset-label", "data-spectr-selected-preset"},
     };
     const auto errors = [&](std::string_view candidate) {
@@ -725,7 +729,10 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
                 result.emplace_back(marker.label);
         return result;
     };
-    CHECK(errors(document).empty());
+    for (const auto& marker : markers) {
+        INFO(marker.label);
+        CHECK(count_occurrences(document, marker.text) == marker.expected_count);
+    }
     for (const auto& marker : markers) {
         INFO(marker.label);
         auto mutated = document;

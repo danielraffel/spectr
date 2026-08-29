@@ -843,8 +843,9 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         " && s.authored_skin === true; })()",
         "settings panel did not keep its authored geometry under the pin");
     capture(rig, directory, "minimum-settings", 792, 516);
-    const auto* settings_title = find_label(
-        *rig.root, "SETTINGS ×");
+    // Title and close action are separate native targets so the close glyph has
+    // its own hover/pressed hit state without reshaping the heading text.
+    const auto* settings_title = find_label(*rig.root, "SETTINGS");
     REQUIRE(settings_title != nullptr);
     auto* settings_scroll = const_cast<View*>(
         static_cast<const View*>(settings_title));

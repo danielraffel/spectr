@@ -9164,7 +9164,23 @@
       ? metadata.text_bindings : []).filter(
         (binding) => binding.text !== "PRESETS \u25BE"
           && binding.text !== "SETTINGS"
-          && binding.text !== "\u00D7");
+          && binding.text !== "\u00D7").map((binding) => {
+        // Band count is live state and the authored control now uses a flex gap
+        // instead of a captured leading space. Preserve the captured vertical
+        // line boxes while matching the current semantic text exactly.
+        if (binding.text === "32") {
+          const node = materializedNodeAtPath(binding, values);
+          const text = String(node?.textContent || "");
+          if (/^(32|40|48|56|64)$/.test(text)) return { ...binding, text };
+        }
+        if (binding.text === " bands \u25BE"
+            && binding.anonymous_text_index === 0) {
+          const { anonymous_text_index, ...rest } = binding;
+          return { ...rest, path: [...(binding.path || []),
+            { tag: "span", index: 1 }], text: "bands \u25BE" };
+        }
+        return binding;
+      });
     const activePaintBindings = Array.isArray(metadata && metadata.paint_bindings) ? metadata.paint_bindings : [];
     let applied = 0;
     const diagnostics = {
@@ -9176,6 +9192,7 @@
       text_applied: 0,
       text_node_miss: 0,
       text_content_mismatch: 0,
+      text_mismatches: [],
       text_target_miss: 0,
       text_optional_expected: activeTextBindings.filter((binding) => binding.runtime_optional).length,
       text_optional_applied: 0,
@@ -9287,6 +9304,9 @@
       const anonymousTarget = binding.anonymous_text_index === void 0 ? null : anonymousTargets[binding.anonymous_text_index];
       if (anonymousTarget) {
         if (String(anonymousTarget.text || "") !== binding.text) {
+          diagnostics.text_mismatches.push({ index: binding.index,
+            expected: binding.text, actual: String(anonymousTarget.text || ""),
+            anonymous: true });
           if (optional) ++diagnostics.text_optional_miss;
           else ++diagnostics.text_content_mismatch;
           continue;
@@ -9300,6 +9320,9 @@
           g5.setFlex(String(anonymousTarget.id), "height", maxBottom);
         }
       } else if (String(node.textContent || "") !== binding.text) {
+        diagnostics.text_mismatches.push({ index: binding.index,
+          expected: binding.text, actual: String(node.textContent || ""),
+          anonymous: false });
         if (optional) ++diagnostics.text_optional_miss;
         else ++diagnostics.text_content_mismatch;
         continue;
