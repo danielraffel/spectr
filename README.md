@@ -40,20 +40,25 @@ See [`planning/`](planning/) for the full design package:
 
 ## Building
 
-Requires a Pulp SDK with WebView and AU/VST3/CLAP/Standalone support. A local
-Pulp checkout can produce the immutable development SDK used by Forge-style
-consumers:
+Requires a Pulp SDK with the dedicated native scripted Skia/Dawn view target
+and AU/VST3/CLAP/Standalone support. A local Pulp checkout can produce the
+immutable development SDK used by Forge-style consumers:
 
 ```bash
 Pulp_DIR="$(pulp sdk install --local --profile forge-dev --print-path)/lib/cmake/Pulp"
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPulp_DIR="$Pulp_DIR"
+Pulp_SHA="$(git -C /path/to/exact/pulp-worktree rev-parse HEAD)"
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DPulp_DIR="$Pulp_DIR" \
+  -DSPECTR_EXPECTED_PULP_SDK_SHA="$Pulp_SHA"
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
 The forge profile validates WebView provenance and normalizes every installed
-static archive to arm64. Release/distribution builds should use a release SDK,
-not the development profile.
+static archive to arm64. The expected-SHA gate rejects a compatible but older
+or substituted SDK before Spectr compiles. Release/distribution builds should
+use a provenance-marked, distribution-eligible release SDK from the same exact
+accepted Pulp commit, not the development profile.
 
 ### Spectral build profiles
 

@@ -10,6 +10,7 @@ OUT="${OUT:-$ROOT/artifacts}"
 VER="${VER:-1.0.0}"
 PULP_ROOT="${PULP_ROOT:-$(cd "$ROOT/../pulp" 2>/dev/null && pwd || true)}"
 PULP_DIR_EXPECTED="${PULP_DIR_EXPECTED:-}"
+PULP_SDK_SHA_EXPECTED="${PULP_SDK_SHA_EXPECTED:-}"
 APP_ID="${APP_ID:-}"
 INST_ID="${INST_ID:-}"
 
@@ -20,6 +21,10 @@ INST_ID="${INST_ID:-}"
 [[ -n "$APP_ID" ]] || { echo "APP_ID must be a Developer ID Application identity hash" >&2; exit 2; }
 [[ -n "$INST_ID" ]] || { echo "INST_ID must be a Developer ID Installer identity hash" >&2; exit 2; }
 [[ -n "$PULP_DIR_EXPECTED" ]] || { echo "PULP_DIR_EXPECTED must name the exact accepted SDK CMake directory" >&2; exit 2; }
+[[ "$PULP_SDK_SHA_EXPECTED" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "PULP_SDK_SHA_EXPECTED must be the exact accepted 40-character Pulp source SHA" >&2
+  exit 2
+}
 
 CACHE="$BUILD/CMakeCache.txt"
 [[ -f "$CACHE" ]] || { echo "missing Spectr build cache: $CACHE" >&2; exit 2; }
@@ -38,6 +43,19 @@ PULP_DIR_ACTUAL="$(cd "$PULP_DIR_ACTUAL" 2>/dev/null && pwd || true)"
 PULP_DIR_EXPECTED="$(cd "$PULP_DIR_EXPECTED" 2>/dev/null && pwd || true)"
 [[ -n "$PULP_DIR_ACTUAL" && "$PULP_DIR_ACTUAL" == "$PULP_DIR_EXPECTED" ]] || {
   echo "build SDK mismatch: expected ${PULP_DIR_EXPECTED:-missing}, got ${PULP_DIR_ACTUAL:-missing}" >&2
+  exit 2
+}
+PULP_SDK_SHA_ACTUAL="$(sed -n 's/^PULP_SDK_SOURCE_GIT_SHA:INTERNAL=//p' "$CACHE" | tail -1)"
+[[ "$PULP_SDK_SHA_ACTUAL" == "$PULP_SDK_SHA_EXPECTED" ]] || {
+  echo "build SDK source mismatch: expected $PULP_SDK_SHA_EXPECTED, got ${PULP_SDK_SHA_ACTUAL:-missing}" >&2
+  exit 2
+}
+grep -q '^PULP_SDK_PROVENANCE_KIND:INTERNAL=release$' "$CACHE" || {
+  echo "Spectr installer inputs must use a provenance-marked release Pulp SDK" >&2
+  exit 2
+}
+grep -q '^PULP_SDK_DISTRIBUTION_ELIGIBLE:INTERNAL=TRUE$' "$CACHE" || {
+  echo "Spectr installer inputs must use a distribution-eligible Pulp SDK" >&2
   exit 2
 }
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]] || {

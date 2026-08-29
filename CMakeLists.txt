@@ -57,6 +57,28 @@ math(EXPR SPECTR_PROCESSING_LATENCY
 
 find_package(Pulp 0.801.0 REQUIRED)
 
+# Native cutover candidates are admitted by immutable SDK provenance, not by
+# whichever compatible Pulp package happens to be first on CMake's search path.
+# The shipping/acceptance command passes the exact merged Pulp SHA here; normal
+# source consumers may leave it empty when they do not need that stronger gate.
+set(SPECTR_EXPECTED_PULP_SDK_SHA "" CACHE STRING
+    "Exact source Git SHA required from the resolved Pulp SDK provenance")
+if(NOT SPECTR_EXPECTED_PULP_SDK_SHA STREQUAL "")
+    string(LENGTH "${SPECTR_EXPECTED_PULP_SDK_SHA}"
+           _spectr_expected_pulp_sdk_sha_length)
+    if(NOT SPECTR_EXPECTED_PULP_SDK_SHA MATCHES "^[0-9a-f]+$" OR
+       NOT _spectr_expected_pulp_sdk_sha_length EQUAL 40)
+        message(FATAL_ERROR
+            "SPECTR_EXPECTED_PULP_SDK_SHA must be one exact lowercase 40-character Git SHA")
+    endif()
+    if(NOT DEFINED PULP_SDK_SOURCE_GIT_SHA OR
+       NOT PULP_SDK_SOURCE_GIT_SHA STREQUAL SPECTR_EXPECTED_PULP_SDK_SHA)
+        message(FATAL_ERROR
+            "Resolved Pulp SDK source SHA is '${PULP_SDK_SOURCE_GIT_SHA}', expected "
+            "'${SPECTR_EXPECTED_PULP_SDK_SHA}'; refusing an older or substituted SDK")
+    endif()
+endif()
+
 # ── Core Spectr sources ────────────────────────────────────────────────
 #
 # Public headers live under include/spectr/.
@@ -107,23 +129,14 @@ set(SPECTR_NATIVE_SOURCES
     src/ui/native_editor.cpp
 )
 
-# Pulp's native/WebView target split landed after the pinned Spectr canvas SDK.
-# Newer SDKs expose the browser-free link floor as Pulp::view-native.  The
-# pinned 0.803.1 SDK exports the same native scripted stack through Pulp::view;
-# accept that compatibility surface only when its link interface does not pull
-# the WebView archive back into the graph.
+# Shipping Spectr is a native cutover consumer. Requiring the dedicated target
+# makes an older compatibility SDK fail during configure instead of silently
+# selecting a less capable rendering surface.
 if(TARGET Pulp::view-native)
     set(SPECTR_NATIVE_VIEW_TARGET Pulp::view-native)
-elseif(TARGET Pulp::view)
-    get_target_property(_spectr_view_links Pulp::view INTERFACE_LINK_LIBRARIES)
-    if("${_spectr_view_links}" MATCHES "view-webview")
-        message(FATAL_ERROR
-            "Pinned Pulp SDK has no Pulp::view-native target and Pulp::view "
-            "links WebView; refusing to contaminate the native Spectr lane")
-    endif()
-    set(SPECTR_NATIVE_VIEW_TARGET Pulp::view)
 else()
-    message(FATAL_ERROR "Pinned Pulp SDK exports no usable native view target")
+    message(FATAL_ERROR
+        "Resolved Pulp SDK exports no Pulp::view-native target; refusing the legacy view fallback")
 endif()
 
 set(SPECTR_NATIVE_ASSET_SOURCES

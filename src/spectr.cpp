@@ -476,15 +476,7 @@ void Spectr::process(
     // An explicit reset or unexpected seek is a hard DSP-history boundary.
     // Preserve the continuously hot WOLA/dry-delay history across an ordinary
     // host cycle wrap so looping does not emit a fresh startup gap.
-#if defined(SPECTR_NATIVE_N1_SDK_COMPAT)
-    // The installed 0.803.0 Forge SDK predates should_reset_stream_history().
-    // For this standalone-only N1 scaffold, honor explicit resets and avoid
-    // treating ordinary loop wraps as cold starts. The shipping format graph
-    // continues to compile against the newer, precise helper below.
-    const bool should_reset_stream_history = ctx.reset_requested;
-#else
     const bool should_reset_stream_history = ctx.should_reset_stream_history();
-#endif
     if (should_reset_stream_history) {
         if (processor_prepared_)
             mask_processor_.reset();
