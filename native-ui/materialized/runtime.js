@@ -8395,9 +8395,11 @@
       // metadata itself when it is not, so it stays unconditional.
       const stateHook = g4.__pulpRefreshMaterializedState__;
       if (typeof stateHook === "function") stateHook();
-      requestLayoutFlush(() => {
-        if (typeof g4.layout === "function") call2("layout");
-      });
+      if (shouldReapply) {
+        requestLayoutFlush(() => {
+          if (typeof g4.layout === "function") call2("layout");
+        });
+      }
     },
     // ── Misc required no-ops / passthroughs ────────────────────────
     // Return the DOM-shim Element when available so `ref.current.X`

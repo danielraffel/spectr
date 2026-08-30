@@ -2133,6 +2133,17 @@ RUNTIME_EDITS = [
      '      const newN = normalizeHostProps(type, newProps);\n'
      '      if (!isFixedTextOnlyUpdate(type, oldN, newN)) markMaterializedTreeDirty();',
      'if (!isFixedTextOnlyUpdate(type, oldN, newN)) markMaterializedTreeDirty()'),
+    ('state-only commits skip the explicit layout flush',
+     '      requestLayoutFlush(() => {\n'
+     '        if (typeof g4.layout === "function") call2("layout");\n'
+     '      });',
+     '      if (shouldReapply) {\n'
+     '        requestLayoutFlush(() => {\n'
+     '          if (typeof g4.layout === "function") call2("layout");\n'
+     '        });\n'
+     '      }',
+     'if (shouldReapply) {\n'
+     '        requestLayoutFlush(() => {'),
     ('imported HTML buttons inherit Pulp semantic hover',
      '            call2("setPointerEvents", textId, "none");\n'
      '            return;\n'
