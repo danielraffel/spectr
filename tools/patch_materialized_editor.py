@@ -347,7 +347,14 @@ EDITS = [
     # both axes. This lets Pulp update its text without scheduling layout.
     ('live status text has text-independent geometry',
      'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%" } }, text)',
-     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", width: "100%", height: "100%" } }, text)'),
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "26px" } }, text)'),
+
+    # The short-lived flex form made the span a container and its changing
+    # text an intrinsic child. Migrate it to one fixed-size Label so live copy
+    # changes repaint without scheduling a second root layout.
+    ('live status text is one fixed-size label',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", width: "100%", height: "100%" } }, text)',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "26px" } }, text)'),
 
     ('hover readout clears the status banner slot',
      '    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);',

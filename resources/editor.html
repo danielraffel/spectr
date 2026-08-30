@@ -2974,7 +2974,7 @@ window.PatternManager = PatternManager;`,
       'status clear is cancellable and repaints its old bounds');
     replaceSpectrSource(
       "    }}>{text}</div>",
-      "    }}><span data-spectr-status-text style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', width: '100%', height: '100%' }}>{text}</span></div>",
+      "    }}><span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', height: '100%', lineHeight: '26px' }}>{text}</span></div>",
       'status banner exposes a stable live text surface');
     replaceSpectrSource(
       'function StatusBanner({ message }) {',

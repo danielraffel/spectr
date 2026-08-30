@@ -561,9 +561,9 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     SECTION("live status text cannot invalidate layout when its content changes") {
         CHECK(count_occurrences(
                   document,
-                  "style: { display: \"flex\", alignItems: \"center\", "
-                  "justifyContent: \"center\", textAlign: \"center\", "
-                  "width: \"100%\", height: \"100%\" }")
+                  "style: { display: \\\"block\\\", textAlign: \\\"center\\\", "
+                  "width: \\\"100%\\\", height: \\\"100%\\\", "
+                  "lineHeight: \\\"26px\\\" }")
               == 1);
         CHECK(count_occurrences(
                   document,
