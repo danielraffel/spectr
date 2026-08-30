@@ -1075,6 +1075,58 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     })();)js", "spectr-native-minimap-react-budget");
     settle(rig.clock, 4);
 
+    // Pointer dragging the minimap window uses the same rigid endpoint clamp
+    // as horizontal trackpad panning. Repeated motion beyond an endpoint must
+    // be absorbed rather than moving the opposite trim or changing the span.
+    rig.bridge().load_script(R"js((() => {
+      const selector = '[data-spectr-filter-surface]';
+      const surface = document.querySelector(selector);
+      const hooks = globalThis.__spectrTestHooks;
+      const fullMin = Math.log10(20), fullMax = Math.log10(20000);
+      const fullSpan = fullMax - fullMin;
+      const innerX = 56, innerWidth = surface.clientWidth - 112;
+      const near = (a, b) => Math.abs(a - b) < 1e-9;
+      const fire = (type, x, y, pointerId, buttons) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+          clientX: x, clientY: y, pointerId, button: 0, buttons
+        })) throw new Error('minimap endpoint drag activation failed: ' + type);
+      };
+      const dragToEndpoint = (direction, pointerId) => {
+        const before = hooks.renderState();
+        const span = before.view.lmax - before.view.lmin;
+        const left = (before.view.lmin - fullMin) / fullSpan;
+        const right = (before.view.lmax - fullMin) / fullSpan;
+        const x = innerX + (left + right) * 0.5 * innerWidth;
+        const y = Array.from({length: surface.clientHeight}, (_, candidate) => candidate)
+          .find(candidate => hooks.minimapHit(x, candidate) === 'window');
+        if (!Number.isFinite(y))
+          throw new Error('minimap endpoint window hit missing');
+        const firstDelta = direction * 100000;
+        fire('pointerdown', x, y, pointerId, 1);
+        fire('pointermove', x + firstDelta, y, pointerId, 1);
+        const atEndpoint = hooks.renderState();
+        if ((direction > 0 && !near(atEndpoint.view.lmax, fullMax))
+            || (direction < 0 && !near(atEndpoint.view.lmin, fullMin))
+            || !near(atEndpoint.view.lmax - atEndpoint.view.lmin, span))
+          throw new Error('pointer drag changed viewport width at endpoint');
+        fire('pointermove', x + firstDelta * 2, y, pointerId, 1);
+        const held = hooks.renderState();
+        if (!near(held.view.lmin, atEndpoint.view.lmin)
+            || !near(held.view.lmax, atEndpoint.view.lmax))
+          throw new Error('pointer endpoint overscroll bounced opposite trim');
+        fire('pointerup', x + firstDelta * 2, y, pointerId, 0);
+        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+          globalThis.__pulpRuntimeSettle__(4);
+        const released = hooks.renderState();
+        if (!near(released.reactView.lmin, released.view.lmin)
+            || !near(released.reactView.lmax, released.view.lmax))
+          throw new Error('pointer endpoint release lost the final viewport');
+      };
+      dragToEndpoint(1, 77);
+      dragToEndpoint(-1, 78);
+    })();)js", "spectr-native-minimap-pointer-endpoint-invariant");
+    settle(rig.clock, 4);
+
     // Product-acceptance gate: a horizontal two-finger gesture pans the
     // selected minimap window as one rigid body. Endpoint overscroll must be
     // absorbed instead of resizing the opposite trim.
@@ -1475,6 +1527,16 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
                 + js_string(options + " button") + ")); "
                   "return document.querySelector('[data-pulp-popup-active=\"true\"]') === items[1]; })()",
             "ArrowDown did not move the authoritative dropdown highlight");
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::up),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 4);
+        require_runtime_contract(
+            rig,
+            "(() => { const items = Array.from(document.querySelectorAll("
+                + js_string(options + " button") + ")); "
+                  "return document.querySelector('[data-pulp-popup-active=\"true\"]') === items[0]; })()",
+            "ArrowUp did not move the authoritative dropdown highlight");
         const auto hover_point = runtime_string(
             rig,
             "(() => { const rect = Array.from(document.querySelectorAll("

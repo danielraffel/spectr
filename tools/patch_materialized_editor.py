@@ -356,6 +356,13 @@ EDITS = [
      'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", width: "100%", height: "100%" } }, text)',
      'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "26px" } }, text)'),
 
+    # The Pulp host can skip import-metadata replay only when the live Label
+    # explicitly declares that text cannot wrap and therefore cannot change
+    # its fixed geometry.
+    ('live status text declares fixed single-line geometry',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "26px" } }, text)',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "26px", whiteSpace: "nowrap" } }, text)'),
+
     ('hover readout clears the status banner slot',
      '    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);',
      '    const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);'),
@@ -2090,6 +2097,42 @@ DOCUMENT_EDITS = [
 ]
 
 RUNTIME_EDITS = [
+    ('fixed text-only commits do not dirty imported layout metadata',
+     '  ]);\n'
+     '  var PulpHostConfig = {',
+     '  ]);\n'
+     '  function hasFixedTextDimension(value) {\n'
+     '    if (typeof value === "number") return Number.isFinite(value) && value > 0;\n'
+     '    if (typeof value !== "string") return false;\n'
+     '    const match = value.trim().match(/^([0-9]+(?:\\.[0-9]+)?)(?:px|%)?$/);\n'
+     '    return match !== null && Number(match[1]) > 0;\n'
+     '  }\n'
+     '  function isFixedTextOnlyUpdate(type, oldProps, newProps) {\n'
+     '    if (!TEXT_BEARING.has(type)) return false;\n'
+     '    const oldText = asText(oldProps.children) ?? oldProps.text;\n'
+     '    const newText = asText(newProps.children) ?? newProps.text;\n'
+     '    if (oldText === newText || newText === void 0) return false;\n'
+     '    if (!hasFixedTextDimension(newProps.width) || !hasFixedTextDimension(newProps.height) || newProps.whiteSpace !== "nowrap") return false;\n'
+     '    const nonTextKeys = new Set([...Object.keys(oldProps), ...Object.keys(newProps)]);\n'
+     '    nonTextKeys.delete("children");\n'
+     '    nonTextKeys.delete("text");\n'
+     '    for (const key of nonTextKeys) {\n'
+     '      if (oldProps[key] !== newProps[key]) return false;\n'
+     '    }\n'
+     '    return true;\n'
+     '  }\n'
+     '  var PulpHostConfig = {',
+     'function isFixedTextOnlyUpdate(type, oldProps, newProps)'),
+    ('fixed text-only commits preserve the completed imported layout',
+     '    commitUpdate(instance, _updatePayload, type, oldProps, newProps, _internalHandle) {\n'
+     '      markMaterializedTreeDirty();\n'
+     '      const oldN = normalizeHostProps(type, oldProps);\n'
+     '      const newN = normalizeHostProps(type, newProps);',
+     '    commitUpdate(instance, _updatePayload, type, oldProps, newProps, _internalHandle) {\n'
+     '      const oldN = normalizeHostProps(type, oldProps);\n'
+     '      const newN = normalizeHostProps(type, newProps);\n'
+     '      if (!isFixedTextOnlyUpdate(type, oldN, newN)) markMaterializedTreeDirty();',
+     'if (!isFixedTextOnlyUpdate(type, oldN, newN)) markMaterializedTreeDirty()'),
     ('imported HTML buttons inherit Pulp semantic hover',
      '            call2("setPointerEvents", textId, "none");\n'
      '            return;\n'
@@ -2818,6 +2861,7 @@ def main():
     raw = open(PATH, encoding='utf-8').read()
     changed = False
     post_checks = []
+    later_patch_points = {edit[1] for edit in EDITS}
     for edit in EDITS:
         label, old, new = edit[:3]
         expected = edit[3] if len(edit) == 4 else 1
@@ -2829,7 +2873,8 @@ def main():
         # gone, any emitted replacement count proves this edit was applied.
         if raw.count(new_e) >= expected and raw.count(old_e) == 0:
             print('already applied ', label)
-            post_checks.append((label, new, expected))
+            if new not in later_patch_points:
+                post_checks.append((label, new, expected))
             continue
         if raw.count(old_e) == 0 and sentinel_e and sentinel_e in raw:
             print('superseded     ', label)
@@ -2844,7 +2889,8 @@ def main():
         if count != expected:
             sys.exit(f'FAIL {label}: patch point occurs {count} times')
         raw = raw.replace(old_e, new_e)
-        post_checks.append((label, new, expected))
+        if new not in later_patch_points:
+            post_checks.append((label, new, expected))
         changed = True
         print('applied         ', label)
 

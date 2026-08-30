@@ -8146,6 +8146,26 @@
     "dt",
     "dd"
   ]);
+  function hasFixedTextDimension(value) {
+    if (typeof value === "number") return Number.isFinite(value) && value > 0;
+    if (typeof value !== "string") return false;
+    const match = value.trim().match(/^([0-9]+(?:\.[0-9]+)?)(?:px|%)?$/);
+    return match !== null && Number(match[1]) > 0;
+  }
+  function isFixedTextOnlyUpdate(type, oldProps, newProps) {
+    if (!TEXT_BEARING.has(type)) return false;
+    const oldText = asText(oldProps.children) ?? oldProps.text;
+    const newText = asText(newProps.children) ?? newProps.text;
+    if (oldText === newText || newText === void 0) return false;
+    if (!hasFixedTextDimension(newProps.width) || !hasFixedTextDimension(newProps.height) || newProps.whiteSpace !== "nowrap") return false;
+    const nonTextKeys = new Set([...Object.keys(oldProps), ...Object.keys(newProps)]);
+    nonTextKeys.delete("children");
+    nonTextKeys.delete("text");
+    for (const key of nonTextKeys) {
+      if (oldProps[key] !== newProps[key]) return false;
+    }
+    return true;
+  }
   var PulpHostConfig = {
     // ── Renderer identity ───────────────────────────────────────────
     supportsMutation: true,
@@ -8298,9 +8318,9 @@
       return shallowDiff(oldN, newN);
     },
     commitUpdate(instance, _updatePayload, type, oldProps, newProps, _internalHandle) {
-      markMaterializedTreeDirty();
       const oldN = normalizeHostProps(type, oldProps);
       const newN = normalizeHostProps(type, newProps);
+      if (!isFixedTextOnlyUpdate(type, oldN, newN)) markMaterializedTreeDirty();
       applyChangedProps(instance, oldN, newN);
       instance.props = { ...newN };
       if (instance._dom && typeof instance._dom === "object") {

@@ -563,7 +563,7 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   document,
                   "style: { display: \\\"block\\\", textAlign: \\\"center\\\", "
                   "width: \\\"100%\\\", height: \\\"100%\\\", "
-                  "lineHeight: \\\"26px\\\" }")
+                  "lineHeight: \\\"26px\\\", whiteSpace: \\\"nowrap\\\" }")
               == 1);
         CHECK(count_occurrences(
                   document,
