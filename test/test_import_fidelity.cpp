@@ -558,6 +558,19 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(count_occurrences(document, "width: 240,") == 0);
     }
 
+    SECTION("live status text cannot invalidate layout when its content changes") {
+        CHECK(count_occurrences(
+                  document,
+                  "style: { display: \"flex\", alignItems: \"center\", "
+                  "justifyContent: \"center\", textAlign: \"center\", "
+                  "width: \"100%\", height: \"100%\" }")
+              == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "data-spectr-status-text\": \"true\", style: { display: \"block\"")
+              == 0);
+    }
+
     SECTION("edge labels and dropdown controls retain intentional rendering") {
         CHECK(document.find("restoreMenuFocus") == document.npos);
         CHECK(count_occurrences(document, "popupKind: \\\"listbox\\\"") == 2);

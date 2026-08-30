@@ -342,6 +342,13 @@ EDITS = [
      'style: { ...menuItem, color: "hsl(200,85%,70%)", '
      'display: "block", width: "100%" }', 2),
 
+    # Text changes never affect this node's geometry: the status shell owns the
+    # content-sized banner, while this live label fills that resolved box in
+    # both axes. This lets Pulp update its text without scheduling layout.
+    ('live status text has text-independent geometry',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%" } }, text)',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", width: "100%", height: "100%" } }, text)'),
+
     ('hover readout clears the status banner slot',
      '    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);',
      '    const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);'),
