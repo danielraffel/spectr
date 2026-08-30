@@ -38,7 +38,7 @@ for workload in bands minimap; do
   trace="$output_dir/$workload.pftrace"
   screenshot="$output_dir/$workload.png"
   receipt="$output_dir/$workload.json"
-  "$repo_dir/tools/bands_perf_capture.swift" \
+  /usr/bin/env swift "$repo_dir/tools/bands_perf_capture.swift" \
     "$app" "$trace" "$screenshot" "$workload"
   "$repo_dir/tools/analyze_interaction_trace.py" \
     --trace "$trace" \
