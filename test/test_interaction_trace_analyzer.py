@@ -20,6 +20,11 @@ class InteractionTraceAnalyzerTest(unittest.TestCase):
         self.assertIn("layout_children", query)
         self.assertIn("gpu_present", query)
 
+    def test_query_excludes_idle_settle_paints_from_overdraw(self) -> None:
+        query = MODULE.build_query()
+        self.assertIn("w.name NOT IN ('layout_children', 'paint')", query)
+        self.assertIn("ABS(s.ts - i.ts) <= 17000000", query)
+
     def test_parse_output_preserves_percentiles_and_stages(self) -> None:
         output = """
 SPECTR_INTERACTION_PERF|summary|180|0.250000|0.500000|181|4.000000|7.900000|8.200000|8.300000|0|0

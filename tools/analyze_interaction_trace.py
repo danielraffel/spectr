@@ -86,7 +86,16 @@ stage_stats AS (
   FROM wanted_stage w
   LEFT JOIN slice s ON s.name = w.name AND s.dur >= 0
   LEFT JOIN bounds b ON 1 = 1
-  WHERE s.id IS NULL OR (s.ts >= b.first_ts AND s.ts <= b.last_ts)
+  WHERE s.id IS NULL OR (
+    s.ts >= b.first_ts AND s.ts <= b.last_ts
+    AND (
+      w.name NOT IN ('layout_children', 'paint')
+      OR EXISTS (
+        SELECT 1 FROM input i
+        WHERE ABS(s.ts - i.ts) <= 17000000
+      )
+    )
+  )
   GROUP BY w.name
 )
 SELECT '{MARKER}|summary|' || b.input_count || '|' ||
