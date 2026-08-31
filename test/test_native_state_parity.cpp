@@ -1649,6 +1649,107 @@ TEST_CASE("native settings modal dismisses by Escape and outside press",
     storage.require_unchanged();
 }
 
+TEST_CASE("remaining native modal panels share Escape and outside dismissal",
+          "[native-n1][state-parity][modal-dismissal]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+
+    const auto exercise = [&](std::string_view name,
+                              const auto& open,
+                              std::string_view panel_selector) {
+        const auto require_open = [&] {
+            CAPTURE(name);
+            open();
+            settle(rig.clock, 12);
+            require_runtime_contract(
+                rig,
+                "!!document.querySelector(" + js_string(panel_selector) + ")",
+                std::string{name} + " did not open");
+            REQUIRE(rig.root->interaction().active_overlay != nullptr);
+            REQUIRE(static_cast<bool>(rig.root->interaction().active_overlay
+                                          ->on_overlay_dismissed));
+            require_runtime_contract(
+                rig,
+                "(() => { const panel = document.querySelector("
+                    + js_string(panel_selector)
+                    + "); const key = panel && panel.__pulpId + ':dismiss';"
+                      " return !!key && globalThis.__pulpReactEventCallbacks__.has(key); })()",
+                std::string{name} + " lost its native dismiss callback");
+
+            const auto center = runtime_string(
+                rig,
+                "(() => { const r = document.querySelector("
+                    + js_string(panel_selector)
+                    + ").getBoundingClientRect(); return (r.left + r.width / 2)"
+                      " + ',' + (r.top + r.height / 2); })()",
+                "spectr-native-modal-panel-center");
+            const auto comma = center.find(',');
+            REQUIRE(comma != std::string::npos);
+            const pulp::view::Point inside{
+                std::stof(center.substr(0, comma)),
+                std::stof(center.substr(comma + 1))};
+            REQUIRE(rig.root->interaction().active_overlay->overlay_contains(inside));
+            const auto routing = pulp::view::route_press_to_active_overlay(
+                *rig.root, inside);
+            REQUIRE(routing.routing == pulp::view::OverlayPressRouting::routed);
+            settle(rig.clock, 4);
+            require_runtime_contract(
+                rig,
+                "!!document.querySelector(" + js_string(panel_selector) + ")",
+                std::string{name} + " treated an inside press as outside");
+        };
+
+        INFO("phase=escape " << name);
+        require_open();
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 8);
+        require_runtime_contract(
+            rig,
+            "!document.querySelector(" + js_string(panel_selector) + ")",
+            std::string{name} + " ignored Escape");
+
+        INFO("phase=outside " << name);
+        require_open();
+        const pulp::view::Point outside{12.0f, 12.0f};
+        REQUIRE_FALSE(
+            rig.root->interaction().active_overlay->overlay_contains(outside));
+        const auto routing = pulp::view::route_press_to_active_overlay(
+            *rig.root, outside);
+        REQUIRE(routing.routing == pulp::view::OverlayPressRouting::dismissed);
+        pulp::view::View::dismiss_active_overlay(*rig.root);
+        settle(rig.clock, 8);
+        require_runtime_contract(
+            rig,
+            "!document.querySelector(" + js_string(panel_selector) + ")",
+            std::string{name} + " ignored native outside dismissal");
+        require_home(rig);
+    };
+
+    exercise("pattern manager", [&] {
+        activate(rig,
+                 "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+        activate(rig, "[data-spectr-pattern-manage]");
+    }, "[data-spectr-pattern-manager-panel]");
+
+    exercise("save preset", [&] {
+        activate(rig,
+                 "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+        activate(rig, "[data-spectr-save-current]");
+    }, "[data-spectr-save-panel]");
+
+    exercise("help", [&] {
+        activate(rig,
+                 "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+    }, "[data-spectr-help-panel]");
+
+    storage.require_unchanged();
+}
+
 TEST_CASE("native Flare keeps below-zero bands negative while pushing them outward",
           "[native-n1][state-parity][flare]") {
     PatternStoragePoison storage;

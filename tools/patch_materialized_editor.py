@@ -74,6 +74,43 @@ EDITS = [
      'React.createElement("div", { "data-spectr-settings-panel": true, onClick: (e) => e.stopPropagation(), style: {',
      'React.createElement("div", { "data-spectr-settings-panel": true, "data-spectr-overlay": "true", overlay: true, onDismiss: onClose, onClick: (e) => e.stopPropagation(), style: {'),
 
+    # Full-screen scrims are browser click targets, not native containment
+    # boundaries. Make each visible panel the semantic overlay owner so Pulp
+    # can route Escape and outside presses consistently in every host.
+    ('pattern manager panel owns native overlay containment',
+     'React.createElement("div", { onClick: (e) => e.stopPropagation(), style: {\n'
+     '    width: 780,',
+     'React.createElement("div", { "data-spectr-pattern-manager-panel": true, "data-spectr-overlay": "true", overlay: true, onDismiss: onClose, onClick: (e) => e.stopPropagation(), style: {\n'
+     '    width: 780,'),
+
+    ('save dialog panel owns native overlay containment',
+     'React.createElement("div", { onClick: (event) => event.stopPropagation(), style: {\n'
+     '      width: 360,',
+     'React.createElement("div", { "data-spectr-save-panel": true, "data-spectr-overlay": "true", overlay: true, onDismiss: onCancel, onClick: (event) => event.stopPropagation(), style: {\n'
+     '      width: 360,'),
+
+    ('help panel owns native overlay containment',
+     'React.createElement("div", { "data-spectr-overlay": "true", role: "dialog", "aria-label": "Keyboard shortcuts", style: {',
+     'React.createElement("div", { "data-spectr-help-panel": true, "data-spectr-overlay": "true", overlay: true, onDismiss: onClose, role: "dialog", "aria-label": "Keyboard shortcuts", style: {'),
+
+    # Rich dropdowns are natively key-routed by Pulp. Help is a dialog-like
+    # popover rather than a listbox, so retain its one Escape listener after
+    # removing the browser-only generic menu fallback from the native bundle.
+    ('help popup retains keyboard dismissal in native hosts',
+     '  const act = (fn) => () => {\n',
+     '  useEffectChrome(() => {\n'
+     '    if (!helpOpen) return;\n'
+     '    const dismissHelp = (event) => {\n'
+     '      if (event.key !== "Escape") return;\n'
+     '      event.preventDefault();\n'
+     '      event.stopPropagation();\n'
+     '      setHelpOpen(false);\n'
+     '    };\n'
+     '    document.addEventListener("keydown", dismissHelp, true);\n'
+     '    return () => document.removeEventListener("keydown", dismissHelp, true);\n'
+     '  }, [helpOpen]);\n'
+     '  const act = fn => () => {\n'),
+
     ('normal chrome does not expose spectral resolution diagnostics',
      '  )))), /* @__PURE__ */ React.createElement("span", null, "\\xB7"), /* @__PURE__ */ React.createElement("span", { className: "tnum" }, info.zoom, "\\xD7 zoom"), /* @__PURE__ */ React.createElement("span", null, "\\xB7"), /* @__PURE__ */ React.createElement("span", { "data-spectr-resolution": true, className: "tnum", title: "Distinct FFT-bin coverage; all bands remain editable", "aria-label": "Spectral resolution", onPointerEnter: () => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + "/" + resolution.active : "\\u2014/\\u2014"} DISTINCT \\xB7 ALL BANDS EDITABLE`), onClick: () => onStatus && onStatus(`SPECTRAL RESOLUTION: ${resolution ? resolution.represented + "/" + resolution.active : "\\u2014/\\u2014"} DISTINCT \\xB7 ALL BANDS EDITABLE`), style: {\n'
      '    color: resolution && resolution.represented < resolution.active ? "rgba(255,176,96,0.88)" : "rgba(255,255,255,0.38)"\n'

@@ -1367,7 +1367,7 @@ window.FilterBank = FilterBank;`,
       'user pattern option selectors');
     replaceSpectrSource(
       'function HelpPopover({ onClose }) {\n  return (\n    <div style={{',
-      'function HelpPopover({ onClose }) {\n  return (\n    <div data-spectr-overlay="true" role="dialog" aria-label="Keyboard shortcuts" style={{',
+      'function HelpPopover({ onClose }) {\n  return (\n    <div data-spectr-help-panel data-spectr-overlay="true" overlay onDismiss={onClose} role="dialog" aria-label="Keyboard shortcuts" style={{',
       'help popup overlay marker');
 
     replaceSpectrSource(
@@ -1864,7 +1864,8 @@ function PatternManager({ open, onClose, userPatterns, setUserPatterns, defaultI
       aria-modal="true" aria-label="Save current preset" onClick={onCancel}
       style={{ position:'absolute', inset:0, zIndex:40, background:'rgba(5,7,10,.72)',
         display:'flex', alignItems:'center', justifyContent:'center' }}>
-      <div onClick={event => event.stopPropagation()} style={{ width:360, padding:18,
+      <div data-spectr-save-panel data-spectr-overlay="true" overlay onDismiss={onCancel}
+        onClick={event => event.stopPropagation()} style={{ width:360, padding:18,
         background:'rgba(12,16,22,.99)', border:'1px solid rgba(255,255,255,.16)',
         borderRadius:5, fontFamily:'var(--mono)', color:'#fff' }}>
         <div style={{ fontSize:11, letterSpacing:2, marginBottom:12 }}>SAVE CURRENT PRESET</div>
@@ -2066,6 +2067,10 @@ window.PatternManager = PatternManager;`,
       '<div style={{\n      position: \'absolute\', inset: 0, zIndex: 30,',
       '<div data-spectr-overlay="true" role="dialog" aria-modal="true" aria-label="Pattern manager" style={{\n      position: \'absolute\', inset: 0, zIndex: 30,',
       'pattern manager semantics');
+    replaceSpectrSource(
+      '<div onClick={e => e.stopPropagation()} style={{\n      width: 780, height: 520,',
+      '<div data-spectr-pattern-manager-panel data-spectr-overlay="true" overlay onDismiss={onClose} onClick={e => e.stopPropagation()} style={{\n      width: 780, height: 520,',
+      'pattern manager native overlay ownership');
     replaceSpectrSource(
       '<div onClick={onClick} onDoubleClick={onDblClick}',
       '<div data-spectr-pattern-id={pattern.id} data-spectr-pattern-source={pattern.source} onClick={onClick} onDoubleClick={onDblClick}',
