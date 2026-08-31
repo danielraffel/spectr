@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
 constexpr std::string_view kAdapterDigest =
-        "be530437fac55f44ca401cb31bc5cc2ebc970a202597e4791107b1905fc4a103";
+        "12c4ab9ab69095f87f41e29123b93b8795af120dcdc5f323f0675a7c3563b79e";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -186,8 +186,8 @@ constexpr std::array kResizeMarkers{
     ContractMarker{"fixed-design-center", "'translate(-50%, -50%) scale(' + scale + ')'"},
     ContractMarker{"resize-text-selection", "input:not([type]), input[type=\"text\"], input[type=\"search\"], textarea,"},
     ContractMarker{"live-viewport-ref", "const [reactView, setReactView] = useState(initialView);"},
-    ContractMarker{"live-left-right-resize", "commitLiveViewport({ lmin, lmax });"},
-    ContractMarker{"live-center-pan", "commitLiveViewport({ lmin, lmax: lmin + span });"},
+    ContractMarker{"live-left-right-resize", "commitLiveViewport({ lmin, lmax });", 2},
+    ContractMarker{"live-center-pan", "commitLiveViewport({ lmin, lmax: lmin + span });", 2},
     ContractMarker{"final-viewport-snapshot", "setView({ ...viewRef.current });\n      wrapRef.current.style.cursor = p.mode === 'minimap-resize' ? 'col-resize' : 'grab';"},
     ContractMarker{"viewport-oracle-snapshot", "reactView: { ...reactView }"},
 };
@@ -730,7 +730,9 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"banner-below-plot-line", "top: 76,"},
         ContractMarker{"centered-rail-button", "height: 26,\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
         ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 3},
-        ContractMarker{"aligned-band-binding", "\"letter_spacing\":0.5}},\"boxes\":[{\"left\":0,\"top\":3,\"width\":13,\"height\":13,\"start\":0,\"length\":2}]},{\"index\":9"},
+        ContractMarker{"aligned-band-binding", "\"boxes\":[{\"left\":0,\"top\":3,\"width\":13,\"height\":13,\"start\":0,\"length\":2},{\"left\":21,\"top\":3,\"width\":52.03125,\"height\":13,\"start\":3,\"length\":8}]"},
+        ContractMarker{"single-band-count-text-binding", "\"text\":\"32 bands ▾\""},
+        ContractMarker{"band-root-reserved-gap", "g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0)"},
         ContractMarker{"band-dropdown-surface", "background: info.N === n ? \\\"rgba(120,180,255,0.18)\\\" : \\\"rgba(255,255,255,0.03)\\\","},
         ContractMarker{"edit-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.14)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"analyzer-dropdown-surface", "background: active ? \\\"rgba(255,255,255,0.08)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
@@ -756,6 +758,7 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"build-info-default-on", "\\\"showBuildInfo\\\": true"},
         ContractMarker{"build-info-optional", "settings.showBuildInfo !== false", 2},
         ContractMarker{"build-info-toggle", "data-spectr-build-info-toggle"},
+        ContractMarker{"build-info-toggle-parameter", "function SpectrSettingsToggle({ value, onChange, statusInfo = false, buildInfo = false }) {"},
         ContractMarker{"build-info-product-sha", "[\\\"SPECTR SHA\\\", info.product_sha || \\\"UNKNOWN\\\"]"},
         ContractMarker{"build-info-product-dirty", "info.product_provenance_known ? info.product_dirty ? \\\"DIRTY\\\" : \\\"CLEAN\\\" : \\\"UNKNOWN\\\""},
         ContractMarker{"build-info-sdk-dirty", "[\\\"SDK SOURCE\\\", info.sdk_provenance_exact ? info.sdk_dirty ? \\\"DIRTY\\\" : \\\"CLEAN\\\" : \\\"UNKNOWN\\\"]"},

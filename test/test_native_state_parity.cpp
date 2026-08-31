@@ -839,7 +839,9 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         REQUIRE(target != nullptr);
         CHECK(target->bounds().height >= 24.0f);
     }
-    const auto* selected_preset = find_label(*rig.root, "FLAT ▾");
+    const auto* selected_preset = find_label(*rig.root, "PRESET… ▾");
+    if (selected_preset == nullptr)
+        selected_preset = find_label(*rig.root, "FLAT ▾");
     if (selected_preset == nullptr)
         selected_preset = find_label(*rig.root, "PRESETS ▾");
     REQUIRE(selected_preset != nullptr);
@@ -854,11 +856,11 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     require_runtime_contract(
         rig,
         // The panel remains pinned to the authored viewport. The appended
-        // Feedback group makes its live child-derived content genuinely taller,
-        // so the native ScrollView exposes only that real overflow.
+        // Feedback and exact build-information groups make the live content
+        // genuinely taller, so the native ScrollView exposes that real extent.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height === 728 && s.scroll_reachable === true"
+        " && s.content_height === 1044 && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
         "settings panel did not keep its authored geometry under the pin");
@@ -2538,18 +2540,38 @@ TEST_CASE("native buttons are tappable across their whole painted bounds",
     std::vector<const View*> controls;
     collect_click_targets(*rig.root, controls);
     REQUIRE(controls.size() >= 15);
-    for (const auto* control : controls) {
-        if (control->bounds().width <= 0.0f || control->bounds().height <= 0.0f)
+    std::vector<std::string> control_ids;
+    control_ids.reserve(controls.size());
+    for (const auto* control : controls) control_ids.push_back(control->id());
+    const std::function<const View*(const View&, std::string_view)> find_by_id =
+        [&](const View& view, std::string_view id) -> const View* {
+          if (view.id() == id) return &view;
+          for (std::size_t index = 0; index < view.child_count(); ++index)
+              if (const auto* match = find_by_id(*view.child_at(index), id))
+                  return match;
+          return nullptr;
+        };
+    for (const auto& control_id : control_ids) {
+        const auto* initial = find_by_id(*rig.root, control_id);
+        REQUIRE(initial != nullptr);
+        if (initial->bounds().width <= 0.0f || initial->bounds().height <= 0.0f)
             continue;
-        INFO("control " << describe_control(*control));
-        // Aim at the PAINTED extent, in root space, because that is what the
-        // user aims at. Probing the hit box instead would pass even when ink
-        // spills outside it, which is the whole complaint in #39.
-        const auto painted = painted_extent(*control);
-        const float y = (painted.top + painted.bottom) * 0.5f;
-        for (const float x : {painted.left + 1.5f,
-                              (painted.left + painted.right) * 0.5f,
-                              painted.right - 1.5f}) {
+        INFO("control " << describe_control(*initial));
+        for (const float fraction : {0.0f, 0.5f, 1.0f}) {
+            if (rig.root->interaction().active_overlay != nullptr) {
+                pulp::view::View::dismiss_active_overlay(*rig.root);
+                settle(rig.clock, 12);
+            }
+            const auto* control = find_by_id(*rig.root, control_id);
+            REQUIRE(control != nullptr);
+            // Aim at the PAINTED extent, in root space, because that is what
+            // the user aims at. Re-resolve after dismissing an overlay because
+            // that React commit may replace a live view object.
+            const auto painted = painted_extent(*control);
+            const float y = (painted.top + painted.bottom) * 0.5f;
+            const float x = fraction == 0.0f ? painted.left + 1.5f
+                : fraction == 1.0f ? painted.right - 1.5f
+                                   : (painted.left + painted.right) * 0.5f;
             CAPTURE(x, y, painted.left, painted.right);
             const auto before = click_dispatch_count(rig);
             rig.root->simulate_click({x, y});

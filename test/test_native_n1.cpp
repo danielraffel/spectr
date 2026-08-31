@@ -307,8 +307,10 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
           settingsDiagnostics.layout_expected !== 163 ||
           settingsDiagnostics.layout_applied !== 163 ||
           settingsDiagnostics.layout_node_miss !== 0 ||
-          settingsDiagnostics.text_expected !== 64 ||
-          settingsDiagnostics.text_applied !== 64 ||
+          // The live band-count trigger owns one text node, so its former
+          // number and suffix captures count as one binding here.
+          settingsDiagnostics.text_expected !== 63 ||
+          settingsDiagnostics.text_applied !== 63 ||
           settingsDiagnostics.text_node_miss !== 0 ||
           settingsDiagnostics.text_content_mismatch !== 0 ||
           settingsDiagnostics.text_target_miss !== 0)
@@ -412,10 +414,10 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
           restoredHomeDiagnostics.layout_expected !== 69 ||
           restoredHomeDiagnostics.layout_applied !== 69 ||
           restoredHomeDiagnostics.layout_node_miss !== 0 ||
-          // The toolbar now includes exact merged captures for the formerly
-          // split SCULPT and PEAK text runs.
-          restoredHomeDiagnostics.text_expected !== 24 ||
-          restoredHomeDiagnostics.text_applied !== 24 ||
+          // The toolbar includes merged SCULPT/PEAK captures and one merged
+          // band-count label instead of separate number and suffix bindings.
+          restoredHomeDiagnostics.text_expected !== 23 ||
+          restoredHomeDiagnostics.text_applied !== 23 ||
           restoredHomeDiagnostics.text_node_miss !== 0 ||
           restoredHomeDiagnostics.text_content_mismatch !== 0 ||
           restoredHomeDiagnostics.text_target_miss !== 0)

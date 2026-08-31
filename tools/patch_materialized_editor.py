@@ -2002,6 +2002,10 @@ EDITS = [
      '      id: statusInfo ? "spectr-status-info-toggle" : void 0,\n'
      '      "data-spectr-setting-toggle": true,'),
 
+    ('build info toggle is declared independently of the status id patch',
+     'function SpectrSettingsToggle({ value, onChange, statusInfo = false }) {\n',
+     'function SpectrSettingsToggle({ value, onChange, statusInfo = false, buildInfo = false }) {\n'),
+
     ('settings groups retain stable materialized identity',
      'function SpectrSettingsGroup({ title, subtitle, children }) {\n'
      '  return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } },',
@@ -2314,9 +2318,6 @@ SUPERSEDED_SENTINELS = {
 # materialization-only corrections explicit rather than teaching HTML edits to
 # rewrite unrelated top-level document data.
 DOCUMENT_EDITS = [
-    ('band-count suffix binding follows its live child span',
-     '{"tag":"button","index":0}],"anonymous_text_index":0,"text":" bands ▾"',
-     '{"tag":"button","index":0},{"tag":"span","index":1}],"text":"bands ▾"'),
     ('selected preset binding reflects the deterministic default',
      '],"text":"PRESETS ▾","basis":{"width":63.05546845843935,',
      '],"text":"FLAT ▾","basis":{"width":42.04257793060037,'),
@@ -2999,6 +3000,17 @@ RUNTIME_EDITS = [
      '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);',
      'g5.setFlex(String(bandTriggerId), "height", 22);\n'
      '      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5)'),
+    ('band selector occupies the reserved gap before metadata',
+     '    if (bandRootId) {\n'
+     '      g5.setFlex(String(bandRootId), "width", 104);\n'
+     '      g5.setFlex(String(bandRootId), "height", 24);\n'
+     '    }',
+     '    if (bandRootId) {\n'
+     '      g5.setFlex(String(bandRootId), "width", 104);\n'
+     '      g5.setFlex(String(bandRootId), "height", 24);\n'
+     '      g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0);\n'
+     '    }',
+     'g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0)'),
     ('band trigger text centers in the common 24px rail',
      '        92, 73.03125, 20, 3.5),',
      '        92, 73.03125, 22, 4.5),',
@@ -3059,28 +3071,42 @@ def escaped(value):
 
 
 def repair_capture_band_count_binding(document, path):
-    """Point the captured suffix binding at the span used by live HTML."""
-    stale = [binding for binding in document.get('text_bindings', [])
-             if binding.get('text') == ' bands ▾'
-             and binding.get('anonymous_text_index') == 0]
-    current = [binding for binding in document.get('text_bindings', [])
-               if binding.get('text') == 'bands ▾'
-               and binding.get('path', [])[-1:] == [{'tag': 'span', 'index': 1}]
-               and 'anonymous_text_index' not in binding]
-    if not stale:
-        if len(current) != 1:
-            sys.exit(
-                f'FAIL band-count suffix binding: {path} has '
-                f'{len(current)} current bindings')
+    """Keep captured text topology identical to the live one-span trigger."""
+    bindings = document.get('text_bindings', [])
+    merged = [binding for binding in bindings
+              if binding.get('text') == '32 bands ▾'
+              and binding.get('path', [])[-1:] == [{'tag': 'span', 'index': 0}]
+              and 'anonymous_text_index' not in binding]
+    number = [binding for binding in bindings
+              if binding.get('text') == '32'
+              and binding.get('path', [])[-1:] == [{'tag': 'span', 'index': 0}]]
+    suffix = [binding for binding in bindings
+              if binding.get('text') in (' bands ▾', 'bands ▾')
+              and (binding.get('anonymous_text_index') == 0
+                   or binding.get('path', [])[-1:] == [{'tag': 'span', 'index': 1}])]
+    if merged:
+        if len(merged) != 1 or number or suffix:
+            sys.exit(f'FAIL merged band-count binding: {path}')
         return False
-    if len(stale) != 1 or current:
+    if len(number) != 1 or len(suffix) != 1:
         sys.exit(
-            f'FAIL band-count suffix binding: {path} has '
-            f'{len(stale)} stale and {len(current)} current bindings')
-    binding = stale[0]
-    binding['path'].append({'tag': 'span', 'index': 1})
-    del binding['anonymous_text_index']
-    binding['text'] = 'bands ▾'
+            f'FAIL band-count binding merge: {path} has '
+            f'{len(number)} number and {len(suffix)} suffix bindings')
+    number_binding, suffix_binding = number[0], suffix[0]
+    number_boxes = [dict(box) for box in number_binding.get('boxes', [])]
+    suffix_boxes = [dict(box) for box in suffix_binding.get('boxes', [])]
+    for box in suffix_boxes:
+        box['start'] = int(box.get('start', 0)) + 3
+    boxes = number_boxes + suffix_boxes
+    basis = dict(suffix_binding.get('basis', {}))
+    basis['width'] = max(
+        (float(box.get('left', 0)) + float(box.get('width', 0)) for box in boxes),
+        default=0.0)
+    number_binding.pop('anonymous_text_index', None)
+    number_binding['text'] = '32 bands ▾'
+    number_binding['basis'] = basis
+    number_binding['boxes'] = boxes
+    bindings.remove(suffix_binding)
     return True
 
 
@@ -3191,6 +3217,10 @@ def main():
         print('applied         ', label)
 
     document = json.loads(raw)
+    if repair_capture_band_count_binding(document, PATH):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          merged band-count text binding', PATH)
     html = document['html']
     for label, new, expected in post_checks:
         if html.count(new) < expected:
@@ -3222,7 +3252,7 @@ def main():
             with open(capture_path, 'w', encoding='utf-8') as handle:
                 json.dump(capture_document, handle, ensure_ascii=False, indent=2)
                 handle.write('\n')
-            print('applied          band-count suffix binding', capture_path)
+            print('applied          merged band-count text binding', capture_path)
             print('written', capture_path)
 
     runtime_raw = open(RUNTIME_PATH, encoding='utf-8').read()

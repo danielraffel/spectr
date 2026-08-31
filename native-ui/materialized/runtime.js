@@ -9557,6 +9557,7 @@
     if (bandRootId) {
       g5.setFlex(String(bandRootId), "width", 104);
       g5.setFlex(String(bandRootId), "height", 24);
+      g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0);
     }
     if (bandTriggerId) {
       g5.setFlex(String(bandTriggerId), "width", 92);
