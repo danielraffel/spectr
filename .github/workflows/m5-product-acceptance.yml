@@ -106,9 +106,20 @@ jobs:
           mkdir -p "$(dirname "$au_dst")"
           rm -rf "$au_dst"
           ditto "$au_src" "$au_dst"
-          PULP_DISABLE_PLUGIN_EDITOR=1 PULP_HEADLESS=1 PULP_TEST_MODE=1 \
-            auval -v aufx Spec Pulp | tee "$SPECTR_ACCEPTANCE_ROOT/auval.txt"
-          grep -q 'AU VALIDATION SUCCEEDED' "$SPECTR_ACCEPTANCE_ROOT/auval.txt"
+          # A clean Tart guest still has a process-global Audio Component
+          # registry. Force discovery of the component copied above, then
+          # require two stable validations after the rescan settles.
+          killall -KILL AudioComponentRegistrar 2>/dev/null || true
+          sleep 5
+          : > "$SPECTR_ACCEPTANCE_ROOT/auval.txt"
+          for attempt in 1 2; do
+            attempt_log="$SPECTR_ACCEPTANCE_ROOT/auval-$attempt.txt"
+            PULP_DISABLE_PLUGIN_EDITOR=1 PULP_HEADLESS=1 PULP_TEST_MODE=1 \
+              auval -v aufx Spec Pulp \
+                | tee "$attempt_log"
+            grep -q 'AU VALIDATION SUCCEEDED' "$attempt_log"
+            cat "$attempt_log" >> "$SPECTR_ACCEPTANCE_ROOT/auval.txt"
+          done
 
       - name: Gate - Spectr M5 product acceptance testable PKG
         shell: bash

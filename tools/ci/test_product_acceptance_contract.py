@@ -38,6 +38,11 @@ checks = {
     "editor-enabled artifact host gate": (
         bool(editor_enabled_artifact)
         and "Pulp host loads" not in headless_focused_regex),
+    "stable AUv2 registrar validation": (
+        "killall -KILL AudioComponentRegistrar" in workflow
+        and "sleep 5" in workflow
+        and "for attempt in 1 2" in workflow
+        and "auval -v aufx Spec Pulp" in workflow),
     "PKG": ("pkgbuild --root" in workflow
             and 'ditto "$SPECTR_BUILD_DIR/Spectr.app"' in workflow
             and "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow),
