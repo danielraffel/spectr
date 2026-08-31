@@ -2426,9 +2426,17 @@ window.PatternManager = PatternManager;`,
   const applyPattern = useAppC((p) => {`,
       'status disable clears immediately and selected preset is retained');
     replaceSpectrSource(
+      "  const [selectedPatternName, setSelectedPatternName] = useAppS('PRESETS');\n  const applyPattern = useAppC((p) => {",
+      "  const [selectedPatternId, setSelectedPatternId] = useAppS(null);\n  const selectedPatternName = [...window.Spectr.FACTORY_PATTERNS, ...userPatterns].find((pattern) => pattern.id === selectedPatternId)?.name || 'PRESETS';\n  const applyPattern = useAppC((p) => {",
+      'selected preset label derives from stable identity');
+    replaceSpectrSource(
       '    b.setGains(gains);\n    fireStatus(`APPLIED "${p.name}"`);',
       '    b.setGains(gains);\n    setSelectedPatternName(p.name);\n    fireStatus(`APPLIED "${p.name}"`);',
       'selected preset name updates with applied state');
+    replaceSpectrSource(
+      '    setSelectedPatternName(p.name);\n    fireStatus(`APPLIED "${p.name}"`);',
+      '    setSelectedPatternId(p.id);\n    fireStatus(`APPLIED "${p.name}"`);',
+      'selected preset tracks applied identity');
     replaceSpectrSource(
       'function Chrome({ settings, setSettings, bankRef, info, status, dspMode,',
       'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode,',

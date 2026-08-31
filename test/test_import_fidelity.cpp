@@ -741,6 +741,9 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"status-info-toggle", "data-spectr-status-info-toggle"},
         ContractMarker{"status-info-suppression", "settings.statusInfo === false", 3},
         ContractMarker{"selected-preset-label", "data-spectr-selected-preset"},
+        ContractMarker{"selected-preset-identity", "const [selectedPatternId, setSelectedPatternId] = useAppS(null);"},
+        ContractMarker{"selected-preset-authoritative-label", "[...window.Spectr.FACTORY_PATTERNS, ...userPatterns].find((pattern) => pattern.id === selectedPatternId)?.name || \"PRESETS\";"},
+        ContractMarker{"selected-preset-applied-identity", "setSelectedPatternId(p.id);"},
     };
     const auto errors = [&](std::string_view candidate) {
         std::vector<std::string> result;

@@ -1060,11 +1060,24 @@ EDITS = [
      '  const [selectedPatternName, setSelectedPatternName] = useAppS("PRESETS");\n'
      '  const applyPattern = useAppC((p) => {'),
 
+    ('selected preset label derives from stable identity',
+     '  const [selectedPatternName, setSelectedPatternName] = useAppS("PRESETS");\n'
+     '  const applyPattern = useAppC((p) => {',
+     '  const [selectedPatternId, setSelectedPatternId] = useAppS(null);\n'
+     '  const selectedPatternName = [...window.Spectr.FACTORY_PATTERNS, ...userPatterns].find((pattern) => pattern.id === selectedPatternId)?.name || "PRESETS";\n'
+     '  const applyPattern = useAppC((p) => {'),
+
     ('selected preset name updates with applied state',
      '    b.setGains(gains);\n'
      '    fireStatus(`APPLIED "${p.name}"`);',
      '    b.setGains(gains);\n'
      '    setSelectedPatternName(p.name);\n'
+     '    fireStatus(`APPLIED "${p.name}"`);'),
+
+    ('selected preset tracks applied identity',
+     '    setSelectedPatternName(p.name);\n'
+     '    fireStatus(`APPLIED "${p.name}"`);',
+     '    setSelectedPatternId(p.id);\n'
      '    fireStatus(`APPLIED "${p.name}"`);'),
 
     ('chrome receives selected preset name',
@@ -1968,6 +1981,10 @@ EDITS = [
 # earlier one. These named sentinels keep reruns strict without pretending the
 # superseded intermediate text must remain in the final shipping document.
 SUPERSEDED_SENTINELS = {
+    'status disable clears immediately and selected preset is retained':
+        'const [selectedPatternId, setSelectedPatternId] = useAppS(null);',
+    'selected preset name updates with applied state':
+        'setSelectedPatternId(p.id);',
     'preset trigger shows selected name':
         'selectedPatternName.length > 6',
     'native menu lookup uses the document selector surface':
