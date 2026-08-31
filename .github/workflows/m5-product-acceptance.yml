@@ -1,0 +1,139 @@
+name: Spectr M5 Product Acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spectr-m5-product-acceptance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  product-acceptance:
+    name: Spectr M5 product-acceptance gate
+    runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-gate-fast]
+    timeout-minutes: 120
+    env:
+      CCACHE_COMPILERCHECK: content
+      CCACHE_NODEPEND: "1"
+    steps:
+      - name: Check out exact admitted Spectr head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          clean: true
+          fetch-depth: 1
+
+      - name: Gate - Spectr M5 product acceptance static contract
+        run: python3 tools/ci/test_product_acceptance_contract.py
+
+      - name: Gate - Spectr M5 product acceptance immutable released SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$GITHUB_WORKSPACE/tools/ci/pulp-sdk-release.json"
+          sdk_tag="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_tag"])' "$pin")"
+          sdk_asset="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["asset"])' "$pin")"
+          sdk_digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["asset_sha256"])' "$pin")"
+          sdk_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_git_sha"])' "$pin")"
+          acceptance_root="$RUNNER_TEMP/spectr-product-acceptance-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          sdk_unpack="$acceptance_root/sdk-unpack"
+          build_dir="$acceptance_root/build"
+          mkdir -p "$sdk_unpack" "$build_dir"
+          archive="$acceptance_root/$sdk_asset"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/Generous-Corp/pulp/releases/download/$sdk_tag/$sdk_asset"
+          printf '%s  %s\n' "$sdk_digest" "$archive" | shasum -a 256 --check
+          tar -xzf "$archive" -C "$sdk_unpack"
+          marker_count="$(find "$sdk_unpack" -maxdepth 3 -name sdk-provenance.json -type f | wc -l | tr -d ' ')"
+          [[ "$marker_count" == "1" ]] || {
+            echo "expected one extracted SDK provenance marker, found $marker_count" >&2
+            exit 1
+          }
+          sdk_marker="$(find "$sdk_unpack" -maxdepth 3 -name sdk-provenance.json -type f -print -quit)"
+          sdk_root="$(dirname "$sdk_marker")"
+          {
+            echo "SPECTR_ACCEPTANCE_ROOT=$acceptance_root"
+            echo "SPECTR_BUILD_DIR=$build_dir"
+            echo "PULP_SDK_ROOT=$sdk_root"
+            echo "PULP_SDK_SHA=$sdk_sha"
+          } >> "$GITHUB_ENV"
+
+      - name: Gate - Spectr M5 product acceptance Release configure and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S "$GITHUB_WORKSPACE" -B "$SPECTR_BUILD_DIR" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPulp_DIR="$PULP_SDK_ROOT/lib/cmake/Pulp" \
+            -DSPECTR_EXPECTED_PULP_SDK_SHA="$PULP_SDK_SHA" \
+            -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$GITHUB_SHA"
+          python3 tools/ci/validate_release_sdk.py \
+            --sdk-root "$PULP_SDK_ROOT" --build-dir "$SPECTR_BUILD_DIR" \
+            --pin tools/ci/pulp-sdk-release.json --product-sha "$GITHUB_SHA"
+
+      - name: Gate - Spectr M5 product acceptance focused native artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build "$SPECTR_BUILD_DIR" --parallel --target \
+            Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP \
+            Spectr-test Spectr-native-n1-test Spectr-editor-authority-test \
+            Spectr-artifact-test Spectr-native-standalone-artifact-test
+
+      - name: Gate - Spectr M5 product acceptance focused behavior
+        shell: bash
+        env:
+          PULP_DISABLE_PLUGIN_EDITOR: "1"
+          PULP_HEADLESS: "1"
+          PULP_TEST_MODE: "1"
+        run: |
+          set -euo pipefail
+          ctest --test-dir "$SPECTR_BUILD_DIR" --output-on-failure --no-tests=error \
+            -R '(^#34:|^#34 bridge|^native N1|^native editor|^native settings|^native semantic|^native selected|^every native dropdown|^remaining native modal|^native Flare|^native frozen|^native buttons|^editor resize|^editors default|^the AU v2|^a resize|^native: |editor authority|import fidelity|materialized|Built Spectr|Spectr editor|Pulp host loads)'
+
+      - name: Gate - Spectr M5 product acceptance AUv2 validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          au_src="$SPECTR_BUILD_DIR/AU/Spectr.component"
+          au_dst="$HOME/Library/Audio/Plug-Ins/Components/Spectr.component"
+          [[ -d "$au_src" ]]
+          mkdir -p "$(dirname "$au_dst")"
+          rm -rf "$au_dst"
+          ditto "$au_src" "$au_dst"
+          PULP_DISABLE_PLUGIN_EDITOR=1 PULP_HEADLESS=1 PULP_TEST_MODE=1 \
+            auval -v aufx Spec Pulp | tee "$SPECTR_ACCEPTANCE_ROOT/auval.txt"
+          grep -q 'AU VALIDATION SUCCEEDED' "$SPECTR_ACCEPTANCE_ROOT/auval.txt"
+
+      - name: Gate - Spectr M5 product acceptance testable PKG
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$SPECTR_ACCEPTANCE_ROOT/pkg-root"
+          mkdir -p "$stage/Applications" \
+            "$stage/Library/Audio/Plug-Ins/Components" \
+            "$stage/Library/Audio/Plug-Ins/VST3" \
+            "$stage/Library/Audio/Plug-Ins/CLAP"
+          ditto "$SPECTR_BUILD_DIR/Spectr.app" "$stage/Applications/Spectr.app"
+          ditto "$SPECTR_BUILD_DIR/AU/Spectr.component" "$stage/Library/Audio/Plug-Ins/Components/Spectr.component"
+          ditto "$SPECTR_BUILD_DIR/VST3/Spectr.vst3" "$stage/Library/Audio/Plug-Ins/VST3/Spectr.vst3"
+          ditto "$SPECTR_BUILD_DIR/CLAP/Spectr.clap" "$stage/Library/Audio/Plug-Ins/CLAP/Spectr.clap"
+          pkg="$SPECTR_ACCEPTANCE_ROOT/Spectr-M5-Product-Acceptance-${GITHUB_SHA:0:12}.pkg"
+          pkgbuild --root "$stage" --identifier com.pulp.spectr.acceptance \
+            --version 1.0.0 --install-location / "$pkg"
+          pkgutil --payload-files "$pkg" | sort > "$SPECTR_ACCEPTANCE_ROOT/pkg-payload.txt"
+          grep -q '^Applications/Spectr.app/' "$SPECTR_ACCEPTANCE_ROOT/pkg-payload.txt"
+          echo "SPECTR_ACCEPTANCE_PKG=$pkg" >> "$GITHUB_ENV"
+
+      - name: Publish exact-head M5-testable product-acceptance PKG
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Spectr-M5-Product-Acceptance-${{ github.sha }}
+          path: |
+            ${{ env.SPECTR_ACCEPTANCE_PKG }}
+            ${{ env.SPECTR_ACCEPTANCE_ROOT }}/auval.txt
+            ${{ env.SPECTR_ACCEPTANCE_ROOT }}/pkg-payload.txt
+          if-no-files-found: error
+          retention-days: 14
