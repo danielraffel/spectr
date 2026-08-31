@@ -138,7 +138,10 @@ jobs:
           pkgbuild --root "$stage" --identifier com.pulp.spectr.acceptance \
             --version 1.0.0 --install-location / "$pkg"
           pkgutil --payload-files "$pkg" | sort > "$SPECTR_ACCEPTANCE_ROOT/pkg-payload.txt"
-          grep -q '^Applications/Spectr.app/' "$SPECTR_ACCEPTANCE_ROOT/pkg-payload.txt"
+          grep -qE '^(\./)?Applications/Spectr\.app/' "$SPECTR_ACCEPTANCE_ROOT/pkg-payload.txt"
+          grep -qE '^(\./)?Library/Audio/Plug-Ins/Components/Spectr\.component/' "$SPECTR_ACCEPTANCE_ROOT/pkg-payload.txt"
+          grep -qE '^(\./)?Library/Audio/Plug-Ins/VST3/Spectr\.vst3/' "$SPECTR_ACCEPTANCE_ROOT/pkg-payload.txt"
+          grep -qE '^(\./)?Library/Audio/Plug-Ins/CLAP/Spectr\.clap/' "$SPECTR_ACCEPTANCE_ROOT/pkg-payload.txt"
           echo "SPECTR_ACCEPTANCE_PKG=$pkg" >> "$GITHUB_ENV"
 
       - name: Publish exact-head M5-testable product-acceptance PKG

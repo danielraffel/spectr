@@ -45,7 +45,13 @@ checks = {
         and "auval -v aufx Spec Pulp" in workflow),
     "PKG": ("pkgbuild --root" in workflow
             and 'ditto "$SPECTR_BUILD_DIR/Spectr.app"' in workflow
-            and "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow),
+            and "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow
+            and all(pattern in workflow for pattern in (
+                r"^(\./)?Applications/Spectr\.app/",
+                r"^(\./)?Library/Audio/Plug-Ins/Components/Spectr\.component/",
+                r"^(\./)?Library/Audio/Plug-Ins/VST3/Spectr\.vst3/",
+                r"^(\./)?Library/Audio/Plug-Ins/CLAP/Spectr\.clap/",
+            ))),
     "Shipyard workflow": config["cloud"]["default_workflow"] == "m5-product-acceptance",
     "no Namespace": "namespace" not in config_text.lower(),
     "no warm path": "$HOME/Code/pulp-sdk" not in config_text and "-B build" not in config_text,
