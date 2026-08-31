@@ -319,6 +319,10 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     r.proc->set_layout(spectr::Layout::Bands48);
     r.proc->viewport() = {280.0f, 340.0f};
     r.proc->field().bands[17] = {-9.5f, true};
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamMotionMode, 1.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamAnalyzerMode, 2.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamEditMode, 4.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamVisualization, 1.0f));
     r.proc->field().bands[47] = {6.25f, false};
     r.proc->capture_snapshot(SnapshotBank::Slot::A);
     r.proc->field().bands[17] = {3.0f, false};
@@ -340,6 +344,10 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     CHECK(payload["min_hz"].get<double>() == Approx(280.0));
     CHECK(payload["max_hz"].get<double>() == Approx(340.0));
     CHECK(payload["revision"].get<int64_t>() == 0);
+    CHECK(payload["motion_mode"].get<double>() == Approx(1.0));
+    CHECK(payload["analyzer_mode"].get<double>() == Approx(2.0));
+    CHECK(payload["edit_mode"].get<double>() == Approx(4.0));
+    CHECK(payload["visualization_mode"].get<double>() == Approx(1.0));
     REQUIRE(payload["snapshots"].isObject());
     CHECK(payload["snapshots"]["A"]["populated"].getBool());
     CHECK(payload["snapshots"]["B"]["populated"].getBool());

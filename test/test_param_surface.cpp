@@ -277,19 +277,47 @@ TEST_CASE("#34: viewport parameters round-trip without inverted edges") {
 
 TEST_CASE("#34: host parameter writes reach canonical processing state") {
     Wired w;
+    CHECK(w.proc->editor_authority().revision() == 0);
+    CHECK(w.proc->host_automation_revision() == 0);
     w.store.set_value(kGainBase + 7, -9.5f);
     w.store.set_value(kMuteBase + 7, 1.0f);
     w.store.set_value(kViewportCenterId, std::log10(1000.0f));
     w.store.set_value(kViewportWidthId, std::log10(4.0f));
     w.store.set_value(kBandCountId, 56.0f);
 
-    w.proc->apply_surface_params(false);
+    REQUIRE(w.proc->apply_surface_params(false));
 
     CHECK(w.proc->field().bands[7].gain_db == Approx(-9.5f));
     CHECK(w.proc->field().bands[7].muted);
     CHECK(w.proc->viewport().min_hz == Approx(500.0f).epsilon(0.0001f));
     CHECK(w.proc->viewport().max_hz == Approx(2000.0f).epsilon(0.0001f));
     CHECK(w.proc->layout() == spectr::Layout::Bands56);
+    CHECK(w.proc->editor_authority().revision() == 1);
+    CHECK(w.proc->host_automation_revision() == 1);
+
+    // A frame-clock poll with no new host value must not manufacture another
+    // editor hydration or invalidate an in-flight editor gesture.
+    CHECK_FALSE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->editor_authority().revision() == 1);
+    CHECK(w.proc->host_automation_revision() == 1);
+}
+
+TEST_CASE("#37: host mode automation advances the editor projection") {
+    Wired w;
+    w.store.set_value(spectr::kParamMotionMode, 1.0f);
+    w.store.set_value(spectr::kParamAnalyzerMode, 2.0f);
+    w.store.set_value(spectr::kParamEditMode, 4.0f);
+    w.store.set_value(spectr::kParamVisualization, 1.0f);
+
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->editor_mode_param(spectr::kParamMotionMode) == Approx(1.0f));
+    CHECK(w.proc->editor_mode_param(spectr::kParamAnalyzerMode) == Approx(2.0f));
+    CHECK(w.proc->editor_mode_param(spectr::kParamEditMode) == Approx(4.0f));
+    CHECK(w.proc->editor_mode_param(spectr::kParamVisualization) == Approx(1.0f));
+    CHECK(w.proc->host_automation_revision() == 1);
+
+    CHECK_FALSE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->host_automation_revision() == 1);
 }
 
 TEST_CASE("#34: canonical edits push only changed host parameters") {

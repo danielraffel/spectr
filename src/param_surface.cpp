@@ -227,7 +227,7 @@ void register_surface_params(pulp::state::StateStore& store) {
 namespace spectr {
 
 void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask&) noexcept {
-    static_cast<Spectr*>(ctx)->apply_surface_params(/*apply_morph=*/true);
+    (void)static_cast<Spectr*>(ctx)->apply_surface_params(/*apply_morph=*/true);
 }
 
 bool Spectr::surface_params_drifted_() const noexcept {
@@ -242,12 +242,13 @@ bool Spectr::surface_params_drifted_() const noexcept {
     return false;
 }
 
-void Spectr::apply_surface_params(bool apply_morph) noexcept {
+bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     auto* store = param_store_;
-    if (!store) return;
+    if (!store) return false;
 
     std::lock_guard<std::mutex> lock(processing_state_mutex_);
     bool sound_changed = false;
+    bool editor_changed = false;
 
     // Apply morph before individual band lanes. A host can automate morph and
     // a band in the same block; the explicit band value must remain reflected
@@ -314,17 +315,33 @@ void Spectr::apply_surface_params(bool apply_morph) noexcept {
         sound_changed = true;
     }
 
-    // Mode toggles carry no C++-side state today — the parameter IS the
-    // state (host-automatable, session-restored); the editor observes them
-    // through the bridge (spectr#37). Track them so the sweep stays quiet.
+    // Mode toggles carry no separate C++-side state — the parameter IS the
+    // state. A host-originated change still needs a new editor projection so
+    // playback automation is visible without echoing it back to the host.
     for (std::size_t m = 0; m < 4; ++m) {
         const auto id = kParamMotionMode + static_cast<pulp::state::ParamID>(m);
         const float value = store->get_value(id);
-        applied_param_cache_[detail::kSlotModeBase + m].store(
-            value, std::memory_order_relaxed);
+        auto& cached = applied_param_cache_[detail::kSlotModeBase + m];
+        if (value != cached.load(std::memory_order_relaxed)) {
+            cached.store(value, std::memory_order_relaxed);
+            editor_changed = true;
+        }
     }
 
-    if (sound_changed) publish_processing_state_();
+    if (sound_changed || editor_changed) {
+        if (sound_changed) publish_processing_state_();
+        host_automation_revision_.store(
+            editor_authority_.record_external_mutation(),
+            std::memory_order_release);
+    }
+    return sound_changed || editor_changed;
+}
+
+float Spectr::editor_mode_param(pulp::state::ParamID id) const noexcept {
+    if (id < kParamMotionMode || id > kParamVisualization) return 0.0f;
+    const auto slot = detail::kSlotModeBase
+        + static_cast<std::size_t>(id - kParamMotionMode);
+    return applied_param_cache_[slot].load(std::memory_order_relaxed);
 }
 
 void Spectr::push_surface_param_(pulp::state::ParamID id, std::size_t slot,

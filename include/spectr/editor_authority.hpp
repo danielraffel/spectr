@@ -4,6 +4,7 @@
 #include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -33,7 +34,15 @@ class EditorAuthority final {
 public:
     explicit EditorAuthority(Spectr& processor) noexcept;
 
-    [[nodiscard]] EditorRevision revision() const noexcept { return revision_; }
+    [[nodiscard]] EditorRevision revision() const noexcept {
+        return revision_.load(std::memory_order_acquire);
+    }
+
+    /// Record a processor mutation that originated outside the editor (for
+    /// example host automation playback). The next editor gesture carrying
+    /// the previous revision will reject as stale instead of overwriting the
+    /// host's newer value.
+    [[nodiscard]] EditorRevision record_external_mutation() noexcept;
 
     [[nodiscard]] EditorReceipt replace_processing_state(
         const BandField& field, const Viewport& viewport, Layout layout,
@@ -69,7 +78,7 @@ private:
 
     Spectr& processor_;
     std::optional<BandSnapshot> edit_snapshot_;
-    EditorRevision revision_ = 0;
+    std::atomic<EditorRevision> revision_{0};
 };
 
 } // namespace spectr

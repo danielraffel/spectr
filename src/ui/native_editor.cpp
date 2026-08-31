@@ -584,6 +584,7 @@ void Spectr::open_native_editor_(pulp::view::View& view) {
         ? static_cast<uint32_t>(std::lround(bounds.height))
         : kEditorPreferredHeight;
     on_view_resized(view, width, height);
+    native_host_automation_revision_ = host_automation_revision();
     if (native_frame_subscription_ >= 0) return;
     native_frame_clock_ = view.frame_clock();
     if (!native_frame_clock_) return;
@@ -593,6 +594,25 @@ void Spectr::open_native_editor_(pulp::view::View& view) {
 
 bool Spectr::tick_native_analyzer_(float dt) {
     if (!native_scripted_ui_ || !native_scripted_ui_->bridge()) return false;
+    const auto host_revision = host_automation_revision();
+    if (host_revision != native_host_automation_revision_) {
+        const auto payload = make_editor_state_payload(*this, host_revision);
+        std::ostringstream hydration;
+        hydration
+            << "if (typeof globalThis.__spectrPublishNativeMessage === 'function') "
+               "globalThis.__spectrPublishNativeMessage('processing_state_hydrate',"
+            << choc::json::toString(payload, false)
+            << ",'spectr-processing-state-hydrate');";
+        try {
+            native_scripted_ui_->bridge()->load_script(
+                hydration.str(), "spectr-native-host-automation");
+            native_host_automation_revision_ = host_revision;
+        } catch (const std::exception& error) {
+            pulp::runtime::log_error(
+                "[Spectr native] host automation hydration rejected: {}",
+                error.what());
+        }
+    }
     native_analyzer_elapsed_ += std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
     if (native_analyzer_elapsed_ < kPublishPeriodSeconds) return true;
     native_analyzer_elapsed_ = std::fmod(native_analyzer_elapsed_, kPublishPeriodSeconds);
@@ -645,6 +665,7 @@ void Spectr::close_native_editor_() {
     native_frame_clock_ = nullptr;
     native_analyzer_elapsed_ = 0.0f;
     native_analyzer_sequence_ = 0;
+    native_host_automation_revision_ = host_automation_revision();
     editor_authority().reset_transient_state();
     native_editor_root_ = nullptr;
     if (native_scripted_ui_) {

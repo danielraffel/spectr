@@ -80,6 +80,10 @@ window.__spectrHydration = {
   muted: new Array(32).fill(true),
   min_hz: 100,
   max_hz: 10000,
+  motion_mode: 0,
+  analyzer_mode: 0,
+  edit_mode: 0,
+  visualization_mode: 2,
   snapshots: spectrReopened ? spectrReopenedSnapshots() : spectrEmptySnapshots(),
 };
 window.__spectrPatternEnvelope = {

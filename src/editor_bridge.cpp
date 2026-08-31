@@ -236,6 +236,14 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     payload.addMember("muted", muted);
     payload.addMember("min_hz", static_cast<double>(state.viewport.min_hz));
     payload.addMember("max_hz", static_cast<double>(state.viewport.max_hz));
+    payload.addMember("motion_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamMotionMode)));
+    payload.addMember("analyzer_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamAnalyzerMode)));
+    payload.addMember("edit_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamEditMode)));
+    payload.addMember("visualization_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamVisualization)));
     payload.addMember("snapshots", snapshots);
     payload.addMember("patterns_json", plugin.patterns().export_json());
     return payload;

@@ -35,23 +35,31 @@ EditorAuthority::EditorAuthority(Spectr& processor) noexcept
     : processor_(processor) {}
 
 EditorReceipt EditorAuthority::reject_(std::string error) const {
-    return {false, revision_, std::move(error)};
+    return {false, revision(), std::move(error)};
 }
 
 EditorReceipt EditorAuthority::accept_without_mutation_() const {
-    return {true, revision_, {}};
+    return {true, revision(), {}};
 }
 
 EditorReceipt EditorAuthority::accept_mutation_() noexcept {
     // Hydration transports the revision as a signed JSON integer. Keep the
     // authority inside that exactly representable domain for its full life.
-    if (revision_ != kMaxEditorRevision) ++revision_;
-    return {true, revision_, {}};
+    auto current = revision_.load(std::memory_order_relaxed);
+    while (current != kMaxEditorRevision
+           && !revision_.compare_exchange_weak(
+               current, current + 1,
+               std::memory_order_release, std::memory_order_relaxed)) {}
+    return {true, current == kMaxEditorRevision ? current : current + 1, {}};
+}
+
+EditorRevision EditorAuthority::record_external_mutation() noexcept {
+    return accept_mutation_().revision;
 }
 
 bool EditorAuthority::matches_(
     std::optional<EditorRevision> expected) const noexcept {
-    return !expected || *expected == revision_;
+    return !expected || *expected == revision();
 }
 
 EditorReceipt EditorAuthority::replace_processing_state(

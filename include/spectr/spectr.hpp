@@ -280,8 +280,8 @@ public:
     //   apply_surface_params() — params → canonical state. Diffs the store
     //   against the applied-value cache; band gains/mutes, viewport, and
     //   band count apply directly, the morph parameter (when apply_morph)
-    //   re-derives the field from the snapshot bank, and mode params only
-    //   update the cache (the editor observes them; see spectr#37). Runs on
+    //   re-derives the field from the snapshot bank, and mode params advance
+    //   the editor projection without republishing the DSP mask. Runs on
     //   the sync worker (spawned from process() on drift) and synchronously
     //   from prepare().
     //
@@ -293,7 +293,13 @@ public:
     // Both directions are one-way per call site, so there is no echo loop:
     // the drain never pushes, and the push path marks the applied cache so
     // the next process()-side sweep sees no drift.
-    void apply_surface_params(bool apply_morph) noexcept;
+    bool apply_surface_params(bool apply_morph) noexcept;
+
+    [[nodiscard]] EditorRevision host_automation_revision() const noexcept {
+        return host_automation_revision_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] float editor_mode_param(
+        pulp::state::ParamID id) const noexcept;
     void sync_params_from_field(bool emit_gestures = true) noexcept;
 
     /// Paint-drag gesture epochs (EditorAuthority drives these from
@@ -361,6 +367,11 @@ private:
     static constexpr std::size_t kSurfaceCacheSlots = 136;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
+    // The most recent EditorAuthority revision caused specifically by host
+    // parameter adoption. Views use this as a coalescing publication key so
+    // automation redraws immediately without echoing every editor-originated
+    // paint receipt back through a full hydration.
+    std::atomic<EditorRevision> host_automation_revision_{0};
     // The canonical state as last pushed to the parameters — the sync delta
     // base. Morph updates it silently (morph moves the morph parameter only;
     // pushing 64 resulting band lanes per morph move would double-drive the
@@ -454,6 +465,7 @@ private:
     int native_frame_subscription_ = -1;
     float native_analyzer_elapsed_ = 0.0f;
     std::uint64_t native_analyzer_sequence_ = 0;
+    EditorRevision native_host_automation_revision_ = 0;
 
     std::unique_ptr<pulp::view::View> create_native_editor_();
     /// Map a ROOT (design-space) point to HOST/WINDOW space using the live host

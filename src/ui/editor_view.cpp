@@ -221,6 +221,7 @@ EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
         if (!panel_)
             return pulp::view::EditorBridge::err_response("editor is not attached");
         panel_->post_message(make_editor_hydration_message(plugin_));
+        host_automation_revision_ = plugin_.host_automation_revision();
         post_resolution_();
         document_ready_ = true;
         start_analyzer_clock_();
@@ -276,10 +277,20 @@ bool EditorView::post_analyzer_() {
 
 bool EditorView::analyzer_tick_(float dt) {
     if (!panel_ || !document_ready_) return true;
+    post_host_automation_();
     analyzer_elapsed_ += std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
     if (analyzer_elapsed_ < kAnalyzerPublishPeriodSeconds) return true;
     analyzer_elapsed_ = std::fmod(analyzer_elapsed_, kAnalyzerPublishPeriodSeconds);
     post_analyzer_();
+    return true;
+}
+
+bool EditorView::post_host_automation_() {
+    const auto revision = plugin_.host_automation_revision();
+    if (!panel_ || !document_ready_ || revision == host_automation_revision_)
+        return false;
+    panel_->post_message(make_editor_hydration_message(plugin_));
+    host_automation_revision_ = revision;
     return true;
 }
 
@@ -299,6 +310,7 @@ void EditorView::stop_analyzer_clock_() {
     analyzer_clock_ = nullptr;
     analyzer_elapsed_ = 0.0f;
     analyzer_publication_key_.reset();
+    host_automation_revision_ = plugin_.host_automation_revision();
 }
 
 EditorView::~EditorView() { detach_if_needed(); }

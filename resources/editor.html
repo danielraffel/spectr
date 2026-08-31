@@ -432,12 +432,21 @@ document.addEventListener('DOMContentLoaded', async function() {
         const muted = payload && payload.muted;
         const minHz = payload && Number(payload.min_hz);
         const maxHz = payload && Number(payload.max_hz);
+        const modeIndex = (key, labels) => {
+          const value = payload && Number(payload[key]);
+          return Number.isInteger(value) && labels[value] ? labels[value] : null;
+        };
+        const motionMode = modeIndex('motion_mode', ['live', 'precision']);
+        const analyzerMode = modeIndex('analyzer_mode', ['peak', 'avg', 'both', 'off']);
+        const editMode = modeIndex('edit_mode', ['sculpt', 'level', 'boost', 'flare', 'glide']);
+        const visualizationMode = modeIndex('visualization_mode', ['bars', 'response', 'both']);
         if (![32, 40, 48, 56, 64].includes(n)
             || !Array.isArray(gainDb) || gainDb.length !== n
             || !Array.isArray(muted) || muted.length !== n
             || !gainDb.every(Number.isFinite)
             || !muted.every(value => typeof value === 'boolean')
             || !Number.isFinite(minHz) || !Number.isFinite(maxHz)
+            || !motionMode || !analyzerMode || !editMode || !visualizationMode
             || minHz <= 0 || maxHz <= minHz) return null;
         const parseSnapshot = projection => {
           if (!projection || projection.populated !== true) return null;
@@ -464,6 +473,7 @@ document.addEventListener('DOMContentLoaded', async function() {
           gains: gainDb.map((db, i) => muted[i]
             ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
           minHz, maxHz, snapshots: { A, B },
+          motionMode, analyzerMode, editMode, visualizationMode,
           revision: Number(payload.revision) || 0,
           patternsJson: typeof payload.patterns_json === 'string'
             ? payload.patterns_json : null,
@@ -928,7 +938,12 @@ window.FilterBank = FilterBank;`,
   const acceptNativeState = useAppC((state) => {
     setNativeHydrated(false);
     setNativeHydration(state);
-    setSettings(current => ({ ...current, bandCount: state.n }));
+    setSettings(current => ({
+      ...current, bandCount: state.n, motionMode: state.motionMode,
+    }));
+    setAnalyzerMode(state.analyzerMode);
+    setEditMode(state.editMode);
+    setVisualizationMode(state.visualizationMode);
     setSnapshotStatus({ A: !!state.snapshots.A, B: !!state.snapshots.B });
     const library = window.SpectrNativePatterns.parse(state.patternsJson);
     if (library) {
