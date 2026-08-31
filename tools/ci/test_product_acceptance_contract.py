@@ -18,7 +18,9 @@ checks = {
     "Release": "-DCMAKE_BUILD_TYPE=Release" in workflow,
     "provenance": "validate_release_sdk.py" in workflow and "SPECTR_EXPECTED_PULP_SDK_SHA" in workflow,
     "focused tests": "ctest --test-dir" in workflow and " -R '" in workflow,
-    "PKG": "pkgbuild --root" in workflow and "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow,
+    "PKG": ("pkgbuild --root" in workflow
+            and 'ditto "$SPECTR_BUILD_DIR/Spectr.app"' in workflow
+            and "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow),
     "Shipyard workflow": config["cloud"]["default_workflow"] == "m5-product-acceptance",
     "no Namespace": "namespace" not in config_text.lower(),
     "no warm path": "$HOME/Code/pulp-sdk" not in config_text and "-B build" not in config_text,

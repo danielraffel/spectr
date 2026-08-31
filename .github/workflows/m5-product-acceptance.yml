@@ -115,7 +115,7 @@ jobs:
             "$stage/Library/Audio/Plug-Ins/Components" \
             "$stage/Library/Audio/Plug-Ins/VST3" \
             "$stage/Library/Audio/Plug-Ins/CLAP"
-          ditto "$SPECTR_BUILD_DIR/Standalone/Spectr.app" "$stage/Applications/Spectr.app"
+          ditto "$SPECTR_BUILD_DIR/Spectr.app" "$stage/Applications/Spectr.app"
           ditto "$SPECTR_BUILD_DIR/AU/Spectr.component" "$stage/Library/Audio/Plug-Ins/Components/Spectr.component"
           ditto "$SPECTR_BUILD_DIR/VST3/Spectr.vst3" "$stage/Library/Audio/Plug-Ins/VST3/Spectr.vst3"
           ditto "$SPECTR_BUILD_DIR/CLAP/Spectr.clap" "$stage/Library/Audio/Plug-Ins/CLAP/Spectr.clap"
