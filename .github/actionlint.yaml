@@ -1,0 +1,5 @@
+self-hosted-runner:
+  labels:
+    - spectr-build
+    - spectr-build-vm
+    - spectr-gate-fast
