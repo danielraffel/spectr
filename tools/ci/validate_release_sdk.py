@@ -5,6 +5,14 @@ from pathlib import Path
 
 def fail(message): raise SystemExit(f"release SDK validation failed: {message}")
 
+def cmake_bool(value):
+    normalized = value.strip().upper()
+    if normalized in {"1", "ON", "YES", "TRUE", "Y"}: return True
+    if normalized in {"", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND"}:
+        return False
+    if normalized.endswith("-NOTFOUND"): return False
+    fail(f"invalid CMake boolean value: {value!r}")
+
 def cache_values(path):
     result = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -32,18 +40,23 @@ def main():
     if not re.fullmatch(r"[0-9a-f]{40}", args.product_sha): fail("product SHA is not full lowercase hex")
     expected_cache = {
         "CMAKE_BUILD_TYPE": "Release",
-        "PULP_SDK_DISTRIBUTION_ELIGIBLE": "TRUE",
-        "PULP_SDK_AUDIO_PROBES_ENABLED": "FALSE",
-        "PULP_SDK_INSPECTOR_ENABLED": "TRUE",
+        "PULP_SDK_DISTRIBUTION_ELIGIBLE": True,
+        "PULP_SDK_AUDIO_PROBES_ENABLED": False,
+        "PULP_SDK_INSPECTOR_ENABLED": True,
         "PULP_SDK_PLATFORM": pin["platform"],
         "PULP_SDK_SOURCE_GIT_SHA": sha,
         "SPECTR_EXPECTED_PULP_SDK_SHA": sha,
         "SPECTR_EXPECTED_PRODUCT_GIT_SHA": args.product_sha,
         "SPECTR_SOURCE_GIT_SHA": args.product_sha,
-        "SPECTR_SOURCE_GIT_DIRTY": "FALSE",
+        "SPECTR_SOURCE_GIT_DIRTY": False,
     }
     for key, expected in expected_cache.items():
-        if cache.get(key) != expected: fail(f"{key}={cache.get(key)!r}, expected {expected!r}")
+        actual = cache.get(key)
+        if isinstance(expected, bool):
+            if actual is None or cmake_bool(actual) != expected:
+                fail(f"{key}={actual!r}, expected CMake boolean {expected!r}")
+        elif actual != expected:
+            fail(f"{key}={actual!r}, expected {expected!r}")
     expected_dir = (args.sdk_root / "lib/cmake/Pulp").resolve()
     if Path(cache.get("Pulp_DIR", "")).resolve() != expected_dir: fail("Pulp_DIR is not the extracted SDK")
 
