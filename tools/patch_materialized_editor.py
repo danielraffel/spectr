@@ -1975,6 +1975,113 @@ EDITS = [
      'React.createElement(SpectrSettingsGroup, { title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." },',
      'React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." },'),
 
+    ('shipping settings expose truthful build information',
+     '}\nfunction SettingsModal({ settings, setSettings, onClose }) {\n'
+     '  const publishMotionMode = (patch) => {',
+     '''}
+function SpectrBuildInfo() {
+  const [info, setInfo] = React.useState(null);
+  const [copyState, setCopyState] = React.useState("COPY");
+  const [loadFailed, setLoadFailed] = React.useState(false);
+  const requestSerial = React.useRef(0);
+  const resetTimer = React.useRef(null);
+  const mountedRef = React.useRef(true);
+  const unwrap = (response) => response && response.payload ? response.payload : response;
+  const requestId = (kind) => "spectr-build-info-" + kind + "-" + ++requestSerial.current;
+  React.useEffect(() => {
+    let live = true;
+    if (!window.pulp || typeof window.pulp.postMessage !== "function") {
+      setLoadFailed(true);
+      return;
+    }
+    Promise.resolve(window.pulp.postMessage("build_info_get", {}, requestId("get"))).then(unwrap).then((body) => {
+      if (!body || body.ok !== true || !body.product_version || !body.sdk_version)
+        throw new Error(body && body.error || "build info unavailable");
+      if (live) setInfo(body);
+    }).catch((error) => {
+      console.error("[Spectr] build info unavailable", error);
+      if (live) setLoadFailed(true);
+    });
+    return () => {
+      live = false;
+      mountedRef.current = false;
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    };
+  }, []);
+  const rows = info ? [
+    ["VERSION", info.product_version],
+    ["PULP SDK", info.sdk_version],
+    ["SDK SHA", info.sdk_sha],
+    ["BUILD", info.build_type ? info.build_type + (info.sdk_dirty ? " · DIRTY" : "") : ""],
+    ["BUILT", info.build_time]
+  ].filter((row) => row[1]) : [];
+  const settleCopyState = (state) => {
+    if (!mountedRef.current) return;
+    setCopyState(state);
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+    resetTimer.current = setTimeout(() => {
+      if (mountedRef.current) setCopyState("COPY");
+    }, 1800);
+  };
+  const copy = () => {
+    setCopyState("COPYING");
+    Promise.resolve(window.pulp.postMessage("build_info_copy", {}, requestId("copy"))).then(unwrap).then((body) => {
+      if (!body || body.ok !== true) throw new Error(body && body.error || "clipboard unavailable");
+      settleCopyState("COPIED");
+    }).catch(() => settleCopyState("COPY UNAVAILABLE"));
+  };
+  return /* @__PURE__ */ React.createElement(
+    SpectrSettingsGroup,
+    { marker: "about", title: "ABOUT", subtitle: "Build information for support and debugging." },
+    !info && /* @__PURE__ */ React.createElement("div", { "data-spectr-build-info-state": loadFailed ? "unavailable" : "loading", style: { opacity: 0.55, fontSize: 9.5 } }, loadFailed ? "BUILD INFO UNAVAILABLE" : "LOADING BUILD INFO…"),
+    rows.map((row) => /* @__PURE__ */ React.createElement("div", { key: row[0], style: { display: "flex", gap: 12, alignItems: "baseline" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 72, flexShrink: 0, opacity: 0.45, fontSize: 9 } }, row[0]), /* @__PURE__ */ React.createElement("span", { title: String(row[1]), style: { flex: 1, fontSize: 9.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, String(row[1])))),
+    info && /* @__PURE__ */ React.createElement("button", { "data-spectr-copy-build-info": true, onClick: copy, disabled: copyState === "COPYING", style: { alignSelf: "flex-start", minWidth: 92, height: 26, padding: "0 10px", borderRadius: 3, border: "1px solid rgba(180,210,255,0.3)", background: "rgba(120,180,255,0.10)", color: "rgba(220,235,255,0.95)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 0.8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { "aria-live": "polite" }, copyState))
+  );
+}
+/* materialized-build-info-owner */
+function SettingsModal({ settings, setSettings, onClose }) {
+  const publishMotionMode = (patch) => {'''),
+
+    ('shipping build info rejects incomplete fallback metadata',
+     '      if (!body || body.ok !== true) throw new Error(body && body.error || "build info unavailable");',
+     '      if (!body || body.ok !== true || !body.product_version || !body.sdk_version)\n'
+     '        throw new Error(body && body.error || "build info unavailable");'),
+
+    ('shipping settings optionally show build information below feedback',
+     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })))));\n'
+     '}',
+     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) }))), settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null)));\n'
+     '}'),
+
+    ('shipping build info tracks mounted lifetime',
+     '  const resetTimer = React.useRef(null);\n'
+     '  const unwrap = (response) => response && response.payload ? response.payload : response;',
+     '  const resetTimer = React.useRef(null);\n'
+     '  const mountedRef = React.useRef(true);\n'
+     '  const unwrap = (response) => response && response.payload ? response.payload : response;'),
+
+    ('shipping build info cleanup invalidates late copy feedback',
+     '      live = false;\n'
+     '      if (resetTimer.current) clearTimeout(resetTimer.current);',
+     '      live = false;\n'
+     '      mountedRef.current = false;\n'
+     '      if (resetTimer.current) clearTimeout(resetTimer.current);'),
+
+    ('shipping build info copy feedback is unmount safe',
+     '  const settleCopyState = (state) => {\n'
+     '    setCopyState(state);\n'
+     '    if (resetTimer.current) clearTimeout(resetTimer.current);\n'
+     '    resetTimer.current = setTimeout(() => setCopyState("COPY"), 1800);\n'
+     '  };',
+     '  const settleCopyState = (state) => {\n'
+     '    if (!mountedRef.current) return;\n'
+     '    setCopyState(state);\n'
+     '    if (resetTimer.current) clearTimeout(resetTimer.current);\n'
+     '    resetTimer.current = setTimeout(() => {\n'
+     '      if (mountedRef.current) setCopyState("COPY");\n'
+     '    }, 1800);\n'
+     '  };'),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an
@@ -2447,7 +2554,7 @@ RUNTIME_EDITS = [
      '      const authoredContentHeight = 728;\n'
      '      const panelHeight = authored ? 679\n'
      '        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));',
-     'const authoredContentHeight = 728;'),
+     'const authoredContentHeight = 952;'),
     ('settings scroll view derives its content from live children',
      '        if (typeof g5.setScrollContentSize === "function")\n'
      '          g5.setScrollContentSize(panelId, panelWidth, 684);',
@@ -2658,7 +2765,39 @@ RUNTIME_EDITS = [
     ('settings feedback extends the authored scroll extent',
      '      const authoredContentHeight = 672;',
      '      const authoredContentHeight = 728;',
-     'const authoredContentHeight = 728;'),
+     'const authoredContentHeight = 952;'),
+    ('settings about receives a stable captured slot',
+     '      if (feedbackId) {\n'
+     '        g5.setPosition(String(feedbackId), "absolute");\n'
+     '        g5.setLeft(String(feedbackId), 27);\n'
+     '        g5.setTop(String(feedbackId), 652);\n'
+     '        g5.setFlex(String(feedbackId), "width", 466);\n'
+     '        g5.setFlex(String(feedbackId), "height", 76);\n'
+     '      }\n'
+     '    }',
+     '      if (feedbackId) {\n'
+     '        g5.setPosition(String(feedbackId), "absolute");\n'
+     '        g5.setLeft(String(feedbackId), 27);\n'
+     '        g5.setTop(String(feedbackId), 652);\n'
+     '        g5.setFlex(String(feedbackId), "width", 466);\n'
+     '        g5.setFlex(String(feedbackId), "height", 76);\n'
+     '      }\n'
+     '      const about = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="about"]\');\n'
+     '      const aboutId = about && (about.__pulpId || about.id);\n'
+     '      if (aboutId) {\n'
+     '        g5.setPosition(String(aboutId), "absolute");\n'
+     '        g5.setLeft(String(aboutId), 27);\n'
+     '        g5.setTop(String(aboutId), 742);\n'
+     '        g5.setFlex(String(aboutId), "width", 466);\n'
+     '        g5.setFlex(String(aboutId), "height", 192);\n'
+     '      }\n'
+     '    }',
+     'g5.setTop(String(aboutId), 742)'),
+    ('settings about extends the authored scroll extent',
+     '      const authoredContentHeight = 728;',
+     '      const authoredContentHeight = 952;',
+     'const authoredContentHeight = 952;'),
     ('settings live scroll extent refreshes after native upgrade',
      '        // Leave content size automatic: the ScrollView unions its live children.\n\n',
      '        // Leave content size automatic: the ScrollView unions its live children.\n'

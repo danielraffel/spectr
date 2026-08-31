@@ -1408,7 +1408,75 @@ window.FilterBank = FilterBank;`,
 
     replaceSpectrSource(
       'function SettingsModal({ settings, setSettings, onClose }) {\n  const persist = (patch) => {',
-      String.raw`function SettingsModal({ settings, setSettings, onClose }) {
+      String.raw`function SpectrBuildInfo() {
+  const [info, setInfo] = React.useState(null);
+  const [copyState, setCopyState] = React.useState('COPY');
+  const [loadFailed, setLoadFailed] = React.useState(false);
+  const requestSerial = React.useRef(0);
+  const resetTimer = React.useRef(null);
+  const mountedRef = React.useRef(true);
+  const unwrap = response => response && response.payload ? response.payload : response;
+  const requestId = kind => 'spectr-build-info-' + kind + '-' + (++requestSerial.current);
+  React.useEffect(() => {
+    let live = true;
+    if (!window.pulp || typeof window.pulp.postMessage !== 'function') {
+      setLoadFailed(true);
+      return;
+    }
+    Promise.resolve(window.pulp.postMessage('build_info_get', {}, requestId('get')))
+      .then(unwrap).then(body => {
+        if (!body || body.ok !== true || !body.product_version || !body.sdk_version)
+          throw new Error((body && body.error) || 'build info unavailable');
+        if (live) setInfo(body);
+      }).catch(error => {
+        console.error('[Spectr] build info unavailable', error);
+        if (live) setLoadFailed(true);
+      });
+    return () => {
+      live = false;
+      mountedRef.current = false;
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    };
+  }, []);
+  const rows = info ? [
+    ['VERSION', info.product_version],
+    ['PULP SDK', info.sdk_version],
+    ['SDK SHA', info.sdk_sha],
+    ['BUILD', info.build_type ? info.build_type + (info.sdk_dirty ? ' · DIRTY' : '') : ''],
+    ['BUILT', info.build_time],
+  ].filter(row => row[1]) : [];
+  const settleCopyState = state => {
+    if (!mountedRef.current) return;
+    setCopyState(state);
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+    resetTimer.current = setTimeout(() => {
+      if (mountedRef.current) setCopyState('COPY');
+    }, 1800);
+  };
+  const copy = () => {
+    setCopyState('COPYING');
+    Promise.resolve(window.pulp.postMessage('build_info_copy', {}, requestId('copy')))
+      .then(unwrap).then(body => {
+        if (!body || body.ok !== true) throw new Error((body && body.error) || 'clipboard unavailable');
+        settleCopyState('COPIED');
+      }).catch(() => settleCopyState('COPY UNAVAILABLE'));
+  };
+  return React.createElement(SpectrSettingsGroup,
+    { marker: 'about', title: 'ABOUT', subtitle: 'Build information for support and debugging.' },
+    !info && React.createElement('div', { 'data-spectr-build-info-state': loadFailed ? 'unavailable' : 'loading',
+      style: { opacity: 0.55, fontSize: 9.5 } }, loadFailed ? 'BUILD INFO UNAVAILABLE' : 'LOADING BUILD INFO…'),
+    rows.map(row => React.createElement('div', { key: row[0], style: { display: 'flex', gap: 12, alignItems: 'baseline' } },
+      React.createElement('span', { style: { width: 72, flexShrink: 0, opacity: 0.45, fontSize: 9 } }, row[0]),
+      React.createElement('span', { title: String(row[1]), style: { flex: 1, fontSize: 9.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, String(row[1])))),
+    info && React.createElement('button', { 'data-spectr-copy-build-info': true, onClick: copy, disabled: copyState === 'COPYING', style: {
+      alignSelf: 'flex-start', minWidth: 92, height: 26, padding: '0 10px', borderRadius: 3,
+      border: '1px solid rgba(180,210,255,0.3)', background: 'rgba(120,180,255,0.10)',
+      color: 'rgba(220,235,255,0.95)', fontFamily: 'var(--mono)', fontSize: 9.5,
+      letterSpacing: 0.8, cursor: 'pointer'
+    } }, React.createElement('span', { 'aria-live': 'polite' }, copyState)));
+}
+
+function SettingsModal({ settings, setSettings, onClose }) {
   React.useEffect(() => {
     const onKey = (event) => {
       if (event.key === 'Escape' && !document.querySelector('[role="listbox"]')) {
@@ -2400,7 +2468,8 @@ window.PatternManager = PatternManager;`,
             <SpectrSettingsToggle statusInfo value={settings.statusInfo !== false}
               onChange={v => persist({ statusInfo: v })} />
           </SpectrSettingsField>
-        </SpectrSettingsGroup>`,
+        </SpectrSettingsGroup>
+        {settings.showBuildInfo !== false && <SpectrBuildInfo />}`,
       'status info is a normal scrollable settings field');
     replaceSpectrSource(
       String.raw`  const fireStatus = useAppC((msg) => {

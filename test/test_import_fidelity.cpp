@@ -744,6 +744,15 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"selected-preset-identity", "const [selectedPatternId, setSelectedPatternId] = useAppS(null);"},
         ContractMarker{"selected-preset-authoritative-label", "[...window.Spectr.FACTORY_PATTERNS, ...userPatterns].find((pattern) => pattern.id === selectedPatternId)?.name || \"PRESETS\";"},
         ContractMarker{"selected-preset-applied-identity", "setSelectedPatternId(p.id);"},
+        ContractMarker{"build-info-component", "function SpectrBuildInfo() {"},
+        ContractMarker{"build-info-get", "postMessage(\\\"build_info_get\\\""},
+        ContractMarker{"build-info-copy", "postMessage(\\\"build_info_copy\\\""},
+        ContractMarker{"build-info-copy-success", "settleCopyState(\\\"COPIED\\\")"},
+        ContractMarker{"build-info-copy-failure", "settleCopyState(\\\"COPY UNAVAILABLE\\\")"},
+        ContractMarker{"build-info-unique-request-ids", "const requestId = (kind) => \\\"spectr-build-info-\\\" + kind + \\\"-\\\" + ++requestSerial.current;"},
+        ContractMarker{"build-info-unmount-cleanup", "mountedRef.current = false;"},
+        ContractMarker{"build-info-late-copy-guard", "if (!mountedRef.current) return;"},
+        ContractMarker{"build-info-optional", "settings.showBuildInfo !== false"},
     };
     const auto errors = [&](std::string_view candidate) {
         std::vector<std::string> result;
@@ -759,6 +768,33 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
     for (const auto& marker : markers) {
         INFO(marker.label);
         auto mutated = document;
+        erase_once(mutated, marker.text);
+        CHECK(contains(errors(mutated), marker.label));
+    }
+}
+
+TEST_CASE("materialized build-info geometry contracts detect every severed fix") {
+    const std::string runtime{
+        reinterpret_cast<const char*>(spectr_native::runtime_js),
+        spectr_native::runtime_js_size};
+    constexpr std::array markers{
+        ContractMarker{"build-info-stable-slot", "g5.setTop(String(aboutId), 742)"},
+        ContractMarker{"build-info-scroll-extent", "const authoredContentHeight = 952;"},
+    };
+    const auto errors = [&](std::string_view candidate) {
+        std::vector<std::string> result;
+        for (const auto& marker : markers)
+            if (count_occurrences(candidate, marker.text) != marker.expected_count)
+                result.emplace_back(marker.label);
+        return result;
+    };
+    for (const auto& marker : markers) {
+        INFO(marker.label);
+        CHECK(count_occurrences(runtime, marker.text) == marker.expected_count);
+    }
+    for (const auto& marker : markers) {
+        INFO(marker.label);
+        auto mutated = runtime;
         erase_once(mutated, marker.text);
         CHECK(contains(errors(mutated), marker.label));
     }
