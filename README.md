@@ -38,6 +38,11 @@ See [`planning/`](planning/) for the full design package:
 - [`planning/Spectr-Upstream-Integration-Plan.md`](planning/Spectr-Upstream-Integration-Plan.md) — Pulp pickup playbook
 - [`planning/Spectr-Build-Signoff.md`](planning/Spectr-Build-Signoff.md) — current build clearance state
 
+Release candidates use the manually dispatched, local-first
+[`Spectr M5 Product Acceptance`](docs/local-first-product-acceptance.md) gate.
+It consumes an immutable official Pulp SDK, runs in a clean transient Tart macOS
+ARM64 guest, and publishes an exact-head PKG for hands-on M5 testing.
+
 ## Building
 
 Requires a Pulp SDK with the dedicated native scripted Skia/Dawn view target
