@@ -537,11 +537,11 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(document.find("statusRefreshAtRef.current = now;") != document.npos);
         CHECK(document.find("}, 150);") == document.npos);
         CHECK(document.find(
-                  "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2000 : 1400;")
+                  "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2400 : 1800;")
               != document.npos);
         CHECK(document.find(
                   "requestAnimationFrame(() => window.dispatchEvent(new Event(\\\"resize\\\")));")
-              != document.npos);
+              == document.npos);
         CHECK(document.find("shell.style.width = Math.max") == document.npos);
     }
 
@@ -563,12 +563,10 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   document,
                   "style: { display: \\\"block\\\", textAlign: \\\"center\\\", "
                   "width: \\\"100%\\\", height: \\\"100%\\\", "
-                  "lineHeight: \\\"26px\\\", whiteSpace: \\\"nowrap\\\" }")
+                  "lineHeight: \\\"13px\\\", paddingTop: \\\"6.5px\\\", "
+                  "boxSizing: \\\"border-box\\\", whiteSpace: \\\"nowrap\\\" }")
               == 1);
-        CHECK(count_occurrences(
-                  document,
-                  "data-spectr-status-text\": \"true\", style: { display: \"block\"")
-              == 0);
+        CHECK(count_occurrences(document, "lineHeight: \"26px\"") == 0);
     }
 
     SECTION("edge labels and dropdown controls retain intentional rendering") {
@@ -617,7 +615,8 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 
     SECTION("remaining standalone chrome stays aligned") {
-        CHECK(count_occurrences(document, "top: 76,") == 1);
+        CHECK(count_occurrences(document, "top: 96,") == 1);
+        CHECK(document.find("onDismiss: () => setOpenMenu(null)") == document.npos);
         CHECK(count_occurrences(
                   document,
                   "height: 26,\\n        display: \\\"inline-flex\\\",\\n"
@@ -719,7 +718,7 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"generation-safe-status", "const generationRef = useRefChrome(0);"},
         ContractMarker{"active-status-renewal", "now - statusRefreshAtRef.current >= 700"},
         ContractMarker{"inactivity-status-clear", "const timer2 = hide(120);"},
-        ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2000 : 1400;"},
+        ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2400 : 1800;"},
         ContractMarker{"content-sized-banner", "width: Math.max(96, Math.min(520, text.length * 8 + 28)),"},
         ContractMarker{"symmetric-banner-padding", "padding: \\\"0 14px\\\""},
         ContractMarker{"smooth-banner-resize", "transition: \\\"width 0.18s ease, opacity 0.15s ease\\\""},
@@ -727,7 +726,7 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"dropdown-surface", "background: \\\"rgba(255,255,255,0.025)\\\",\\n  border: \\\"1px solid transparent\\\""},
         ContractMarker{"aligned-band-count", "minWidth: 40,\\n        minHeight: 26,\\n        boxSizing: \\\"border-box\\\",\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
         ContractMarker{"native-band-count-spacing", "lineHeight: 1, paddingLeft: 4"},
-        ContractMarker{"banner-below-plot-line", "top: 76,"},
+        ContractMarker{"banner-below-plot-line", "top: 96,"},
         ContractMarker{"centered-rail-button", "height: 26,\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
         ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 3},
         ContractMarker{"aligned-band-binding", "\"boxes\":[{\"left\":0,\"top\":3,\"width\":13,\"height\":13,\"start\":0,\"length\":2},{\"left\":21,\"top\":3,\"width\":52.03125,\"height\":13,\"start\":3,\"length\":8}]"},

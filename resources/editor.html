@@ -384,7 +384,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       setVisible(true);
     }
     shownRef.current = display;
-    const holdMs = /\b(?:MUTED|UNMUTED)\b/.test(display) ? 2000 : 1400;
+    const holdMs = /\b(?:MUTED|UNMUTED)\b/.test(display) ? 2400 : 1800;
     timers.push(setTimeout(() => {
       setVisible(false);
       setText('');
@@ -1478,7 +1478,8 @@ window.FilterBank = FilterBank;`,
       alignSelf: 'flex-start', minWidth: 92, height: 26, padding: '0 10px', borderRadius: 3,
       border: '1px solid rgba(180,210,255,0.3)', background: 'rgba(120,180,255,0.10)',
       color: 'rgba(220,235,255,0.95)', fontFamily: 'var(--mono)', fontSize: 9.5,
-      letterSpacing: 0.8, cursor: 'pointer'
+      letterSpacing: 0.8, cursor: 'pointer', display: 'inline-flex', alignItems: 'center',
+      justifyContent: 'center', lineHeight: 1
     } }, React.createElement('span', { 'aria-live': 'polite' }, copyState)));
 }
 
@@ -2793,7 +2794,7 @@ window.PatternManager = PatternManager;`,
       'status banner resizes smoothly');
     replaceSpectrSource(
       "      position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',",
-      "      position: 'absolute', top: 84, left: '50%', transform: 'translateX(-50%)',",
+      "      position: 'absolute', top: 96, left: '50%', transform: 'translateX(-50%)',",
       'status banner sits below the plot top line');
     replaceSpectrSource(
       String.raw`        borderRadius: 3, cursor: 'pointer',
@@ -3031,7 +3032,7 @@ window.PatternManager = PatternManager;`,
       setVisible(true);
     }
     shownRef.current = display;
-    const holdMs = /\b(?:MUTED|UNMUTED)\b/.test(display) ? 2000 : 1400;
+    const holdMs = /\b(?:MUTED|UNMUTED)\b/.test(display) ? 2400 : 1800;
     timers.push(setTimeout(() => {
       setVisible(false);
       setText('');
@@ -3049,7 +3050,6 @@ window.PatternManager = PatternManager;`,
       setVisible(false);
       setText('');
       shownRef.current = '';
-      requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
     }, delay);
     if (!display) {
       const timer = hide(120);
@@ -3061,14 +3061,14 @@ window.PatternManager = PatternManager;`,
     setText(display);
     setVisible(true);
     shownRef.current = display;
-    const holdMs = /\b(?:MUTED|UNMUTED)\b/.test(display) ? 2000 : 1400;
+    const holdMs = /\b(?:MUTED|UNMUTED)\b/.test(display) ? 2400 : 1800;
     const timer = hide(holdMs);
     return () => clearTimeout(timer);
   }, [message]);`,
       'status clear is cancellable and repaints its old bounds');
     replaceSpectrSource(
       "    }}>{text}</div>",
-      "    }}><span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', height: '100%', lineHeight: '26px', whiteSpace: 'nowrap' }}>{text}</span></div>",
+      "    }}><span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', height: '100%', lineHeight: '13px', paddingTop: '6.5px', boxSizing: 'border-box', whiteSpace: 'nowrap' }}>{text}</span></div>",
       'status banner exposes a stable live text surface');
     replaceSpectrSource(
       'function StatusBanner({ message }) {',
@@ -3082,7 +3082,6 @@ window.PatternManager = PatternManager;`,
       setVisible(false);
       setText('');
       shownRef.current = '';
-      requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
       return;
     }
     const display = message ? message.split('|')[0].trim() : '';`,

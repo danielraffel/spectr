@@ -400,6 +400,10 @@ EDITS = [
      'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "26px" } }, text)',
      'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "26px", whiteSpace: "nowrap" } }, text)'),
 
+    ('live status text is optically centered',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "26px", whiteSpace: "nowrap" } }, text)',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "13px", paddingTop: "6.5px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)'),
+
     ('hover readout clears the status banner slot',
      '    const ty = clamp(y - 30, g.inner.y + 2, g.inner.y + g.inner.h);',
      '    const ty = clamp(y - 30, g.inner.y + 20, g.inner.y + g.inner.h);'),
@@ -460,7 +464,7 @@ EDITS = [
      '      setVisible(true);\n'
      '    }\n'
      '    shownRef.current = display;\n'
-     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2000 : 1400;\n'
+     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2400 : 1800;\n'
      '    timers.push(setTimeout(() => {\n'
      '      setVisible(false);\n'
      '      setText("");\n'
@@ -512,9 +516,18 @@ EDITS = [
     ('mute status gets a longer independent hold',
      '    const timer = hide(1400);\n'
      '    return () => clearTimeout(timer);',
-     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2000 : 1400;\n'
+     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2400 : 1800;\n'
      '    const timer = hide(holdMs);\n'
      '    return () => clearTimeout(timer);'),
+
+    ('status hold timing migration',
+     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2000 : 1400;',
+     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2400 : 1800;'),
+
+    ('status visibility does not synthesize global resize',
+     '      requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));\n',
+     '',
+     2),
 
     ('status info hint fits the settings field',
      'hint: "Hover, mute, and drag details in the top banner"',
@@ -942,11 +955,15 @@ EDITS = [
 
     ('status banner sits below the plot top line',
      '        top: 60,',
-     '        top: 84,'),
+     '        top: 96,'),
 
     ('status banner clears the ruler line',
      '        top: 76,',
-     '        top: 84,'),
+     '        top: 96,'),
+
+    ('status banner clears the ruler line migration',
+     '        top: 84,',
+     '        top: 96,'),
 
     ('bottom rail controls center glyphs text and chevrons',
      '        borderRadius: 3,\n'
@@ -1180,9 +1197,9 @@ EDITS = [
      'React.createElement("span", null, /* @__PURE__ */ React.createElement(RailBtn',
      4),
 
-    ('semantic popup surfaces claim native dismissal ownership',
-     '"data-spectr-menu-options": true, "data-spectr-overlay": "true", role:',
+    ('semantic popup surfaces delegate dismissal to Pulp',
      '"data-spectr-menu-options": true, "data-spectr-overlay": "true", overlay: true, onDismiss: () => setOpenMenu(null), role:',
+     '"data-spectr-menu-options": true, "data-spectr-overlay": "true", role:',
      5),
 
     ('generic Pulp popup owns keyboard and outside dismissal',
@@ -1708,7 +1725,6 @@ EDITS = [
      '      setVisible(false);\n'
      '      setText("");\n'
      '      shownRef.current = "";\n'
-     '      requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));\n'
      '    }, delay);\n'
      '    if (!display) {\n'
      '      const timer2 = hide(120);\n'
@@ -1733,7 +1749,6 @@ EDITS = [
      '      setVisible(false);\n'
      '      setText("");\n'
      '      shownRef.current = "";\n'
-     '      requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));\n'
      '      return;\n'
      '    }\n'
      '    const display = message ? message.split("|")[0].trim() : "";'),
@@ -2079,7 +2094,7 @@ function SpectrBuildInfo() {
     { marker: "about", title: "ABOUT", subtitle: "Build information for support and debugging." },
     !info && /* @__PURE__ */ React.createElement("div", { "data-spectr-build-info-state": loadFailed ? "unavailable" : "loading", style: { opacity: 0.55, fontSize: 9.5 } }, loadFailed ? "BUILD INFO UNAVAILABLE" : "LOADING BUILD INFO…"),
     rows.map((row) => /* @__PURE__ */ React.createElement("div", { key: row[0], style: { display: "flex", gap: 12, alignItems: "baseline" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 72, flexShrink: 0, opacity: 0.45, fontSize: 9 } }, row[0]), /* @__PURE__ */ React.createElement("span", { title: String(row[1]), style: { flex: 1, fontSize: 9.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, String(row[1])))),
-    info && /* @__PURE__ */ React.createElement("button", { "data-spectr-copy-build-info": true, onClick: copy, disabled: copyState === "COPYING", style: { alignSelf: "flex-start", minWidth: 92, height: 26, padding: "0 10px", borderRadius: 3, border: "1px solid rgba(180,210,255,0.3)", background: "rgba(120,180,255,0.10)", color: "rgba(220,235,255,0.95)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 0.8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { "aria-live": "polite" }, copyState))
+    info && /* @__PURE__ */ React.createElement("button", { "data-spectr-copy-build-info": true, onClick: copy, disabled: copyState === "COPYING", style: { alignSelf: "flex-start", minWidth: 92, height: 26, padding: "0 10px", borderRadius: 3, border: "1px solid rgba(180,210,255,0.3)", background: "rgba(120,180,255,0.10)", color: "rgba(220,235,255,0.95)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 0.8, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1 } }, /* @__PURE__ */ React.createElement("span", { "aria-live": "polite" }, copyState))
   );
 }
 /* materialized-build-info-owner */
@@ -2090,6 +2105,10 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '      if (!body || body.ok !== true) throw new Error(body && body.error || "build info unavailable");',
      '      if (!body || body.ok !== true || !body.product_version || !body.sdk_version)\n'
      '        throw new Error(body && body.error || "build info unavailable");'),
+
+    ('copy build info text is vertically centered',
+     '    info && /* @__PURE__ */ React.createElement("button", { "data-spectr-copy-build-info": true, onClick: copy, disabled: copyState === "COPYING", style: { alignSelf: "flex-start", minWidth: 92, height: 26, padding: "0 10px", borderRadius: 3, border: "1px solid rgba(180,210,255,0.3)", background: "rgba(120,180,255,0.10)", color: "rgba(220,235,255,0.95)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 0.8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { "aria-live": "polite" }, copyState))',
+     '    info && /* @__PURE__ */ React.createElement("button", { "data-spectr-copy-build-info": true, onClick: copy, disabled: copyState === "COPYING", style: { alignSelf: "flex-start", minWidth: 92, height: 26, padding: "0 10px", borderRadius: 3, border: "1px solid rgba(180,210,255,0.3)", background: "rgba(120,180,255,0.10)", color: "rgba(220,235,255,0.95)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 0.8, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1 } }, /* @__PURE__ */ React.createElement("span", { "aria-live": "polite" }, copyState))'),
 
     ('shipping settings optionally show build information below feedback',
      '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })))));\n'

@@ -389,7 +389,7 @@ window.spectrStartOracle = () => {
         throw new Error('status banner padding was not symmetric');
       if (!bannerStyle.transitionProperty.split(',').map(value => value.trim()).includes('width'))
         throw new Error('status banner width did not animate');
-      if (parseFloat(bannerStyle.top) < 70)
+      if (parseFloat(bannerStyle.top) < 90)
         throw new Error('status banner remained above the plot top line');
       await spectrWaitFor(() =>
         !document.querySelector('[data-spectr-status-banner]'),
