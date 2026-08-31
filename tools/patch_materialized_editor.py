@@ -1983,12 +1983,15 @@ function SpectrBuildInfo() {
   const [info, setInfo] = React.useState(null);
   const [copyState, setCopyState] = React.useState("COPY");
   const [loadFailed, setLoadFailed] = React.useState(false);
-  const requestSerial = React.useRef(0);
   const resetTimer = React.useRef(null);
   const mountedRef = React.useRef(true);
   const unwrap = (response) => response && response.payload ? response.payload : response;
-  const requestId = (kind) => "spectr-build-info-" + kind + "-" + ++requestSerial.current;
+  const requestId = (kind) => {
+    window.__spectrBuildInfoRequestSerial = (Number(window.__spectrBuildInfoRequestSerial) || 0) + 1;
+    return "spectr-build-info-" + kind + "-" + window.__spectrBuildInfoRequestSerial;
+  };
   React.useEffect(() => {
+    mountedRef.current = true;
     let live = true;
     if (!window.pulp || typeof window.pulp.postMessage !== "function") {
       setLoadFailed(true);
@@ -2081,6 +2084,29 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '      if (mountedRef.current) setCopyState("COPY");\n'
      '    }, 1800);\n'
      '  };'),
+
+    ('shipping build info request ids survive remounts',
+     '  const requestSerial = React.useRef(0);\n'
+     '  const resetTimer = React.useRef(null);\n'
+     '  const mountedRef = React.useRef(true);\n'
+     '  const unwrap = (response) => response && response.payload ? response.payload : response;\n'
+     '  const requestId = (kind) => "spectr-build-info-" + kind + "-" + ++requestSerial.current;',
+     '  const resetTimer = React.useRef(null);\n'
+     '  const mountedRef = React.useRef(true);\n'
+     '  const unwrap = (response) => response && response.payload ? response.payload : response;\n'
+     '  const requestId = (kind) => {\n'
+     '    window.__spectrBuildInfoRequestSerial = (Number(window.__spectrBuildInfoRequestSerial) || 0) + 1;\n'
+     '    return "spectr-build-info-" + kind + "-" + window.__spectrBuildInfoRequestSerial;\n'
+     '  };'),
+
+    ('shipping build info effect replay restores mounted lifetime',
+     '  React.useEffect(() => {\n'
+     '    let live = true;\n'
+     '    if (!window.pulp || typeof window.pulp.postMessage !== "function") {',
+     '  React.useEffect(() => {\n'
+     '    mountedRef.current = true;\n'
+     '    let live = true;\n'
+     '    if (!window.pulp || typeof window.pulp.postMessage !== "function") {'),
 
 ]
 

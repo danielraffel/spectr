@@ -1412,12 +1412,15 @@ window.FilterBank = FilterBank;`,
   const [info, setInfo] = React.useState(null);
   const [copyState, setCopyState] = React.useState('COPY');
   const [loadFailed, setLoadFailed] = React.useState(false);
-  const requestSerial = React.useRef(0);
   const resetTimer = React.useRef(null);
   const mountedRef = React.useRef(true);
   const unwrap = response => response && response.payload ? response.payload : response;
-  const requestId = kind => 'spectr-build-info-' + kind + '-' + (++requestSerial.current);
+  const requestId = kind => {
+    window.__spectrBuildInfoRequestSerial = (Number(window.__spectrBuildInfoRequestSerial) || 0) + 1;
+    return 'spectr-build-info-' + kind + '-' + window.__spectrBuildInfoRequestSerial;
+  };
   React.useEffect(() => {
+    mountedRef.current = true;
     let live = true;
     if (!window.pulp || typeof window.pulp.postMessage !== 'function') {
       setLoadFailed(true);
