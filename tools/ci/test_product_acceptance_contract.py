@@ -17,7 +17,11 @@ checks = {
     "clean temp": "$RUNNER_TEMP/spectr-product-acceptance-" in workflow,
     "Release": "-DCMAKE_BUILD_TYPE=Release" in workflow,
     "provenance": "validate_release_sdk.py" in workflow and "SPECTR_EXPECTED_PULP_SDK_SHA" in workflow,
-    "focused tests": "ctest --test-dir" in workflow and " -R '" in workflow,
+    "focused tests": ("ctest --test-dir" in workflow and " -R '" in workflow
+                      and "^every native dropdown" in workflow
+                      and "^remaining native modal" in workflow
+                      and "^native settings" in workflow
+                      and "^editor resize" in workflow),
     "PKG": ("pkgbuild --root" in workflow
             and 'ditto "$SPECTR_BUILD_DIR/Spectr.app"' in workflow
             and "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow),
