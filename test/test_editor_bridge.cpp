@@ -17,6 +17,7 @@
 #include "spectr_editor_assets_data.hpp"
 
 #include <pulp/state/store.hpp>
+#include <pulp/runtime/build_info.hpp>
 #include <pulp/view/script_engine.hpp>
 
 #include <choc/containers/choc_Value.h>
@@ -26,6 +27,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Catch::Approx;
@@ -41,14 +43,16 @@ struct Rig {
     std::unique_ptr<Spectr>       proc;
     pulp::view::EditorBridge      bridge;
 
-    Rig() : proc(std::make_unique<Spectr>()) {
+    explicit Rig(spectr::ClipboardWriter clipboard_writer = {})
+        : proc(std::make_unique<Spectr>()) {
         proc->set_state_store(&store);
         proc->define_parameters(store);
         // Production registers the processor-owned library so pattern edits
         // participate in the plugin state blob. Keep the bridge oracle wired
         // to that same authority instead of a detached test-only library.
         register_spectr_editor_handlers(
-            bridge, *proc, proc->patterns(), proc->editor_authority());
+            bridge, *proc, proc->patterns(), proc->editor_authority(),
+            std::move(clipboard_writer));
     }
 
     std::string dispatch(std::string_view envelope_json) {
@@ -119,6 +123,43 @@ std::string processing_state_envelope(std::uint32_t n,
 }
 
 } // namespace
+
+TEST_CASE("native editor bridge exposes truthful build information and copy feedback") {
+    bool copied = false;
+    std::string copied_text;
+    Rig r([&](std::string_view text) {
+        copied = true;
+        copied_text = text;
+        return true;
+    });
+
+    const auto response = choc::json::parse(
+        r.dispatch(R"({"type":"build_info_get","payload":{}})"));
+    REQUIRE(response.isObject());
+    REQUIRE(response["ok"].getBool());
+    CHECK(response["product_version"].get<std::string>()
+          == r.proc->descriptor().version);
+    CHECK(response["sdk_version"].get<std::string>()
+          == pulp::runtime::kSdkVersion);
+    CHECK(response["sdk_dirty"].getBool() == pulp::runtime::kGitDirty);
+    REQUIRE(response.hasObjectMember("copy_text"));
+    CHECK(response["copy_text"].get<std::string>().find("Spectr: ") == 0);
+    CHECK(response["copy_text"].get<std::string>().find("Pulp SDK: ")
+          != std::string::npos);
+
+    const auto copy_response = r.dispatch(
+        R"({"type":"build_info_copy","payload":{}})");
+    REQUIRE(response_ok(copy_response));
+    CHECK(copied);
+    CHECK(copied_text == response["copy_text"].get<std::string>());
+}
+
+TEST_CASE("native editor bridge reports clipboard refusal") {
+    Rig r([](std::string_view) { return false; });
+    const auto response = r.dispatch(
+        R"({"type":"build_info_copy","payload":{}})");
+    CHECK(response_has_error(response, "clipboard unavailable"));
+}
 
 TEST_CASE("native editor bridge: complete field preserves exact mute and layout") {
     Rig r;

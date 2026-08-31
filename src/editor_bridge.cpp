@@ -8,6 +8,8 @@
 #include "spectr/snapshot.hpp"
 
 #include <pulp/state/store.hpp>
+#include <pulp/platform/clipboard.hpp>
+#include <pulp/runtime/build_info.hpp>
 #include <pulp/runtime/trace.hpp>
 #include <pulp/view/editor_bridge.hpp>
 
@@ -19,6 +21,11 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+
+#ifndef SPECTR_PULP_SDK_SOURCE_GIT_SHA
+#define SPECTR_PULP_SDK_SOURCE_GIT_SHA ""
+#endif
 
 // Spectr-specific handler registrations. The generic envelope parse +
 // dispatch + response builders live in pulp::view::EditorBridge (upstream
@@ -119,6 +126,43 @@ choc::value::Value pattern_library_projection_(const PatternLibrary& library) {
     return result;
 }
 
+std::string build_info_copy_text_(const Spectr& plugin) {
+    std::string result;
+    const auto append = [&result](std::string_view label, std::string_view value) {
+        if (value.empty()) return;
+        result.append(label);
+        result.append(": ");
+        result.append(value);
+        result.push_back('\n');
+    };
+    append("Spectr", plugin.descriptor().version);
+    append("Pulp SDK", pulp::runtime::kSdkVersion);
+    constexpr std::string_view exact_sha{SPECTR_PULP_SDK_SOURCE_GIT_SHA};
+    append("Pulp SDK SHA", exact_sha.empty()
+        ? std::string_view{pulp::runtime::kGitSha} : exact_sha);
+    append("Build", pulp::runtime::kBuildType);
+    append("Built", pulp::runtime::kBuildIso8601);
+    if (!result.empty()) result.pop_back();
+    return result;
+}
+
+choc::value::Value build_info_projection_(const Spectr& plugin) {
+    auto result = choc::value::createObject("SpectrBuildInfo");
+    result.addMember("product_version", plugin.descriptor().version);
+    result.addMember("sdk_version", std::string{pulp::runtime::kSdkVersion});
+    constexpr std::string_view exact_sha{SPECTR_PULP_SDK_SOURCE_GIT_SHA};
+    const auto sdk_sha = exact_sha.empty()
+        ? std::string_view{pulp::runtime::kGitSha} : exact_sha;
+    if (!sdk_sha.empty()) result.addMember("sdk_sha", std::string{sdk_sha});
+    if (!pulp::runtime::kBuildType.empty())
+        result.addMember("build_type", std::string{pulp::runtime::kBuildType});
+    if (!pulp::runtime::kBuildIso8601.empty())
+        result.addMember("build_time", std::string{pulp::runtime::kBuildIso8601});
+    result.addMember("sdk_dirty", pulp::runtime::kGitDirty);
+    result.addMember("copy_text", build_info_copy_text_(plugin));
+    return result;
+}
+
 std::optional<EditorRevision> expected_revision_(
     const choc::value::ValueView& payload) {
     if (!payload.isObject() || !payload.hasObjectMember("expected_revision"))
@@ -174,8 +218,15 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
 void register_spectr_editor_handlers(EditorBridge& bridge,
                                      Spectr& plugin,
                                      PatternLibrary& library,
-                                     EditorAuthority& authority)
+                                     EditorAuthority& authority,
+                                     ClipboardWriter clipboard_writer)
 {
+    if (!clipboard_writer) {
+        clipboard_writer = [](std::string_view text) {
+            return pulp::platform::Clipboard::set_text(std::string{text});
+        };
+    }
+
     bridge.add_handler("processing_state_get",
         [&plugin, &authority](const choc::value::ValueView&) {
             // Every committed realm requests state on mount. Treat that as a
@@ -183,6 +234,20 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             // captured by callbacks from the retired realm.
             authority.reset_transient_state();
             return authority_response_(plugin, {true, authority.revision(), {}});
+        });
+
+    bridge.add_handler("build_info_get",
+        [&plugin](const choc::value::ValueView&) {
+            return EditorBridge::ok_response(build_info_projection_(plugin));
+        });
+
+    bridge.add_handler("build_info_copy",
+        [&plugin, clipboard_writer = std::move(clipboard_writer)](
+            const choc::value::ValueView&) {
+            const auto text = build_info_copy_text_(plugin);
+            if (!clipboard_writer(text))
+                return EditorBridge::err_response("clipboard unavailable");
+            return EditorBridge::ok_response();
         });
 
     // Complete JS field publication. Gain and mute are deliberately separate:

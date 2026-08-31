@@ -57,6 +57,17 @@ math(EXPR SPECTR_PROCESSING_LATENCY
 
 find_package(Pulp 0.801.0 REQUIRED)
 
+set(SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE "")
+if(DEFINED PULP_SDK_SOURCE_GIT_SHA)
+    string(LENGTH "${PULP_SDK_SOURCE_GIT_SHA}"
+           _spectr_pulp_sdk_source_git_sha_length)
+    if(PULP_SDK_SOURCE_GIT_SHA MATCHES "^[0-9a-f]+$" AND
+       _spectr_pulp_sdk_source_git_sha_length EQUAL 40)
+        set(SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE
+            "${PULP_SDK_SOURCE_GIT_SHA}")
+    endif()
+endif()
+
 # Native cutover candidates are admitted by immutable SDK provenance, not by
 # whichever compatible Pulp package happens to be first on CMake's search path.
 # The shipping/acceptance command passes the exact merged Pulp SHA here; normal
@@ -176,6 +187,7 @@ function(spectr_configure_native_target target)
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
+        SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
     )
 endfunction()
 
@@ -342,6 +354,7 @@ target_compile_definitions(Spectr-test PRIVATE
     PULP_PLUGIN_DESIGN_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
     SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
     SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
+    SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
 )
 catch_discover_tests(Spectr-test)
 
