@@ -66,6 +66,20 @@ find_package(Git QUIET)
 if(GIT_FOUND)
     execute_process(
         COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}"
+                rev-parse --show-toplevel
+        RESULT_VARIABLE _spectr_git_root_result
+        OUTPUT_VARIABLE _spectr_git_root
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    file(REAL_PATH "${CMAKE_CURRENT_SOURCE_DIR}" _spectr_source_root)
+    if(_spectr_git_root_result EQUAL 0)
+        file(REAL_PATH "${_spectr_git_root}" _spectr_git_root)
+    endif()
+endif()
+if(GIT_FOUND AND _spectr_git_root_result EQUAL 0 AND
+   _spectr_git_root STREQUAL _spectr_source_root)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}"
                 rev-parse --verify HEAD
         RESULT_VARIABLE _spectr_git_sha_result
         OUTPUT_VARIABLE _spectr_source_git_sha
@@ -250,6 +264,7 @@ function(spectr_configure_native_target target)
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
+        SPECTR_PULP_SDK_PROVENANCE_EXACT=$<BOOL:${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}>
         SPECTR_PRODUCT_GIT_SHA="${SPECTR_SOURCE_GIT_SHA}"
         SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
     )
@@ -419,6 +434,7 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
     SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
     SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
+    SPECTR_PULP_SDK_PROVENANCE_EXACT=$<BOOL:${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}>
     SPECTR_PRODUCT_GIT_SHA="${SPECTR_SOURCE_GIT_SHA}"
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )

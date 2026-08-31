@@ -758,7 +758,7 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"build-info-toggle", "data-spectr-build-info-toggle"},
         ContractMarker{"build-info-product-sha", "[\\\"SPECTR SHA\\\", info.product_sha || \\\"UNKNOWN\\\"]"},
         ContractMarker{"build-info-product-dirty", "info.product_provenance_known ? info.product_dirty ? \\\"DIRTY\\\" : \\\"CLEAN\\\" : \\\"UNKNOWN\\\""},
-        ContractMarker{"build-info-sdk-dirty", "[\\\"SDK SOURCE\\\", info.sdk_dirty ? \\\"DIRTY\\\" : \\\"CLEAN\\\"]"},
+        ContractMarker{"build-info-sdk-dirty", "[\\\"SDK SOURCE\\\", info.sdk_provenance_exact ? info.sdk_dirty ? \\\"DIRTY\\\" : \\\"CLEAN\\\" : \\\"UNKNOWN\\\"]"},
     };
     const auto errors = [&](std::string_view candidate) {
         std::vector<std::string> result;

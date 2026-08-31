@@ -143,6 +143,8 @@ TEST_CASE("native editor bridge exposes truthful build information and copy feed
     CHECK(response["sdk_version"].get<std::string>()
           == pulp::runtime::kSdkVersion);
     CHECK(response["sdk_dirty"].getBool() == pulp::runtime::kGitDirty);
+    CHECK(response["sdk_provenance_exact"].getBool()
+          == static_cast<bool>(SPECTR_PULP_SDK_PROVENANCE_EXACT));
     constexpr std::string_view product_sha{SPECTR_PRODUCT_GIT_SHA};
     if (product_sha.empty()) {
         CHECK_FALSE(response.hasObjectMember("product_sha"));
@@ -167,10 +169,15 @@ TEST_CASE("native editor bridge exposes truthful build information and copy feed
               + (product_sha.empty() ? "unknown"
                  : SPECTR_PRODUCT_GIT_DIRTY ? "dirty" : "clean"))
           != std::string::npos);
+    constexpr std::string_view exact_sdk_sha{SPECTR_PULP_SDK_SOURCE_GIT_SHA};
+    if (!exact_sdk_sha.empty())
+        CHECK(response["copy_text"].get<std::string>().find(
+                  std::string{"Pulp SDK SHA: "} + std::string{exact_sdk_sha})
+              != std::string::npos);
     CHECK(response["copy_text"].get<std::string>().find(
-              std::string{"Pulp SDK SHA: "} + SPECTR_PULP_SDK_SOURCE_GIT_SHA)
-          != std::string::npos);
-    CHECK(response["copy_text"].get<std::string>().find("Pulp SDK source: ")
+              std::string{"Pulp SDK source: "}
+              + (exact_sdk_sha.empty() ? "unknown"
+                 : pulp::runtime::kGitDirty ? "dirty" : "clean"))
           != std::string::npos);
 
     const auto copy_response = r.dispatch(

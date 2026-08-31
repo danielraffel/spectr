@@ -1447,7 +1447,7 @@ window.FilterBank = FilterBank;`,
     ['SPECTR SOURCE', info.product_provenance_known ? (info.product_dirty ? 'DIRTY' : 'CLEAN') : 'UNKNOWN'],
     ['PULP SDK', info.sdk_version],
     ['SDK SHA', info.sdk_sha],
-    ['SDK SOURCE', info.sdk_dirty ? 'DIRTY' : 'CLEAN'],
+    ['SDK SOURCE', info.sdk_provenance_exact ? (info.sdk_dirty ? 'DIRTY' : 'CLEAN') : 'UNKNOWN'],
     ['BUILD', info.build_type || ''],
     ['BUILT', info.build_time],
   ].filter(row => row[1]) : [];

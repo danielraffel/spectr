@@ -8,6 +8,8 @@ workflow = (ROOT / ".github/workflows/m5-product-acceptance.yml").read_text()
 config_text = (ROOT / ".shipyard/config.toml").read_text()
 config = tomllib.loads(config_text)
 pin = json.loads((ROOT / "tools/ci/pulp-sdk-release.json").read_text())
+cmake = (ROOT / "CMakeLists.txt").read_text()
+package = (ROOT / "package.sh").read_text()
 checks = {
     "exact name": "name: Spectr M5 Product Acceptance" in workflow,
     "manual only": "workflow_dispatch:" in workflow and not re.search(r"(?m)^  (push|pull_request|schedule):", workflow),
@@ -33,6 +35,10 @@ checks = {
     "no warm path": "$HOME/Code/pulp-sdk" not in config_text and "-B build" not in config_text,
     "release SHA": bool(re.fullmatch(r"[0-9a-f]{40}", pin["source_git_sha"])),
     "asset digest": bool(re.fullmatch(r"[0-9a-f]{64}", pin["asset_sha256"])),
+    "source root authority": ("rev-parse --show-toplevel" in cmake
+                              and "_spectr_git_root STREQUAL _spectr_source_root" in cmake),
+    "package rechecks exact head": ("SPECTR_SHA_AFTER_BUILD" in package
+                                    and "SPECTR_SHA_CACHED_AFTER_BUILD" in package),
 }
 failed = [name for name, passed in checks.items() if not passed]
 if failed: raise SystemExit("product-acceptance contract failures: " + ", ".join(failed))

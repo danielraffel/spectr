@@ -26,6 +26,9 @@
 #ifndef SPECTR_PULP_SDK_SOURCE_GIT_SHA
 #define SPECTR_PULP_SDK_SOURCE_GIT_SHA ""
 #endif
+#ifndef SPECTR_PULP_SDK_PROVENANCE_EXACT
+#define SPECTR_PULP_SDK_PROVENANCE_EXACT 0
+#endif
 #ifndef SPECTR_PRODUCT_GIT_SHA
 #define SPECTR_PRODUCT_GIT_SHA ""
 #endif
@@ -152,8 +155,10 @@ std::string build_info_copy_text_(const Spectr& plugin) {
     constexpr std::string_view exact_sha{SPECTR_PULP_SDK_SOURCE_GIT_SHA};
     append("Pulp SDK SHA", exact_sha.empty()
         ? std::string_view{pulp::runtime::kGitSha} : exact_sha);
-    append("Pulp SDK source", pulp::runtime::kGitDirty
-        ? std::string_view{"dirty"} : std::string_view{"clean"});
+    append("Pulp SDK source", SPECTR_PULP_SDK_PROVENANCE_EXACT == 0
+        ? std::string_view{"unknown"}
+        : pulp::runtime::kGitDirty ? std::string_view{"dirty"}
+                                  : std::string_view{"clean"});
     append("Build", pulp::runtime::kBuildType);
     append("Built", pulp::runtime::kBuildIso8601);
     if (!result.empty()) result.pop_back();
@@ -173,6 +178,8 @@ choc::value::Value build_info_projection_(const Spectr& plugin) {
     const auto sdk_sha = exact_sha.empty()
         ? std::string_view{pulp::runtime::kGitSha} : exact_sha;
     if (!sdk_sha.empty()) result.addMember("sdk_sha", std::string{sdk_sha});
+    result.addMember("sdk_provenance_exact",
+                     SPECTR_PULP_SDK_PROVENANCE_EXACT != 0);
     if (!pulp::runtime::kBuildType.empty())
         result.addMember("build_type", std::string{pulp::runtime::kBuildType});
     if (!pulp::runtime::kBuildIso8601.empty())

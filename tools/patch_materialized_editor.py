@@ -2159,12 +2159,16 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '    ["SPECTR SOURCE", info.product_provenance_known ? info.product_dirty ? "DIRTY" : "CLEAN" : "UNKNOWN"],\n'
      '    ["PULP SDK", info.sdk_version],\n'
      '    ["SDK SHA", info.sdk_sha],\n'
-     '    ["SDK SOURCE", info.sdk_dirty ? "DIRTY" : "CLEAN"],\n'
+     '    ["SDK SOURCE", info.sdk_provenance_exact ? info.sdk_dirty ? "DIRTY" : "CLEAN" : "UNKNOWN"],\n'
      '    ["BUILD", info.build_type || ""],'),
 
     ('shipping build info toggle stays discoverable when about is hidden',
      '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) }))), settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null)));\n',
      '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })), /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Build info", hint: "Support and debugging details" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { buildInfo: true, value: settings.showBuildInfo !== false, onChange: (v) => persist({ showBuildInfo: v }) }))), settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null)));\n'),
+
+    ('shipping build info distinguishes exact SDK provenance',
+     '    ["SDK SOURCE", info.sdk_dirty ? "DIRTY" : "CLEAN"],',
+     '    ["SDK SOURCE", info.sdk_provenance_exact ? info.sdk_dirty ? "DIRTY" : "CLEAN" : "UNKNOWN"],'),
 
     ('shipping build info toggle has a stable selector',
      '      "data-spectr-status-info-state": statusInfo ? value ? "on" : "off" : void 0,\n'

@@ -87,6 +87,16 @@ grep -q '^PULP_SDK_DISTRIBUTION_ELIGIBLE:INTERNAL=TRUE$' "$CACHE" || {
 "$PULP_ROOT/tools/ci/governed-build.sh" \
   cmake --build "$BUILD" \
   --target Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP
+SPECTR_SHA_AFTER_BUILD="$(git -C "$ROOT" rev-parse --verify HEAD)"
+[[ "$SPECTR_SHA_AFTER_BUILD" == "$SPECTR_SHA_EXPECTED" ]] || {
+  echo "Spectr source changed during package rebuild: expected $SPECTR_SHA_EXPECTED, got $SPECTR_SHA_AFTER_BUILD" >&2
+  exit 2
+}
+SPECTR_SHA_CACHED_AFTER_BUILD="$(sed -n 's/^SPECTR_SOURCE_GIT_SHA:INTERNAL=//p' "$CACHE" | tail -1)"
+[[ "$SPECTR_SHA_CACHED_AFTER_BUILD" == "$SPECTR_SHA_EXPECTED" ]] || {
+  echo "configured Spectr source changed during package rebuild" >&2
+  exit 2
+}
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]] || {
   echo "the package rebuild changed tracked Spectr source" >&2
   exit 2
