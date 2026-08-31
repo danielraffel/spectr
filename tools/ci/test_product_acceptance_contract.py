@@ -16,7 +16,10 @@ checks = {
     "no selector input": "runner_selector" not in workflow and "runner_provider" not in workflow,
     "clean temp": "$RUNNER_TEMP/spectr-product-acceptance-" in workflow,
     "Release": "-DCMAKE_BUILD_TYPE=Release" in workflow,
-    "provenance": "validate_release_sdk.py" in workflow and "SPECTR_EXPECTED_PULP_SDK_SHA" in workflow,
+    "provenance": ("validate_release_sdk.py" in workflow
+                   and "SPECTR_EXPECTED_PULP_SDK_SHA" in workflow
+                   and '-DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$GITHUB_SHA"' in workflow
+                   and '--product-sha "$GITHUB_SHA"' in workflow),
     "focused tests": ("ctest --test-dir" in workflow and " -R '" in workflow
                       and "^every native dropdown" in workflow
                       and "^remaining native modal" in workflow

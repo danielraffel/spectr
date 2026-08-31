@@ -9111,7 +9111,7 @@
       const nativeScrollView = ensureSpectrNativeScrollView(settingsPanel, values);
       const authored = width === 1320 && height === 860;
       const panelWidth = Math.min(520, Math.max(360, width - 40));
-      const authoredContentHeight = 952;
+      const authoredContentHeight = 1044;
       const panelHeight = authored ? 679
         : Math.min(authoredContentHeight, Math.max(240, height * 0.9));
       const panelTop = authored ? 90.5
@@ -9281,7 +9281,7 @@
         g5.setLeft(String(feedbackId), 27);
         g5.setTop(String(feedbackId), 652);
         g5.setFlex(String(feedbackId), "width", 466);
-        g5.setFlex(String(feedbackId), "height", 76);
+        g5.setFlex(String(feedbackId), "height", 108);
       }
       const about = globalThis.document?.querySelector?.(
         '[data-spectr-settings-group="about"]');
@@ -9289,9 +9289,9 @@
       if (aboutId) {
         g5.setPosition(String(aboutId), "absolute");
         g5.setLeft(String(aboutId), 27);
-        g5.setTop(String(aboutId), 742);
+        g5.setTop(String(aboutId), 774);
         g5.setFlex(String(aboutId), "width", 466);
-        g5.setFlex(String(aboutId), "height", 192);
+        g5.setFlex(String(aboutId), "height", 252);
       }
     }
     for (const binding of activePaintBindings) {

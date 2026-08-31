@@ -67,10 +67,11 @@ jobs:
           cmake -S "$GITHUB_WORKSPACE" -B "$SPECTR_BUILD_DIR" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DPulp_DIR="$PULP_SDK_ROOT/lib/cmake/Pulp" \
-            -DSPECTR_EXPECTED_PULP_SDK_SHA="$PULP_SDK_SHA"
+            -DSPECTR_EXPECTED_PULP_SDK_SHA="$PULP_SDK_SHA" \
+            -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$GITHUB_SHA"
           python3 tools/ci/validate_release_sdk.py \
             --sdk-root "$PULP_SDK_ROOT" --build-dir "$SPECTR_BUILD_DIR" \
-            --pin tools/ci/pulp-sdk-release.json
+            --pin tools/ci/pulp-sdk-release.json --product-sha "$GITHUB_SHA"
 
       - name: Gate - Spectr M5 product acceptance focused native artifacts
         shell: bash

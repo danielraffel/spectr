@@ -1443,9 +1443,12 @@ window.FilterBank = FilterBank;`,
   }, []);
   const rows = info ? [
     ['VERSION', info.product_version],
+    ['SPECTR SHA', info.product_sha || 'UNKNOWN'],
+    ['SPECTR SOURCE', info.product_provenance_known ? (info.product_dirty ? 'DIRTY' : 'CLEAN') : 'UNKNOWN'],
     ['PULP SDK', info.sdk_version],
     ['SDK SHA', info.sdk_sha],
-    ['BUILD', info.build_type ? info.build_type + (info.sdk_dirty ? ' · DIRTY' : '') : ''],
+    ['SDK SOURCE', info.sdk_dirty ? 'DIRTY' : 'CLEAN'],
+    ['BUILD', info.build_type || ''],
     ['BUILT', info.build_time],
   ].filter(row => row[1]) : [];
   const settleCopyState = state => {
@@ -1538,11 +1541,13 @@ function SpectrSettingsSlider({ value, min, max, step, onChange, fmt }) {
     </span>
   </div>;
 }
-function SpectrSettingsToggle({ value, onChange, statusInfo = false }) {
+function SpectrSettingsToggle({ value, onChange, statusInfo = false, buildInfo = false }) {
   return <button id={statusInfo ? 'spectr-status-info-toggle' : undefined}
     data-spectr-setting-toggle
     data-spectr-status-info-toggle={statusInfo ? 'true' : undefined}
     data-spectr-status-info-state={statusInfo ? (value ? 'on' : 'off') : undefined}
+    data-spectr-build-info-toggle={buildInfo ? 'true' : undefined}
+    data-spectr-build-info-state={buildInfo ? (value ? 'on' : 'off') : undefined}
     role="switch" aria-checked={value}
     onClick={() => onChange(!value)} style={{
       width: 40, height: 20, borderRadius: 11,
@@ -2409,7 +2414,7 @@ window.PatternManager = PatternManager;`,
       'response ticks omit first and last edges');
     replaceSpectrSource(
       '  "showRulers": true,\n  "scheme": "midnight",',
-      '  "showRulers": true,\n  "statusInfo": true,\n  "scheme": "midnight",',
+      '  "showRulers": true,\n  "statusInfo": true,\n  "showBuildInfo": true,\n  "scheme": "midnight",',
       'status info defaults on');
     replaceSpectrSource(
       String.raw`          <div>
@@ -2475,6 +2480,10 @@ window.PatternManager = PatternManager;`,
           <SpectrSettingsField label="Status info" hint="Hover, mute, and drag">
             <SpectrSettingsToggle statusInfo value={settings.statusInfo !== false}
               onChange={v => persist({ statusInfo: v })} />
+          </SpectrSettingsField>
+          <SpectrSettingsField label="Build info" hint="Support and debugging details">
+            <SpectrSettingsToggle buildInfo value={settings.showBuildInfo !== false}
+              onChange={v => persist({ showBuildInfo: v })} />
           </SpectrSettingsField>
         </SpectrSettingsGroup>
         {settings.showBuildInfo !== false && <SpectrBuildInfo />}`,

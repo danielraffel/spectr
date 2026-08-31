@@ -11,6 +11,7 @@ VER="${VER:-1.0.0}"
 PULP_ROOT="${PULP_ROOT:-$(cd "$ROOT/../pulp" 2>/dev/null && pwd || true)}"
 PULP_DIR_EXPECTED="${PULP_DIR_EXPECTED:-}"
 PULP_SDK_SHA_EXPECTED="${PULP_SDK_SHA_EXPECTED:-}"
+SPECTR_SHA_EXPECTED="${SPECTR_SHA_EXPECTED:-}"
 APP_ID="${APP_ID:-}"
 INST_ID="${INST_ID:-}"
 
@@ -25,6 +26,10 @@ INST_ID="${INST_ID:-}"
   echo "PULP_SDK_SHA_EXPECTED must be the exact accepted 40-character Pulp source SHA" >&2
   exit 2
 }
+[[ "$SPECTR_SHA_EXPECTED" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "SPECTR_SHA_EXPECTED must be the exact accepted 40-character Spectr source SHA" >&2
+  exit 2
+}
 
 CACHE="$BUILD/CMakeCache.txt"
 [[ -f "$CACHE" ]] || { echo "missing Spectr build cache: $CACHE" >&2; exit 2; }
@@ -36,6 +41,20 @@ SOURCE_ROOT="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$CACHE" | tail -1)
 SOURCE_ROOT="$(cd "$SOURCE_ROOT" 2>/dev/null && pwd || true)"
 [[ "$SOURCE_ROOT" == "$ROOT" ]] || {
   echo "build was not configured from this Spectr worktree: ${SOURCE_ROOT:-unknown}" >&2
+  exit 2
+}
+SPECTR_SHA_ACTUAL="$(sed -n 's/^SPECTR_SOURCE_GIT_SHA:INTERNAL=//p' "$CACHE" | tail -1)"
+[[ "$SPECTR_SHA_ACTUAL" == "$SPECTR_SHA_EXPECTED" ]] || {
+  echo "build Spectr source mismatch: expected $SPECTR_SHA_EXPECTED, got ${SPECTR_SHA_ACTUAL:-missing}" >&2
+  exit 2
+}
+grep -q '^SPECTR_SOURCE_GIT_DIRTY:INTERNAL=FALSE$' "$CACHE" || {
+  echo "Spectr installer inputs must come from a clean configured source tree" >&2
+  exit 2
+}
+SPECTR_SHA_NOW="$(git -C "$ROOT" rev-parse --verify HEAD)"
+[[ "$SPECTR_SHA_NOW" == "$SPECTR_SHA_EXPECTED" ]] || {
+  echo "current Spectr source mismatch: expected $SPECTR_SHA_EXPECTED, got $SPECTR_SHA_NOW" >&2
   exit 2
 }
 PULP_DIR_ACTUAL="$(sed -n 's/^Pulp_DIR:[^=]*=//p' "$CACHE" | tail -1)"

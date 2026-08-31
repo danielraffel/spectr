@@ -57,6 +57,68 @@ math(EXPR SPECTR_PROCESSING_LATENCY
 
 find_package(Pulp 0.801.0 REQUIRED)
 
+# Product provenance is recomputed on every configure. Never preserve a SHA
+# from a prior checkout in CMakeCache.txt: acceptance packages must identify
+# the exact Spectr tree that produced them.
+set(_spectr_source_git_sha "")
+set(_spectr_source_git_dirty TRUE)
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}"
+                rev-parse --verify HEAD
+        RESULT_VARIABLE _spectr_git_sha_result
+        OUTPUT_VARIABLE _spectr_source_git_sha
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    string(LENGTH "${_spectr_source_git_sha}" _spectr_source_git_sha_length)
+    if(_spectr_git_sha_result EQUAL 0 AND
+       _spectr_source_git_sha MATCHES "^[0-9a-f]+$" AND
+       _spectr_source_git_sha_length EQUAL 40)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}"
+                    status --porcelain --untracked-files=normal
+            RESULT_VARIABLE _spectr_git_status_result
+            OUTPUT_VARIABLE _spectr_git_status
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        if(_spectr_git_status_result EQUAL 0 AND _spectr_git_status STREQUAL "")
+            set(_spectr_source_git_dirty FALSE)
+        endif()
+    else()
+        set(_spectr_source_git_sha "")
+    endif()
+endif()
+set(SPECTR_SOURCE_GIT_SHA "${_spectr_source_git_sha}" CACHE INTERNAL
+    "Exact Spectr source Git SHA recomputed at configure time" FORCE)
+set(SPECTR_SOURCE_GIT_DIRTY "${_spectr_source_git_dirty}" CACHE INTERNAL
+    "Whether the configured Spectr source tree is dirty or unverifiable" FORCE)
+
+set(SPECTR_EXPECTED_PRODUCT_GIT_SHA "" CACHE STRING
+    "Exact clean Spectr Git SHA required for an accepted Release build")
+if(NOT SPECTR_EXPECTED_PRODUCT_GIT_SHA STREQUAL "")
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+        message(FATAL_ERROR
+            "SPECTR_EXPECTED_PRODUCT_GIT_SHA admits Release builds only")
+    endif()
+    string(LENGTH "${SPECTR_EXPECTED_PRODUCT_GIT_SHA}"
+           _spectr_expected_product_git_sha_length)
+    if(NOT SPECTR_EXPECTED_PRODUCT_GIT_SHA MATCHES "^[0-9a-f]+$" OR
+       NOT _spectr_expected_product_git_sha_length EQUAL 40)
+        message(FATAL_ERROR
+            "SPECTR_EXPECTED_PRODUCT_GIT_SHA must be one exact lowercase 40-character Git SHA")
+    endif()
+    if(NOT SPECTR_SOURCE_GIT_SHA STREQUAL SPECTR_EXPECTED_PRODUCT_GIT_SHA)
+        message(FATAL_ERROR
+            "Resolved Spectr source SHA is '${SPECTR_SOURCE_GIT_SHA}', expected "
+            "'${SPECTR_EXPECTED_PRODUCT_GIT_SHA}'")
+    endif()
+    if(SPECTR_SOURCE_GIT_DIRTY)
+        message(FATAL_ERROR
+            "Accepted Spectr Release source is dirty or unverifiable")
+    endif()
+endif()
+
 set(SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE "")
 if(DEFINED PULP_SDK_SOURCE_GIT_SHA)
     string(LENGTH "${PULP_SDK_SOURCE_GIT_SHA}"
@@ -188,6 +250,8 @@ function(spectr_configure_native_target target)
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
+        SPECTR_PRODUCT_GIT_SHA="${SPECTR_SOURCE_GIT_SHA}"
+        SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
     )
 endfunction()
 
@@ -355,6 +419,8 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
     SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
     SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
+    SPECTR_PRODUCT_GIT_SHA="${SPECTR_SOURCE_GIT_SHA}"
+    SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
 

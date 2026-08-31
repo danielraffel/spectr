@@ -26,6 +26,12 @@
 #ifndef SPECTR_PULP_SDK_SOURCE_GIT_SHA
 #define SPECTR_PULP_SDK_SOURCE_GIT_SHA ""
 #endif
+#ifndef SPECTR_PRODUCT_GIT_SHA
+#define SPECTR_PRODUCT_GIT_SHA ""
+#endif
+#ifndef SPECTR_PRODUCT_GIT_DIRTY
+#define SPECTR_PRODUCT_GIT_DIRTY 1
+#endif
 
 // Spectr-specific handler registrations. The generic envelope parse +
 // dispatch + response builders live in pulp::view::EditorBridge (upstream
@@ -136,10 +142,18 @@ std::string build_info_copy_text_(const Spectr& plugin) {
         result.push_back('\n');
     };
     append("Spectr", plugin.descriptor().version);
+    constexpr std::string_view product_sha{SPECTR_PRODUCT_GIT_SHA};
+    append("Spectr SHA", product_sha.empty() ? std::string_view{"unknown"}
+                                              : product_sha);
+    append("Spectr source", product_sha.empty() ? std::string_view{"unknown"}
+        : SPECTR_PRODUCT_GIT_DIRTY ? std::string_view{"dirty"}
+                                  : std::string_view{"clean"});
     append("Pulp SDK", pulp::runtime::kSdkVersion);
     constexpr std::string_view exact_sha{SPECTR_PULP_SDK_SOURCE_GIT_SHA};
     append("Pulp SDK SHA", exact_sha.empty()
         ? std::string_view{pulp::runtime::kGitSha} : exact_sha);
+    append("Pulp SDK source", pulp::runtime::kGitDirty
+        ? std::string_view{"dirty"} : std::string_view{"clean"});
     append("Build", pulp::runtime::kBuildType);
     append("Built", pulp::runtime::kBuildIso8601);
     if (!result.empty()) result.pop_back();
@@ -149,6 +163,11 @@ std::string build_info_copy_text_(const Spectr& plugin) {
 choc::value::Value build_info_projection_(const Spectr& plugin) {
     auto result = choc::value::createObject("SpectrBuildInfo");
     result.addMember("product_version", plugin.descriptor().version);
+    constexpr std::string_view product_sha{SPECTR_PRODUCT_GIT_SHA};
+    if (!product_sha.empty())
+        result.addMember("product_sha", std::string{product_sha});
+    result.addMember("product_dirty", SPECTR_PRODUCT_GIT_DIRTY != 0);
+    result.addMember("product_provenance_known", !product_sha.empty());
     result.addMember("sdk_version", std::string{pulp::runtime::kSdkVersion});
     constexpr std::string_view exact_sha{SPECTR_PULP_SDK_SOURCE_GIT_SHA};
     const auto sdk_sha = exact_sha.empty()

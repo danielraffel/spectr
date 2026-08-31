@@ -1995,7 +1995,7 @@ EDITS = [
      '    "button",\n'
      '    {\n'
      '      "data-spectr-setting-toggle": true,',
-     'function SpectrSettingsToggle({ value, onChange, statusInfo = false }) {\n'
+     'function SpectrSettingsToggle({ value, onChange, statusInfo = false, buildInfo = false }) {\n'
      '  return /* @__PURE__ */ React.createElement(\n'
      '    "button",\n'
      '    {\n'
@@ -2145,6 +2145,35 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '    let live = true;\n'
      '    if (!window.pulp || typeof window.pulp.postMessage !== "function") {'),
 
+    ('shipping settings default build information on',
+     '  "showRulers": true,\n  "statusInfo": true,\n  "scheme": "midnight",',
+     '  "showRulers": true,\n  "statusInfo": true,\n  "showBuildInfo": true,\n  "scheme": "midnight",'),
+
+    ('shipping build info renders exact product provenance',
+     '    ["VERSION", info.product_version],\n'
+     '    ["PULP SDK", info.sdk_version],\n'
+     '    ["SDK SHA", info.sdk_sha],\n'
+     '    ["BUILD", info.build_type ? info.build_type + (info.sdk_dirty ? " · DIRTY" : "") : ""],',
+     '    ["VERSION", info.product_version],\n'
+     '    ["SPECTR SHA", info.product_sha || "UNKNOWN"],\n'
+     '    ["SPECTR SOURCE", info.product_provenance_known ? info.product_dirty ? "DIRTY" : "CLEAN" : "UNKNOWN"],\n'
+     '    ["PULP SDK", info.sdk_version],\n'
+     '    ["SDK SHA", info.sdk_sha],\n'
+     '    ["SDK SOURCE", info.sdk_dirty ? "DIRTY" : "CLEAN"],\n'
+     '    ["BUILD", info.build_type || ""],'),
+
+    ('shipping build info toggle stays discoverable when about is hidden',
+     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) }))), settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null)));\n',
+     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })), /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Build info", hint: "Support and debugging details" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { buildInfo: true, value: settings.showBuildInfo !== false, onChange: (v) => persist({ showBuildInfo: v }) }))), settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null)));\n'),
+
+    ('shipping build info toggle has a stable selector',
+     '      "data-spectr-status-info-state": statusInfo ? value ? "on" : "off" : void 0,\n'
+     '      role: "switch",',
+     '      "data-spectr-status-info-state": statusInfo ? value ? "on" : "off" : void 0,\n'
+     '      "data-spectr-build-info-toggle": buildInfo ? "true" : void 0,\n'
+     '      "data-spectr-build-info-state": buildInfo ? value ? "on" : "off" : void 0,\n'
+     '      role: "switch",'),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an
@@ -2269,6 +2298,12 @@ SUPERSEDED_SENTINELS = {
         'data-spectr-status-info-state',
     'settings close interaction state is local to the modal':
         'toggle.setAttribute("aria-checked"',
+    'status info toggle has a stable id':
+        'data-spectr-build-info-toggle',
+    'shipping settings expose truthful build information':
+        '/* materialized-build-info-owner */',
+    'shipping settings optionally show build information below feedback':
+        'data-spectr-build-info-toggle',
 }
 
 # Generated bindings live outside the escaped `html` string. Keep these
@@ -2617,7 +2652,7 @@ RUNTIME_EDITS = [
      '      const authoredContentHeight = 728;\n'
      '      const panelHeight = authored ? 679\n'
      '        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));',
-     'const authoredContentHeight = 952;'),
+     'const authoredContentHeight = 1044;'),
     ('settings scroll view derives its content from live children',
      '        if (typeof g5.setScrollContentSize === "function")\n'
      '          g5.setScrollContentSize(panelId, panelWidth, 684);',
@@ -2828,7 +2863,7 @@ RUNTIME_EDITS = [
     ('settings feedback extends the authored scroll extent',
      '      const authoredContentHeight = 672;',
      '      const authoredContentHeight = 728;',
-     'const authoredContentHeight = 952;'),
+     'const authoredContentHeight = 1044;'),
     ('settings about receives a stable captured slot',
      '      if (feedbackId) {\n'
      '        g5.setPosition(String(feedbackId), "absolute");\n'
@@ -2856,11 +2891,27 @@ RUNTIME_EDITS = [
      '        g5.setFlex(String(aboutId), "height", 192);\n'
      '      }\n'
      '    }',
-     'g5.setTop(String(aboutId), 742)'),
+     'g5.setTop(String(aboutId), 774)'),
     ('settings about extends the authored scroll extent',
      '      const authoredContentHeight = 728;',
      '      const authoredContentHeight = 952;',
-     'const authoredContentHeight = 952;'),
+     'const authoredContentHeight = 1044;'),
+    ('settings feedback reserves both persisted toggles',
+     '        g5.setFlex(String(feedbackId), "height", 76);',
+     '        g5.setFlex(String(feedbackId), "height", 108);',
+     'g5.setFlex(String(feedbackId), "height", 108)'),
+    ('settings about follows the expanded feedback group',
+     '        g5.setTop(String(aboutId), 742);',
+     '        g5.setTop(String(aboutId), 774);',
+     'g5.setTop(String(aboutId), 774)'),
+    ('settings about reserves exact provenance rows',
+     '        g5.setFlex(String(aboutId), "height", 192);',
+     '        g5.setFlex(String(aboutId), "height", 252);',
+     'g5.setFlex(String(aboutId), "height", 252)'),
+    ('settings exact provenance extends the authored scroll extent',
+     '      const authoredContentHeight = 952;',
+     '      const authoredContentHeight = 1044;',
+     'const authoredContentHeight = 1044;'),
     ('settings live scroll extent refreshes after native upgrade',
      '        // Leave content size automatic: the ScrollView unions its live children.\n\n',
      '        // Leave content size automatic: the ScrollView unions its live children.\n'

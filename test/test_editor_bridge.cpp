@@ -27,6 +27,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -142,9 +143,34 @@ TEST_CASE("native editor bridge exposes truthful build information and copy feed
     CHECK(response["sdk_version"].get<std::string>()
           == pulp::runtime::kSdkVersion);
     CHECK(response["sdk_dirty"].getBool() == pulp::runtime::kGitDirty);
+    constexpr std::string_view product_sha{SPECTR_PRODUCT_GIT_SHA};
+    if (product_sha.empty()) {
+        CHECK_FALSE(response.hasObjectMember("product_sha"));
+        CHECK_FALSE(response["product_provenance_known"].getBool());
+    } else {
+        REQUIRE(response.hasObjectMember("product_sha"));
+        CHECK(response["product_sha"].get<std::string>() == product_sha);
+        CHECK(response["product_provenance_known"].getBool());
+    }
+    CHECK(response["product_dirty"].getBool()
+          == static_cast<bool>(SPECTR_PRODUCT_GIT_DIRTY));
     REQUIRE(response.hasObjectMember("copy_text"));
     CHECK(response["copy_text"].get<std::string>().find("Spectr: ") == 0);
     CHECK(response["copy_text"].get<std::string>().find("Pulp SDK: ")
+          != std::string::npos);
+    CHECK(response["copy_text"].get<std::string>().find(
+              std::string{"Spectr SHA: "}
+              + (product_sha.empty() ? "unknown" : std::string{product_sha}))
+          != std::string::npos);
+    CHECK(response["copy_text"].get<std::string>().find(
+              std::string{"Spectr source: "}
+              + (product_sha.empty() ? "unknown"
+                 : SPECTR_PRODUCT_GIT_DIRTY ? "dirty" : "clean"))
+          != std::string::npos);
+    CHECK(response["copy_text"].get<std::string>().find(
+              std::string{"Pulp SDK SHA: "} + SPECTR_PULP_SDK_SOURCE_GIT_SHA)
+          != std::string::npos);
+    CHECK(response["copy_text"].get<std::string>().find("Pulp SDK source: ")
           != std::string::npos);
 
     const auto copy_response = r.dispatch(

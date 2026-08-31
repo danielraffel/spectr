@@ -753,7 +753,12 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"build-info-effect-replay-lifetime", "mountedRef.current = true;"},
         ContractMarker{"build-info-unmount-cleanup", "mountedRef.current = false;"},
         ContractMarker{"build-info-late-copy-guard", "if (!mountedRef.current) return;"},
-        ContractMarker{"build-info-optional", "settings.showBuildInfo !== false"},
+        ContractMarker{"build-info-default-on", "\\\"showBuildInfo\\\": true"},
+        ContractMarker{"build-info-optional", "settings.showBuildInfo !== false", 2},
+        ContractMarker{"build-info-toggle", "data-spectr-build-info-toggle"},
+        ContractMarker{"build-info-product-sha", "[\\\"SPECTR SHA\\\", info.product_sha || \\\"UNKNOWN\\\"]"},
+        ContractMarker{"build-info-product-dirty", "info.product_provenance_known ? info.product_dirty ? \\\"DIRTY\\\" : \\\"CLEAN\\\" : \\\"UNKNOWN\\\""},
+        ContractMarker{"build-info-sdk-dirty", "[\\\"SDK SOURCE\\\", info.sdk_dirty ? \\\"DIRTY\\\" : \\\"CLEAN\\\"]"},
     };
     const auto errors = [&](std::string_view candidate) {
         std::vector<std::string> result;
@@ -779,8 +784,10 @@ TEST_CASE("materialized build-info geometry contracts detect every severed fix")
         reinterpret_cast<const char*>(spectr_native::runtime_js),
         spectr_native::runtime_js_size};
     constexpr std::array markers{
-        ContractMarker{"build-info-stable-slot", "g5.setTop(String(aboutId), 742)"},
-        ContractMarker{"build-info-scroll-extent", "const authoredContentHeight = 952;"},
+        ContractMarker{"build-info-feedback-slot", "g5.setFlex(String(feedbackId), \\\"height\\\", 108)"},
+        ContractMarker{"build-info-stable-slot", "g5.setTop(String(aboutId), 774)"},
+        ContractMarker{"build-info-provenance-height", "g5.setFlex(String(aboutId), \\\"height\\\", 252)"},
+        ContractMarker{"build-info-scroll-extent", "const authoredContentHeight = 1044;"},
     };
     const auto errors = [&](std::string_view candidate) {
         std::vector<std::string> result;

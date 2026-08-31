@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--sdk-root", type=Path, required=True)
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--pin", type=Path, required=True)
+    parser.add_argument("--product-sha", required=True)
     args = parser.parse_args()
     pin = json.loads(args.pin.read_text(encoding="utf-8"))
     version, sha = pin["release_tag"].removeprefix("v"), pin["source_git_sha"]
@@ -28,6 +29,7 @@ def main():
     if not re.fullmatch(r"[0-9a-f]{64}", pin["asset_sha256"]): fail("invalid asset SHA-256")
 
     cache = cache_values(args.build_dir / "CMakeCache.txt")
+    if not re.fullmatch(r"[0-9a-f]{40}", args.product_sha): fail("product SHA is not full lowercase hex")
     expected_cache = {
         "CMAKE_BUILD_TYPE": "Release",
         "PULP_SDK_DISTRIBUTION_ELIGIBLE": "TRUE",
@@ -36,6 +38,9 @@ def main():
         "PULP_SDK_PLATFORM": pin["platform"],
         "PULP_SDK_SOURCE_GIT_SHA": sha,
         "SPECTR_EXPECTED_PULP_SDK_SHA": sha,
+        "SPECTR_EXPECTED_PRODUCT_GIT_SHA": args.product_sha,
+        "SPECTR_SOURCE_GIT_SHA": args.product_sha,
+        "SPECTR_SOURCE_GIT_DIRTY": "FALSE",
     }
     for key, expected in expected_cache.items():
         if cache.get(key) != expected: fail(f"{key}={cache.get(key)!r}, expected {expected!r}")
