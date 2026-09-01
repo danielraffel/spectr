@@ -7178,7 +7178,7 @@
       // off, and by detach() at unmount.
       case "overlay":
         if (value) {
-          call("claimOverlay", id);
+          call("claimOverlay", id, true);
           return true;
         }
         call("releaseOverlay", id);
@@ -7200,7 +7200,7 @@
       case "role": {
         const r = typeof value === "string" ? value.toLowerCase() : "";
         if (r === "dialog" || r === "alertdialog" || r === "menu" || r === "listbox") {
-          call("claimOverlay", id);
+          call("claimOverlay", id, true);
           return true;
         }
         return true;
@@ -7208,7 +7208,7 @@
       case "aria-modal": {
         const truthy = value === true || value === "true" || value === "";
         if (truthy) {
-          call("claimOverlay", id);
+          call("claimOverlay", id, true);
           return true;
         }
         return true;
@@ -7905,6 +7905,8 @@
             call2("setBottom", textId, 0);
             call2("setLeft", textId, 0);
             call2("setPointerEvents", textId, "none");
+            call2("setAccessibilityRole", id, "button");
+            if (text) call2("setAccessibilityLabel", id, text);
             return;
           }
           case "input": {
@@ -8144,6 +8146,26 @@
     "dt",
     "dd"
   ]);
+  function hasFixedTextDimension(value) {
+    if (typeof value === "number") return Number.isFinite(value) && value > 0;
+    if (typeof value !== "string") return false;
+    const match = value.trim().match(/^([0-9]+(?:\.[0-9]+)?)(?:px|%)?$/);
+    return match !== null && Number(match[1]) > 0;
+  }
+  function isFixedTextOnlyUpdate(type, oldProps, newProps) {
+    if (!TEXT_BEARING.has(type)) return false;
+    const oldText = asText(oldProps.children) ?? oldProps.text;
+    const newText = asText(newProps.children) ?? newProps.text;
+    if (oldText === newText || newText === void 0) return false;
+    if (!hasFixedTextDimension(newProps.width) || !hasFixedTextDimension(newProps.height) || newProps.whiteSpace !== "nowrap") return false;
+    const nonTextKeys = new Set([...Object.keys(oldProps), ...Object.keys(newProps)]);
+    nonTextKeys.delete("children");
+    nonTextKeys.delete("text");
+    for (const key of nonTextKeys) {
+      if (oldProps[key] !== newProps[key]) return false;
+    }
+    return true;
+  }
   var PulpHostConfig = {
     // ── Renderer identity ───────────────────────────────────────────
     supportsMutation: true,
@@ -8296,9 +8318,9 @@
       return shallowDiff(oldN, newN);
     },
     commitUpdate(instance, _updatePayload, type, oldProps, newProps, _internalHandle) {
-      markMaterializedTreeDirty();
       const oldN = normalizeHostProps(type, oldProps);
       const newN = normalizeHostProps(type, newProps);
+      if (!isFixedTextOnlyUpdate(type, oldN, newN)) markMaterializedTreeDirty();
       applyChangedProps(instance, oldN, newN);
       instance.props = { ...newN };
       if (instance._dom && typeof instance._dom === "object") {
@@ -8373,9 +8395,11 @@
       // metadata itself when it is not, so it stays unconditional.
       const stateHook = g4.__pulpRefreshMaterializedState__;
       if (typeof stateHook === "function") stateHook();
-      requestLayoutFlush(() => {
-        if (typeof g4.layout === "function") call2("layout");
-      });
+      if (shouldReapply) {
+        requestLayoutFlush(() => {
+          if (typeof g4.layout === "function") call2("layout");
+        });
+      }
     },
     // ── Misc required no-ops / passthroughs ────────────────────────
     // Return the DOM-shim Element when available so `ref.current.X`
@@ -9087,8 +9111,9 @@
       const nativeScrollView = ensureSpectrNativeScrollView(settingsPanel, values);
       const authored = width === 1320 && height === 860;
       const panelWidth = Math.min(520, Math.max(360, width - 40));
+      const authoredContentHeight = 1044;
       const panelHeight = authored ? 679
-        : Math.min(684, Math.max(240, height * 0.9));
+        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));
       const panelTop = authored ? 90.5
         : compact ? 16 : Math.max(16, (height - panelHeight) * 0.5);
       const settingsOverlay = settingsPanel.parentElement
@@ -9098,6 +9123,10 @@
              panelWidth, panelHeight);
       const panelId = idOf(settingsPanel);
       if (panelId) {
+        // React claimed the captured View before this ScrollView upgrade.
+        // Re-claim the stable id on the replacement so the framework
+        // routes Escape and outside presses against the panel bounds.
+        if (typeof g5.claimOverlay === "function") g5.claimOverlay(panelId, true);
         // Replacing the captured overflow container with a real native
         // ScrollView intentionally preserves its DOM identity, but the newly
         // allocated native view has no paint state. Replay the authored panel
@@ -9109,13 +9138,16 @@
         g5.setBorderWidth(panelId, 1);
         g5.setBorderStyle(panelId, "solid");
         g5.setBorderRadius(panelId, 8);
-        g5.setOverflow(panelId, "scroll");
+        g5.setOverflow(panelId, panelHeight < authoredContentHeight ? "scroll" : "hidden");
+        // Leave content size automatic: the ScrollView unions its live children.
         if (typeof g5.setScrollContentSize === "function")
-          g5.setScrollContentSize(panelId, panelWidth, 684);
+          g5.setScrollContentSize(panelId);
+
       }
       settingsReceipt = {
         width: panelWidth, height: panelHeight, top: panelTop,
-        content_height: 684, scroll_reachable: panelHeight < 684,
+        content_height: authoredContentHeight,
+        scroll_reachable: panelHeight < authoredContentHeight,
         native_scroll_view: nativeScrollView,
         authored_skin: true
       };
@@ -9153,8 +9185,48 @@
   }
   function applyMaterializedImportMetadata(metadata) {
     const values = materializedDomRegistryValues();
-    const activeLayoutBindings = Array.isArray(metadata && metadata.layout_bindings) ? metadata.layout_bindings : [];
-    const activeTextBindings = Array.isArray(metadata && metadata.text_bindings) ? metadata.text_bindings : [];
+    // These states are live, responsive UI. Their capture metadata is useful
+    // as a visual oracle, but applying its fixed boxes at runtime makes the
+    // header reflow and collapses the selected-preset action layout.
+    const authoredLayoutState = activeCapturedState === "bands";
+    const authoredManagerDetail = activeCapturedState === "pattern-manager"
+      ? document.querySelector("[data-spectr-manager-detail]") : null;
+    const belongsToAuthoredManagerDetail = (binding) => {
+      let node = materializedNodeAtPath(binding, values);
+      while (node) {
+        if (node === authoredManagerDetail) return true;
+        node = node.parentElement || node._parentElement || null;
+      }
+      return false;
+    };
+    const activeLayoutBindings = (authoredLayoutState ? []
+      : (Array.isArray(metadata && metadata.layout_bindings)
+          ? metadata.layout_bindings : [])).filter(
+            (binding) => !belongsToAuthoredManagerDetail(binding));
+    // Selected preset names are authored state, not frozen capture text.
+    const authoredTextState = activeCapturedState === "bands";
+    const activeTextBindings = (authoredTextState ? []
+      : (Array.isArray(metadata && metadata.text_bindings)
+          ? metadata.text_bindings : [])).filter(
+        (binding) => !belongsToAuthoredManagerDetail(binding)).filter(
+        (binding) => binding.text !== "PRESETS \u25BE"
+          && binding.text !== "SETTINGS"
+          && binding.text !== "\u00D7"
+          && binding.text !== "bands \u25BE"
+          && binding.text !== " bands \u25BE").map((binding) => {
+        // Band count is live state and now owns one non-wrapping text node.
+        // Merge the old number and suffix captures into one stable line box.
+        if (binding.text === "32") {
+          const node = materializedNodeAtPath(binding, values);
+          const text = String(node?.textContent || "");
+          if (/^(32|40|48|56|64) bands \u25BE$/.test(text)) return {
+            ...binding, text, basis: { ...binding.basis, width: 73.03125 },
+            boxes: [{ left: 0, top: 3, width: 73.03125, height: 13,
+              start: 0, length: text.length }],
+          };
+        }
+        return binding;
+      });
     const activePaintBindings = Array.isArray(metadata && metadata.paint_bindings) ? metadata.paint_bindings : [];
     let applied = 0;
     const diagnostics = {
@@ -9166,6 +9238,7 @@
       text_applied: 0,
       text_node_miss: 0,
       text_content_mismatch: 0,
+      text_mismatches: [],
       text_target_miss: 0,
       text_optional_expected: activeTextBindings.filter((binding) => binding.runtime_optional).length,
       text_optional_applied: 0,
@@ -9202,6 +9275,57 @@
         g5.setFlex(String(id), "height", binding.box.height);
         ++applied;
         ++diagnostics.layout_applied;
+      }
+    }
+    if (activeCapturedState === "settings") {
+      const header = globalThis.document?.querySelector?.(
+        '[data-spectr-settings-header]');
+      const headerId = header && (header.__pulpId || header.id);
+      if (headerId) {
+        const headerParent = header.parentElement || header._parentElement;
+        const headerParentId = headerParent && (headerParent.__pulpId || headerParent.id);
+        const headerPanelMetrics = headerParentId && typeof g5.getLayoutBoxMetrics === "function"
+          ? g5.getLayoutBoxMetrics(String(headerParentId)) : null;
+        const stickyHeaderWidth = Math.max(0, (Number(headerPanelMetrics?.width) || 520) - 2);
+        const title = globalThis.document?.querySelector?.("[data-spectr-settings-title]");
+        const titleWrapper = title && (title.parentElement || title._parentElement);
+        const titleWrapperId = titleWrapper && (titleWrapper.__pulpId || titleWrapper.id);
+        const close = globalThis.document?.querySelector?.("[data-spectr-settings-close]");
+        const closeId = close && (close.__pulpId || close.id);
+        g5.setPosition(String(headerId), "sticky");
+        // The panel has 27px authored content padding. Pull the sticky
+        // chrome over that padding and put the same inset back inside
+        // the header, so title/close geometry stays unchanged while no
+        // scrolling field can paint around the opaque top strip.
+        g5.setLeft(String(headerId), 0);
+        g5.setTop(String(headerId), 0);
+        g5.setFlex(String(headerId), "width", stickyHeaderWidth);
+        g5.setFlex(String(headerId), "height", 72);
+        // Captured descendants retain absolute layout bindings, so move
+        // the visible title and close action back to their authored inset.
+        if (titleWrapperId) g5.setTransform(String(titleWrapperId), 1, 0, 0, 1, 27, 27);
+        if (closeId) g5.setTransform(String(closeId), 1, 0, 0, 1, 27, 27);
+        g5.setBackground(String(headerId), "rgba(14,18,25,1)");
+      }
+      const feedback = globalThis.document?.querySelector?.(
+        '[data-spectr-settings-group="feedback"]');
+      const feedbackId = feedback && (feedback.__pulpId || feedback.id);
+      if (feedbackId) {
+        g5.setPosition(String(feedbackId), "absolute");
+        g5.setLeft(String(feedbackId), 27);
+        g5.setTop(String(feedbackId), 652);
+        g5.setFlex(String(feedbackId), "width", 466);
+        g5.setFlex(String(feedbackId), "height", 108);
+      }
+      const about = globalThis.document?.querySelector?.(
+        '[data-spectr-settings-group="about"]');
+      const aboutId = about && (about.__pulpId || about.id);
+      if (aboutId) {
+        g5.setPosition(String(aboutId), "absolute");
+        g5.setLeft(String(aboutId), 27);
+        g5.setTop(String(aboutId), 774);
+        g5.setFlex(String(aboutId), "width", 466);
+        g5.setFlex(String(aboutId), "height", 252);
       }
     }
     for (const binding of activePaintBindings) {
@@ -9258,6 +9382,9 @@
       const anonymousTarget = binding.anonymous_text_index === void 0 ? null : anonymousTargets[binding.anonymous_text_index];
       if (anonymousTarget) {
         if (String(anonymousTarget.text || "") !== binding.text) {
+          diagnostics.text_mismatches.push({ index: binding.index,
+            expected: binding.text, actual: String(anonymousTarget.text || ""),
+            anonymous: true });
           if (optional) ++diagnostics.text_optional_miss;
           else ++diagnostics.text_content_mismatch;
           continue;
@@ -9271,6 +9398,9 @@
           g5.setFlex(String(anonymousTarget.id), "height", maxBottom);
         }
       } else if (String(node.textContent || "") !== binding.text) {
+        diagnostics.text_mismatches.push({ index: binding.index,
+          expected: binding.text, actual: String(node.textContent || ""),
+          anonymous: false });
         if (optional) ++diagnostics.text_optional_miss;
         else ++diagnostics.text_content_mismatch;
         continue;
@@ -9324,6 +9454,47 @@
       if (optional) ++diagnostics.text_optional_applied;
       else ++diagnostics.text_applied;
     }
+    if (activeCapturedState === "settings") {
+      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");
+      const titleTargets = Array.isArray(titleNode?.__pulpAnonymousTextTargets)
+        ? titleNode.__pulpAnonymousTextTargets : [];
+      const titleId = titleNode?.__pulpTextTargetId || titleTargets[0]?.id;
+      const titleBinding = Array.isArray(metadata?.text_bindings)
+        ? metadata.text_bindings.find((binding) => binding.text === "SETTINGS") : null;
+      if (titleId && titleBinding && typeof g5.setFontFamily === "function") {
+        g5.setFontFamily(String(titleId), materializedRuntimeFontStack(titleBinding));
+        if (typeof g5.setFontSize === "function") g5.setFontSize(String(titleId), 14);
+        if (typeof g5.setFontWeight === "function") g5.setFontWeight(String(titleId), 600);
+        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(titleId), 2);
+      }
+    }
+    if (activeCapturedState === "settings"
+        && typeof g5.setCapturedLineBoxes === "function") {
+      const statusNode = globalThis.document?.querySelector?.("[data-spectr-status-info-toggle]");
+      const targets = Array.isArray(statusNode?.__pulpAnonymousTextTargets)
+        ? statusNode.__pulpAnonymousTextTargets : [];
+      const target = targets[0];
+      const statusValue = statusNode?.getAttribute?.("data-spectr-status-info-toggle");
+      const label = statusValue === "off" ? "STATUS INFO OFF" : "STATUS INFO ON";
+      const targetId = target?.id || statusNode?.__pulpTextTargetId;
+      if (targetId && statusNode) {
+        const id = String(targetId);
+        const textWidth = label.length * 6.2;
+        if (typeof g5.setPosition === "function") g5.setPosition(id, "absolute");
+        if (typeof g5.setLeft === "function") g5.setLeft(id, -1);
+        if (typeof g5.setTop === "function") g5.setTop(id, -1);
+        if (typeof g5.setFlex === "function") {
+          g5.setFlex(id, "width", 150);
+          g5.setFlex(id, "height", 32);
+        }
+        if (typeof g5.setFontSize === "function") g5.setFontSize(id, 9);
+        if (typeof g5.setFontWeight === "function") g5.setFontWeight(id, 600);
+        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(id, 0.8);
+        g5.setCapturedLineBoxes(id, [{ left: (150 - textWidth) / 2, top: 9.5,
+          width: textWidth, height: 13, start: 0, length: label.length }],
+          150, "JetBrainsMono-Regular", false);
+      }
+    }
     g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;
     return applied;
   }
@@ -9341,7 +9512,7 @@
       { root: "analyzer", text: "PEAK ▾", svgTop: 3.75, labelTop: 6.25,
         svgXShift: -1, svgYShift: 0,
         labelXShift: -1, labelYShift: 0 },
-      { root: "pattern", text: "PRESETS ▾", svgTop: 5.375, labelTop: 6.375,
+      { root: "pattern", text: "PRESETS ▾", svgTop: 5.375, labelTop: 6.25,
         svgXShift: 0.25, svgYShift: 0,
         labelXShift: 0.25, labelYShift: 0 }
     ];
@@ -9382,6 +9553,73 @@
       }
       return false;
     };
+    const centerBandText = (owner, label, width, textWidth,
+                            height = 26, lineTop = 6.5) => {
+      if (!owner || typeof g5.setCapturedLineBoxes !== "function") return null;
+      const targets = Array.isArray(owner.__pulpAnonymousTextTargets)
+        ? owner.__pulpAnonymousTextTargets : [];
+      const targetId = owner.__pulpTextTargetId || targets[0]?.id
+        || owner.__pulpId || owner.id;
+      if (!targetId) return null;
+      const id = String(targetId);
+      g5.setPosition(id, "absolute");
+      g5.setLeft(id, 0);
+      g5.setTop(id, 0);
+      g5.setFlex(id, "width", width);
+      g5.setFlex(id, "height", height);
+      if (typeof g5.setFontSize === "function") g5.setFontSize(id, 10);
+      if (typeof g5.setFontWeight === "function") g5.setFontWeight(id, 400);
+      if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(id, 0.8);
+      const left = (width - textWidth) / 2;
+      g5.setCapturedLineBoxes(id, [{ left, top: lineTop, width: textWidth,
+        height: 13, start: 0, length: label.length }], width,
+        "JetBrainsMono-Regular", false);
+      return { label, left, top: lineTop, width, height,
+               text_width: textWidth };
+    };
+    const bandRoot = globalThis.document?.querySelector?.(
+      '[data-spectr-menu-root="bands"]');
+    const bandTrigger = globalThis.document?.querySelector?.(
+      '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
+    const bandRootId = bandRoot && (bandRoot.__pulpId || bandRoot.id);
+    const bandTriggerId = bandTrigger
+      && (bandTrigger.__pulpId || bandTrigger.id);
+    // The captured band control was 19px tall and sat 2.5px below the two
+    // 24px segmented controls. Give its trigger the same 24px rail and let the
+    // header's normal flex alignment establish the shared baseline. Reserve
+    // the trigger's full painted width so it cannot overlap the zoom readout.
+    if (bandRootId) {
+      g5.setFlex(String(bandRootId), "width", 104);
+      g5.setFlex(String(bandRootId), "height", 24);
+      g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0);
+    }
+    if (bandTriggerId) {
+      g5.setFlex(String(bandTriggerId), "width", 92);
+      g5.setFlex(String(bandTriggerId), "height", 22);
+      g5.setTransform(String(bandTriggerId), 1, 0, 0, 1, 0, -1.5);
+    }
+    const nativeTextOwner = (owner) => values.find((candidate) => {
+      const parent = candidate?.parentElement || candidate?._parentElement || null;
+      return parent === owner && materializedNodeTag(candidate) === "span";
+    }) || owner;
+    const liveBandCount = Number(
+      globalThis.__spectrTestHooks?.appState?.()?.settings?.bandCount) || 32;
+    const bandCountReceipt = {
+      trigger: centerBandText(
+        nativeTextOwner(bandTrigger), liveBandCount + " bands \u25BE",
+        92, 73.03125, 22, 4.5),
+      options: []
+    };
+    const bandOptions = bandRoot ? Array.from(globalThis.document?.querySelectorAll?.(
+      '[data-spectr-menu-root="bands"] [data-spectr-band-count]') || []) : [];
+    for (const option of bandOptions) {
+      const optionLabel = String(option.getAttribute?.(
+        "data-spectr-band-count") || "");
+      const centered = centerBandText(
+        nativeTextOwner(option), optionLabel, 44, 13);
+      if (centered) bandCountReceipt.options.push(centered);
+    }
+    g5.__spectrBandCountCenteringReceipt__ = bandCountReceipt;
     const receipt = [];
     for (const correction of corrections) {
       const root = g5.__pulpFindMaterializedElement__(
@@ -9392,9 +9630,17 @@
       const svg = descendants.find(
         (node) => materializedNodeTag(node) === "svg"
       );
-      const label = descendants.find(
-        (node) => String(node && node.textContent || "") === correction.text
-      );
+      const label = descendants.find((node) => {
+        if (materializedNodeTag(node) !== "span"
+            || !/\u25BE$/.test(String(node?.textContent || "").trim()))
+          return false;
+        return !descendants.some((candidate) => {
+          const parent = candidate?.parentElement
+            || candidate?._parentElement || null;
+          return parent === node && materializedNodeTag(candidate) === "span"
+            && /\u25BE$/.test(String(candidate?.textContent || "").trim());
+        });
+      });
       const applyGeometry = (node, top, xShift, yShift) => {
         const id = node && (node.__pulpId || node.id);
         if (!id) return false;
@@ -9418,6 +9664,70 @@
       });
     }
     g5.__spectrToolbarOpticalCenteringReceipt__ = receipt;
+    if (activeCapturedState === "pattern") {
+      const popup = globalThis.document?.querySelector?.(
+        '[data-spectr-menu-root="pattern"] [data-spectr-menu-options]');
+      const save = globalThis.document?.querySelector?.(
+        '[data-spectr-save-current]');
+      const manage = globalThis.document?.querySelector?.(
+        '[data-spectr-pattern-manage]');
+      const footer = save && (save.parentElement || save._parentElement);
+      const setBox = (node, left, top, width, height) => {
+        const id = node && (node.__pulpId || node.id);
+        if (!id) return false;
+        g5.setPosition(String(id), "absolute");
+        g5.setLeft(String(id), left);
+        g5.setTop(String(id), top);
+        g5.setFlex(String(id), "width", width);
+        g5.setFlex(String(id), "height", height);
+        return true;
+      };
+      const patternReceipt = {
+        popup: setBox(popup, 0, -336, 220, 334),
+        footer: setBox(footer, 5, 264, 210, 63),
+        save: setBox(save, 0, 3, 210, 28),
+        manage: setBox(manage, 0, 33, 210, 28)
+      };
+      g5.__spectrPatternMenuLayoutReceipt__ = patternReceipt;
+    }
+    if (activeCapturedState === "pattern-manager") {
+      const managerSetBox = (node, left, top, width, height) => {
+        const id = node && (node.__pulpId || node.id);
+        if (!id) return false;
+        g5.setPosition(String(id), "absolute");
+        g5.setLeft(String(id), left);
+        g5.setTop(String(id), top);
+        g5.setFlex(String(id), "width", width);
+        g5.setFlex(String(id), "height", height);
+        return true;
+      };
+      const managerActionGeometry = [
+        ["apply", 0, 0, 54],
+        ["set-default", 60, 0, 112],
+        ["duplicate", 178, 0, 82],
+        ["export-file", 314, 0, 112],
+        ["export-clip", 0, 32, 112]
+      ];
+      const managerReceipt = { actions: [] };
+      for (const [action, left, top, width2] of managerActionGeometry) {
+        const node = document.querySelector(
+          `[data-spectr-manager-action="${action}"]`);
+        managerReceipt.actions.push({ action, applied:
+          managerSetBox(node, left, top, width2, 26) });
+      }
+      const title = document.querySelector("[data-spectr-manager-title]");
+      const source = document.querySelector("[data-spectr-manager-source]");
+      const titleId = title && (title.__pulpId || title.id);
+      const titleMetrics = titleId && typeof g5.getLayoutBoxMetrics === "function"
+        ? g5.getLayoutBoxMetrics(String(titleId)) : null;
+      const measuredTitleWidth = String(title?.textContent || "").length * 10.25;
+      const titleWidth = Math.min(260, Math.max(24, measuredTitleWidth,
+        Number(titleMetrics?.width) || 0));
+      managerReceipt.title = managerSetBox(title, 0, 0, titleWidth, 26);
+      managerReceipt.source = managerSetBox(
+        source, Math.min(354, titleWidth + 10), 2, 64, 22);
+      g5.__spectrPatternManagerLayoutReceipt__ = managerReceipt;
+    }
     return receipt.length;
   }
   function applySpectrHeaderOpticalCentering() {

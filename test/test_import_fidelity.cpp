@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
 constexpr std::string_view kAdapterDigest =
-    "058613937c6c345e3f05a556a90df230127a2cba0ed0dc7eef30904265f593fd";
+    "1bf88b4a918275078f7c4350fba00c49976e1af0b03db7490a2efcf69be1eb9f";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -185,6 +185,11 @@ constexpr std::array kResizeMarkers{
     ContractMarker{"native-viewport-resize", "window.addEventListener('resize', resizeFixedDesign);"},
     ContractMarker{"fixed-design-center", "'translate(-50%, -50%) scale(' + scale + ')'"},
     ContractMarker{"resize-text-selection", "input:not([type]), input[type=\"text\"], input[type=\"search\"], textarea,"},
+    ContractMarker{"live-viewport-ref", "const [reactView, setReactView] = useState(initialView);"},
+    ContractMarker{"live-left-right-resize", "commitLiveViewport({ lmin, lmax });", 2},
+    ContractMarker{"live-center-pan", "commitLiveViewport({ lmin, lmax: lmin + span });", 2},
+    ContractMarker{"final-viewport-snapshot", "setView({ ...viewRef.current });\n      wrapRef.current.style.cursor = p.mode === 'minimap-resize' ? 'col-resize' : 'grab';"},
+    ContractMarker{"viewport-oracle-snapshot", "reactView: { ...reactView }"},
 };
 
 constexpr std::array kForbiddenProductResizeMarkers{
@@ -256,6 +261,9 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     const auto adapter = outer_adapter(html);
     REQUIRE_FALSE(adapter.empty());
     CHECK(pulp::runtime::sha256_hex(adapter) == kAdapterDigest);
+    auto mutated_adapter = adapter;
+    mutated_adapter.front() ^= 1;
+    CHECK(pulp::runtime::sha256_hex(mutated_adapter) != kAdapterDigest);
     CHECK(adapter.find("throw new Error('Spectr source patch point missing: ' + label)") != adapter.npos);
     CHECK(adapter.find("new DOMParser().parseFromString(template, 'text/html')") != adapter.npos);
     CHECK(adapter.find("window.Babel.transformScriptTags()") != adapter.npos);
@@ -284,7 +292,16 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("nativeAnalyzerFrame = null") != adapter.npos);
     CHECK(adapter.find("rejected malformed native analyzer frame") != adapter.npos);
     CHECK(adapter.find("data-spectr-menu-root") != adapter.npos);
-    CHECK(adapter.find("document.activeElement.click()") != adapter.npos);
+    // Browser previews do not run through Pulp's native semantic popup
+    // dispatcher, so the authored adapter retains a browser-only fallback.
+    // The materialization patcher removes it from the shipping native document,
+    // whose popupKind assertions below pin native Pulp ownership.
+    CHECK(count_occurrences(adapter, "document.activeElement.click()") == 1);
+    CHECK(adapter.find("Browser previews need this contract locally") != adapter.npos);
+    CHECK(adapter.find("data-spectr-menu-trigger aria-haspopup=\"listbox\"")
+          != adapter.npos);
+    CHECK(adapter.find("data-spectr-menu-options data-spectr-overlay=\"true\"")
+          != adapter.npos);
     CHECK(adapter.find("fixedDesignSurface.style.transform") != adapter.npos);
     CHECK(adapter.find("wrapRef.current.clientWidth / rect.width") != adapter.npos);
     CHECK(adapter.find("truthful mask visualization selector") != adapter.npos);
@@ -392,7 +409,12 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(structure_errors(bundle->template_html).empty());
     CHECK(patch_errors(bundle->template_html).empty());
     CHECK(gesture_errors(bundle->template_html).empty());
-    CHECK(resize_errors(adapter).empty());
+    const auto resize_contract_errors = resize_errors(adapter);
+    for (const auto& error : resize_contract_errors) {
+        INFO("resize contract error: " << error);
+        CHECK(error.empty());
+    }
+    CHECK(resize_contract_errors.empty());
 }
 
 TEST_CASE("import fidelity oracle detects payload mutations") {
@@ -468,12 +490,10 @@ TEST_CASE("import adapter contract detects native viewport resize mutations") {
 
 #ifdef SPECTR_NATIVE_EDITOR
 
-// The shipping editor is native-ui/materialized/materialized-document.runtime.json,
-// a generated artifact that no recipe in this repo reproduces
-// (danielraffel/spectr#48), so editor fixes have to be hand-applied to it as
-// well as to resources/editor.html. Nothing else in the build notices when the
-// two drift, and a fix that lands only in the source ships as no fix at all.
-// These assert the emitted document, not the source that should have produced it.
+// The shipping editor is native-ui/materialized/materialized-document.runtime.json.
+// tools/patch_materialized_editor.py is its idempotent compatibility recipe;
+// these checks assert the emitted document as a separate shipping surface so a
+// source-only fix cannot be mistaken for a native fix.
 TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     const std::string document{
         reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
@@ -492,25 +512,39 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 
     SECTION("hover feedback uses the unified status banner") {
-        CHECK(count_occurrences(
-                  document,
-                  "const hoverBand = hover && !hover.mini ? hover.band : -1;")
+        CHECK(count_occurrences(document, "const hoverRef = useRef(null);") == 1);
+        CHECK(count_occurrences(document, "const currentHover = hoverRef.current;") == 1);
+        CHECK(count_occurrences(document,
+                                "if (!currentHover || currentHover.mini) return;")
               == 1);
-        CHECK(count_occurrences(
-                  document,
-                  "const keepAlive = setInterval(() => onStatus(label), 1e3);")
-              == 1);
-        CHECK(count_occurrences(document, "if (!hover || hover.mini) return;") == 1);
+        CHECK(count_occurrences(document, "updateLiveHoverStatus();") == 1);
         CHECK(count_occurrences(document, "const tw = ctx.measureText(label).width + 18;") == 0);
     }
 
     SECTION("the status banner replaces one message at a time") {
-        CHECK(count_occurrences(document, "shownRef.current !== display") == 1);
+        CHECK(count_occurrences(document, "const generationRef = useRefChrome(0);") == 1);
+        CHECK(count_occurrences(document, "const statusRefreshAtRef = useRef(0);") == 1);
         CHECK(count_occurrences(
                   document,
                   "const t = setTimeout(() => {\\n      setVisible(false);\\n"
                   "      setText(\\\"\\\");\\n    }, 1400);")
               == 0);
+        CHECK(document.find("if (generation !== generationRef.current) return;")
+              != document.npos);
+        CHECK(document.find("const timer2 = hide(160);") != document.npos);
+        CHECK(document.find("now - statusRefreshAtRef.current >= 120")
+              != document.npos);
+        CHECK(document.find("statusRefreshAtRef.current = now;") != document.npos);
+        // The remaining 150 ms interval is the low-rate zoom/readout sampler,
+        // not the retired status-dismiss timer.
+        CHECK(count_occurrences(document, "}, 150);") == 1);
+        CHECK(document.find(
+                  "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;")
+              != document.npos);
+        CHECK(document.find(
+                  "requestAnimationFrame(() => window.dispatchEvent(new Event(\\\"resize\\\")));")
+              == document.npos);
+        CHECK(document.find("shell.style.width = Math.max") == document.npos);
     }
 
     SECTION("the status banner is centered, padded, and smoothly content-sized") {
@@ -526,7 +560,21 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(count_occurrences(document, "width: 240,") == 0);
     }
 
+    SECTION("live status text cannot invalidate layout when its content changes") {
+        CHECK(count_occurrences(
+                  document,
+                  "style: { display: \\\"block\\\", textAlign: \\\"center\\\", "
+                  "width: \\\"100%\\\", height: \\\"100%\\\", "
+                  "lineHeight: \\\"14px\\\", paddingTop: \\\"6px\\\", "
+                  "boxSizing: \\\"border-box\\\", whiteSpace: \\\"nowrap\\\" }")
+              == 1);
+        CHECK(count_occurrences(document, "lineHeight: \"26px\"") == 0);
+    }
+
     SECTION("edge labels and dropdown controls retain intentional rendering") {
+        CHECK(document.find("restoreMenuFocus") == document.npos);
+        CHECK(count_occurrences(document, "popupKind: \\\"listbox\\\"") == 2);
+        CHECK(count_occurrences(document, "popupKind: \\\"menu\\\"") == 2);
         CHECK(count_occurrences(document, "ctx.setLineDash([2, 2]);") == 0);
         CHECK(count_occurrences(
                   document,
@@ -541,15 +589,38 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
               == 1);
         CHECK(count_occurrences(
                   document,
-                  "display: \\\"inline-flex\\\",\\n"
-                  "    alignItems: \\\"center\\\",\\n"
-                  "    gap: 4,\\n"
-                  "    lineHeight: 1")
+                  "width: 44,\\n"
+                  "        minWidth: 44,\\n"
+                  "        flexShrink: 0,\\n"
+                  "        minHeight: 26,\\n"
+                  "        boxSizing: \\\"border-box\\\",\\n"
+                  "        display: \\\"inline-flex\\\",\\n"
+                  "        alignItems: \\\"center\\\",\\n"
+                  "        justifyContent: \\\"center\\\",\\n"
+                  "        lineHeight: 1")
               == 1);
     }
 
+    SECTION("minimap cursor feedback distinguishes idle drag and band editing") {
+        CHECK(count_occurrences(
+                  document,
+                  "wrapRef.current.style.cursor = mm === \\\"left\\\" || mm === \\\"right\\\" ? \\\"col-resize\\\" : \\\"grabbing\\\";")
+              == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "wrapRef.current.style.cursor = \\\"crosshair\\\";")
+              == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "mm === \\\"left\\\" || mm === \\\"right\\\"\\n        ? \\\"col-resize\\\"")
+              == 1);
+        CHECK(document.find("for (let i = 1; i < N; i++)") != document.npos);
+        CHECK(document.find("for (let i = 0; i <= N; i++)") == document.npos);
+    }
+
     SECTION("remaining standalone chrome stays aligned") {
-        CHECK(count_occurrences(document, "top: 76,") == 1);
+        CHECK(count_occurrences(document, "top: 104,") == 1);
+        CHECK(document.find("onDismiss: () => setOpenMenu(null)") == document.npos);
         CHECK(count_occurrences(
                   document,
                   "height: 26,\\n        display: \\\"inline-flex\\\",\\n"
@@ -561,12 +632,14 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   document,
                   "style: { marginLeft: 6, display: \\\"inline-flex\\\", "
                   "alignItems: \\\"center\\\", lineHeight: 1 }")
-              == 3);
+              == 2);
         CHECK(count_occurrences(
                   document,
                   "\"letter_spacing\":0.5}},\"boxes\":[{\"left\":0,"
                   "\"top\":3,\"width\":13,\"height\":13,"
-                  "\"start\":0,\"length\":2}]},{\"index\":9")
+                  "\"start\":0,\"length\":2},{\"left\":21,"
+                  "\"top\":3,\"width\":52.03125,\"height\":13,"
+                  "\"start\":3,\"length\":8}]},{\"index\":10")
               == 1);
     }
 
@@ -577,6 +650,25 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         // that lane fail, but only here does the SHIPPING document say so.
         CHECK(count_occurrences(document, "const commitDrawnGains = (map) => {") == 1);
         CHECK(count_occurrences(document, "commitDrawnGains(map);") == 6);
+        CHECK(count_occurrences(document, "commitMany(map, true);") == 1);
+        CHECK(count_occurrences(document, "commitMany(held, true);") == 1);
+        CHECK(count_occurrences(document, "if (!deferReact) setGains") == 2);
+        CHECK(count_occurrences(document,
+                  "setGains(targetGainsRef.current.slice());") == 1);
+        CHECK(count_occurrences(document,
+                  "reactGains: Array.from(gains)") == 1);
+        CHECK(count_occurrences(document,
+                  "updateLiveHoverStatus();") == 1);
+        CHECK(count_occurrences(document,
+                  "const commitLiveViewport = (next) => {") == 1);
+        CHECK(count_occurrences(document,
+                  "commitLiveViewport({ lmin, lmax });") == 2);
+        CHECK(count_occurrences(document,
+                  "commitLiveViewport({ lmin, lmax: lmin + span });") == 2);
+        CHECK(count_occurrences(document,
+                  "setView({ ...viewRef.current });") == 1);
+        CHECK(count_occurrences(document,
+                  "reactView: { ...reactView }") == 1);
         CHECK(count_occurrences(document, "const editBaseGain = (value, index) => {") == 1);
         CHECK(count_occurrences(document, "unmuteOnDrawRef.current") == 2);
         // No drawn-edit site may short-circuit a muted band to the sentinel
@@ -614,28 +706,70 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 }
 
-TEST_CASE("materialized visual triage contract detects severed fixes") {
+TEST_CASE("materialized mode and visual contracts detect every severed fix") {
     const std::string document{
         reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
         spectr_native::materialized_document_runtime_json_size};
     constexpr std::array markers{
-        ContractMarker{"unified-hover", "const hoverBand = hover && !hover.mini ? hover.band : -1;"},
-        ContractMarker{"persistent-hover", "const keepAlive = setInterval(() => onStatus(label), 1e3);"},
-        ContractMarker{"guide-only-hover", "if (!hover || hover.mini) return;"},
+        ContractMarker{"bridge-message", R"(postMessage(\"mode_set\")"},
+        ContractMarker{"motion", R"(spectrPublishMode(\"motion\")", 3},
+        ContractMarker{"edit", R"(spectrPublishMode(\"edit\")", 3},
+        ContractMarker{"analyzer", R"(spectrPublishMode(\"analyzer\")", 2},
+        ContractMarker{"visualization", R"(spectrPublishMode(\"visualization\")"},
+        ContractMarker{"native-listbox-popup-ownership", "popupKind: \\\"listbox\\\"", 2},
+        ContractMarker{"native-menu-popup-ownership", "popupKind: \\\"menu\\\"", 2},
+        ContractMarker{"pointer-owned-hover", "const currentHover = hoverRef.current;"},
+        ContractMarker{"live-hover-publication", "updateLiveHoverStatus();"},
+        ContractMarker{"guide-only-hover", "if (!currentHover || currentHover.mini) return;"},
+        ContractMarker{"generation-safe-status", "const generationRef = useRefChrome(0);"},
+        ContractMarker{"active-status-renewal", "now - statusRefreshAtRef.current >= 120"},
+        ContractMarker{"inactivity-status-clear", "const timer2 = hide(160);"},
+        ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
         ContractMarker{"content-sized-banner", "width: Math.max(96, Math.min(520, text.length * 8 + 28)),"},
         ContractMarker{"symmetric-banner-padding", "padding: \\\"0 14px\\\""},
         ContractMarker{"smooth-banner-resize", "transition: \\\"width 0.18s ease, opacity 0.15s ease\\\""},
         ContractMarker{"aligned-edge-label", "ctx.font = \\\"10px JetBrains Mono, monospace\\\";\\n        ctx.textAlign = \\\"center\\\";\\n        ctx.textBaseline = \\\"middle\\\";"},
         ContractMarker{"dropdown-surface", "background: \\\"rgba(255,255,255,0.025)\\\",\\n  border: \\\"1px solid transparent\\\""},
-        ContractMarker{"aligned-band-count", "display: \\\"inline-flex\\\",\\n    alignItems: \\\"center\\\",\\n    gap: 4,\\n    lineHeight: 1"},
-        ContractMarker{"banner-below-plot-line", "top: 76,"},
+        ContractMarker{"aligned-band-count", "width: 44,\\n        minWidth: 44,\\n        flexShrink: 0,\\n        minHeight: 26,\\n        boxSizing: \\\"border-box\\\",\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
+        ContractMarker{"native-band-count-spacing", "style: { lineHeight: 1, whiteSpace: \\\"nowrap\\\" }"},
+        ContractMarker{"banner-below-plot-line", "top: 104,"},
+        ContractMarker{"integer-centered-banner-text", "lineHeight: \\\"14px\\\", paddingTop: \\\"6px\\\""},
+        ContractMarker{"sticky-settings-header", "position: \\\"sticky\\\", top: 0, zIndex: 3"},
+        ContractMarker{"complete-status-info-hint", "Hover, mute, and drag feedback"},
+        ContractMarker{"copy-state-feedback", "data-spectr-copy-state"},
         ContractMarker{"centered-rail-button", "height: 26,\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
-        ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 3},
-        ContractMarker{"aligned-band-binding", "\"letter_spacing\":0.5}},\"boxes\":[{\"left\":0,\"top\":3,\"width\":13,\"height\":13,\"start\":0,\"length\":2}]},{\"index\":9"},
-        ContractMarker{"band-dropdown-surface", "background: info.N === n ? \\\"rgba(120,180,255,0.18)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
+        ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 2},
+        ContractMarker{"aligned-band-binding", "\"boxes\":[{\"left\":0,\"top\":3,\"width\":13,\"height\":13,\"start\":0,\"length\":2},{\"left\":21,\"top\":3,\"width\":52.03125,\"height\":13,\"start\":3,\"length\":8}]"},
+        ContractMarker{"single-band-count-text-binding", "\"text\":\"32 bands ▾\""},
+        ContractMarker{"band-dropdown-surface", "background: info.N === n ? \\\"rgba(120,180,255,0.18)\\\" : \\\"rgba(255,255,255,0.03)\\\","},
         ContractMarker{"edit-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.14)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"analyzer-dropdown-surface", "background: active ? \\\"rgba(255,255,255,0.08)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"settings-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.16)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
+        ContractMarker{"minimap-edge-resize-cursor", "mm === \\\"left\\\" || mm === \\\"right\\\"\\n        ? \\\"col-resize\\\""},
+        ContractMarker{"minimap-press-cursor", "wrapRef.current.style.cursor = mm === \\\"left\\\" || mm === \\\"right\\\" ? \\\"col-resize\\\" : \\\"grabbing\\\";"},
+        ContractMarker{"band-crosshair-cursor", "wrapRef.current.style.cursor = \\\"crosshair\\\";"},
+        ContractMarker{"status-info-toggle", "data-spectr-status-info-toggle"},
+        ContractMarker{"status-info-suppression", "settings.statusInfo === false", 3},
+        ContractMarker{"selected-preset-label", "data-spectr-selected-preset"},
+        ContractMarker{"selected-preset-identity", "const [selectedPatternId, setSelectedPatternId] = useAppS(null);"},
+        ContractMarker{"selected-preset-authoritative-label", "[...window.Spectr.FACTORY_PATTERNS, ...userPatterns].find((pattern) => pattern.id === selectedPatternId)?.name || \\\"PRESETS\\\";"},
+        ContractMarker{"selected-preset-applied-identity", "setSelectedPatternId(p.id);"},
+        ContractMarker{"build-info-component", "function SpectrBuildInfo() {"},
+        ContractMarker{"build-info-get", "postMessage(\\\"build_info_get\\\""},
+        ContractMarker{"build-info-copy", "postMessage(\\\"build_info_copy\\\""},
+        ContractMarker{"build-info-copy-success", "settleCopyState(\\\"COPIED\\\")"},
+        ContractMarker{"build-info-copy-failure", "settleCopyState(\\\"COPY UNAVAILABLE\\\")"},
+        ContractMarker{"build-info-unique-request-ids", "window.__spectrBuildInfoRequestSerial = (Number(window.__spectrBuildInfoRequestSerial) || 0) + 1;"},
+        ContractMarker{"build-info-effect-replay-lifetime", "mountedRef.current = true;"},
+        ContractMarker{"build-info-unmount-cleanup", "mountedRef.current = false;"},
+        ContractMarker{"build-info-late-copy-guard", "if (!mountedRef.current) return;"},
+        ContractMarker{"build-info-default-on", "\\\"showBuildInfo\\\": true"},
+        ContractMarker{"build-info-optional", "settings.showBuildInfo !== false", 2},
+        ContractMarker{"build-info-toggle", "data-spectr-build-info-toggle"},
+        ContractMarker{"build-info-toggle-parameter", "function SpectrSettingsToggle({ value, onChange, statusInfo = false, buildInfo = false }) {"},
+        ContractMarker{"build-info-product-sha", "[\\\"SPECTR SHA\\\", info.product_sha || \\\"UNKNOWN\\\"]"},
+        ContractMarker{"build-info-product-dirty", "info.product_provenance_known ? info.product_dirty ? \\\"DIRTY\\\" : \\\"CLEAN\\\" : \\\"UNKNOWN\\\""},
+        ContractMarker{"build-info-sdk-dirty", "[\\\"SDK SOURCE\\\", info.sdk_provenance_exact ? info.sdk_dirty ? \\\"DIRTY\\\" : \\\"CLEAN\\\" : \\\"UNKNOWN\\\"]"},
     };
     const auto errors = [&](std::string_view candidate) {
         std::vector<std::string> result;
@@ -644,13 +778,89 @@ TEST_CASE("materialized visual triage contract detects severed fixes") {
                 result.emplace_back(marker.label);
         return result;
     };
-    CHECK(errors(document).empty());
+    for (const auto& marker : markers) {
+        INFO(marker.label);
+        CHECK(count_occurrences(document, marker.text) == marker.expected_count);
+    }
     for (const auto& marker : markers) {
         INFO(marker.label);
         auto mutated = document;
         erase_once(mutated, marker.text);
         CHECK(contains(errors(mutated), marker.label));
     }
+}
+
+TEST_CASE("materialized build-info geometry contracts detect every severed fix") {
+    const std::string runtime{
+        reinterpret_cast<const char*>(spectr_native::runtime_js),
+        spectr_native::runtime_js_size};
+    constexpr std::array markers{
+        ContractMarker{"build-info-feedback-slot", "g5.setFlex(String(feedbackId), \"height\", 108)"},
+        ContractMarker{"build-info-stable-slot", "g5.setTop(String(aboutId), 774)"},
+        ContractMarker{"build-info-provenance-height", "g5.setFlex(String(aboutId), \"height\", 252)"},
+        ContractMarker{"build-info-scroll-extent", "const authoredContentHeight = 1044;"},
+        ContractMarker{"band-root-reserved-gap", "g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0)"},
+    };
+    const auto errors = [&](std::string_view candidate) {
+        std::vector<std::string> result;
+        for (const auto& marker : markers)
+            if (count_occurrences(candidate, marker.text) != marker.expected_count)
+                result.emplace_back(marker.label);
+        return result;
+    };
+    for (const auto& marker : markers) {
+        INFO(marker.label);
+        CHECK(count_occurrences(runtime, marker.text) == marker.expected_count);
+    }
+    for (const auto& marker : markers) {
+        INFO(marker.label);
+        auto mutated = runtime;
+        erase_once(mutated, marker.text);
+        CHECK(contains(errors(mutated), marker.label));
+    }
+}
+
+TEST_CASE("status overlay and settings polish contracts detect every severed fix") {
+    const std::string document{
+        reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
+        spectr_native::materialized_document_runtime_json_size};
+    constexpr std::array markers{
+        ContractMarker{"drag-status-refresh", "now - statusRefreshAtRef.current >= 120"},
+        ContractMarker{"status-clear-grace", "const timer2 = hide(160);"},
+        ContractMarker{"status-readable-dwell", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
+        ContractMarker{"status-below-ruler", "top: 104,"},
+        ContractMarker{"status-integer-centering", "lineHeight: \\\"14px\\\", paddingTop: \\\"6px\\\""},
+        ContractMarker{"settings-sticky-header", "position: \\\"sticky\\\", top: 0, zIndex: 3"},
+        ContractMarker{"settings-complete-status-hint", "Hover, mute, and drag feedback"},
+        ContractMarker{"settings-copy-feedback-state", "data-spectr-copy-state"},
+        ContractMarker{"settings-centered-copy-feedback", "aria-live\\\": \\\"polite\\\", style: { display: \\\"inline-flex\\\", alignItems: \\\"center\\\", justifyContent: \\\"center\\\", width: \\\"100%\\\", height: \\\"100%\\\", lineHeight: 1"},
+    };
+    const auto errors = [&](std::string_view candidate) {
+        std::vector<std::string> result;
+        for (const auto& marker : markers)
+            if (count_occurrences(candidate, marker.text) != marker.expected_count)
+                result.emplace_back(marker.label);
+        return result;
+    };
+    for (const auto& marker : markers) {
+        INFO(marker.label);
+        CHECK(count_occurrences(document, marker.text) == marker.expected_count);
+        auto mutated = document;
+        erase_once(mutated, marker.text);
+        CHECK(contains(errors(mutated), marker.label));
+    }
+}
+
+TEST_CASE("settings overflow follows live content height") {
+    const std::string runtime{
+        reinterpret_cast<const char*>(spectr_native::runtime_js),
+        spectr_native::runtime_js_size};
+    constexpr std::string_view marker =
+        "g5.setOverflow(panelId, panelHeight < authoredContentHeight ? \"scroll\" : \"hidden\")";
+    CHECK(count_occurrences(runtime, marker) == 1);
+    auto mutated = runtime;
+    erase_once(mutated, marker);
+    CHECK(count_occurrences(mutated, marker) == 0);
 }
 
 #endif // SPECTR_NATIVE_EDITOR

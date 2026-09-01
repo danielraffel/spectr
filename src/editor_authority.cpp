@@ -35,23 +35,31 @@ EditorAuthority::EditorAuthority(Spectr& processor) noexcept
     : processor_(processor) {}
 
 EditorReceipt EditorAuthority::reject_(std::string error) const {
-    return {false, revision_, std::move(error)};
+    return {false, revision(), std::move(error)};
 }
 
 EditorReceipt EditorAuthority::accept_without_mutation_() const {
-    return {true, revision_, {}};
+    return {true, revision(), {}};
 }
 
 EditorReceipt EditorAuthority::accept_mutation_() noexcept {
     // Hydration transports the revision as a signed JSON integer. Keep the
     // authority inside that exactly representable domain for its full life.
-    if (revision_ != kMaxEditorRevision) ++revision_;
-    return {true, revision_, {}};
+    auto current = revision_.load(std::memory_order_relaxed);
+    while (current != kMaxEditorRevision
+           && !revision_.compare_exchange_weak(
+               current, current + 1,
+               std::memory_order_release, std::memory_order_relaxed)) {}
+    return {true, current == kMaxEditorRevision ? current : current + 1, {}};
+}
+
+EditorRevision EditorAuthority::record_external_mutation() noexcept {
+    return accept_mutation_().revision;
 }
 
 bool EditorAuthority::matches_(
     std::optional<EditorRevision> expected) const noexcept {
-    return !expected || *expected == revision_;
+    return !expected || *expected == revision();
 }
 
 EditorReceipt EditorAuthority::replace_processing_state(
@@ -82,9 +90,10 @@ EditorReceipt EditorAuthority::replace_processing_state(
     // observable difference this change introduces. Skipping the write too would
     // be a further improvement, but it is a separate behavioural claim about the
     // audio-thread publish path and does not belong in this fix.
-    const bool unchanged = layout == processor_.layout()
-        && same_viewport(viewport, processor_.viewport())
-        && same_band_field(field, processor_.field());
+    const auto current = processor_.processing_state_snapshot();
+    const bool unchanged = layout == current.layout
+        && same_viewport(viewport, current.viewport)
+        && same_band_field(field, current.field);
     if (!processor_.replace_processing_state(field, viewport, layout))
         return reject_("invalid processing state");
     edit_snapshot_.reset();
@@ -95,7 +104,11 @@ EditorReceipt EditorAuthority::replace_processing_state(
 EditorReceipt EditorAuthority::begin_band_edit(
     std::optional<EditorRevision> expected) noexcept {
     if (!matches_(expected)) return reject_("stale editor revision");
-    edit_snapshot_ = BandSnapshot::capture(processor_.field());
+    edit_snapshot_ = BandSnapshot::capture(
+        processor_.processing_state_snapshot().field);
+    // spectr#34: open a host-gesture epoch so the paint's parameter writes
+    // bracket as one begin/end per touched band per drag, not per event.
+    processor_.begin_param_gesture_epoch();
     return accept_without_mutation_();
 }
 
@@ -104,10 +117,12 @@ EditorReceipt EditorAuthority::update_band_edit(
     std::optional<EditorRevision> expected) noexcept {
     if (!matches_(expected)) {
         edit_snapshot_.reset();
+        processor_.end_param_gesture_epoch();
         return reject_("stale editor revision");
     }
     if (!edit_snapshot_) return reject_("paint without paint_start");
-    const auto visible = visible_count(processor_.layout());
+    const auto current = processor_.processing_state_snapshot();
+    const auto visible = visible_count(current.layout);
     if (gesture.n_visible != visible
         || gesture.start_band >= visible
         || gesture.current_band >= visible
@@ -119,10 +134,10 @@ EditorReceipt EditorAuthority::update_band_edit(
         || gesture.current_value > kBandGainMaxDb) {
         return reject_("paint geometry or values are invalid");
     }
-    auto next = processor_.field();
+    auto next = current.field;
     dispatch_edit(mode, next, gesture, *edit_snapshot_);
     if (!processor_.replace_processing_state(
-            next, processor_.viewport(), processor_.layout())) {
+            next, current.viewport, current.layout)) {
         return reject_("paint produced invalid processing state");
     }
     return accept_mutation_();
@@ -130,11 +145,13 @@ EditorReceipt EditorAuthority::update_band_edit(
 
 EditorReceipt EditorAuthority::end_band_edit() noexcept {
     edit_snapshot_.reset();
+    processor_.end_param_gesture_epoch();
     return accept_without_mutation_();
 }
 
 EditorReceipt EditorAuthority::cancel_band_edit() noexcept {
     edit_snapshot_.reset();
+    processor_.end_param_gesture_epoch();
     return accept_without_mutation_();
 }
 
@@ -175,6 +192,7 @@ EditorReceipt EditorAuthority::apply_morph(
 
 void EditorAuthority::reset_transient_state() noexcept {
     edit_snapshot_.reset();
+    processor_.end_param_gesture_epoch();
 }
 
 } // namespace spectr

@@ -12,6 +12,8 @@
 
 #include <pulp/format/plugin_state_io.hpp>
 
+#include <choc/text/choc_JSON.h>
+
 #include "spectr/spectr.hpp"
 
 #include <cstring>
@@ -36,10 +38,10 @@ struct Wired {
 
 } // namespace
 
-TEST_CASE("M4: every V1 parameter is registered") {
+TEST_CASE("M4: legacy parameter IDs remain registered in the full surface") {
     Wired w;
     auto params = w.store.all_params();
-    CHECK(params.size() == 2);
+    CHECK(params.size() == spectr::kSurfaceParamCount);
 
     const std::vector<pulp::state::ParamID> expected = {
         spectr::kMix, spectr::kOutputTrim,
@@ -50,20 +52,27 @@ TEST_CASE("M4: every V1 parameter is registered") {
         INFO("Missing parameter id " << id);
         CHECK(found);
     }
-    for (const auto& param : params)
-        CHECK(param.name != "Morph");
+    REQUIRE(w.store.info(spectr::kParamMorph) != nullptr);
+    CHECK(w.store.info(spectr::kParamMorph)->name == "A/B Morph");
 }
 
 TEST_CASE("M4: serialize_plugin_state produces non-empty JSON") {
     Wired w;
     auto blob = w.proc->serialize_plugin_state();
     CHECK(!blob.empty());
-    std::string_view text(reinterpret_cast<const char*>(blob.data()), blob.size());
-    CHECK(text.find("version") != std::string_view::npos);
-    CHECK(text.find("band_gain") != std::string_view::npos);
-    CHECK(text.find("band_mute") != std::string_view::npos);
-    CHECK(text.find("view_min_hz") != std::string_view::npos);
-    CHECK(text.find("view_max_hz") != std::string_view::npos);
+    const std::string_view text(reinterpret_cast<const char*>(blob.data()), blob.size());
+    const auto root = choc::json::parse(text);
+    REQUIRE(root.isObject());
+    CHECK(root.hasObjectMember("version"));
+    CHECK(root.hasObjectMember("snapshots"));
+    CHECK(root.hasObjectMember("patterns_json"));
+    // Live host parameters belong only to StateStore in v3. Snapshot fields
+    // legitimately contain their own band arrays inside the snapshots object.
+    CHECK_FALSE(root.hasObjectMember("band_gain"));
+    CHECK_FALSE(root.hasObjectMember("band_mute"));
+    CHECK_FALSE(root.hasObjectMember("view_min_hz"));
+    CHECK_FALSE(root.hasObjectMember("view_max_hz"));
+    CHECK_FALSE(root.hasObjectMember("layout_index"));
 }
 
 TEST_CASE("M4: plugin_state round-trips band gains, mutes, and viewport") {
@@ -182,5 +191,5 @@ TEST_CASE("M4: band-count configuration publishes before process()") {
 
     w.proc->process(ov, iv, midi_in, midi_out, ctx);
     CHECK(w.proc->layout() == spectr::Layout::Bands64);
-    CHECK(w.store.all_params().size() == 2);
+    CHECK(w.store.all_params().size() == spectr::kSurfaceParamCount);
 }

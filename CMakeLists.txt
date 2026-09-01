@@ -10,8 +10,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # size agree with every adapter's runtime preferred size.
 set(SPECTR_AUTHORED_WIDTH 1320)
 set(SPECTR_AUTHORED_HEIGHT 860)
-set(SPECTR_HOST_PREFERRED_WIDTH 1320)
-set(SPECTR_HOST_PREFERRED_HEIGHT 860)
+set(SPECTR_HOST_PREFERRED_WIDTH 990)
+set(SPECTR_HOST_PREFERRED_HEIGHT 645)
 set(SPECTR_HOST_MIN_WIDTH 792)
 set(SPECTR_HOST_MIN_HEIGHT 516)
 set(SPECTR_HOST_MAX_WIDTH 2640)
@@ -57,6 +57,115 @@ math(EXPR SPECTR_PROCESSING_LATENCY
 
 find_package(Pulp 0.801.0 REQUIRED)
 
+# Product provenance is recomputed on every configure. Never preserve a SHA
+# from a prior checkout in CMakeCache.txt: acceptance packages must identify
+# the exact Spectr tree that produced them.
+set(_spectr_source_git_sha "")
+set(_spectr_source_git_dirty TRUE)
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}"
+                rev-parse --show-toplevel
+        RESULT_VARIABLE _spectr_git_root_result
+        OUTPUT_VARIABLE _spectr_git_root
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    file(REAL_PATH "${CMAKE_CURRENT_SOURCE_DIR}" _spectr_source_root)
+    if(_spectr_git_root_result EQUAL 0)
+        file(REAL_PATH "${_spectr_git_root}" _spectr_git_root)
+    endif()
+endif()
+if(GIT_FOUND AND _spectr_git_root_result EQUAL 0 AND
+   _spectr_git_root STREQUAL _spectr_source_root)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}"
+                rev-parse --verify HEAD
+        RESULT_VARIABLE _spectr_git_sha_result
+        OUTPUT_VARIABLE _spectr_source_git_sha
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    string(LENGTH "${_spectr_source_git_sha}" _spectr_source_git_sha_length)
+    if(_spectr_git_sha_result EQUAL 0 AND
+       _spectr_source_git_sha MATCHES "^[0-9a-f]+$" AND
+       _spectr_source_git_sha_length EQUAL 40)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}"
+                    status --porcelain --untracked-files=normal
+            RESULT_VARIABLE _spectr_git_status_result
+            OUTPUT_VARIABLE _spectr_git_status
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        if(_spectr_git_status_result EQUAL 0 AND _spectr_git_status STREQUAL "")
+            set(_spectr_source_git_dirty FALSE)
+        endif()
+    else()
+        set(_spectr_source_git_sha "")
+    endif()
+endif()
+set(SPECTR_SOURCE_GIT_SHA "${_spectr_source_git_sha}" CACHE INTERNAL
+    "Exact Spectr source Git SHA recomputed at configure time" FORCE)
+set(SPECTR_SOURCE_GIT_DIRTY "${_spectr_source_git_dirty}" CACHE INTERNAL
+    "Whether the configured Spectr source tree is dirty or unverifiable" FORCE)
+
+set(SPECTR_EXPECTED_PRODUCT_GIT_SHA "" CACHE STRING
+    "Exact clean Spectr Git SHA required for an accepted Release build")
+if(NOT SPECTR_EXPECTED_PRODUCT_GIT_SHA STREQUAL "")
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+        message(FATAL_ERROR
+            "SPECTR_EXPECTED_PRODUCT_GIT_SHA admits Release builds only")
+    endif()
+    string(LENGTH "${SPECTR_EXPECTED_PRODUCT_GIT_SHA}"
+           _spectr_expected_product_git_sha_length)
+    if(NOT SPECTR_EXPECTED_PRODUCT_GIT_SHA MATCHES "^[0-9a-f]+$" OR
+       NOT _spectr_expected_product_git_sha_length EQUAL 40)
+        message(FATAL_ERROR
+            "SPECTR_EXPECTED_PRODUCT_GIT_SHA must be one exact lowercase 40-character Git SHA")
+    endif()
+    if(NOT SPECTR_SOURCE_GIT_SHA STREQUAL SPECTR_EXPECTED_PRODUCT_GIT_SHA)
+        message(FATAL_ERROR
+            "Resolved Spectr source SHA is '${SPECTR_SOURCE_GIT_SHA}', expected "
+            "'${SPECTR_EXPECTED_PRODUCT_GIT_SHA}'")
+    endif()
+    if(SPECTR_SOURCE_GIT_DIRTY)
+        message(FATAL_ERROR
+            "Accepted Spectr Release source is dirty or unverifiable")
+    endif()
+endif()
+
+set(SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE "")
+if(DEFINED PULP_SDK_SOURCE_GIT_SHA)
+    string(LENGTH "${PULP_SDK_SOURCE_GIT_SHA}"
+           _spectr_pulp_sdk_source_git_sha_length)
+    if(PULP_SDK_SOURCE_GIT_SHA MATCHES "^[0-9a-f]+$" AND
+       _spectr_pulp_sdk_source_git_sha_length EQUAL 40)
+        set(SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE
+            "${PULP_SDK_SOURCE_GIT_SHA}")
+    endif()
+endif()
+
+# Native cutover candidates are admitted by immutable SDK provenance, not by
+# whichever compatible Pulp package happens to be first on CMake's search path.
+# The shipping/acceptance command passes the exact merged Pulp SHA here; normal
+# source consumers may leave it empty when they do not need that stronger gate.
+set(SPECTR_EXPECTED_PULP_SDK_SHA "" CACHE STRING
+    "Exact source Git SHA required from the resolved Pulp SDK provenance")
+if(NOT SPECTR_EXPECTED_PULP_SDK_SHA STREQUAL "")
+    string(LENGTH "${SPECTR_EXPECTED_PULP_SDK_SHA}"
+           _spectr_expected_pulp_sdk_sha_length)
+    if(NOT SPECTR_EXPECTED_PULP_SDK_SHA MATCHES "^[0-9a-f]+$" OR
+       NOT _spectr_expected_pulp_sdk_sha_length EQUAL 40)
+        message(FATAL_ERROR
+            "SPECTR_EXPECTED_PULP_SDK_SHA must be one exact lowercase 40-character Git SHA")
+    endif()
+    if(NOT DEFINED PULP_SDK_SOURCE_GIT_SHA OR
+       NOT PULP_SDK_SOURCE_GIT_SHA STREQUAL SPECTR_EXPECTED_PULP_SDK_SHA)
+        message(FATAL_ERROR
+            "Resolved Pulp SDK source SHA is '${PULP_SDK_SOURCE_GIT_SHA}', expected "
+            "'${SPECTR_EXPECTED_PULP_SDK_SHA}'; refusing an older or substituted SDK")
+    endif()
+endif()
+
 # ── Core Spectr sources ────────────────────────────────────────────────
 #
 # Public headers live under include/spectr/.
@@ -65,6 +174,7 @@ find_package(Pulp 0.801.0 REQUIRED)
 
 set(SPECTR_SOURCES
     src/spectr.cpp
+    src/param_surface.cpp
     src/edit_engine.cpp
     src/editor_authority.cpp
     src/editor_bridge.cpp
@@ -76,6 +186,7 @@ set(SPECTR_SOURCES
 
 set(SPECTR_HEADERS
     include/spectr/spectr.hpp
+    include/spectr/param_surface.hpp
     include/spectr/band_state.hpp
     include/spectr/viewport.hpp
     include/spectr/edit_modes.hpp
@@ -95,6 +206,7 @@ set(SPECTR_HEADERS
 # root rather than silently selecting AutoUi or the WebView baseline.
 set(SPECTR_NATIVE_SOURCES
     src/spectr.cpp
+    src/param_surface.cpp
     src/edit_engine.cpp
     src/editor_authority.cpp
     src/editor_bridge.cpp
@@ -104,23 +216,14 @@ set(SPECTR_NATIVE_SOURCES
     src/ui/native_editor.cpp
 )
 
-# Pulp's native/WebView target split landed after the pinned Spectr canvas SDK.
-# Newer SDKs expose the browser-free link floor as Pulp::view-native.  The
-# pinned 0.803.1 SDK exports the same native scripted stack through Pulp::view;
-# accept that compatibility surface only when its link interface does not pull
-# the WebView archive back into the graph.
+# Shipping Spectr is a native cutover consumer. Requiring the dedicated target
+# makes an older compatibility SDK fail during configure instead of silently
+# selecting a less capable rendering surface.
 if(TARGET Pulp::view-native)
     set(SPECTR_NATIVE_VIEW_TARGET Pulp::view-native)
-elseif(TARGET Pulp::view)
-    get_target_property(_spectr_view_links Pulp::view INTERFACE_LINK_LIBRARIES)
-    if("${_spectr_view_links}" MATCHES "view-webview")
-        message(FATAL_ERROR
-            "Pinned Pulp SDK has no Pulp::view-native target and Pulp::view "
-            "links WebView; refusing to contaminate the native Spectr lane")
-    endif()
-    set(SPECTR_NATIVE_VIEW_TARGET Pulp::view)
 else()
-    message(FATAL_ERROR "Pinned Pulp SDK exports no usable native view target")
+    message(FATAL_ERROR
+        "Resolved Pulp SDK exports no Pulp::view-native target; refusing the legacy view fallback")
 endif()
 
 set(SPECTR_NATIVE_ASSET_SOURCES
@@ -160,6 +263,10 @@ function(spectr_configure_native_target target)
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
+        SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
+        SPECTR_PULP_SDK_PROVENANCE_EXACT=$<BOOL:${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}>
+        SPECTR_PRODUCT_GIT_SHA="${SPECTR_SOURCE_GIT_SHA}"
+        SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
     )
 endfunction()
 
@@ -296,6 +403,8 @@ add_executable(Spectr-test
     test/test_import_fidelity.cpp
     test/test_preset.cpp
     test/test_snapshot.cpp
+    test/test_param_surface.cpp
+    test/test_mode_bridge.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
@@ -324,6 +433,10 @@ target_compile_definitions(Spectr-test PRIVATE
     PULP_PLUGIN_DESIGN_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
     SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
     SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
+    SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
+    SPECTR_PULP_SDK_PROVENANCE_EXACT=$<BOOL:${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}>
+    SPECTR_PRODUCT_GIT_SHA="${SPECTR_SOURCE_GIT_SHA}"
+    SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
 

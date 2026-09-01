@@ -38,22 +38,54 @@ See [`planning/`](planning/) for the full design package:
 - [`planning/Spectr-Upstream-Integration-Plan.md`](planning/Spectr-Upstream-Integration-Plan.md) — Pulp pickup playbook
 - [`planning/Spectr-Build-Signoff.md`](planning/Spectr-Build-Signoff.md) — current build clearance state
 
+Release candidates use the manually dispatched, local-first
+[`Spectr M5 Product Acceptance`](docs/local-first-product-acceptance.md) gate.
+It consumes an immutable official Pulp SDK, runs in a clean transient Tart macOS
+ARM64 guest, and publishes an exact-head PKG for hands-on M5 testing.
+
 ## Building
 
-Requires a Pulp SDK with WebView and AU/VST3/CLAP/Standalone support. A local
-Pulp checkout can produce the immutable development SDK used by Forge-style
-consumers:
+Requires a Pulp SDK with the dedicated native scripted Skia/Dawn view target
+and AU/VST3/CLAP/Standalone support. A local Pulp checkout can produce the
+immutable development SDK used by Forge-style consumers:
 
 ```bash
 Pulp_DIR="$(pulp sdk install --local --profile forge-dev --print-path)/lib/cmake/Pulp"
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPulp_DIR="$Pulp_DIR"
+Pulp_SHA="$(git -C /path/to/exact/pulp-worktree rev-parse HEAD)"
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DPulp_DIR="$Pulp_DIR" \
+  -DSPECTR_EXPECTED_PULP_SDK_SHA="$Pulp_SHA"
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
 The forge profile validates WebView provenance and normalizes every installed
-static archive to arm64. Release/distribution builds should use a release SDK,
-not the development profile.
+static archive to arm64. The expected-SHA gate rejects a compatible but older
+or substituted SDK before Spectr compiles. Release/distribution builds should
+use a provenance-marked, distribution-eligible release SDK from the same exact
+accepted Pulp commit, not the development profile.
+
+For the exact-head M5 interaction gate, install a tracing-enabled development
+SDK from the same merged Pulp commit, configure Spectr in Release with that
+exact SDK and SHA, and run the two isolated live-host workloads:
+
+```bash
+TracePrefix="$(tools/install_trace_sdk.sh /path/to/exact-clean-pulp-worktree)"
+Pulp_SHA="$(git -C /path/to/exact-clean-pulp-worktree rev-parse HEAD)"
+cmake -S . -B build-native -DCMAKE_BUILD_TYPE=Release \
+  -DPulp_DIR="$TracePrefix/lib/cmake/Pulp" \
+  -DSPECTR_EXPECTED_PULP_SDK_SHA="$Pulp_SHA"
+cmake --build build-native --target Spectr_Standalone
+tools/verify_interaction_perf.sh \
+  build-native <exact-spectr-sha> <exact-pulp-sdk-sha> artifacts/perf
+```
+
+The command captures separate band-edit and minimap Perfetto traces, GPU
+screenshots, and JSON receipts. It fails closed when provenance differs, a
+required AppKit/QuickJS/Skia stage is absent, layout or paint repeats more than
+once per delivered input, or the M5 trace misses the 120 Hz p95 / 60 Hz p99
+frame budgets. These are development artifacts; traced binaries must never be
+packaged for distribution.
 
 ### Spectral build profiles
 

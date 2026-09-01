@@ -10,6 +10,7 @@
 #include <catch2/catch_approx.hpp>
 
 #include "spectr/snapshot.hpp"
+#include "spectr/modulation.hpp"
 #include "spectr/spectr.hpp"
 
 #include <pulp/state/store.hpp>
@@ -119,6 +120,62 @@ TEST_CASE("M8 morph_fields: mute follows the dominant slot") {
     // choice in the test so changes are intentional.
     CHECK(out.bands[0].muted == false);
     CHECK(out.bands[1].muted == true);
+}
+
+TEST_CASE("internal modulation is a non-destructive overlay") {
+    spectr::BandField canonical;
+    canonical.bands[0].gain_db = 3.0f;
+    spectr::SnapshotBank bank;
+    spectr::ModulationSettings settings;
+    settings.enabled = true;
+    settings.depth = 0.5f;
+    settings.target = spectr::ModulationTarget::WholeBank;
+
+    const auto audible = spectr::apply_internal_modulation(
+        canonical, bank, 0.0f, settings, 1.0f);
+    CHECK(audible.bands[0].gain_db == Catch::Approx(9.0f));
+    CHECK(canonical.bands[0].gain_db == Catch::Approx(3.0f));
+}
+
+TEST_CASE("internal modulation targets snapshots and host morph independently") {
+    spectr::BandField canonical;
+    canonical.bands[0].gain_db = 0.0f;
+    spectr::SnapshotBank bank;
+    spectr::BandField a = canonical;
+    spectr::BandField b = canonical;
+    a.bands[0].gain_db = -12.0f;
+    b.bands[0].gain_db = 12.0f;
+    bank.capture_into(spectr::SnapshotBank::Slot::A, a, {}, spectr::Layout::Bands32);
+    bank.capture_into(spectr::SnapshotBank::Slot::B, b, {}, spectr::Layout::Bands32);
+
+    spectr::ModulationSettings settings;
+    settings.enabled = true;
+    settings.depth = 1.0f;
+    settings.target = spectr::ModulationTarget::SnapshotA;
+    auto audible = spectr::apply_internal_modulation(
+        canonical, bank, 0.5f, settings, 1.0f);
+    CHECK(audible.bands[0].gain_db == Catch::Approx(-12.0f));
+
+    settings.target = spectr::ModulationTarget::SnapshotB;
+    audible = spectr::apply_internal_modulation(
+        canonical, bank, 0.5f, settings, 1.0f);
+    CHECK(audible.bands[0].gain_db == Catch::Approx(12.0f));
+
+    settings.target = spectr::ModulationTarget::Morph;
+    settings.depth = 0.5f;
+    audible = spectr::apply_internal_modulation(
+        canonical, bank, 0.5f, settings, 1.0f);
+    CHECK(audible.bands[0].gain_db == Catch::Approx(6.0f));
+    CHECK(canonical.bands[0].gain_db == Catch::Approx(0.0f));
+}
+
+TEST_CASE("tempo LFO waveform is deterministic and bounded") {
+    for (const auto shape : {spectr::LfoShape::Sine, spectr::LfoShape::Triangle,
+                             spectr::LfoShape::Square, spectr::LfoShape::Saw}) {
+        CHECK(spectr::lfo_value(shape, 0.125) ==
+              Catch::Approx(spectr::lfo_value(shape, 1.125)));
+        CHECK(std::abs(spectr::lfo_value(shape, 0.37)) <= 1.0f);
+    }
 }
 
 TEST_CASE("M8 SnapshotBank: capture marks slot populated") {

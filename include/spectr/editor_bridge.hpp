@@ -42,6 +42,11 @@
 //  type="processing_state_get"
 //                           — payload: {}
 //                             effect: return authoritative editor projection
+//  type="build_info_get"   — payload: {}
+//                             effect: return product + exact SDK provenance
+//  type="build_info_copy"  — payload: {}
+//                             effect: copy canonical diagnostic text; report
+//                                     native clipboard success honestly
 //  type="paint_start"       — payload: {}
 //                             effect: capture BandSnapshot
 //  type="paint"             — payload: {mode, start_band, start_value,
@@ -73,6 +78,8 @@
 //  type="load_preset"       — payload: {preset_json: "<serialized>"}
 //                             effect: apply state; echo metadata in extras
 //  type="param_set"         — payload: {id: int, value: float}
+//  type="mode_set"          — payload: {kind: motion|analyzer|edit|visualization,
+//                                       value: the corresponding editor label}
 //                             effect: StateStore::set_value(id, value)
 
 #include <pulp/view/editor_bridge.hpp>
@@ -80,12 +87,19 @@
 #include <choc/containers/choc_Value.h>
 
 #include <cstdint>
+#include <functional>
+#include <string_view>
 #include "spectr/editor_authority.hpp"
 
 namespace spectr {
 
 class Spectr;
 class PatternLibrary;
+
+/// Injectable seam for product-owned clipboard feedback. Production leaves
+/// this empty and uses Pulp's native platform clipboard; tests provide a
+/// deterministic writer so success/failure never mutates the user's clipboard.
+using ClipboardWriter = std::function<bool(std::string_view)>;
 
 /// Canonical editor projection used by initial hydration and every native-owned
 /// snapshot/recall/morph response. Keeping one builder prevents the WebView's
@@ -100,6 +114,7 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
 void register_spectr_editor_handlers(pulp::view::EditorBridge& bridge,
                                      Spectr& plugin,
                                      PatternLibrary& library,
-                                     EditorAuthority& authority);
+                                     EditorAuthority& authority,
+                                     ClipboardWriter clipboard_writer = {});
 
 } // namespace spectr

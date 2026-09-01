@@ -45,6 +45,122 @@ TEST_CASE("Spectr processes audio") {
     REQUIRE(peak > 0.1f);
 }
 
+TEST_CASE("Spectr renders scheduled band automation without control-worker latency",
+          "[automation][spectral][rt]") {
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    host.prepare(sample_rate, block_size);
+
+    pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+    const float* in_ptrs[] = {in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> input(in_ptrs, 2, block_size);
+    auto output = out.view();
+    std::uint64_t rendered = 0;
+    auto fill_tone = [&] {
+        for (std::size_t sample = 0; sample < block_size; ++sample) {
+            const float value = 0.5f * std::sin(
+                2.0 * 3.14159265358979323846 * 997.0
+                * static_cast<double>(rendered + sample) / sample_rate);
+            in.channel(0)[sample] = value;
+            in.channel(1)[sample] = value;
+        }
+        rendered += block_size;
+    };
+    auto peak = [&] {
+        float value = 0.0f;
+        for (float sample : out.channel(0))
+            value = std::max(value, std::abs(sample));
+        return value;
+    };
+
+    float baseline_peak = 0.0f;
+    const auto warmup_blocks = static_cast<std::size_t>(
+        (spectr::kSpectralLatency + spectr::kSpectralFftSize) / block_size + 4);
+    for (std::size_t block = 0; block < warmup_blocks; ++block) {
+        fill_tone();
+        host.process(output, input);
+        baseline_peak = std::max(baseline_peak, peak());
+    }
+    REQUIRE(baseline_peak > 0.25f);
+
+    pulp::state::ParameterEventQueue automated;
+    for (std::size_t band = 0; band < 32; ++band) {
+        REQUIRE(automated.push({
+            spectr::band_gain_param_id(band), 256, -24.0f, 0}));
+    }
+    fill_tone();
+    host.process(output, input, automated);
+
+    automated.clear();
+    for (std::size_t band = 0; band < 32; ++band) {
+        REQUIRE(automated.push({
+            spectr::band_gain_param_id(band), 0, -24.0f, 0}));
+    }
+    float automated_peak = baseline_peak;
+    for (std::size_t block = 0; block < warmup_blocks; ++block) {
+        fill_tone();
+        host.process(output, input, automated);
+        automated_peak = peak();
+    }
+    CHECK(automated_peak < baseline_peak * 0.12f);
+}
+
+TEST_CASE("Spectr applies internal modulation on the audio owner",
+          "[modulation][spectral][rt]") {
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+    const auto render_peak = [](bool enabled) {
+        pulp::format::HeadlessHost host(spectr::create_spectr);
+        host.prepare(sample_rate, block_size);
+        pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+        const float* input_channels[] = {
+            in.channel(0).data(), in.channel(1).data()};
+        pulp::audio::BufferView<const float> input(
+            input_channels, 2, block_size);
+        auto output = out.view();
+        std::uint64_t rendered = 0;
+        float peak = 0.0f;
+        const auto blocks = static_cast<std::size_t>(
+            (spectr::kSpectralLatency + spectr::kSpectralFftSize)
+                / block_size + 6);
+        for (std::size_t block = 0; block < blocks; ++block) {
+            for (std::size_t sample = 0; sample < block_size; ++sample) {
+                const float value = 0.25f * std::sin(
+                    2.0 * 3.14159265358979323846 * 997.0
+                    * static_cast<double>(rendered + sample) / sample_rate);
+                in.channel(0)[sample] = value;
+                in.channel(1)[sample] = value;
+            }
+            rendered += block_size;
+            pulp::state::ParameterEventQueue events;
+            for (std::size_t band = 0; band < 32; ++band)
+                REQUIRE(events.push({
+                    spectr::band_gain_param_id(band), 0, -12.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoEnabled, 0,
+                                 enabled ? 1.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                                 static_cast<float>(spectr::LfoShape::Square),
+                                 0}));
+            REQUIRE(events.push({spectr::kParamLfoRate, 0, 16.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                                 static_cast<float>(
+                                     spectr::ModulationTarget::WholeBank),
+                                 0}));
+            host.process(output, input, events);
+            for (float sample : out.channel(0))
+                peak = std::max(peak, std::abs(sample));
+        }
+        return peak;
+    };
+
+    const float unmodulated = render_peak(false);
+    const float modulated = render_peak(true);
+    REQUIRE(unmodulated > 0.01f);
+    CHECK(modulated > unmodulated * 2.5f);
+}
+
 TEST_CASE("Spectr has correct descriptor") {
     pulp::format::HeadlessHost host(spectr::create_spectr);
     auto desc = host.descriptor();
@@ -539,13 +655,10 @@ TEST_CASE("Spectr imported editor has bounded proportional sizing") {
     spectr::Spectr plugin;
     const auto size = plugin.view_size();
 
-    // Opens at the AUTHORED box. Under a pinned design viewport the root is
-    // laid out at 1320x860 at every host size, so opening there is the one
-    // size at which host pixels and design pixels are 1:1 and no scale is
-    // applied at all. Opening smaller (the previous 990x645) only meant every
-    // first paint went through a 0.75 downscale for no gain.
-    CHECK(size.preferred_width == 1320);
-    CHECK(size.preferred_height == 860);
+    // The authored layout remains 1320x860, but the host initially opens it at
+    // 75% scale so the editor fits comfortably on smaller displays.
+    CHECK(size.preferred_width == 990);
+    CHECK(size.preferred_height == 645);
     CHECK(size.min_width == 792);
     CHECK(size.min_height == 516);
     CHECK(size.max_width == 2640);

@@ -8,6 +8,9 @@
 #include "spectr/snapshot.hpp"
 
 #include <pulp/state/store.hpp>
+#include <pulp/platform/clipboard.hpp>
+#include <pulp/runtime/build_info.hpp>
+#include <pulp/runtime/trace.hpp>
 #include <pulp/view/editor_bridge.hpp>
 
 #include <choc/containers/choc_Value.h>
@@ -18,6 +21,20 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+
+#ifndef SPECTR_PULP_SDK_SOURCE_GIT_SHA
+#define SPECTR_PULP_SDK_SOURCE_GIT_SHA ""
+#endif
+#ifndef SPECTR_PULP_SDK_PROVENANCE_EXACT
+#define SPECTR_PULP_SDK_PROVENANCE_EXACT 0
+#endif
+#ifndef SPECTR_PRODUCT_GIT_SHA
+#define SPECTR_PRODUCT_GIT_SHA ""
+#endif
+#ifndef SPECTR_PRODUCT_GIT_DIRTY
+#define SPECTR_PRODUCT_GIT_DIRTY 1
+#endif
 
 // Spectr-specific handler registrations. The generic envelope parse +
 // dispatch + response builders live in pulp::view::EditorBridge (upstream
@@ -68,6 +85,35 @@ std::optional<float> finite_number_(const choc::value::ValueView& value) {
     return static_cast<float>(number);
 }
 
+struct ModeParamValue {
+    pulp::state::ParamID id;
+    float value;
+};
+
+std::optional<ModeParamValue> parse_mode_param_(std::string_view kind,
+                                                std::string_view value) {
+    if (kind == "motion") {
+        if (value == "live") return ModeParamValue{kParamMotionMode, 0.0f};
+        if (value == "precision") return ModeParamValue{kParamMotionMode, 1.0f};
+    } else if (kind == "analyzer") {
+        if (value == "peak") return ModeParamValue{kParamAnalyzerMode, 0.0f};
+        if (value == "avg") return ModeParamValue{kParamAnalyzerMode, 1.0f};
+        if (value == "both") return ModeParamValue{kParamAnalyzerMode, 2.0f};
+        if (value == "off") return ModeParamValue{kParamAnalyzerMode, 3.0f};
+    } else if (kind == "edit") {
+        if (value == "sculpt") return ModeParamValue{kParamEditMode, 0.0f};
+        if (value == "level") return ModeParamValue{kParamEditMode, 1.0f};
+        if (value == "boost") return ModeParamValue{kParamEditMode, 2.0f};
+        if (value == "flare") return ModeParamValue{kParamEditMode, 3.0f};
+        if (value == "glide") return ModeParamValue{kParamEditMode, 4.0f};
+    } else if (kind == "visualization") {
+        if (value == "bars") return ModeParamValue{kParamVisualization, 0.0f};
+        if (value == "response") return ModeParamValue{kParamVisualization, 1.0f};
+        if (value == "both") return ModeParamValue{kParamVisualization, 2.0f};
+    }
+    return std::nullopt;
+}
+
 choc::value::Value snapshot_projection_(const FieldSnapshot& snapshot,
                                         std::size_t visible) {
     auto result = choc::value::createObject("SpectrSnapshotProjection");
@@ -86,6 +132,60 @@ choc::value::Value snapshot_projection_(const FieldSnapshot& snapshot,
 choc::value::Value pattern_library_projection_(const PatternLibrary& library) {
     auto result = choc::value::createObject("SpectrPatternLibraryProjection");
     result.addMember("patterns_json", library.export_json());
+    return result;
+}
+
+std::string build_info_copy_text_(const Spectr& plugin) {
+    std::string result;
+    const auto append = [&result](std::string_view label, std::string_view value) {
+        if (value.empty()) return;
+        result.append(label);
+        result.append(": ");
+        result.append(value);
+        result.push_back('\n');
+    };
+    append("Spectr", plugin.descriptor().version);
+    constexpr std::string_view product_sha{SPECTR_PRODUCT_GIT_SHA};
+    append("Spectr SHA", product_sha.empty() ? std::string_view{"unknown"}
+                                              : product_sha);
+    append("Spectr source", product_sha.empty() ? std::string_view{"unknown"}
+        : SPECTR_PRODUCT_GIT_DIRTY ? std::string_view{"dirty"}
+                                  : std::string_view{"clean"});
+    append("Pulp SDK", pulp::runtime::kSdkVersion);
+    constexpr std::string_view exact_sha{SPECTR_PULP_SDK_SOURCE_GIT_SHA};
+    append("Pulp SDK SHA", exact_sha.empty()
+        ? std::string_view{pulp::runtime::kGitSha} : exact_sha);
+    append("Pulp SDK source", SPECTR_PULP_SDK_PROVENANCE_EXACT == 0
+        ? std::string_view{"unknown"}
+        : pulp::runtime::kGitDirty ? std::string_view{"dirty"}
+                                  : std::string_view{"clean"});
+    append("Build", pulp::runtime::kBuildType);
+    append("Built", pulp::runtime::kBuildIso8601);
+    if (!result.empty()) result.pop_back();
+    return result;
+}
+
+choc::value::Value build_info_projection_(const Spectr& plugin) {
+    auto result = choc::value::createObject("SpectrBuildInfo");
+    result.addMember("product_version", plugin.descriptor().version);
+    constexpr std::string_view product_sha{SPECTR_PRODUCT_GIT_SHA};
+    if (!product_sha.empty())
+        result.addMember("product_sha", std::string{product_sha});
+    result.addMember("product_dirty", SPECTR_PRODUCT_GIT_DIRTY != 0);
+    result.addMember("product_provenance_known", !product_sha.empty());
+    result.addMember("sdk_version", std::string{pulp::runtime::kSdkVersion});
+    constexpr std::string_view exact_sha{SPECTR_PULP_SDK_SOURCE_GIT_SHA};
+    const auto sdk_sha = exact_sha.empty()
+        ? std::string_view{pulp::runtime::kGitSha} : exact_sha;
+    if (!sdk_sha.empty()) result.addMember("sdk_sha", std::string{sdk_sha});
+    result.addMember("sdk_provenance_exact",
+                     SPECTR_PULP_SDK_PROVENANCE_EXACT != 0);
+    if (!pulp::runtime::kBuildType.empty())
+        result.addMember("build_type", std::string{pulp::runtime::kBuildType});
+    if (!pulp::runtime::kBuildIso8601.empty())
+        result.addMember("build_time", std::string{pulp::runtime::kBuildIso8601});
+    result.addMember("sdk_dirty", pulp::runtime::kGitDirty);
+    result.addMember("copy_text", build_info_copy_text_(plugin));
     return result;
 }
 
@@ -115,17 +215,18 @@ std::string authority_response_(const Spectr& plugin,
 
 choc::value::Value make_editor_state_payload(const Spectr& plugin,
                                              EditorRevision revision) {
-    const auto n = visible_count(plugin.layout());
+    const auto state = plugin.processing_state_snapshot();
+    const auto n = visible_count(state.layout);
     auto gains = choc::value::createEmptyArray();
     auto muted = choc::value::createEmptyArray();
     for (std::size_t i = 0; i < n; ++i) {
-        gains.addArrayElement(static_cast<double>(plugin.field().bands[i].gain_db));
-        muted.addArrayElement(plugin.field().bands[i].muted);
+        gains.addArrayElement(static_cast<double>(state.field.bands[i].gain_db));
+        muted.addArrayElement(state.field.bands[i].muted);
     }
 
     auto snapshots = choc::value::createObject("SpectrSnapshotState");
-    snapshots.addMember("A", snapshot_projection_(plugin.snapshots().a, n));
-    snapshots.addMember("B", snapshot_projection_(plugin.snapshots().b, n));
+    snapshots.addMember("A", snapshot_projection_(state.snapshots.a, n));
+    snapshots.addMember("B", snapshot_projection_(state.snapshots.b, n));
 
     auto payload = choc::value::createObject("SpectrEditorState");
     payload.addMember("revision", static_cast<std::int64_t>(
@@ -133,8 +234,26 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     payload.addMember("n_visible", static_cast<std::int32_t>(n));
     payload.addMember("gain_db", gains);
     payload.addMember("muted", muted);
-    payload.addMember("min_hz", static_cast<double>(plugin.viewport().min_hz));
-    payload.addMember("max_hz", static_cast<double>(plugin.viewport().max_hz));
+    payload.addMember("min_hz", static_cast<double>(state.viewport.min_hz));
+    payload.addMember("max_hz", static_cast<double>(state.viewport.max_hz));
+    payload.addMember("motion_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamMotionMode)));
+    payload.addMember("analyzer_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamAnalyzerMode)));
+    payload.addMember("edit_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamEditMode)));
+    payload.addMember("visualization_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamVisualization)));
+    const auto modulation_state = plugin.modulation_settings();
+    auto modulation = choc::value::createObject("SpectrModulationState");
+    modulation.addMember("enabled", modulation_state.enabled);
+    modulation.addMember("shape", static_cast<std::int32_t>(modulation_state.shape));
+    modulation.addMember("beats_per_cycle", static_cast<double>(
+        modulation_state.beats_per_cycle));
+    modulation.addMember("depth", static_cast<double>(modulation_state.depth));
+    modulation.addMember("target", static_cast<std::int32_t>(
+        modulation_state.target));
+    payload.addMember("modulation", modulation);
     payload.addMember("snapshots", snapshots);
     payload.addMember("patterns_json", plugin.patterns().export_json());
     return payload;
@@ -143,8 +262,15 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
 void register_spectr_editor_handlers(EditorBridge& bridge,
                                      Spectr& plugin,
                                      PatternLibrary& library,
-                                     EditorAuthority& authority)
+                                     EditorAuthority& authority,
+                                     ClipboardWriter clipboard_writer)
 {
+    if (!clipboard_writer) {
+        clipboard_writer = [](std::string_view text) {
+            return pulp::platform::Clipboard::set_text(std::string{text});
+        };
+    }
+
     bridge.add_handler("processing_state_get",
         [&plugin, &authority](const choc::value::ValueView&) {
             // Every committed realm requests state on mount. Treat that as a
@@ -152,6 +278,20 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             // captured by callbacks from the retired realm.
             authority.reset_transient_state();
             return authority_response_(plugin, {true, authority.revision(), {}});
+        });
+
+    bridge.add_handler("build_info_get",
+        [&plugin](const choc::value::ValueView&) {
+            return EditorBridge::ok_response(build_info_projection_(plugin));
+        });
+
+    bridge.add_handler("build_info_copy",
+        [&plugin, clipboard_writer = std::move(clipboard_writer)](
+            const choc::value::ValueView&) {
+            const auto text = build_info_copy_text_(plugin);
+            if (!clipboard_writer(text))
+                return EditorBridge::err_response("clipboard unavailable");
+            return EditorBridge::ok_response();
         });
 
     // Complete JS field publication. Gain and mute are deliberately separate:
@@ -175,7 +315,8 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             if (gains.size() != n_visible || mutes.size() != n_visible)
                 return EditorBridge::err_response("gain_db and muted lengths must equal n_visible");
 
-            auto next = plugin.field();
+            const auto state = plugin.processing_state_snapshot();
+            auto next = state.field;
             for (std::uint32_t i = 0; i < n_visible; ++i) {
                 const auto gain = finite_number_(gains[i]);
                 if (!gain) return EditorBridge::err_response("gain_db values must be finite numbers");
@@ -188,7 +329,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             }
 
             return authority_response_(plugin, authority.replace_processing_state(
-                next, plugin.viewport(), *layout, expected_revision_(p)));
+                next, state.viewport, *layout, expected_revision_(p)));
         });
 
     // Atomic state publication for the imported live editor. Zoom/pan changes
@@ -196,6 +337,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     // cross the bridge together and compile into one complete Pulp mask table.
     bridge.add_handler("processing_state_set",
         [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
+            PULP_TRACE_SCOPE_NAMED("state", "spectr_processing_state_set");
             if (!p.isObject())
                 return EditorBridge::err_response("payload must be object");
 
@@ -217,7 +359,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 return EditorBridge::err_response(
                     "gain_db and muted lengths must equal n_visible");
 
-            BandField next = plugin.field();
+            BandField next = plugin.processing_state_snapshot().field;
             for (std::uint32_t i = 0; i < n_visible; ++i) {
                 const auto gain = finite_number_(gains[i]);
                 if (!gain || *gain < kBandGainMinDb || *gain > kBandGainMaxDb)
@@ -328,8 +470,9 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             if (id.empty()) return EditorBridge::err_response("pattern id missing");
             const auto* pat = library.find(id);
             if (!pat) return EditorBridge::err_response("unknown pattern id");
-            pat->apply_to(plugin.field());
-            plugin.publish_field();
+            auto field = plugin.processing_state_snapshot().field;
+            pat->apply_to(field);
+            plugin.replace_field(field);
             return EditorBridge::ok_response();
         });
 
@@ -337,7 +480,8 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         [&library, &plugin](const choc::value::ValueView& p) -> std::string {
             auto name = EditorBridge::get_string(p, "name");
             if (name.size() > 48) name.resize(48);
-            const auto saved = library.save_current(plugin.field(), std::move(name));
+            const auto saved = library.save_current(
+                plugin.processing_state_snapshot().field, std::move(name));
             auto extras = pattern_library_projection_(library);
             extras.addMember("id", saved.id);
             extras.addMember("name", saved.name);
@@ -397,6 +541,20 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             extras.addMember("modified_at",    result.metadata.modified_at);
             extras.addMember("plugin_version", result.plugin_version);
             return EditorBridge::ok_response(extras);
+        });
+
+    // ── Product mode writes ───────────────────────────────────────────
+
+    bridge.add_handler("mode_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject()) return EditorBridge::err_response("mode payload missing");
+            const auto kind = EditorBridge::get_string(p, "kind");
+            const auto value = EditorBridge::get_string(p, "value");
+            const auto parsed = parse_mode_param_(kind, value);
+            if (!parsed) return EditorBridge::err_response("invalid mode kind or value");
+            if (!plugin.set_editor_mode_param(parsed->id, parsed->value))
+                return EditorBridge::err_response("mode parameter unavailable");
+            return EditorBridge::ok_response();
         });
 
     // ── Flat param write ───────────────────────────────────────────────

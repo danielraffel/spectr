@@ -113,6 +113,28 @@ TEST_CASE("editor authority invalidates a captured gesture on concurrent mutatio
     CHECK(retired_update.error == "paint without paint_start");
 }
 
+TEST_CASE("external host mutation retires a stale editor gesture",
+          "[editor-authority][automation]") {
+    AuthorityRig r;
+    auto& authority = r.processor.editor_authority();
+    REQUIRE(authority.begin_band_edit(0).accepted);
+
+    CHECK(authority.record_external_mutation() == 1);
+    CHECK(authority.revision() == 1);
+
+    spectr::DragGesture gesture;
+    gesture.start_band = 8;
+    gesture.current_band = 8;
+    gesture.start_value = 0.0f;
+    gesture.current_value = 12.0f;
+    gesture.n_visible = 32;
+    const auto stale = authority.update_band_edit(
+        spectr::EditMode::Sculpt, gesture, 0);
+    CHECK_FALSE(stale.accepted);
+    CHECK(stale.error == "stale editor revision");
+    CHECK(authority.revision() == 1);
+}
+
 TEST_CASE("editor bridge never degrades a malformed revision into an unconditional mutation",
           "[editor-authority]") {
     AuthorityRig r;

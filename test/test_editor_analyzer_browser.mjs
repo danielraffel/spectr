@@ -80,6 +80,10 @@ window.__spectrHydration = {
   muted: new Array(32).fill(true),
   min_hz: 100,
   max_hz: 10000,
+  motion_mode: 0,
+  analyzer_mode: 0,
+  edit_mode: 0,
+  visualization_mode: 2,
   snapshots: spectrReopened ? spectrReopenedSnapshots() : spectrEmptySnapshots(),
 };
 window.__spectrPatternEnvelope = {
@@ -389,7 +393,7 @@ window.spectrStartOracle = () => {
         throw new Error('status banner padding was not symmetric');
       if (!bannerStyle.transitionProperty.split(',').map(value => value.trim()).includes('width'))
         throw new Error('status banner width did not animate');
-      if (parseFloat(bannerStyle.top) < 70)
+      if (parseFloat(bannerStyle.top) < 90)
         throw new Error('status banner remained above the plot top line');
       await spectrWaitFor(() =>
         !document.querySelector('[data-spectr-status-banner]'),
@@ -793,11 +797,39 @@ window.spectrStartOracle = () => {
       state = await spectrPublishAfter(count, 'pre-drag unmute publication');
       if (state.muted[restoredBand]) throw new Error('pre-drag tap did not unmute band');
       const preDragGain = state.gain_db[restoredBand];
+      const preDragReact = window.__spectrTestHooks.renderState().reactGains.slice();
       count = spectrStatePosts().length;
       spectrPointer(target, 'pointerdown', x, y);
       spectrPointer(target, 'pointermove', x, y - 24);
+      await spectrFrames(2);
+      const duringDrag = window.__spectrTestHooks.renderState();
+      if (duringDrag.targetGains.every((value, index) => value === preDragReact[index]))
+        throw new Error('drag did not update the live target before release');
+      if (duringDrag.reactGains.some((value, index) => value !== preDragReact[index]))
+        throw new Error('drag reconciled React state before release');
+      const firstLiveStatus = document.querySelector('[data-spectr-status-text]')?.textContent;
+      spectrPointer(target, 'pointermove', x, y - 48);
+      await spectrFrames(2);
+      const secondLiveStatus = document.querySelector('[data-spectr-status-text]')?.textContent;
+      if (!firstLiveStatus?.includes('BAND') || !secondLiveStatus?.includes('BAND')
+          || firstLiveStatus === secondLiveStatus)
+        throw new Error('live hover gain status did not follow the drag');
+      // A sustained edit must not outlive the banner's inactivity timer. Move
+      // often enough to represent active input, but long enough that the old
+      // one-shot 1.4 s timeout would have removed the banner mid-gesture.
+      for (let activeFrame = 0; activeFrame < 4; ++activeFrame) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        spectrPointer(target, 'pointermove', x, y - 48 - activeFrame);
+        await spectrFrames(2);
+        if (!document.querySelector('[data-spectr-status-banner]'))
+          throw new Error('active drag outlived the status inactivity deadline');
+      }
       spectrPointer(target, 'pointerup', x, y - 24);
       await spectrFrames(3);
+      const releasedDrag = window.__spectrTestHooks.renderState();
+      if (releasedDrag.reactGains.some((value, index) =>
+        Math.abs(value - releasedDrag.targetGains[index]) > 1e-9))
+        throw new Error('pointer release did not publish the final React snapshot');
       state = await spectrPublishAfter(count, '>3px drag publication');
       if (state.muted[restoredBand]) throw new Error('drag toggled mute');
       if (state.gain_db[restoredBand] === preDragGain)
@@ -940,7 +972,7 @@ window.spectrStartOracle = () => {
           throw new Error('mask visualization failed: ' + label);
       }
 
-      const presetsButton = spectrButton('PRESETS ▾');
+      const presetsButton = menuTrigger('pattern');
       if (!presetsButton) throw new Error('preset dropdown trigger missing');
       await spectrClick(presetsButton);
       const saveCurrent = await spectrWaitFor(() =>
@@ -1024,8 +1056,37 @@ window.spectrStartOracle = () => {
       const minimapLabelBottom = miniY + 42 * rect.height / designHeight;
       if (minimapLabelBottom >= footerTop)
         throw new Error('minimap overlaps footer controls');
-      count = spectrStatePosts().length;
+      const cursorAt = async (cursorX, expected, label) => {
+        spectrPointer(target, 'pointermove', cursorX, miniY, 40);
+        await spectrFrames(1);
+        if (getComputedStyle(target).cursor !== expected)
+          throw new Error(label + ' cursor was ' + getComputedStyle(target).cursor
+            + ', expected ' + expected);
+      };
+      const rightHandleX = mapX(rightFraction);
+      const windowX = mapX((leftFraction + rightFraction) * 0.5);
       const trackX = mapX(leftFraction * 0.45);
+      const leftHandleX = mapX(leftFraction);
+      await cursorAt(leftHandleX, 'col-resize', 'left minimap handle');
+      await cursorAt(rightHandleX, 'col-resize', 'right minimap handle');
+      await cursorAt(windowX, 'grab', 'minimap window');
+      await cursorAt(trackX, 'pointer', 'minimap track');
+      spectrPointer(target, 'pointerdown', leftHandleX, miniY, 41);
+      if (getComputedStyle(target).cursor !== 'col-resize')
+        throw new Error('active minimap trim did not retain col-resize');
+      spectrPointer(target, 'pointerup', leftHandleX, miniY, 41);
+      if (getComputedStyle(target).cursor !== 'col-resize')
+        throw new Error('released minimap trim did not retain col-resize');
+      spectrPointer(target, 'pointerdown', windowX, miniY, 40);
+      if (getComputedStyle(target).cursor !== 'grabbing')
+        throw new Error('active minimap cursor was not grabbing');
+      spectrPointer(target, 'pointerup', windowX, miniY, 40);
+      if (getComputedStyle(target).cursor !== 'grab')
+        throw new Error('released minimap cursor did not restore grab');
+      spectrPointer(target, 'pointermove', x, y, 40);
+      if (getComputedStyle(target).cursor !== 'crosshair')
+        throw new Error('band adjustment cursor was not preserved');
+      count = spectrStatePosts().length;
       await spectrTap(target, trackX, miniY);
       state = await spectrPublishAfter(count, 'minimap track publication');
       if (state.min_hz === beforeMinimap.min_hz)
@@ -1048,10 +1109,10 @@ window.spectrStartOracle = () => {
         throw new Error('minimap drag selected text');
       const shiftedLeftFraction = (Math.log10(state.min_hz) - fullMin) / fullSpan;
       count = spectrStatePosts().length;
-      const leftHandleX = mapX(shiftedLeftFraction);
-      spectrPointer(target, 'pointerdown', leftHandleX, miniY, 42);
-      spectrPointer(target, 'pointermove', leftHandleX + rect.width * 0.025, miniY, 42);
-      spectrPointer(target, 'pointerup', leftHandleX + rect.width * 0.025, miniY, 42);
+      const shiftedLeftHandleX = mapX(shiftedLeftFraction);
+      spectrPointer(target, 'pointerdown', shiftedLeftHandleX, miniY, 42);
+      spectrPointer(target, 'pointermove', shiftedLeftHandleX + rect.width * 0.025, miniY, 42);
+      spectrPointer(target, 'pointerup', shiftedLeftHandleX + rect.width * 0.025, miniY, 42);
       const resizedView = await spectrPublishAfter(count, 'minimap resize publication');
       if (Math.abs(Math.log(resizedView.max_hz / resizedView.min_hz) - afterSpan) < 0.02)
         throw new Error('minimap handle did not resize viewport');

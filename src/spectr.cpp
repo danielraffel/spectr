@@ -1,4 +1,7 @@
 #include "spectr/spectr.hpp"
+
+#include <pulp/runtime/trace.hpp>
+#include <pulp/format/param_processing.hpp>
 #if !defined(SPECTR_NATIVE_EDITOR)
 #include "spectr/ui/editor_view.hpp"
 #endif
@@ -17,8 +20,28 @@
 
 namespace spectr {
 
-Spectr::Spectr() : editor_authority_(*this) {}
-Spectr::~Spectr() = default;
+Spectr::Spectr() : editor_authority_(*this) {
+#if defined(SPECTR_NATIVE_EDITOR)
+    pulp::view::CommandInfo settings;
+    settings.id = kOpenSettingsCommand;
+    settings.name = "Settings\u2026";
+    settings.category = "App";
+    settings.default_key = static_cast<pulp::view::KeyCode>(',');
+#if defined(__APPLE__)
+    settings.default_modifiers = pulp::view::kModCmd;
+#else
+    settings.default_modifiers = pulp::view::kModCtrl;
+#endif
+    native_command_registry_.register_command(settings);
+    native_command_registry_.add_handler(this);
+#endif
+}
+
+Spectr::~Spectr() {
+#if defined(SPECTR_NATIVE_EDITOR)
+    native_command_registry_.remove_handler(this);
+#endif
+}
 
 pulp::format::PluginDescriptor Spectr::descriptor() const {
     return make_descriptor();
@@ -47,13 +70,27 @@ void Spectr::define_parameters(pulp::state::StateStore& store) {
         .name  = "Mix",
         .unit  = "%",
         .range = {0.0f, 100.0f, 100.0f},
+        .group_id = 1,
     });
     store.add_parameter({
         .id    = kOutputTrim,
         .name  = "Output",
         .unit  = "dB",
         .range = {-24.0f, 24.0f, 0.0f},
+        .group_id = 1,
     });
+
+    // spectr#34 — the full static host-automation surface (64 band gains,
+    // 64 band mutes, morph, viewport center/width, band count, 4 modes).
+    register_surface_params(store);
+    param_store_ = &store;
+    // Mirror the registered defaults so the process()-side drift sweep
+    // starts quiet: cache == store means "nothing to apply".
+    for (std::size_t slot = 0; slot < kSurfaceCacheSlots; ++slot) {
+        applied_param_cache_[slot].store(
+            store.get_value(detail::surface_slot_param_id(slot)),
+            std::memory_order_relaxed);
+    }
 
     // Wire ABCompare now that the store reference is live. Keeps the
     // StateStore-side A/B under pulp::view::ABCompare and the band-field
@@ -64,37 +101,89 @@ void Spectr::define_parameters(pulp::state::StateStore& store) {
 // ── Snapshot A/B (Milestone 8) ─────────────────────────────────────────
 
 void Spectr::capture_snapshot(SnapshotBank::Slot slot) noexcept {
+    // The sync worker reads the bank when a host-side morph write lands, so
+    // capture serializes against the same lock as every field_/bank access.
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
     snapshots_.capture_into(slot, field_, viewport_, layout_);
+    publish_audio_modulation_state_();
 }
 
 void Spectr::apply_morph_to_live(float t) noexcept {
-    const bool has_a = snapshots_.has(SnapshotBank::Slot::A);
-    const bool has_b = snapshots_.has(SnapshotBank::Slot::B);
-    if (!has_a && !has_b) return;
-    if (!has_a) { replace_field(snapshots_.b.field); return; }
-    if (!has_b) { replace_field(snapshots_.a.field); return; }
-    morph_fields(field_, snapshots_.a.field, snapshots_.b.field, t);
-    publish_field();
+    t = std::clamp(t, 0.0f, 1.0f);
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        const bool has_a = snapshots_.has(SnapshotBank::Slot::A);
+        const bool has_b = snapshots_.has(SnapshotBank::Slot::B);
+        if (!has_a && !has_b) return;
+        if (!has_a) { field_ = snapshots_.b.field; }
+        else if (!has_b) { field_ = snapshots_.a.field; }
+        else { morph_fields(field_, snapshots_.a.field, snapshots_.b.field, t); }
+        publish_processing_state_();
+        // The morph moves the morph PARAMETER only — pushing the 64 resulting
+        // band values as parameter writes would flood the host per slider
+        // move and double-drive the field on automation playback (the morph
+        // lane would recompute what the band lanes replay). The synced mirror
+        // still advances, so a subsequent band edit pushes only its own delta.
+        synced_field_ = field_;
+        morph_derived_ = true;
+        morph_overrides_.reset();
+    }
+    push_surface_param_(detail::surface_slot_param_id(detail::kSlotMorph),
+                        detail::kSlotMorph, t);
 }
 
 void Spectr::replace_field(const BandField& field) noexcept {
-    field_ = field;
-    publish_field();
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        field_ = field;
+        publish_processing_state_();
+    }
+    sync_params_from_field();
+}
+
+ProcessingStateSnapshot Spectr::processing_state_snapshot() const noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return {field_, viewport_, layout_, snapshots_};
 }
 
 bool Spectr::replace_processing_state(const BandField& field,
                                       const Viewport& viewport,
                                       Layout layout) noexcept {
+    PULP_TRACE_SCOPE_NAMED("state", "spectr_replace_processing_state");
     if (!viewport.valid()) return false;
-    field_ = field;
-    viewport_ = viewport;
-    layout_ = layout;
-    publish_processing_state_();
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        field_ = field;
+        viewport_ = viewport;
+        layout_ = layout;
+        {
+            PULP_TRACE_SCOPE_NAMED("state", "spectr_mask_publish");
+            publish_processing_state_();
+        }
+    }
+    {
+        PULP_TRACE_SCOPE_NAMED("state", "spectr_host_param_sync");
+        sync_params_from_field();
+    }
     return true;
 }
 
 void Spectr::publish_field() noexcept {
+    // DSP publish only; callers that mutate field_ decide whether the change
+    // also reaches the host parameters (sync_params_from_field). Morph is
+    // the deliberate exception — see apply_morph_to_live.
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
     publish_processing_state_();
+}
+
+bool Spectr::set_editor_mode_param(pulp::state::ParamID id,
+                                   float value) noexcept {
+    if (!param_store_ || id < kParamMotionMode || id > kParamVisualization)
+        return false;
+    const auto slot = detail::kSlotModeBase
+        + static_cast<std::size_t>(id - kParamMotionMode);
+    push_surface_param_(id, slot, value);
+    return true;
 }
 
 pulp::signal::SpectralBandLayout Spectr::make_mask_layout_() const noexcept {
@@ -122,12 +211,23 @@ pulp::signal::SpectralBandLayout Spectr::make_mask_layout_() const noexcept {
 bool Spectr::spectral_resolution(
     pulp::signal::SpectralBandResolution& out_resolution) const noexcept {
     if (!processor_prepared_) return false;
+    // make_mask_layout_ reads field_/viewport_/layout_; hold the same lock
+    // the writers (UI, sync worker, restore) serialize against.
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
     return pulp::signal::analyze_spectral_band_resolution(
         make_mask_layout_(), kSpectralFftSize,
         static_cast<float>(sample_rate_), out_resolution);
 }
 
+void Spectr::publish_audio_modulation_state_() noexcept {
+    // All callers serialize through processing_state_mutex_. TripleBuffer
+    // therefore has one logical writer and process() remains its sole reader.
+    audio_modulation_publication_.write(AudioModulationState{
+        modulation_, snapshots_});
+}
+
 void Spectr::publish_processing_state_() noexcept {
+    publish_audio_modulation_state_();
     auto mask_layout = make_mask_layout_();
 
     if (!processor_prepared_) return;
@@ -150,6 +250,13 @@ pulp::view::ABCompare* Spectr::ab_compare() noexcept {
 }
 
 void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
+    // Re-prepare may overlap a parameter-sync task launched by the previous
+    // process cycle. Join it before rebuilding mask_processor_: the worker can
+    // publish a compiled layout, and publish_layout() must never race
+    // mask_processor_.prepare(). The lane is restarted after the new engine
+    // and its initial publication are ready.
+    param_sync_lane_.stop();
+
     sample_rate_ = ctx.sample_rate;
     max_block_   = ctx.max_buffer_size;
     channels_    = std::max(1, ctx.output_channels);
@@ -169,7 +276,23 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     output_gain_.set_ramp_time(0.01f, static_cast<float>(sample_rate_));
     output_gain_.set_immediate(std::pow(
         10.0f, state().get_value(kOutputTrim) * 0.05f));
-    publish_processing_state_();
+    // spectr#34: adopt any parameter state written before prepare (a host
+    // may restore a session before audio starts). Morph is excluded — the
+    // restored field already encodes it; re-deriving would erase post-morph
+    // tweaks. The publish below covers whatever the apply changed.
+    apply_surface_params(/*apply_morph=*/false);
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        publish_processing_state_();
+    }
+    // Audio→worker lane for host-automation adoption (see the drift sweep
+    // in process()). Restart cleanly across re-prepare.
+    if (!param_sync_lane_.start(&Spectr::param_sync_trampoline_, this,
+                                pulp::format::BackgroundTaskPolicy::Latest)) {
+        pulp::runtime::log_error(
+            "[Spectr] parameter sync worker failed to start; host automation "
+            "of the band surface will not reach the DSP");
+    }
     configure_bridge_(ctx.output_channels);
 }
 
@@ -223,9 +346,13 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
         // unpainted band during a live drag came from exactly that round trip —
         // the responsive pass needs ~96 host frames to commit, so the surface
         // outran the content for the whole gesture.
-        view.set_bounds({0.0f, 0.0f, static_cast<float>(kEditorDesignWidth),
-                         static_cast<float>(kEditorDesignHeight)});
-        view.layout_children();
+        const pulp::view::Rect authored_bounds{
+            0.0f, 0.0f, static_cast<float>(kEditorDesignWidth),
+            static_cast<float>(kEditorDesignHeight)};
+        if (view.bounds() != authored_bounds) {
+            view.set_bounds(authored_bounds);
+            view.layout_children();
+        }
         // Still run the materialized pass, but ALWAYS at the authored size.
         // It does two jobs: applyMaterializedImportMetadata() restores the
         // captured authored geometry, and only after that does it re-place for
@@ -239,8 +366,12 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
         publish_native_layout_(kEditorDesignWidth, kEditorDesignHeight);
         return;
     }
-    view.set_bounds({0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h)});
-    view.layout_children();
+    const pulp::view::Rect host_bounds{
+        0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h)};
+    if (view.bounds() != host_bounds) {
+        view.set_bounds(host_bounds);
+        view.layout_children();
+    }
     publish_native_layout_(w, h);
 #else
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
@@ -307,6 +438,9 @@ void Spectr::configure_bridge_(int num_channels) {
 }
 
 void Spectr::release() {
+    // Join the sync worker BEFORE touching the mask processor: an in-flight
+    // apply publishes into it.
+    param_sync_lane_.stop();
     mask_processor_ = {};
     processor_prepared_ = false;
     bridge_.reset();
@@ -321,8 +455,12 @@ int Spectr::latency_samples() const {
 }
 
 void Spectr::set_layout(Layout L) {
-    layout_ = L;
-    publish_processing_state_();
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        layout_ = L;
+        publish_processing_state_();
+    }
+    sync_params_from_field();
 }
 
 void Spectr::process(
@@ -332,6 +470,14 @@ void Spectr::process(
     pulp::midi::MidiBuffer& /*midi_out*/,
     const pulp::format::ProcessContext& ctx)
 {
+    // spectr#34: host-side parameter writes (automation playback, generic
+    // controls) land in the store between blocks. On any drift, hand the
+    // adoption to the sync worker — mask-table compilation is a
+    // control-thread operation and never runs here. One lock-free spawn per
+    // block at most; the lane's Latest policy coalesces bursts.
+    if (processor_prepared_ && surface_params_drifted_())
+        param_sync_lane_.try_spawn(ParamSyncTask{});
+
     // Sync the two continuously automatable audio controls each block.
     const float mix        = state().get_value(kMix) / 100.0f;
     const float out_trim_db= state().get_value(kOutputTrim);
@@ -340,15 +486,7 @@ void Spectr::process(
     // An explicit reset or unexpected seek is a hard DSP-history boundary.
     // Preserve the continuously hot WOLA/dry-delay history across an ordinary
     // host cycle wrap so looping does not emit a fresh startup gap.
-#if defined(SPECTR_NATIVE_N1_SDK_COMPAT)
-    // The installed 0.803.0 Forge SDK predates should_reset_stream_history().
-    // For this standalone-only N1 scaffold, honor explicit resets and avoid
-    // treating ordinary loop wraps as cold starts. The shipping format graph
-    // continues to compile against the newer, precise helper below.
-    const bool should_reset_stream_history = ctx.reset_requested;
-#else
     const bool should_reset_stream_history = ctx.should_reset_stream_history();
-#endif
     if (should_reset_stream_history) {
         if (processor_prepared_)
             mask_processor_.reset();
@@ -359,11 +497,176 @@ void Spectr::process(
         && output.num_channels() == static_cast<std::size_t>(channels_)
         && input.num_channels() == static_cast<std::size_t>(channels_)
         && output.num_samples() == input.num_samples()) {
+        const auto* events = param_events();
+        const auto& audio_modulation = audio_modulation_publication_.read();
+        const bool has_events = events && !events->events().empty();
+        const bool modulation_enabled =
+            state().get_value(kParamLfoEnabled) >= 0.5f;
+        if (has_events || modulation_enabled) {
+            std::array<pulp::format::ParamSnapshotEntry,
+                       kSurfaceCacheSlots + 2> initial{};
+            initial[0] = {kMix, audio_mix_percent_};
+            initial[1] = {kOutputTrim, audio_output_trim_db_};
+            for (std::size_t slot = 0; slot < kSurfaceCacheSlots; ++slot) {
+                initial[slot + 2] = {
+                    detail::surface_slot_param_id(slot),
+                    applied_param_cache_[slot].load(std::memory_order_relaxed)};
+            }
+
+            pulp::format::ParamCursor params(
+                state(), events,
+                has_events
+                    ? std::span<const pulp::format::ParamSnapshotEntry>{initial}
+                    : std::span<const pulp::format::ParamSnapshotEntry>{});
+            std::size_t block_offset = 0;
+            pulp::format::for_each_subblock(
+                output, input, events, params,
+                [&](pulp::audio::BufferView<float>& out_slice,
+                    const pulp::audio::BufferView<const float>& in_slice,
+                    pulp::format::ParamCursor& cursor) {
+                    BandField canonical{};
+                    const auto automated_layout = layout_from_param_value(
+                        cursor.value(kParamBandCount));
+                    for (std::size_t band = 0; band < kMaxBands; ++band) {
+                        canonical.bands[band].gain_db =
+                            cursor.value(band_gain_param_id(band));
+                        canonical.bands[band].muted =
+                            cursor.value(band_mute_param_id(band)) >= 0.5f;
+                    }
+
+                    const float host_morph = std::clamp(
+                        cursor.value(kParamMorph), 0.0f, 1.0f);
+                    BandField host_field = canonical;
+                    if (audio_modulation.snapshots.has(SnapshotBank::Slot::A)
+                        && audio_modulation.snapshots.has(SnapshotBank::Slot::B)) {
+                        morph_fields(host_field,
+                                     audio_modulation.snapshots.a.field,
+                                     audio_modulation.snapshots.b.field,
+                                     host_morph);
+                    }
+                    ModulationSettings modulation_settings;
+                    modulation_settings.enabled =
+                        cursor.value(kParamLfoEnabled) >= 0.5f;
+                    modulation_settings.shape = static_cast<LfoShape>(
+                        std::clamp(static_cast<int>(std::lround(
+                            cursor.value(kParamLfoShape))), 0, 3));
+                    modulation_settings.beats_per_cycle = std::clamp(
+                        cursor.value(kParamLfoRate), 0.25f, 16.0f);
+                    modulation_settings.depth = std::clamp(
+                        cursor.value(kParamLfoDepth), 0.0f, 1.0f);
+                    modulation_settings.target =
+                        static_cast<ModulationTarget>(std::clamp(
+                            static_cast<int>(std::lround(
+                                cursor.value(kParamLfoTarget))), 0, 3));
+                    if (should_reset_stream_history && block_offset == 0) {
+                        audio_modulation_phase_ =
+                            ctx.position_beats
+                            / std::max(0.0625, static_cast<double>(
+                                modulation_settings.beats_per_cycle));
+                        audio_modulation_phase_ -=
+                            std::floor(audio_modulation_phase_);
+                    }
+                    const float wave = lfo_value(
+                        modulation_settings.shape, audio_modulation_phase_);
+                    const BandField audible = apply_internal_modulation(
+                        host_field, audio_modulation.snapshots, host_morph,
+                        modulation_settings, wave);
+
+                    pulp::signal::SpectralBandLayout automated;
+                    automated.active_bands = static_cast<std::uint32_t>(
+                        visible_count(automated_layout));
+                    const auto automated_viewport = decode_viewport(
+                        cursor.value(kParamViewportCenter),
+                        cursor.value(kParamViewportWidth));
+                    automated.min_hz = automated_viewport.min_hz;
+                    automated.max_hz = automated_viewport.max_hz;
+                    automated.spacing =
+                        pulp::signal::SpectralBandSpacing::logarithmic;
+                    automated.edge_policy =
+                        pulp::signal::SpectralBandEdgePolicy::extend_edge_band;
+                    automated.boundary_kernel =
+                        pulp::signal::SpectralMaskBoundaryKernel::hard;
+                    automated.transition_fraction = 0.0f;
+                    automated.transition_frames = 0;
+                    for (std::size_t band = 0;
+                         band < automated.active_bands; ++band) {
+                        automated.bands[band].gain_db =
+                            audible.bands[band].gain_db;
+                        automated.bands[band].muted =
+                            audible.bands[band].muted;
+                    }
+                    (void)mask_processor_.set_layout_rt(automated);
+                    mask_processor_.set_mix(std::clamp(
+                        cursor.value(kMix) / 100.0f, 0.0f, 1.0f));
+
+                    for (std::size_t channel = 0;
+                         channel < out_slice.num_channels(); ++channel) {
+                        input_channels_[channel] =
+                            in_slice.channel(channel).data();
+                        output_channels_[channel] =
+                            out_slice.channel(channel).data();
+                    }
+                    const bool processed = mask_processor_.process(
+                        input_channels_.data(), output_channels_.data(),
+                        static_cast<int>(out_slice.num_samples()));
+                    if (!processed) {
+                        for (std::size_t channel = 0;
+                             channel < out_slice.num_channels(); ++channel) {
+                            auto dst = out_slice.channel(channel);
+                            std::fill(dst.begin(), dst.end(), 0.0f);
+                        }
+                    } else {
+                        for (std::size_t sample = 0;
+                             sample < out_slice.num_samples(); ++sample) {
+                            const auto absolute_sample = static_cast<int32_t>(
+                                block_offset + sample);
+                            const float gain = std::pow(
+                                10.0f,
+                                cursor.value_at(kOutputTrim, absolute_sample)
+                                    * 0.05f);
+                            for (std::size_t channel = 0;
+                                 channel < out_slice.num_channels(); ++channel)
+                                output_channels_[channel][sample] *= gain;
+                        }
+                    }
+                    const double sample_rate = ctx.sample_rate > 0.0
+                        ? ctx.sample_rate : sample_rate_;
+                    const double tempo = ctx.tempo_bpm > 0.0
+                        ? ctx.tempo_bpm : 120.0;
+                    const double beats_per_cycle = std::max(
+                        0.0625, static_cast<double>(
+                            modulation_settings.beats_per_cycle));
+                    audio_modulation_phase_ +=
+                        (static_cast<double>(out_slice.num_samples())
+                         * tempo / (60.0 * sample_rate)) / beats_per_cycle;
+                    audio_modulation_phase_ -=
+                        std::floor(audio_modulation_phase_);
+                    block_offset += out_slice.num_samples();
+                });
+
+            const auto last_sample = static_cast<int32_t>(
+                output.num_samples() > 0 ? output.num_samples() - 1 : 0);
+            audio_mix_percent_ = params.value_at(kMix, last_sample);
+            audio_output_trim_db_ = params.value_at(kOutputTrim, last_sample);
+
+            const auto nc = output.num_channels();
+            if (nc > 0 && nc <= 8) {
+                const float* ptrs[8];
+                for (std::size_t ch = 0; ch < nc; ++ch)
+                    ptrs[ch] = output.channel(ch).data();
+                bridge_.process(ptrs, static_cast<int>(nc),
+                                static_cast<int>(output.num_samples()));
+            }
+            return;
+        }
+
         for (std::size_t channel = 0; channel < output.num_channels(); ++channel) {
             input_channels_[channel] = input.channel(channel).data();
             output_channels_[channel] = output.channel(channel).data();
         }
         mask_processor_.set_mix(std::clamp(mix, 0.0f, 1.0f));
+        audio_mix_percent_ = mix * 100.0f;
+        audio_output_trim_db_ = out_trim_db;
         const bool processed = mask_processor_.process(
             input_channels_.data(), output_channels_.data(),
             static_cast<int>(output.num_samples()));
@@ -444,28 +747,19 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     auto root = createObject("SpectrPluginState");
     root.addMember("version", static_cast<int32_t>(kPluginStateVersion));
 
-    // band_gain[64] + band_mute[64] — canonical slots.
-    auto gains = createEmptyArray();
-    auto mutes = createEmptyArray();
-    for (const auto& b : field_.bands) {
-        gains.addArrayElement(static_cast<double>(b.gain_db));
-        mutes.addArrayElement(b.muted);
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+
+    // Live band, viewport, layout, and mode values belong to StateStore and
+    // are deliberately absent here. A morph is derived from the snapshot
+    // bank; only indices edited after the morph need a sparse overlay, whose
+    // values also live in StateStore.
+    root.addMember("morph_derived", morph_derived_);
+    auto morph_overrides = createEmptyArray();
+    for (std::size_t i = 0; i < kMaxBands; ++i) {
+        if (morph_overrides_.test(i))
+            morph_overrides.addArrayElement(static_cast<int32_t>(i));
     }
-    root.addMember("band_gain", gains);
-    root.addMember("band_mute", mutes);
-
-    // Viewport (sound-defining, per §5.5.1).
-    root.addMember("view_min_hz", static_cast<double>(viewport_.min_hz));
-    root.addMember("view_max_hz", static_cast<double>(viewport_.max_hz));
-
-    // Layout is structured product state, not a dynamic host parameter.
-    root.addMember("layout_index",
-                   static_cast<int32_t>(layout_to_index(layout_)));
-
-    // Editor state placeholders — analyzer / edit mode UI selection. Not
-    // sound-defining for V1; M5+ fills them in.
-    root.addMember("analyzer_mode", static_cast<int32_t>(0));
-    root.addMember("edit_mode",     static_cast<int32_t>(0));
+    root.addMember("morph_overrides", morph_overrides);
 
     // M8 — snapshot bank. Absent or empty on a v1 blob; new v2 writers
     // always include it so a round-trip preserves the A/B selection
@@ -491,11 +785,7 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
 
 namespace {
 
-void reset_supplemental_state_(BandField& f, Viewport& v, Layout& l,
-                               SnapshotBank& bank, PatternLibrary& patterns) {
-    f.reset();
-    v = Viewport{};
-    l = Layout::Bands32;
+void reset_supplemental_state_(SnapshotBank& bank, PatternLibrary& patterns) {
     bank = SnapshotBank{};
     patterns = PatternLibrary{};  // restores factories, drops user patterns
 }
@@ -598,8 +888,38 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     // Empty span = legacy blob or caller signalling "reset to defaults"
     // per the pulp#625 hook contract.
     if (bytes.empty()) {
-        reset_supplemental_state_(field_, viewport_, layout_, snapshots_, patterns_);
-        publish_processing_state_();
+        BandField store_field{};
+        for (std::size_t i = 0; i < kMaxBands; ++i) {
+            store_field.bands[i].gain_db = param_store_
+                ? param_store_->get_value(band_gain_param_id(i)) : 0.0f;
+            store_field.bands[i].muted = param_store_
+                && param_store_->get_value(band_mute_param_id(i)) >= 0.5f;
+        }
+        const auto store_view = param_store_
+            ? decode_viewport(param_store_->get_value(kParamViewportCenter),
+                              param_store_->get_value(kParamViewportWidth))
+            : Viewport{};
+        const auto store_layout = param_store_
+            ? layout_from_param_value(param_store_->get_value(kParamBandCount))
+            : Layout::Bands32;
+        {
+            std::lock_guard<std::mutex> lock(processing_state_mutex_);
+            field_ = store_field;
+            viewport_ = store_view;
+            layout_ = store_layout;
+            reset_supplemental_state_(snapshots_, patterns_);
+            morph_derived_ = false;
+            morph_overrides_.reset();
+            synced_field_ = field_;
+            synced_viewport_ = viewport_;
+            synced_layout_ = layout_;
+            publish_processing_state_();
+        }
+        for (std::size_t slot = 0; param_store_ && slot < kSurfaceCacheSlots; ++slot) {
+            applied_param_cache_[slot].store(
+                param_store_->get_value(detail::surface_slot_param_id(slot)),
+                std::memory_order_relaxed);
+        }
         return true;
     }
 
@@ -612,8 +932,9 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     }
     if (!root.isObject()) return false;
 
-    // Version gate — accept v1 (legacy pre-M8) and v2 (with snapshots).
-    // Reject anything else we don't know how to read.
+    // Version gate — accept v1 (legacy pre-M8), v2 (live state plus
+    // snapshots), and v3 (parameter-owned live state plus supplemental
+    // snapshots/patterns/morph derivation).
     if (!root.hasObjectMember("version")) return false;
     const auto parsed_version = read_int_(root["version"]);
     if (!parsed_version) return false;
@@ -621,9 +942,20 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     if (version < 1 || version > kPluginStateVersion) return false;
 
     // Apply in a staging copy so a malformed payload leaves live state alone.
-    BandField new_field;
-    Viewport  new_view  = viewport_;
-    Layout    new_layout = layout_;
+    BandField new_field{};
+    Viewport  new_view{};
+    Layout    new_layout = Layout::Bands32;
+
+    if (version >= 3 && param_store_) {
+        for (std::size_t i = 0; i < kMaxBands; ++i) {
+            new_field.bands[i].gain_db = param_store_->get_value(band_gain_param_id(i));
+            new_field.bands[i].muted =
+                param_store_->get_value(band_mute_param_id(i)) >= 0.5f;
+        }
+        new_view = decode_viewport(param_store_->get_value(kParamViewportCenter),
+                                   param_store_->get_value(kParamViewportWidth));
+        new_layout = layout_from_param_value(param_store_->get_value(kParamBandCount));
+    }
 
     if (root.hasObjectMember("band_gain") && root["band_gain"].isArray()) {
         auto arr = root["band_gain"];
@@ -680,6 +1012,26 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             && !read_snapshot_(snaps["b"], new_bank.b)) return false;
     }
 
+    bool new_morph_derived = false;
+    std::bitset<kMaxBands> new_morph_overrides;
+    if (version >= 3) {
+        if (root.hasObjectMember("morph_derived")) {
+            const auto value = root["morph_derived"];
+            if (!value.isBool()) return false;
+            new_morph_derived = value.getBool();
+        }
+        if (root.hasObjectMember("morph_overrides")) {
+            const auto values = root["morph_overrides"];
+            if (!values.isArray()) return false;
+            for (std::uint32_t i = 0; i < values.size(); ++i) {
+                const auto parsed = read_int_(values[i]);
+                if (!parsed || *parsed < 0
+                    || *parsed >= static_cast<int>(kMaxBands)) return false;
+                new_morph_overrides.set(static_cast<std::size_t>(*parsed));
+            }
+        }
+    }
+
     // M9.5 — user patterns. Restore into a fresh library so the factory
     // presets are present regardless of what the blob carried, while user
     // IDs, names, order, and default remain exact. Swap-on-success.
@@ -690,12 +1042,55 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         if (!new_patterns.restore_json(std::string_view(s))) return false;
     }
 
-    field_ = new_field;
-    viewport_  = new_view;
-    snapshots_ = new_bank;
-    patterns_  = std::move(new_patterns);
-    layout_ = new_layout;
-    publish_processing_state_();
+    if (version >= 3 && new_morph_derived) {
+        const BandField param_field = new_field;
+        const bool has_a = new_bank.has(SnapshotBank::Slot::A);
+        const bool has_b = new_bank.has(SnapshotBank::Slot::B);
+        if (has_a && has_b) {
+            const float t = param_store_ ? param_store_->get_value(kParamMorph) : 0.0f;
+            morph_fields(new_field, new_bank.a.field, new_bank.b.field, t);
+        } else if (has_a || has_b) {
+            new_field = has_a ? new_bank.a.field : new_bank.b.field;
+        } else {
+            new_morph_derived = false;
+            new_morph_overrides.reset();
+        }
+        if (new_morph_derived) {
+            for (std::size_t i = 0; i < kMaxBands; ++i) {
+                if (new_morph_overrides.test(i))
+                    new_field.bands[i] = param_field.bands[i];
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        field_ = new_field;
+        viewport_  = new_view;
+        snapshots_ = new_bank;
+        patterns_  = std::move(new_patterns);
+        layout_ = new_layout;
+        morph_derived_ = new_morph_derived;
+        morph_overrides_ = new_morph_overrides;
+        publish_processing_state_();
+        if (version >= 3) {
+            synced_field_ = field_;
+            synced_viewport_ = viewport_;
+            synced_layout_ = layout_;
+        }
+    }
+    if (version < 3) {
+        // Migrate legacy supplemental live state into the new parameter-owned
+        // representation. Future saves then emit only v3 supplemental data.
+        // Host restore is listener-silent and may run off the UI thread; it
+        // migrates values without synthesizing user gesture callbacks.
+        sync_params_from_field(/*emit_gestures=*/false);
+    }
+    for (std::size_t slot = 0; param_store_ && slot < kSurfaceCacheSlots; ++slot) {
+        applied_param_cache_[slot].store(
+            param_store_->get_value(detail::surface_slot_param_id(slot)),
+            std::memory_order_relaxed);
+    }
     return true;
 }
 

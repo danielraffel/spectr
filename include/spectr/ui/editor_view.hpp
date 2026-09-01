@@ -90,6 +90,7 @@ public:
 private:
     bool post_resolution_();
     bool post_analyzer_();
+    bool post_host_automation_();
     void start_analyzer_clock_();
     void stop_analyzer_clock_();
     bool analyzer_tick_(float dt);
@@ -128,6 +129,7 @@ private:
     int                                       analyzer_subscription_ = -1;
     float                                     analyzer_elapsed_ = 0.0f;
     std::optional<EditorAnalyzerPublicationKey> analyzer_publication_key_;
+    EditorRevision                            host_automation_revision_ = 0;
     std::unique_ptr<pulp::view::WebViewPanel> panel_;
 };
 

@@ -17,6 +17,7 @@
 #include "spectr_editor_assets_data.hpp"
 
 #include <pulp/state/store.hpp>
+#include <pulp/runtime/build_info.hpp>
 #include <pulp/view/script_engine.hpp>
 
 #include <choc/containers/choc_Value.h>
@@ -26,6 +27,8 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 using Catch::Approx;
@@ -41,14 +44,16 @@ struct Rig {
     std::unique_ptr<Spectr>       proc;
     pulp::view::EditorBridge      bridge;
 
-    Rig() : proc(std::make_unique<Spectr>()) {
+    explicit Rig(spectr::ClipboardWriter clipboard_writer = {})
+        : proc(std::make_unique<Spectr>()) {
         proc->set_state_store(&store);
         proc->define_parameters(store);
         // Production registers the processor-owned library so pattern edits
         // participate in the plugin state blob. Keep the bridge oracle wired
         // to that same authority instead of a detached test-only library.
         register_spectr_editor_handlers(
-            bridge, *proc, proc->patterns(), proc->editor_authority());
+            bridge, *proc, proc->patterns(), proc->editor_authority(),
+            std::move(clipboard_writer));
     }
 
     std::string dispatch(std::string_view envelope_json) {
@@ -119,6 +124,75 @@ std::string processing_state_envelope(std::uint32_t n,
 }
 
 } // namespace
+
+TEST_CASE("native editor bridge exposes truthful build information and copy feedback") {
+    bool copied = false;
+    std::string copied_text;
+    Rig r([&](std::string_view text) {
+        copied = true;
+        copied_text = text;
+        return true;
+    });
+
+    const auto response = choc::json::parse(
+        r.dispatch(R"({"type":"build_info_get","payload":{}})"));
+    REQUIRE(response.isObject());
+    REQUIRE(response["ok"].getBool());
+    CHECK(response["product_version"].get<std::string>()
+          == r.proc->descriptor().version);
+    CHECK(response["sdk_version"].get<std::string>()
+          == pulp::runtime::kSdkVersion);
+    CHECK(response["sdk_dirty"].getBool() == pulp::runtime::kGitDirty);
+    CHECK(response["sdk_provenance_exact"].getBool()
+          == static_cast<bool>(SPECTR_PULP_SDK_PROVENANCE_EXACT));
+    constexpr std::string_view product_sha{SPECTR_PRODUCT_GIT_SHA};
+    if (product_sha.empty()) {
+        CHECK_FALSE(response.hasObjectMember("product_sha"));
+        CHECK_FALSE(response["product_provenance_known"].getBool());
+    } else {
+        REQUIRE(response.hasObjectMember("product_sha"));
+        CHECK(response["product_sha"].get<std::string>() == product_sha);
+        CHECK(response["product_provenance_known"].getBool());
+    }
+    CHECK(response["product_dirty"].getBool()
+          == static_cast<bool>(SPECTR_PRODUCT_GIT_DIRTY));
+    REQUIRE(response.hasObjectMember("copy_text"));
+    CHECK(response["copy_text"].get<std::string>().find("Spectr: ") == 0);
+    CHECK(response["copy_text"].get<std::string>().find("Pulp SDK: ")
+          != std::string::npos);
+    CHECK(response["copy_text"].get<std::string>().find(
+              std::string{"Spectr SHA: "}
+              + (product_sha.empty() ? "unknown" : std::string{product_sha}))
+          != std::string::npos);
+    CHECK(response["copy_text"].get<std::string>().find(
+              std::string{"Spectr source: "}
+              + (product_sha.empty() ? "unknown"
+                 : SPECTR_PRODUCT_GIT_DIRTY ? "dirty" : "clean"))
+          != std::string::npos);
+    constexpr std::string_view exact_sdk_sha{SPECTR_PULP_SDK_SOURCE_GIT_SHA};
+    if (!exact_sdk_sha.empty())
+        CHECK(response["copy_text"].get<std::string>().find(
+                  std::string{"Pulp SDK SHA: "} + std::string{exact_sdk_sha})
+              != std::string::npos);
+    CHECK(response["copy_text"].get<std::string>().find(
+              std::string{"Pulp SDK source: "}
+              + (exact_sdk_sha.empty() ? "unknown"
+                 : pulp::runtime::kGitDirty ? "dirty" : "clean"))
+          != std::string::npos);
+
+    const auto copy_response = r.dispatch(
+        R"({"type":"build_info_copy","payload":{}})");
+    REQUIRE(response_ok(copy_response));
+    CHECK(copied);
+    CHECK(copied_text == response["copy_text"].get<std::string>());
+}
+
+TEST_CASE("native editor bridge reports clipboard refusal") {
+    Rig r([](std::string_view) { return false; });
+    const auto response = r.dispatch(
+        R"({"type":"build_info_copy","payload":{}})");
+    CHECK(response_has_error(response, "clipboard unavailable"));
+}
 
 TEST_CASE("native editor bridge: complete field preserves exact mute and layout") {
     Rig r;
@@ -245,6 +319,16 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     r.proc->set_layout(spectr::Layout::Bands48);
     r.proc->viewport() = {280.0f, 340.0f};
     r.proc->field().bands[17] = {-9.5f, true};
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamMotionMode, 1.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamAnalyzerMode, 2.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamEditMode, 4.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamVisualization, 1.0f));
+    r.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    r.store.set_value(spectr::kParamLfoShape, 2.0f);
+    r.store.set_value(spectr::kParamLfoRate, 8.0f);
+    r.store.set_value(spectr::kParamLfoDepth, 0.75f);
+    r.store.set_value(spectr::kParamLfoTarget, 3.0f);
+    REQUIRE(r.proc->apply_surface_params(true));
     r.proc->field().bands[47] = {6.25f, false};
     r.proc->capture_snapshot(SnapshotBank::Slot::A);
     r.proc->field().bands[17] = {3.0f, false};
@@ -266,6 +350,16 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     CHECK(payload["min_hz"].get<double>() == Approx(280.0));
     CHECK(payload["max_hz"].get<double>() == Approx(340.0));
     CHECK(payload["revision"].get<int64_t>() == 0);
+    CHECK(payload["motion_mode"].get<double>() == Approx(1.0));
+    CHECK(payload["analyzer_mode"].get<double>() == Approx(2.0));
+    CHECK(payload["edit_mode"].get<double>() == Approx(4.0));
+    CHECK(payload["visualization_mode"].get<double>() == Approx(1.0));
+    REQUIRE(payload["modulation"].isObject());
+    CHECK(payload["modulation"]["enabled"].getBool());
+    CHECK(payload["modulation"]["shape"].get<int64_t>() == 2);
+    CHECK(payload["modulation"]["beats_per_cycle"].get<double>() == Approx(8.0));
+    CHECK(payload["modulation"]["depth"].get<double>() == Approx(0.75));
+    CHECK(payload["modulation"]["target"].get<int64_t>() == 3);
     REQUIRE(payload["snapshots"].isObject());
     CHECK(payload["snapshots"]["A"]["populated"].getBool());
     CHECK(payload["snapshots"]["B"]["populated"].getBool());
@@ -467,8 +561,8 @@ TEST_CASE("embedded editor gates default publication until native hydration") {
     CHECK(html.find("hydrateProcessingState(nativeHydration)")
           != std::string::npos);
     CHECK(html.find("spectral_resolution_request") != std::string::npos);
-    CHECK(html.find("RES {resolution ?") != std::string::npos);
-    CHECK(html.find("rgba(255,176,96,0.88)") != std::string::npos);
+    CHECK(html.find("RES {resolution ?") == std::string::npos);
+    CHECK(html.find("data-spectr-resolution") == std::string::npos);
 }
 
 TEST_CASE("native editor bridge rejects invalid zoom without partial mutation") {
@@ -866,7 +960,13 @@ TEST_CASE("M9.5 bridge load_preset: applies and echoes metadata") {
     // Build a preset from one rig, load it into another.
     Rig a;
     a.store.set_value(spectr::kMix, 18.0f);
-    a.proc->field().bands[10].gain_db = -3.0f;
+    // Presets serialize the StateStore-authoritative processing state. Seed
+    // the band through the same editor bridge used by the shipping UI rather
+    // than mutating the processor's derived field cache behind that authority.
+    REQUIRE(response_ok(a.dispatch(
+        processing_state_envelope(32, 20.0f, 20000.0f, 10, -3.0f))));
+    // A stale direct cache mutation must not override the authoritative value.
+    a.proc->field().bands[10].gain_db = -11.0f;
     spectr::PresetMetadata meta;
     meta.name = "Bridge Load";
     meta.author = "Test";

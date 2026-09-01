@@ -142,6 +142,7 @@ bool make_editor_resolution_message(
     const Spectr& plugin, pulp::view::WebViewMessage& out_message) {
     pulp::signal::SpectralBandResolution report;
     if (!plugin.spectral_resolution(report)) return false;
+    const auto state = plugin.processing_state_snapshot();
 
     auto payload = choc::value::createObject("SpectrEditorResolution");
     payload.addMember("represented_bands",
@@ -151,8 +152,8 @@ bool make_editor_resolution_message(
     payload.addMember("fully_represented", report.fully_represented());
     payload.addMember("fft_size", static_cast<std::int32_t>(report.fft_size));
     payload.addMember("sample_rate", static_cast<double>(report.sample_rate));
-    payload.addMember("min_hz", static_cast<double>(plugin.viewport().min_hz));
-    payload.addMember("max_hz", static_cast<double>(plugin.viewport().max_hz));
+    payload.addMember("min_hz", static_cast<double>(state.viewport.min_hz));
+    payload.addMember("max_hz", static_cast<double>(state.viewport.max_hz));
 
     out_message = {
         .type = "spectral_resolution",
@@ -220,6 +221,7 @@ EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
         if (!panel_)
             return pulp::view::EditorBridge::err_response("editor is not attached");
         panel_->post_message(make_editor_hydration_message(plugin_));
+        host_automation_revision_ = plugin_.host_automation_revision();
         post_resolution_();
         document_ready_ = true;
         start_analyzer_clock_();
@@ -258,14 +260,15 @@ bool EditorView::post_analyzer_() {
         .sample_rate = spectrum.sample_rate,
         .floor_db = spectrum.floor_db,
     };
+    const auto state = plugin_.processing_state_snapshot();
     const auto publication_key = make_editor_analyzer_publication_key(
-        snapshot, plugin_.viewport());
+        snapshot, state.viewport);
     if (analyzer_publication_key_
         && *analyzer_publication_key_ == publication_key)
         return false;
 
     pulp::view::WebViewMessage message;
-    if (!make_editor_analyzer_message(snapshot, plugin_.viewport(), message))
+    if (!make_editor_analyzer_message(snapshot, state.viewport, message))
         return false;
     panel_->post_message(message);
     analyzer_publication_key_ = publication_key;
@@ -274,10 +277,20 @@ bool EditorView::post_analyzer_() {
 
 bool EditorView::analyzer_tick_(float dt) {
     if (!panel_ || !document_ready_) return true;
+    post_host_automation_();
     analyzer_elapsed_ += std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
     if (analyzer_elapsed_ < kAnalyzerPublishPeriodSeconds) return true;
     analyzer_elapsed_ = std::fmod(analyzer_elapsed_, kAnalyzerPublishPeriodSeconds);
     post_analyzer_();
+    return true;
+}
+
+bool EditorView::post_host_automation_() {
+    const auto revision = plugin_.host_automation_revision();
+    if (!panel_ || !document_ready_ || revision == host_automation_revision_)
+        return false;
+    panel_->post_message(make_editor_hydration_message(plugin_));
+    host_automation_revision_ = revision;
     return true;
 }
 
@@ -297,6 +310,7 @@ void EditorView::stop_analyzer_clock_() {
     analyzer_clock_ = nullptr;
     analyzer_elapsed_ = 0.0f;
     analyzer_publication_key_.reset();
+    host_automation_revision_ = plugin_.host_automation_revision();
 }
 
 EditorView::~EditorView() { detach_if_needed(); }

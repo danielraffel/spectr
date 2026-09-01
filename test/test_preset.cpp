@@ -55,8 +55,9 @@ TEST_CASE("M9 preset round-trip preserves working state") {
     // Capture into both snapshot slots so the preset exercises the full
     // bank round-trip path too.
     a.proc->capture_snapshot(SnapshotBank::Slot::A);
-    a.proc->field() = spectr::BandField{};
-    a.proc->field().bands[0].gain_db = +6.0f;
+    spectr::BandField live_b;
+    live_b.bands[0].gain_db = +6.0f;
+    a.proc->replace_field(live_b);
     a.proc->capture_snapshot(SnapshotBank::Slot::B);
     a.proc->snapshots().active = SnapshotBank::Slot::B;
 
@@ -85,7 +86,7 @@ TEST_CASE("M9 preset round-trip preserves working state") {
     CHECK(b.store.get_value(spectr::kMix)        == Approx(42.0f));
     CHECK(b.store.get_value(spectr::kOutputTrim) == Approx(6.0f));
 
-    // Supplemental state restored.
+    // Parameter-owned live state restored.
     CHECK(b.proc->field().bands[0].gain_db == Approx(+6.0f));  // live field = B's snapshot
     CHECK(b.proc->viewport().min_hz == Approx(120.0f));
     CHECK(b.proc->viewport().max_hz == Approx(7200.0f));
@@ -131,7 +132,9 @@ TEST_CASE("M9 rejects files that aren't Spectr presets") {
 TEST_CASE("M9 rejects malformed JSON without touching processor state") {
     Rig r;
     r.store.set_value(spectr::kMix, 50.0f);
-    r.proc->field().bands[0].gain_db = -3.0f;
+    spectr::BandField field;
+    field.bands[0].gain_db = -3.0f;
+    r.proc->replace_field(field);
 
     const auto result = load_preset_from_string(*r.proc, "not json at all {");
     CHECK_FALSE(result);
@@ -165,7 +168,9 @@ TEST_CASE("M9 reports CorruptState on undecodable state_store") {
 TEST_CASE("M9 file save/load round-trip works end-to-end") {
     Rig a;
     a.store.set_value(spectr::kMix, 25.0f);
-    a.proc->field().bands[3].gain_db = -5.0f;
+    spectr::BandField field;
+    field.bands[3].gain_db = -5.0f;
+    a.proc->replace_field(field);
 
     const std::string path = "/tmp/spectr-m9-roundtrip.preset";
     PresetMetadata meta;

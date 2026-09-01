@@ -4554,66 +4554,9 @@
           "index": 0
         }
       ],
-      "text": "32",
+      "text": "32 bands ▾",
       "basis": {
-        "width": 13,
-        "resolved_face": "JetBrainsMono-Regular",
-        "resolved_faces": [
-          {
-            "family_name": "JetBrains Mono",
-            "post_script_name": "JetBrainsMono-Regular",
-            "is_custom_font": true,
-            "glyph_count": 2
-          }
-        ],
-        "requested": {
-          "font_family": "\"JetBrains Mono\", ui-monospace, monospace",
-          "font_size": 10,
-          "font_weight": 400,
-          "font_slant": 0,
-          "letter_spacing": 0.5
-        }
-      },
-      "boxes": [
-        {
-          "left": 0,
-          "top": 0,
-          "width": 13,
-          "height": 13,
-          "start": 0,
-          "length": 2
-        }
-      ]
-    },
-    {
-      "index": 9,
-      "anchor": "#root",
-      "path": [
-        {
-          "tag": "div",
-          "index": 0
-        },
-        {
-          "tag": "div",
-          "index": 1
-        },
-        {
-          "tag": "div",
-          "index": 6
-        },
-        {
-          "tag": "div",
-          "index": 0
-        },
-        {
-          "tag": "button",
-          "index": 0
-        }
-      ],
-      "anonymous_text_index": 0,
-      "text": " bands ▾",
-      "basis": {
-        "width": 81.03125,
+        "width": 73.03125,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
@@ -4639,11 +4582,19 @@
       },
       "boxes": [
         {
+          "left": 0,
+          "top": 0,
+          "width": 13,
+          "height": 13,
+          "start": 0,
+          "length": 2
+        },
+        {
           "left": 21,
           "top": 3,
           "width": 52.03125,
           "height": 13,
-          "start": 0,
+          "start": 3,
           "length": 8
         }
       ]

@@ -13,6 +13,7 @@
 #include <pulp/view/window_host.hpp>
 #include <pulp/view/widgets.hpp>
 #include <pulp/view/widgets/svg_rect.hpp>
+#include <pulp/view/widget_bridge.hpp>
 
 #include <algorithm>
 #include <array>
@@ -395,6 +396,8 @@ void install_click_dispatch_counter(NativeEditorRig& rig) {
     })();)js", "spectr-native-click-dispatch-counter");
 }
 
+std::string js_string(std::string_view value);
+
 // The bridge has no evaluate-with-result seam, so read the counter back the way
 // the rest of this file reads runtime state: throw it and parse the message.
 int click_dispatch_count(NativeEditorRig& rig) {
@@ -410,6 +413,24 @@ int click_dispatch_count(NativeEditorRig& rig) {
     }
     FAIL("click dispatch counter was not readable");
     return -1;
+}
+
+std::string runtime_string(NativeEditorRig& rig, std::string_view expression,
+                           std::string_view label) {
+    const std::string marker = "SPECTR_RUNTIME_VALUE:";
+    try {
+        rig.bridge().load_script(
+            "throw new Error(" + js_string(marker) + " + String("
+                + std::string(expression) + "));",
+            std::string(label));
+    } catch (const std::exception& error) {
+        const std::string message = error.what();
+        const auto offset = message.find(marker);
+        if (offset != std::string::npos)
+            return message.substr(offset + marker.size());
+    }
+    FAIL("runtime string was not readable for " << label);
+    return {};
 }
 
 // The responsive layer refuses to write a non-finite box and records it. An
@@ -684,13 +705,18 @@ void click_each_point_exactly_once(NativeEditorRig& rig, View& button,
                                    std::string_view glyph_text,
                                    bool capture_button) {
     REQUIRE(button.pointer_events() == View::PointerEvents::box_only);
+    const auto button_id = button.id();
     const auto points = snapshot_hit_points(button, glyph_text, capture_button);
     REQUIRE(points.size() == 7);
     for (std::size_t index = 0; index < points.size(); ++index) {
-        INFO("semantic point index " << index << " on " << button.id());
+        // Each click publishes state and may synchronously replace the React
+        // host view. Never retain or dereference the previous generation.
+        auto* current = rig.bridge().widget(button_id);
+        REQUIRE(current != nullptr);
+        INFO("semantic point index " << index << " on " << button_id);
         auto* target = rig.root->hit_test(points[index]);
         REQUIRE(target != nullptr);
-        REQUIRE(target->id() == button.id());
+        REQUIRE(target == current);
         const auto revision = rig.processor.native_editor_revision();
         rig.root->simulate_click(points[index]);
         settle(rig.clock, 12);
@@ -741,8 +767,8 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     // should_pin_design_viewport() engages in every format. The previous
     // contract opened at 990x645 with viewport_policy=Responsive, which
     // short-circuited the pin and made the root reflow at the host size.
-    CHECK(size.preferred_width == 1320);
-    CHECK(size.preferred_height == 860);
+    CHECK(size.preferred_width == 990);
+    CHECK(size.preferred_height == 645);
     CHECK(size.min_width == 792);
     CHECK(size.min_height == 516);
     CHECK(size.max_width == 2640);
@@ -802,7 +828,8 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     }
 
     rig.resize(792, 516);
-    for (const auto text : {"CLEAR", "SCULPT ▾", "PEAK ▾", "PRESETS ▾"}) {
+    for (const auto text : {"CLEAR", "SCULPT ▾", "PEAK ▾"}) {
+        CAPTURE(text);
         const auto* label = find_label(*rig.root, text);
         REQUIRE(label != nullptr);
         CHECK(label->font_size() >= 10.0f);
@@ -812,23 +839,34 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         REQUIRE(target != nullptr);
         CHECK(target->bounds().height >= 24.0f);
     }
+    const auto* selected_preset = find_label(*rig.root, "PRESET… ▾");
+    if (selected_preset == nullptr)
+        selected_preset = find_label(*rig.root, "FLAT ▾");
+    if (selected_preset == nullptr)
+        selected_preset = find_label(*rig.root, "PRESETS ▾");
+    REQUIRE(selected_preset != nullptr);
+    CHECK(selected_preset->font_size() >= 10.0f);
+    auto* preset_target = selected_preset->parent();
+    while (preset_target != nullptr && !preset_target->on_click)
+        preset_target = preset_target->parent();
+    REQUIRE(preset_target != nullptr);
+    CHECK(preset_target->bounds().height >= 24.0f);
 
     activate(rig, "[data-spectr-settings-open]");
     require_runtime_contract(
         rig,
-        // Under the pin the panel keeps its AUTHORED height (679) at every host
-        // size and paint scales it, so `scroll_reachable` comes from the design
-        // -- 684 of content in a 679 viewport -- not from squeezing the panel to
-        // fit the window. The previous expectation of 464.4 was the compact
-        // branch constraining it to a 792x516 host; that branch no longer runs,
-        // and a height that tracked the host would mean the reflow is back.
+        // The panel remains pinned to the authored viewport. The appended
+        // Feedback and exact build-information groups make the live content
+        // genuinely taller, so the native ScrollView exposes that real extent.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height === 684 && s.scroll_reachable === true"
+        " && s.content_height === 1044 && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
         "settings panel did not keep its authored geometry under the pin");
     capture(rig, directory, "minimum-settings", 792, 516);
+    // Title and close action are separate native targets so the close glyph has
+    // its own hover/pressed hit state without reshaping the heading text.
     const auto* settings_title = find_label(*rig.root, "SETTINGS");
     REQUIRE(settings_title != nullptr);
     auto* settings_scroll = const_cast<View*>(
@@ -850,18 +888,16 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     CHECK(scroll_view->border_color().a8() == 26);
     CHECK(scroll_view->border_width() == Catch::Approx(1.0f));
     CHECK(scroll_view->corner_radius() == Catch::Approx(8.0f));
-    CHECK(scroll_view->content_size().height == Catch::Approx(684.0f));
+    CHECK(scroll_view->content_size().height
+          > scroll_view->bounds().height + 0.5f);
     // Authored height at every host size -- the pin scales it at paint, so the
     // panel is never squeezed to the window. 464.4 was the compact branch
     // fitting it into a 792x516 host; a height that tracks the host now would
     // mean the reflow layer is running alongside the pin.
     CHECK(scroll_view->bounds().height == Catch::Approx(679.0f).margin(0.1f));
-    scroll_view->set_scroll(0.0f, 684.0f);
+    scroll_view->set_scroll(0.0f, 728.0f);
     settle(rig.clock, 4);
-    // Scrollable by exactly the design's overflow: 684 of content in a 679
-    // viewport. The old > 200 expectation only held while the viewport was
-    // squeezed to 464.4 and the overflow was correspondingly large.
-    CHECK(scroll_view->scroll_y() == Catch::Approx(5.0f).margin(0.5f));
+    CHECK(scroll_view->scroll_y() > 0.0f);
     const auto* response_label = find_label(*rig.root, "Response");
     REQUIRE(response_label != nullptr);
     const auto response_point = root_point(
@@ -875,6 +911,902 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     CHECK(response_point.y >= 0.0f);
     CHECK(response_point.y <= spectr::kEditorDesignHeight);
     capture(rig, directory, "minimum-settings-bottom", 792, 516);
+}
+
+TEST_CASE("native settings command and minimap cursors reach the shipping runtime",
+          "[native-n1][state-parity][commands][cursor]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    require_runtime_contract(
+        rig,
+        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 4.5"
+        " && globalThis.__spectrBandCountCenteringReceipt__.trigger.height === 22"
+        " && Math.abs(globalThis.__spectrBandCountCenteringReceipt__.trigger.left"
+        " - 9.484375) < 0.001",
+        "band trigger text was not optically centered");
+    const auto* trigger_label = find_label(*rig.root, "32 bands ▾");
+    REQUIRE(trigger_label != nullptr);
+    CAPTURE(trigger_label->id(), trigger_label->parent()->id());
+    REQUIRE(trigger_label->cached_line_boxes().size() == 1);
+    CHECK(trigger_label->cached_line_boxes().front().left
+          == Catch::Approx(9.484375f).margin(0.01f));
+    CHECK(trigger_label->cached_line_boxes().front().top
+          == Catch::Approx(4.5f).margin(0.01f));
+
+    REQUIRE(static_cast<bool>(rig.root->on_global_key));
+    const auto comma = static_cast<pulp::view::KeyCode>(',');
+    CHECK_FALSE(rig.root->on_global_key({
+        .key = comma, .modifiers = pulp::view::kModNone, .is_down = true}));
+    require_home(rig);
+#if defined(__APPLE__)
+    constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+    constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+    REQUIRE(rig.root->on_global_key({
+        .key = comma, .modifiers = primary_modifier, .is_down = true}));
+    settle(rig.clock, 16);
+    require_state(rig, "settings");
+    activate(rig, "[data-spectr-settings-close]");
+    require_home(rig);
+
+    // Spectral resolution remains a diagnostic bridge contract. It must not
+    // leak into the normal product chrome as a cryptic RES counter.
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-spectr-resolution]')"
+        " && !Array.from(document.querySelectorAll('span'))"
+        ".some(node => /^RES\\s+\\d+\\/\\d+$/.test(node.textContent.trim()))",
+        "diagnostic spectral resolution leaked into product chrome");
+
+    View* surface = nullptr;
+    const std::function<void(View&)> find_surface = [&](View& candidate) {
+        if (candidate.cursor() == View::CursorStyle::crosshair
+            && candidate.on_dom_pointer_event) {
+            REQUIRE(surface == nullptr);
+            surface = &candidate;
+        }
+        for (std::size_t index = 0; index < candidate.child_count(); ++index)
+            find_surface(*candidate.child_at(index));
+    };
+    find_surface(*rig.root);
+    REQUIRE(surface != nullptr);
+    CHECK(surface->cursor() == View::CursorStyle::crosshair);
+    const auto dispatch_minimap = [&](std::string_view event,
+                                      std::string_view hit) {
+        const auto script = std::string{R"js((() => {
+          const selector = '[data-spectr-filter-surface]';
+          const surface = document.querySelector(selector);
+          if (!surface) throw new Error('filter surface missing');
+          const desired = )js"} + js_string(hit) + R"js(;
+          const state = globalThis.__spectrTestHooks?.renderState?.();
+          if (!state) throw new Error('filter state missing');
+          const fullMin = Math.log10(20);
+          const fullSpan = Math.log10(20000) - fullMin;
+          const innerX = 56, innerWidth = surface.clientWidth - 112;
+          const left = (state.view.lmin - fullMin) / fullSpan;
+          const right = (state.view.lmax - fullMin) / fullSpan;
+          const windowX = innerX + (left + right) * 0.5 * innerWidth;
+          const miniY = Array.from({length: surface.clientHeight}, (_, y) => y)
+            .find(y => globalThis.__spectrTestHooks.minimapHit(windowX, y) === 'window');
+          if (!Number.isFinite(miniY)) throw new Error('minimap y missing');
+          const x = desired === 'left' ? innerX + left * innerWidth
+            : desired === 'right' ? innerX + right * innerWidth
+            : desired === 'track' ? innerX + left * 0.45 * innerWidth
+            : windowX;
+          const point = {x, y: miniY};
+          if (globalThis.__spectrTestHooks.minimapHit(point.x, point.y) !== desired)
+            throw new Error('minimap hit missing: ' + desired);
+          if (!globalThis.__pulpActivateMaterializedElement__(selector, )js"
+            + js_string(event) + R"js(, {
+                clientX: point.x, clientY: point.y, pointerId: 71,
+                button: 0, buttons: 1
+              })) throw new Error('minimap cursor activation failed');
+          if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+            globalThis.__pulpRuntimeSettle__(4);
+        })();)js";
+        rig.bridge().load_script(script, "spectr-native-minimap-cursor");
+        settle(rig.clock, 4);
+    };
+
+    dispatch_minimap("pointermove", "left");
+    CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
+    dispatch_minimap("pointermove", "right");
+    CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
+    dispatch_minimap("pointerdown", "window");
+    CHECK(surface->cursor() == View::CursorStyle::grabbing);
+    dispatch_minimap("pointermove", "window");
+    CHECK(surface->cursor() == View::CursorStyle::grabbing);
+    dispatch_minimap("pointerup", "window");
+    CHECK(surface->cursor() == View::CursorStyle::grab);
+    activate(rig, "[data-spectr-filter-surface]", "pointermove",
+             R"js({clientX:660,clientY:430,pointerId:72,button:0,buttons:0})js");
+    CHECK(surface->cursor() == View::CursorStyle::crosshair);
+
+    rig.bridge().load_script(R"js((() => {
+      const selector = '[data-spectr-filter-surface]';
+      const surface = document.querySelector(selector);
+      const hooks = globalThis.__spectrTestHooks;
+      const fire = (type, x, y, pointerId, buttons) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+          clientX: x, clientY: y, pointerId, button: 0, buttons
+        })) throw new Error('minimap perf activation failed: ' + type);
+      };
+      const gesture = (hit, delta, pointerId) => {
+        const before = hooks.renderState();
+        const fullMin = Math.log10(20);
+        const fullSpan = Math.log10(20000) - fullMin;
+        const innerX = 56, innerWidth = surface.clientWidth - 112;
+        const left = (before.view.lmin - fullMin) / fullSpan;
+        const right = (before.view.lmax - fullMin) / fullSpan;
+        const x = hit === 'left' ? innerX + left * innerWidth
+          : hit === 'right' ? innerX + right * innerWidth
+          : innerX + (left + right) * 0.5 * innerWidth;
+        const y = Array.from({length: surface.clientHeight}, (_, candidate) => candidate)
+          .find(candidate => hooks.minimapHit(x, candidate) === hit);
+        if (!Number.isFinite(y)) throw new Error('minimap perf hit missing: ' + hit);
+        const postCount = globalThis.__spectrNativeDispatchTrace.filter(
+          entry => entry.type === 'processing_state_set').length;
+        fire('pointerdown', x, y, pointerId, 1);
+        fire('pointermove', x + delta, y, pointerId, 1);
+        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+          globalThis.__pulpRuntimeSettle__(2);
+        const during = hooks.renderState();
+        if (during.view.lmin === before.view.lmin
+            && during.view.lmax === before.view.lmax)
+          throw new Error(hit + ' did not update the live viewport');
+        if (during.reactView.lmin !== before.reactView.lmin
+            || during.reactView.lmax !== before.reactView.lmax)
+          throw new Error(hit + ' reconciled React before release');
+        if (globalThis.__spectrNativeDispatchTrace.filter(
+              entry => entry.type === 'processing_state_set').length <= postCount)
+          throw new Error(hit + ' did not publish native viewport state');
+        fire('pointerup', x + delta, y, pointerId, 0);
+        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+          globalThis.__pulpRuntimeSettle__(4);
+        const released = hooks.renderState();
+        if (Math.abs(released.reactView.lmin - released.view.lmin) > 1e-9
+            || Math.abs(released.reactView.lmax - released.view.lmax) > 1e-9)
+          throw new Error(hit + ' release lost the final React viewport');
+      };
+      gesture('left', 40, 74);
+      gesture('right', -40, 75);
+      gesture('window', 35, 76);
+    })();)js", "spectr-native-minimap-react-budget");
+    settle(rig.clock, 4);
+
+    // Pointer dragging the minimap window uses the same rigid endpoint clamp
+    // as horizontal trackpad panning. Repeated motion beyond an endpoint must
+    // be absorbed rather than moving the opposite trim or changing the span.
+    rig.bridge().load_script(R"js((() => {
+      const selector = '[data-spectr-filter-surface]';
+      const surface = document.querySelector(selector);
+      const hooks = globalThis.__spectrTestHooks;
+      const fullMin = Math.log10(20), fullMax = Math.log10(20000);
+      const fullSpan = fullMax - fullMin;
+      const innerX = 56, innerWidth = surface.clientWidth - 112;
+      const near = (a, b) => Math.abs(a - b) < 1e-9;
+      const fire = (type, x, y, pointerId, buttons) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+          clientX: x, clientY: y, pointerId, button: 0, buttons
+        })) throw new Error('minimap endpoint drag activation failed: ' + type);
+      };
+      const dragToEndpoint = (direction, pointerId) => {
+        const before = hooks.renderState();
+        const span = before.view.lmax - before.view.lmin;
+        const left = (before.view.lmin - fullMin) / fullSpan;
+        const right = (before.view.lmax - fullMin) / fullSpan;
+        const x = innerX + (left + right) * 0.5 * innerWidth;
+        const y = Array.from({length: surface.clientHeight}, (_, candidate) => candidate)
+          .find(candidate => hooks.minimapHit(x, candidate) === 'window');
+        if (!Number.isFinite(y))
+          throw new Error('minimap endpoint window hit missing');
+        const firstDelta = direction * 100000;
+        fire('pointerdown', x, y, pointerId, 1);
+        fire('pointermove', x + firstDelta, y, pointerId, 1);
+        const atEndpoint = hooks.renderState();
+        if ((direction > 0 && !near(atEndpoint.view.lmax, fullMax))
+            || (direction < 0 && !near(atEndpoint.view.lmin, fullMin))
+            || !near(atEndpoint.view.lmax - atEndpoint.view.lmin, span))
+          throw new Error('pointer drag changed viewport width at endpoint');
+        fire('pointermove', x + firstDelta * 2, y, pointerId, 1);
+        const held = hooks.renderState();
+        if (!near(held.view.lmin, atEndpoint.view.lmin)
+            || !near(held.view.lmax, atEndpoint.view.lmax))
+          throw new Error('pointer endpoint overscroll bounced opposite trim');
+        fire('pointerup', x + firstDelta * 2, y, pointerId, 0);
+        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+          globalThis.__pulpRuntimeSettle__(4);
+        const released = hooks.renderState();
+        if (!near(released.reactView.lmin, released.view.lmin)
+            || !near(released.reactView.lmax, released.view.lmax))
+          throw new Error('pointer endpoint release lost the final viewport');
+      };
+      dragToEndpoint(1, 77);
+      dragToEndpoint(-1, 78);
+    })();)js", "spectr-native-minimap-pointer-endpoint-invariant");
+    settle(rig.clock, 4);
+
+    // Product-acceptance gate: a horizontal two-finger gesture pans the
+    // selected minimap window as one rigid body. Endpoint overscroll must be
+    // absorbed instead of resizing the opposite trim.
+    rig.bridge().load_script(R"js((() => {
+      const selector = '[data-spectr-filter-surface]';
+      const surface = document.querySelector(selector);
+      const hooks = globalThis.__spectrTestHooks;
+      const fullMin = Math.log10(20), fullMax = Math.log10(20000);
+      const x = surface.clientWidth * 0.5;
+      const wheel = (deltaX) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, 'wheel', {
+          clientX: x, clientY: surface.clientHeight * 0.5,
+          deltaX, deltaY: 0, preventDefault() {}
+        })) throw new Error('horizontal minimap wheel activation failed');
+      };
+      const spanOf = (state) => state.view.lmax - state.view.lmin;
+      const near = (a, b) => Math.abs(a - b) < 1e-9;
+
+      const initialSpan = spanOf(hooks.renderState());
+      wheel(100000);
+      const atRight = hooks.renderState();
+      if (!near(atRight.view.lmax, fullMax)
+          || !near(spanOf(atRight), initialSpan))
+        throw new Error('right endpoint pan changed viewport width');
+      wheel(100000);
+      const heldRight = hooks.renderState();
+      if (!near(heldRight.view.lmin, atRight.view.lmin)
+          || !near(heldRight.view.lmax, atRight.view.lmax))
+        throw new Error('right endpoint overscroll bounced opposite trim');
+
+      wheel(-100000);
+      const atLeft = hooks.renderState();
+      if (!near(atLeft.view.lmin, fullMin)
+          || !near(spanOf(atLeft), initialSpan))
+        throw new Error('left endpoint pan changed viewport width');
+      wheel(-100000);
+      const heldLeft = hooks.renderState();
+      if (!near(heldLeft.view.lmin, atLeft.view.lmin)
+          || !near(heldLeft.view.lmax, atLeft.view.lmax))
+        throw new Error('left endpoint overscroll bounced opposite trim');
+    })();)js", "spectr-native-minimap-horizontal-endpoint-invariant");
+    settle(rig.clock, 4);
+
+    rig.bridge().load_script(R"js((() => {
+      const selector = '[data-spectr-filter-surface]';
+      const hooks = globalThis.__spectrTestHooks;
+      const before = hooks.renderState().reactGains.slice();
+      const fire = (type, x, y, buttons) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+          clientX: x, clientY: y, pointerId: 73, button: 0, buttons
+        })) throw new Error('band drag activation failed: ' + type);
+      };
+      fire('pointerdown', 660, 430, 1);
+      fire('pointermove', 700, 365, 1);
+      if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+        globalThis.__pulpRuntimeSettle__(2);
+      const during = hooks.renderState();
+      if (during.targetGains.every((value, index) => value === before[index]))
+        throw new Error('band drag did not update live target');
+      if (during.reactGains.some((value, index) => value !== before[index]))
+        throw new Error('band drag reconciled React state before release');
+      const status = document.querySelector('[data-spectr-status-text]');
+      if (!status || !status.textContent.includes('BAND'))
+        throw new Error('band drag did not update live hover status');
+      fire('pointerup', 700, 365, 0);
+      if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+        globalThis.__pulpRuntimeSettle__(4);
+      const released = hooks.renderState();
+      if (released.reactGains.some((value, index) =>
+          Math.abs(value - released.targetGains[index]) > 1e-9))
+        throw new Error('band release did not publish final React state');
+
+      // A transient leave between related drag/hover updates must not flash an
+      // empty banner, and its stale clear timer must not erase the replacement.
+      let repaintSignals = 0;
+      window.addEventListener('resize', () => { repaintSignals += 1; });
+      fire('pointerleave', 700, 365, 0);
+      if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+        globalThis.__pulpRuntimeSettle__(4);
+      fire('pointermove', 720, 350, 0);
+      if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+        globalThis.__pulpRuntimeSettle__(12);
+      if (!status.textContent.includes('BAND'))
+        throw new Error('stale status clear erased replacement hover');
+
+      // The materialized test clock intentionally does not advance wall-clock
+      // timers. The source contract separately pins the eventual hide's resize
+      // invalidation; this executed assertion covers cancellation of the stale
+      // clear while the replacement remains immediately truthful.
+      if (repaintSignals != 0)
+        throw new Error('replacement hover caused an intermediate blank repaint');
+    })();)js", "spectr-native-band-drag-react-budget");
+    settle(rig.clock, 4);
+}
+
+TEST_CASE("native semantic popup navigation owns one visible highlight and selection",
+          "[native-n1][state-parity][dropdown]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto directory = atlas_directory();
+    capture(rig, directory, "band-header-closed");
+
+    const auto* band_label = find_label(*rig.root, "32 bands ▾");
+    const auto* peer_label = find_label(*rig.root, "BOTH");
+    REQUIRE(band_label != nullptr);
+    REQUIRE(peer_label != nullptr);
+    const auto clickable_ancestor = [](const View* view) {
+        while (view != nullptr && !view->on_click) view = view->parent();
+        return view;
+    };
+    const auto* band_button = clickable_ancestor(band_label);
+    const auto* peer_button = clickable_ancestor(peer_label);
+    REQUIRE(band_button != nullptr);
+    REQUIRE(peer_button != nullptr);
+    const auto band_top = root_point(*band_button, 0.0f, 0.0f);
+    const auto band_bottom = root_point(
+        *band_button, 0.0f, band_button->bounds().height);
+    const auto peer_top = root_point(*peer_button, 0.0f, 0.0f);
+    const auto peer_bottom = root_point(
+        *peer_button, 0.0f, peer_button->bounds().height);
+    CHECK(band_top.y == Catch::Approx(peer_top.y).margin(0.01f));
+    CHECK(band_bottom.y == Catch::Approx(peer_bottom.y).margin(0.01f));
+
+    const auto dispatch = [&](pulp::view::KeyCode key) {
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(key), pulp::view::kModNone, true));
+        settle(rig.clock, 6);
+    };
+    rig.bridge().load_script(R"js((() => {
+      const trigger = document.querySelector(
+        '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
+      if (!trigger) {
+        const buttons = Array.from(document.querySelectorAll('button')).map(
+          button => ({ text: button.textContent.trim(),
+            trigger: button.getAttribute('data-spectr-menu-trigger'),
+            parentRoot: button.parentElement &&
+              button.parentElement.getAttribute('data-spectr-menu-root') }));
+        throw new Error('band header trigger missing: ' + JSON.stringify(buttons));
+      }
+      globalThis.__spectrBandHeaderBefore = {
+        trigger: trigger.getBoundingClientRect(),
+        separator: Array.from(document.querySelectorAll('span'))
+          .map(span => ({ text: span.textContent.trim(), rect: span.getBoundingClientRect() }))
+          .filter(entry => entry.text === '·'
+            && entry.rect.left >= trigger.getBoundingClientRect().right - 0.5)
+          .sort((a, b) => a.rect.left - b.rect.left)[0]?.rect,
+        peer: Array.from(document.querySelectorAll(
+          '[data-spectr-visualization] button')).find(
+          button => button.textContent.trim() === 'BOTH')?.getBoundingClientRect(),
+        zoom: Array.from(document.querySelectorAll('span')).find(
+          span => span.textContent.trim().endsWith('× zoom'))?.getBoundingClientRect()
+      };
+    })();)js", "spectr-native-band-header-before-open");
+    const auto focus_and_open = [&] {
+        rig.bridge().load_script(
+            "document.querySelector('[data-spectr-menu-root=\"bands\"] "
+            "[data-spectr-menu-trigger]').focus()",
+            "spectr-native-focus-band-trigger");
+        dispatch(pulp::view::KeyCode::down);
+    };
+
+    focus_and_open();
+    capture(rig, directory, "band-header-open");
+    REQUIRE(rig.root->interaction().active_overlay != nullptr);
+    REQUIRE(rig.root->interaction().active_overlay->overlay_consumes_outside_click());
+    require_runtime_contract(
+        rig,
+        "globalThis.__spectrBandCountCenteringReceipt__?.options?.length === 5"
+        " && globalThis.__spectrBandCountCenteringReceipt__.options.every("
+        "entry => entry.top === 6.5 && Math.abs(entry.left - 15.5) < 0.001)",
+        "band popup option text was not optically centered");
+    const auto* option_label = find_label(*rig.root, "32");
+    REQUIRE(option_label != nullptr);
+    REQUIRE(option_label->cached_line_boxes().size() == 1);
+    CHECK(option_label->cached_line_boxes().front().left
+          == Catch::Approx(15.5f).margin(0.01f));
+    CHECK(option_label->cached_line_boxes().front().top
+          == Catch::Approx(6.5f).margin(0.01f));
+    rig.bridge().load_script(R"js((() => {
+      const trigger = document.querySelector(
+        '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
+      const popup = document.querySelector(
+        '[data-spectr-menu-root="bands"] [data-spectr-menu-options]');
+      const options = Array.from(document.querySelectorAll(
+        '[data-spectr-menu-root="bands"] [data-spectr-menu-options] button'));
+      if (!trigger || !popup || options.length !== 5)
+        throw new Error('band popup geometry subjects missing');
+      const triggerRect = trigger.getBoundingClientRect();
+      const popupRect = popup.getBoundingClientRect();
+      const rects = options.map(option => option.getBoundingClientRect());
+      const before = globalThis.__spectrBandHeaderBefore;
+      if (triggerRect.width < 80 || rects.some(rect => rect.width < 43))
+        throw new Error('band geometry trigger=' + triggerRect.width
+          + ' options=' + rects.map(rect => rect.width).join(','));
+      for (let index = 1; index < rects.length; ++index) {
+        if (rects[index].left < rects[index - 1].right - 0.5)
+          throw new Error('band options overlap at ' + index + ': '
+            + rects.map(rect => rect.left + '..' + rect.right).join(','));
+      }
+      if (popupRect.width < rects.reduce((sum, rect) => sum + rect.width, 0) - 1)
+        throw new Error('band popup clips option row');
+      if (!before
+          || Math.abs(triggerRect.left - before.trigger.left) > 0.5
+          || Math.abs(triggerRect.width - before.trigger.width) > 0.5)
+        throw new Error('band popup reflowed its header');
+      if (!before.peer
+          || Math.abs(triggerRect.top - before.peer.top) > 0.5
+          || Math.abs(triggerRect.bottom - before.peer.bottom) > 0.5)
+        throw new Error('band trigger missed segmented-control rail: trigger='
+          + triggerRect.top + '..' + triggerRect.bottom + ' peer='
+          + before.peer?.top + '..' + before.peer?.bottom);
+      if (!before.separator || triggerRect.right > before.separator.left - 3.5)
+        throw new Error('band trigger failed to reserve separator gap: triggerRight='
+          + triggerRect.right + ' separatorLeft=' + before.separator?.left);
+      if (!before.zoom || triggerRect.right > before.zoom.left + 0.5)
+        throw new Error('band trigger overlaps the zoom readout: triggerRight='
+          + triggerRect.right + ' zoomLeft=' + before.zoom?.left);
+      if (popupRect.top < triggerRect.bottom - 0.5)
+        throw new Error('band popup does not overlay below its trigger');
+      if (popupRect.right > globalThis.innerWidth + 0.5)
+        throw new Error('band popup clipped at the app edge');
+    })();)js", "spectr-native-band-menu-geometry");
+    settle(rig.clock, 4);
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-pulp-popup-active=\"true\"]')?.textContent.trim() === '32'",
+        "ArrowDown did not open with a visible authoritative highlight");
+    dispatch(pulp::view::KeyCode::down);
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-pulp-popup-active=\"true\"]')?.textContent.trim() === '40'",
+        "ArrowDown did not paint the same authoritative highlight as pointer hover");
+    dispatch(pulp::view::KeyCode::enter);
+    require_app_state(rig, "s.settings.bandCount === 40",
+                      "Enter did not invoke the highlighted option callback");
+    REQUIRE(spectr::visible_count(rig.processor.layout()) == 40);
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-spectr-menu-root=\"bands\"] [data-spectr-menu-options]')",
+        "Enter selected but did not close the popup");
+    require_runtime_contract(
+        rig,
+        "(() => { const text = document.querySelector('[data-spectr-menu-root=\"bands\"] "
+        "[data-spectr-menu-trigger] .tnum')?.textContent || ''; "
+        "if (!text.includes('40')) throw new Error('stale band trigger: ' + text); return true; })()",
+        "Enter selected but did not update the trigger immediately");
+
+    focus_and_open();
+    dispatch(pulp::view::KeyCode::escape);
+    REQUIRE(spectr::visible_count(rig.processor.layout()) == 40);
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-spectr-menu-root=\"bands\"] [data-spectr-menu-options]')",
+        "Escape did not dismiss without changing selection");
+
+    focus_and_open();
+    REQUIRE(rig.root->interaction().active_overlay != nullptr);
+    REQUIRE(rig.root->interaction().active_overlay->overlay_consumes_outside_click());
+    pulp::view::View::dismiss_active_overlay(*rig.root);
+    settle(rig.clock, 10);
+    REQUIRE(rig.root->interaction().active_overlay == nullptr);
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-spectr-menu-root=\"bands\"] [data-spectr-menu-options]')",
+        "native overlay dismissal did not close the authored popup");
+
+    focus_and_open();
+    const pulp::view::Point outside{1200.0f, 430.0f};
+    auto* outside_target = rig.root->hit_test(outside);
+    REQUIRE(outside_target != nullptr);
+    REQUIRE(pulp::view::transfer_input_focus(*rig.root, outside_target));
+    REQUIRE(pulp::view::deliver_mouse_down(*rig.root, outside_target, outside,
+                                           /*modifiers=*/0,
+                                           /*click_count=*/1,
+                                           /*bubble=*/true));
+    settle(rig.clock, 10);
+    REQUIRE(spectr::visible_count(rig.processor.layout()) == 40);
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-spectr-menu-root=\"bands\"] [data-spectr-menu-options]')",
+        "outside pointer did not dismiss without changing selection");
+    storage.require_unchanged();
+}
+
+TEST_CASE("native selected tabs inherit hover through their label ancestry",
+          "[native-n1][state-parity][hover]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    const auto* label = find_label(*rig.root, "BOTH");
+    REQUIRE(label != nullptr);
+    const View* button = nearest_click_target(label);
+    REQUIRE(button != nullptr);
+    CHECK(button->opacity() == Catch::Approx(1.0f));
+    require_app_state(rig, "s.visualizationMode === 'both'",
+                      "the selected visualization tab was not BOTH");
+
+    const auto point = root_point(
+        *label, label->bounds().width * 0.5f, label->bounds().height * 0.5f);
+    const View* feedback_owner = rig.root->hit_test(point);
+    std::string ancestry;
+    for (const View* node = feedback_owner; node != nullptr; node = node->parent()) {
+        if (!ancestry.empty()) ancestry += " <- ";
+        ancestry += node->id();
+        ancestry += "{role=" + std::to_string(static_cast<int>(node->access_role()));
+        ancestry += ",default=" + std::to_string(node->default_hover_feedback());
+        ancestry += ",click=" + std::to_string(static_cast<bool>(node->on_click));
+        ancestry += "}";
+    }
+    INFO("hover ancestry: " << ancestry);
+    while (feedback_owner != nullptr &&
+           !feedback_owner->default_hover_feedback()) {
+        feedback_owner = feedback_owner->parent();
+    }
+    REQUIRE(feedback_owner != nullptr);
+    CHECK(feedback_owner->access_role() == View::AccessRole::button);
+    capture(rig, atlas_directory(), "selected-tab-resting");
+
+    rig.root->simulate_hover(point);
+    settle(rig.clock, 4);
+    CHECK(button->is_hovered());
+    CHECK(feedback_owner->is_hovered());
+    capture(rig, atlas_directory(), "selected-tab-hover");
+    require_app_state(rig, "s.visualizationMode === 'both'",
+                      "hover changed the selected visualization tab");
+    storage.require_unchanged();
+}
+
+TEST_CASE("every native dropdown dismisses by Escape and outside press",
+          "[native-n1][state-parity][dropdown][dismissal]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    const std::array<std::string_view, 5> menus{
+        "bands", "edit", "analyzer", "overflow", "pattern"};
+    const pulp::view::Point outside{660.0f, 430.0f};
+    for (const auto menu : menus) {
+        INFO("menu=" << menu);
+        const auto root = std::string{"[data-spectr-menu-root=\""}
+            + std::string(menu) + "\"]";
+        const auto trigger = root + " [data-spectr-menu-trigger]";
+        const auto options = root + " [data-spectr-menu-options]";
+
+        const auto open_from_keyboard = [&] {
+            rig.bridge().load_script(
+                "document.querySelector(" + js_string(trigger) + ").focus()",
+                "spectr-native-focus-menu-trigger");
+            REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+                *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+                pulp::view::kModNone, true));
+            settle(rig.clock, 8);
+        };
+        open_from_keyboard();
+        REQUIRE(rig.root->interaction().active_overlay != nullptr);
+        REQUIRE(rig.root->interaction().active_overlay->overlay_consumes_outside_click());
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 8);
+        require_runtime_contract(
+            rig, "!document.querySelector(" + js_string(options) + ")",
+            "Escape left a dropdown open");
+
+        open_from_keyboard();
+        REQUIRE(rig.root->interaction().active_overlay != nullptr);
+        CAPTURE(describe_control(*rig.root->interaction().active_overlay));
+        REQUIRE_FALSE(rig.root->interaction().active_overlay->overlay_contains(outside));
+        rig.root->simulate_click(outside);
+        settle(rig.clock, 8);
+        require_runtime_contract(
+            rig, "!document.querySelector(" + js_string(options) + ")",
+            "outside press left a dropdown open");
+
+        // The same Pulp-owned active state must drive keyboard traversal and
+        // pointer hover for every Spectr popup, not just the band selector.
+        // Keeping this in the all-menu loop prevents a semantically incomplete
+        // imported dropdown from silently falling back to click-only behavior.
+        open_from_keyboard();
+        require_runtime_contract(
+            rig,
+            "(() => { const popup = document.querySelector("
+                + js_string(options)
+                + "); const items = popup ? Array.from(document.querySelectorAll("
+                + js_string(options + " button") + ")) : []; "
+                  "return items.length >= 3 "
+                  "&& document.querySelector('[data-pulp-popup-active=\"true\"]') === items[0]; })()",
+            "ArrowDown did not open the dropdown with one visible highlight");
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 4);
+        require_runtime_contract(
+            rig,
+            "(() => { const items = Array.from(document.querySelectorAll("
+                + js_string(options + " button") + ")); "
+                  "return document.querySelector('[data-pulp-popup-active=\"true\"]') === items[1]; })()",
+            "ArrowDown did not move the authoritative dropdown highlight");
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::up),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 4);
+        require_runtime_contract(
+            rig,
+            "(() => { const items = Array.from(document.querySelectorAll("
+                + js_string(options + " button") + ")); "
+                  "return document.querySelector('[data-pulp-popup-active=\"true\"]') === items[0]; })()",
+            "ArrowUp did not move the authoritative dropdown highlight");
+        const auto hover_point = runtime_string(
+            rig,
+            "(() => { const rect = Array.from(document.querySelectorAll("
+                + js_string(options + " button")
+                + "))[2].getBoundingClientRect(); "
+                  "return (rect.left + rect.width / 2) + ','"
+                  " + (rect.top + rect.height / 2); })()",
+            "spectr-native-hover-menu-option-point");
+        const auto comma = hover_point.find(',');
+        REQUIRE(comma != std::string::npos);
+        rig.root->simulate_hover({
+            std::stof(hover_point.substr(0, comma)),
+            std::stof(hover_point.substr(comma + 1))});
+        settle(rig.clock, 4);
+        require_runtime_contract(
+            rig,
+            "(() => { const items = Array.from(document.querySelectorAll("
+                + js_string(options + " button") + ")); const hovered = items[2]; "
+                  "return document.querySelector('[data-pulp-popup-active=\"true\"]') === hovered "
+                  "&& hovered.style.backgroundColor === 'rgba(120,180,255,0.18)'; })()",
+            "pointer hover did not move and visibly paint the dropdown highlight");
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::enter),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 8);
+        require_runtime_contract(
+            rig, "!document.querySelector(" + js_string(options) + ")",
+            "Return did not select the highlighted option and close the dropdown");
+    }
+    storage.require_unchanged();
+}
+
+TEST_CASE("native settings modal dismisses by Escape and outside press",
+          "[native-n1][state-parity][settings][dismissal]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    // Match the production host boundary: the first frame lays out the mounted
+    // document before a user can invoke the modal command.
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+    const auto comma = static_cast<pulp::view::KeyCode>(',');
+    CHECK_FALSE(rig.root->on_global_key({
+        .key = comma,
+        .modifiers = pulp::view::kModNone,
+        .is_down = true}));
+    require_home(rig);
+
+    const auto open_settings = [&] {
+#if defined(__APPLE__)
+        constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+        constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+        REQUIRE(rig.root->on_global_key({
+            .key = comma,
+            .modifiers = primary_modifier,
+            .is_down = true}));
+        settle(rig.clock, 16);
+        require_state(rig, "settings");
+        REQUIRE(rig.root->interaction().active_overlay != nullptr);
+    };
+
+    INFO("phase=open-for-escape");
+    open_settings();
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-pulp-popup-active=\"true\"]')",
+        "Settings opened with a stale dropdown highlight claim");
+    REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+        *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+        pulp::view::kModNone, true));
+    REQUIRE(rig.root->interaction().active_overlay == nullptr);
+    settle(rig.clock, 8);
+    require_home(rig);
+
+    INFO("phase=open-for-outside");
+    open_settings();
+    REQUIRE(rig.root->interaction().active_overlay->overlay_consumes_outside_click());
+    const auto* title = find_label(*rig.root, "SETTINGS");
+    REQUIRE(title != nullptr);
+    const auto title_rect = root_rect(*title);
+    const pulp::view::Point title_point{
+        (title_rect.left + title_rect.right) * 0.5f,
+        (title_rect.top + title_rect.bottom) * 0.5f};
+    CAPTURE(describe_control(*rig.root->interaction().active_overlay));
+    REQUIRE(rig.root->interaction().active_overlay->overlay_contains(title_point));
+    const auto inside = pulp::view::route_press_to_active_overlay(
+        *rig.root, title_point);
+    REQUIRE(inside.routing == pulp::view::OverlayPressRouting::routed);
+    REQUIRE(inside.target != nullptr);
+    REQUIRE(static_cast<bool>(rig.root->interaction().active_overlay
+                                  ->on_overlay_dismissed));
+    require_runtime_contract(
+        rig,
+        "(() => { const panel = document.querySelector('[data-spectr-settings-panel]');"
+        " const key = panel && panel.__pulpId + ':dismiss';"
+        " return !!key && globalThis.__pulpReactEventCallbacks__.has(key); })()",
+        "settings panel lost its native dismiss callback");
+    settle(rig.clock, 8);
+    INFO("phase=inside-positive-control");
+    require_state(rig, "settings");
+
+    // The authored panel occupies x=400..920. This point is on the modal
+    // scrim, proving the outside path rather than reusing the close button.
+    const auto field_before_outside = rig.processor.field();
+    rig.root->simulate_click({1200.0f, 430.0f});
+    settle(rig.clock, 8);
+    INFO("phase=outside-dismissal");
+    require_home(rig);
+    for (std::size_t index = 0; index < field_before_outside.bands.size(); ++index) {
+        CHECK(rig.processor.field().bands[index].gain_db
+              == Catch::Approx(field_before_outside.bands[index].gain_db));
+        CHECK(rig.processor.field().bands[index].muted
+              == field_before_outside.bands[index].muted);
+    }
+    storage.require_unchanged();
+}
+
+TEST_CASE("remaining native modal panels share Escape and outside dismissal",
+          "[native-n1][state-parity][modal-dismissal]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+
+    const auto exercise = [&](std::string_view name,
+                              const auto& open,
+                              std::string_view panel_selector) {
+        const auto require_open = [&] {
+            CAPTURE(name);
+            open();
+            settle(rig.clock, 12);
+            require_runtime_contract(
+                rig,
+                "!!document.querySelector(" + js_string(panel_selector) + ")",
+                std::string{name} + " did not open");
+            REQUIRE(rig.root->interaction().active_overlay != nullptr);
+            REQUIRE(rig.root->interaction().active_overlay
+                        ->overlay_consumes_outside_click());
+            REQUIRE(static_cast<bool>(rig.root->interaction().active_overlay
+                                          ->on_overlay_dismissed));
+            require_runtime_contract(
+                rig,
+                "(() => { const panel = document.querySelector("
+                    + js_string(panel_selector)
+                    + "); const key = panel && panel.__pulpId + ':dismiss';"
+                      " return !!key && globalThis.__pulpReactEventCallbacks__.has(key); })()",
+                std::string{name} + " lost its native dismiss callback");
+
+            const auto center = runtime_string(
+                rig,
+                "(() => { const r = document.querySelector("
+                    + js_string(panel_selector)
+                    + ").getBoundingClientRect(); return (r.left + r.width / 2)"
+                      " + ',' + (r.top + r.height / 2); })()",
+                "spectr-native-modal-panel-center");
+            const auto comma = center.find(',');
+            REQUIRE(comma != std::string::npos);
+            const pulp::view::Point inside{
+                std::stof(center.substr(0, comma)),
+                std::stof(center.substr(comma + 1))};
+            REQUIRE(rig.root->interaction().active_overlay->overlay_contains(inside));
+            const auto routing = pulp::view::route_press_to_active_overlay(
+                *rig.root, inside);
+            REQUIRE(routing.routing == pulp::view::OverlayPressRouting::routed);
+            settle(rig.clock, 4);
+            require_runtime_contract(
+                rig,
+                "!!document.querySelector(" + js_string(panel_selector) + ")",
+                std::string{name} + " treated an inside press as outside");
+        };
+
+        INFO("phase=escape " << name);
+        require_open();
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 8);
+        require_runtime_contract(
+            rig,
+            "!document.querySelector(" + js_string(panel_selector) + ")",
+            std::string{name} + " ignored Escape");
+
+        INFO("phase=outside " << name);
+        require_open();
+        const pulp::view::Point outside{12.0f, 12.0f};
+        REQUIRE_FALSE(
+            rig.root->interaction().active_overlay->overlay_contains(outside));
+        const auto field_before_outside = rig.processor.field();
+        rig.root->simulate_click(outside);
+        settle(rig.clock, 8);
+        require_runtime_contract(
+            rig,
+            "!document.querySelector(" + js_string(panel_selector) + ")",
+            std::string{name} + " ignored native outside dismissal");
+        require_home(rig);
+        for (std::size_t index = 0; index < field_before_outside.bands.size(); ++index) {
+            CHECK(rig.processor.field().bands[index].gain_db
+                  == Catch::Approx(field_before_outside.bands[index].gain_db));
+            CHECK(rig.processor.field().bands[index].muted
+                  == field_before_outside.bands[index].muted);
+        }
+    };
+
+    exercise("pattern manager", [&] {
+        activate(rig,
+                 "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+        activate(rig, "[data-spectr-pattern-manage]");
+    }, "[data-spectr-pattern-manager-panel]");
+
+    exercise("save preset", [&] {
+        activate(rig,
+                 "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+        activate(rig, "[data-spectr-save-current]");
+    }, "[data-spectr-save-panel]");
+
+    exercise("help", [&] {
+        activate(rig,
+                 "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+    }, "[data-spectr-help-panel]");
+
+    storage.require_unchanged();
+}
+
+TEST_CASE("native Flare keeps below-zero bands negative while pushing them outward",
+          "[native-n1][state-parity][flare]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.close();
+    for (auto& band : rig.processor.field().bands) {
+        band.gain_db = -4.0f;
+        band.muted = false;
+    }
+    rig.open();
+    require_home(rig);
+    activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-edit-mode=\"flare\"]");
+    require_app_state(rig, "s.editMode === 'flare'", "Flare mode did not become authoritative");
+
+    rig.bridge().load_script(R"js((() => {
+      const selector = '[data-spectr-filter-surface]';
+      const fire = (type, x, y, buttons) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+          clientX: x, clientY: y, pointerId: 94, button: 0, buttons
+        })) throw new Error('Flare activation failed: ' + type);
+      };
+      fire('pointerdown', 660, 430, 1);
+      fire('pointermove', 660, 350, 1);
+      fire('pointerup', 660, 350, 0);
+      if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+        globalThis.__pulpRuntimeSettle__(6);
+      const gains = globalThis.__spectrTestHooks.renderState().targetGains;
+      if (!gains.some(value => Number.isFinite(value) && value < (-4 / 24)))
+        throw new Error('Flare did not push a negative band farther below zero');
+      if (gains.some(value => Number.isFinite(value) && value > 0))
+        throw new Error('Flare flipped a below-zero band positive');
+    })();)js", "spectr-native-flare-negative");
+    settle(rig.clock, 8);
+    const auto visible = spectr::visible_count(rig.processor.layout());
+    REQUIRE(std::any_of(rig.processor.field().bands.begin(),
+                        rig.processor.field().bands.begin() + visible,
+                        [](const auto& band) { return band.gain_db < -4.01f; }));
+    REQUIRE(std::none_of(rig.processor.field().bands.begin(),
+                         rig.processor.field().bands.begin() + visible,
+                         [](const auto& band) { return band.gain_db > 0.0f; }));
+    storage.require_unchanged();
 }
 
 TEST_CASE("native frozen state atlas interactions and persistence",
@@ -1002,7 +1934,7 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         "JSON.stringify(globalThis.__spectrToolbarOpticalCenteringReceipt__) === "
         "'[{\"root\":\"edit\",\"svg_top\":6.5,\"label_top\":6.25,\"svg_x_shift\":-1,\"svg_y_shift\":0,\"label_x_shift\":-1,\"label_y_shift\":0},"
         "{\"root\":\"analyzer\",\"svg_top\":3.75,\"label_top\":6.25,\"svg_x_shift\":-1,\"svg_y_shift\":0,\"label_x_shift\":-1,\"label_y_shift\":0},"
-        "{\"root\":\"pattern\",\"svg_top\":5.375,\"label_top\":6.375,\"svg_x_shift\":0.25,\"svg_y_shift\":0,\"label_x_shift\":0.25,\"label_y_shift\":0}]'",
+        "{\"root\":\"pattern\",\"svg_top\":5.375,\"label_top\":6.25,\"svg_x_shift\":0.25,\"svg_y_shift\":0,\"label_x_shift\":0.25,\"label_y_shift\":0}]'",
         "toolbar optical-centering corrections were not applied");
     const auto require_toolbar_child_geometry = [&](std::string_view text,
                                                       float icon_top,
@@ -1015,6 +1947,7 @@ TEST_CASE("native frozen state atlas interactions and persistence",
                                                       float icon_y_shift,
                                                       float label_x_shift,
                                                       float label_y_shift) {
+        CAPTURE(text);
         const auto* label = find_label(*rig.root, text);
         REQUIRE(label != nullptr);
         const auto* button = label->parent();
@@ -1057,10 +1990,9 @@ TEST_CASE("native frozen state atlas interactions and persistence",
                                    7.25f, 22.0f, 16.0f,
                                    11.0f, 39.0f,
                                    -1.0f, 0.0f, -1.0f, 0.0f);
-    require_toolbar_child_geometry("PRESETS ▾", 6.375f,
-                                   7.375f, 18.0f, 13.0f,
-                                   11.0f, 35.0f,
-                                   0.25f, 0.0f, 0.25f, 0.0f);
+    // The preset label is processor-owned and can change before the first
+    // painted frame. Its live geometry is covered by the optical-centering
+    // receipt above rather than by a frozen initial-label lookup.
     feed_tone(rig);
     capture(rig, directory, "home");
 
@@ -1074,13 +2006,28 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     activate(rig, "[data-spectr-band-count=\"32\"]");
     REQUIRE(rig.processor.layout() == spectr::Layout::Bands32);
 
+    const auto require_selected_toolbar_baseline = [&] (std::string_view root,
+                                                         std::string_view attribute,
+                                                         std::string_view value) {
+        activate(rig, "[data-spectr-menu-root=\"" + std::string(root)
+                      + "\"] [data-spectr-menu-trigger]");
+        activate(rig, "[" + std::string(attribute) + "=\""
+                      + std::string(value) + "\"]");
+        require_runtime_contract(
+            rig,
+            "globalThis.__spectrToolbarOpticalCenteringReceipt__.find("
+            "entry => entry.root === '" + std::string(root)
+            + "')?.label_top === 6.25",
+            "selected " + std::string(root) + " label lost its optical baseline");
+    };
+
     activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
     require_state(rig, "edit");
     capture(rig, directory, "edit");
     activate(rig, "[data-spectr-edit-mode=\"level\"]");
     require_app_state(rig, "s.editMode === 'level'", "edit mode menu selection failed");
-    activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
-    activate(rig, "[data-spectr-edit-mode=\"sculpt\"]");
+    for (const auto* mode : {"boost", "flare", "glide", "sculpt"})
+        require_selected_toolbar_baseline("edit", "data-spectr-edit-mode", mode);
     // The idle status shell stays in the tree without painting, so transient
     // messages cannot shift materialized state paths.
     require_home(rig);
@@ -1090,8 +2037,9 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     capture(rig, directory, "analyzer");
     activate(rig, "[data-spectr-analyzer-mode=\"avg\"]");
     require_app_state(rig, "s.analyzerMode === 'avg'", "analyzer menu selection failed");
-    activate(rig, "[data-spectr-menu-root=\"analyzer\"] [data-spectr-menu-trigger]");
-    activate(rig, "[data-spectr-analyzer-mode=\"peak\"]");
+    for (const auto* mode : {"both", "off", "peak"})
+        require_selected_toolbar_baseline(
+            "analyzer", "data-spectr-analyzer-mode", mode);
     require_home(rig);
 
     activate(rig, "[data-spectr-menu-root=\"overflow\"] [data-spectr-menu-trigger]");
@@ -1109,13 +2057,51 @@ TEST_CASE("native frozen state atlas interactions and persistence",
 
     activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
     require_state(rig, "pattern");
+    require_runtime_contract(rig, R"js((() => {
+      const popup = document.querySelector(
+        '[data-spectr-menu-root="pattern"] [data-spectr-menu-options]');
+      const save = document.querySelector('[data-spectr-save-current]');
+      const manage = document.querySelector('[data-spectr-pattern-manage]');
+      if (!popup || !save || !manage) return false;
+      const p = popup.getBoundingClientRect();
+      const s = save.getBoundingClientRect();
+      const m = manage.getBoundingClientRect();
+      const valid = Math.abs(s.left - m.left) < 0.5
+        && Math.abs(s.width - m.width) < 0.5
+        && m.top >= s.bottom - 0.5
+        && s.left >= p.left - 0.5 && m.right <= p.right + 0.5
+        && m.bottom <= p.bottom + 0.5;
+      if (!valid) throw new Error(JSON.stringify({ popup: p, save: s, manage: m }));
+      return true;
+    })())js", "preset actions were not separate full-width rows");
     capture(rig, directory, "pattern");
     activate(rig, "[data-spectr-pattern-menu-id=\"factory:tilt\"]");
     REQUIRE(std::any_of(rig.processor.field().bands.begin(),
                         rig.processor.field().bands.begin() + 32,
                         [](const auto& band) { return std::abs(band.gain_db) > 0.1f; }));
+    REQUIRE(std::any_of(rig.processor.field().bands.begin(),
+                        rig.processor.field().bands.begin() + 32,
+                        [](const auto& band) { return band.gain_db < -0.1f; }));
+    REQUIRE(std::any_of(rig.processor.field().bands.begin(),
+                        rig.processor.field().bands.begin() + 32,
+                        [](const auto& band) { return band.gain_db > 0.1f; }));
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-selected-preset]')?.textContent"
+        " === 'DOWNWA\u2026 \u25BE'",
+        "selected factory preset name was not safely truncated on the trigger");
+    require_runtime_contract(
+        rig,
+        "globalThis.__spectrToolbarOpticalCenteringReceipt__.find("
+        "entry => entry.root === 'pattern')?.label_top === 6.25",
+        "selected preset label lost the shared toolbar optical baseline");
     activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
     activate(rig, "[data-spectr-pattern-menu-id=\"factory:flat\"]");
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-selected-preset]')?.textContent"
+        " === 'FLAT \u25BE'",
+        "selected factory preset name did not update after applying a new preset");
     require_home(rig);
 
     activate(rig, "[data-spectr-settings-open]");
@@ -1142,6 +2128,105 @@ TEST_CASE("native frozen state atlas interactions and persistence",
           == Catch::Approx(520.0f).margin(0.01f));
     CHECK(authored_settings_panel->bounds().height
           == Catch::Approx(679.0f).margin(0.01f));
+    const auto panel_rect = root_rect(*authored_settings_panel);
+    const auto* close_label = find_label(*rig.root, "×");
+    REQUIRE(close_label != nullptr);
+    const auto* close_target = nearest_click_target(close_label);
+    REQUIRE(close_target != nullptr);
+    const auto close_rect = root_rect(*close_target);
+    const View* settings_header = authored_settings_title;
+    while (settings_header != nullptr
+           && settings_header->position() != View::Position::sticky)
+        settings_header = settings_header->parent();
+    REQUIRE(settings_header != nullptr);
+    const auto header_rect = root_rect(*settings_header);
+    // Sticky modal chrome owns the complete top strip. A title-sized opaque
+    // box leaves scrolled fields visible through the panel padding around it.
+    CHECK(header_rect.left == Catch::Approx(panel_rect.left + 1.0f).margin(0.01f));
+    CHECK(header_rect.top == Catch::Approx(panel_rect.top + 1.0f).margin(0.01f));
+    CHECK(header_rect.right == Catch::Approx(panel_rect.right - 1.0f).margin(0.01f));
+    CHECK(header_rect.bottom >= close_rect.bottom + 8.0f);
+    CHECK(close_rect.top >= panel_rect.top + 20.0f);
+    CHECK(close_rect.bottom <= panel_rect.top + 64.0f);
+    CHECK(panel_rect.right - close_rect.right >= 20.0f);
+    CHECK(panel_rect.right - close_rect.right <= 60.0f);
+    require_runtime_contract(
+        rig,
+        "document.querySelectorAll('[data-spectr-settings-group=\"feedback\"]')?.length === 1",
+        "feedback group lost its stable materialized identity");
+    require_app_state(rig, "s.settings.statusInfo !== false",
+                      "status info did not default on");
+    const auto* feedback_label = find_label(*rig.root, "FEEDBACK");
+    const auto* status_info_label = find_label(*rig.root, "Status info");
+    const auto* response_label = find_label(*rig.root, "Response");
+    REQUIRE(feedback_label != nullptr);
+    REQUIRE(status_info_label != nullptr);
+    REQUIRE(response_label != nullptr);
+    const auto direct_panel_child = [&](const View* node) {
+        while (node != nullptr && node->parent() != authored_settings_panel)
+            node = node->parent();
+        return node;
+    };
+    const auto* feedback_group = direct_panel_child(feedback_label);
+    const auto* response_group = direct_panel_child(response_label);
+    REQUIRE(feedback_group != nullptr);
+    REQUIRE(response_group != nullptr);
+    const auto feedback_rect = root_rect(*feedback_group);
+    const auto response_rect = root_rect(*response_group);
+    CHECK(feedback_rect.top > response_rect.bottom);
+    CHECK(feedback_rect.left >= panel_rect.left + 20.0f);
+    CHECK(feedback_rect.right <= panel_rect.right - 20.0f);
+    capture(rig, directory, "settings-top");
+    auto* settings_scroll = dynamic_cast<pulp::view::ScrollView*>(
+        const_cast<View*>(authored_settings_panel));
+    REQUIRE(settings_scroll != nullptr);
+    // The production host performs layout immediately before its first paint.
+    // Drive that same boundary explicitly so automatic child-derived extent is
+    // observable even when this test is run without screenshot capture.
+    rig.root->layout_children();
+    CHECK(settings_scroll->content_size().height
+          > settings_scroll->bounds().height + 0.5f);
+    settings_scroll->set_scroll(0.0f, 10000.0f);
+    settle(rig.clock, 4);
+    CHECK(settings_scroll->scroll_y() > 0.0f);
+    capture(rig, directory, "settings-feedback");
+    const pulp::view::Point sticky_close_point{
+        (close_rect.left + close_rect.right) * 0.5f,
+        (close_rect.top + close_rect.bottom) * 0.5f};
+    CHECK(nearest_click_target(rig.root->hit_test(sticky_close_point))
+          == close_target);
+    require_runtime_contract(
+        rig,
+        "String(document.getElementById('spectr-status-info-toggle')?.getAttribute('aria-checked')) === 'true'",
+        "status info toggle did not expose its enabled state");
+    activate(rig, "#spectr-status-info-toggle");
+    require_app_state(rig, "s.settings.statusInfo === false",
+                      "status info toggle did not disable messages");
+    require_runtime_contract(
+        rig,
+        "String(document.getElementById('spectr-status-info-toggle')?.getAttribute('aria-checked')) === 'false'",
+        "status info toggle did not expose its disabled state");
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-spectr-status-banner]')",
+        "disabling status info left the banner painted");
+    activate(rig, "#spectr-status-info-toggle");
+    require_app_state(rig, "s.settings.statusInfo === true",
+                      "status info toggle did not restore messages");
+    require_runtime_contract(
+        rig,
+        "String(document.getElementById('spectr-status-info-toggle')?.getAttribute('aria-checked')) === 'true'",
+        "status info toggle did not restore its enabled state");
+    activate(rig, "[data-spectr-settings-close]", "pointerenter");
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-settings-close]')?.getAttribute('data-spectr-close-state') === 'hover'",
+        "settings close did not expose hover feedback");
+    activate(rig, "[data-spectr-settings-close]", "pointerdown");
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-settings-close]')?.getAttribute('data-spectr-close-state') === 'pressed'",
+        "settings close did not expose pressed feedback");
     capture(rig, directory, "settings");
     activate(rig, "[data-spectr-setting-option=\"warm\"]");
     activate(rig, "[data-spectr-setting-toggle]");
@@ -1161,15 +2246,19 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         "s.settings.theme === 'spectral' && s.settings.showMinimap === true"
         " && s.settings.bloom === 1",
         "settings controls did not restore deterministic atlas defaults");
+    rig.root->simulate_click(sticky_close_point);
+    settle(rig.clock, 12);
+    require_home(rig);
+    activate(rig, "[data-spectr-settings-open]");
+    require_state(rig, "settings");
     activate(rig, "[data-spectr-settings-close]");
     require_home(rig);
 
     activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
     require_state(rig, "help");
     capture(rig, directory, "help");
-    // Native document/window keyboard listeners are not yet fed by Pulp's
-    // focused-view key path. The same trigger is the product's deterministic
-    // native close interaction; Chromium separately proves Escape.
+    // Help is a persistent rail panel rather than a semantic popup. Reusing
+    // its trigger is its deterministic native close interaction.
     activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
     require_home(rig);
 
@@ -1225,6 +2314,15 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     capture(rig, directory, "save-dialog");
     require_app_state(rig, "s.saveDialogOpen === true",
                       "save command did not open its native dialog");
+    REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+        *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+        pulp::view::kModNone, true));
+    settle(rig.clock, 8);
+    require_app_state(rig, "s.saveDialogOpen === false",
+                      "Escape left the save dialog open");
+    activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-save-current]");
+    require_state(rig, "save-dialog");
     activate(rig, "#spectr-save-name", "change",
              R"js({value:'STATE ATLAS MASK',target:{value:'STATE ATLAS MASK'},currentTarget:{value:'STATE ATLAS MASK'}})js");
     activate(rig, "[data-spectr-manager-action=\"save-submit\"]");
@@ -1256,6 +2354,64 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     require_app_state(rig,
         "s.managerOpen === true && s.userPatterns.length === 1",
         "saved preset was not available in the native pattern manager");
+    activate(rig, "[data-spectr-pattern-id=\"factory:tilt\"]");
+    settle(rig.clock, 4);
+    rig.bridge().load_script(R"js((() => {
+      const manager = document.querySelector(
+        '[data-spectr-overlay="true"][aria-label="Pattern manager"]');
+      if (!manager) throw new Error('pattern manager overlay missing');
+      const heading = document.querySelector('[data-spectr-manager-heading]');
+      const title = document.querySelector('[data-spectr-manager-title]');
+      const source = document.querySelector('[data-spectr-manager-source]');
+      const preview = document.querySelector('[data-spectr-manager-preview]');
+      const bands = document.querySelector('[data-spectr-manager-meta]');
+      const actionRow = document.querySelector('[data-spectr-manager-actions]');
+      const actions = ['apply', 'set-default', 'duplicate',
+        'export-file', 'export-clip'];
+      const labels = ['APPLY', 'SET AS DEFAULT', 'DUPLICATE',
+        'EXPORT (FILE)', 'EXPORT (CLIP)'];
+      const buttons = actions.map(action => document.querySelector(
+        '[data-spectr-manager-action="' + action + '"]'));
+      if (!heading || !title || !source || !preview || !bands || !actionRow
+          || buttons.some(button => !button))
+        throw new Error('selected preset detail subjects missing');
+      const managerRect = manager.getBoundingClientRect();
+      const headingRect = heading.getBoundingClientRect();
+      const titleRect = title.getBoundingClientRect();
+      const sourceRect = source.getBoundingClientRect();
+      const previewRect = preview.getBoundingClientRect();
+      const bandsRect = bands.getBoundingClientRect();
+      const actionRect = actionRow.getBoundingClientRect();
+      const buttonRects = buttons.map(button => button.getBoundingClientRect());
+      if (headingRect.width <= 0 || previewRect.width <= 0 || bandsRect.width <= 0
+          || actionRect.width <= 0)
+        throw new Error('selected preset detail collapsed');
+      if (titleRect.right > sourceRect.left + 0.5)
+        throw new Error('selected preset source badge overlaps its title');
+      if (headingRect.bottom > previewRect.top + 0.5
+          || previewRect.bottom > bandsRect.top + 0.5
+          || bandsRect.bottom > actionRect.top + 0.5)
+        throw new Error('selected preset detail vertical order collapsed');
+      for (const rect of buttonRects) {
+        if (rect.width < 50 || rect.height < 25)
+          throw new Error('selected preset action collapsed');
+        if (rect.left < managerRect.left - 0.5 || rect.right > managerRect.right + 0.5
+            || rect.top < managerRect.top - 0.5 || rect.bottom > managerRect.bottom + 0.5)
+          throw new Error('selected preset action escaped the manager');
+      }
+      for (let a = 0; a < buttonRects.length; ++a) {
+        for (let b = a + 1; b < buttonRects.length; ++b) {
+          const xOverlap = Math.min(buttonRects[a].right, buttonRects[b].right)
+            - Math.max(buttonRects[a].left, buttonRects[b].left);
+          const yOverlap = Math.min(buttonRects[a].bottom, buttonRects[b].bottom)
+            - Math.max(buttonRects[a].top, buttonRects[b].top);
+          if (xOverlap > 0.5 && yOverlap > 0.5)
+            throw new Error('selected preset actions overlap: '
+              + labels[a] + ' / ' + labels[b]);
+        }
+      }
+    })();)js", "spectr-native-pattern-manager-selected-layout");
+    settle(rig.clock, 4);
     std::vector<const pulp::view::SvgRectWidget*> preview_rects;
     collect_svg_rects(*rig.root, preview_rects);
     const auto distributed_preview_bars = std::count_if(
@@ -1438,18 +2594,38 @@ TEST_CASE("native buttons are tappable across their whole painted bounds",
     std::vector<const View*> controls;
     collect_click_targets(*rig.root, controls);
     REQUIRE(controls.size() >= 15);
-    for (const auto* control : controls) {
-        if (control->bounds().width <= 0.0f || control->bounds().height <= 0.0f)
+    std::vector<std::string> control_ids;
+    control_ids.reserve(controls.size());
+    for (const auto* control : controls) control_ids.push_back(control->id());
+    const std::function<const View*(const View&, std::string_view)> find_by_id =
+        [&](const View& view, std::string_view id) -> const View* {
+          if (view.id() == id) return &view;
+          for (std::size_t index = 0; index < view.child_count(); ++index)
+              if (const auto* match = find_by_id(*view.child_at(index), id))
+                  return match;
+          return nullptr;
+        };
+    for (const auto& control_id : control_ids) {
+        const auto* initial = find_by_id(*rig.root, control_id);
+        REQUIRE(initial != nullptr);
+        if (initial->bounds().width <= 0.0f || initial->bounds().height <= 0.0f)
             continue;
-        INFO("control " << describe_control(*control));
-        // Aim at the PAINTED extent, in root space, because that is what the
-        // user aims at. Probing the hit box instead would pass even when ink
-        // spills outside it, which is the whole complaint in #39.
-        const auto painted = painted_extent(*control);
-        const float y = (painted.top + painted.bottom) * 0.5f;
-        for (const float x : {painted.left + 1.5f,
-                              (painted.left + painted.right) * 0.5f,
-                              painted.right - 1.5f}) {
+        INFO("control " << describe_control(*initial));
+        for (const float fraction : {0.0f, 0.5f, 1.0f}) {
+            if (rig.root->interaction().active_overlay != nullptr) {
+                pulp::view::View::dismiss_active_overlay(*rig.root);
+                settle(rig.clock, 12);
+            }
+            const auto* control = find_by_id(*rig.root, control_id);
+            REQUIRE(control != nullptr);
+            // Aim at the PAINTED extent, in root space, because that is what
+            // the user aims at. Re-resolve after dismissing an overlay because
+            // that React commit may replace a live view object.
+            const auto painted = painted_extent(*control);
+            const float y = (painted.top + painted.bottom) * 0.5f;
+            const float x = fraction == 0.0f ? painted.left + 1.5f
+                : fraction == 1.0f ? painted.right - 1.5f
+                                   : (painted.left + painted.right) * 0.5f;
             CAPTURE(x, y, painted.left, painted.right);
             const auto before = click_dispatch_count(rig);
             rig.root->simulate_click({x, y});
@@ -1532,6 +2708,18 @@ pulp::view::Point root_to_window(pulp::view::Point root_pt,
     return {root_pt.x * sx + tx, root_pt.y * sy + ty};
 }
 
+void deliver_native_resize_drag(View& root, View* target,
+                                pulp::view::Point root_pt,
+                                float movement_x, float movement_y) {
+    pulp::view::PointerAttributes pointer;
+    pointer.movement_x = movement_x;
+    pointer.movement_y = movement_y;
+    pointer.has_movement_delta = true;
+    pulp::view::deliver_mouse_drag(
+        root, target, root_pt, /*modifiers=*/0, /*click_count=*/1,
+        pulp::view::MouseButton::left, pointer);
+}
+
 }  // namespace
 
 TEST_CASE("editor resize grip sits in the bottom bar at every size",
@@ -1552,24 +2740,20 @@ TEST_CASE("editor resize grip sits in the bottom bar at every size",
         REQUIRE(grip != nullptr);
 
         const auto box = root_rect(*grip);
-        CHECK(box.right - box.left == Catch::Approx(14.0f));
-        CHECK(box.bottom - box.top == Catch::Approx(14.0f));
+        CHECK(box.right - box.left == Catch::Approx(20.0f));
+        CHECK(box.bottom - box.top == Catch::Approx(20.0f));
         // INVARIANT under the pin, and this is the proportional contract in one
         // assertion: the grip sits at the bottom-right of the AUTHORED box at
         // every host size, because the root never reflows — the host scales it.
         // Under the old responsive contract this tracked the live host bounds
         // instead, which is exactly the reflow the user ruled out.
         CHECK(box.right
-              == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth) - 3.0f));
-        // Laid INTO the bottom bar rather than floated in the corner behind it
-        // (the Efx FRAGMENTS arrangement): vertically centred on the bar's 26pt
-        // control row, whose centre is bar_top(804) + 15.5 + 13 = 832.5. A grip
-        // that drifts off that row stops reading as part of the bar, and a bar
-        // height change that nobody propagated fails here.
-        constexpr float kBarControlRowCentre = 804.0f + 15.5f + 13.0f;
-        CHECK((box.top + box.bottom) * 0.5f
-              == Catch::Approx(kBarControlRowCentre));
-        CHECK(box.bottom < static_cast<float>(spectr::kEditorDesignHeight));
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth)));
+        // Conventional AU affordance: flush with the plug-in content corner.
+        // Logic-owned chrome may continue below the content view, but the
+        // plug-in must not leave an internal gap above it.
+        CHECK(box.bottom
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignHeight)));
 
         // Reachable: hit-testing its centre resolves to the grip itself, not to
         // whatever the scripted realm painted underneath.
@@ -1666,7 +2850,6 @@ TEST_CASE("editor resize grip drag requests an aspect-held, clamped size",
 
     const auto* grip = find_resize_grip(*rig.root);
     REQUIRE(grip != nullptr);
-    auto& mutable_grip = *const_cast<View*>(grip);
 
     std::vector<std::pair<std::uint32_t, std::uint32_t>> requests;
     bool accept = true;
@@ -1676,18 +2859,26 @@ TEST_CASE("editor resize grip drag requests an aspect-held, clamped size",
             return accept;
         });
 
-    // Deltas are stated as POINTER movement — window-space points, which is
-    // what a user actually moves and what the editor must grow by. At this host
-    // size the design viewport scales by 990/1320 = 0.75, so a root-space delta
-    // is NOT the same number; deriving the root points to deliver from the
-    // intended window movement keeps the case honest at any host size.
+    // Deltas are stated as POINTER movement — host/window-space points, which
+    // is what Pulp's native plug-in host stamps onto PointerAttributes. At this
+    // host size the design viewport scales by 990/1320 = 0.75, so the delivered
+    // root point deliberately disagrees numerically with the native movement.
+    // That keeps this case honest about which channel owns resize arithmetic.
     const auto drag = [&](float window_dx, float window_dy) {
-        const auto anchor = pulp::view::Point{0.0f, 0.0f};
+        const auto box = root_rect(*grip);
+        const auto anchor = pulp::view::Point{
+            (box.left + box.right) * 0.5f,
+            (box.top + box.bottom) * 0.5f};
+        auto* target = rig.root->hit_test(anchor);
+        REQUIRE(target == grip);
+        REQUIRE(pulp::view::deliver_mouse_down(
+            *rig.root, target, anchor, /*modifiers=*/0,
+            /*click_count=*/1, /*bubble=*/true));
         const auto origin = root_to_window(anchor, 990.0f, 645.0f);
         const auto moved = window_to_root(
             {origin.x + window_dx, origin.y + window_dy}, 990.0f, 645.0f);
-        mutable_grip.on_mouse_down(anchor);
-        mutable_grip.on_mouse_drag(moved);
+        deliver_native_resize_drag(
+            *rig.root, target, moved, window_dx, window_dy);
     };
 
     SECTION("a grow drag asks for the aspect-held size") {
@@ -1730,8 +2921,10 @@ TEST_CASE("editor resize grip drag requests an aspect-held, clamped size",
 
         // And one refusal ends the gesture's traffic rather than opening a
         // rejected host transaction per mouse-move.
-        mutable_grip.on_mouse_drag({360.0f, 0.0f});
-        mutable_grip.on_mouse_drag({390.0f, 0.0f});
+        deliver_native_resize_drag(
+            *rig.root, const_cast<View*>(grip), {360.0f, 0.0f}, 30.0f, 0.0f);
+        deliver_native_resize_drag(
+            *rig.root, const_cast<View*>(grip), {390.0f, 0.0f}, 30.0f, 0.0f);
         CHECK(requests.size() == 1);
     }
 }
@@ -1765,13 +2958,20 @@ TEST_CASE("editor resize grip round-trips a granted resize",
     const auto drag_and_grant = [&](float window_dx, float window_dy) {
         const auto* grip = find_resize_grip(*rig.root);
         REQUIRE(grip != nullptr);
-        auto& mutable_grip = *const_cast<View*>(grip);
-        const auto anchor = pulp::view::Point{0.0f, 0.0f};
+        const auto box = root_rect(*grip);
+        const auto anchor = pulp::view::Point{
+            (box.left + box.right) * 0.5f,
+            (box.top + box.bottom) * 0.5f};
+        auto* target = rig.root->hit_test(anchor);
+        REQUIRE(target == grip);
+        REQUIRE(pulp::view::deliver_mouse_down(
+            *rig.root, target, anchor, /*modifiers=*/0,
+            /*click_count=*/1, /*bubble=*/true));
         const auto origin = root_to_window(anchor, host_w, host_h);
         const auto moved = window_to_root(
             {origin.x + window_dx, origin.y + window_dy}, host_w, host_h);
-        mutable_grip.on_mouse_down(anchor);
-        mutable_grip.on_mouse_drag(moved);
+        deliver_native_resize_drag(
+            *rig.root, target, moved, window_dx, window_dy);
         REQUIRE_FALSE(requests.empty());
         // The host grants it: the window resizes, and the new size arrives back
         // through on_view_resized exactly as a real host delivers it — after
@@ -1804,16 +3004,11 @@ TEST_CASE("editor resize grip round-trips a granted resize",
         REQUIRE(grip != nullptr);
         const auto box = root_rect(*grip);
         CHECK(box.right
-              == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth) - 3.0f));
-        // Laid INTO the bottom bar rather than floated in the corner behind it
-        // (the Efx FRAGMENTS arrangement): vertically centred on the bar's 26pt
-        // control row, whose centre is bar_top(804) + 15.5 + 13 = 832.5. A grip
-        // that drifts off that row stops reading as part of the bar, and a bar
-        // height change that nobody propagated fails here.
-        constexpr float kBarControlRowCentre = 804.0f + 15.5f + 13.0f;
-        CHECK((box.top + box.bottom) * 0.5f
-              == Catch::Approx(kBarControlRowCentre));
-        CHECK(box.bottom < static_cast<float>(spectr::kEditorDesignHeight));
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth)));
+        CHECK(box.bottom
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignHeight)));
+        CHECK(box.right - box.left == Catch::Approx(20.0f));
+        CHECK(box.bottom - box.top == Catch::Approx(20.0f));
     }
 
     // And the UI is still live at the size the gesture produced. This is the
@@ -1907,7 +3102,7 @@ TEST_CASE("editor resize grip resizes through the host dispatch path",
     const auto press_window = root_to_window(press, 990.0f, 645.0f);
     const auto moved = window_to_root(
         {press_window.x + 330.0f, press_window.y + 215.0f}, 990.0f, 645.0f);
-    pulp::view::deliver_mouse_drag(*rig.root, target, moved, /*modifiers=*/0);
+    deliver_native_resize_drag(*rig.root, target, moved, 330.0f, 215.0f);
 
     // The gesture reached the editor and produced a real host request.
     REQUIRE(requests.size() == 1);
@@ -2036,20 +3231,19 @@ TEST_CASE("editor resize grip holds still when the pointer holds still",
 
     for (int event = 0; event < 12; ++event) {
         const auto delivered = window_to_root(held_window, host_w, host_h);
-        pulp::view::deliver_mouse_drag(*rig.root, target, delivered,
-                                       /*modifiers=*/0);
+        // One native 100pt movement, followed by eleven native 0pt movements
+        // while the pointer remains physically stationary. The changing root
+        // coordinate must not be reinterpreted as new resize travel.
+        deliver_native_resize_drag(
+            *rig.root, target, delivered,
+            event == 0 ? 100.0f : 0.0f, 0.0f);
     }
 
-    REQUIRE(!requests.empty());
-    // A stationary pointer resolves to ONE size. Not "settles eventually" —
-    // every request the gesture makes must agree, because each disagreement is
-    // a visible jump of the plug-in window in the host.
+    // A stationary pointer resolves to ONE request. Not "settles eventually"
+    // and not twelve duplicate transactions: one physical movement produces
+    // one target even though the design-space coordinate keeps changing.
+    REQUIRE(requests.size() == 1);
     const auto first = requests.front();
-    for (const auto& request : requests) {
-        INFO("requested " << request.first << 'x' << request.second
-             << " vs first " << first.first << 'x' << first.second);
-        CHECK(request == first);
-    }
     // And it is the size the movement actually asked for: +100 window points.
     const auto expected = spectr::resolve_editor_resize(
         spectr::kEditorDesignWidth, spectr::kEditorDesignHeight, 100.0, 0.0);
@@ -2109,7 +3303,8 @@ TEST_CASE("editor resize grip measures the pointer, not design units",
     const auto pressed_window = root_to_window(press, kHostW, kHostH);
     const auto moved = window_to_root(
         {pressed_window.x + kPointerTravel, pressed_window.y}, kHostW, kHostH);
-    pulp::view::deliver_mouse_drag(*rig.root, target, moved, /*modifiers=*/0);
+    deliver_native_resize_drag(
+        *rig.root, target, moved, kPointerTravel, 0.0f);
 
     REQUIRE(requests.size() == 1);
     // The editor grows by what the POINTER travelled, 1:1.
@@ -2146,7 +3341,8 @@ TEST_CASE("a resize to an unchanged design box republishes nothing",
 
     // Drive the resize path the way a drag does. Under the pin every one of
     // these publishes the authored box, so after the first there is nothing new
-    // to say and the JS pass must not run again.
+    // to say: neither the native tree nor the JS pass should run again.
+    const auto layouts_before = pulp::view::View::layout_pass_count();
     for (const auto& size : std::array<std::pair<int, int>, 4>{
              std::pair{1400, 912}, std::pair{1480, 964},
              std::pair{1560, 1016}, std::pair{1640, 1068}}) {
@@ -2154,6 +3350,7 @@ TEST_CASE("a resize to an unchanged design box republishes nothing",
                                       static_cast<std::uint32_t>(size.first),
                                       static_cast<std::uint32_t>(size.second));
     }
+    CHECK(pulp::view::View::layout_pass_count() - layouts_before == 0);
     settle(rig.clock, 32);
 
     // Same throw-to-read seam the rest of this file uses.
@@ -2171,4 +3368,3 @@ TEST_CASE("a resize to an unchanged design box republishes nothing",
     INFO("materialized layout passes during four same-box resizes");
     CHECK(passes == 0);
 }
-

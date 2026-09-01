@@ -37,11 +37,10 @@ static_assert(kEditorMinimumWidth * kEditorDesignHeight
 static_assert(kEditorMaximumWidth * kEditorDesignHeight
               == kEditorMaximumHeight * kEditorDesignWidth);
 
-// Keep Spectr source-compatible with the frozen Pulp SDK used for the N0
-// baseline while taking advantage of the explicit authored-viewport contract
-// in newer SDKs. The member probes are dependent on ViewSize, so an older
-// seven-field ViewSize remains a supported compile target without preprocessor
-// version guesses.
+// The member probes keep this product-side size contract tolerant of additive
+// ViewSize fields. SDK admission itself is intentionally stricter in CMake:
+// shipping Spectr requires the dedicated native-view target and may pin one
+// exact SDK source SHA.
 // Resolved target for an editor-owned resize gesture.
 struct EditorResizeTarget {
     std::uint32_t width;

@@ -3,21 +3,97 @@
 
 #include <pulp/audio/buffer.hpp>
 #include <pulp/format/headless.hpp>
+#include <pulp/format/quirk_apply.hpp>
 #include <pulp/host/plugin_slot.hpp>
 #include <pulp/midi/buffer.hpp>
 
 #include "spectr/spectr.hpp"
+#include "spectr/param_surface.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstdio>
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
+
+std::vector<std::pair<std::uint32_t, std::string>> expected_host_parameters() {
+    std::vector<std::pair<std::uint32_t, std::string>> expected{
+        {pulp::format::kSynthesizedBypassParamId, "Bypass"},
+        {spectr::kMix, "Mix"},
+        {spectr::kOutputTrim, "Output"},
+    };
+    for (std::size_t band = 0; band < spectr::kMaxBands; ++band) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "Band %02zu Gain", band + 1);
+        expected.emplace_back(spectr::band_gain_param_id(band), name);
+    }
+    for (std::size_t band = 0; band < spectr::kMaxBands; ++band) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "Band %02zu Mute", band + 1);
+        expected.emplace_back(spectr::band_mute_param_id(band), name);
+    }
+    expected.insert(expected.end(), {
+        {spectr::kParamMorph, "A/B Morph"},
+        {spectr::kParamViewportCenter, "Viewport Center"},
+        {spectr::kParamViewportWidth, "Viewport Width"},
+        {spectr::kParamBandCount, "Band Count"},
+        {spectr::kParamMotionMode, "Motion Mode"},
+        {spectr::kParamAnalyzerMode, "Analyzer Mode"},
+        {spectr::kParamEditMode, "Edit Mode"},
+        {spectr::kParamVisualization, "Visualization"},
+        {spectr::kParamLfoEnabled, "LFO Enabled"},
+        {spectr::kParamLfoShape, "LFO Shape"},
+        {spectr::kParamLfoRate, "LFO Rate"},
+        {spectr::kParamLfoDepth, "LFO Depth"},
+        {spectr::kParamLfoTarget, "LFO Target"},
+    });
+    return expected;
+}
+
+void check_host_parameter_contract(
+    const std::vector<pulp::host::HostParamInfo>& parameters) {
+    const auto expected = expected_host_parameters();
+    REQUIRE(expected.size() == spectr::kSurfaceParamCount + 1);
+    REQUIRE(parameters.size() == expected.size());
+
+    std::vector<std::uint32_t> actual_ids;
+    actual_ids.reserve(parameters.size());
+    for (const auto& parameter : parameters)
+        actual_ids.push_back(parameter.id);
+    std::ranges::sort(actual_ids);
+    CHECK(std::ranges::adjacent_find(actual_ids) == actual_ids.end());
+
+    for (const auto& [id, name] : expected) {
+        const auto it = std::ranges::find(parameters, id,
+            &pulp::host::HostParamInfo::id);
+        INFO("expected host parameter " << name << " id=" << id);
+        REQUIRE(it != parameters.end());
+        CHECK(it->name == name);
+        CHECK(it->flags.is_bypass
+              == (id == pulp::format::kSynthesizedBypassParamId));
+        if (!it->flags.is_bypass) {
+            CHECK(it->flags.automatable);
+            CHECK_FALSE(it->flags.read_only);
+            CHECK_FALSE(it->flags.hidden);
+        }
+    }
+
+    // The static surface stays complete when the current layout shows only
+    // 32 bands. Hidden slots are host-visible state lanes whose DSP effect is
+    // deliberately inert until their band enters the visible layout.
+    CHECK(std::ranges::find(parameters, spectr::band_gain_param_id(63),
+          &pulp::host::HostParamInfo::id) != parameters.end());
+    CHECK(std::ranges::find(parameters, spectr::band_mute_param_id(63),
+          &pulp::host::HostParamInfo::id) != parameters.end());
+}
 
 std::vector<std::uint8_t> make_all_muted_state() {
     pulp::format::HeadlessHost author(spectr::create_spectr);
@@ -153,7 +229,7 @@ void check_built_artifact(const std::filesystem::path& bundle,
     CHECK(slot->latency_samples() == SPECTR_EXPECTED_LATENCY);
     CHECK(slot->info().name == "Spectr");
     const auto parameters = slot->parameters();
-    CHECK(parameters.size() == 3);
+    check_host_parameter_contract(parameters);
     for (const auto& parameter : parameters) {
         INFO("parameter " << parameter.name << " id=" << parameter.id
              << " default=" << parameter.default_value
@@ -161,18 +237,6 @@ void check_built_artifact(const std::filesystem::path& bundle,
         CHECK(slot->get_parameter(parameter.id)
               == Catch::Approx(parameter.default_value));
     }
-    for (const std::string_view expected : {
-             "Mix", "Output"}) {
-        CHECK(std::ranges::any_of(parameters, [expected](const auto& parameter) {
-            return parameter.name == expected && !parameter.flags.is_bypass;
-        }));
-    }
-    CHECK_FALSE(std::ranges::any_of(parameters, [](const auto& parameter) {
-        return parameter.name == "Morph";
-    }));
-    CHECK(std::ranges::count_if(parameters, [](const auto& parameter) {
-        return parameter.flags.is_bypass;
-    }) == 1);
     CHECK(slot->has_editor());
 
     constexpr int block_size = 512;
