@@ -796,9 +796,11 @@ TEST_CASE("materialized build-info geometry contracts detect every severed fix")
         spectr_native::runtime_js_size};
     constexpr std::array markers{
         ContractMarker{"build-info-feedback-slot", "g5.setFlex(String(feedbackId), \"height\", 108)"},
-        ContractMarker{"build-info-stable-slot", "g5.setTop(String(aboutId), 774)"},
+        ContractMarker{"modulation-stable-slot", "g5.setTop(String(modulationId), 652)"},
+        ContractMarker{"feedback-stable-slot", "g5.setTop(String(feedbackId), 884)"},
+        ContractMarker{"build-info-stable-slot", "g5.setTop(String(aboutId), 1010)"},
         ContractMarker{"build-info-provenance-height", "g5.setFlex(String(aboutId), \"height\", 252)"},
-        ContractMarker{"build-info-scroll-extent", "const authoredContentHeight = 1044;"},
+        ContractMarker{"build-info-scroll-extent", "const authoredContentHeight = 1280;"},
         ContractMarker{"band-root-reserved-gap", "g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0)"},
     };
     const auto errors = [&](std::string_view candidate) {

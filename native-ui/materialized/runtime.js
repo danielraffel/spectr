@@ -9111,7 +9111,7 @@
       const nativeScrollView = ensureSpectrNativeScrollView(settingsPanel, values);
       const authored = width === 1320 && height === 860;
       const panelWidth = Math.min(520, Math.max(360, width - 40));
-      const authoredContentHeight = 1044;
+      const authoredContentHeight = 1280;
       const panelHeight = authored ? 679
         : Math.min(authoredContentHeight, Math.max(240, height * 0.9));
       const panelTop = authored ? 90.5
@@ -9307,13 +9307,23 @@
         if (closeId) g5.setTransform(String(closeId), 1, 0, 0, 1, 27, 27);
         g5.setBackground(String(headerId), "rgba(14,18,25,1)");
       }
+      const modulation = globalThis.document?.querySelector?.(
+        '[data-spectr-settings-group="modulation"]');
+      const modulationId = modulation && (modulation.__pulpId || modulation.id);
+      if (modulationId) {
+        g5.setPosition(String(modulationId), "absolute");
+        g5.setLeft(String(modulationId), 27);
+        g5.setTop(String(modulationId), 652);
+        g5.setFlex(String(modulationId), "width", 466);
+        g5.setFlex(String(modulationId), "height", 214);
+      }
       const feedback = globalThis.document?.querySelector?.(
         '[data-spectr-settings-group="feedback"]');
       const feedbackId = feedback && (feedback.__pulpId || feedback.id);
       if (feedbackId) {
         g5.setPosition(String(feedbackId), "absolute");
         g5.setLeft(String(feedbackId), 27);
-        g5.setTop(String(feedbackId), 652);
+        g5.setTop(String(feedbackId), 884);
         g5.setFlex(String(feedbackId), "width", 466);
         g5.setFlex(String(feedbackId), "height", 108);
       }
@@ -9323,7 +9333,7 @@
       if (aboutId) {
         g5.setPosition(String(aboutId), "absolute");
         g5.setLeft(String(aboutId), 27);
-        g5.setTop(String(aboutId), 774);
+        g5.setTop(String(aboutId), 1010);
         g5.setFlex(String(aboutId), "width", 466);
         g5.setFlex(String(aboutId), "height", 252);
       }

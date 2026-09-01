@@ -2935,7 +2935,7 @@ RUNTIME_EDITS = [
      '      const authoredContentHeight = 728;\n'
      '      const panelHeight = authored ? 679\n'
      '        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));',
-     'const authoredContentHeight = 1044;'),
+     ': Math.min(authoredContentHeight, Math.max(240, height * 0.9))'),
     ('settings scroll view derives its content from live children',
      '        if (typeof g5.setScrollContentSize === "function")\n'
      '          g5.setScrollContentSize(panelId, panelWidth, 684);',
@@ -3129,7 +3129,7 @@ RUNTIME_EDITS = [
      '        g5.setFlex(String(feedbackId), "height", 76);\n'
      '      }\n'
      '    }',
-     'g5.setTop(String(feedbackId), 652)'),
+     'g5.setTop(String(feedbackId), 884)'),
     ('settings header remains fixed while its body scrolls',
      '    if (activeCapturedState === "settings") {\n'
      '      const feedback = globalThis.document?.querySelector?.(\n',
@@ -3178,7 +3178,7 @@ RUNTIME_EDITS = [
     ('settings feedback extends the authored scroll extent',
      '      const authoredContentHeight = 672;',
      '      const authoredContentHeight = 728;',
-     'const authoredContentHeight = 1044;'),
+     'const authoredContentHeight = 1280;'),
     ('settings about receives a stable captured slot',
      '      if (feedbackId) {\n'
      '        g5.setPosition(String(feedbackId), "absolute");\n'
@@ -3206,11 +3206,11 @@ RUNTIME_EDITS = [
      '        g5.setFlex(String(aboutId), "height", 192);\n'
      '      }\n'
      '    }',
-     'g5.setTop(String(aboutId), 774)'),
+     'g5.setTop(String(aboutId), 1010)'),
     ('settings about extends the authored scroll extent',
      '      const authoredContentHeight = 728;',
      '      const authoredContentHeight = 952;',
-     'const authoredContentHeight = 1044;'),
+     'const authoredContentHeight = 1280;'),
     ('settings feedback reserves both persisted toggles',
      '        g5.setFlex(String(feedbackId), "height", 76);',
      '        g5.setFlex(String(feedbackId), "height", 108);',
@@ -3218,7 +3218,7 @@ RUNTIME_EDITS = [
     ('settings about follows the expanded feedback group',
      '        g5.setTop(String(aboutId), 742);',
      '        g5.setTop(String(aboutId), 774);',
-     'g5.setTop(String(aboutId), 774)'),
+     'g5.setTop(String(aboutId), 1010)'),
     ('settings about reserves exact provenance rows',
      '        g5.setFlex(String(aboutId), "height", 192);',
      '        g5.setFlex(String(aboutId), "height", 252);',
@@ -3226,7 +3226,37 @@ RUNTIME_EDITS = [
     ('settings exact provenance extends the authored scroll extent',
      '      const authoredContentHeight = 952;',
      '      const authoredContentHeight = 1044;',
-     'const authoredContentHeight = 1044;'),
+     'const authoredContentHeight = 1280;'),
+    ('settings modulation receives its own non-overlapping captured slot',
+     '      const feedback = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="feedback"]\');\n'
+     '      const feedbackId = feedback && (feedback.__pulpId || feedback.id);',
+     '      const modulation = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="modulation"]\');\n'
+     '      const modulationId = modulation && (modulation.__pulpId || modulation.id);\n'
+     '      if (modulationId) {\n'
+     '        g5.setPosition(String(modulationId), "absolute");\n'
+     '        g5.setLeft(String(modulationId), 27);\n'
+     '        g5.setTop(String(modulationId), 652);\n'
+     '        g5.setFlex(String(modulationId), "width", 466);\n'
+     '        g5.setFlex(String(modulationId), "height", 214);\n'
+     '      }\n'
+     '      const feedback = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="feedback"]\');\n'
+     '      const feedbackId = feedback && (feedback.__pulpId || feedback.id);',
+     'g5.setTop(String(modulationId), 652)'),
+    ('settings feedback follows the modulation slot',
+     '        g5.setTop(String(feedbackId), 652);',
+     '        g5.setTop(String(feedbackId), 884);',
+     'g5.setTop(String(feedbackId), 884)'),
+    ('settings about follows modulation and feedback',
+     '        g5.setTop(String(aboutId), 774);',
+     '        g5.setTop(String(aboutId), 1010);',
+     'g5.setTop(String(aboutId), 1010)'),
+    ('settings modulation extends the authored scroll extent',
+     '      const authoredContentHeight = 1044;',
+     '      const authoredContentHeight = 1280;',
+     'const authoredContentHeight = 1280;'),
     ('settings live scroll extent refreshes after native upgrade',
      '        // Leave content size automatic: the ScrollView unions its live children.\n\n',
      '        // Leave content size automatic: the ScrollView unions its live children.\n'

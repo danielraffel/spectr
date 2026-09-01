@@ -860,7 +860,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // genuinely taller, so the native ScrollView exposes that real extent.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height === 1044 && s.scroll_reachable === true"
+        " && s.content_height === 1280 && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
         "settings panel did not keep its authored geometry under the pin");
