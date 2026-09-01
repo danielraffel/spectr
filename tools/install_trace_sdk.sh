@@ -70,7 +70,10 @@ for dependency in \
   }
 done
 
-python3 "$pulp_source/tools/scripts/fetch_skia_for_release.py" darwin-arm64
+(
+  cd "$pulp_source"
+  /usr/bin/python3 tools/scripts/fetch_skia_for_release.py darwin-arm64
+)
 if [[ -n $(git -C "$pulp_source" status --porcelain --untracked-files=no) ]]; then
   echo "pinned dependency preparation changed tracked Pulp source" >&2
   exit 2
