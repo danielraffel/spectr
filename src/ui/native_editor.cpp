@@ -545,9 +545,19 @@ void Spectr::open_native_editor_(pulp::view::View& view) {
 
 bool Spectr::tick_native_analyzer_(float dt) {
     if (!native_scripted_ui_ || !native_scripted_ui_->bridge()) return false;
+    const bool automation_perf_fixture = [] {
+        const auto* value = std::getenv("SPECTR_AUTOMATION_PERF_FIXTURE");
+        return value != nullptr && std::string_view{value} == "1";
+    }();
     const auto host_revision = host_automation_revision();
-    if (host_revision != native_host_automation_revision_) {
-        const auto payload = make_editor_live_state_payload(*this, host_revision);
+    const auto projection_revision = automation_perf_fixture
+        ? native_host_automation_revision_ + 1
+        : host_revision;
+    if (automation_perf_fixture
+        || host_revision != native_host_automation_revision_) {
+        PULP_TRACE_SCOPE_NAMED("state", "spectr_host_automation_project");
+        const auto payload = make_editor_live_state_payload(
+            *this, projection_revision);
         std::ostringstream hydration;
         hydration
             << "if (typeof globalThis.__spectrPublishNativeMessage === 'function') "
@@ -557,7 +567,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
         try {
             native_scripted_ui_->bridge()->load_script(
                 hydration.str(), "spectr-native-host-automation-live");
-            native_host_automation_revision_ = host_revision;
+            native_host_automation_revision_ = projection_revision;
         } catch (const std::exception& error) {
             pulp::runtime::log_error(
                 "[Spectr native] host automation hydration rejected: {}",

@@ -10,14 +10,14 @@ func fail(_ message: String) -> Never {
 }
 
 guard CommandLine.arguments.count == 4 || CommandLine.arguments.count == 5 else {
-    fail("usage: bands_perf_capture.swift APP TRACE SCREENSHOT [bands|minimap]")
+    fail("usage: bands_perf_capture.swift APP TRACE SCREENSHOT [bands|minimap|automation]")
 }
 
 let app = URL(fileURLWithPath: CommandLine.arguments[1])
 let trace = URL(fileURLWithPath: CommandLine.arguments[2])
 let screenshot = URL(fileURLWithPath: CommandLine.arguments[3])
 let workload = CommandLine.arguments.count == 5 ? CommandLine.arguments[4] : "bands"
-guard workload == "bands" || workload == "minimap" else {
+guard workload == "bands" || workload == "minimap" || workload == "automation" else {
     fail("unknown workload: \(workload)")
 }
 let binary = app.appendingPathComponent("Contents/MacOS/Spectr")
@@ -34,7 +34,11 @@ environment["PULP_TRACE_PATH"] = trace.path
 environment["PULP_SCREENSHOT"] = screenshot.path
 environment["PULP_FRAMES"] = "420"
 environment["SPECTR_BANDS_PERF_FIXTURE"] = "1"
-environment["PULP_TEST_POINTER_DRAG"] = workload == "minimap" ? "minimap" : "1"
+if workload == "automation" {
+    environment["SPECTR_AUTOMATION_PERF_FIXTURE"] = "1"
+} else {
+    environment["PULP_TEST_POINTER_DRAG"] = workload == "minimap" ? "minimap" : "1"
+}
 process.environment = environment
 try process.run()
 

@@ -30,11 +30,11 @@ fi
 mkdir -p "$output_dir"
 output_dir=$(cd "$output_dir" && pwd)
 
-# Product-acceptance gate: prove the exact-head band edit and all three
-# minimap gestures (left trim, right trim, rigid-window pan) on the live
-# AppKit -> QuickJS -> Skia/Graphite path. Each workload gets its own trace so
-# one inexpensive interaction cannot hide the other's tail latency.
-for workload in bands minimap; do
+# Product-acceptance gate: prove the exact-head band edit, all three minimap
+# gestures, and host-automation playback on the live AppKit -> QuickJS ->
+# Skia/Graphite path. Each workload gets its own trace so one inexpensive
+# interaction cannot hide another's tail latency.
+for workload in bands minimap automation; do
   trace="$output_dir/$workload.pftrace"
   screenshot="$output_dir/$workload.png"
   receipt="$output_dir/$workload.json"
