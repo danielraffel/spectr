@@ -45,6 +45,67 @@ TEST_CASE("Spectr processes audio") {
     REQUIRE(peak > 0.1f);
 }
 
+TEST_CASE("Spectr renders scheduled band automation without control-worker latency",
+          "[automation][spectral][rt]") {
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    host.prepare(sample_rate, block_size);
+
+    pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+    const float* in_ptrs[] = {in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> input(in_ptrs, 2, block_size);
+    auto output = out.view();
+    std::uint64_t rendered = 0;
+    auto fill_tone = [&] {
+        for (std::size_t sample = 0; sample < block_size; ++sample) {
+            const float value = 0.5f * std::sin(
+                2.0 * 3.14159265358979323846 * 997.0
+                * static_cast<double>(rendered + sample) / sample_rate);
+            in.channel(0)[sample] = value;
+            in.channel(1)[sample] = value;
+        }
+        rendered += block_size;
+    };
+    auto peak = [&] {
+        float value = 0.0f;
+        for (float sample : out.channel(0))
+            value = std::max(value, std::abs(sample));
+        return value;
+    };
+
+    float baseline_peak = 0.0f;
+    const auto warmup_blocks = static_cast<std::size_t>(
+        (spectr::kSpectralLatency + spectr::kSpectralFftSize) / block_size + 4);
+    for (std::size_t block = 0; block < warmup_blocks; ++block) {
+        fill_tone();
+        host.process(output, input);
+        baseline_peak = std::max(baseline_peak, peak());
+    }
+    REQUIRE(baseline_peak > 0.25f);
+
+    pulp::state::ParameterEventQueue automated;
+    for (std::size_t band = 0; band < 32; ++band) {
+        REQUIRE(automated.push({
+            spectr::band_gain_param_id(band), 256, -24.0f, 0}));
+    }
+    fill_tone();
+    host.process(output, input, automated);
+
+    automated.clear();
+    for (std::size_t band = 0; band < 32; ++band) {
+        REQUIRE(automated.push({
+            spectr::band_gain_param_id(band), 0, -24.0f, 0}));
+    }
+    float automated_peak = baseline_peak;
+    for (std::size_t block = 0; block < warmup_blocks; ++block) {
+        fill_tone();
+        host.process(output, input, automated);
+        automated_peak = peak();
+    }
+    CHECK(automated_peak < baseline_peak * 0.12f);
+}
+
 TEST_CASE("Spectr has correct descriptor") {
     pulp::format::HeadlessHost host(spectr::create_spectr);
     auto desc = host.descriptor();

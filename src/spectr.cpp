@@ -1,6 +1,7 @@
 #include "spectr/spectr.hpp"
 
 #include <pulp/runtime/trace.hpp>
+#include <pulp/format/param_processing.hpp>
 #if !defined(SPECTR_NATIVE_EDITOR)
 #include "spectr/ui/editor_view.hpp"
 #endif
@@ -487,11 +488,112 @@ void Spectr::process(
         && output.num_channels() == static_cast<std::size_t>(channels_)
         && input.num_channels() == static_cast<std::size_t>(channels_)
         && output.num_samples() == input.num_samples()) {
+        const auto* events = param_events();
+        if (events && !events->events().empty()) {
+            std::array<pulp::format::ParamSnapshotEntry,
+                       kSurfaceCacheSlots + 2> initial{};
+            initial[0] = {kMix, audio_mix_percent_};
+            initial[1] = {kOutputTrim, audio_output_trim_db_};
+            for (std::size_t slot = 0; slot < kSurfaceCacheSlots; ++slot) {
+                initial[slot + 2] = {
+                    detail::surface_slot_param_id(slot),
+                    applied_param_cache_[slot].load(std::memory_order_relaxed)};
+            }
+
+            pulp::format::ParamCursor params(
+                state(), events,
+                std::span<const pulp::format::ParamSnapshotEntry>{initial});
+            std::size_t block_offset = 0;
+            pulp::format::for_each_subblock(
+                output, input, events, params,
+                [&](pulp::audio::BufferView<float>& out_slice,
+                    const pulp::audio::BufferView<const float>& in_slice,
+                    pulp::format::ParamCursor& cursor) {
+                    pulp::signal::SpectralBandLayout automated;
+                    const auto automated_layout = layout_from_param_value(
+                        cursor.value(kParamBandCount));
+                    automated.active_bands = static_cast<std::uint32_t>(
+                        visible_count(automated_layout));
+                    const auto automated_viewport = decode_viewport(
+                        cursor.value(kParamViewportCenter),
+                        cursor.value(kParamViewportWidth));
+                    automated.min_hz = automated_viewport.min_hz;
+                    automated.max_hz = automated_viewport.max_hz;
+                    automated.spacing =
+                        pulp::signal::SpectralBandSpacing::logarithmic;
+                    automated.edge_policy =
+                        pulp::signal::SpectralBandEdgePolicy::extend_edge_band;
+                    automated.boundary_kernel =
+                        pulp::signal::SpectralMaskBoundaryKernel::hard;
+                    automated.transition_fraction = 0.0f;
+                    automated.transition_frames = 0;
+                    for (std::size_t band = 0;
+                         band < automated.active_bands; ++band) {
+                        automated.bands[band].gain_db =
+                            cursor.value(band_gain_param_id(band));
+                        automated.bands[band].muted =
+                            cursor.value(band_mute_param_id(band)) >= 0.5f;
+                    }
+                    (void)mask_processor_.set_layout_rt(automated);
+                    mask_processor_.set_mix(std::clamp(
+                        cursor.value(kMix) / 100.0f, 0.0f, 1.0f));
+
+                    for (std::size_t channel = 0;
+                         channel < out_slice.num_channels(); ++channel) {
+                        input_channels_[channel] =
+                            in_slice.channel(channel).data();
+                        output_channels_[channel] =
+                            out_slice.channel(channel).data();
+                    }
+                    const bool processed = mask_processor_.process(
+                        input_channels_.data(), output_channels_.data(),
+                        static_cast<int>(out_slice.num_samples()));
+                    if (!processed) {
+                        for (std::size_t channel = 0;
+                             channel < out_slice.num_channels(); ++channel) {
+                            auto dst = out_slice.channel(channel);
+                            std::fill(dst.begin(), dst.end(), 0.0f);
+                        }
+                    } else {
+                        for (std::size_t sample = 0;
+                             sample < out_slice.num_samples(); ++sample) {
+                            const auto absolute_sample = static_cast<int32_t>(
+                                block_offset + sample);
+                            const float gain = std::pow(
+                                10.0f,
+                                cursor.value_at(kOutputTrim, absolute_sample)
+                                    * 0.05f);
+                            for (std::size_t channel = 0;
+                                 channel < out_slice.num_channels(); ++channel)
+                                output_channels_[channel][sample] *= gain;
+                        }
+                    }
+                    block_offset += out_slice.num_samples();
+                });
+
+            const auto last_sample = static_cast<int32_t>(
+                output.num_samples() > 0 ? output.num_samples() - 1 : 0);
+            audio_mix_percent_ = params.value_at(kMix, last_sample);
+            audio_output_trim_db_ = params.value_at(kOutputTrim, last_sample);
+
+            const auto nc = output.num_channels();
+            if (nc > 0 && nc <= 8) {
+                const float* ptrs[8];
+                for (std::size_t ch = 0; ch < nc; ++ch)
+                    ptrs[ch] = output.channel(ch).data();
+                bridge_.process(ptrs, static_cast<int>(nc),
+                                static_cast<int>(output.num_samples()));
+            }
+            return;
+        }
+
         for (std::size_t channel = 0; channel < output.num_channels(); ++channel) {
             input_channels_[channel] = input.channel(channel).data();
             output_channels_[channel] = output.channel(channel).data();
         }
         mask_processor_.set_mix(std::clamp(mix, 0.0f, 1.0f));
+        audio_mix_percent_ = mix * 100.0f;
+        audio_output_trim_db_ = out_trim_db;
         const bool processed = mask_processor_.process(
             input_channels_.data(), output_channels_.data(),
             static_cast<int>(output.num_samples()));

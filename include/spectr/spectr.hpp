@@ -367,6 +367,12 @@ private:
     static constexpr std::size_t kSurfaceCacheSlots = 136;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
+    // Audio-owner baseline used when an adapter supplies an event queue after
+    // already committing its end-of-block values to StateStore. ParamCursor
+    // must begin from the values audible at the end of the previous block,
+    // otherwise the pre-event slice would incorrectly jump to the final value.
+    float audio_mix_percent_ = 100.0f;
+    float audio_output_trim_db_ = 0.0f;
     // The most recent EditorAuthority revision caused specifically by host
     // parameter adoption. Views use this as a coalescing publication key so
     // automation redraws immediately without echoing every editor-originated
