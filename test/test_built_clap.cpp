@@ -49,6 +49,11 @@ std::vector<std::pair<std::uint32_t, std::string>> expected_host_parameters() {
         {spectr::kParamAnalyzerMode, "Analyzer Mode"},
         {spectr::kParamEditMode, "Edit Mode"},
         {spectr::kParamVisualization, "Visualization"},
+        {spectr::kParamLfoEnabled, "LFO Enabled"},
+        {spectr::kParamLfoShape, "LFO Shape"},
+        {spectr::kParamLfoRate, "LFO Rate"},
+        {spectr::kParamLfoDepth, "LFO Depth"},
+        {spectr::kParamLfoTarget, "LFO Target"},
     });
     return expected;
 }

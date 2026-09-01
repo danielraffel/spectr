@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
 constexpr std::string_view kAdapterDigest =
-    "cdc81039cadcc2cb8f309669d16bcf35d5773b2a4d78b249556c270a0a232b5e";
+    "1bf88b4a918275078f7c4350fba00c49976e1af0b03db7490a2efcf69be1eb9f";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -535,7 +535,9 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(document.find("now - statusRefreshAtRef.current >= 120")
               != document.npos);
         CHECK(document.find("statusRefreshAtRef.current = now;") != document.npos);
-        CHECK(document.find("}, 150);") == document.npos);
+        // The remaining 150 ms interval is the low-rate zoom/readout sampler,
+        // not the retired status-dismiss timer.
+        CHECK(count_occurrences(document, "}, 150);") == 1);
         CHECK(document.find(
                   "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;")
               != document.npos);
@@ -587,7 +589,9 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
               == 1);
         CHECK(count_occurrences(
                   document,
-                  "minWidth: 40,\\n"
+                  "width: 44,\\n"
+                  "        minWidth: 44,\\n"
+                  "        flexShrink: 0,\\n"
                   "        minHeight: 26,\\n"
                   "        boxSizing: \\\"border-box\\\",\\n"
                   "        display: \\\"inline-flex\\\",\\n"
@@ -628,12 +632,14 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   document,
                   "style: { marginLeft: 6, display: \\\"inline-flex\\\", "
                   "alignItems: \\\"center\\\", lineHeight: 1 }")
-              == 3);
+              == 2);
         CHECK(count_occurrences(
                   document,
                   "\"letter_spacing\":0.5}},\"boxes\":[{\"left\":0,"
                   "\"top\":3,\"width\":13,\"height\":13,"
-                  "\"start\":0,\"length\":2}]},{\"index\":9")
+                  "\"start\":0,\"length\":2},{\"left\":21,"
+                  "\"top\":3,\"width\":52.03125,\"height\":13,"
+                  "\"start\":3,\"length\":8}]},{\"index\":10")
               == 1);
     }
 
@@ -656,9 +662,9 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(count_occurrences(document,
                   "const commitLiveViewport = (next) => {") == 1);
         CHECK(count_occurrences(document,
-                  "commitLiveViewport({ lmin, lmax });") == 1);
+                  "commitLiveViewport({ lmin, lmax });") == 2);
         CHECK(count_occurrences(document,
-                  "commitLiveViewport({ lmin, lmax: lmin + span });") == 1);
+                  "commitLiveViewport({ lmin, lmax: lmin + span });") == 2);
         CHECK(count_occurrences(document,
                   "setView({ ...viewRef.current });") == 1);
         CHECK(count_occurrences(document,
@@ -724,18 +730,17 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"smooth-banner-resize", "transition: \\\"width 0.18s ease, opacity 0.15s ease\\\""},
         ContractMarker{"aligned-edge-label", "ctx.font = \\\"10px JetBrains Mono, monospace\\\";\\n        ctx.textAlign = \\\"center\\\";\\n        ctx.textBaseline = \\\"middle\\\";"},
         ContractMarker{"dropdown-surface", "background: \\\"rgba(255,255,255,0.025)\\\",\\n  border: \\\"1px solid transparent\\\""},
-        ContractMarker{"aligned-band-count", "minWidth: 40,\\n        minHeight: 26,\\n        boxSizing: \\\"border-box\\\",\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
-        ContractMarker{"native-band-count-spacing", "lineHeight: 1, paddingLeft: 4"},
+        ContractMarker{"aligned-band-count", "width: 44,\\n        minWidth: 44,\\n        flexShrink: 0,\\n        minHeight: 26,\\n        boxSizing: \\\"border-box\\\",\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
+        ContractMarker{"native-band-count-spacing", "style: { lineHeight: 1, whiteSpace: \\\"nowrap\\\" }"},
         ContractMarker{"banner-below-plot-line", "top: 104,"},
         ContractMarker{"integer-centered-banner-text", "lineHeight: \\\"14px\\\", paddingTop: \\\"6px\\\""},
-        ContractMarker{"sticky-settings-header", "position: \\\"sticky\\\", top: -26, zIndex: 3"},
+        ContractMarker{"sticky-settings-header", "position: \\\"sticky\\\", top: 0, zIndex: 3"},
         ContractMarker{"complete-status-info-hint", "Hover, mute, and drag feedback"},
         ContractMarker{"copy-state-feedback", "data-spectr-copy-state"},
         ContractMarker{"centered-rail-button", "height: 26,\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
-        ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 3},
+        ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 2},
         ContractMarker{"aligned-band-binding", "\"boxes\":[{\"left\":0,\"top\":3,\"width\":13,\"height\":13,\"start\":0,\"length\":2},{\"left\":21,\"top\":3,\"width\":52.03125,\"height\":13,\"start\":3,\"length\":8}]"},
         ContractMarker{"single-band-count-text-binding", "\"text\":\"32 bands ▾\""},
-        ContractMarker{"band-root-reserved-gap", "g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0)"},
         ContractMarker{"band-dropdown-surface", "background: info.N === n ? \\\"rgba(120,180,255,0.18)\\\" : \\\"rgba(255,255,255,0.03)\\\","},
         ContractMarker{"edit-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.14)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"analyzer-dropdown-surface", "background: active ? \\\"rgba(255,255,255,0.08)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
@@ -747,7 +752,7 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"status-info-suppression", "settings.statusInfo === false", 3},
         ContractMarker{"selected-preset-label", "data-spectr-selected-preset"},
         ContractMarker{"selected-preset-identity", "const [selectedPatternId, setSelectedPatternId] = useAppS(null);"},
-        ContractMarker{"selected-preset-authoritative-label", "[...window.Spectr.FACTORY_PATTERNS, ...userPatterns].find((pattern) => pattern.id === selectedPatternId)?.name || \"PRESETS\";"},
+        ContractMarker{"selected-preset-authoritative-label", "[...window.Spectr.FACTORY_PATTERNS, ...userPatterns].find((pattern) => pattern.id === selectedPatternId)?.name || \\\"PRESETS\\\";"},
         ContractMarker{"selected-preset-applied-identity", "setSelectedPatternId(p.id);"},
         ContractMarker{"build-info-component", "function SpectrBuildInfo() {"},
         ContractMarker{"build-info-get", "postMessage(\\\"build_info_get\\\""},
@@ -790,10 +795,11 @@ TEST_CASE("materialized build-info geometry contracts detect every severed fix")
         reinterpret_cast<const char*>(spectr_native::runtime_js),
         spectr_native::runtime_js_size};
     constexpr std::array markers{
-        ContractMarker{"build-info-feedback-slot", "g5.setFlex(String(feedbackId), \\\"height\\\", 108)"},
+        ContractMarker{"build-info-feedback-slot", "g5.setFlex(String(feedbackId), \"height\", 108)"},
         ContractMarker{"build-info-stable-slot", "g5.setTop(String(aboutId), 774)"},
-        ContractMarker{"build-info-provenance-height", "g5.setFlex(String(aboutId), \\\"height\\\", 252)"},
+        ContractMarker{"build-info-provenance-height", "g5.setFlex(String(aboutId), \"height\", 252)"},
         ContractMarker{"build-info-scroll-extent", "const authoredContentHeight = 1044;"},
+        ContractMarker{"band-root-reserved-gap", "g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0)"},
     };
     const auto errors = [&](std::string_view candidate) {
         std::vector<std::string> result;
@@ -824,7 +830,7 @@ TEST_CASE("status overlay and settings polish contracts detect every severed fix
         ContractMarker{"status-readable-dwell", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
         ContractMarker{"status-below-ruler", "top: 104,"},
         ContractMarker{"status-integer-centering", "lineHeight: \\\"14px\\\", paddingTop: \\\"6px\\\""},
-        ContractMarker{"settings-sticky-header", "position: \\\"sticky\\\", top: -26, zIndex: 3"},
+        ContractMarker{"settings-sticky-header", "position: \\\"sticky\\\", top: 0, zIndex: 3"},
         ContractMarker{"settings-complete-status-hint", "Hover, mute, and drag feedback"},
         ContractMarker{"settings-copy-feedback-state", "data-spectr-copy-state"},
         ContractMarker{"settings-centered-copy-feedback", "aria-live\\\": \\\"polite\\\", style: { display: \\\"inline-flex\\\", alignItems: \\\"center\\\", justifyContent: \\\"center\\\", width: \\\"100%\\\", height: \\\"100%\\\", lineHeight: 1"},

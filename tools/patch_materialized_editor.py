@@ -3384,6 +3384,33 @@ def escaped(value):
     return json.dumps(value)[1:-1]
 
 
+def repair_duplicate_settings_helpers(document):
+    """Collapse helpers accidentally replayed ahead of SettingsModal.
+
+    The build-info insertion deliberately leaves a later SettingsModal patch
+    point for the modulation helper.  Once modulation owns that seam, the
+    build-info owner sentinel is authoritative; replaying the earlier insert
+    would otherwise prepend the same two helpers on every regeneration.
+    """
+    html = document.get('html', '')
+    build = 'function SpectrBuildInfo() {'
+    modulation = 'function SpectrModulationSettings() {'
+    settings = 'function SettingsModal('
+    if html.count(build) <= 1 and html.count(modulation) <= 1:
+        return False
+    first = html.find(build)
+    second = html.find(build, first + len(build))
+    settings_start = html.find(settings, first)
+    if first < 0 or second < 0 or settings_start < 0:
+        raise RuntimeError('cannot identify duplicated settings helper seam')
+    first_helper_pair = html[first:second]
+    if (first_helper_pair.count(build) != 1
+            or first_helper_pair.count(modulation) != 1):
+        raise RuntimeError('duplicated settings helpers are not one stable pair')
+    document['html'] = html[:first] + first_helper_pair + html[settings_start:]
+    return True
+
+
 def repair_capture_band_count_binding(document, path):
     """Keep captured text topology identical to the live one-span trigger."""
     bindings = document.get('text_bindings', [])
@@ -3485,6 +3512,11 @@ def main():
 
     raw = open(PATH, encoding='utf-8').read()
     changed = False
+    document = json.loads(raw)
+    if repair_duplicate_settings_helpers(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          collapsed duplicate settings helpers')
     post_checks = []
     later_patch_points = {edit[1] for edit in EDITS}
     for edit in EDITS:
@@ -3493,6 +3525,9 @@ def main():
         old_e, new_e = escaped(old), escaped(new)
         sentinel = SUPERSEDED_SENTINELS.get(label)
         sentinel_e = escaped(sentinel) if sentinel else None
+        if sentinel_e and sentinel_e in raw:
+            print('superseded     ', label)
+            continue
         # One JSX patch point can transpile into repeated identical literals
         # (for example the two preset footer buttons). Once the old image is
         # gone, any emitted replacement count proves this edit was applied.
@@ -3500,9 +3535,6 @@ def main():
             print('already applied ', label)
             if new not in later_patch_points:
                 post_checks.append((label, new, expected))
-            continue
-        if raw.count(old_e) == 0 and sentinel_e and sentinel_e in raw:
-            print('superseded     ', label)
             continue
         count = raw.count(old_e)
         if count == 0:
