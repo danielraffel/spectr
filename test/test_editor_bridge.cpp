@@ -323,6 +323,12 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     REQUIRE(r.proc->set_editor_mode_param(spectr::kParamAnalyzerMode, 2.0f));
     REQUIRE(r.proc->set_editor_mode_param(spectr::kParamEditMode, 4.0f));
     REQUIRE(r.proc->set_editor_mode_param(spectr::kParamVisualization, 1.0f));
+    r.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    r.store.set_value(spectr::kParamLfoShape, 2.0f);
+    r.store.set_value(spectr::kParamLfoRate, 8.0f);
+    r.store.set_value(spectr::kParamLfoDepth, 0.75f);
+    r.store.set_value(spectr::kParamLfoTarget, 3.0f);
+    REQUIRE(r.proc->apply_surface_params(true));
     r.proc->field().bands[47] = {6.25f, false};
     r.proc->capture_snapshot(SnapshotBank::Slot::A);
     r.proc->field().bands[17] = {3.0f, false};
@@ -348,6 +354,12 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     CHECK(payload["analyzer_mode"].get<double>() == Approx(2.0));
     CHECK(payload["edit_mode"].get<double>() == Approx(4.0));
     CHECK(payload["visualization_mode"].get<double>() == Approx(1.0));
+    REQUIRE(payload["modulation"].isObject());
+    CHECK(payload["modulation"]["enabled"].getBool());
+    CHECK(payload["modulation"]["shape"].get<int64_t>() == 2);
+    CHECK(payload["modulation"]["beats_per_cycle"].get<double>() == Approx(8.0));
+    CHECK(payload["modulation"]["depth"].get<double>() == Approx(0.75));
+    CHECK(payload["modulation"]["target"].get<int64_t>() == 3);
     REQUIRE(payload["snapshots"].isObject());
     CHECK(payload["snapshots"]["A"]["populated"].getBool());
     CHECK(payload["snapshots"]["B"]["populated"].getBool());

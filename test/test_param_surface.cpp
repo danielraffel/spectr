@@ -8,7 +8,7 @@
 // Coverage:
 //   - The full static surface is registered: 64 band gains, 64 band mutes,
 //     A/B morph, viewport center/width, band count, four mode toggles, plus
-//     the legacy Mix/Output — 138 parameters, no more, no less.
+//     the legacy Mix/Output and internal modulation — 143 parameters.
 //   - IDs follow the documented scheme (docs/parameter-surface.md) and the
 //     reserved ranges stay empty.
 //   - Names are zero-padded so host menus sort lexicographically.
@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 138;
+constexpr std::size_t kExpectedParamCount = 143;
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {
@@ -114,8 +114,12 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     CHECK(find(w.store, 3004) == nullptr);
     CHECK(find(w.store, 3099) == nullptr);
     CHECK(find(w.store, 3104) == nullptr);
-    // LFO ranges are reserved for #36 and must NOT be registered yet.
-    CHECK(find(w.store, 4000) == nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfoEnabled) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfoShape) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfoRate) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfoDepth) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfoTarget) != nullptr);
+    CHECK(find(w.store, 4005) == nullptr);
     CHECK(find(w.store, 4031) == nullptr);
     CHECK(find(w.store, 4100) == nullptr);
     CHECK(find(w.store, 4199) == nullptr);
@@ -158,7 +162,7 @@ TEST_CASE("#34: band parameter names are zero-padded and grouped") {
     CHECK(g1->group_id != 0);
     CHECK(m1->group_id != 0);
     CHECK(g1->group_id != m1->group_id);
-    CHECK(w.store.all_groups().size() == 6);
+    CHECK(w.store.all_groups().size() == 7);
     REQUIRE(find(w.store, 1) != nullptr);
     REQUIRE(find(w.store, 2) != nullptr);
     CHECK(find(w.store, 1)->group_id == 1);
@@ -259,6 +263,27 @@ TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
     CHECK(vis->value_labels[1] == "Response");
     CHECK(vis->value_labels[2] == "Both");
     CHECK(vis->range.default_value == Approx(2.0f));
+
+    const auto* enabled = find(w.store, spectr::kParamLfoEnabled);
+    const auto* shape = find(w.store, spectr::kParamLfoShape);
+    const auto* rate = find(w.store, spectr::kParamLfoRate);
+    const auto* depth = find(w.store, spectr::kParamLfoDepth);
+    const auto* target = find(w.store, spectr::kParamLfoTarget);
+    REQUIRE(enabled != nullptr);
+    REQUIRE(shape != nullptr);
+    REQUIRE(rate != nullptr);
+    REQUIRE(depth != nullptr);
+    REQUIRE(target != nullptr);
+    CHECK(enabled->kind == pulp::state::ParamKind::Toggle);
+    CHECK(shape->kind == pulp::state::ParamKind::Enum);
+    CHECK(shape->value_labels.size() == 4);
+    CHECK(rate->range.min == Approx(0.25f));
+    CHECK(rate->range.max == Approx(16.0f));
+    CHECK(rate->range.default_value == Approx(4.0f));
+    CHECK(depth->range.min == Approx(0.0f));
+    CHECK(depth->range.max == Approx(1.0f));
+    CHECK(target->kind == pulp::state::ParamKind::Enum);
+    CHECK(target->value_labels.size() == 4);
 }
 
 TEST_CASE("#34: viewport parameters round-trip without inverted edges") {

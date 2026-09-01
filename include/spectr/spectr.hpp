@@ -38,6 +38,7 @@
 #include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
 #include "spectr/editor_resize.hpp"
+#include "spectr/modulation.hpp"
 
 #ifndef SPECTR_FFT_SIZE
 #define SPECTR_FFT_SIZE 8192
@@ -300,6 +301,7 @@ public:
     }
     [[nodiscard]] float editor_mode_param(
         pulp::state::ParamID id) const noexcept;
+    [[nodiscard]] ModulationSettings modulation_settings() const noexcept;
     void sync_params_from_field(bool emit_gestures = true) noexcept;
 
     /// Paint-drag gesture epochs (EditorAuthority drives these from
@@ -363,8 +365,9 @@ private:
     // the audio thread by the process() drift sweep and written by both sync
     // directions. Slot layout: 0..63 gains, 64..127 mutes, 128 morph,
     // 129 viewport center, 130 viewport width, 131 band count, then motion,
-    // analyzer, edit, and visualization at 132..135.
-    static constexpr std::size_t kSurfaceCacheSlots = 136;
+    // analyzer, edit, and visualization at 132..135, then internal LFO
+    // enabled/shape/rate/depth/target at 136..140.
+    static constexpr std::size_t kSurfaceCacheSlots = 141;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
     // Audio-owner baseline used when an adapter supplies an event queue after
@@ -399,6 +402,7 @@ private:
     // compilation is a control-thread operation).
     struct ParamSyncTask { std::uint64_t tag = 0; };
     pulp::format::BackgroundTaskLane<ParamSyncTask, 8> param_sync_lane_;
+    ModulationSettings modulation_{};
     // Open paint-drag epoch (UI thread only): params already begin-gestured.
     std::vector<pulp::state::ParamID> epoch_gesture_params_{};
     bool param_gesture_epoch_open_ = false;

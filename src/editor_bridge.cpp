@@ -244,6 +244,16 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
         plugin.editor_mode_param(kParamEditMode)));
     payload.addMember("visualization_mode", static_cast<double>(
         plugin.editor_mode_param(kParamVisualization)));
+    const auto modulation_state = plugin.modulation_settings();
+    auto modulation = choc::value::createObject("SpectrModulationState");
+    modulation.addMember("enabled", modulation_state.enabled);
+    modulation.addMember("shape", static_cast<std::int32_t>(modulation_state.shape));
+    modulation.addMember("beats_per_cycle", static_cast<double>(
+        modulation_state.beats_per_cycle));
+    modulation.addMember("depth", static_cast<double>(modulation_state.depth));
+    modulation.addMember("target", static_cast<std::int32_t>(
+        modulation_state.target));
+    payload.addMember("modulation", modulation);
     payload.addMember("snapshots", snapshots);
     payload.addMember("patterns_json", plugin.patterns().export_json());
     return payload;

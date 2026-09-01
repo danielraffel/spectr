@@ -26,7 +26,12 @@ layout remain stored but do not enter the active spectral mask.
 | `3102` | Edit mode |
 | `3103` | Visualization mode |
 | `3104...3999` | Reserved mode and global growth |
-| `4000...4199` | Reserved LFO and modulation controls |
+| `4000` | Internal LFO enabled |
+| `4001` | Internal LFO shape (sine/triangle/square/saw) |
+| `4002` | Internal LFO rate (beats per cycle) |
+| `4003` | Internal LFO depth |
+| `4004` | Internal LFO target (whole bank/snapshot A/snapshot B/morph) |
+| `4005...4199` | Reserved modulation growth |
 
 The gain and mute names are zero-padded (`Band 01 Gain` through
 `Band 64 Gain`) so hosts that flatten groups still sort them correctly.

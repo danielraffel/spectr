@@ -50,6 +50,15 @@ inline constexpr pulp::state::ParamID kParamAnalyzerMode  = 3101;  // Peak/Avg/B
 inline constexpr pulp::state::ParamID kParamEditMode      = 3102;  // Sculpt..Glide
 inline constexpr pulp::state::ParamID kParamVisualization = 3103;  // Bars/Response/Both
 
+// Internal tempo-synced LFO. These are ordinary static host parameters so a
+// host or third-party modulator can automate them while the derived LFO output
+// remains a non-destructive DSP overlay.
+inline constexpr pulp::state::ParamID kParamLfoEnabled = 4000;
+inline constexpr pulp::state::ParamID kParamLfoShape   = 4001;
+inline constexpr pulp::state::ParamID kParamLfoRate    = 4002; // beats/cycle
+inline constexpr pulp::state::ParamID kParamLfoDepth   = 4003;
+inline constexpr pulp::state::ParamID kParamLfoTarget  = 4004;
+
 // ── Band blocks ──────────────────────────────────────────────────────────
 // Band i gain = kParamBandGainBase + i, mute = kParamBandMuteBase + i.
 // 1064..1999 and 2064..2999 are reserved growth tails for those blocks.
@@ -64,9 +73,8 @@ constexpr pulp::state::ParamID band_mute_param_id(std::size_t band) noexcept {
 }
 
 /// Total registered parameters: 2 legacy + 64 gain + 64 mute + 4 control
-/// (morph, center, width, count) + 4 modes. LFO space (4000..4199) is
-/// reserved for spectr#36 and deliberately NOT registered yet.
-inline constexpr std::size_t kSurfaceParamCount = 138;
+/// (morph, center, width, count) + 4 modes + 5 internal LFO controls.
+inline constexpr std::size_t kSurfaceParamCount = 143;
 
 // ── Viewport log-frequency encoding ─────────────────────────────────────
 // The display mapping (pattern.cpp) spans log10(20)..log10(20000), so the
@@ -110,7 +118,8 @@ inline constexpr std::size_t kSlotCenter     = 129;
 inline constexpr std::size_t kSlotWidth      = 130;
 inline constexpr std::size_t kSlotBandCount  = 131;
 inline constexpr std::size_t kSlotModeBase   = 132;  // +0..3: motion/analyzer/edit/visualization
-inline constexpr std::size_t kSurfaceSlots   = 136;
+inline constexpr std::size_t kSlotLfoBase    = 136;  // +0..4: enabled/shape/rate/depth/target
+inline constexpr std::size_t kSurfaceSlots   = 141;
 
 constexpr pulp::state::ParamID surface_slot_param_id(std::size_t slot) noexcept {
     if (slot < 64) return band_gain_param_id(slot);
@@ -120,8 +129,12 @@ constexpr pulp::state::ParamID surface_slot_param_id(std::size_t slot) noexcept 
         case kSlotCenter:    return kParamViewportCenter;
         case kSlotWidth:     return kParamViewportWidth;
         case kSlotBandCount: return kParamBandCount;
-        default:             return kParamMotionMode
-                                 + static_cast<pulp::state::ParamID>(slot - kSlotModeBase);
+        default:
+            if (slot < kSlotLfoBase)
+                return kParamMotionMode
+                    + static_cast<pulp::state::ParamID>(slot - kSlotModeBase);
+            return kParamLfoEnabled
+                + static_cast<pulp::state::ParamID>(slot - kSlotLfoBase);
     }
 }
 

@@ -67,6 +67,7 @@ constexpr int kGroupBandMute  = 3;
 constexpr int kGroupSnapshots = 4;
 constexpr int kGroupViewport  = 5;
 constexpr int kGroupModes     = 6;
+constexpr int kGroupModulation= 7;
 
 std::string band_name(std::size_t i, const char* suffix) {
     char buf[32];
@@ -110,6 +111,7 @@ void register_surface_params(pulp::state::StateStore& store) {
     store.add_group({kGroupSnapshots, "Snapshots", 0});
     store.add_group({kGroupViewport, "Viewport", 0});
     store.add_group({kGroupModes, "Modes", 0});
+    store.add_group({kGroupModulation, "Modulation", 0});
 
     for (std::size_t i = 0; i < kMaxBands; ++i) {
         pulp::state::ParamInfo info;
@@ -211,6 +213,53 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.group_id = kGroupModes;
         info.kind = pulp::state::ParamKind::Enum;
         add_enum_labels(info, {"Bars", "Response", "Both"});
+        store.add_parameter(info);
+    }
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamLfoEnabled;
+        info.name = "LFO Enabled";
+        info.range = {0.0f, 1.0f, 0.0f, 1.0f};
+        info.group_id = kGroupModulation;
+        info.kind = pulp::state::ParamKind::Toggle;
+        add_enum_labels(info, {"Off", "On"});
+        store.add_parameter(info);
+    }
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamLfoShape;
+        info.name = "LFO Shape";
+        info.range = {0.0f, 3.0f, 0.0f, 1.0f};
+        info.group_id = kGroupModulation;
+        info.kind = pulp::state::ParamKind::Enum;
+        add_enum_labels(info, {"Sine", "Triangle", "Square", "Saw"});
+        store.add_parameter(info);
+    }
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamLfoRate;
+        info.name = "LFO Rate";
+        info.unit = "beats";
+        info.range = {0.25f, 16.0f, 4.0f};
+        info.group_id = kGroupModulation;
+        store.add_parameter(info);
+    }
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamLfoDepth;
+        info.name = "LFO Depth";
+        info.range = {0.0f, 1.0f, 0.5f};
+        info.group_id = kGroupModulation;
+        store.add_parameter(info);
+    }
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamLfoTarget;
+        info.name = "LFO Target";
+        info.range = {0.0f, 3.0f, 0.0f, 1.0f};
+        info.group_id = kGroupModulation;
+        info.kind = pulp::state::ParamKind::Enum;
+        add_enum_labels(info, {"Whole Bank", "Snapshot A", "Snapshot B", "Morph"});
         store.add_parameter(info);
     }
 }
@@ -328,6 +377,36 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         }
     }
 
+    ModulationSettings next_modulation;
+    next_modulation.enabled = store->get_value(kParamLfoEnabled) >= 0.5f;
+    next_modulation.shape = static_cast<LfoShape>(std::clamp(
+        static_cast<int>(std::lround(store->get_value(kParamLfoShape))), 0, 3));
+    next_modulation.beats_per_cycle = std::clamp(
+        store->get_value(kParamLfoRate), 0.25f, 16.0f);
+    next_modulation.depth = std::clamp(
+        store->get_value(kParamLfoDepth), 0.0f, 1.0f);
+    next_modulation.target = static_cast<ModulationTarget>(std::clamp(
+        static_cast<int>(std::lround(store->get_value(kParamLfoTarget))), 0, 3));
+    const std::array<float, 5> modulation_values{
+        next_modulation.enabled ? 1.0f : 0.0f,
+        static_cast<float>(next_modulation.shape),
+        next_modulation.beats_per_cycle,
+        next_modulation.depth,
+        static_cast<float>(next_modulation.target)};
+    bool modulation_changed = false;
+    for (std::size_t i = 0; i < modulation_values.size(); ++i) {
+        auto& cached = applied_param_cache_[detail::kSlotLfoBase + i];
+        if (cached.load(std::memory_order_relaxed) != modulation_values[i]) {
+            cached.store(modulation_values[i], std::memory_order_relaxed);
+            modulation_changed = true;
+        }
+    }
+    if (modulation_changed) {
+        modulation_ = next_modulation;
+        sound_changed = true;
+        editor_changed = true;
+    }
+
     if (sound_changed || editor_changed) {
         if (sound_changed) publish_processing_state_();
         host_automation_revision_.store(
@@ -342,6 +421,11 @@ float Spectr::editor_mode_param(pulp::state::ParamID id) const noexcept {
     const auto slot = detail::kSlotModeBase
         + static_cast<std::size_t>(id - kParamMotionMode);
     return applied_param_cache_[slot].load(std::memory_order_relaxed);
+}
+
+ModulationSettings Spectr::modulation_settings() const noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return modulation_;
 }
 
 void Spectr::push_surface_param_(pulp::state::ParamID id, std::size_t slot,

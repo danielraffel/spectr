@@ -2257,6 +2257,44 @@ function SettingsModal({ settings, setSettings, onClose }) {
      'React.createElement("span", { "aria-live": "polite" }, copyState)',
      'React.createElement("span", { "aria-live": "polite", style: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", lineHeight: 1 } }, copyState)'),
 
+    ('internal modulation settings own host parameters',
+     '/* materialized-build-info-owner */\nfunction SettingsModal({ settings, setSettings, onClose }) {',
+     '''/* materialized-build-info-owner */
+function SpectrModulationSettings() {
+  const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0 });
+  React.useEffect(() => {
+    let live = true;
+    Promise.resolve(window.pulp.postMessage("processing_state_get", {}, "spectr-modulation-hydrate")).then((response) => {
+      const body = response && response.payload ? response.payload : response;
+      const modulation = body && body.modulation;
+      if (live && modulation) setValue({
+        enabled: modulation.enabled === true,
+        shape: Number(modulation.shape) || 0,
+        rate: Number(modulation.beats_per_cycle) || 4,
+        depth: Number(modulation.depth) || 0,
+        target: Number(modulation.target) || 0
+      });
+    }).catch((error) => console.error("[Spectr] modulation state unavailable", error));
+    return () => { live = false; };
+  }, []);
+  const publish = (key, id, next) => {
+    setValue((current) => ({ ...current, [key]: next }));
+    Promise.resolve(window.pulp.postMessage("param_set", { id, value: typeof next === "boolean" ? next ? 1 : 0 : next }, "spectr-modulation-" + key)).catch((error) => console.error("[Spectr] modulation write failed", error));
+  };
+  return /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },
+    /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "LFO", hint: "Enable internal modulation" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { value: value.enabled, onChange: (next) => publish("enabled", 4000, next) })),
+    /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Shape", hint: "Oscillator waveform" }, /* @__PURE__ */ React.createElement(SpectrSettingsChips, { value: value.shape, onChange: (next) => publish("shape", 4001, next), opts: [[0,"Sin"],[1,"Tri"],[2,"Square"],[3,"Saw"]] })),
+    /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Rate", hint: "Beats per cycle" }, /* @__PURE__ */ React.createElement(SpectrSettingsSlider, { value: value.rate, min: 0.25, max: 16, step: 0.25, onChange: (next) => publish("rate", 4002, next), fmt: (next) => next.toFixed(2) })),
+    /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Depth", hint: "Modulation amount" }, /* @__PURE__ */ React.createElement(SpectrSettingsSlider, { value: value.depth, min: 0, max: 1, step: 0.01, onChange: (next) => publish("depth", 4003, next) })),
+    /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Target", hint: "Shape the bank, snapshots, or morph" }, /* @__PURE__ */ React.createElement(SpectrSettingsChips, { value: value.target, onChange: (next) => publish("target", 4004, next), opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"]] }))
+  );
+}
+function SettingsModal({ settings, setSettings, onClose }) {'''),
+
+    ('settings render internal modulation before feedback',
+     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." },',
+     '  ))), /* @__PURE__ */ React.createElement(SpectrModulationSettings, null), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." },'),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an
@@ -2387,6 +2425,8 @@ SUPERSEDED_SENTINELS = {
         '/* materialized-build-info-owner */',
     'shipping settings optionally show build information below feedback':
         'data-spectr-build-info-toggle',
+    'shipping build info toggle stays discoverable when about is hidden':
+        'React.createElement(SpectrModulationSettings, null)',
 }
 
 # Generated bindings live outside the escaped `html` string. Keep these
