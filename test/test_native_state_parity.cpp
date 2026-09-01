@@ -1604,9 +1604,14 @@ TEST_CASE("native settings modal dismisses by Escape and outside press",
 
     INFO("phase=open-for-escape");
     open_settings();
+    require_runtime_contract(
+        rig,
+        "!document.querySelector('[data-pulp-popup-active=\"true\"]')",
+        "Settings opened with a stale dropdown highlight claim");
     REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
         *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
         pulp::view::kModNone, true));
+    REQUIRE(rig.root->interaction().active_overlay == nullptr);
     settle(rig.clock, 8);
     require_home(rig);
 

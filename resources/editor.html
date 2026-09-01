@@ -1499,9 +1499,9 @@ window.FilterBank = FilterBank;`,
 }
 
 function SettingsModal({ settings, setSettings, onClose }) {
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const onKey = (event) => {
-      if (event.key === 'Escape' && !document.querySelector('[role="listbox"]')) {
+      if (event.key === 'Escape' && !document.querySelector('[data-pulp-popup-active="true"]')) {
         event.preventDefault(); event.stopPropagation(); onClose();
       }
     };

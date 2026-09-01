@@ -74,6 +74,30 @@ EDITS = [
      'React.createElement("div", { "data-spectr-settings-panel": true, onClick: (e) => e.stopPropagation(), style: {',
      'React.createElement("div", { "data-spectr-settings-panel": true, "data-spectr-overlay": "true", overlay: true, onDismiss: onClose, onClick: (e) => e.stopPropagation(), style: {'),
 
+    ('settings Escape ignores only an actually open popup',
+     'event.key === "Escape" && !document.querySelector(\'[role="listbox"]\')',
+     'event.key === "Escape" && !document.querySelector(\'[data-pulp-popup-active="true"]\')'),
+
+    ('settings dismissal listener commits with the modal mount',
+     'function SettingsModal({ settings, setSettings, onClose }) {\n'
+     '  const publishMotionMode = (patch) => {\n'
+     '    if (patch.motionMode) window.spectrPublishMode("motion", patch.motionMode);\n'
+     '  };\n'
+     '  React.useEffect(() => {',
+     'function SettingsModal({ settings, setSettings, onClose }) {\n'
+     '  const publishMotionMode = (patch) => {\n'
+     '    if (patch.motionMode) window.spectrPublishMode("motion", patch.motionMode);\n'
+     '  };\n'
+     '  React.useLayoutEffect(() => {'),
+
+    ('settings status semantics commit with the modal mount',
+     '  const [closeState, setCloseState] = React.useState("idle");\n'
+     '  React.useEffect(() => {\n'
+     '    const toggle = document.getElementById("spectr-status-info-toggle");',
+     '  const [closeState, setCloseState] = React.useState("idle");\n'
+     '  React.useLayoutEffect(() => {\n'
+     '    const toggle = document.getElementById("spectr-status-info-toggle");'),
+
     # Full-screen scrims are browser click targets, not native containment
     # boundaries. Make each visible panel the semantic overlay owner so Pulp
     # can route Escape and outside presses consistently in every host.
@@ -274,7 +298,7 @@ EDITS = [
      '  const publishMotionMode = (patch) => {\n'
      '    if (patch.motionMode) window.spectrPublishMode("motion", patch.motionMode);\n'
      '  };\n'
-     '  React.useEffect(() => {'),
+     '  React.useLayoutEffect(() => {'),
 
     ('settings and tweaks invoke motion publication',
      '  const persist = (patch) => {\n'
@@ -1928,7 +1952,7 @@ EDITS = [
 
     ('settings header exposes stable sticky identity',
      '/* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true,',
-     '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-header": true, style: { position: "sticky", top: -26, zIndex: 3, display: "flex", alignItems: "center", justifyContent: "space-between", margin: "-26px -26px 22px", padding: "26px 26px 16px", background: "rgba(14,18,25,1)" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true,'),
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-header": true, style: { position: "sticky", top: 0, zIndex: 3, display: "flex", alignItems: "center", justifyContent: "space-between", margin: "0 0 22px", padding: "26px 26px 16px", background: "rgba(14,18,25,1)" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true,'),
 
     ('ordinary settings toggles stay generic',
      'function SpectrSettingsToggle({ value, onChange, statusInfo }) {\n'
@@ -1958,7 +1982,7 @@ EDITS = [
      '  const [closeState, setCloseState] = React.useState("idle");\n'
      '  const persist = (patch) => {',
      '  const [closeState, setCloseState] = React.useState("idle");\n'
-     '  React.useEffect(() => {\n'
+     '  React.useLayoutEffect(() => {\n'
      '    const toggle = document.getElementById("spectr-status-info-toggle");\n'
      '    if (!toggle) return;\n'
      '    const enabled = settings.statusInfo !== false;\n'
@@ -2243,7 +2267,11 @@ function SettingsModal({ settings, setSettings, onClose }) {
 
     ('settings header is an authored fixed scroll boundary',
      '"data-spectr-settings-header": true, style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 }',
-     '"data-spectr-settings-header": true, style: { position: "sticky", top: -26, zIndex: 3, display: "flex", alignItems: "center", justifyContent: "space-between", margin: "-26px -26px 22px", padding: "26px 26px 16px", background: "rgba(14,18,25,1)" }'),
+     '"data-spectr-settings-header": true, style: { position: "sticky", top: 0, zIndex: 3, display: "flex", alignItems: "center", justifyContent: "space-between", margin: "0 0 22px", padding: "26px 26px 16px", background: "rgba(14,18,25,1)" }'),
+
+    ('settings sticky header stays inside the panel boundary',
+     '"data-spectr-settings-header": true, style: { position: "sticky", top: -26, zIndex: 3, display: "flex", alignItems: "center", justifyContent: "space-between", margin: "-26px -26px 22px", padding: "26px 26px 16px", background: "rgba(14,18,25,1)" }',
+     '"data-spectr-settings-header": true, style: { position: "sticky", top: 0, zIndex: 3, display: "flex", alignItems: "center", justifyContent: "space-between", margin: "0 0 22px", padding: "26px 26px 16px", background: "rgba(14,18,25,1)" }'),
 
     ('status info description is not truncated',
      'label: "Status info", hint: "Hover, mute, and drag"',
