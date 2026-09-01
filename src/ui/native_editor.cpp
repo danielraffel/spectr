@@ -3,6 +3,7 @@
 #include "spectr/editor_bridge.hpp"
 
 #include <pulp/runtime/log.hpp>
+#include <pulp/runtime/trace.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/format/plugin_descriptor.hpp>
 #include <pulp/view/buttons.hpp>
