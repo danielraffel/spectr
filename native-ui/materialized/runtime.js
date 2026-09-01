@@ -7178,7 +7178,7 @@
       // off, and by detach() at unmount.
       case "overlay":
         if (value) {
-          call("claimOverlay", id);
+          call("claimOverlay", id, true);
           return true;
         }
         call("releaseOverlay", id);
@@ -7200,7 +7200,7 @@
       case "role": {
         const r = typeof value === "string" ? value.toLowerCase() : "";
         if (r === "dialog" || r === "alertdialog" || r === "menu" || r === "listbox") {
-          call("claimOverlay", id, r === "menu" || r === "listbox");
+          call("claimOverlay", id, true);
           return true;
         }
         return true;
@@ -7208,7 +7208,7 @@
       case "aria-modal": {
         const truthy = value === true || value === "true" || value === "";
         if (truthy) {
-          call("claimOverlay", id);
+          call("claimOverlay", id, true);
           return true;
         }
         return true;
@@ -9126,7 +9126,7 @@
         // React claimed the captured View before this ScrollView upgrade.
         // Re-claim the stable id on the replacement so the framework
         // routes Escape and outside presses against the panel bounds.
-        if (typeof g5.claimOverlay === "function") g5.claimOverlay(panelId);
+        if (typeof g5.claimOverlay === "function") g5.claimOverlay(panelId, true);
         // Replacing the captured overflow container with a real native
         // ScrollView intentionally preserves its DOM identity, but the newly
         // allocated native view has no paint state. Replay the authored panel

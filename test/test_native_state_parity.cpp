@@ -1612,6 +1612,7 @@ TEST_CASE("native settings modal dismisses by Escape and outside press",
 
     INFO("phase=open-for-outside");
     open_settings();
+    REQUIRE(rig.root->interaction().active_overlay->overlay_consumes_outside_click());
     const auto* title = find_label(*rig.root, "SETTINGS");
     REQUIRE(title != nullptr);
     const auto title_rect = root_rect(*title);
@@ -1638,16 +1639,17 @@ TEST_CASE("native settings modal dismisses by Escape and outside press",
 
     // The authored panel occupies x=400..920. This point is on the modal
     // scrim, proving the outside path rather than reusing the close button.
-    const auto outside = pulp::view::route_press_to_active_overlay(
-        *rig.root, {1200.0f, 430.0f});
-    REQUIRE(outside.routing == pulp::view::OverlayPressRouting::dismissed);
-    // The portable router deliberately reports dismissal and lets every host
-    // continue through its normal hit-test path. Mirror that second half: the
-    // Settings scrim receives the click and closes its modal state.
+    const auto field_before_outside = rig.processor.field();
     rig.root->simulate_click({1200.0f, 430.0f});
     settle(rig.clock, 8);
     INFO("phase=outside-dismissal");
     require_home(rig);
+    for (std::size_t index = 0; index < field_before_outside.bands.size(); ++index) {
+        CHECK(rig.processor.field().bands[index].gain_db
+              == Catch::Approx(field_before_outside.bands[index].gain_db));
+        CHECK(rig.processor.field().bands[index].muted
+              == field_before_outside.bands[index].muted);
+    }
     storage.require_unchanged();
 }
 
@@ -1671,6 +1673,8 @@ TEST_CASE("remaining native modal panels share Escape and outside dismissal",
                 "!!document.querySelector(" + js_string(panel_selector) + ")",
                 std::string{name} + " did not open");
             REQUIRE(rig.root->interaction().active_overlay != nullptr);
+            REQUIRE(rig.root->interaction().active_overlay
+                        ->overlay_consumes_outside_click());
             REQUIRE(static_cast<bool>(rig.root->interaction().active_overlay
                                           ->on_overlay_dismissed));
             require_runtime_contract(
@@ -1720,16 +1724,20 @@ TEST_CASE("remaining native modal panels share Escape and outside dismissal",
         const pulp::view::Point outside{12.0f, 12.0f};
         REQUIRE_FALSE(
             rig.root->interaction().active_overlay->overlay_contains(outside));
-        const auto routing = pulp::view::route_press_to_active_overlay(
-            *rig.root, outside);
-        REQUIRE(routing.routing == pulp::view::OverlayPressRouting::dismissed);
-        pulp::view::View::dismiss_active_overlay(*rig.root);
+        const auto field_before_outside = rig.processor.field();
+        rig.root->simulate_click(outside);
         settle(rig.clock, 8);
         require_runtime_contract(
             rig,
             "!document.querySelector(" + js_string(panel_selector) + ")",
             std::string{name} + " ignored native outside dismissal");
         require_home(rig);
+        for (std::size_t index = 0; index < field_before_outside.bands.size(); ++index) {
+            CHECK(rig.processor.field().bands[index].gain_db
+                  == Catch::Approx(field_before_outside.bands[index].gain_db));
+            CHECK(rig.processor.field().bands[index].muted
+                  == field_before_outside.bands[index].muted);
+        }
     };
 
     exercise("pattern manager", [&] {

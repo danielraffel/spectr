@@ -2498,16 +2498,47 @@ RUNTIME_EDITS = [
      '          }\n'
      '          case "input": {',
      'call2("setAccessibilityRole", id, "button")'),
-    ('semantic popup roles consume their outside dismissal press',
+    ('semantic overlays consume their outside dismissal press',
      '        if (r === "dialog" || r === "alertdialog" || r === "menu" || r === "listbox") {\n'
      '          call("claimOverlay", id);\n'
      '          return true;\n'
      '        }',
      '        if (r === "dialog" || r === "alertdialog" || r === "menu" || r === "listbox") {\n'
-     '          call("claimOverlay", id, r === "menu" || r === "listbox");\n'
+     '          call("claimOverlay", id, true);\n'
      '          return true;\n'
      '        }',
-     'call("claimOverlay", id, r === "menu" || r === "listbox")'),
+     'call("claimOverlay", id, true)'),
+    ('explicit overlays consume their outside dismissal press',
+     '      case "overlay":\n'
+     '        if (value) {\n'
+     '          call("claimOverlay", id);\n'
+     '          return true;\n'
+     '        }',
+     '      case "overlay":\n'
+     '        if (value) {\n'
+     '          call("claimOverlay", id, true);\n'
+     '          return true;\n'
+     '        }',
+     '      case "overlay":\n'
+     '        if (value) {\n'
+     '          call("claimOverlay", id, true);'),
+    ('aria-modal overlays consume their outside dismissal press',
+     '      case "aria-modal": {\n'
+     '        const truthy = value === true || value === "true" || value === "";\n'
+     '        if (truthy) {\n'
+     '          call("claimOverlay", id);\n'
+     '          return true;\n'
+     '        }',
+     '      case "aria-modal": {\n'
+     '        const truthy = value === true || value === "true" || value === "";\n'
+     '        if (truthy) {\n'
+     '          call("claimOverlay", id, true);\n'
+     '          return true;\n'
+     '        }',
+     '      case "aria-modal": {\n'
+     '        const truthy = value === true || value === "true" || value === "";\n'
+     '        if (truthy) {\n'
+     '          call("claimOverlay", id, true);'),
     ('settings live form descendants bypass stale captured geometry',
      '    const activeLayoutBindings = (Array.isArray(metadata && metadata.layout_bindings)\n'
      '      ? metadata.layout_bindings : []).map((binding) => {\n'
@@ -3181,9 +3212,9 @@ RUNTIME_EDITS = [
      '        // React claimed the captured View before this ScrollView upgrade.\n'
      '        // Re-claim the stable id on the replacement so the framework\n'
      '        // routes Escape and outside presses against the panel bounds.\n'
-     '        if (typeof g5.claimOverlay === "function") g5.claimOverlay(panelId);\n'
+     '        if (typeof g5.claimOverlay === "function") g5.claimOverlay(panelId, true);\n'
      '        // Replacing the captured overflow container with a real native\n',
-     'g5.claimOverlay(panelId);'),
+     'g5.claimOverlay(panelId, true);'),
     ('band trigger shares the segmented-control header baseline',
      '    const centerBandText = (owner, label, width, textWidth) => {\n'
      '      if (!owner || typeof g5.setCapturedLineBoxes !== "function") return null;',
@@ -3512,6 +3543,35 @@ def main():
 
     runtime_raw = open(RUNTIME_PATH, encoding='utf-8').read()
     runtime_changed = False
+    # Normalize the short-lived menu-only consumption policy so the durable
+    # recipe below applies both to a fresh materialization and to an editor
+    # already patched by the previous recipe.
+    previous_semantic_overlay_claim = (
+        '          call("claimOverlay", id, r === "menu" || r === "listbox");')
+    replayable_semantic_overlay_claim = '          call("claimOverlay", id);'
+    desired_semantic_overlay_claim = '          call("claimOverlay", id, true);'
+    if (desired_semantic_overlay_claim not in runtime_raw
+            and previous_semantic_overlay_claim in runtime_raw):
+        runtime_raw = runtime_raw.replace(
+            previous_semantic_overlay_claim,
+            replayable_semantic_overlay_claim,
+            1)
+        runtime_changed = True
+        print('normalized      semantic overlay dismissal consumption')
+    previous_settings_overlay_claim = (
+        '        if (typeof g5.claimOverlay === "function") '
+        'g5.claimOverlay(panelId);')
+    desired_settings_overlay_claim = (
+        '        if (typeof g5.claimOverlay === "function") '
+        'g5.claimOverlay(panelId, true);')
+    if (desired_settings_overlay_claim not in runtime_raw
+            and previous_settings_overlay_claim in runtime_raw):
+        runtime_raw = runtime_raw.replace(
+            previous_settings_overlay_claim,
+            desired_settings_overlay_claim,
+            1)
+        runtime_changed = True
+        print('normalized      settings overlay dismissal consumption')
     # 04d9ac3 already materialized a 24px trigger with a zero Y transform.
     # Normalize that one stale output back to this recipe's preceding state so
     # the measured -1.5px rail correction below is both replayable on a fresh
