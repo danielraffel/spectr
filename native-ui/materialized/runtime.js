@@ -9138,7 +9138,7 @@
         g5.setBorderWidth(panelId, 1);
         g5.setBorderStyle(panelId, "solid");
         g5.setBorderRadius(panelId, 8);
-        g5.setOverflow(panelId, "scroll");
+        g5.setOverflow(panelId, panelHeight < authoredContentHeight ? "scroll" : "hidden");
         // Leave content size automatic: the ScrollView unions its live children.
         if (typeof g5.setScrollContentSize === "function")
           g5.setScrollContentSize(panelId);

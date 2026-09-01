@@ -3109,6 +3109,46 @@ window.PatternManager = PatternManager;`,
       '<StatusBanner message={status} />',
       '<StatusBanner message={status} disabled={settings.statusInfo === false} />',
       'status banner receives the persistent setting');
+    replaceSpectrSource(
+      "    if (onStatus && now - statusRefreshAtRef.current >= 700) {",
+      "    if (onStatus && now - statusRefreshAtRef.current >= 120) {",
+      'live status shell follows drag without perceptible batching');
+    replaceSpectrSource(
+      "    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2400 : 1800;",
+      "    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;",
+      'status remains readable after the latest interaction');
+    replaceSpectrSource(
+      "      const timer = hide(120);",
+      "      const timer = hide(160);",
+      'status clear grace prevents boundary flashes');
+    replaceSpectrSource(
+      "      position: 'absolute', top: 96, left: '50%', transform: 'translateX(-50%)',",
+      "      position: 'absolute', top: 104, left: '50%', transform: 'translateX(-50%)',",
+      'status banner clears the ruler with visible padding');
+    replaceSpectrSource(
+      "<span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', height: '100%', lineHeight: '13px', paddingTop: '6.5px', boxSizing: 'border-box', whiteSpace: 'nowrap' }}>{text}</span>",
+      "<span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', height: '100%', lineHeight: '14px', paddingTop: '6px', boxSizing: 'border-box', whiteSpace: 'nowrap' }}>{text}</span>",
+      'status text uses an integer-centered line box');
+    replaceSpectrSource(
+      "function SpectrSettingsField({ label, hint, children }) {\n  return <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>\n    <div style={{ width: 110, flexShrink: 0 }}>",
+      "function SpectrSettingsField({ label, hint, children }) {\n  return <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>\n    <div style={{ width: 150, flexShrink: 0 }}>",
+      'settings hints reserve enough width to remain complete');
+    replaceSpectrSource(
+      "<div data-spectr-settings-header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22 }}>",
+      "<div data-spectr-settings-header style={{ position: 'sticky', top: -26, zIndex: 3, display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '-26px -26px 22px', padding: '26px 26px 16px', background: 'rgba(14,18,25,1)' }}>",
+      'settings header is an authored fixed scroll boundary');
+    replaceSpectrSource(
+      "<SpectrSettingsField label=\"Status info\" hint=\"Hover, mute, and drag\">",
+      "<SpectrSettingsField label=\"Status info\" hint=\"Hover, mute, and drag feedback\">",
+      'status info description is not truncated');
+    replaceSpectrSource(
+      "info && React.createElement('button', { 'data-spectr-copy-build-info': true, onClick: copy, disabled: copyState === 'COPYING', style: {",
+      "info && React.createElement('button', { 'data-spectr-copy-build-info': true, 'data-spectr-copy-state': copyState.toLowerCase().replace(/ /g, '-'), onClick: copy, disabled: copyState === 'COPYING', style: {",
+      'copy feedback exposes its visible state');
+    replaceSpectrSource(
+      "} }, React.createElement('span', { 'aria-live': 'polite' }, copyState)));",
+      "} }, React.createElement('span', { 'aria-live': 'polite', style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', lineHeight: 1 } }, copyState)));",
+      'copy feedback remains centered in every state');
 
     const resourceScript = '<script>window.__resources = ' +
       JSON.stringify(resourceMap).split('</' + 'script>').join('<\\/' + 'script>') +

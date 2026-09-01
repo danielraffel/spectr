@@ -531,13 +531,13 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
               == 0);
         CHECK(document.find("if (generation !== generationRef.current) return;")
               != document.npos);
-        CHECK(document.find("const timer2 = hide(120);") != document.npos);
-        CHECK(document.find("now - statusRefreshAtRef.current >= 700")
+        CHECK(document.find("const timer2 = hide(160);") != document.npos);
+        CHECK(document.find("now - statusRefreshAtRef.current >= 120")
               != document.npos);
         CHECK(document.find("statusRefreshAtRef.current = now;") != document.npos);
         CHECK(document.find("}, 150);") == document.npos);
         CHECK(document.find(
-                  "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2400 : 1800;")
+                  "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;")
               != document.npos);
         CHECK(document.find(
                   "requestAnimationFrame(() => window.dispatchEvent(new Event(\\\"resize\\\")));")
@@ -563,7 +563,7 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   document,
                   "style: { display: \\\"block\\\", textAlign: \\\"center\\\", "
                   "width: \\\"100%\\\", height: \\\"100%\\\", "
-                  "lineHeight: \\\"13px\\\", paddingTop: \\\"6.5px\\\", "
+                  "lineHeight: \\\"14px\\\", paddingTop: \\\"6px\\\", "
                   "boxSizing: \\\"border-box\\\", whiteSpace: \\\"nowrap\\\" }")
               == 1);
         CHECK(count_occurrences(document, "lineHeight: \"26px\"") == 0);
@@ -615,7 +615,7 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 
     SECTION("remaining standalone chrome stays aligned") {
-        CHECK(count_occurrences(document, "top: 96,") == 1);
+        CHECK(count_occurrences(document, "top: 104,") == 1);
         CHECK(document.find("onDismiss: () => setOpenMenu(null)") == document.npos);
         CHECK(count_occurrences(
                   document,
@@ -716,9 +716,9 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"live-hover-publication", "updateLiveHoverStatus();"},
         ContractMarker{"guide-only-hover", "if (!currentHover || currentHover.mini) return;"},
         ContractMarker{"generation-safe-status", "const generationRef = useRefChrome(0);"},
-        ContractMarker{"active-status-renewal", "now - statusRefreshAtRef.current >= 700"},
-        ContractMarker{"inactivity-status-clear", "const timer2 = hide(120);"},
-        ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2400 : 1800;"},
+        ContractMarker{"active-status-renewal", "now - statusRefreshAtRef.current >= 120"},
+        ContractMarker{"inactivity-status-clear", "const timer2 = hide(160);"},
+        ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
         ContractMarker{"content-sized-banner", "width: Math.max(96, Math.min(520, text.length * 8 + 28)),"},
         ContractMarker{"symmetric-banner-padding", "padding: \\\"0 14px\\\""},
         ContractMarker{"smooth-banner-resize", "transition: \\\"width 0.18s ease, opacity 0.15s ease\\\""},
@@ -726,7 +726,11 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"dropdown-surface", "background: \\\"rgba(255,255,255,0.025)\\\",\\n  border: \\\"1px solid transparent\\\""},
         ContractMarker{"aligned-band-count", "minWidth: 40,\\n        minHeight: 26,\\n        boxSizing: \\\"border-box\\\",\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
         ContractMarker{"native-band-count-spacing", "lineHeight: 1, paddingLeft: 4"},
-        ContractMarker{"banner-below-plot-line", "top: 96,"},
+        ContractMarker{"banner-below-plot-line", "top: 104,"},
+        ContractMarker{"integer-centered-banner-text", "lineHeight: \\\"14px\\\", paddingTop: \\\"6px\\\""},
+        ContractMarker{"sticky-settings-header", "position: \\\"sticky\\\", top: -26, zIndex: 3"},
+        ContractMarker{"complete-status-info-hint", "Hover, mute, and drag feedback"},
+        ContractMarker{"copy-state-feedback", "data-spectr-copy-state"},
         ContractMarker{"centered-rail-button", "height: 26,\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
         ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 3},
         ContractMarker{"aligned-band-binding", "\"boxes\":[{\"left\":0,\"top\":3,\"width\":13,\"height\":13,\"start\":0,\"length\":2},{\"left\":21,\"top\":3,\"width\":52.03125,\"height\":13,\"start\":3,\"length\":8}]"},
@@ -808,6 +812,49 @@ TEST_CASE("materialized build-info geometry contracts detect every severed fix")
         erase_once(mutated, marker.text);
         CHECK(contains(errors(mutated), marker.label));
     }
+}
+
+TEST_CASE("status overlay and settings polish contracts detect every severed fix") {
+    const std::string document{
+        reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
+        spectr_native::materialized_document_runtime_json_size};
+    constexpr std::array markers{
+        ContractMarker{"drag-status-refresh", "now - statusRefreshAtRef.current >= 120"},
+        ContractMarker{"status-clear-grace", "const timer2 = hide(160);"},
+        ContractMarker{"status-readable-dwell", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
+        ContractMarker{"status-below-ruler", "top: 104,"},
+        ContractMarker{"status-integer-centering", "lineHeight: \\\"14px\\\", paddingTop: \\\"6px\\\""},
+        ContractMarker{"settings-sticky-header", "position: \\\"sticky\\\", top: -26, zIndex: 3"},
+        ContractMarker{"settings-complete-status-hint", "Hover, mute, and drag feedback"},
+        ContractMarker{"settings-copy-feedback-state", "data-spectr-copy-state"},
+        ContractMarker{"settings-centered-copy-feedback", "aria-live\\\": \\\"polite\\\", style: { display: \\\"inline-flex\\\", alignItems: \\\"center\\\", justifyContent: \\\"center\\\", width: \\\"100%\\\", height: \\\"100%\\\", lineHeight: 1"},
+    };
+    const auto errors = [&](std::string_view candidate) {
+        std::vector<std::string> result;
+        for (const auto& marker : markers)
+            if (count_occurrences(candidate, marker.text) != marker.expected_count)
+                result.emplace_back(marker.label);
+        return result;
+    };
+    for (const auto& marker : markers) {
+        INFO(marker.label);
+        CHECK(count_occurrences(document, marker.text) == marker.expected_count);
+        auto mutated = document;
+        erase_once(mutated, marker.text);
+        CHECK(contains(errors(mutated), marker.label));
+    }
+}
+
+TEST_CASE("settings overflow follows live content height") {
+    const std::string runtime{
+        reinterpret_cast<const char*>(spectr_native::runtime_js),
+        spectr_native::runtime_js_size};
+    constexpr std::string_view marker =
+        "g5.setOverflow(panelId, panelHeight < authoredContentHeight ? \"scroll\" : \"hidden\")";
+    CHECK(count_occurrences(runtime, marker) == 1);
+    auto mutated = runtime;
+    erase_once(mutated, marker);
+    CHECK(count_occurrences(mutated, marker) == 0);
 }
 
 #endif // SPECTR_NATIVE_EDITOR

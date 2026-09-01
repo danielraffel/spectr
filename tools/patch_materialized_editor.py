@@ -464,7 +464,7 @@ EDITS = [
      '      setVisible(true);\n'
      '    }\n'
      '    shownRef.current = display;\n'
-     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2400 : 1800;\n'
+     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;\n'
      '    timers.push(setTimeout(() => {\n'
      '      setVisible(false);\n'
      '      setText("");\n'
@@ -516,13 +516,13 @@ EDITS = [
     ('mute status gets a longer independent hold',
      '    const timer = hide(1400);\n'
      '    return () => clearTimeout(timer);',
-     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2400 : 1800;\n'
+     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;\n'
      '    const timer = hide(holdMs);\n'
      '    return () => clearTimeout(timer);'),
 
     ('status hold timing migration',
      '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2000 : 1400;',
-     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2400 : 1800;'),
+     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;'),
 
     ('status visibility does not synthesize global resize',
      '      requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));\n',
@@ -531,7 +531,7 @@ EDITS = [
 
     ('status info hint fits the settings field',
      'hint: "Hover, mute, and drag details in the top banner"',
-     'hint: "Hover, mute, and drag"'),
+     'hint: "Hover, mute, and drag feedback"'),
 
     # ----------------------------- task 4: mute consistency across edit modes
     ('redraw-unmutes setting is read by the bank',
@@ -955,15 +955,15 @@ EDITS = [
 
     ('status banner sits below the plot top line',
      '        top: 60,',
-     '        top: 96,'),
+     '        top: 104,'),
 
     ('status banner clears the ruler line',
      '        top: 76,',
-     '        top: 96,'),
+     '        top: 104,'),
 
     ('status banner clears the ruler line migration',
      '        top: 84,',
-     '        top: 96,'),
+     '        top: 104,'),
 
     ('bottom rail controls center glyphs text and chevrons',
      '        borderRadius: 3,\n'
@@ -1914,7 +1914,7 @@ EDITS = [
 
     ('settings header exposes stable sticky identity',
      '/* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true,',
-     '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-header": true, style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true,'),
+     '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-header": true, style: { position: "sticky", top: -26, zIndex: 3, display: "flex", alignItems: "center", justifyContent: "space-between", margin: "-26px -26px 22px", padding: "26px 26px 16px", background: "rgba(14,18,25,1)" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-title": true,'),
 
     ('ordinary settings toggles stay generic',
      'function SpectrSettingsToggle({ value, onChange, statusInfo }) {\n'
@@ -2108,7 +2108,7 @@ function SettingsModal({ settings, setSettings, onClose }) {
 
     ('copy build info text is vertically centered',
      '    info && /* @__PURE__ */ React.createElement("button", { "data-spectr-copy-build-info": true, onClick: copy, disabled: copyState === "COPYING", style: { alignSelf: "flex-start", minWidth: 92, height: 26, padding: "0 10px", borderRadius: 3, border: "1px solid rgba(180,210,255,0.3)", background: "rgba(120,180,255,0.10)", color: "rgba(220,235,255,0.95)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 0.8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { "aria-live": "polite" }, copyState))',
-     '    info && /* @__PURE__ */ React.createElement("button", { "data-spectr-copy-build-info": true, onClick: copy, disabled: copyState === "COPYING", style: { alignSelf: "flex-start", minWidth: 92, height: 26, padding: "0 10px", borderRadius: 3, border: "1px solid rgba(180,210,255,0.3)", background: "rgba(120,180,255,0.10)", color: "rgba(220,235,255,0.95)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 0.8, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1 } }, /* @__PURE__ */ React.createElement("span", { "aria-live": "polite" }, copyState))'),
+     '    info && /* @__PURE__ */ React.createElement("button", { "data-spectr-copy-build-info": true, "data-spectr-copy-state": copyState.toLowerCase().replace(/ /g, "-"), onClick: copy, disabled: copyState === "COPYING", style: { alignSelf: "flex-start", minWidth: 92, height: 26, padding: "0 10px", borderRadius: 3, border: "1px solid rgba(180,210,255,0.3)", background: "rgba(120,180,255,0.10)", color: "rgba(220,235,255,0.95)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 0.8, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1 } }, /* @__PURE__ */ React.createElement("span", { "aria-live": "polite", style: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", lineHeight: 1 } }, copyState))'),
 
     ('shipping settings optionally show build information below feedback',
      '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })))));\n'
@@ -2186,8 +2186,8 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '    ["BUILD", info.build_type || ""],'),
 
     ('shipping build info toggle stays discoverable when about is hidden',
-     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) }))), settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null)));\n',
-     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })), /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Build info", hint: "Support and debugging details" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { buildInfo: true, value: settings.showBuildInfo !== false, onChange: (v) => persist({ showBuildInfo: v }) }))), settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null)));\n'),
+     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag feedback" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) }))), settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null)));\n',
+     '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Status info", hint: "Hover, mute, and drag feedback" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { statusInfo: true, value: settings.statusInfo !== false, onChange: (v) => persist({ statusInfo: v }) })), /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Build info", hint: "Support and debugging details" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { buildInfo: true, value: settings.showBuildInfo !== false, onChange: (v) => persist({ showBuildInfo: v }) }))), settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null)));\n'),
 
     ('shipping build info distinguishes exact SDK provenance',
      '    ["SDK SOURCE", info.sdk_dirty ? "DIRTY" : "CLEAN"],',
@@ -2199,7 +2199,49 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '      "data-spectr-status-info-state": statusInfo ? value ? "on" : "off" : void 0,\n'
      '      "data-spectr-build-info-toggle": buildInfo ? "true" : void 0,\n'
      '      "data-spectr-build-info-state": buildInfo ? value ? "on" : "off" : void 0,\n'
-     '      role: "switch",'),
+      '      role: "switch",'),
+
+    ('live status shell follows drag without perceptible batching',
+     '    if (onStatus && now - statusRefreshAtRef.current >= 700) {',
+     '    if (onStatus && now - statusRefreshAtRef.current >= 120) {'),
+
+    ('status remains readable after the latest interaction',
+     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2400 : 1800;',
+     '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;'),
+
+    ('status clear grace prevents boundary flashes',
+     '      const timer2 = hide(120);',
+     '      const timer2 = hide(160);'),
+
+    ('status banner clears the ruler with visible padding',
+     '      position: "absolute",\n        top: 96,',
+     '      position: "absolute",\n        top: 104,'),
+
+    ('status text uses an integer-centered line box',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "13px", paddingTop: "6.5px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "14px", paddingTop: "6px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)'),
+
+    ('settings hints reserve enough width to remain complete',
+     'function SpectrSettingsField({ label, hint, children }) {\n'
+     '  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 110, flexShrink: 0 } },',
+     'function SpectrSettingsField({ label, hint, children }) {\n'
+     '  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 150, flexShrink: 0 } },'),
+
+    ('settings header is an authored fixed scroll boundary',
+     '"data-spectr-settings-header": true, style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 }',
+     '"data-spectr-settings-header": true, style: { position: "sticky", top: -26, zIndex: 3, display: "flex", alignItems: "center", justifyContent: "space-between", margin: "-26px -26px 22px", padding: "26px 26px 16px", background: "rgba(14,18,25,1)" }'),
+
+    ('status info description is not truncated',
+     'label: "Status info", hint: "Hover, mute, and drag"',
+     'label: "Status info", hint: "Hover, mute, and drag feedback"'),
+
+    ('copy feedback exposes its visible state',
+     '"data-spectr-copy-build-info": true, onClick: copy, disabled: copyState === "COPYING",',
+     '"data-spectr-copy-build-info": true, "data-spectr-copy-state": copyState.toLowerCase().replace(/ /g, "-"), onClick: copy, disabled: copyState === "COPYING",'),
+
+    ('copy feedback remains centered in every state',
+     'React.createElement("span", { "aria-live": "polite" }, copyState)',
+     'React.createElement("span", { "aria-live": "polite", style: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", lineHeight: 1 } }, copyState)'),
 
 ]
 
@@ -2256,7 +2298,7 @@ SUPERSEDED_SENTINELS = {
     'live status renews its inactivity deadline off the paint hot path':
         'const statusRefreshAtRef = useRef(0);',
     'live status deadline refresh is throttled':
-        'now - statusRefreshAtRef.current >= 700',
+        'now - statusRefreshAtRef.current >= 120',
     'drawn gain edits share one mute decision':
         'commitMany(map, true);',
     'hover readout clears the status banner slot':
@@ -3114,6 +3156,10 @@ RUNTIME_EDITS = [
      '    }\n'
      '    return receipt.length;',
      '__spectrPatternMenuLayoutReceipt__'),
+    ('settings hides the scroll track when all content fits',
+     '        g5.setOverflow(panelId, "scroll");',
+     '        g5.setOverflow(panelId, panelHeight < authoredContentHeight ? "scroll" : "hidden");',
+     'panelHeight < authoredContentHeight ? "scroll" : "hidden"'),
 ]
 
 
