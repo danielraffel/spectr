@@ -259,6 +259,36 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     return payload;
 }
 
+choc::value::Value make_editor_live_state_payload(const Spectr& plugin,
+                                                  EditorRevision revision) {
+    const auto state = plugin.processing_state_snapshot();
+    const auto n = visible_count(state.layout);
+    auto gains = choc::value::createEmptyArray();
+    auto muted = choc::value::createEmptyArray();
+    for (std::size_t i = 0; i < n; ++i) {
+        gains.addArrayElement(static_cast<double>(state.field.bands[i].gain_db));
+        muted.addArrayElement(state.field.bands[i].muted);
+    }
+
+    auto payload = choc::value::createObject("SpectrEditorLiveState");
+    payload.addMember("revision", static_cast<std::int64_t>(
+        std::min(revision, kMaxEditorRevision)));
+    payload.addMember("n_visible", static_cast<std::int32_t>(n));
+    payload.addMember("gain_db", gains);
+    payload.addMember("muted", muted);
+    payload.addMember("min_hz", static_cast<double>(state.viewport.min_hz));
+    payload.addMember("max_hz", static_cast<double>(state.viewport.max_hz));
+    payload.addMember("motion_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamMotionMode)));
+    payload.addMember("analyzer_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamAnalyzerMode)));
+    payload.addMember("edit_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamEditMode)));
+    payload.addMember("visualization_mode", static_cast<double>(
+        plugin.editor_mode_param(kParamVisualization)));
+    return payload;
+}
+
 void register_spectr_editor_handlers(EditorBridge& bridge,
                                      Spectr& plugin,
                                      PatternLibrary& library,

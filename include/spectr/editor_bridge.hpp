@@ -107,6 +107,12 @@ using ClipboardWriter = std::function<bool(std::string_view)>;
 choc::value::Value make_editor_state_payload(const Spectr& plugin,
                                              EditorRevision revision = 0);
 
+/// Compact projection for frame-coalesced host automation playback. Unlike
+/// the full hydration payload, this excludes presets, snapshots, and settings
+/// that would force a broad React reconciliation on every display frame.
+choc::value::Value make_editor_live_state_payload(const Spectr& plugin,
+                                                  EditorRevision revision);
+
 /// Register Spectr's editor-bridge handlers on the given Pulp
 /// EditorBridge. All state references are captured by closures and
 /// must outlive the bridge. Intended to be called once at EditorView

@@ -479,6 +479,39 @@ document.addEventListener('DOMContentLoaded', async function() {
             ? payload.patterns_json : null,
         };
       },
+      parseLive(payload) {
+        const isInteger = value => Number.isFinite(value) && Math.floor(value) === value;
+        const n = payload && Number(payload.n_visible);
+        const gainDb = payload && payload.gain_db;
+        const muted = payload && payload.muted;
+        const minHz = payload && Number(payload.min_hz);
+        const maxHz = payload && Number(payload.max_hz);
+        const revision = payload && Number(payload.revision);
+        const modeIndex = (key, labels) => {
+          const value = payload && Number(payload[key]);
+          return isInteger(value) && labels[value] ? labels[value] : null;
+        };
+        const motionMode = modeIndex('motion_mode', ['live', 'precision']);
+        const analyzerMode = modeIndex('analyzer_mode', ['peak', 'avg', 'both', 'off']);
+        const editMode = modeIndex('edit_mode', ['sculpt', 'level', 'boost', 'flare', 'glide']);
+        const visualizationMode = modeIndex('visualization_mode', ['bars', 'response', 'both']);
+        if (![32, 40, 48, 56, 64].includes(n)
+            || !Array.isArray(gainDb) || gainDb.length !== n
+            || !Array.isArray(muted) || muted.length !== n
+            || !gainDb.every(Number.isFinite)
+            || !muted.every(value => typeof value === 'boolean')
+            || !isInteger(revision) || revision < 0 || revision > 9007199254740991
+            || !Number.isFinite(minHz) || !Number.isFinite(maxHz)
+            || !motionMode || !analyzerMode || !editMode || !visualizationMode
+            || minHz <= 0 || maxHz <= minHz) return null;
+        return {
+          n, gainDb: gainDb.slice(), muted: muted.slice(),
+          gains: gainDb.map((db, i) => muted[i]
+            ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
+          minHz, maxHz, revision,
+          motionMode, analyzerMode, editMode, visualizationMode,
+        };
+      },
     };
     window.SpectrNativePatterns = {
       parse(patternsJson) {
@@ -928,6 +961,48 @@ window.FilterBank = FilterBank;`,
       lastX: x, lastY: y,`,
       'raw pointer origin for tap classification');
     replaceSpectrSource(
+      String.raw`const { useState: useAppS, useRef: useAppR, useEffect: useAppE, useCallback: useAppC } = React;
+
+function App() {`,
+      String.raw`const { useState: useAppS, useRef: useAppR, useEffect: useAppE, useCallback: useAppC } = React;
+
+function parseSpectrNativeLiveState(payload) {
+  const isInteger = value => Number.isFinite(value) && Math.floor(value) === value;
+  const n = payload && Number(payload.n_visible);
+  const gainDb = payload && payload.gain_db;
+  const muted = payload && payload.muted;
+  const minHz = payload && Number(payload.min_hz);
+  const maxHz = payload && Number(payload.max_hz);
+  const revision = payload && Number(payload.revision);
+  const modeIndex = (key, labels) => {
+    const value = payload && Number(payload[key]);
+    return isInteger(value) && labels[value] ? labels[value] : null;
+  };
+  const motionMode = modeIndex('motion_mode', ['live', 'precision']);
+  const analyzerMode = modeIndex('analyzer_mode', ['peak', 'avg', 'both', 'off']);
+  const editMode = modeIndex('edit_mode', ['sculpt', 'level', 'boost', 'flare', 'glide']);
+  const visualizationMode = modeIndex('visualization_mode', ['bars', 'response', 'both']);
+  if (![32, 40, 48, 56, 64].includes(n)
+      || !Array.isArray(gainDb) || gainDb.length !== n
+      || !Array.isArray(muted) || muted.length !== n
+      || !gainDb.every(Number.isFinite)
+      || !muted.every(value => typeof value === 'boolean')
+      || !isInteger(revision) || revision < 0 || revision > 9007199254740991
+      || !Number.isFinite(minHz) || !Number.isFinite(maxHz)
+      || !motionMode || !analyzerMode || !editMode || !visualizationMode
+      || minHz <= 0 || maxHz <= minHz) return null;
+  return {
+    n, gainDb: gainDb.slice(), muted: muted.slice(),
+    gains: gainDb.map((db, index) => muted[index]
+      ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
+    minHz, maxHz, revision,
+    motionMode, analyzerMode, editMode, visualizationMode,
+  };
+}
+
+function App() {`,
+      'app owns a native compact automation parser');
+    replaceSpectrSource(
       '  const bankRef = useAppR(null);\n\n  const [info, setInfo] = useAppS({ N: settings.bandCount, zoom: \'1.00\' });',
       String.raw`  const bankRef = useAppR(null);
   const nativeBridgeAvailable = !!window.pulp
@@ -935,7 +1010,14 @@ window.FilterBank = FilterBank;`,
     && typeof window.pulp.postMessage === 'function';
   const [nativeHydrated, setNativeHydrated] = useAppS(!nativeBridgeAvailable);
   const [nativeHydration, setNativeHydration] = useAppS(null);
+  const nativeLiveModesRef = useAppR(null);
   const acceptNativeState = useAppC((state) => {
+    nativeLiveModesRef.current = {
+      motionMode: state.motionMode,
+      analyzerMode: state.analyzerMode,
+      editMode: state.editMode,
+      visualizationMode: state.visualizationMode,
+    };
     setNativeHydrated(false);
     setNativeHydration(state);
     setSettings(current => ({
@@ -951,6 +1033,41 @@ window.FilterBank = FilterBank;`,
       setDefaultId(library.defaultId);
     }
   }, []);
+  const acceptNativeLiveState = useAppC((state) => {
+    const bank = bankRef.current;
+    if (!bank || bank.N !== state.n) {
+      // A band-count change is a topology transition, not a continuous frame
+      // update. Ask for one authoritative full projection rather than trying
+      // to reconcile a mismatched live payload in React.
+      try {
+        window.pulp.postMessage('editor_ready', {}, 'spectr-editor-live-resync');
+      } catch (error) {
+        console.error('[Spectr] live-state resync failed', error);
+      }
+      return;
+    }
+    if (typeof bank.applyHostAutomationState !== 'function')
+      throw new Error('[Spectr] compact live-state bank method is unavailable');
+    try {
+      bank.applyHostAutomationState(state);
+    } catch (error) {
+      throw new Error('[Spectr] compact live-state bank projection failed: ' + error);
+    }
+    const modes = nativeLiveModesRef.current || {};
+    if (modes.motionMode !== state.motionMode)
+      setSettings(current => ({ ...current, motionMode: state.motionMode }));
+    if (modes.analyzerMode !== state.analyzerMode)
+      setAnalyzerMode(state.analyzerMode);
+    if (modes.editMode !== state.editMode) setEditMode(state.editMode);
+    if (modes.visualizationMode !== state.visualizationMode)
+      setVisualizationMode(state.visualizationMode);
+    nativeLiveModesRef.current = {
+      motionMode: state.motionMode,
+      analyzerMode: state.analyzerMode,
+      editMode: state.editMode,
+      visualizationMode: state.visualizationMode,
+    };
+  }, []);
 
   // The native processor owns restored state. Ask for it only after this
   // listener exists, then keep React's initial defaults read-only until the
@@ -965,6 +1082,14 @@ window.FilterBank = FilterBank;`,
       }
       acceptNativeState(state);
     });
+    const unsubscribeLiveState = window.pulp.on('processing_state_live', (message) => {
+      const state = parseSpectrNativeLiveState(message && message.payload);
+      if (!state) {
+        console.error('[Spectr] rejected malformed native live-state payload');
+        return;
+      }
+      acceptNativeLiveState(state);
+    });
     try {
       window.pulp.postMessage('editor_ready', {}, 'spectr-editor-ready');
     } catch (error) {
@@ -972,8 +1097,9 @@ window.FilterBank = FilterBank;`,
     }
     return () => {
       if (typeof unsubscribeHydration === 'function') unsubscribeHydration();
+      if (typeof unsubscribeLiveState === 'function') unsubscribeLiveState();
     };
-  }, [acceptNativeState]);
+  }, [acceptNativeState, acceptNativeLiveState]);
 
   useAppE(() => {
     if (!nativeHydration || settings.bandCount !== nativeHydration.n) return;
@@ -1029,12 +1155,29 @@ window.FilterBank = FilterBank;`,
         targetGainsRef.current = state.gains.slice(0, N);
         // Never seed a synchronous WebKit paint with the categorical
         // -Infinity sentinel. The target array still owns exact mute state.
-        renderGainsRef.current = state.gains.map(value =>
-          Number.isFinite(value) ? clamp(value, -1.02, 1.02) : 0).slice(0, N);
+        renderGainsRef.current = state.gains.map((value, index) =>
+          state.muted[index] ? 0 : clamp(value, -1.02, 1.02)).slice(0, N);
         snapshotsRef.current = state.snapshots;
         setSnapshots(state.snapshots);
         setGains(state.gains.slice(0, N));
         setView({ lmin: Math.log10(state.minHz), lmax: Math.log10(state.maxHz) });
+      },
+      applyHostAutomationState: (state) => {
+        if (!Number.isSafeInteger(state.revision)
+            || state.revision < nativeAppliedRevisionRef.current) return false;
+        nativeProjectionRef.current = true;
+        nativeAppliedRevisionRef.current = state.revision;
+        mutedGainDbRef.current = state.gainDb.slice(0, N);
+        targetGainsRef.current = state.gains.slice(0, N);
+        // Host automation is already the audible value for this frame. Draw
+        // that projection directly; applying the editor's gesture easing here
+        // would make playback look different from what the processor sounds.
+        renderGainsRef.current = state.gains.map((value, index) =>
+          state.muted[index] ? 0 : clamp(value, -1.02, 1.02)).slice(0, N);
+        viewRef.current.lmin = Math.log10(state.minHz);
+        viewRef.current.lmax = Math.log10(state.maxHz);
+        if (renderAllRef.current) renderAllRef.current();
+        return true;
       },
       getGains: () => targetGainsRef.current.slice(),`,
       'atomic native field hydration');

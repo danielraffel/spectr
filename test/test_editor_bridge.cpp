@@ -368,6 +368,41 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     CHECK(payload["snapshots"]["B"]["gain_db"][17].get<double>() == Approx(3.0));
 }
 
+TEST_CASE("host automation publication is compact and revisioned") {
+    Rig r;
+    r.proc->set_layout(spectr::Layout::Bands48);
+    r.proc->viewport() = {280.0f, 340.0f};
+    r.proc->field().bands[17] = {-9.5f, true};
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamMotionMode, 1.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamAnalyzerMode, 2.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamEditMode, 4.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamVisualization, 1.0f));
+
+    constexpr spectr::EditorRevision revision = 42;
+    const auto message = spectr::make_editor_live_state_message(*r.proc, revision);
+    CHECK(message.type == "processing_state_live");
+    CHECK(message.id == "spectr-processing-state-live");
+
+    const auto payload = choc::json::parse(message.payload_json);
+    REQUIRE(payload.isObject());
+    CHECK(payload["revision"].get<int64_t>() == 42);
+    CHECK(payload["n_visible"].get<int64_t>() == 48);
+    CHECK(payload["gain_db"].size() == 48);
+    CHECK(payload["muted"].size() == 48);
+    CHECK(payload["gain_db"][17].get<double>() == Approx(-9.5));
+    CHECK(payload["muted"][17].getBool());
+    CHECK(payload["min_hz"].get<double>() == Approx(280.0));
+    CHECK(payload["max_hz"].get<double>() == Approx(340.0));
+    CHECK(payload["motion_mode"].get<double>() == Approx(1.0));
+    CHECK(payload["analyzer_mode"].get<double>() == Approx(2.0));
+    CHECK(payload["edit_mode"].get<double>() == Approx(4.0));
+    CHECK(payload["visualization_mode"].get<double>() == Approx(1.0));
+    CHECK_FALSE(payload.hasObjectMember("snapshots"));
+    CHECK_FALSE(payload.hasObjectMember("patterns_json"));
+    CHECK_FALSE(payload.hasObjectMember("settings"));
+    CHECK_FALSE(payload.hasObjectMember("modulation"));
+}
+
 TEST_CASE("native editor resolution disclosure uses current product geometry") {
     Rig r;
     pulp::format::PrepareContext prepare;
@@ -550,6 +585,8 @@ TEST_CASE("embedded editor gates default publication until native hydration") {
 
     CHECK(html.find("window.pulp.on('processing_state_hydrate'")
           != std::string::npos);
+    CHECK(html.find("window.pulp.on('processing_state_live'")
+          != std::string::npos);
     CHECK(html.find("window.pulp.postMessage('editor_ready'")
           != std::string::npos);
     CHECK(html.find("if (!nativeHydrated) return;")
@@ -560,7 +597,9 @@ TEST_CASE("embedded editor gates default publication until native hydration") {
           != std::string::npos);
     CHECK(html.find("hydrateProcessingState(nativeHydration)")
           != std::string::npos);
-    CHECK(html.find("spectral_resolution_request") != std::string::npos);
+    CHECK(html.find("applyHostAutomationState(state)")
+          != std::string::npos);
+    CHECK(html.find("spectral_resolution_request") == std::string::npos);
     CHECK(html.find("RES {resolution ?") == std::string::npos);
     CHECK(html.find("data-spectr-resolution") == std::string::npos);
 }

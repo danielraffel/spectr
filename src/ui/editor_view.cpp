@@ -138,6 +138,16 @@ pulp::view::WebViewMessage make_editor_hydration_message(const Spectr& plugin) {
     };
 }
 
+pulp::view::WebViewMessage make_editor_live_state_message(
+    const Spectr& plugin, EditorRevision revision) {
+    auto payload = make_editor_live_state_payload(plugin, revision);
+    return {
+        .type = "processing_state_live",
+        .payload_json = choc::json::toString(payload, false),
+        .id = "spectr-processing-state-live",
+    };
+}
+
 bool make_editor_resolution_message(
     const Spectr& plugin, pulp::view::WebViewMessage& out_message) {
     pulp::signal::SpectralBandResolution report;
@@ -289,7 +299,7 @@ bool EditorView::post_host_automation_() {
     const auto revision = plugin_.host_automation_revision();
     if (!panel_ || !document_ready_ || revision == host_automation_revision_)
         return false;
-    panel_->post_message(make_editor_hydration_message(plugin_));
+    panel_->post_message(make_editor_live_state_message(plugin_, revision));
     host_automation_revision_ = revision;
     return true;
 }

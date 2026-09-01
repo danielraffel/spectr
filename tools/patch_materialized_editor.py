@@ -2323,6 +2323,273 @@ function SettingsModal({ settings, setSettings, onClose }) {'''),
      '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." },',
      '  ))), /* @__PURE__ */ React.createElement(SpectrModulationSettings, null), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." },'),
 
+    ('native bridge parses compact live automation state',
+     '  const nativeState = { parse: parseNativeState };',
+     '''  const parseNativeLiveState = payload => {
+    const isInteger = value => Number.isFinite(value) && Math.floor(value) === value;
+    const n = payload && Number(payload.n_visible);
+    const gainDb = payload && payload.gain_db;
+    const muted = payload && payload.muted;
+    const minHz = payload && Number(payload.min_hz);
+    const maxHz = payload && Number(payload.max_hz);
+    const revision = payload && Number(payload.revision);
+    const modeIndex = (key, labels) => {
+      const value = payload && Number(payload[key]);
+      return isInteger(value) && labels[value] ? labels[value] : null;
+    };
+    const motionMode = modeIndex('motion_mode', ['live', 'precision']);
+    const analyzerMode = modeIndex('analyzer_mode', ['peak', 'avg', 'both', 'off']);
+    const editMode = modeIndex('edit_mode', ['sculpt', 'level', 'boost', 'flare', 'glide']);
+    const visualizationMode = modeIndex('visualization_mode', ['bars', 'response', 'both']);
+    if (![32, 40, 48, 56, 64].includes(n)
+        || !Array.isArray(gainDb) || gainDb.length !== n
+        || !Array.isArray(muted) || muted.length !== n
+        || !gainDb.every(Number.isFinite)
+        || !muted.every(value => typeof value === 'boolean')
+        || !isInteger(revision) || revision < 0 || revision > 9007199254740991
+        || !Number.isFinite(minHz) || !Number.isFinite(maxHz)
+        || !motionMode || !analyzerMode || !editMode || !visualizationMode
+        || minHz <= 0 || maxHz <= minHz) return null;
+    return {
+      n, gainDb: gainDb.slice(), muted: muted.slice(),
+      gains: gainDb.map((db, index) => muted[index]
+        ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
+      minHz, maxHz, revision,
+      motionMode, analyzerMode, editMode, visualizationMode,
+    };
+  };
+  const nativeState = { parse: parseNativeState, parseLive: parseNativeLiveState };'''),
+
+    ('app accepts compact host automation projections',
+     '''  const acceptNativeState = useAppC((state) => {
+    setNativeHydrated(false);
+    setNativeHydration(state);
+    setSettings((current) => ({ ...current, bandCount: state.n }));
+    setSnapshotStatus({ A: !!state.snapshots.A, B: !!state.snapshots.B });
+    const library = window.SpectrNativePatterns.parse(state.patternsJson);
+    if (library) {
+      setUserPatterns(library.patterns);
+      setDefaultId(library.defaultId);
+    }
+  }, []);''',
+     '''  const nativeLiveModesRef = useAppR(null);
+  const acceptNativeState = useAppC(state => {
+    setNativeHydrated(false);
+    setNativeHydration(state);
+    setSettings((current) => ({ ...current, bandCount: state.n }));
+    setSnapshotStatus({ A: !!state.snapshots.A, B: !!state.snapshots.B });
+    const library = window.SpectrNativePatterns.parse(state.patternsJson);
+    if (library) {
+      setUserPatterns(library.patterns);
+      setDefaultId(library.defaultId);
+    }
+  }, []);
+  const acceptNativeLiveState = useAppC((state) => {
+    const bank = bankRef.current;
+    if (!bank || bank.N !== state.n) {
+      try {
+        window.pulp.postMessage("editor_ready", {}, "spectr-editor-live-resync");
+      } catch (error) {
+        console.error("[Spectr] live-state resync failed", error);
+      }
+      return;
+    }
+    if (typeof bank.applyHostAutomationState !== "function")
+      throw new Error("[Spectr] compact live-state bank method is unavailable");
+    try {
+      bank.applyHostAutomationState(state);
+    } catch (error) {
+      throw new Error("[Spectr] compact live-state bank projection failed: " + error);
+    }
+    const modes = nativeLiveModesRef.current || {};
+    if (modes.motionMode !== state.motionMode)
+      setSettings((current) => ({ ...current, motionMode: state.motionMode }));
+    if (modes.analyzerMode !== state.analyzerMode)
+      setAnalyzerMode(state.analyzerMode);
+    if (modes.editMode !== state.editMode) setEditMode(state.editMode);
+    if (modes.visualizationMode !== state.visualizationMode)
+      setVisualizationMode(state.visualizationMode);
+    nativeLiveModesRef.current = {
+      motionMode: state.motionMode,
+      analyzerMode: state.analyzerMode,
+      editMode: state.editMode,
+      visualizationMode: state.visualizationMode,
+    };
+  }, []);'''),
+
+    ('compact automation parser supports the embedded QuickJS surface',
+     '''  const parseNativeLiveState = payload => {
+    const n = payload && Number(payload.n_visible);''',
+     '''  const parseNativeLiveState = payload => {
+    const isInteger = value => Number.isFinite(value) && Math.floor(value) === value;
+    const n = payload && Number(payload.n_visible);'''),
+
+    ('compact automation parser uses portable integer checks',
+     '''      return Number.isInteger(value) && labels[value] ? labels[value] : null;
+    };''',
+     '''      return isInteger(value) && labels[value] ? labels[value] : null;
+    };'''),
+
+    ('compact automation parser bounds revisions portably',
+     '''        || !Number.isSafeInteger(revision) || revision < 0
+        || !Number.isFinite(minHz)''',
+     '''        || !isInteger(revision) || revision < 0 || revision > 9007199254740991
+        || !Number.isFinite(minHz)'''),
+
+    ('compact automation mode updates avoid frame reconciliation',
+     '''  const acceptNativeLiveState = useAppC((state) => {
+    const bank = bankRef.current;
+    if (!bank || bank.N !== state.n) {
+      try {
+        window.pulp.postMessage("editor_ready", {}, "spectr-editor-live-resync");
+      } catch (error) {
+        console.error("[Spectr] live-state resync failed", error);
+      }
+      return;
+    }
+    bank.applyHostAutomationState(state);
+    setSettings((current) => current.motionMode === state.motionMode ? current : { ...current, motionMode: state.motionMode });
+    setAnalyzerMode((current) => current === state.analyzerMode ? current : state.analyzerMode);
+    setEditMode((current) => current === state.editMode ? current : state.editMode);
+    setVisualizationMode((current) => current === state.visualizationMode ? current : state.visualizationMode);
+  }, []);''',
+     '''  const nativeLiveModesRef = useAppR(null);
+  const acceptNativeLiveState = useAppC((state) => {
+    const bank = bankRef.current;
+    if (!bank || bank.N !== state.n) {
+      try {
+        window.pulp.postMessage("editor_ready", {}, "spectr-editor-live-resync");
+      } catch (error) {
+        console.error("[Spectr] live-state resync failed", error);
+      }
+      return;
+    }
+    if (typeof bank.applyHostAutomationState !== "function")
+      throw new Error("[Spectr] compact live-state bank method is unavailable");
+    try {
+      bank.applyHostAutomationState(state);
+    } catch (error) {
+      throw new Error("[Spectr] compact live-state bank projection failed: " + error);
+    }
+    const modes = nativeLiveModesRef.current || {};
+    if (modes.motionMode !== state.motionMode)
+      setSettings((current) => ({ ...current, motionMode: state.motionMode }));
+    if (modes.analyzerMode !== state.analyzerMode)
+      setAnalyzerMode(state.analyzerMode);
+    if (modes.editMode !== state.editMode) setEditMode(state.editMode);
+    if (modes.visualizationMode !== state.visualizationMode)
+      setVisualizationMode(state.visualizationMode);
+    nativeLiveModesRef.current = {
+      motionMode: state.motionMode,
+      analyzerMode: state.analyzerMode,
+      editMode: state.editMode,
+      visualizationMode: state.visualizationMode,
+    };
+  }, []);'''),
+
+    ('app owns the compact automation parser in its execution realm',
+     '''const { useState: useAppS, useRef: useAppR, useEffect: useAppE, useCallback: useAppC } = React;
+function App() {''',
+     '''const { useState: useAppS, useRef: useAppR, useEffect: useAppE, useCallback: useAppC } = React;
+function parseSpectrNativeLiveState(payload) {
+  const isInteger = value => Number.isFinite(value) && Math.floor(value) === value;
+  const n = payload && Number(payload.n_visible);
+  const gainDb = payload && payload.gain_db;
+  const muted = payload && payload.muted;
+  const minHz = payload && Number(payload.min_hz);
+  const maxHz = payload && Number(payload.max_hz);
+  const revision = payload && Number(payload.revision);
+  const modeIndex = (key, labels) => {
+    const value = payload && Number(payload[key]);
+    return isInteger(value) && labels[value] ? labels[value] : null;
+  };
+  const motionMode = modeIndex("motion_mode", ["live", "precision"]);
+  const analyzerMode = modeIndex("analyzer_mode", ["peak", "avg", "both", "off"]);
+  const editMode = modeIndex("edit_mode", ["sculpt", "level", "boost", "flare", "glide"]);
+  const visualizationMode = modeIndex("visualization_mode", ["bars", "response", "both"]);
+  if (![32, 40, 48, 56, 64].includes(n)
+      || !Array.isArray(gainDb) || gainDb.length !== n
+      || !Array.isArray(muted) || muted.length !== n
+      || !gainDb.every(Number.isFinite)
+      || !muted.every(value => typeof value === "boolean")
+      || !isInteger(revision) || revision < 0 || revision > 9007199254740991
+      || !Number.isFinite(minHz) || !Number.isFinite(maxHz)
+      || !motionMode || !analyzerMode || !editMode || !visualizationMode
+      || minHz <= 0 || maxHz <= minHz) return null;
+  return {
+    n, gainDb: gainDb.slice(), muted: muted.slice(),
+    gains: gainDb.map((db, index) => muted[index]
+      ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
+    minHz, maxHz, revision,
+    motionMode, analyzerMode, editMode, visualizationMode,
+  };
+}
+function App() {'''),
+
+    ('compact automation subscription uses the app-owned parser',
+     '''      const state = window.SpectrNativeState.parseLive(message && message.payload);
+      if (!state) {
+        console.error("[Spectr] rejected malformed native live-state payload");''',
+     '''      const state = parseSpectrNativeLiveState(message && message.payload);
+      if (!state) {
+        console.error("[Spectr] rejected malformed native live-state payload");'''),
+
+    ('compact automation renders explicit mute values portably',
+     '''        renderGainsRef.current = state.gains.map((value) => Number.isFinite(value) ? clamp(value, -1.02, 1.02) : 0).slice(0, N);''',
+     '''        renderGainsRef.current = state.gains.map((value, index) => state.muted[index] ? 0 : clamp(value, -1.02, 1.02)).slice(0, N);''',
+     2),
+
+    ('app subscribes to one live automation projection per frame',
+     '''      acceptNativeState(state);
+    });
+    try {''',
+     '''      acceptNativeState(state);
+    });
+    const unsubscribeLiveState = window.pulp.on("processing_state_live", (message) => {
+      const state = window.SpectrNativeState.parseLive(message && message.payload);
+      if (!state) {
+        console.error("[Spectr] rejected malformed native live-state payload");
+        return;
+      }
+      acceptNativeLiveState(state);
+    });
+    try {'''),
+
+    ('app releases compact live automation subscription',
+     '''    return () => {
+      if (typeof unsubscribeHydration === "function") unsubscribeHydration();
+    };
+  }, [acceptNativeState]);''',
+     '''    return () => {
+      if (typeof unsubscribeHydration === "function") unsubscribeHydration();
+      if (typeof unsubscribeLiveState === "function") unsubscribeLiveState();
+    };
+  }, [acceptNativeState, acceptNativeLiveState]);'''),
+
+    ('filter bank applies host automation without React hydration',
+     '''      },
+      getGains: () => targetGainsRef.current.slice(),
+      view,
+      N
+    };''',
+     '''      },
+      applyHostAutomationState: (state) => {
+        if (!Number.isSafeInteger(state.revision) || state.revision < nativeAppliedRevisionRef.current) return false;
+        nativeProjectionRef.current = true;
+        nativeAppliedRevisionRef.current = state.revision;
+        mutedGainDbRef.current = state.gainDb.slice(0, N);
+        targetGainsRef.current = state.gains.slice(0, N);
+        renderGainsRef.current = state.gains.map((value, index) => state.muted[index] ? 0 : clamp(value, -1.02, 1.02)).slice(0, N);
+        viewRef.current.lmin = Math.log10(state.minHz);
+        viewRef.current.lmax = Math.log10(state.maxHz);
+        if (renderAllRef.current) renderAllRef.current();
+        return true;
+      },
+      getGains: () => Array.from(targetGainsRef.current),
+      view,
+      N
+    };'''),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an

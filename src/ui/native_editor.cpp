@@ -547,16 +547,16 @@ bool Spectr::tick_native_analyzer_(float dt) {
     if (!native_scripted_ui_ || !native_scripted_ui_->bridge()) return false;
     const auto host_revision = host_automation_revision();
     if (host_revision != native_host_automation_revision_) {
-        const auto payload = make_editor_state_payload(*this, host_revision);
+        const auto payload = make_editor_live_state_payload(*this, host_revision);
         std::ostringstream hydration;
         hydration
             << "if (typeof globalThis.__spectrPublishNativeMessage === 'function') "
-               "globalThis.__spectrPublishNativeMessage('processing_state_hydrate',"
+               "globalThis.__spectrPublishNativeMessage('processing_state_live',"
             << choc::json::toString(payload, false)
-            << ",'spectr-processing-state-hydrate');";
+            << ",'spectr-processing-state-live');";
         try {
             native_scripted_ui_->bridge()->load_script(
-                hydration.str(), "spectr-native-host-automation");
+                hydration.str(), "spectr-native-host-automation-live");
             native_host_automation_revision_ = host_revision;
         } catch (const std::exception& error) {
             pulp::runtime::log_error(

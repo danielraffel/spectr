@@ -372,6 +372,65 @@ window.spectrStartOracle = () => {
           && state.mutedGainDb.every(Number.isFinite) && state;
       }, reopened ? 'finite reopened hydration' : 'finite initial hydration');
       step(reopened ? 'reopened-hydrated' : 'initial-hydrated');
+      if ((window.__spectrHandlers.processing_state_live?.size || 0) !== 1)
+        throw new Error('native live-state listener count is not one');
+      const beforeLive = window.__spectrTestHooks.renderState();
+      const livePayload = {
+        revision: 0,
+        n_visible: 32,
+        gain_db: Array.from({ length: 32 }, (_, index) => index - 16),
+        muted: Array.from({ length: 32 }, (_, index) => index === 7),
+        min_hz: 220,
+        max_hz: 8800,
+        motion_mode: 1,
+        analyzer_mode: 2,
+        edit_mode: 3,
+        visualization_mode: 1,
+      };
+      window.__spectrEmit('processing_state_live', livePayload);
+      const projectedLive = await spectrWaitFor(() => {
+        const state = window.__spectrTestHooks.renderState?.();
+        return state
+          && Math.abs(state.targetGains[0] - livePayload.gain_db[0] / 24) < 1e-9
+          && state.targetGains[7] === -Infinity
+          && Math.abs(state.view.lmin - Math.log10(livePayload.min_hz)) < 1e-9
+          && Math.abs(state.view.lmax - Math.log10(livePayload.max_hz)) < 1e-9
+          && state;
+      }, 'imperative native live-state projection');
+      if (projectedLive.gains.some((value, index) =>
+          value !== (index === 7 ? 0 : Math.max(-1.02,
+            Math.min(1.02, livePayload.gain_db[index] / 24)))))
+        throw new Error('native live-state canvas projection diverged from audible values');
+      if (projectedLive.reactGains.some((value, index) =>
+          value !== beforeLive.reactGains[index]))
+        throw new Error('native live-state reconciled React gains on the frame path');
+      if (projectedLive.reactView.lmin !== beforeLive.reactView.lmin
+          || projectedLive.reactView.lmax !== beforeLive.reactView.lmax)
+        throw new Error('native live-state reconciled React viewport on the frame path');
+      window.__spectrEmit('processing_state_live', {
+        ...livePayload,
+        revision: -1,
+        gain_db: new Array(32).fill(24),
+        min_hz: 20,
+        max_hz: 20000,
+      });
+      await spectrFrames(2);
+      const afterStaleLive = window.__spectrTestHooks.renderState();
+      if (Math.abs(afterStaleLive.targetGains[0]
+          - livePayload.gain_db[0] / 24) > 1e-9
+          || Math.abs(afterStaleLive.view.lmin
+          - Math.log10(livePayload.min_hz)) > 1e-9)
+        throw new Error('invalid native live-state overwrote the latest projection');
+      // Restore the fixture's authoritative full state before the remaining
+      // interaction oracle. This also proves a topology/full-state refresh
+      // can still supersede the compact frame lane when one is required.
+      window.__spectrEmit('processing_state_hydrate', window.__spectrHydration);
+      await spectrWaitFor(() => {
+        const state = window.__spectrTestHooks.renderState?.();
+        return state && state.targetGains.every(value => value === -Infinity)
+          && Math.abs(state.view.lmin - Math.log10(window.__spectrHydration.min_hz)) < 1e-9
+          && Math.abs(state.view.lmax - Math.log10(window.__spectrHydration.max_hz)) < 1e-9;
+      }, 'full hydration after native live-state projection');
       if (document.querySelector('[data-spectr-status-banner]'))
         throw new Error('empty status banner was mounted');
       Object.defineProperty(document, 'hasFocus', {

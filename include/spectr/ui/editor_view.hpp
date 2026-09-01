@@ -34,6 +34,10 @@ class Spectr;
 /// React bridge listener is installed.
 pulp::view::WebViewMessage make_editor_hydration_message(const Spectr& plugin);
 
+/// One latest-value-wins automation projection per editor frame.
+pulp::view::WebViewMessage make_editor_live_state_message(
+    const Spectr& plugin, EditorRevision revision);
+
 bool make_editor_resolution_message(
     const Spectr& plugin, pulp::view::WebViewMessage& out_message);
 
