@@ -105,6 +105,7 @@ void Spectr::capture_snapshot(SnapshotBank::Slot slot) noexcept {
     // capture serializes against the same lock as every field_/bank access.
     std::lock_guard<std::mutex> lock(processing_state_mutex_);
     snapshots_.capture_into(slot, field_, viewport_, layout_);
+    publish_audio_modulation_state_();
 }
 
 void Spectr::apply_morph_to_live(float t) noexcept {
@@ -218,7 +219,15 @@ bool Spectr::spectral_resolution(
         static_cast<float>(sample_rate_), out_resolution);
 }
 
+void Spectr::publish_audio_modulation_state_() noexcept {
+    // All callers serialize through processing_state_mutex_. TripleBuffer
+    // therefore has one logical writer and process() remains its sole reader.
+    audio_modulation_publication_.write(AudioModulationState{
+        modulation_, snapshots_});
+}
+
 void Spectr::publish_processing_state_() noexcept {
+    publish_audio_modulation_state_();
     auto mask_layout = make_mask_layout_();
 
     if (!processor_prepared_) return;
@@ -489,7 +498,11 @@ void Spectr::process(
         && input.num_channels() == static_cast<std::size_t>(channels_)
         && output.num_samples() == input.num_samples()) {
         const auto* events = param_events();
-        if (events && !events->events().empty()) {
+        const auto& audio_modulation = audio_modulation_publication_.read();
+        const bool has_events = events && !events->events().empty();
+        const bool modulation_enabled =
+            state().get_value(kParamLfoEnabled) >= 0.5f;
+        if (has_events || modulation_enabled) {
             std::array<pulp::format::ParamSnapshotEntry,
                        kSurfaceCacheSlots + 2> initial{};
             initial[0] = {kMix, audio_mix_percent_};
@@ -502,16 +515,64 @@ void Spectr::process(
 
             pulp::format::ParamCursor params(
                 state(), events,
-                std::span<const pulp::format::ParamSnapshotEntry>{initial});
+                has_events
+                    ? std::span<const pulp::format::ParamSnapshotEntry>{initial}
+                    : std::span<const pulp::format::ParamSnapshotEntry>{});
             std::size_t block_offset = 0;
             pulp::format::for_each_subblock(
                 output, input, events, params,
                 [&](pulp::audio::BufferView<float>& out_slice,
                     const pulp::audio::BufferView<const float>& in_slice,
                     pulp::format::ParamCursor& cursor) {
-                    pulp::signal::SpectralBandLayout automated;
+                    BandField canonical{};
                     const auto automated_layout = layout_from_param_value(
                         cursor.value(kParamBandCount));
+                    for (std::size_t band = 0; band < kMaxBands; ++band) {
+                        canonical.bands[band].gain_db =
+                            cursor.value(band_gain_param_id(band));
+                        canonical.bands[band].muted =
+                            cursor.value(band_mute_param_id(band)) >= 0.5f;
+                    }
+
+                    const float host_morph = std::clamp(
+                        cursor.value(kParamMorph), 0.0f, 1.0f);
+                    BandField host_field = canonical;
+                    if (audio_modulation.snapshots.has(SnapshotBank::Slot::A)
+                        && audio_modulation.snapshots.has(SnapshotBank::Slot::B)) {
+                        morph_fields(host_field,
+                                     audio_modulation.snapshots.a.field,
+                                     audio_modulation.snapshots.b.field,
+                                     host_morph);
+                    }
+                    ModulationSettings modulation_settings;
+                    modulation_settings.enabled =
+                        cursor.value(kParamLfoEnabled) >= 0.5f;
+                    modulation_settings.shape = static_cast<LfoShape>(
+                        std::clamp(static_cast<int>(std::lround(
+                            cursor.value(kParamLfoShape))), 0, 3));
+                    modulation_settings.beats_per_cycle = std::clamp(
+                        cursor.value(kParamLfoRate), 0.25f, 16.0f);
+                    modulation_settings.depth = std::clamp(
+                        cursor.value(kParamLfoDepth), 0.0f, 1.0f);
+                    modulation_settings.target =
+                        static_cast<ModulationTarget>(std::clamp(
+                            static_cast<int>(std::lround(
+                                cursor.value(kParamLfoTarget))), 0, 3));
+                    if (should_reset_stream_history && block_offset == 0) {
+                        audio_modulation_phase_ =
+                            ctx.position_beats
+                            / std::max(0.0625, static_cast<double>(
+                                modulation_settings.beats_per_cycle));
+                        audio_modulation_phase_ -=
+                            std::floor(audio_modulation_phase_);
+                    }
+                    const float wave = lfo_value(
+                        modulation_settings.shape, audio_modulation_phase_);
+                    const BandField audible = apply_internal_modulation(
+                        host_field, audio_modulation.snapshots, host_morph,
+                        modulation_settings, wave);
+
+                    pulp::signal::SpectralBandLayout automated;
                     automated.active_bands = static_cast<std::uint32_t>(
                         visible_count(automated_layout));
                     const auto automated_viewport = decode_viewport(
@@ -530,9 +591,9 @@ void Spectr::process(
                     for (std::size_t band = 0;
                          band < automated.active_bands; ++band) {
                         automated.bands[band].gain_db =
-                            cursor.value(band_gain_param_id(band));
+                            audible.bands[band].gain_db;
                         automated.bands[band].muted =
-                            cursor.value(band_mute_param_id(band)) >= 0.5f;
+                            audible.bands[band].muted;
                     }
                     (void)mask_processor_.set_layout_rt(automated);
                     mask_processor_.set_mix(std::clamp(
@@ -568,6 +629,18 @@ void Spectr::process(
                                 output_channels_[channel][sample] *= gain;
                         }
                     }
+                    const double sample_rate = ctx.sample_rate > 0.0
+                        ? ctx.sample_rate : sample_rate_;
+                    const double tempo = ctx.tempo_bpm > 0.0
+                        ? ctx.tempo_bpm : 120.0;
+                    const double beats_per_cycle = std::max(
+                        0.0625, static_cast<double>(
+                            modulation_settings.beats_per_cycle));
+                    audio_modulation_phase_ +=
+                        (static_cast<double>(out_slice.num_samples())
+                         * tempo / (60.0 * sample_rate)) / beats_per_cycle;
+                    audio_modulation_phase_ -=
+                        std::floor(audio_modulation_phase_);
                     block_offset += out_slice.num_samples();
                 });
 

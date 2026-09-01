@@ -12,6 +12,7 @@
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
 #include <pulp/signal/smoothed_value.hpp>
+#include <pulp/runtime/triple_buffer.hpp>
 #include <pulp/view/ab_compare.hpp>
 #include <pulp/view/visualization_bridge.hpp>
 #include <array>
@@ -53,6 +54,11 @@ struct ProcessingStateSnapshot {
     BandField field{};
     Viewport viewport{};
     Layout layout = Layout::Bands32;
+    SnapshotBank snapshots{};
+};
+
+struct AudioModulationState {
+    ModulationSettings settings{};
     SnapshotBank snapshots{};
 };
 
@@ -376,6 +382,12 @@ private:
     // otherwise the pre-event slice would incorrectly jump to the final value.
     float audio_mix_percent_ = 100.0f;
     float audio_output_trim_db_ = 0.0f;
+    // Settings/snapshots cross from serialized control writers to the audio
+    // owner through a latest-value publication. Derived LFO values never flow
+    // back into either canonical state or host parameter lanes.
+    pulp::runtime::TripleBuffer<AudioModulationState>
+        audio_modulation_publication_{};
+    double audio_modulation_phase_ = 0.0;
     // The most recent EditorAuthority revision caused specifically by host
     // parameter adoption. Views use this as a coalescing publication key so
     // automation redraws immediately without echoing every editor-originated
@@ -470,6 +482,7 @@ private:
 
     [[nodiscard]] pulp::signal::SpectralBandLayout
         make_mask_layout_() const noexcept;
+    void publish_audio_modulation_state_() noexcept;
     void publish_processing_state_() noexcept;
     void configure_bridge_(int num_channels);
 };
