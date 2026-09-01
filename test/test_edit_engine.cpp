@@ -114,7 +114,7 @@ TEST_CASE("M6 Boost: scales snapshot gains by drag direction") {
     }
 }
 
-TEST_CASE("M6 Flare: exaggerates distance from 0 dB proportional to drag") {
+TEST_CASE("M6 Flare: expands or compresses distance from 0 dB without changing sign") {
     BandField f0;
     // Snapshot: alternating ±4 dB, so positive bands stay positive and
     // negatives stay negative under flare.
@@ -123,14 +123,25 @@ TEST_CASE("M6 Flare: exaggerates distance from 0 dB proportional to drag") {
     }
     const auto snap = BandSnapshot::capture(f0);
 
-    auto f = f0;
-    // Full upward drag.
-    const auto drag = make_drag(0, 0.0f, 0, kMaxBands == 0 ? 0.0f : 12.0f);
-    apply_flare(f, drag, snap);
-    // Every band should be FARTHER from zero than its snapshot (in the
-    // direction of its sign).
-    for (std::size_t i = 0; i < kMaxBands; ++i) {
-        CHECK(std::fabs(f.bands[i].gain_db) >= std::fabs(snap.gain_db[i]));
+    SECTION("drag up expands both signs away from zero") {
+        auto f = f0;
+        apply_flare(f, make_drag(0, 0.0f, 0, 12.0f), snap);
+        for (std::size_t i = 0; i < kMaxBands; ++i) {
+            CHECK(std::fabs(f.bands[i].gain_db) > std::fabs(snap.gain_db[i]));
+            CHECK(std::signbit(f.bands[i].gain_db)
+                  == std::signbit(snap.gain_db[i]));
+        }
+    }
+
+    SECTION("large drag down compresses both signs toward zero without crossing") {
+        auto f = f0;
+        apply_flare(f, make_drag(0, 0.0f, 0, -48.0f), snap);
+        for (std::size_t i = 0; i < kMaxBands; ++i) {
+            CHECK(std::fabs(f.bands[i].gain_db) < std::fabs(snap.gain_db[i]));
+            CHECK(std::fabs(f.bands[i].gain_db) > 0.0f);
+            CHECK(std::signbit(f.bands[i].gain_db)
+                  == std::signbit(snap.gain_db[i]));
+        }
     }
 }
 

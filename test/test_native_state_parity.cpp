@@ -1921,7 +1921,7 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         "JSON.stringify(globalThis.__spectrToolbarOpticalCenteringReceipt__) === "
         "'[{\"root\":\"edit\",\"svg_top\":6.5,\"label_top\":6.25,\"svg_x_shift\":-1,\"svg_y_shift\":0,\"label_x_shift\":-1,\"label_y_shift\":0},"
         "{\"root\":\"analyzer\",\"svg_top\":3.75,\"label_top\":6.25,\"svg_x_shift\":-1,\"svg_y_shift\":0,\"label_x_shift\":-1,\"label_y_shift\":0},"
-        "{\"root\":\"pattern\",\"svg_top\":5.375,\"label_top\":6.375,\"svg_x_shift\":0.25,\"svg_y_shift\":0,\"label_x_shift\":0.25,\"label_y_shift\":0}]'",
+        "{\"root\":\"pattern\",\"svg_top\":5.375,\"label_top\":6.25,\"svg_x_shift\":0.25,\"svg_y_shift\":0,\"label_x_shift\":0.25,\"label_y_shift\":0}]'",
         "toolbar optical-centering corrections were not applied");
     const auto require_toolbar_child_geometry = [&](std::string_view text,
                                                       float icon_top,
@@ -2077,8 +2077,18 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         "document.querySelector('[data-spectr-selected-preset]')?.textContent"
         " === 'DOWNWA\u2026 \u25BE'",
         "selected factory preset name was not safely truncated on the trigger");
+    require_runtime_contract(
+        rig,
+        "globalThis.__spectrToolbarOpticalCenteringReceipt__.find("
+        "entry => entry.root === 'pattern')?.label_top === 6.25",
+        "selected preset label lost the shared toolbar optical baseline");
     activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
     activate(rig, "[data-spectr-pattern-menu-id=\"factory:flat\"]");
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-selected-preset]')?.textContent"
+        " === 'FLAT \u25BE'",
+        "selected factory preset name did not update after applying a new preset");
     require_home(rig);
 
     activate(rig, "[data-spectr-settings-open]");
@@ -2332,27 +2342,46 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         "s.managerOpen === true && s.userPatterns.length === 1",
         "saved preset was not available in the native pattern manager");
     activate(rig, "[data-spectr-pattern-id=\"factory:tilt\"]");
+    settle(rig.clock, 4);
     rig.bridge().load_script(R"js((() => {
       const manager = document.querySelector(
         '[data-spectr-overlay="true"][aria-label="Pattern manager"]');
       if (!manager) throw new Error('pattern manager overlay missing');
       const heading = document.querySelector('[data-spectr-manager-heading]');
+      const title = document.querySelector('[data-spectr-manager-title]');
+      const source = document.querySelector('[data-spectr-manager-source]');
+      const preview = document.querySelector('[data-spectr-manager-preview]');
       const bands = document.querySelector('[data-spectr-manager-meta]');
+      const actionRow = document.querySelector('[data-spectr-manager-actions]');
       const actions = ['apply', 'set-default', 'duplicate',
         'export-file', 'export-clip'];
       const labels = ['APPLY', 'SET AS DEFAULT', 'DUPLICATE',
         'EXPORT (FILE)', 'EXPORT (CLIP)'];
       const buttons = actions.map(action => document.querySelector(
         '[data-spectr-manager-action="' + action + '"]'));
-      if (!heading || !bands || buttons.some(button => !button))
+      if (!heading || !title || !source || !preview || !bands || !actionRow
+          || buttons.some(button => !button))
         throw new Error('selected preset detail subjects missing');
       const managerRect = manager.getBoundingClientRect();
       const headingRect = heading.getBoundingClientRect();
+      const titleRect = title.getBoundingClientRect();
+      const sourceRect = source.getBoundingClientRect();
+      const previewRect = preview.getBoundingClientRect();
       const bandsRect = bands.getBoundingClientRect();
+      const actionRect = actionRow.getBoundingClientRect();
       const buttonRects = buttons.map(button => button.getBoundingClientRect());
-      if (headingRect.bottom > bandsRect.top)
-        throw new Error('selected preset title overlaps its metadata');
+      if (headingRect.width <= 0 || previewRect.width <= 0 || bandsRect.width <= 0
+          || actionRect.width <= 0)
+        throw new Error('selected preset detail collapsed');
+      if (titleRect.right > sourceRect.left + 0.5)
+        throw new Error('selected preset source badge overlaps its title');
+      if (headingRect.bottom > previewRect.top + 0.5
+          || previewRect.bottom > bandsRect.top + 0.5
+          || bandsRect.bottom > actionRect.top + 0.5)
+        throw new Error('selected preset detail vertical order collapsed');
       for (const rect of buttonRects) {
+        if (rect.width < 50 || rect.height < 25)
+          throw new Error('selected preset action collapsed');
         if (rect.left < managerRect.left - 0.5 || rect.right > managerRect.right + 0.5
             || rect.top < managerRect.top - 0.5 || rect.bottom > managerRect.bottom + 0.5)
           throw new Error('selected preset action escaped the manager');

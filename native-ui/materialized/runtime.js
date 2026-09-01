@@ -9189,14 +9189,26 @@
     // as a visual oracle, but applying its fixed boxes at runtime makes the
     // header reflow and collapses the selected-preset action layout.
     const authoredLayoutState = activeCapturedState === "bands";
-    const activeLayoutBindings = authoredLayoutState ? []
+    const authoredManagerDetail = activeCapturedState === "pattern-manager"
+      ? document.querySelector("[data-spectr-manager-detail]") : null;
+    const belongsToAuthoredManagerDetail = (binding) => {
+      let node = materializedNodeAtPath(binding, values);
+      while (node) {
+        if (node === authoredManagerDetail) return true;
+        node = node.parentElement || node._parentElement || null;
+      }
+      return false;
+    };
+    const activeLayoutBindings = (authoredLayoutState ? []
       : (Array.isArray(metadata && metadata.layout_bindings)
-          ? metadata.layout_bindings : []);
+          ? metadata.layout_bindings : [])).filter(
+            (binding) => !belongsToAuthoredManagerDetail(binding));
     // Selected preset names are authored state, not frozen capture text.
     const authoredTextState = activeCapturedState === "bands";
     const activeTextBindings = (authoredTextState ? []
       : (Array.isArray(metadata && metadata.text_bindings)
           ? metadata.text_bindings : [])).filter(
+        (binding) => !belongsToAuthoredManagerDetail(binding)).filter(
         (binding) => binding.text !== "PRESETS \u25BE"
           && binding.text !== "SETTINGS"
           && binding.text !== "\u00D7"
@@ -9500,7 +9512,7 @@
       { root: "analyzer", text: "PEAK ▾", svgTop: 3.75, labelTop: 6.25,
         svgXShift: -1, svgYShift: 0,
         labelXShift: -1, labelYShift: 0 },
-      { root: "pattern", text: "PRESETS ▾", svgTop: 5.375, labelTop: 6.375,
+      { root: "pattern", text: "PRESETS ▾", svgTop: 5.375, labelTop: 6.25,
         svgXShift: 0.25, svgYShift: 0,
         labelXShift: 0.25, labelYShift: 0 }
     ];
@@ -9677,6 +9689,44 @@
         manage: setBox(manage, 0, 33, 210, 28)
       };
       g5.__spectrPatternMenuLayoutReceipt__ = patternReceipt;
+    }
+    if (activeCapturedState === "pattern-manager") {
+      const managerSetBox = (node, left, top, width, height) => {
+        const id = node && (node.__pulpId || node.id);
+        if (!id) return false;
+        g5.setPosition(String(id), "absolute");
+        g5.setLeft(String(id), left);
+        g5.setTop(String(id), top);
+        g5.setFlex(String(id), "width", width);
+        g5.setFlex(String(id), "height", height);
+        return true;
+      };
+      const managerActionGeometry = [
+        ["apply", 0, 0, 54],
+        ["set-default", 60, 0, 112],
+        ["duplicate", 178, 0, 82],
+        ["export-file", 314, 0, 112],
+        ["export-clip", 0, 32, 112]
+      ];
+      const managerReceipt = { actions: [] };
+      for (const [action, left, top, width2] of managerActionGeometry) {
+        const node = document.querySelector(
+          `[data-spectr-manager-action="${action}"]`);
+        managerReceipt.actions.push({ action, applied:
+          managerSetBox(node, left, top, width2, 26) });
+      }
+      const title = document.querySelector("[data-spectr-manager-title]");
+      const source = document.querySelector("[data-spectr-manager-source]");
+      const titleId = title && (title.__pulpId || title.id);
+      const titleMetrics = titleId && typeof g5.getLayoutBoxMetrics === "function"
+        ? g5.getLayoutBoxMetrics(String(titleId)) : null;
+      const measuredTitleWidth = String(title?.textContent || "").length * 10.25;
+      const titleWidth = Math.min(260, Math.max(24, measuredTitleWidth,
+        Number(titleMetrics?.width) || 0));
+      managerReceipt.title = managerSetBox(title, 0, 0, titleWidth, 26);
+      managerReceipt.source = managerSetBox(
+        source, Math.min(354, titleWidth + 10), 2, 64, 22);
+      g5.__spectrPatternManagerLayoutReceipt__ = managerReceipt;
     }
     return receipt.length;
   }

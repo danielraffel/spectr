@@ -895,6 +895,20 @@ EDITS = [
      'React.createElement(MBtn, { onClick: onSetDefault }, isDefault ? "\\u2605 DEFAULT" : "SET AS DEFAULT"), /* @__PURE__ */ React.createElement(MBtn, { onClick: onDuplicate }, "DUPLICATE"),',
      'React.createElement(MBtn, { action: "set-default", onClick: onSetDefault }, isDefault ? "\\u2605 DEFAULT" : "SET AS DEFAULT"), /* @__PURE__ */ React.createElement(MBtn, { action: "duplicate", onClick: onDuplicate }, "DUPLICATE"),'),
 
+    ('selected preset heading subjects are individually addressable',
+     'React.createElement("span", { style: { fontSize: 14, letterSpacing: 1, fontWeight: 500 } }, isDefault &&',
+     'React.createElement("span", { "data-spectr-manager-title": true, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500 } }, isDefault &&'),
+
+    ('selected preset heading safely truncates long names',
+     'React.createElement("span", { "data-spectr-manager-title": true, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500 } }, isDefault &&',
+     'React.createElement("span", { "data-spectr-manager-title": true, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, isDefault &&'),
+
+    ('selected preset source badge is individually addressable',
+     'pattern.name), /* @__PURE__ */ React.createElement("span", { style: {\n'
+     '    fontSize: 8.5,',
+     'pattern.name), /* @__PURE__ */ React.createElement("span", { "data-spectr-manager-source": true, style: {\n'
+     '    fontSize: 8.5,'),
+
     ('selected preset export actions are individually addressable',
      'React.createElement(MBtn, { onClick: () => onExport("file") }, "EXPORT (FILE)"), /* @__PURE__ */ React.createElement(MBtn, { onClick: () => onExport("clipboard") }, "EXPORT (CLIP)")))',
      'React.createElement(MBtn, { action: "export-file", onClick: () => onExport("file") }, "EXPORT (FILE)"), /* @__PURE__ */ React.createElement(MBtn, { action: "export-clip", onClick: () => onExport("clipboard") }, "EXPORT (CLIP)")))'),
@@ -2712,6 +2726,110 @@ RUNTIME_EDITS = [
      '      : (Array.isArray(metadata && metadata.text_bindings)\n'
      '          ? metadata.text_bindings : [])).filter(',
      'const authoredTextState = activeCapturedState === "bands"'),
+    ('migrate broad preset manager layout bypass to detail-only ownership',
+     '    const authoredLayoutState = activeCapturedState === "bands"\n'
+     '      || activeCapturedState === "pattern-manager";',
+     '    const authoredLayoutState = activeCapturedState === "bands";',
+     'const authoredLayoutState = activeCapturedState === "bands";'),
+    ('migrate broad preset manager text bypass to detail-only ownership',
+     '    const authoredTextState = activeCapturedState === "bands"\n'
+     '      || activeCapturedState === "pattern-manager";',
+     '    const authoredTextState = activeCapturedState === "bands";',
+     'const authoredTextState = activeCapturedState === "bands";'),
+    ('preset manager detail keeps authored live layout after bands migration',
+     '    const authoredLayoutState = activeCapturedState === "bands";\n'
+     '    const activeLayoutBindings = authoredLayoutState ? []\n'
+     '      : (Array.isArray(metadata && metadata.layout_bindings)\n'
+     '          ? metadata.layout_bindings : []);',
+     '    const authoredLayoutState = activeCapturedState === "bands";\n'
+     '    const authoredManagerDetail = activeCapturedState === "pattern-manager"\n'
+     '      ? document.querySelector("[data-spectr-manager-detail]") : null;\n'
+     '    const belongsToAuthoredManagerDetail = (binding) => {\n'
+     '      let node = materializedNodeAtPath(binding, values);\n'
+     '      while (node) {\n'
+     '        if (node === authoredManagerDetail) return true;\n'
+     '        node = node.parentElement || node._parentElement || null;\n'
+     '      }\n'
+     '      return false;\n'
+     '    };\n'
+     '    const activeLayoutBindings = (authoredLayoutState ? []\n'
+     '      : (Array.isArray(metadata && metadata.layout_bindings)\n'
+     '          ? metadata.layout_bindings : [])).filter(\n'
+     '            (binding) => !belongsToAuthoredManagerDetail(binding));',
+     'const belongsToAuthoredManagerDetail = (binding)'),
+    ('preset manager detail keeps authored live text after bands migration',
+     '    const authoredTextState = activeCapturedState === "bands";\n'
+     '    const activeTextBindings = (authoredTextState ? []\n'
+     '      : (Array.isArray(metadata && metadata.text_bindings)\n'
+     '          ? metadata.text_bindings : [])).filter(',
+     '    const authoredTextState = activeCapturedState === "bands";\n'
+     '    const activeTextBindings = (authoredTextState ? []\n'
+     '      : (Array.isArray(metadata && metadata.text_bindings)\n'
+     '          ? metadata.text_bindings : [])).filter(\n'
+     '        (binding) => !belongsToAuthoredManagerDetail(binding)).filter(',
+     '!belongsToAuthoredManagerDetail(binding)).filter('),
+    ('selected preset uses the shared toolbar optical baseline',
+     '      { root: "pattern", text: "PRESETS ▾", svgTop: 5.375, labelTop: 6.375,',
+     '      { root: "pattern", text: "PRESETS ▾", svgTop: 5.375, labelTop: 6.25,',
+     'root: "pattern", text: "PRESETS ▾", svgTop: 5.375, labelTop: 6.25'),
+    ('selected preset manager uses explicit native action geometry',
+     '      g5.__spectrPatternMenuLayoutReceipt__ = patternReceipt;\n'
+     '    }\n'
+     '    return receipt.length;',
+     '      g5.__spectrPatternMenuLayoutReceipt__ = patternReceipt;\n'
+     '    }\n'
+     '    if (activeCapturedState === "pattern-manager") {\n'
+     '      const managerSetBox = (node, left, top, width, height) => {\n'
+     '        const id = node && (node.__pulpId || node.id);\n'
+     '        if (!id) return false;\n'
+     '        g5.setPosition(String(id), "absolute");\n'
+     '        g5.setLeft(String(id), left);\n'
+     '        g5.setTop(String(id), top);\n'
+     '        g5.setFlex(String(id), "width", width);\n'
+     '        g5.setFlex(String(id), "height", height);\n'
+     '        return true;\n'
+     '      };\n'
+     '      const managerActionGeometry = [\n'
+     '        ["apply", 0, 0, 54],\n'
+     '        ["set-default", 60, 0, 112],\n'
+     '        ["duplicate", 178, 0, 82],\n'
+     '        ["export-file", 314, 0, 112],\n'
+     '        ["export-clip", 0, 32, 112]\n'
+     '      ];\n'
+     '      const managerReceipt = { actions: [] };\n'
+     '      for (const [action, left, top, width2] of managerActionGeometry) {\n'
+     '        const node = document.querySelector(\n'
+     '          `[data-spectr-manager-action="${action}"]`);\n'
+     '        managerReceipt.actions.push({ action, applied:\n'
+     '          managerSetBox(node, left, top, width2, 26) });\n'
+     '      }\n'
+     '      const title = document.querySelector("[data-spectr-manager-title]");\n'
+     '      const source = document.querySelector("[data-spectr-manager-source]");\n'
+     '      const titleId = title && (title.__pulpId || title.id);\n'
+     '      const titleMetrics = titleId && typeof g5.getLayoutBoxMetrics === "function"\n'
+     '        ? g5.getLayoutBoxMetrics(String(titleId)) : null;\n'
+     '      const titleWidth = Math.min(330, Math.max(24,\n'
+     '        Number(titleMetrics?.width) || 104));\n'
+     '      managerReceipt.title = managerSetBox(title, 0, 0, titleWidth, 26);\n'
+     '      managerReceipt.source = managerSetBox(\n'
+     '        source, Math.min(354, titleWidth + 8), 2, 64, 22);\n'
+     '      g5.__spectrPatternManagerLayoutReceipt__ = managerReceipt;\n'
+     '    }\n'
+     '    return receipt.length;',
+     '__spectrPatternManagerLayoutReceipt__'),
+    ('selected preset source badge follows the measured title text',
+     '      const titleWidth = Math.min(330, Math.max(24,\n'
+     '        Number(titleMetrics?.width) || 104));\n'
+     '      managerReceipt.title = managerSetBox(title, 0, 0, titleWidth, 26);\n'
+     '      managerReceipt.source = managerSetBox(\n'
+     '        source, Math.min(354, titleWidth + 8), 2, 64, 22);',
+     '      const measuredTitleWidth = String(title?.textContent || "").length * 10.25;\n'
+     '      const titleWidth = Math.min(260, Math.max(24, measuredTitleWidth,\n'
+     '        Number(titleMetrics?.width) || 0));\n'
+     '      managerReceipt.title = managerSetBox(title, 0, 0, titleWidth, 26);\n'
+     '      managerReceipt.source = managerSetBox(\n'
+     '        source, Math.min(354, titleWidth + 10), 2, 64, 22);',
+     'const measuredTitleWidth = String(title?.textContent || "").length * 10.25'),
     ('settings auto extent replaces the stale manual capture height',
      '      const panelHeight = authored ? 679\n'
      '        : Math.min(684, Math.max(240, height * 0.9));',

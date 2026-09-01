@@ -72,13 +72,14 @@ void apply_flare(BandField& field,
                  const DragGesture& drag,
                  const BandSnapshot& snap) noexcept {
     // Exaggerate distance-from-zero in the snapshot, scaled by drag
-    // distance. Drag up → expansion; drag down → compression.
+    // distance. Drag up expands and drag down compresses. An exponential
+    // scale is intentional: it is always positive, so Flare can approach
+    // 0 dB but never cross it or invert the authored curve.
     const float dy = drag_dy_norm(drag);
-    const float expand = 1.0f + dy * 3.0f;  // [-2 .. +4] over a full-range drag
+    const float expand = std::exp2(dy * 2.0f); // 0.25x .. 4x over a full-range drag
     for (std::size_t i = 0; i < kMaxBands; ++i) {
         const float s = snap.gain_db[i];
-        // Preserve sign; extend magnitude proportionally.
-        float v = s * expand;
+        const float v = s * expand;
         field.bands[i].gain_db = clamp_db(v);
         field.bands[i].muted   = snap.muted[i];
     }
