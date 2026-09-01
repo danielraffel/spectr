@@ -767,8 +767,8 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     // should_pin_design_viewport() engages in every format. The previous
     // contract opened at 990x645 with viewport_policy=Responsive, which
     // short-circuited the pin and made the root reflow at the host size.
-    CHECK(size.preferred_width == 1320);
-    CHECK(size.preferred_height == 860);
+    CHECK(size.preferred_width == 990);
+    CHECK(size.preferred_height == 645);
     CHECK(size.min_width == 792);
     CHECK(size.min_height == 516);
     CHECK(size.max_width == 2640);
@@ -2111,6 +2111,18 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     const auto* close_target = nearest_click_target(close_label);
     REQUIRE(close_target != nullptr);
     const auto close_rect = root_rect(*close_target);
+    const View* settings_header = authored_settings_title;
+    while (settings_header != nullptr
+           && settings_header->position() != View::Position::sticky)
+        settings_header = settings_header->parent();
+    REQUIRE(settings_header != nullptr);
+    const auto header_rect = root_rect(*settings_header);
+    // Sticky modal chrome owns the complete top strip. A title-sized opaque
+    // box leaves scrolled fields visible through the panel padding around it.
+    CHECK(header_rect.left == Catch::Approx(panel_rect.left + 1.0f).margin(0.01f));
+    CHECK(header_rect.top == Catch::Approx(panel_rect.top + 1.0f).margin(0.01f));
+    CHECK(header_rect.right == Catch::Approx(panel_rect.right - 1.0f).margin(0.01f));
+    CHECK(header_rect.bottom >= close_rect.bottom + 8.0f);
     CHECK(close_rect.top >= panel_rect.top + 20.0f);
     CHECK(close_rect.bottom <= panel_rect.top + 64.0f);
     CHECK(panel_rect.right - close_rect.right >= 20.0f);
@@ -2654,6 +2666,18 @@ pulp::view::Point root_to_window(pulp::view::Point root_pt,
     return {root_pt.x * sx + tx, root_pt.y * sy + ty};
 }
 
+void deliver_native_resize_drag(View& root, View* target,
+                                pulp::view::Point root_pt,
+                                float movement_x, float movement_y) {
+    pulp::view::PointerAttributes pointer;
+    pointer.movement_x = movement_x;
+    pointer.movement_y = movement_y;
+    pointer.has_movement_delta = true;
+    pulp::view::deliver_mouse_drag(
+        root, target, root_pt, /*modifiers=*/0, /*click_count=*/1,
+        pulp::view::MouseButton::left, pointer);
+}
+
 }  // namespace
 
 TEST_CASE("editor resize grip sits in the bottom bar at every size",
@@ -2674,24 +2698,20 @@ TEST_CASE("editor resize grip sits in the bottom bar at every size",
         REQUIRE(grip != nullptr);
 
         const auto box = root_rect(*grip);
-        CHECK(box.right - box.left == Catch::Approx(14.0f));
-        CHECK(box.bottom - box.top == Catch::Approx(14.0f));
+        CHECK(box.right - box.left == Catch::Approx(20.0f));
+        CHECK(box.bottom - box.top == Catch::Approx(20.0f));
         // INVARIANT under the pin, and this is the proportional contract in one
         // assertion: the grip sits at the bottom-right of the AUTHORED box at
         // every host size, because the root never reflows — the host scales it.
         // Under the old responsive contract this tracked the live host bounds
         // instead, which is exactly the reflow the user ruled out.
         CHECK(box.right
-              == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth) - 3.0f));
-        // Laid INTO the bottom bar rather than floated in the corner behind it
-        // (the Efx FRAGMENTS arrangement): vertically centred on the bar's 26pt
-        // control row, whose centre is bar_top(804) + 15.5 + 13 = 832.5. A grip
-        // that drifts off that row stops reading as part of the bar, and a bar
-        // height change that nobody propagated fails here.
-        constexpr float kBarControlRowCentre = 804.0f + 15.5f + 13.0f;
-        CHECK((box.top + box.bottom) * 0.5f
-              == Catch::Approx(kBarControlRowCentre));
-        CHECK(box.bottom < static_cast<float>(spectr::kEditorDesignHeight));
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth)));
+        // Conventional AU affordance: flush with the plug-in content corner.
+        // Logic-owned chrome may continue below the content view, but the
+        // plug-in must not leave an internal gap above it.
+        CHECK(box.bottom
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignHeight)));
 
         // Reachable: hit-testing its centre resolves to the grip itself, not to
         // whatever the scripted realm painted underneath.
@@ -2788,7 +2808,6 @@ TEST_CASE("editor resize grip drag requests an aspect-held, clamped size",
 
     const auto* grip = find_resize_grip(*rig.root);
     REQUIRE(grip != nullptr);
-    auto& mutable_grip = *const_cast<View*>(grip);
 
     std::vector<std::pair<std::uint32_t, std::uint32_t>> requests;
     bool accept = true;
@@ -2798,18 +2817,26 @@ TEST_CASE("editor resize grip drag requests an aspect-held, clamped size",
             return accept;
         });
 
-    // Deltas are stated as POINTER movement — window-space points, which is
-    // what a user actually moves and what the editor must grow by. At this host
-    // size the design viewport scales by 990/1320 = 0.75, so a root-space delta
-    // is NOT the same number; deriving the root points to deliver from the
-    // intended window movement keeps the case honest at any host size.
+    // Deltas are stated as POINTER movement — host/window-space points, which
+    // is what Pulp's native plug-in host stamps onto PointerAttributes. At this
+    // host size the design viewport scales by 990/1320 = 0.75, so the delivered
+    // root point deliberately disagrees numerically with the native movement.
+    // That keeps this case honest about which channel owns resize arithmetic.
     const auto drag = [&](float window_dx, float window_dy) {
-        const auto anchor = pulp::view::Point{0.0f, 0.0f};
+        const auto box = root_rect(*grip);
+        const auto anchor = pulp::view::Point{
+            (box.left + box.right) * 0.5f,
+            (box.top + box.bottom) * 0.5f};
+        auto* target = rig.root->hit_test(anchor);
+        REQUIRE(target == grip);
+        REQUIRE(pulp::view::deliver_mouse_down(
+            *rig.root, target, anchor, /*modifiers=*/0,
+            /*click_count=*/1, /*bubble=*/true));
         const auto origin = root_to_window(anchor, 990.0f, 645.0f);
         const auto moved = window_to_root(
             {origin.x + window_dx, origin.y + window_dy}, 990.0f, 645.0f);
-        mutable_grip.on_mouse_down(anchor);
-        mutable_grip.on_mouse_drag(moved);
+        deliver_native_resize_drag(
+            *rig.root, target, moved, window_dx, window_dy);
     };
 
     SECTION("a grow drag asks for the aspect-held size") {
@@ -2852,8 +2879,10 @@ TEST_CASE("editor resize grip drag requests an aspect-held, clamped size",
 
         // And one refusal ends the gesture's traffic rather than opening a
         // rejected host transaction per mouse-move.
-        mutable_grip.on_mouse_drag({360.0f, 0.0f});
-        mutable_grip.on_mouse_drag({390.0f, 0.0f});
+        deliver_native_resize_drag(
+            *rig.root, const_cast<View*>(grip), {360.0f, 0.0f}, 30.0f, 0.0f);
+        deliver_native_resize_drag(
+            *rig.root, const_cast<View*>(grip), {390.0f, 0.0f}, 30.0f, 0.0f);
         CHECK(requests.size() == 1);
     }
 }
@@ -2887,13 +2916,20 @@ TEST_CASE("editor resize grip round-trips a granted resize",
     const auto drag_and_grant = [&](float window_dx, float window_dy) {
         const auto* grip = find_resize_grip(*rig.root);
         REQUIRE(grip != nullptr);
-        auto& mutable_grip = *const_cast<View*>(grip);
-        const auto anchor = pulp::view::Point{0.0f, 0.0f};
+        const auto box = root_rect(*grip);
+        const auto anchor = pulp::view::Point{
+            (box.left + box.right) * 0.5f,
+            (box.top + box.bottom) * 0.5f};
+        auto* target = rig.root->hit_test(anchor);
+        REQUIRE(target == grip);
+        REQUIRE(pulp::view::deliver_mouse_down(
+            *rig.root, target, anchor, /*modifiers=*/0,
+            /*click_count=*/1, /*bubble=*/true));
         const auto origin = root_to_window(anchor, host_w, host_h);
         const auto moved = window_to_root(
             {origin.x + window_dx, origin.y + window_dy}, host_w, host_h);
-        mutable_grip.on_mouse_down(anchor);
-        mutable_grip.on_mouse_drag(moved);
+        deliver_native_resize_drag(
+            *rig.root, target, moved, window_dx, window_dy);
         REQUIRE_FALSE(requests.empty());
         // The host grants it: the window resizes, and the new size arrives back
         // through on_view_resized exactly as a real host delivers it — after
@@ -2926,16 +2962,11 @@ TEST_CASE("editor resize grip round-trips a granted resize",
         REQUIRE(grip != nullptr);
         const auto box = root_rect(*grip);
         CHECK(box.right
-              == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth) - 3.0f));
-        // Laid INTO the bottom bar rather than floated in the corner behind it
-        // (the Efx FRAGMENTS arrangement): vertically centred on the bar's 26pt
-        // control row, whose centre is bar_top(804) + 15.5 + 13 = 832.5. A grip
-        // that drifts off that row stops reading as part of the bar, and a bar
-        // height change that nobody propagated fails here.
-        constexpr float kBarControlRowCentre = 804.0f + 15.5f + 13.0f;
-        CHECK((box.top + box.bottom) * 0.5f
-              == Catch::Approx(kBarControlRowCentre));
-        CHECK(box.bottom < static_cast<float>(spectr::kEditorDesignHeight));
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignWidth)));
+        CHECK(box.bottom
+              == Catch::Approx(static_cast<float>(spectr::kEditorDesignHeight)));
+        CHECK(box.right - box.left == Catch::Approx(20.0f));
+        CHECK(box.bottom - box.top == Catch::Approx(20.0f));
     }
 
     // And the UI is still live at the size the gesture produced. This is the
@@ -3029,7 +3060,7 @@ TEST_CASE("editor resize grip resizes through the host dispatch path",
     const auto press_window = root_to_window(press, 990.0f, 645.0f);
     const auto moved = window_to_root(
         {press_window.x + 330.0f, press_window.y + 215.0f}, 990.0f, 645.0f);
-    pulp::view::deliver_mouse_drag(*rig.root, target, moved, /*modifiers=*/0);
+    deliver_native_resize_drag(*rig.root, target, moved, 330.0f, 215.0f);
 
     // The gesture reached the editor and produced a real host request.
     REQUIRE(requests.size() == 1);
@@ -3158,20 +3189,19 @@ TEST_CASE("editor resize grip holds still when the pointer holds still",
 
     for (int event = 0; event < 12; ++event) {
         const auto delivered = window_to_root(held_window, host_w, host_h);
-        pulp::view::deliver_mouse_drag(*rig.root, target, delivered,
-                                       /*modifiers=*/0);
+        // One native 100pt movement, followed by eleven native 0pt movements
+        // while the pointer remains physically stationary. The changing root
+        // coordinate must not be reinterpreted as new resize travel.
+        deliver_native_resize_drag(
+            *rig.root, target, delivered,
+            event == 0 ? 100.0f : 0.0f, 0.0f);
     }
 
-    REQUIRE(!requests.empty());
-    // A stationary pointer resolves to ONE size. Not "settles eventually" —
-    // every request the gesture makes must agree, because each disagreement is
-    // a visible jump of the plug-in window in the host.
+    // A stationary pointer resolves to ONE request. Not "settles eventually"
+    // and not twelve duplicate transactions: one physical movement produces
+    // one target even though the design-space coordinate keeps changing.
+    REQUIRE(requests.size() == 1);
     const auto first = requests.front();
-    for (const auto& request : requests) {
-        INFO("requested " << request.first << 'x' << request.second
-             << " vs first " << first.first << 'x' << first.second);
-        CHECK(request == first);
-    }
     // And it is the size the movement actually asked for: +100 window points.
     const auto expected = spectr::resolve_editor_resize(
         spectr::kEditorDesignWidth, spectr::kEditorDesignHeight, 100.0, 0.0);
@@ -3231,7 +3261,8 @@ TEST_CASE("editor resize grip measures the pointer, not design units",
     const auto pressed_window = root_to_window(press, kHostW, kHostH);
     const auto moved = window_to_root(
         {pressed_window.x + kPointerTravel, pressed_window.y}, kHostW, kHostH);
-    pulp::view::deliver_mouse_drag(*rig.root, target, moved, /*modifiers=*/0);
+    deliver_native_resize_drag(
+        *rig.root, target, moved, kPointerTravel, 0.0f);
 
     REQUIRE(requests.size() == 1);
     // The editor grows by what the POINTER travelled, 1:1.

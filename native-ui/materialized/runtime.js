@@ -9270,7 +9270,29 @@
         '[data-spectr-settings-header]');
       const headerId = header && (header.__pulpId || header.id);
       if (headerId) {
+        const headerParent = header.parentElement || header._parentElement;
+        const headerParentId = headerParent && (headerParent.__pulpId || headerParent.id);
+        const headerPanelMetrics = headerParentId && typeof g5.getLayoutBoxMetrics === "function"
+          ? g5.getLayoutBoxMetrics(String(headerParentId)) : null;
+        const stickyHeaderWidth = Math.max(0, (Number(headerPanelMetrics?.width) || 520) - 2);
+        const title = globalThis.document?.querySelector?.("[data-spectr-settings-title]");
+        const titleWrapper = title && (title.parentElement || title._parentElement);
+        const titleWrapperId = titleWrapper && (titleWrapper.__pulpId || titleWrapper.id);
+        const close = globalThis.document?.querySelector?.("[data-spectr-settings-close]");
+        const closeId = close && (close.__pulpId || close.id);
         g5.setPosition(String(headerId), "sticky");
+        // The panel has 27px authored content padding. Pull the sticky
+        // chrome over that padding and put the same inset back inside
+        // the header, so title/close geometry stays unchanged while no
+        // scrolling field can paint around the opaque top strip.
+        g5.setLeft(String(headerId), 0);
+        g5.setTop(String(headerId), 0);
+        g5.setFlex(String(headerId), "width", stickyHeaderWidth);
+        g5.setFlex(String(headerId), "height", 72);
+        // Captured descendants retain absolute layout bindings, so move
+        // the visible title and close action back to their authored inset.
+        if (titleWrapperId) g5.setTransform(String(titleWrapperId), 1, 0, 0, 1, 27, 27);
+        if (closeId) g5.setTransform(String(closeId), 1, 0, 0, 1, 27, 27);
         g5.setBackground(String(headerId), "rgba(14,18,25,1)");
       }
       const feedback = globalThis.document?.querySelector?.(

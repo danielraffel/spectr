@@ -2879,11 +2879,43 @@ RUNTIME_EDITS = [
      '        \'[data-spectr-settings-header]\');\n'
      '      const headerId = header && (header.__pulpId || header.id);\n'
      '      if (headerId) {\n'
+     '        const headerParent = header.parentElement || header._parentElement;\n'
+     '        const headerParentId = headerParent && (headerParent.__pulpId || headerParent.id);\n'
+     '        const headerPanelMetrics = headerParentId && typeof g5.getLayoutBoxMetrics === "function"\n'
+     '          ? g5.getLayoutBoxMetrics(String(headerParentId)) : null;\n'
+     '        const stickyHeaderWidth = Math.max(0, (Number(headerPanelMetrics?.width) || 520) - 2);\n'
+     '        const title = globalThis.document?.querySelector?.("[data-spectr-settings-title]");\n'
+     '        const titleWrapper = title && (title.parentElement || title._parentElement);\n'
+     '        const titleWrapperId = titleWrapper && (titleWrapper.__pulpId || titleWrapper.id);\n'
+     '        const close = globalThis.document?.querySelector?.("[data-spectr-settings-close]");\n'
+     '        const closeId = close && (close.__pulpId || close.id);\n'
      '        g5.setPosition(String(headerId), "sticky");\n'
      '        g5.setBackground(String(headerId), "rgba(14,18,25,1)");\n'
      '      }\n'
      '      const feedback = globalThis.document?.querySelector?.(\n',
      'g5.setPosition(String(headerId), "sticky")'),
+    ('settings sticky header owns the complete opaque top strip',
+     '      if (headerId) {\n'
+     '        g5.setPosition(String(headerId), "sticky");\n'
+     '        g5.setBackground(String(headerId), "rgba(14,18,25,1)");\n'
+     '      }\n',
+     '      if (headerId) {\n'
+     '        g5.setPosition(String(headerId), "sticky");\n'
+     '        // The panel has 27px authored content padding. Pull the sticky\n'
+     '        // chrome over that padding and put the same inset back inside\n'
+     '        // the header, so title/close geometry stays unchanged while no\n'
+     '        // scrolling field can paint around the opaque top strip.\n'
+     '        g5.setLeft(String(headerId), 0);\n'
+     '        g5.setTop(String(headerId), 0);\n'
+     '        g5.setFlex(String(headerId), "width", stickyHeaderWidth);\n'
+     '        g5.setFlex(String(headerId), "height", 72);\n'
+     '        // Captured descendants retain absolute layout bindings, so move\n'
+     '        // the visible title and close action back to their authored inset.\n'
+     '        if (titleWrapperId) g5.setTransform(String(titleWrapperId), 1, 0, 0, 1, 27, 27);\n'
+     '        if (closeId) g5.setTransform(String(closeId), 1, 0, 0, 1, 27, 27);\n'
+     '        g5.setBackground(String(headerId), "rgba(14,18,25,1)");\n'
+     '      }\n',
+     'g5.setFlex(String(headerId), "height", 72)'),
     ('settings feedback extends the authored scroll extent',
      '      const authoredContentHeight = 672;',
      '      const authoredContentHeight = 728;',

@@ -435,22 +435,6 @@ private:
     // per drag rather than read live (reading live would compound).
     std::uint32_t native_resize_base_width_ = 0;
     std::uint32_t native_resize_base_height_ = 0;
-    // Pointer position at grip mouse-down, in HOST/WINDOW space.
-    //
-    // NOT design space, and this is the whole bug the grip used to have. Under
-    // a pinned viewport the host maps design->window with a scale of
-    // host_width / kEditorDesignWidth, and mouse points arrive inverse-mapped
-    // back into design space. Resizing therefore CHANGES THE MEANING of a
-    // design-space coordinate mid-gesture: hold the pointer perfectly still,
-    // grow the editor, and the same physical pixel reports a smaller design x.
-    // A delta latched in design space then collapses toward zero, the next
-    // request shrinks the editor, the scale drops back, the delta reappears —
-    // measured, driving a STATIONARY pointer through the real dispatch path,
-    // as the requested size swinging across 903x588 .. 1959x1277 on successive
-    // pointer events, with a full materialized re-layout behind every swing.
-    // Window space is invariant under the resize, so the latch lives there.
-    float native_resize_start_window_x_ = 0.0f;
-    float native_resize_start_window_y_ = 0.0f;
     // Set when the host refuses a request mid-drag, so one refusal doesn't turn
     // into a rejected transaction per mouse-move for the rest of the gesture.
     bool native_resize_refused_ = false;
@@ -468,11 +452,6 @@ private:
     EditorRevision native_host_automation_revision_ = 0;
 
     std::unique_ptr<pulp::view::View> create_native_editor_();
-    /// Map a ROOT (design-space) point to HOST/WINDOW space using the live host
-    /// size, mirroring the transform the editor host applies at paint. Identity
-    /// when no design viewport is pinned, which is the right answer for the
-    /// un-pinned case because root space IS window space there.
-    pulp::view::Point native_root_to_window_(pulp::view::Point root_pt) const;
     void publish_native_layout_(std::uint32_t w, std::uint32_t h);
     void open_native_editor_(pulp::view::View& view);
     void close_native_editor_();

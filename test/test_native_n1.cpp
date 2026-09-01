@@ -123,8 +123,8 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     processor.prepare(prepare);
 
     const auto size = processor.view_size();
-    REQUIRE(size.preferred_width == 1320);
-    REQUIRE(size.preferred_height == 860);
+    REQUIRE(size.preferred_width == 990);
+    REQUIRE(size.preferred_height == 645);
     REQUIRE(size.min_width == 792);
     REQUIRE(size.min_height == 516);
     REQUIRE(size.max_width == 2640);
@@ -613,4 +613,54 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     REQUIRE(reopened != nullptr);
     REQUIRE(processor.native_editor_revision() == revision_before_close);
     processor.on_view_closed(*reopened);
+}
+
+TEST_CASE("native analyzer migrates to a replacement editor while Logic retains the predecessor",
+          "[native-n1][analyzer][auv2-lifecycle]") {
+    spectr::Spectr processor;
+    pulp::state::StateStore store;
+    processor.set_state_store(&store);
+    processor.define_parameters(store);
+    pulp::format::PrepareContext prepare;
+    prepare.sample_rate = 48000.0;
+    prepare.max_buffer_size = 256;
+    prepare.input_channels = 2;
+    prepare.output_channels = 2;
+    processor.prepare(prepare);
+
+    auto predecessor = processor.create_view();
+    REQUIRE(predecessor != nullptr);
+    predecessor->set_bounds({0, 0, 1320, 860});
+    pulp::view::FrameClock predecessor_clock;
+    predecessor->set_frame_clock(&predecessor_clock);
+    predecessor->layout_children();
+    processor.on_view_opened(*predecessor);
+    feed_tone(processor, predecessor_clock);
+    REQUIRE(processor.read_spectrum().sequence_number > 0);
+
+    // Model Logic's AUv2 ordering: detach the old editor without destroying it,
+    // then request a replacement from the same audio-unit Processor.
+    auto replacement = processor.create_view();
+    REQUIRE(replacement != nullptr);
+    replacement->set_bounds({0, 0, 1320, 860});
+    pulp::view::FrameClock replacement_clock;
+    replacement->set_frame_clock(&replacement_clock);
+    replacement->layout_children();
+    processor.on_view_opened(*replacement);
+
+    auto* replacement_session = processor.active_scripted_ui();
+    REQUIRE(replacement_session != nullptr);
+    REQUIRE(replacement_session->bridge() != nullptr);
+    feed_tone(processor, replacement_clock);
+    replacement_session->bridge()->load_script(R"js(
+      const frame = globalThis.SpectrAnalyzer?.debugSnapshot?.();
+      if (!frame || frame.sequence_number <= 0)
+        throw new Error('replacement editor did not receive live analyzer audio');
+    )js", "spectr-native-replacement-analyzer-contract");
+
+    // The predecessor's delayed teardown must not close the visible runtime.
+    processor.on_view_closed(*predecessor);
+    REQUIRE(processor.active_scripted_ui() == replacement_session);
+    replacement_clock.tick(1.0f / 30.0f);
+    processor.on_view_closed(*replacement);
 }

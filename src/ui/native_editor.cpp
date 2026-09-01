@@ -65,24 +65,16 @@ constexpr float kPublishPeriodSeconds = 1.0f / 30.0f;
 //   * bar        y = 860 - 56 = 804, height 56, full width
 //   * gear / "?" 26x26 at y = 804 + 15.5, the help button ending at x = 1300
 //   * gutter     x = 1300 .. 1320, i.e. 20pt
-// A 14pt grip inset 3pt from the right edge spans x = 1303..1317 and clears the
-// help button by 3pt. Vertically it is centred on the bar's 26pt control row
-// instead of tucked into the last 3pt of the corner, so it reads as part of the
-// bar. `editor resize grip overlaps no other control` pins the clearance.
-constexpr float kResizeGripSize = 14.0f;
-constexpr float kResizeGripInset = 3.0f;
-// Bar metrics the grip aligns to. Kept as named constants so the two places
-// that must agree (this placement and the test that asserts it) cite one
-// source, and so a bar-height change fails visibly rather than silently
-// sliding the grip off the control row.
-constexpr float kBottomBarHeight = 56.0f;
-constexpr float kBottomBarControlHeight = 26.0f;
-constexpr float kBottomBarControlTop = 15.5f;
-// Distance from the editor's bottom edge to the vertical centre of the grip:
-// centre it on the bar's control row, not on the bar box.
-constexpr float kResizeGripBottomInset =
-    kBottomBarHeight - kBottomBarControlTop - kBottomBarControlHeight * 0.5f
-    - kResizeGripSize * 0.5f;
+// The full 20pt gutter is the hit target. This keeps the adjacent help button
+// untouched while making the corner much easier to acquire than the original
+// 14pt target. The painted diagonals remain inset within this box, so the grip
+// gains usability without becoming visually heavy. It is flush to the
+// plug-in content's bottom-right corner, matching the conventional AU resize
+// affordance. `editor resize grip overlaps no other control` pins clearance
+// from the adjacent controls.
+constexpr float kResizeGripSize = 20.0f;
+constexpr float kResizeGripInset = 0.0f;
+constexpr float kResizeGripBottomInset = 0.0f;
 // The materialized DesignIR tree is a sandwich: `__pulp_materialized_surface__`
 // paints at z = -20000 and `__pulp_materialized_behavior__` takes interaction at
 // z = +20000. Native chrome that must own its own rect has to clear the
@@ -98,29 +90,20 @@ constexpr std::size_t kOverviewAnalyzerPointCount = 121;
 constexpr float kAnalyzerCeilingDb = 24.0f;
 
 // `ResizableCorner` supplies the shape (non-focusable, wants mouse input) but
-// NOT the arithmetic: its `on_resize` reports a delta between two points in the
-// view's own coordinate space, and under a pinned design viewport that space
-// rescales during the very gesture that drives it. So the base class's delta is
-// deliberately unused here, and this reports absolute ROOT-space positions
-// instead, leaving the owner — which is the only thing that knows the live host
-// size — to convert them into the invariant window space. See
-// `native_resize_start_window_x_`.
+// NOT the platform arithmetic. Pulp's generic `ResizableCorner` consumes
+// host-normalized movement deltas when they are available, so its cumulative
+// `on_resize` delta remains invariant while Logic changes the editor and window
+// sizes underneath the captured pointer.
 class EditorResizeGrip : public pulp::view::ResizableCorner {
 public:
     EditorResizeGrip() {
-        // Semantically correct, and INERT IN THIS HOST TODAY: the shared macOS
-        // plug-in-view cursor switch (plugin_view_host_mac.mm,
-        // pulp_plugin_apply_hover_cursor) maps only the horizontal and vertical
-        // resize styles and lets every diagonal one fall through to the arrow.
-        // Set anyway rather than left default_ — it is what the control means,
-        // it costs nothing, and it starts working the moment that switch grows
-        // a diagonal case. Do not read this as "the grip shows a resize
-        // cursor"; it does not yet.
+        // Pulp maps this through the shared macOS cursor helper, including in
+        // embedded AU editors, so the larger hit target also gets the expected
+        // diagonal resize feedback.
         set_cursor(pulp::view::View::CursorStyle::bottom_right_resize);
     }
 
-    std::function<void(pulp::view::Point)> on_drag_begin;
-    std::function<void(pulp::view::Point)> on_drag_move;
+    std::function<void()> on_drag_begin;
 
     // ResizableCorner strokes with the theme's `control.border`, which on this
     // near-black background is effectively invisible — instrumenting the live
@@ -131,7 +114,7 @@ public:
         const float w = bounds().width, h = bounds().height;
         canvas.set_line_width(1.5f);
         for (int i = 0; i < 3; ++i) {
-            const float inset = 2.0f + static_cast<float>(i) * 4.5f;
+            const float inset = 2.0f + static_cast<float>(i) * 6.0f;
             canvas.set_stroke_color(pulp::canvas::Color::rgba8(
                 190, 200, 214, static_cast<uint8_t>(hovered_ ? 235 : 150)));
             canvas.stroke_line(w - inset, h - 1.0f, w - 1.0f, h - inset);
@@ -141,25 +124,12 @@ public:
     void on_mouse_enter() override { hovered_ = true; }
     void on_mouse_leave() override { hovered_ = false; }
 
-    // `pos` arrives in this view's LOCAL space (pointer_dispatch localizes the
-    // root point through the parent chain). The grip is a direct child of the
-    // root, so adding its own origin recovers the root-space point — and the
-    // origin must be added rather than ignored, because the local->root offset
-    // is scaled by the design viewport too, and dropping it reintroduces a
-    // smaller version of the same feedback error.
     void on_mouse_down(pulp::view::Point pos) override {
-        if (on_drag_begin) on_drag_begin(to_root(pos));
-    }
-
-    void on_mouse_drag(pulp::view::Point pos) override {
-        if (on_drag_move) on_drag_move(to_root(pos));
+        pulp::view::ResizableCorner::on_mouse_down(pos);
+        if (on_drag_begin) on_drag_begin();
     }
 
 private:
-    pulp::view::Point to_root(pulp::view::Point local) const {
-        return {local.x + bounds().x, local.y + bounds().y};
-    }
-
     bool hovered_ = false;
 };
 struct EmbeddedFile {
@@ -321,30 +291,6 @@ void append_trace(std::ostringstream& js,
 
 } // namespace
 
-pulp::view::Point Spectr::native_root_to_window_(
-    pulp::view::Point root_pt) const {
-    // Only meaningful while a design viewport is pinned; without one the root
-    // is laid out at the host size and the two spaces already coincide.
-    if (!pulp::format::should_pin_design_viewport(view_size())
-        || native_host_width_ == 0 || native_host_height_ == 0) {
-        return root_pt;
-    }
-    float sx = 1.0f, sy = 1.0f, tx = 0.0f, ty = 0.0f;
-    // `top_align` MUST match what the host used, or the y mapping is off by
-    // half the letterbox. AU v2 is the only format that reaches this code and
-    // au_v2_cocoa_view.mm calls set_design_viewport_top_align(true) whenever the
-    // viewport is pinned, so `true` is the matching value rather than a guess.
-    if (!pulp::view::WindowHost::compute_design_viewport_transform(
-            static_cast<float>(native_host_width_),
-            static_cast<float>(native_host_height_),
-            static_cast<float>(kEditorDesignWidth),
-            static_cast<float>(kEditorDesignHeight),
-            sx, sy, tx, ty, /*top_align=*/true)) {
-        return root_pt;
-    }
-    return {root_pt.x * sx + tx, root_pt.y * sy + ty};
-}
-
 std::vector<pulp::view::CommandID> Spectr::commands() const {
     return {kOpenSettingsCommand};
 }
@@ -371,6 +317,20 @@ bool Spectr::perform_command(pulp::view::CommandID id) {
 }
 
 std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
+    // Logic may retain a detached AUv2 NSView and ask the same Processor for a
+    // replacement editor before that retained view is deallocated. In that
+    // ordering `on_view_closed(old_root)` has not run yet. Spectr has one
+    // materialized runtime and one analyzer frame-clock subscription, so the
+    // replacement must explicitly supersede the detached runtime here. If we
+    // leave the old subscription installed, open_native_editor_ sees a valid
+    // subscription id and never subscribes the replacement root; audio keeps
+    // processing while the visible analyzer remains frozen.
+    //
+    // A later close notification for the retained predecessor is harmless:
+    // on_view_closed() identity-checks against native_editor_root_ and cannot
+    // tear down the replacement.
+    if (native_editor_root_ != nullptr) close_native_editor_();
+
     // A fresh editor has published nothing, so the first publish_native_layout_
     // must run even though the size it is handed has not changed since the last
     // editor. Reset here rather than on close: create is the one path both the
@@ -524,7 +484,7 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     grip->flex().preferred_width = kResizeGripSize;
     grip->flex().preferred_height = kResizeGripSize;
     grip->set_z_index(kResizeGripZIndex);
-    grip->on_drag_begin = [this](pulp::view::Point root_pt) {
+    grip->on_drag_begin = [this] {
         // Measure from the HOST size, not the root. Under a pinned viewport the
         // root is constant at the authored box, so basing the drag on root
         // bounds makes every gesture start from the same number and the grip
@@ -533,22 +493,13 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
             ? native_host_width_ : kEditorPreferredWidth;
         native_resize_base_height_ = native_host_height_ > 0
             ? native_host_height_ : kEditorPreferredHeight;
-        const auto start = native_root_to_window_(root_pt);
-        native_resize_start_window_x_ = start.x;
-        native_resize_start_window_y_ = start.y;
         native_resize_refused_ = false;
     };
-    grip->on_drag_move = [this](pulp::view::Point root_pt) {
+    grip->on_resize = [this](float movement_x, float movement_y) {
         if (native_resize_refused_ || native_resize_base_width_ == 0) return;
-        // Both ends of the delta in window space, so the arithmetic is immune
-        // to the scale change this very gesture causes. Doing it in design
-        // space instead is the oscillation documented on
-        // `native_resize_start_window_x_`.
-        const auto now = native_root_to_window_(root_pt);
-        const double dx = now.x - native_resize_start_window_x_;
-        const double dy = now.y - native_resize_start_window_y_;
         const auto target = resolve_editor_resize(
-            native_resize_base_width_, native_resize_base_height_, dx, dy);
+            native_resize_base_width_, native_resize_base_height_,
+            movement_x, movement_y);
         // Skip the round trip while the drag still resolves to the size the
         // host is already at; otherwise a slow drag opens one host transaction
         // per mouse-move that changes nothing. Compared against the host size
