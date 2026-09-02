@@ -495,6 +495,13 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${SPECTR_CHROME_EXECUTABLE}
             --mute-modes)
     set_tests_properties(Spectr-browser-mute-modes PROPERTIES TIMEOUT 180)
+    add_test(NAME Spectr-browser-build-info-timeout
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_build_info_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            ${SPECTR_CHROME_EXECUTABLE})
+    set_tests_properties(Spectr-browser-build-info-timeout PROPERTIES TIMEOUT 45)
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────

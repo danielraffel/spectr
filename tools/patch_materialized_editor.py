@@ -2206,6 +2206,50 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '    let live = true;\n'
      '    if (!window.pulp || typeof window.pulp.postMessage !== "function") {'),
 
+    ('shipping build info cannot remain stuck loading',
+     '    mountedRef.current = true;\n'
+     '    let live = true;\n'
+     '    if (!window.pulp || typeof window.pulp.postMessage !== "function") {\n'
+     '      setLoadFailed(true);\n'
+     '      return;\n'
+     '    }\n'
+     '    Promise.resolve(window.pulp.postMessage("build_info_get", {}, requestId("get"))).then(unwrap).then((body) => {\n'
+     '      if (!body || body.ok !== true || !body.product_version || !body.sdk_version)\n'
+     '        throw new Error(body && body.error || "build info unavailable");\n'
+     '      if (live) setInfo(body);\n'
+     '    }).catch((error) => {\n'
+     '      console.error("[Spectr] build info unavailable", error);\n'
+     '      if (live) setLoadFailed(true);\n'
+     '    });\n'
+     '    return () => {\n'
+     '      live = false;\n'
+     '      mountedRef.current = false;\n'
+     '      if (resetTimer.current) clearTimeout(resetTimer.current);\n',
+     '    mountedRef.current = true;\n'
+     '    let live = true;\n'
+     '    if (!window.pulp || typeof window.pulp.postMessage !== "function") {\n'
+     '      setLoadFailed(true);\n'
+     '      return;\n'
+     '    }\n'
+     '    const loadTimer = setTimeout(() => {\n'
+     '      if (live) setLoadFailed(true);\n'
+     '    }, 1500);\n'
+     '    Promise.resolve(window.pulp.postMessage("build_info_get", {}, requestId("get"))).then(unwrap).then((body) => {\n'
+     '      if (!body || body.ok !== true || !body.product_version || !body.sdk_version)\n'
+     '        throw new Error(body && body.error || "build info unavailable");\n'
+     '      clearTimeout(loadTimer);\n'
+     '      if (live) setInfo(body);\n'
+     '    }).catch((error) => {\n'
+     '      console.error("[Spectr] build info unavailable", error);\n'
+     '      clearTimeout(loadTimer);\n'
+     '      if (live) setLoadFailed(true);\n'
+     '    });\n'
+     '    return () => {\n'
+     '      live = false;\n'
+     '      mountedRef.current = false;\n'
+     '      if (resetTimer.current) clearTimeout(resetTimer.current);\n'
+     '      clearTimeout(loadTimer);\n'),
+
     ('shipping settings default build information on',
      '  "showRulers": true,\n  "statusInfo": true,\n  "scheme": "midnight",',
      '  "showRulers": true,\n  "statusInfo": true,\n  "showBuildInfo": true,\n  "scheme": "midnight",'),
