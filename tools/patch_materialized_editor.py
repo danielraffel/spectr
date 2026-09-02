@@ -2698,6 +2698,8 @@ function App() {'''),
 # earlier one. These named sentinels keep reruns strict without pretending the
 # superseded intermediate text must remain in the final shipping document.
 SUPERSEDED_SENTINELS = {
+    'materialized modulation tabs stay visible above scrolling content':
+        'data-spectr-settings-general-tab',
     'filter bank applies host automation without React hydration':
         'getGains: () => Array.from(targetGainsRef.current)',
     'status disable clears immediately and selected preset is retained':
