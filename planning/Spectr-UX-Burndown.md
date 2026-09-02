@@ -57,8 +57,8 @@ for that confirmation.
 | AUT-1 | Recorded automation/playback is sample-accurate | Processor playback implemented | Exact-sample/block-partition proof plus released-SDK `Spectr-native-n1-test "*automation*"` (1 case / 12 assertions); DAW recording/AUv2 evidence still absent | Logic test required | Open |
 | AUT-2 | Bands and viewport animate during host playback | Done | Native frame-lane and Perfetto proof passed | Pending in Logic with new PKG | Waiting human/host confirmation |
 | AUT-3 | Logic automation lanes are visible and behave correctly | Parameter surface implemented | Real-host automated receipt unavailable | Pending in Logic with new PKG | Waiting human/host confirmation |
-| MOD-1 | Internal modulation/LFO Settings UI | Done | Materialized Chromium proof passes; both LFOs expose on/off, Sin/Tri/Square/Saw, tempo rate, depth, and bridge-backed hydration/write paths; released SDK 0.828.0 `Spectr-test '*modulation*'` passes 5 cases / 3,123 assertions | Pending visual/audible check in new PKG | Waiting human confirmation |
-| MOD-2 | Whole-bank, Snapshot A/B, and Morph targets | Implemented; independent Bank/A/B/Morph toggles now preserve a mixed target mask, with ALL/NONE shortcuts | Native target-mask bridge composes selected destinations; materialized Chromium proof asserts all four target controls and mask state; released SDK 0.828.0 focused modulation and bridge suites pass (5/3,123 and 32/1,181); exact package/audio proof remains pending | Pending audible check in new PKG | Waiting human confirmation |
+| MOD-1 | Internal modulation/LFO Settings UI | Done | Materialized Chromium proof passes; both LFOs expose on/off, Sin/Tri/Square/Saw, tempo rate, depth, and bridge-backed hydration/write paths; official SDK 0.829.0 `Spectr-test '*modulation*'` passes 5 cases / 3,123 assertions | Pending visual/audible check in new PKG | Waiting human confirmation |
+| MOD-2 | Whole-bank, Snapshot A/B, and Morph targets | Implemented; independent Bank/A/B/Morph toggles now preserve a mixed target mask, with ALL/NONE shortcuts | Native target-mask bridge composes selected destinations; materialized Chromium proof asserts all four target controls and mask state; official SDK 0.829.0 focused modulation suite passes 5/3,123; exact package/audio proof remains pending | Pending audible check in new PKG | Waiting human confirmation |
 | MOD-3 | Third-party host modulation works alongside internal modulation | Pulp successor foundation committed (`35364ef25f`, test extension `c757b68096`); Spectr now composes two native LFO overlays after host field/morph | Spectr released-SDK suite passes 169 cases / 162,522 assertions; Pulp CLAP host-validation passes 6 cases / 3,661 assertions; PR #8028 remains open with macOS Build + Test job `100444687696` failing before tests on Homebrew proxy CONNECT (curl 56 / HTTP 000) and other checks still running | Logic/REAPER after PR/API landing | Open |
 
 ### Additional correctness and delivery gates
@@ -84,21 +84,13 @@ for that confirmation.
   clean successor checkout is `pulp-8012-merged-sdk-20260902`; the prior local
   refresh worktree is superseded and remains unpushed. PR #8012 is merged, not
   waiting in the merge queue.
-- Official SDK publication is blocked on the dedicated
-  `pulp-build-vm-release` lane. The `v0.828.1` Darwin ARM64 build completed
-  successfully and produced temporary Actions artifact `9857949914` with
-  SHA-256 `c786ad6358ad7d40c483a171f77068f25cb2c62a2d8bf87b6a449baf05eb4c31`,
-  built from `e051fed05a2f50b0f64893c924b4ef95b3a86d77` and containing merged
-  #8012. Release run `33610508668` was later cancelled while waiting on
-  Darwin x64, so no authoritative GitHub Release asset or digest exists yet.
-  Pulp PR #8019
-  is the live `v0.828.2` bump candidate at exact head
-  `35cacda37d243988dfe1643acc8279af52348eea`; its PR-head Build and Test macOS
-  job `100208586394` is the PR-head Build and Test candidate on M5 runner
-  `m5-pulp-gate-01-8976-6`. That PR-head job is not an official SDK release.
-  Root owns restoring release-lane capacity and will provide the authoritative
-  release asset. Spectr must remain frozen: do not retry, rebuild, or pin an
-  unofficial SDK.
+- Official SDK publication is now resolved by Pulp release `v0.829.0`: the
+  Darwin ARM64 asset digest is
+  `42294da6937280df758ed53c77c046aa68e5d99b71d0b97e3e3438b68fd78117`, with
+  distribution-eligible source SHA
+  `cc75fa91cf6942a197b2fb00b38ac679de3cbcd1`. Its SDK contains the merged
+  #8012 `WidgetBridge::dispatch_native_message` API and is the immutable SDK
+  used for the package proof below.
 - Spectr integration worktree: `spectr-ux-burndown-20260901`; the integrated
   implementation head proven below is
   `8650a4d19703a2709d88f8510806397ea1be6c5c` (individual modulation target
