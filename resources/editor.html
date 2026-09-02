@@ -594,6 +594,52 @@ document.addEventListener('DOMContentLoaded', async function() {
 window.FilterBank = FilterBank;`,
       'band context menu ignores analyzer-only parent renders');
     replaceSpectrSource(
+      String.raw`    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    // Schedule so the click that opened it doesn't immediately close it.
+    const t = setTimeout(() => document.addEventListener('pointerdown', onDown), 0);
+    window.addEventListener('keydown', onKey);
+    return () => { clearTimeout(t); document.removeEventListener('pointerdown', onDown); window.removeEventListener('keydown', onKey); };`,
+      String.raw`    const consume = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+    };
+    const armOutsideActivationShield = () => {
+      const types = ['mousedown', 'pointerup', 'mouseup', 'click'];
+      let timer = 0;
+      const release = () => {
+        clearTimeout(timer);
+        for (const type of types) document.removeEventListener(type, shield, true);
+      };
+      const shield = event => {
+        consume(event);
+        if (event.type === 'click') release();
+      };
+      for (const type of types) document.addEventListener(type, shield, true);
+      timer = setTimeout(release, 1000);
+    };
+    const onDown = event => {
+      if (!ref.current || ref.current.contains(event.target)) return;
+      consume(event);
+      armOutsideActivationShield();
+      onClose();
+    };
+    const onKey = event => {
+      if (event.key !== 'Escape') return;
+      consume(event);
+      onClose();
+    };
+    // Schedule so the click that opened it doesn't immediately close it.
+    const t = setTimeout(() => document.addEventListener('pointerdown', onDown, true), 0);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey, true);
+    };`,
+      'band context consumes dismissal gestures');
+    replaceSpectrSource(
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
       'independent muted gain hydration');
@@ -1384,8 +1430,30 @@ function App() {`,
       if (key === 'help') setHelpOpen(false);
       else setOpenMenu(null);
     };
+    const consume = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+    };
+    const armOutsideActivationShield = () => {
+      const types = ['mousedown', 'pointerup', 'mouseup', 'click'];
+      let timer = 0;
+      const release = () => {
+        clearTimeout(timer);
+        for (const type of types) document.removeEventListener(type, shield, true);
+      };
+      const shield = (event) => {
+        consume(event);
+        if (event.type === 'click') release();
+      };
+      for (const type of types) document.addEventListener(type, shield, true);
+      timer = setTimeout(release, 1000);
+    };
     const onPointer = (event) => {
-      if (!root.contains(event.target)) close(false);
+      if (root.contains(event.target)) return;
+      consume(event);
+      if (event.type === 'pointerdown') armOutsideActivationShield();
+      close(false);
     };
     const onKey = (event) => {
       if (event.key === 'Escape') {
@@ -1416,10 +1484,12 @@ function App() {`,
         document.activeElement.click();
       }
     };
-    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('pointerdown', onPointer, true);
+    document.addEventListener('mousedown', onPointer, true);
     document.addEventListener('keydown', onKey, true);
     return () => {
-      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('pointerdown', onPointer, true);
+      document.removeEventListener('mousedown', onPointer, true);
       document.removeEventListener('keydown', onKey, true);
       if (restoreMenuFocus.current) {
         restoreMenuFocus.current = false;

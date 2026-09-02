@@ -13,6 +13,7 @@ assert(htmlPath && chromePath, 'usage: test_editor_analyzer_browser.mjs HTML CHR
 const resizeOnlyMode = mode === '--resize-only';
 const jsOnlyMode = mode === '--js-only';
 const muteModesMode = mode === '--mute-modes';
+const popupOnlyMode = mode === '--popup-only';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-analyzer-browser-'));
 try {
@@ -262,6 +263,222 @@ const spectrOutsideClick = async target => {
   }));
   await spectrFrames(2);
 };
+const spectrOutsideActivation = async target => {
+  const events = [
+    new PointerEvent('pointerdown', {
+      bubbles: true, cancelable: true, pointerId: 81, pointerType: 'mouse',
+      isPrimary: true, button: 0, buttons: 1,
+    }),
+    new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, buttons: 1 }),
+    new PointerEvent('pointerup', {
+      bubbles: true, cancelable: true, pointerId: 81, pointerType: 'mouse',
+      isPrimary: true, button: 0, buttons: 0,
+    }),
+    new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0, buttons: 0 }),
+    new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }),
+  ];
+  for (const event of events) target.dispatchEvent(event);
+  await spectrFrames(2);
+  return events;
+};
+const spectrTestPopupContracts = async () => {
+  const menuTrigger = key => {
+    const root = document.querySelector('[data-spectr-menu-root="' + key + '"]');
+    const host = root && root.querySelector('[data-spectr-menu-trigger]');
+    return host && (host.matches('button') ? host : host.querySelector('button'));
+  };
+  const menuOptions = key => document.querySelector(
+    '[data-spectr-menu-root="' + key + '"] [data-spectr-menu-options]');
+  const openMenu = async key => {
+    const trigger = menuTrigger(key);
+    if (!trigger) throw new Error(key + ' menu trigger missing');
+    await spectrClick(trigger);
+    await spectrWaitFor(() => menuOptions(key), key + ' menu open');
+    return trigger;
+  };
+  const productState = () => {
+    const app = window.__spectrTestHooks.appState?.() || {};
+    return JSON.stringify({
+      app: {
+        settings: app.settings,
+        editMode: app.editMode,
+        analyzerMode: app.analyzerMode,
+        visualizationMode: app.visualizationMode,
+        snapshotStatus: app.snapshotStatus,
+        userPatterns: app.userPatterns,
+        defaultId: app.defaultId,
+      },
+      processing: spectrLatestState(),
+      posts: spectrStatePosts().length,
+    });
+  };
+  const assertEscape = async (key, selector = null) => {
+    await openMenu(key);
+    const escape = spectrKey('Escape', 'Escape');
+    if (!escape.defaultPrevented) throw new Error(key + ' Escape was not consumed');
+    await spectrWaitFor(() => !(selector ? document.querySelector(selector) : menuOptions(key)),
+      key + ' Escape close');
+    if (document.activeElement !== menuTrigger(key))
+      throw new Error(key + ' Escape did not restore trigger focus');
+  };
+  const assertOutsideConsumed = async key => {
+    await openMenu(key);
+    const visualization = Array.from(document.querySelectorAll(
+      '[data-spectr-visualization] button')).find(button =>
+        button.textContent.trim() === 'BARS');
+    if (!visualization) throw new Error('outside-click mutation control missing');
+    const before = productState();
+    const events = await spectrOutsideActivation(visualization);
+    await spectrWaitFor(() => !menuOptions(key), key + ' outside close');
+    if (events.some(event => !event.defaultPrevented))
+      throw new Error(key + ' outside activation was not fully consumed');
+    if (productState() !== before)
+      throw new Error(key + ' outside activation mutated an underlying control');
+  };
+  const assertKeyboardSelection = async key => {
+    const trigger = await openMenu(key);
+    const options = Array.from(menuOptions(key).querySelectorAll('button:not([disabled])'));
+    if (options.length < 2) throw new Error(key + ' menu needs two keyboard options');
+    const selectionBefore = productState();
+    const down = spectrKey('ArrowDown', 'ArrowDown');
+    if (!down.defaultPrevented || document.activeElement !== options[0])
+      throw new Error(key + ' ArrowDown did not highlight first option');
+    const secondDown = spectrKey('ArrowDown', 'ArrowDown');
+    if (!secondDown.defaultPrevented || document.activeElement !== options[1])
+      throw new Error(key + ' second ArrowDown did not highlight second option');
+    options[0].dispatchEvent(new PointerEvent('pointerover', {
+      bubbles: true, cancelable: true, pointerId: 82, pointerType: 'mouse',
+      isPrimary: true,
+    }));
+    options[0].dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    await spectrFrames(1);
+    if (productState() !== selectionBefore)
+      throw new Error(key + ' hover changed selection');
+    const up = spectrKey('ArrowUp', 'ArrowUp');
+    if (!up.defaultPrevented || document.activeElement !== options[0])
+      throw new Error(key + ' ArrowUp did not restore first highlight');
+    const enter = spectrKey('Enter', 'Enter');
+    if (!enter.defaultPrevented) throw new Error(key + ' Return was not consumed');
+    await spectrWaitFor(() => !menuOptions(key), key + ' Return close');
+    if (document.activeElement !== trigger)
+      throw new Error(key + ' Return did not restore trigger focus');
+  };
+
+  for (const key of ['bands', 'edit', 'analyzer', 'overflow', 'pattern']) {
+    await assertEscape(key);
+    await assertOutsideConsumed(key);
+    await assertKeyboardSelection(key);
+  }
+
+  const helpTrigger = menuTrigger('help');
+  await spectrClick(helpTrigger);
+  await spectrWaitFor(() => document.querySelector('[aria-label="Keyboard shortcuts"]'),
+    'help open');
+  const helpEscape = spectrKey('Escape', 'Escape');
+  if (!helpEscape.defaultPrevented) throw new Error('help Escape was not consumed');
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Keyboard shortcuts"]'),
+    'help Escape close');
+  await spectrClick(helpTrigger);
+  await spectrWaitFor(() => document.querySelector('[aria-label="Keyboard shortcuts"]'),
+    'help reopen');
+  const helpBefore = productState();
+  const helpEvents = await spectrOutsideActivation(document.querySelector(
+    '[data-spectr-visualization] button'));
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Keyboard shortcuts"]'),
+    'help outside close');
+  if (helpEvents.some(event => !event.defaultPrevented) || productState() !== helpBefore)
+    throw new Error('help outside activation reached the underlying editor');
+
+  const settingsOpen = document.querySelector('[data-spectr-settings-open]');
+  await spectrClick(settingsOpen);
+  let settingsPanel = await spectrWaitFor(() => document.querySelector(
+    '[data-spectr-settings-panel]'), 'settings open');
+  const settingsEscape = spectrKey('Escape', 'Escape');
+  if (!settingsEscape.defaultPrevented) throw new Error('settings Escape was not consumed');
+  await spectrWaitFor(() => !document.querySelector('[data-spectr-settings-panel]'),
+    'settings Escape close');
+  await spectrClick(settingsOpen);
+  settingsPanel = await spectrWaitFor(() => document.querySelector(
+    '[data-spectr-settings-panel]'), 'settings reopen');
+  const settingsBefore = productState();
+  await spectrClick(settingsPanel.parentElement);
+  await spectrWaitFor(() => !document.querySelector('[data-spectr-settings-panel]'),
+    'settings outside close');
+  if (productState() !== settingsBefore)
+    throw new Error('settings outside click mutated the editor');
+
+  await openMenu('pattern');
+  await spectrClick(document.querySelector('[data-spectr-save-current]'));
+  const saveDialog = await spectrWaitFor(() => document.querySelector(
+    '[data-spectr-save-dialog]'), 'save dialog open');
+  const saveEscape = spectrKey('Escape', 'Escape');
+  if (!saveEscape.defaultPrevented) throw new Error('save dialog Escape was not consumed');
+  await spectrWaitFor(() => !document.querySelector('[data-spectr-save-dialog]'),
+    'save dialog Escape close');
+  await openMenu('pattern');
+  await spectrClick(document.querySelector('[data-spectr-save-current]'));
+  const reopenedSaveDialog = await spectrWaitFor(() => document.querySelector(
+    '[data-spectr-save-dialog]'), 'save dialog reopen');
+  const saveBefore = productState();
+  await spectrClick(reopenedSaveDialog);
+  await spectrWaitFor(() => !document.querySelector('[data-spectr-save-dialog]'),
+    'save dialog outside close');
+  if (productState() !== saveBefore)
+    throw new Error('save dialog outside click mutated the editor');
+
+  await openMenu('pattern');
+  await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…'),
+    'manager action'));
+  let manager = await spectrWaitFor(() => document.querySelector(
+    '[aria-label="Pattern manager"]'), 'manager open');
+  const managerEscape = spectrKey('Escape', 'Escape');
+  if (!managerEscape.defaultPrevented) throw new Error('manager Escape was not consumed');
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Pattern manager"]'),
+    'manager Escape close');
+  await openMenu('pattern');
+  await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…'),
+    'manager reopen action'));
+  manager = await spectrWaitFor(() => document.querySelector(
+    '[aria-label="Pattern manager"]'), 'manager reopen');
+  const managerBefore = productState();
+  await spectrClick(manager);
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Pattern manager"]'),
+    'manager outside close');
+  if (productState() !== managerBefore)
+    throw new Error('manager outside click mutated the editor');
+
+  const canvas = Array.from(document.querySelectorAll('canvas'))
+    .find(candidate => getComputedStyle(candidate).pointerEvents !== 'none');
+  const bandTarget = canvas && canvas.parentElement;
+  if (!bandTarget) throw new Error('band context target missing');
+  const bandRect = bandTarget.getBoundingClientRect();
+  bandTarget.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true,
+    clientX: bandRect.left + bandRect.width * 0.4,
+    clientY: bandRect.top + bandRect.height * 0.45,
+  }));
+  await spectrWaitFor(() => document.querySelector('[aria-label="Band actions"]'),
+    'band context open');
+  spectrKey('Escape', 'Escape');
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Band actions"]'),
+    'band context Escape close');
+  bandTarget.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true,
+    clientX: bandRect.left + bandRect.width * 0.4,
+    clientY: bandRect.top + bandRect.height * 0.45,
+  }));
+  await spectrWaitFor(() => document.querySelector('[aria-label="Band actions"]'),
+    'band context reopen');
+  const bandBefore = productState();
+  const bandOutsideEvents = await spectrOutsideActivation(document.querySelector(
+    '[data-spectr-visualization] button'));
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Band actions"]'),
+    'band context outside close');
+  if (bandOutsideEvents.some(event => !event.defaultPrevented)
+      || productState() !== bandBefore)
+    throw new Error('band context outside activation reached the underlying editor');
+  if (!spectrBundleClean()) throw new Error('popup contract emitted a runtime error');
+};
 const spectrTestNativeResizeSurface = async () => {
   if (document.getElementById('spectr-resize-grip')
       || document.getElementById('spectr-resize-status'))
@@ -322,6 +539,12 @@ window.spectrStartOracle = () => {
         throw new Error('editor did not scale proportionally');
       if (bodyRect.width > innerWidth + 0.5 || bodyRect.height > innerHeight + 0.5)
         throw new Error('editor overflowed its host viewport');
+      if (new URL(location.href).searchParams.has('popup-only')) {
+        await spectrTestPopupContracts();
+        result.textContent = 'SPECTR_BROWSER_POPUP_OK';
+        document.documentElement.dataset.spectrOracle = 'POPUP_OK';
+        return;
+      }
       if (resizeOnly) {
         await spectrTestNativeResizeSurface();
         result.textContent = 'SPECTR_BROWSER_RESIZE_OK';
@@ -1334,7 +1557,12 @@ setTimeout(window.spectrStartOracle, 0);
     || run.stderr;
 
   const initialUrl = `file://${instrumented}`;
-  if (muteModesMode) {
+  if (popupOnlyMode) {
+    const run = runChrome(initialUrl + '?popup-only=1', 1320, 860);
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /data-spectr-oracle="POPUP_OK"/, failure(run));
+    process.exitCode = 0;
+  } else if (muteModesMode) {
     const run = runChrome(initialUrl + '?mute-modes=1', 1320, 860);
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /data-spectr-oracle="MUTE_MODES_OK"/, failure(run));
