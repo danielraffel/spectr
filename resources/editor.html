@@ -2419,12 +2419,22 @@ window.PatternManager = PatternManager;`,
           fireStatus('ANALYZER → ' + next.toUpperCase());
           return next;
         });
+        return;
+      }
+      if (k === 'p') {
+        e.preventDefault();
+        setManagerOpen(true);
+        fireStatus('PRESET MANAGER');
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [fireStatus]);`,
       'focus-local non-musical shortcuts');
+    replaceSpectrSource(
+      '        onApply={applyPattern}',
+      '        onApply={(p) => { applyPattern(p); setManagerOpen(false); }}',
+      'apply preset closes manager');
     replaceAllSpectrSource("hint: 'S'", "hint: '1'", 2, 'Sculpt shortcut labels');
     replaceAllSpectrSource("hint: 'L'", "hint: '2'", 2, 'Level shortcut labels');
     replaceAllSpectrSource("hint: 'B'", "hint: '3'", 2, 'Boost shortcut labels');
