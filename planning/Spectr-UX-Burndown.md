@@ -71,7 +71,7 @@ for that confirmation.
 | DEL-1 | Exact-head architectural/adversarial review | Not applicable | Review receipt pending | Not applicable | Open |
 | DEL-2 | Spectr PR merged with required checks green | Spectr branch remains clean; Pulp modulation successor is pushed as PR #8028 at exact head `f2a04d1dcd5adf2ff9019bf750b74fb983456dca` | PR #8028 checks are active; merge receipt pending | Not applicable | Open |
 | DEL-3 | Logic AUv2 and REAPER VST3/CLAP acceptance | Formats implemented | Host receipts pending | Pending | Open |
-| DEL-4 | Signed, notarized, installed, launch-verified M5 PKG | Packaging path exists | Official-SDK build and artifact verification pending | Pending | Blocked on authoritative official Darwin ARM64 SDK |
+| DEL-4 | Signed, notarized, installed, launch-verified M5 PKG | Packaging path exists; released SDK 0.828.0 builds/tests Spectr successfully | Four-payload package rebuild is blocked because released 0.828.0 lacks `WidgetBridge::dispatch_native_message`; development SDK has it but is not distribution-eligible | Pending | Blocked on authoritative distribution SDK/API pairing |
 
 ## Protected source state
 
