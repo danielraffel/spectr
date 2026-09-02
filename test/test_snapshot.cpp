@@ -169,6 +169,23 @@ TEST_CASE("internal modulation targets snapshots and host morph independently") 
     CHECK(canonical.bands[0].gain_db == Catch::Approx(0.0f));
 }
 
+TEST_CASE("internal modulation target mask composes selected destinations") {
+    spectr::BandField canonical;
+    canonical.bands[0].gain_db = 0.0f;
+    spectr::SnapshotBank bank;
+    spectr::BandField a = canonical;
+    a.bands[0].gain_db = 6.0f;
+    bank.capture_into(spectr::SnapshotBank::Slot::A, a, {}, spectr::Layout::Bands32);
+    spectr::ModulationSettings settings;
+    settings.enabled = true;
+    settings.depth = 1.0f;
+    settings.target_mask = (std::uint8_t{1} << 0) | (std::uint8_t{1} << 1);
+    const auto audible = spectr::apply_internal_modulation(
+        canonical, bank, 0.0f, settings, 0.0f);
+    CHECK(audible.bands[0].gain_db == Catch::Approx(3.0f));
+    CHECK(canonical.bands[0].gain_db == Catch::Approx(0.0f));
+}
+
 TEST_CASE("tempo LFO waveform is deterministic and bounded") {
     for (const auto shape : {spectr::LfoShape::Sine, spectr::LfoShape::Triangle,
                              spectr::LfoShape::Square, spectr::LfoShape::Saw}) {

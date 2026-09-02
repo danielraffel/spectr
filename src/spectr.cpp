@@ -501,7 +501,8 @@ void Spectr::process(
         const auto& audio_modulation = audio_modulation_publication_.read();
         const bool has_events = events && !events->events().empty();
         const bool modulation_enabled =
-            state().get_value(kParamLfoEnabled) >= 0.5f;
+            state().get_value(kParamLfoEnabled) >= 0.5f
+            || state().get_value(kParamLfo2Enabled) >= 0.5f;
         if (has_events || modulation_enabled) {
             std::array<pulp::format::ParamSnapshotEntry,
                        kSurfaceCacheSlots + 2> initial{};
@@ -558,6 +559,17 @@ void Spectr::process(
                         static_cast<ModulationTarget>(std::clamp(
                             static_cast<int>(std::lround(
                                 cursor.value(kParamLfoTarget))), 0, 3));
+                    modulation_settings.target_mask =
+                        audio_modulation.settings.target_mask;
+                    modulation_settings.lfo2_enabled =
+                        cursor.value(kParamLfo2Enabled) >= 0.5f;
+                    modulation_settings.lfo2_shape = static_cast<LfoShape>(
+                        std::clamp(static_cast<int>(std::lround(
+                            cursor.value(kParamLfo2Shape))), 0, 3));
+                    modulation_settings.lfo2_beats_per_cycle = std::clamp(
+                        cursor.value(kParamLfo2Rate), 0.25f, 16.0f);
+                    modulation_settings.lfo2_depth = std::clamp(
+                        cursor.value(kParamLfo2Depth), 0.0f, 1.0f);
                     if (should_reset_stream_history && block_offset == 0) {
                         audio_modulation_phase_ =
                             ctx.position_beats
@@ -565,12 +577,32 @@ void Spectr::process(
                                 modulation_settings.beats_per_cycle));
                         audio_modulation_phase_ -=
                             std::floor(audio_modulation_phase_);
+                        audio_modulation_phase_2_ =
+                            ctx.position_beats
+                            / std::max(0.0625, static_cast<double>(
+                                modulation_settings.lfo2_beats_per_cycle));
+                        audio_modulation_phase_2_ -=
+                            std::floor(audio_modulation_phase_2_);
                     }
                     const float wave = lfo_value(
                         modulation_settings.shape, audio_modulation_phase_);
-                    const BandField audible = apply_internal_modulation(
+                    BandField audible = apply_internal_modulation(
                         host_field, audio_modulation.snapshots, host_morph,
                         modulation_settings, wave);
+                    if (modulation_settings.lfo2_enabled) {
+                        const float wave2 = lfo_value(
+                            modulation_settings.lfo2_shape,
+                            audio_modulation_phase_2_);
+                        ModulationSettings second = modulation_settings;
+                        second.enabled = true;
+                        second.shape = modulation_settings.lfo2_shape;
+                        second.beats_per_cycle =
+                            modulation_settings.lfo2_beats_per_cycle;
+                        second.depth = modulation_settings.lfo2_depth;
+                        audible = apply_internal_modulation(
+                            audible, audio_modulation.snapshots, host_morph,
+                            second, wave2);
+                    }
 
                     pulp::signal::SpectralBandLayout automated;
                     automated.active_bands = static_cast<std::uint32_t>(
@@ -641,6 +673,14 @@ void Spectr::process(
                          * tempo / (60.0 * sample_rate)) / beats_per_cycle;
                     audio_modulation_phase_ -=
                         std::floor(audio_modulation_phase_);
+                    const double beats_per_cycle_2 = std::max(
+                        0.0625, static_cast<double>(
+                            modulation_settings.lfo2_beats_per_cycle));
+                    audio_modulation_phase_2_ +=
+                        (static_cast<double>(out_slice.num_samples())
+                         * tempo / (60.0 * sample_rate)) / beats_per_cycle_2;
+                    audio_modulation_phase_2_ -=
+                        std::floor(audio_modulation_phase_2_);
                     block_offset += out_slice.num_samples();
                 });
 

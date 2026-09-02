@@ -58,6 +58,10 @@ inline constexpr pulp::state::ParamID kParamLfoShape   = 4001;
 inline constexpr pulp::state::ParamID kParamLfoRate    = 4002; // beats/cycle
 inline constexpr pulp::state::ParamID kParamLfoDepth   = 4003;
 inline constexpr pulp::state::ParamID kParamLfoTarget  = 4004;
+inline constexpr pulp::state::ParamID kParamLfo2Enabled = 4010;
+inline constexpr pulp::state::ParamID kParamLfo2Shape   = 4011;
+inline constexpr pulp::state::ParamID kParamLfo2Rate    = 4012;
+inline constexpr pulp::state::ParamID kParamLfo2Depth   = 4013;
 
 // ── Band blocks ──────────────────────────────────────────────────────────
 // Band i gain = kParamBandGainBase + i, mute = kParamBandMuteBase + i.
@@ -73,8 +77,8 @@ constexpr pulp::state::ParamID band_mute_param_id(std::size_t band) noexcept {
 }
 
 /// Total registered parameters: 2 legacy + 64 gain + 64 mute + 4 control
-/// (morph, center, width, count) + 4 modes + 5 internal LFO controls.
-inline constexpr std::size_t kSurfaceParamCount = 143;
+/// (morph, center, width, count) + 4 modes + 9 internal LFO controls.
+inline constexpr std::size_t kSurfaceParamCount = 147;
 
 // ── Viewport log-frequency encoding ─────────────────────────────────────
 // The display mapping (pattern.cpp) spans log10(20)..log10(20000), so the
@@ -119,7 +123,8 @@ inline constexpr std::size_t kSlotWidth      = 130;
 inline constexpr std::size_t kSlotBandCount  = 131;
 inline constexpr std::size_t kSlotModeBase   = 132;  // +0..3: motion/analyzer/edit/visualization
 inline constexpr std::size_t kSlotLfoBase    = 136;  // +0..4: enabled/shape/rate/depth/target
-inline constexpr std::size_t kSurfaceSlots   = 141;
+inline constexpr std::size_t kSlotLfo2Base   = 141;  // +0..3: enabled/shape/rate/depth
+inline constexpr std::size_t kSurfaceSlots   = 145;
 
 constexpr pulp::state::ParamID surface_slot_param_id(std::size_t slot) noexcept {
     if (slot < 64) return band_gain_param_id(slot);
@@ -133,8 +138,11 @@ constexpr pulp::state::ParamID surface_slot_param_id(std::size_t slot) noexcept 
             if (slot < kSlotLfoBase)
                 return kParamMotionMode
                     + static_cast<pulp::state::ParamID>(slot - kSlotModeBase);
-            return kParamLfoEnabled
-                + static_cast<pulp::state::ParamID>(slot - kSlotLfoBase);
+            if (slot < kSlotLfo2Base)
+                return kParamLfoEnabled
+                    + static_cast<pulp::state::ParamID>(slot - kSlotLfoBase);
+            return kParamLfo2Enabled
+                + static_cast<pulp::state::ParamID>(slot - kSlotLfo2Base);
     }
 }
 

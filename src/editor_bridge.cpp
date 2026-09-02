@@ -253,6 +253,12 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     modulation.addMember("depth", static_cast<double>(modulation_state.depth));
     modulation.addMember("target", static_cast<std::int32_t>(
         modulation_state.target));
+    modulation.addMember("lfo2_enabled", modulation_state.lfo2_enabled);
+    modulation.addMember("lfo2_shape", static_cast<std::int32_t>(modulation_state.lfo2_shape));
+    modulation.addMember("lfo2_beats_per_cycle", static_cast<double>(
+        modulation_state.lfo2_beats_per_cycle));
+    modulation.addMember("lfo2_depth", static_cast<double>(modulation_state.lfo2_depth));
+    modulation.addMember("target_mask", static_cast<std::int32_t>(modulation_state.target_mask));
     payload.addMember("modulation", modulation);
     payload.addMember("snapshots", snapshots);
     payload.addMember("patterns_json", plugin.patterns().export_json());
@@ -604,6 +610,28 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             const float value = EditorBridge::get_float(p, "value", 0.0f);
             plugin.state().set_value(id, value);
             return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("modulation_targets_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("targets")
+                || !p["targets"].isArray())
+                return EditorBridge::err_response("targets must be an array");
+            const auto targets = p["targets"];
+            std::uint8_t mask = 0;
+            for (std::uint32_t i = 0; i < targets.size(); ++i) {
+                if (!targets[i].isString())
+                    return EditorBridge::err_response("target names must be strings");
+                const auto name = targets[i].getString();
+                if (name == "bank") mask |= 1u << 0;
+                else if (name == "snapshot-a") mask |= 1u << 1;
+                else if (name == "snapshot-b") mask |= 1u << 2;
+                else if (name == "morph") mask |= 1u << 3;
+                else return EditorBridge::err_response("unknown modulation target");
+            }
+            return plugin.set_modulation_target_mask(mask)
+                ? EditorBridge::ok_response()
+                : EditorBridge::err_response("modulation target state unavailable");
         });
 }
 

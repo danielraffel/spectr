@@ -18,6 +18,13 @@ struct ModulationSettings {
     float beats_per_cycle = 4.0f;
     float depth = 0.5f;
     ModulationTarget target = ModulationTarget::WholeBank;
+    bool lfo2_enabled = false;
+    LfoShape lfo2_shape = LfoShape::Sine;
+    float lfo2_beats_per_cycle = 4.0f;
+    float lfo2_depth = 0.0f;
+    // Optional destination mask for ALL/NONE composition. Zero preserves the
+    // legacy single-target enum semantics; bits 0..3 map Bank/A/B/Morph.
+    std::uint8_t target_mask = 0;
 };
 
 inline float lfo_value(LfoShape shape, double phase) noexcept {
@@ -42,6 +49,21 @@ inline BandField apply_internal_modulation(const BandField& canonical,
                                            float host_morph,
                                            const ModulationSettings& settings,
                                            float bipolar_lfo) noexcept {
+    if (settings.target_mask != 0) {
+        auto one = settings;
+        one.target_mask = 0;
+        BandField result = canonical;
+        constexpr ModulationTarget targets[] = {
+            ModulationTarget::WholeBank, ModulationTarget::SnapshotA,
+            ModulationTarget::SnapshotB, ModulationTarget::Morph};
+        for (std::size_t bit = 0; bit < 4; ++bit) {
+            if ((settings.target_mask & (std::uint8_t{1} << bit)) == 0) continue;
+            one.target = targets[bit];
+            result = apply_internal_modulation(result, snapshots, host_morph,
+                                               one, bipolar_lfo);
+        }
+        return result;
+    }
     BandField out = canonical;
     if (!settings.enabled || settings.depth <= 0.0f) return out;
 

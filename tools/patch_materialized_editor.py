@@ -3900,7 +3900,7 @@ def strengthen_modulation_state(document):
         raise RuntimeError('modulation state initializer missing')
     html = html.replace(old_state, new_state, 1)
     old_hydrate = '        target: Number(modulation.target) || 0\n      });'
-    new_hydrate = '        target: Number(modulation.target) || 0,\n        lfo2Enabled: modulation.lfo2_enabled === true,\n        lfo2Shape: Number(modulation.lfo2_shape) || 0,\n        lfo2Rate: Number(modulation.lfo2_beats_per_cycle) || 4,\n        lfo2Depth: Number(modulation.lfo2_depth) || 0,\n        targetSelection: Array.isArray(modulation.targets) ? (modulation.targets.length ? "all" : "none") : "all"\n      });'
+    new_hydrate = '        target: Number(modulation.target) || 0,\n        lfo2Enabled: modulation.lfo2_enabled === true,\n        lfo2Shape: Number(modulation.lfo2_shape) || 0,\n        lfo2Rate: Number(modulation.lfo2_beats_per_cycle) || 4,\n        lfo2Depth: Number(modulation.lfo2_depth) || 0,\n        targetSelection: Number.isFinite(Number(modulation.target_mask)) ? (Number(modulation.target_mask) ? "all" : "none") : (Array.isArray(modulation.targets) ? (modulation.targets.length ? "all" : "none") : "all")\n      });'
     if old_hydrate in html:
         html = html.replace(old_hydrate, new_hydrate, 1)
     old_publish = '  const tabButton = (key, label) => React.createElement'

@@ -119,6 +119,10 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     REQUIRE(find(w.store, spectr::kParamLfoRate) != nullptr);
     REQUIRE(find(w.store, spectr::kParamLfoDepth) != nullptr);
     REQUIRE(find(w.store, spectr::kParamLfoTarget) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfo2Enabled) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfo2Shape) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfo2Rate) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfo2Depth) != nullptr);
     CHECK(find(w.store, 4005) == nullptr);
     CHECK(find(w.store, 4031) == nullptr);
     CHECK(find(w.store, 4100) == nullptr);

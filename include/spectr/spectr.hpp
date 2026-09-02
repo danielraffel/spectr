@@ -311,6 +311,7 @@ public:
     [[nodiscard]] float editor_mode_param(
         pulp::state::ParamID id) const noexcept;
     [[nodiscard]] ModulationSettings modulation_settings() const noexcept;
+    bool set_modulation_target_mask(std::uint8_t mask) noexcept;
     void sync_params_from_field(bool emit_gestures = true) noexcept;
 
     /// Paint-drag gesture epochs (EditorAuthority drives these from
@@ -376,7 +377,7 @@ private:
     // 129 viewport center, 130 viewport width, 131 band count, then motion,
     // analyzer, edit, and visualization at 132..135, then internal LFO
     // enabled/shape/rate/depth/target at 136..140.
-    static constexpr std::size_t kSurfaceCacheSlots = 141;
+    static constexpr std::size_t kSurfaceCacheSlots = 145;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
     // Audio-owner baseline used when an adapter supplies an event queue after
@@ -391,6 +392,7 @@ private:
     pulp::runtime::TripleBuffer<AudioModulationState>
         audio_modulation_publication_{};
     double audio_modulation_phase_ = 0.0;
+    double audio_modulation_phase_2_ = 0.0;
     // The most recent EditorAuthority revision caused specifically by host
     // parameter adoption. Views use this as a coalescing publication key so
     // automation redraws immediately without echoing every editor-originated
