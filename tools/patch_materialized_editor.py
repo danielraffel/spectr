@@ -3926,14 +3926,40 @@ def strengthen_modulation_state(document):
     return changed
 
 
+def add_modulation_target_toggles(document):
+    """Expose independent Bank/A/B/Morph target toggles without losing masks."""
+    html = document.get('html', '')
+    changed = False
+    old_hydrate = 'targetSelection: Number.isFinite(Number(modulation.target_mask)) ? (Number(modulation.target_mask) ? "all" : "none") : (Array.isArray(modulation.targets) ? (modulation.targets.length ? "all" : "none") : "all")'
+    new_hydrate = 'targetMask: Number.isFinite(Number(modulation.target_mask)) ? (Number(modulation.target_mask) & 15) : (Array.isArray(modulation.targets) ? modulation.targets.reduce((mask, target) => mask | ({ bank: 1, "snapshot-a": 2, "snapshot-b": 4, morph: 8 }[target] || 0), 0) : 15),\n        targetSelection: "all"'
+    if old_hydrate in html:
+        html = html.replace(old_hydrate, new_hydrate, 1)
+        changed = True
+    old_publish = 'const publishTargets = (selection) => { const targets = selection === "all" ? ["bank", "snapshot-a", "snapshot-b", "morph"] : []; setValue((current) => ({ ...current, targetSelection: selection })); Promise.resolve(window.pulp.postMessage("modulation_targets_set", { targets }, "spectr-modulation-targets")).catch((error) => console.error("[Spectr] modulation target write failed", error)); };'
+    new_publish = 'const publishTargetMask = (mask) => { const targetNames = ["bank", "snapshot-a", "snapshot-b", "morph"]; const targets = targetNames.filter((_, index) => (mask & (1 << index)) !== 0); setValue((current) => ({ ...current, targetMask: mask, targetSelection: mask === 15 ? "all" : mask === 0 ? "none" : "custom" })); Promise.resolve(window.pulp.postMessage("modulation_targets_set", { targets }, "spectr-modulation-targets")).catch((error) => console.error("[Spectr] modulation target write failed", error)); };\n  const publishTargets = (selection) => publishTargetMask(selection === "all" ? 15 : 0);'
+    if old_publish in html and 'publishTargetMask' not in html:
+        html = html.replace(old_publish, new_publish, 1)
+        changed = True
+    old_buttons = 'React.createElement("div", { style: { display: "flex", gap: 5 } }, React.createElement("button", { type: "button", "data-spectr-modulation-select": "all", "aria-pressed": value.targetSelection === "all", onClick: () => publishTargets("all"), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { type: "button", "data-spectr-modulation-select": "none", "aria-pressed": value.targetSelection === "none", onClick: () => publishTargets("none"), style: { padding: "5px 10px" } }, "NONE"))'
+    new_buttons = 'React.createElement("div", { style: { display: "flex", gap: 5, flexWrap: "wrap" } }, [ [1, "bank", "BANK"], [2, "snapshot-a", "A"], [4, "snapshot-b", "B"], [8, "morph", "MORPH"] ].map(([bit, key, label]) => React.createElement("button", { key, type: "button", "data-spectr-modulation-target": key, "aria-pressed": (value.targetMask & bit) !== 0, onClick: () => publishTargetMask((value.targetMask || 0) ^ bit), style: { padding: "5px 10px" } }, label)).concat([React.createElement("button", { key: "all", type: "button", "data-spectr-modulation-select": "all", "aria-pressed": value.targetMask === 15, onClick: () => publishTargets("all"), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { key: "none", type: "button", "data-spectr-modulation-select": "none", "aria-pressed": value.targetMask === 0, onClick: () => publishTargets("none"), style: { padding: "5px 10px" } }, "NONE")]))'
+    if old_buttons in html:
+        html = html.replace(old_buttons, new_buttons, 1)
+        changed = True
+    document['html'] = html
+    return changed
+
+
 def adjust_settings_panel_extent(document):
     html = document.get('html', '')
-    if 'maxHeight: "92vh"' in html:
+    if 'maxHeight: "98vh"' in html:
         return False
+    if 'maxHeight: "92vh"' in html:
+        document['html'] = html.replace('maxHeight: "92vh"', 'maxHeight: "98vh"', 1)
+        return True
     needle = 'width: 520,\n    maxHeight: "90vh",\n    overflowY: "auto"'
     if needle not in html:
         raise RuntimeError('settings panel extent missing')
-    document['html'] = html.replace(needle, 'width: 520,\n    maxHeight: "92vh",\n    overflowY: "auto"', 1)
+    document['html'] = html.replace(needle, 'width: 520,\n    maxHeight: "98vh",\n    overflowY: "auto"', 1)
     return True
 
 
@@ -4057,6 +4083,10 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          bridge-backed LFO2 and target selection state')
+    if add_modulation_target_toggles(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          independent modulation target toggles')
     if separate_modulation_tab_content(document):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True

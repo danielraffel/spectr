@@ -15,6 +15,7 @@ const surfaceEnd = document.html.indexOf('\nfunction SnapBtn(', surfaceStart);
 assert(surfaceStart >= 0 && surfaceEnd > surfaceStart,
   'shipping Settings/status surface missing');
 const shippingSurface = document.html.slice(surfaceStart, surfaceEnd);
+const modulationSurface = document.html.slice(document.html.indexOf('function SpectrModulationSettings'));
 assert.match(shippingSurface, /data-spectr-settings-tabs/, 'modulation settings tab surface missing');
 assert.match(shippingSurface, /data-spectr-settings-tab[\s\S]*general/, 'General settings tab missing');
 assert.match(shippingSurface, /data-spectr-settings-tab[\s\S]*modulation/, 'Modulation settings tab missing');
@@ -22,6 +23,11 @@ assert.match(shippingSurface, /position: "sticky"/, 'settings tabs are not fixed
 assert.match(shippingSurface, /label: "LFO 2"/, 'second internal LFO controls missing');
 assert.match(shippingSurface, /data-spectr-modulation-select.*all/, 'modulation select-all control missing');
 assert.match(shippingSurface, /data-spectr-modulation-select.*none/, 'modulation select-none control missing');
+for (const target of ['bank', 'snapshot-a', 'snapshot-b', 'morph']) {
+  assert.match(modulationSurface, new RegExp(`['"]${target}['"]`),
+    `individual modulation target ${target} missing`);
+}
+assert.match(modulationSurface, /targetMask/, 'modulation target mask state is not preserved');
 assert.match(shippingSurface, /modulation_targets_set/, 'modulation target selection is not bridge-backed');
 assert.match(shippingSurface, /lfo2Enabled|lfo2_enabled/, 'second LFO state is not represented in the bridge surface');
 const shortDwell = shippingSurface.replace(
