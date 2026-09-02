@@ -3869,6 +3869,22 @@ def augment_modulation_tabs(document):
     return True
 
 
+def separate_modulation_tab_content(document):
+    html = document.get('html', '')
+    if 'data-spectr-settings-general-tab' in html:
+        return False
+    start = '    React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },'
+    if start not in html:
+        raise RuntimeError('modulation group missing from tab surface')
+    html = html.replace(start, '    tab === "modulation" && React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },', 1)
+    close = '  )\n  );\n  /* tabs complete */'
+    if close not in html:
+        raise RuntimeError('modulation tab close missing')
+    html = html.replace(close, '  ),\n    tab === "general" && React.createElement("div", { "data-spectr-settings-general-tab": true, style: { padding: "10px 4px", color: "rgba(255,255,255,0.5)", fontFamily: "var(--sans)", fontSize: 10 } }, "General editor settings are shown below."),\n  );\n  /* tabs complete */', 1)
+    document['html'] = html
+    return True
+
+
 def check_script_blocks(label, blocks):
     """Parse JavaScript blocks with the same Node parser as the browser oracle."""
     import subprocess
@@ -3985,6 +4001,10 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          second internal LFO controls')
+    if separate_modulation_tab_content(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          separate General and Modulation tab content')
     if repair_capture_band_count_binding(document, PATH):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
