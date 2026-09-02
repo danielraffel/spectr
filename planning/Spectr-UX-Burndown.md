@@ -101,8 +101,8 @@ for that confirmation.
   unofficial SDK.
 - Spectr integration worktree: `spectr-ux-burndown-20260901`; the integrated
   implementation head proven below is
-  `3d0d105bb860e8266e8eb70332ec0943080145ef`, followed only by this ledger
-  refresh.
+  `8650a4d19703a2709d88f8510806397ea1be6c5c` (individual modulation target
+  masks included).
 - The preserved Pulp dropdown/modal worktree remains at
   `d6f5c37b1ea5973a7790721b976360b2b51f0b12`. Its six commits are already
   patch-equivalent on protected `origin/main` `421a5ee07b18429b6b252f0901b6f76b2936c3fe`;
@@ -167,7 +167,7 @@ visual acceptance.
 - [ ] Pulp framework tests and inherited Spectr plugin-format behavior pass.
 
 Exact-head browser evidence: `Spectr-browser-popups` passed in real Chromium at
-`3d0d105bb860e8266e8eb70332ec0943080145ef`. It exercised all five footer
+`8650a4d19703a2709d88f8510806397ea1be6c5c`. It exercised all five footer
 dropdowns plus Help, Settings, save, Pattern Manager, and band-context popups.
 The outside activation sequence was consumed with the underlying editor and
 processing state unchanged; a planted click-through control failed before the
@@ -185,7 +185,7 @@ fix. This does not replace the clean merged-SDK native and plugin-format pass.
   approaches zero without crossing it.
 
 Exact-head evidence: the full real-Chromium editor matrix passed at
-`3d0d105bb860e8266e8eb70332ec0943080145ef`, and the SDK-independent integrated
+`8650a4d19703a2709d88f8510806397ea1be6c5c`, and the SDK-independent integrated
 Flare oracle preserved negative, positive, and exact-zero band behavior. That
 proves the current math, not that the sign-preserving interaction is the desired
 product behavior.
@@ -208,7 +208,7 @@ product behavior.
 Exact-head browser evidence: the real-Chromium build-info harness reproduced
 indefinite loading with its planted no-timeout control, then proved the shipping
 component transitions an unresolved request to `BUILD INFO UNAVAILABLE` after
-the 1.5-second bound at `3d0d105bb860e8266e8eb70332ec0943080145ef`.
+ the 1.5-second bound at `8650a4d19703a2709d88f8510806397ea1be6c5c`.
 
 ### 7. Internal modulation
 
