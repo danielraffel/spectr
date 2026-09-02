@@ -244,6 +244,21 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
 - These are fresh local evidence only; Logic AUv2 lanes, REAPER editor/
   automation receipts, COR-1/2/3 review, and PR #8028 landing remain open.
 
+### 2026-09-02 Logic Record baseline blocker
+
+- A reported host symptom remains unclassified: after editing bands or the
+  viewport, pressing Logic's Record appears to snap Spectr back to the last
+  recording instead of starting from the current live state.
+- Headless/native coverage does not reproduce it. `replace_processing_state()`
+  synchronously mirrors the live field and viewport into the host StateStore;
+  `apply_surface_params()` only adopts a host value when it differs from its
+  applied cache. Existing `test_param_surface` and native host-automation
+  tests cover those invariants.
+- Do not change reset/restore semantics speculatively. The next diagnostic
+  receipt must capture Logic parameter writes around Record (or a state
+  restore callback) to distinguish Logic reapplying an existing automation
+  lane from a plug-in reset. AUT-1/AUT-2 remain blocked on that host trace.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
