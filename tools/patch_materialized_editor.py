@@ -2682,7 +2682,7 @@ function App() {'''),
 
     ('materialized modulation settings expose fixed tabs',
      'function SpectrModulationSettings() {\n  const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0 });',
-     'function SpectrModulationSettings() {\n  /* settings tabs */\n  const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0 });\n  const [tab, setTab] = React.useState("modulation");'),
+     'function SpectrModulationSettings() {\n  /* settings tabs */\n  const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0, lfo2Enabled: false, lfo2Shape: 0, lfo2Rate: 4, lfo2Depth: 0, targetSelection: "all" });\n  const [tab, setTab] = React.useState("modulation");'),
 
     ('materialized modulation tabs stay visible above scrolling content',
      '  return /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },',
@@ -3889,6 +3889,33 @@ def separate_modulation_tab_content(document):
     return True
 
 
+def strengthen_modulation_state(document):
+    """Keep both LFOs and target select-all/none state bridge-backed."""
+    html = document.get('html', '')
+    if 'spectr-modulation-targets' in html:
+        return False
+    old_state = 'const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0 });'
+    new_state = 'const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0, lfo2Enabled: false, lfo2Shape: 0, lfo2Rate: 4, lfo2Depth: 0, targetSelection: "all" });'
+    if old_state not in html:
+        raise RuntimeError('modulation state initializer missing')
+    html = html.replace(old_state, new_state, 1)
+    old_hydrate = '        target: Number(modulation.target) || 0\n      });'
+    new_hydrate = '        target: Number(modulation.target) || 0,\n        lfo2Enabled: modulation.lfo2_enabled === true,\n        lfo2Shape: Number(modulation.lfo2_shape) || 0,\n        lfo2Rate: Number(modulation.lfo2_beats_per_cycle) || 4,\n        lfo2Depth: Number(modulation.lfo2_depth) || 0,\n        targetSelection: Array.isArray(modulation.targets) ? (modulation.targets.length ? "all" : "none") : "all"\n      });'
+    if old_hydrate in html:
+        html = html.replace(old_hydrate, new_hydrate, 1)
+    old_publish = '  const tabButton = (key, label) => React.createElement'
+    new_publish = '  const publishTargets = (selection) => { const targets = selection === "all" ? ["bank", "snapshot-a", "snapshot-b", "morph"] : []; setValue((current) => ({ ...current, targetSelection: selection })); Promise.resolve(window.pulp.postMessage("modulation_targets_set", { targets }, "spectr-modulation-targets")).catch((error) => console.error("[Spectr] modulation target write failed", error)); };\n  const tabButton = (key, label) => React.createElement'
+    if old_publish not in html:
+        raise RuntimeError('modulation tab button seam missing')
+    html = html.replace(old_publish, new_publish, 1)
+    html = html.replace('onClick: () => setValue((current) => ({ ...current, targetSelection: "all" }))', 'onClick: () => publishTargets("all")', 1)
+    html = html.replace('onClick: () => setValue((current) => ({ ...current, targetSelection: "none" }))', 'onClick: () => publishTargets("none")', 1)
+    html = html.replace('"data-spectr-modulation-select": "all", onClick:', '"data-spectr-modulation-select": "all", "aria-pressed": value.targetSelection === "all", onClick:', 1)
+    html = html.replace('"data-spectr-modulation-select": "none", onClick:', '"data-spectr-modulation-select": "none", "aria-pressed": value.targetSelection === "none", onClick:', 1)
+    document['html'] = html
+    return True
+
+
 def adjust_settings_panel_extent(document):
     html = document.get('html', '')
     if 'maxHeight: "92vh"' in html:
@@ -4016,6 +4043,10 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          second internal LFO controls')
+    if strengthen_modulation_state(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          bridge-backed LFO2 and target selection state')
     if separate_modulation_tab_content(document):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
