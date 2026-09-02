@@ -224,6 +224,12 @@ TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
     CHECK(width->range.default_value == Approx(3.0f).margin(0.0001f));
     CHECK(width->range.max == Approx(3.0f).margin(0.0001f));
     CHECK(width->range.min > 0.0f);
+    REQUIRE(width->to_string);
+    REQUIRE(width->from_string);
+    CHECK(width->from_string(width->to_string(width->range.min))
+          == Approx(width->range.min).margin(0.0001f));
+    CHECK(width->from_string("3.0 oct")
+          == Approx(width->range.max).margin(0.0001f));
 
     // Band count is a stepped control over the five legal layouts.
     const auto* count = find(w.store, kBandCountId);

@@ -97,6 +97,18 @@ std::string octaves_string(float width_log) {
     return buf;
 }
 
+float parse_octaves(std::string_view text) {
+    // Accept the formatter's numeric value with an optional "oct" suffix.
+    // StateStore performs range clamping after parsing, so preserve the raw
+    // logarithmic value here and let the parameter contract own bounds.
+    std::string s(text);
+    float octaves = 0.0f;
+    if (std::sscanf(s.c_str(), "%f", &octaves) != 1
+        || !std::isfinite(octaves) || octaves <= 0.0f)
+        return 0.0f;
+    return octaves * kViewportMinWidthLog;
+}
+
 void add_enum_labels(pulp::state::ParamInfo& info,
                      std::initializer_list<const char*> labels) {
     for (const char* label : labels) info.value_labels.emplace_back(label);
@@ -162,6 +174,7 @@ void register_surface_params(pulp::state::StateStore& store) {
                       kViewportMaxWidthLog};
         info.group_id = kGroupViewport;
         info.to_string = [](float v) { return octaves_string(v); };
+        info.from_string = [](const std::string& s) { return parse_octaves(s); };
         store.add_parameter(info);
     }
     {
