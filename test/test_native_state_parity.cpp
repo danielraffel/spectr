@@ -1238,27 +1238,23 @@ TEST_CASE("native host automation projects through the compact live frame lane",
         gains: before.reactGains.slice(),
         view: { ...before.reactView },
       };
-      const payload = {
-        revision: 1,
-        n_visible: 32,
-        gain_db: Array.from({length: 32}, (_, index) => index - 16),
-        muted: Array.from({length: 32}, (_, index) => index === 7),
-        min_hz: 220,
-        max_hz: 8800,
-        motion_mode: 1,
-        analyzer_mode: 2,
-        edit_mode: 3,
-        visualization_mode: 1,
-      };
-      try {
-        globalThis.__spectrPublishNativeMessage(
-          'processing_state_live', payload, 'spectr-native-live-state-test');
-      } catch (error) {
-        throw new Error('compact live emit failed: ' + error);
-      }
-      if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
-        globalThis.__pulpRuntimeSettle__(4);
     })();)js", "spectr-native-host-automation-live-publish");
+
+    for (std::size_t index = 0; index < 32; ++index) {
+        rig.store.set_value(
+            spectr::band_gain_param_id(index), static_cast<float>(index) - 16.0f);
+        rig.store.set_value(
+            spectr::band_mute_param_id(index), index == 7 ? 1.0f : 0.0f);
+    }
+    const auto [viewport_center, viewport_width] =
+        spectr::encode_viewport({220.0f, 8800.0f});
+    rig.store.set_value(spectr::kParamViewportCenter, viewport_center);
+    rig.store.set_value(spectr::kParamViewportWidth, viewport_width);
+    rig.store.set_value(spectr::kParamMotionMode, 1.0f);
+    rig.store.set_value(spectr::kParamAnalyzerMode, 2.0f);
+    rig.store.set_value(spectr::kParamEditMode, 3.0f);
+    rig.store.set_value(spectr::kParamVisualization, 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
     settle(rig.clock, 4);
 
     rig.bridge().load_script(R"js((() => {
@@ -1269,15 +1265,15 @@ TEST_CASE("native host automation projects through the compact live frame lane",
       if (Math.abs(state.targetGains[0] - expected) > 1e-9
           || state.targetGains[7] !== -Infinity)
         throw new Error('compact live-state did not update target gains');
-      // The animation loop deliberately converges muted render state back to
-      // its categorical sentinel; drawBands/drawMaskResponse project that
-      // sentinel onto the 0 dB line. The finite band must never be eased.
+      // Muting remains categorical in target state, while the render projection
+      // deliberately places the muted band on the 0 dB line. The finite band
+      // must never be eased.
       if (Math.abs(state.gains[0] - expected) > 1e-9
-          || state.gains[7] !== -Infinity)
+          || state.gains[7] !== 0)
         throw new Error('compact live-state did not draw current values directly: gain0=' +
           state.gains[0] + ', gain7=' + state.gains[7] + ', expected=' + expected);
-      if (Math.abs(state.view.lmin - Math.log10(220)) > 1e-9
-          || Math.abs(state.view.lmax - Math.log10(8800)) > 1e-9)
+      if (Math.abs(state.view.lmin - Math.log10(220)) > 1e-5
+          || Math.abs(state.view.lmax - Math.log10(8800)) > 1e-5)
         throw new Error('compact live-state did not update the viewport');
       if (state.reactGains.some((value, index) => value !== before.gains[index]))
         throw new Error('compact live-state reconciled React gains');

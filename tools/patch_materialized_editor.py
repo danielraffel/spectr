@@ -2590,12 +2590,27 @@ function App() {'''),
       N
     };'''),
 
+    ('host automation defers canvas draw to the frame loop',
+     '''        viewRef.current.lmin = Math.log10(state.minHz);
+        viewRef.current.lmax = Math.log10(state.maxHz);
+        if (renderAllRef.current) renderAllRef.current();
+        return true;
+      },
+      getGains: () => Array.from(targetGainsRef.current),''',
+     '''        viewRef.current.lmin = Math.log10(state.minHz);
+        viewRef.current.lmax = Math.log10(state.maxHz);
+        return true;
+      },
+      getGains: () => Array.from(targetGainsRef.current),'''),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an
 # earlier one. These named sentinels keep reruns strict without pretending the
 # superseded intermediate text must remain in the final shipping document.
 SUPERSEDED_SENTINELS = {
+    'filter bank applies host automation without React hydration':
+        'getGains: () => Array.from(targetGainsRef.current)',
     'status disable clears immediately and selected preset is retained':
         'const [selectedPatternId, setSelectedPatternId] = useAppS(null);',
     'selected preset name updates with applied state':

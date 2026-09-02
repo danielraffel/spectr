@@ -1169,14 +1169,13 @@ function App() {`,
         nativeAppliedRevisionRef.current = state.revision;
         mutedGainDbRef.current = state.gainDb.slice(0, N);
         targetGainsRef.current = state.gains.slice(0, N);
-        // Host automation is already the audible value for this frame. Draw
-        // that projection directly; applying the editor's gesture easing here
-        // would make playback look different from what the processor sounds.
+        // Host automation is already the audible value for this frame. Publish
+        // it directly to the render refs; the existing animation-frame loop
+        // paints those refs without gesture easing or an extra synchronous draw.
         renderGainsRef.current = state.gains.map((value, index) =>
           state.muted[index] ? 0 : clamp(value, -1.02, 1.02)).slice(0, N);
         viewRef.current.lmin = Math.log10(state.minHz);
         viewRef.current.lmax = Math.log10(state.maxHz);
-        if (renderAllRef.current) renderAllRef.current();
         return true;
       },
       getGains: () => targetGainsRef.current.slice(),`,
