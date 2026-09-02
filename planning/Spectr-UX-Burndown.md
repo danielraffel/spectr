@@ -59,7 +59,7 @@ for that confirmation.
 | AUT-3 | Logic automation lanes are visible and behave correctly | Parameter surface implemented | Real-host automated receipt unavailable | Pending in Logic with new PKG | Waiting human/host confirmation |
 | MOD-1 | Internal modulation/LFO Settings UI | Done | Focused bridge/layout coverage exists; official-SDK native rerun pending | Pending visual/audible check in new PKG | Waiting automated proof + human confirmation |
 | MOD-2 | Whole-bank, Snapshot A/B, and Morph targets | Implemented | Four-target proof is not yet integrated into this branch; current distinctness assertion fails | Pending audible check in new PKG | Open |
-| MOD-3 | Third-party host modulation works alongside internal modulation | Pulp successor foundation committed (`35364ef25f`); Spectr composition not yet integrated | Release build of `pulp-test-clap-host-validation '[modulation]'` passes 2 cases / 14 assertions, including CLAP offset 37; Pulp review/landing and Spectr integration still required | Logic/REAPER after landed Pulp API | Open |
+| MOD-3 | Third-party host modulation works alongside internal modulation | Pulp successor foundation committed (`35364ef25f`); Spectr composition not yet integrated | Release `pulp-test-clap-host-validation` passes 5 cases / 3652 assertions, including CLAP offset 37; Pulp review/landing and Spectr integration still required | Logic/REAPER after landed Pulp API | Open |
 
 ### Additional correctness and delivery gates
 
