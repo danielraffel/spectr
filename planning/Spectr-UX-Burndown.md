@@ -32,9 +32,9 @@ for that confirmation.
 | CUR-3 | Closed/grabbing hand while moving viewport | Done (`grabbing`) | Prior native cursor suite passed; official-SDK rerun pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
 | CUR-4 | Left/right resize cursor over viewport trims | Done (horizontal resize) | Prior native cursor suite passed; official-SDK rerun pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
 | PRE-1 | Preset Manager matches original source HTML | Mostly implemented | Registered shipping-surface Chromium test passes 8 factory + saved-user states; source A/B comparison remains report-only and needs review | Pending in new PKG | Open |
-| PRE-2 | Selected-preset detail layout and action overlap | Implemented for known factory layout | User/edit-state overlap proof pending | Pending in new PKG | Open |
+| PRE-2 | Selected-preset detail layout and action overlap | Implemented for factory and saved-user states | Registered real-Chromium matrix passed all 8 factory + saved-user selection and rename/edit states; planted overlap control fails | Pending in new PKG | Waiting human confirmation |
 | PRE-3 | Long names truncate before Snapshot controls | Done | Exact-head real-Chromium matrix passed | Pending in new PKG | Waiting human confirmation |
-| PRE-4 | Icons/text vertically centered for every selection | Implemented | Every preset/edit-state coverage pending | Pending in new PKG | Open |
+| PRE-4 | Icons/text vertically centered for every selection | Implemented | Registered real-Chromium matrix passed every factory + saved-user selection and rename/edit state alignment | Pending in new PKG | Waiting human confirmation |
 | PRE-5 | Selected preset name and SVG both update | Done | Exact-head real-Chromium matrix passed | Pending in new PKG | Waiting human confirmation |
 | PRE-6 | Flare correctly handles negative, positive, and zero bands | Current sign-preserving behavior implemented | Unit and native oracles pass current contract | Required: decide whether stopping at 0 dB is desired | Open product decision |
 | DDM-1 | Escape closes every dropdown and modal | Done | Every Spectr surface passed in real Chromium; official-SDK native/plugin replay pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
