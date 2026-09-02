@@ -3892,28 +3892,38 @@ def separate_modulation_tab_content(document):
 def strengthen_modulation_state(document):
     """Keep both LFOs and target select-all/none state bridge-backed."""
     html = document.get('html', '')
-    if 'spectr-modulation-targets' in html:
-        return False
+    changed = False
     old_state = 'const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0 });'
     new_state = 'const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0, lfo2Enabled: false, lfo2Shape: 0, lfo2Rate: 4, lfo2Depth: 0, targetSelection: "all" });'
-    if old_state not in html:
-        raise RuntimeError('modulation state initializer missing')
-    html = html.replace(old_state, new_state, 1)
+    if old_state in html:
+        html = html.replace(old_state, new_state, 1)
+        changed = True
     old_hydrate = '        target: Number(modulation.target) || 0\n      });'
     new_hydrate = '        target: Number(modulation.target) || 0,\n        lfo2Enabled: modulation.lfo2_enabled === true,\n        lfo2Shape: Number(modulation.lfo2_shape) || 0,\n        lfo2Rate: Number(modulation.lfo2_beats_per_cycle) || 4,\n        lfo2Depth: Number(modulation.lfo2_depth) || 0,\n        targetSelection: Number.isFinite(Number(modulation.target_mask)) ? (Number(modulation.target_mask) ? "all" : "none") : (Array.isArray(modulation.targets) ? (modulation.targets.length ? "all" : "none") : "all")\n      });'
     if old_hydrate in html:
         html = html.replace(old_hydrate, new_hydrate, 1)
+        changed = True
     old_publish = '  const tabButton = (key, label) => React.createElement'
     new_publish = '  const publishTargets = (selection) => { const targets = selection === "all" ? ["bank", "snapshot-a", "snapshot-b", "morph"] : []; setValue((current) => ({ ...current, targetSelection: selection })); Promise.resolve(window.pulp.postMessage("modulation_targets_set", { targets }, "spectr-modulation-targets")).catch((error) => console.error("[Spectr] modulation target write failed", error)); };\n  const tabButton = (key, label) => React.createElement'
-    if old_publish not in html:
-        raise RuntimeError('modulation tab button seam missing')
-    html = html.replace(old_publish, new_publish, 1)
-    html = html.replace('onClick: () => setValue((current) => ({ ...current, targetSelection: "all" }))', 'onClick: () => publishTargets("all")', 1)
-    html = html.replace('onClick: () => setValue((current) => ({ ...current, targetSelection: "none" }))', 'onClick: () => publishTargets("none")', 1)
-    html = html.replace('"data-spectr-modulation-select": "all", onClick:', '"data-spectr-modulation-select": "all", "aria-pressed": value.targetSelection === "all", onClick:', 1)
-    html = html.replace('"data-spectr-modulation-select": "none", onClick:', '"data-spectr-modulation-select": "none", "aria-pressed": value.targetSelection === "none", onClick:', 1)
+    if 'spectr-modulation-targets' not in html:
+        if old_publish not in html:
+            raise RuntimeError('modulation tab button seam missing')
+        html = html.replace(old_publish, new_publish, 1)
+        changed = True
+    if 'publishTargets("all")' not in html:
+        html = html.replace('onClick: () => setValue((current) => ({ ...current, targetSelection: "all" }))', 'onClick: () => publishTargets("all")', 1)
+        changed = True
+    if 'publishTargets("none")' not in html:
+        html = html.replace('onClick: () => setValue((current) => ({ ...current, targetSelection: "none" }))', 'onClick: () => publishTargets("none")', 1)
+        changed = True
+    if 'aria-pressed": value.targetSelection === "all"' not in html:
+        html = html.replace('"data-spectr-modulation-select": "all", onClick:', '"data-spectr-modulation-select": "all", "aria-pressed": value.targetSelection === "all", onClick:', 1)
+        changed = True
+    if 'aria-pressed": value.targetSelection === "none"' not in html:
+        html = html.replace('"data-spectr-modulation-select": "none", onClick:', '"data-spectr-modulation-select": "none", "aria-pressed": value.targetSelection === "none", onClick:', 1)
+        changed = True
     document['html'] = html
-    return True
+    return changed
 
 
 def adjust_settings_panel_extent(document):
