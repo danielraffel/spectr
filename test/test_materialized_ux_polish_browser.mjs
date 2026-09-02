@@ -22,6 +22,8 @@ assert.match(shippingSurface, /position: "sticky"/, 'settings tabs are not fixed
 assert.match(shippingSurface, /label: "LFO 2"/, 'second internal LFO controls missing');
 assert.match(shippingSurface, /data-spectr-modulation-select.*all/, 'modulation select-all control missing');
 assert.match(shippingSurface, /data-spectr-modulation-select.*none/, 'modulation select-none control missing');
+assert.match(shippingSurface, /modulation_targets_set/, 'modulation target selection is not bridge-backed');
+assert.match(shippingSurface, /lfo2Enabled|lfo2_enabled/, 'second LFO state is not represented in the bridge surface');
 const shortDwell = shippingSurface.replace(
   'const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;',
   'const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 280 : 220;');
