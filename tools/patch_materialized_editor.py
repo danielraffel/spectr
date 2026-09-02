@@ -2243,6 +2243,10 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '    if (onStatus && now - statusRefreshAtRef.current >= 700) {',
      '    if (onStatus && now - statusRefreshAtRef.current >= 120) {'),
 
+    ('live status renewal stays off the hot layout cadence',
+     '    if (onStatus && now - statusRefreshAtRef.current >= 120) {',
+     '    if (onStatus && now - statusRefreshAtRef.current >= 700) {'),
+
     ('status remains readable after the latest interaction',
      '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2400 : 1800;',
      '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;'),

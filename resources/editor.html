@@ -3252,10 +3252,6 @@ window.PatternManager = PatternManager;`,
       '<StatusBanner message={status} disabled={settings.statusInfo === false} />',
       'status banner receives the persistent setting');
     replaceSpectrSource(
-      "    if (onStatus && now - statusRefreshAtRef.current >= 700) {",
-      "    if (onStatus && now - statusRefreshAtRef.current >= 120) {",
-      'live status shell follows drag without perceptible batching');
-    replaceSpectrSource(
       "    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2400 : 1800;",
       "    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;",
       'status remains readable after the latest interaction');
