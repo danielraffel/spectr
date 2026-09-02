@@ -14,9 +14,9 @@ completion evidence.
 - Pulp typed dispatch worktree:
   `pulp-widget-bridge-realtime-dispatch-20260901`, commit
   `17998f387baff370284d112527375a5d702af88b`.
-- Spectr integration worktree: `spectr-ux-burndown-20260901`, based on commit
-  `639acec8ae016c4ac43652538290cd43579b5265` until the current coherent slice
-  is committed.
+- Spectr integration worktree: `spectr-ux-burndown-20260901`; the committed
+  automation implementation slice is
+  `cbff6b8c34ea8c184ccbf301d3615b87c70ddc29`.
 - Pulp dropdown/modal worktree:
   `pulp-dropdown-modal-acceptance-20260831`, commit
   `d6f5c37b1ea5973a7790721b976360b2b51f0b12`.
@@ -35,7 +35,7 @@ completion evidence.
   has a focused test that drives the real C++ frame-clock path.
 - [x] An exact-Pulp-SHA Release Spectr build passes the native host-automation
   test and focused native suite.
-- [ ] The live AppKit to QuickJS to Skia/Graphite Perfetto gate passes for band,
+- [x] The live AppKit to QuickJS to Skia/Graphite Perfetto gate passes for band,
   minimap, and automation workloads, with exact Spectr and Pulp SHA receipts.
 - [x] Snapshot and typed dispatch costs, repaint counts, and frame-tail budgets
   have been inspected rather than inferred from the aggregate gate.
@@ -43,13 +43,13 @@ completion evidence.
   safe under the focused realtime tests.
 - [ ] Logic shows the expected automation lanes and smooth band/viewport replay.
 
-Pre-commit functional evidence: the deferred-draw automation trace passed with
-0.057 ms projection p95 and 1.56/1.97 ms frame p95/p99; snapshot construction
-averaged 0.004 ms and typed dispatch averaged 0.083 ms. The minimap workload
-also passed. The full gate remains open because two repeat bands captures
-reported 1.145-1.168 layout slices per input against the 1.100 cap, despite
-passing input and frame-tail budgets. Exact clean-Spectr-SHA receipts must
-replace this functional evidence after the slice is committed.
+Clean-head evidence: the complete three-workload gate passed. The automation
+receipt recorded 0.053 ms projection p95 and 1.46/2.07 ms frame p95/p99;
+snapshot construction and typed dispatch were independently inspected, and
+the rendered automation screenshot remained byte-identical after deferring the
+redundant synchronous draw. The bands and minimap receipts also passed their
+input, layout/paint-count, and frame-tail budgets. Any later branch-head change
+requires regenerating the SHA-bound receipts.
 
 ### 2. Cursor feedback
 
