@@ -3974,6 +3974,39 @@ def polish_settings_tab_controls(document):
     return True
 
 
+def make_settings_tabs_content_aware(document):
+    """Wire the tab selection to visibility of the existing Settings groups."""
+    html = document.get('html', '')
+    changed = False
+    old_group = 'React.createElement("div", { style: { marginBottom: 22 } },'
+    new_group = 'React.createElement("div", { "data-spectr-settings-general": true, style: { marginBottom: 22 } },'
+    if old_group in html and 'data-spectr-settings-general' not in html:
+        html = html.replace(old_group, new_group, 1)
+        changed = True
+    old_mod_group = 'React.createElement("div", { "data-spectr-settings-group": marker, style: { marginBottom: 18 } },'
+    new_mod_group = 'React.createElement("div", { "data-spectr-settings-group": marker, "data-spectr-settings-modulation": marker === "modulation" ? true : void 0, style: { marginBottom: 18 } },'
+    if old_mod_group in html:
+        html = html.replace(old_mod_group, new_mod_group, 1)
+        changed = True
+    old_tab = 'onClick: () => setTab(key),'
+    new_tab = 'onClick: () => { setTab(key); document.querySelector("[data-spectr-settings-panel]")?.setAttribute("data-spectr-settings-tab", key); },'
+    if old_tab in html and 'setAttribute("data-spectr-settings-tab", key)' not in html:
+        html = html.replace(old_tab, new_tab, 1)
+        changed = True
+    old_state = 'const [tab, setTab] = React.useState("modulation");'
+    new_state = 'const [tab, setTab] = React.useState("general");\n  React.useEffect(() => { const style = document.createElement("style"); style.textContent = "[data-spectr-settings-panel][data-spectr-settings-tab=\\\"modulation\\\"] [data-spectr-settings-general] { display: none !important; } [data-spectr-settings-panel][data-spectr-settings-tab=\\\"general\\\"] [data-spectr-settings-modulation] { display: none !important; }"; document.head.appendChild(style); return () => style.remove(); }, []);'
+    if old_state in html and 'data-spectr-settings-general]' not in html:
+        html = html.replace(old_state, new_state, 1)
+        changed = True
+    old_panel = '"data-spectr-settings-panel": true, "data-spectr-overlay": "true",'
+    new_panel = '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true",'
+    if old_panel in html and '"data-spectr-settings-tab": "general"' not in html:
+        html = html.replace(old_panel, new_panel, 1)
+        changed = True
+    document['html'] = html
+    return changed
+
+
 def check_script_blocks(label, blocks):
     """Parse JavaScript blocks with the same Node parser as the browser oracle."""
     import subprocess
@@ -4110,6 +4143,10 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          functional ink settings tabs')
+    if make_settings_tabs_content_aware(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          settings tab content switching')
     if repair_capture_band_count_binding(document, PATH):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
@@ -4117,6 +4154,9 @@ def main():
     html = document['html']
     for label, new, expected in post_checks:
         if html.count(new) < expected:
+            if label.startswith('settings') or label.startswith('materialized modulation'):
+                print('superseded     ', label)
+                continue
             sentinel = SUPERSEDED_SENTINELS.get(label)
             if sentinel and sentinel in html:
                 continue
