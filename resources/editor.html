@@ -10,6 +10,10 @@
     #__bundler_thumbnail { position: fixed; inset: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #05070a; z-index: 9999; }
     #__bundler_thumbnail svg { width: 100%; height: 100%; object-fit: contain; }
     #__bundler_placeholder { color: #999; font-size: 14px; }
+    /* Readable at Logic's default AUv2 size without widening the chrome. */
+    button, [role="button"], [role="tab"] { font-size: clamp(11px, 0.9vw, 14px) !important; line-height: 1.15; white-space: nowrap; }
+    button span, [role="button"] span, [role="tab"] span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    [data-spectr-settings-group] > div:first-child { font-size: clamp(10px, 0.82vw, 13px) !important; }
   </style>
   <noscript>
     <style>#__bundler_loading { display: none; }</style>

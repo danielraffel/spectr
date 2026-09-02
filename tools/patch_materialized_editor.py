@@ -4007,6 +4007,19 @@ def make_settings_tabs_content_aware(document):
     return changed
 
 
+def add_readable_typography(document):
+    """Scale compact labels up while constraining them to their control rails."""
+    html = document.get('html', '')
+    if 'spectr-readable-type' in html:
+        return False
+    style = '<style id="spectr-readable-type">button,[role="button"],[role="tab"]{font-size:clamp(11px,.9vw,14px)!important;line-height:1.15;white-space:nowrap}button span,[role="button"] span,[role="tab"] span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-spectr-settings-group]>div:first-child{font-size:clamp(10px,.82vw,13px)!important}</style>'
+    marker = '</head>'
+    if marker not in html:
+        return False
+    document['html'] = html.replace(marker, style + marker, 1)
+    return True
+
+
 def check_script_blocks(label, blocks):
     """Parse JavaScript blocks with the same Node parser as the browser oracle."""
     import subprocess
@@ -4147,6 +4160,10 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          settings tab content switching')
+    if add_readable_typography(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          readable typography rails')
     if repair_capture_band_count_binding(document, PATH):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
