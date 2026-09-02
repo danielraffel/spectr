@@ -904,7 +904,13 @@ EDITS = [
     ('selected preset preview has a stable semantic subject',
      '), !isFactory && !editName && /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": "rename-start", onClick: () => setEditName(true), style: iconBtn }, "\\u270E")), /* @__PURE__ */ React.createElement("div", { style: {\n'
      '    background: "rgba(0,0,0,0.35)",',
-     '), !isFactory && !editName && /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": "rename-start", onClick: () => setEditName(true), style: iconBtn }, "\\u270E")), /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-preview": true, style: {\n'
+     '), !isFactory && !editName && /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": "rename-start", onClick: () => setEditName(true), style: iconBtn }, "\\u270E")), /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-preview": true, "data-spectr-pattern-id": pattern.id, style: {\n'
+     '    background: "rgba(0,0,0,0.35)",'),
+
+    ('migrate selected preset preview to stable identity',
+     'React.createElement("div", { "data-spectr-manager-preview": true, style: {\n'
+     '    background: "rgba(0,0,0,0.35)",',
+     'React.createElement("div", { "data-spectr-manager-preview": true, "data-spectr-pattern-id": pattern.id, style: {\n'
      '    background: "rgba(0,0,0,0.35)",'),
 
     ('selected preset metadata has a stable semantic subject',
@@ -921,16 +927,34 @@ EDITS = [
 
     ('selected preset heading subjects are individually addressable',
      'React.createElement("span", { style: { fontSize: 14, letterSpacing: 1, fontWeight: 500 } }, isDefault &&',
-     'React.createElement("span", { "data-spectr-manager-title": true, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500 } }, isDefault &&'),
+     'React.createElement("span", { "data-spectr-manager-title": true, "data-spectr-pattern-id": pattern.id, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "inline-flex", alignItems: "center", minHeight: 26, lineHeight: 1 } }, isDefault &&'),
 
-    ('selected preset heading safely truncates long names',
-     'React.createElement("span", { "data-spectr-manager-title": true, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500 } }, isDefault &&',
-     'React.createElement("span", { "data-spectr-manager-title": true, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, isDefault &&'),
+    ('migrate selected preset title to stable identity',
+     'React.createElement("span", { "data-spectr-manager-title": true, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, isDefault &&',
+     'React.createElement("span", { "data-spectr-manager-title": true, "data-spectr-pattern-id": pattern.id, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "inline-flex", alignItems: "center", minHeight: 26, lineHeight: 1 } }, isDefault &&'),
+
+    ('center selected preset title line box',
+     'React.createElement("span", { "data-spectr-manager-title": true, "data-spectr-pattern-id": pattern.id, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, isDefault &&',
+     'React.createElement("span", { "data-spectr-manager-title": true, "data-spectr-pattern-id": pattern.id, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "inline-flex", alignItems: "center", minHeight: 26, lineHeight: 1 } }, isDefault &&'),
 
     ('selected preset source badge is individually addressable',
      'pattern.name), /* @__PURE__ */ React.createElement("span", { style: {\n'
      '    fontSize: 8.5,',
      'pattern.name), /* @__PURE__ */ React.createElement("span", { "data-spectr-manager-source": true, style: {\n'
+     '    display: "inline-flex",\n'
+     '    alignItems: "center",\n'
+     '    minHeight: 26,\n'
+     '    lineHeight: 1,\n'
+     '    fontSize: 8.5,'),
+
+    ('center selected preset source line box',
+     'React.createElement("span", { "data-spectr-manager-source": true, style: {\n'
+     '    fontSize: 8.5,',
+     'React.createElement("span", { "data-spectr-manager-source": true, style: {\n'
+     '    display: "inline-flex",\n'
+     '    alignItems: "center",\n'
+     '    minHeight: 26,\n'
+     '    lineHeight: 1,\n'
      '    fontSize: 8.5,'),
 
     ('selected preset export actions are individually addressable',

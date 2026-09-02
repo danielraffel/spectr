@@ -2025,6 +2025,18 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
 function PatternManager({ open, onClose, userPatterns, setUserPatterns, defaultId, setDefaultId, N, onApply, currentGains, onStatus, onRequestSave, onRenamePattern, onDeletePattern }) {`,
       'native pattern manager actions');
     replaceSpectrSource(
+      '<span style={{ fontSize: 14, letterSpacing: 1, fontWeight: 500 }}>',
+      '<span data-spectr-manager-title data-spectr-pattern-id={pattern.id} style={{ fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: \'nowrap\', overflow: \'hidden\', textOverflow: \'ellipsis\', display: \'inline-flex\', alignItems: \'center\', minHeight: 26, lineHeight: 1 }}>',
+      'selected pattern title carries its stable identity');
+    replaceSpectrSource(
+      '{/* Full preview */}\n      <div style={{',
+      '{/* Full preview */}\n      <div data-spectr-manager-preview data-spectr-pattern-id={pattern.id} style={{',
+      'selected pattern SVG carries the same stable identity');
+    replaceSpectrSource(
+      '<span style={{\n          fontSize: 8.5, letterSpacing: 1.5, opacity: 0.6,',
+      '<span data-spectr-manager-source style={{\n          display: \'inline-flex\', alignItems: \'center\', minHeight: 26, lineHeight: 1,\n          fontSize: 8.5, letterSpacing: 1.5, opacity: 0.6,',
+      'selected pattern source badge shares the title line box');
+    replaceSpectrSource(
       '  const [managerOpen, setManagerOpen] = useAppS(false);',
       '  const [managerOpen, setManagerOpen] = useAppS(false);\n  const [saveDialogOpen, setSaveDialogOpen] = useAppS(false);',
       'save dialog state');

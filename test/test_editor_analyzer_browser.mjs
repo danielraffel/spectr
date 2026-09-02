@@ -1257,6 +1257,19 @@ window.spectrStartOracle = () => {
       const presetsButton = menuTrigger('pattern');
       if (!presetsButton) throw new Error('preset dropdown trigger missing');
       await spectrClick(presetsButton);
+      await spectrClick(await spectrWaitFor(() => document.querySelector(
+        '[data-spectr-pattern-menu-id="factory:tilt"]'), 'long preset menu item'));
+      const selectedPreset = await spectrWaitFor(() => {
+        const label = document.querySelector('[data-spectr-selected-preset]');
+        return label?.textContent === 'DOWNWA… ▾' ? label : null;
+      }, 'truncated selected preset label');
+      const snapshotLabel = Array.from(document.querySelectorAll('span'))
+        .find(span => span.textContent.trim() === 'SNAPSHOT');
+      if (!snapshotLabel || selectedPreset.title !== 'DOWNWARD TILT'
+          || selectedPreset.getBoundingClientRect().right
+            > snapshotLabel.getBoundingClientRect().left + 0.5)
+        throw new Error('long preset name escaped into the Snapshot controls');
+      await spectrClick(presetsButton);
       const saveCurrent = await spectrWaitFor(() =>
         document.querySelector('[data-spectr-save-current]'), 'save current menu item');
       await spectrClick(saveCurrent);
@@ -1292,6 +1305,48 @@ window.spectrStartOracle = () => {
         'preset manager menu item'));
       const manager = await spectrWaitFor(() => document.querySelector(
         '[aria-label="Pattern manager"]'), 'pattern manager');
+      await spectrClick(await spectrWaitFor(() => manager.querySelector(
+        '[data-spectr-pattern-id="factory:tilt"]'), 'tilt pattern row'));
+      const tiltSelection = await spectrWaitFor(() => {
+        const title = manager.querySelector('[data-spectr-manager-title]');
+        const preview = manager.querySelector('[data-spectr-manager-preview]');
+        const signature = Array.from(preview?.querySelectorAll('svg rect') || [])
+          .map(rect => rect.getAttribute('y') + ':' + rect.getAttribute('height')).join('|');
+        return title?.textContent === 'DOWNWARD TILT'
+          && title.dataset.spectrPatternId === 'factory:tilt'
+          && preview?.dataset.spectrPatternId === 'factory:tilt'
+          && signature ? { title, preview, signature } : null;
+      }, 'tilt title and SVG selection');
+      await spectrClick(manager.querySelector('[data-spectr-pattern-id="factory:flat"]'));
+      const flatSelection = await spectrWaitFor(() => {
+        const title = manager.querySelector('[data-spectr-manager-title]');
+        const preview = manager.querySelector('[data-spectr-manager-preview]');
+        const signature = Array.from(preview?.querySelectorAll('svg rect') || [])
+          .map(rect => rect.getAttribute('y') + ':' + rect.getAttribute('height')).join('|');
+        return title?.textContent.endsWith('FLAT')
+          && title.dataset.spectrPatternId === 'factory:flat'
+          && preview?.dataset.spectrPatternId === 'factory:flat'
+          && signature !== tiltSelection.signature ? { title, preview } : null;
+      }, 'flat title and SVG selection');
+      const sourceBadge = manager.querySelector('[data-spectr-manager-source]');
+      const actions = Array.from(manager.querySelectorAll(
+        '[data-spectr-manager-actions] button'));
+      const actionRects = actions.map(button => button.getBoundingClientRect());
+      const titleRect = flatSelection.title.getBoundingClientRect();
+      const sourceRect = sourceBadge?.getBoundingClientRect();
+      if (!sourceRect || getComputedStyle(flatSelection.title.parentElement).alignItems !== 'center'
+          || Math.abs((titleRect.top + titleRect.bottom)
+            - (sourceRect.top + sourceRect.bottom)) > 4)
+        throw new Error('selected preset text and source icon lost their shared center');
+      for (let a = 0; a < actionRects.length; ++a) {
+        for (let b = a + 1; b < actionRects.length; ++b) {
+          if (Math.min(actionRects[a].right, actionRects[b].right)
+                - Math.max(actionRects[a].left, actionRects[b].left) > 0.5
+              && Math.min(actionRects[a].bottom, actionRects[b].bottom)
+                - Math.max(actionRects[a].top, actionRects[b].top) > 0.5)
+            throw new Error('preset manager actions overlap');
+        }
+      }
       await spectrClick(await spectrWaitFor(() => manager.querySelector(
         '[data-spectr-pattern-id="user:test-0"]'), 'saved pattern row'));
       await spectrClick(await spectrWaitFor(() => Array.from(manager.querySelectorAll('button'))

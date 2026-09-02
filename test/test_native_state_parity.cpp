@@ -1825,13 +1825,14 @@ TEST_CASE("remaining native modal panels share Escape and outside dismissal",
     storage.require_unchanged();
 }
 
-TEST_CASE("native Flare keeps below-zero bands negative while pushing them outward",
+TEST_CASE("native Flare preserves mixed-sign curves and bands crossing 0 dB",
           "[native-n1][state-parity][flare]") {
     PatternStoragePoison storage;
     NativeEditorRig rig;
     rig.close();
-    for (auto& band : rig.processor.field().bands) {
-        band.gain_db = -4.0f;
+    for (std::size_t index = 0; index < rig.processor.field().bands.size(); ++index) {
+        auto& band = rig.processor.field().bands[index];
+        band.gain_db = index % 3 == 0 ? -4.0f : index % 3 == 1 ? 4.0f : 0.0f;
         band.muted = false;
     }
     rig.open();
@@ -1853,19 +1854,28 @@ TEST_CASE("native Flare keeps below-zero bands negative while pushing them outwa
       if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
         globalThis.__pulpRuntimeSettle__(6);
       const gains = globalThis.__spectrTestHooks.renderState().targetGains;
-      if (!gains.some(value => Number.isFinite(value) && value < (-4 / 24)))
+      if (!gains.some((value, index) => index % 3 === 0 && Number.isFinite(value) && value < (-4 / 24)))
         throw new Error('Flare did not push a negative band farther below zero');
-      if (gains.some(value => Number.isFinite(value) && value > 0))
+      if (!gains.some((value, index) => index % 3 === 1 && Number.isFinite(value) && value > (4 / 24)))
+        throw new Error('Flare did not push a positive band farther above zero');
+      if (gains.some((value, index) => index % 3 === 0 && value > 0))
         throw new Error('Flare flipped a below-zero band positive');
-    })();)js", "spectr-native-flare-negative");
+      if (gains.some((value, index) => index % 3 === 1 && value < 0))
+        throw new Error('Flare flipped an above-zero band negative');
+      if (gains.some((value, index) => index % 3 === 2 && Math.abs(value) > 1e-7))
+        throw new Error('Flare moved a zero-crossing band away from 0 dB');
+    })();)js", "spectr-native-flare-crossing-zero");
     settle(rig.clock, 8);
     const auto visible = spectr::visible_count(rig.processor.layout());
     REQUIRE(std::any_of(rig.processor.field().bands.begin(),
                         rig.processor.field().bands.begin() + visible,
                         [](const auto& band) { return band.gain_db < -4.01f; }));
-    REQUIRE(std::none_of(rig.processor.field().bands.begin(),
-                         rig.processor.field().bands.begin() + visible,
-                         [](const auto& band) { return band.gain_db > 0.0f; }));
+    for (std::size_t index = 0; index < visible; ++index) {
+        const auto gain = rig.processor.field().bands[index].gain_db;
+        if (index % 3 == 0) REQUIRE(gain < -4.01f);
+        if (index % 3 == 1) REQUIRE(gain > 4.01f);
+        if (index % 3 == 2) REQUIRE(gain == Catch::Approx(0.0f).margin(1.0e-6f));
+    }
     storage.require_unchanged();
 }
 
@@ -2494,6 +2504,37 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     REQUIRE(distributed_preview_bars >= 16);
     REQUIRE(viewport_sized_preview_bars >= 16);
     REQUIRE(visibly_tall_preview_bars >= 40);
+    rig.bridge().load_script(R"js((() => {
+      const title = document.querySelector('[data-spectr-manager-title]');
+      const preview = document.querySelector('[data-spectr-manager-preview]');
+      const signature = Array.from(preview?.querySelectorAll('svg rect') || [])
+        .map(rect => rect.getAttribute('y') + ':' + rect.getAttribute('height')).join('|');
+      if (!title || !preview || title.textContent !== 'DOWNWARD TILT'
+          || title.getAttribute('data-spectr-pattern-id') !== 'factory:tilt'
+          || preview.getAttribute('data-spectr-pattern-id') !== 'factory:tilt'
+          || !signature)
+        throw new Error('initial selected preset title/SVG identity was incoherent');
+      globalThis.__spectrPresetSelectionReceipt__ = signature;
+    })();)js", "spectr-native-pattern-selection-initial");
+    settle(rig.clock, 2);
+    activate(rig, "[data-spectr-pattern-id=\"factory:flat\"]");
+    settle_until_contract(
+        rig,
+        "(() => { const title = document.querySelector('[data-spectr-manager-title]');"
+        " const preview = document.querySelector('[data-spectr-manager-preview]');"
+        " const signature = Array.from(preview?.querySelectorAll('svg rect') || [])"
+        ".map(rect => rect.getAttribute('y') + ':' + rect.getAttribute('height')).join('|');"
+        " return title?.textContent.endsWith('FLAT')"
+        " && title?.getAttribute('data-spectr-pattern-id') === 'factory:flat'"
+        " && preview?.getAttribute('data-spectr-pattern-id') === 'factory:flat'"
+        " && signature && signature !== globalThis.__spectrPresetSelectionReceipt__; })()",
+        "selected preset name and SVG did not update in the same committed identity");
+    activate(rig, "[data-spectr-pattern-id=\"factory:tilt\"]");
+    settle_until_contract(
+        rig,
+        "document.querySelector('[data-spectr-manager-title]')?."
+        "getAttribute('data-spectr-pattern-id') === 'factory:tilt'",
+        "selected preset did not restore before the frozen manager capture");
     capture(rig, directory, "pattern-manager");
     activate(rig, "[data-spectr-pattern-id=" + js_string(pattern_id) + "]");
     // Selecting the row is itself a React commit. Clicking rename-start before it
