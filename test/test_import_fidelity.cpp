@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
 constexpr std::string_view kAdapterDigest =
-    "1bf88b4a918275078f7c4350fba00c49976e1af0b03db7490a2efcf69be1eb9f";
+    "f809cb539431cd2ab64155c23b6c3eb7a288bf6fd1ad4e19dfbaeb36b153cb69";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
