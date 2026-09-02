@@ -259,6 +259,20 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   restore callback) to distinguish Logic reapplying an existing automation
   lane from a plug-in reset. AUT-1/AUT-2 remain blocked on that host trace.
 
+### 2026-09-02 additional UX feedback
+
+- Automation playback is materially improved in the installed build (human
+  confirmation); Logic automation-lane visibility remains a separate AUT-3
+  acceptance item.
+- The installed package still lacks visible drag cursor transitions. Browser
+  and native fixtures pass, but host-level cursor publication is not yet
+  proven; keep cursor acceptance open until a React/native fix is rebuilt and
+  observed in AU.
+- Queued, tested Spectr fixes are not yet in a new package: settings content
+  tabs (`ad227c0`), keyboard/ink tab styling (`41d017a`), readable default
+  typography (`701ff6b`), preset Apply-close plus `P` shortcut (`8fd9f82`), and
+  minimap endpoint/performance evidence (`e6588ae`).
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
