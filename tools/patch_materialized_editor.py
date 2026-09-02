@@ -3889,6 +3889,17 @@ def separate_modulation_tab_content(document):
     return True
 
 
+def adjust_settings_panel_extent(document):
+    html = document.get('html', '')
+    if 'maxHeight: "92vh"' in html:
+        return False
+    needle = 'width: 520,\n    maxHeight: "90vh",\n    overflowY: "auto"'
+    if needle not in html:
+        raise RuntimeError('settings panel extent missing')
+    document['html'] = html.replace(needle, 'width: 520,\n    maxHeight: "92vh",\n    overflowY: "auto"', 1)
+    return True
+
+
 def check_script_blocks(label, blocks):
     """Parse JavaScript blocks with the same Node parser as the browser oracle."""
     import subprocess
@@ -4009,6 +4020,10 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          separate General and Modulation tab content')
+    if adjust_settings_panel_extent(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          settings panel extent for two-LFO content')
     if repair_capture_band_count_binding(document, PATH):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
