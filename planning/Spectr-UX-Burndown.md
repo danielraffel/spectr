@@ -1,6 +1,6 @@
 # Spectr UX and Automation Burn-down
 
-Last updated: 2026-09-01
+Last updated: 2026-09-02
 
 This is the durable landing ledger for the final Spectr native-editor UX,
 automation, host-acceptance, and package work. A checked box requires committed
@@ -13,13 +13,16 @@ completion evidence.
   state and is outside this workstream.
 - Pulp typed dispatch worktree:
   `pulp-widget-bridge-realtime-dispatch-20260901`, commit
-  `17998f387baff370284d112527375a5d702af88b`.
+  `2c4d98c076e04cbcfd72fb538fb505a4dfd60972`; PR #8012's required
+  Build and Test run `33583683746` has expanded from its zero-job concurrency
+  wedge and is active, but no merge SHA exists yet.
 - Spectr integration worktree: `spectr-ux-burndown-20260901`; the committed
-  automation implementation slice is
-  `cbff6b8c34ea8c184ccbf301d3615b87c70ddc29`.
-- Pulp dropdown/modal worktree:
-  `pulp-dropdown-modal-acceptance-20260831`, commit
-  `d6f5c37b1ea5973a7790721b976360b2b51f0b12`.
+  branch head is `ea4bf5668bf8eb3df0f73137e63cb893cf7860be`.
+- The preserved Pulp dropdown/modal worktree remains at
+  `d6f5c37b1ea5973a7790721b976360b2b51f0b12`. Its six commits are already
+  patch-equivalent on protected `origin/main` `421a5ee07b18429b6b252f0901b6f76b2936c3fe`;
+  the cursor and React dismissal equivalents are `e5dc8d29c7` and
+  `d3a4ce574a`, respectively, so they must not be republished.
 - Spectr realtime modulation proof:
   `73c359b30735e725d5fa2da3e6071fba2e6d1be5`.
 
@@ -58,6 +61,16 @@ requires regenerating the SHA-bound receipts.
 - [ ] Grabbing hand during viewport drag.
 - [ ] Left/right resize cursor over viewport trims.
 - [ ] Standalone, AUv2, and REAPER acceptance recorded.
+
+Implementation/proof state: protected Pulp main contains the AppKit
+gesture-phase cursor refresh at `e5dc8d29c7`, and current committed Spectr source
+drives the shipping materialized runtime through crosshair, left/right
+horizontal resize, grabbing, and restored grab states. The available Release
+`Spectr-native-n1-test '[cursor]'` passed 54 assertions, but its cache records
+dirty Spectr `639acec` and development Pulp SDK `17998f…`; under this ledger's
+provenance policy it is prior evidence, not a clean-head pass. Rebuild and rerun
+on the merged immutable SDK before checking these rows or beginning host-format
+visual acceptance.
 
 ### 3. Dropdown and modal defaults
 
