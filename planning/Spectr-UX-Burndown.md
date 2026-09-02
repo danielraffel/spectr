@@ -16,7 +16,19 @@ completion evidence.
   `aadb837854df498fd368e9fe28e55420b991241f`. The merge contains the dispatch
   API, implementation, focused repaint/rAF test, and Vellum watch event. The
   clean successor checkout is `pulp-8012-merged-sdk-20260902`; the prior local
-  refresh worktree is superseded and remains unpushed.
+  refresh worktree is superseded and remains unpushed. PR #8012 is merged, not
+  waiting in the merge queue.
+- Official SDK publication is blocked on the dedicated
+  `pulp-build-vm-release` lane. The `v0.828.1` Release CLI run `33610508668`
+  still has Darwin ARM64 job `100184337658` queued with no assigned runner, so
+  no authoritative Darwin ARM64 SDK asset or digest exists yet. Pulp PR #8019
+  is the live `v0.828.2` bump candidate at exact head
+  `35cacda37d243988dfe1643acc8279af52348eea`; its PR-head Build and Test macOS
+  job `100208586394` is actively running on M5 runner
+  `m5-pulp-gate-01-8976-6`. That PR-head job is not an official SDK release.
+  Root owns restoring release-lane capacity and will provide the authoritative
+  release asset. Spectr must remain frozen: do not retry, rebuild, or pin an
+  unofficial SDK.
 - Spectr integration worktree: `spectr-ux-burndown-20260901`; the integrated
   implementation head proven below is
   `3d0d105bb860e8266e8eb70332ec0943080145ef`, followed only by this ledger
@@ -144,6 +156,13 @@ the 1.5-second bound at `3d0d105bb860e8266e8eb70332ec0943080145ef`.
 - [ ] Focused Logic AUv2 and REAPER acceptance passes on landed dependencies.
 - [ ] One clean M5-testable PKG records the exact merged Spectr and Pulp SDK
   SHAs and passes signing, notarization, installation, and launch checks.
+
+Current package wake condition: Root supplies an authoritative official Darwin
+ARM64 SDK release asset containing the merged #8012 dispatch implementation.
+Only then may this branch record its immutable tag, source SHA, and asset
+SHA-256; configure the exact-SHA Release build; rerun native and host acceptance;
+land Spectr; and package. Until then, the release-lane queue is an external
+dependency, not permission to use a PR-head or locally built SDK.
 
 ## Evidence policy
 
