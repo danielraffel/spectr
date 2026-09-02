@@ -2362,6 +2362,7 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '''/* materialized-build-info-owner */
 function SpectrModulationSettings() {
   const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0 });
+  const [tab, setTab] = React.useState('modulation');
   React.useEffect(() => {
     let live = true;
     Promise.resolve(window.pulp.postMessage("processing_state_get", {}, "spectr-modulation-hydrate")).then((response) => {
@@ -2381,12 +2382,16 @@ function SpectrModulationSettings() {
     setValue((current) => ({ ...current, [key]: next }));
     Promise.resolve(window.pulp.postMessage("param_set", { id, value: typeof next === "boolean" ? next ? 1 : 0 : next }, "spectr-modulation-" + key)).catch((error) => console.error("[Spectr] modulation write failed", error));
   };
-  return /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },
+  const tabButton = (key, label) => React.createElement('button', { key, type: 'button', role: 'tab', 'aria-selected': tab === key, 'data-spectr-settings-tab': key, onClick: () => setTab(key), style: { flex: 1, height: 28, border: '1px solid ' + (tab === key ? 'rgba(180,210,255,0.45)' : 'rgba(255,255,255,0.1)'), borderRadius: 3, background: tab === key ? 'rgba(120,180,255,0.16)' : 'rgba(255,255,255,0.03)', color: tab === key ? '#fff' : 'rgba(255,255,255,0.55)', fontFamily: 'var(--mono)', fontSize: 9.5, letterSpacing: 1, cursor: 'pointer' } }, label);
+  return /* @__PURE__ */ React.createElement('div', { 'data-spectr-settings-tabs': true, style: { marginBottom: 18 } },
+    React.createElement('div', { role: 'tablist', style: { display: 'flex', gap: 5, marginBottom: 14 } }, tabButton('general', 'GENERAL'), tabButton('modulation', 'MODULATION')),
+    React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },
     /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "LFO", hint: "Enable internal modulation" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { value: value.enabled, onChange: (next) => publish("enabled", 4000, next) })),
     /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Shape", hint: "Oscillator waveform" }, /* @__PURE__ */ React.createElement(SpectrSettingsChips, { value: value.shape, onChange: (next) => publish("shape", 4001, next), opts: [[0,"Sin"],[1,"Tri"],[2,"Square"],[3,"Saw"]] })),
     /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Rate", hint: "Beats per cycle" }, /* @__PURE__ */ React.createElement(SpectrSettingsSlider, { value: value.rate, min: 0.25, max: 16, step: 0.25, onChange: (next) => publish("rate", 4002, next), fmt: (next) => next.toFixed(2) })),
     /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Depth", hint: "Modulation amount" }, /* @__PURE__ */ React.createElement(SpectrSettingsSlider, { value: value.depth, min: 0, max: 1, step: 0.01, onChange: (next) => publish("depth", 4003, next) })),
     /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Target", hint: "Shape the bank, snapshots, or morph" }, /* @__PURE__ */ React.createElement(SpectrSettingsChips, { value: value.target, onChange: (next) => publish("target", 4004, next), opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"]] }))
+  )
   );
 }
 function SettingsModal({ settings, setSettings, onClose }) {'''),
@@ -2674,6 +2679,18 @@ function App() {'''),
         return true;
       },
       getGains: () => Array.from(targetGainsRef.current),'''),
+
+    ('materialized modulation settings expose fixed tabs',
+     'function SpectrModulationSettings() {\n  const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0 });',
+     'function SpectrModulationSettings() {\n  /* settings tabs */\n  const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0 });\n  const [tab, setTab] = React.useState("modulation");'),
+
+    ('materialized modulation tabs stay visible above scrolling content',
+     '  return /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },',
+     '  const tabButton = (key, label) => React.createElement("button", { key, type: "button", role: "tab", "aria-selected": tab === key, "data-spectr-settings-tab": key, onClick: () => setTab(key), style: { flex: 1, height: 28, border: "1px solid " + (tab === key ? "rgba(180,210,255,0.45)" : "rgba(255,255,255,0.1)"), borderRadius: 3, background: tab === key ? "rgba(120,180,255,0.16)" : "rgba(255,255,255,0.03)", color: tab === key ? "#fff" : "rgba(255,255,255,0.55)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 1, cursor: "pointer" } }, label);\n  return /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-tabs": true, style: { position: "sticky", top: 76, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" } },\n    React.createElement("div", { role: "tablist", style: { display: "flex", gap: 5, marginBottom: 14 } }, tabButton("general", "GENERAL"), tabButton("modulation", "MODULATION")),\n    React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },'),
+
+    ('materialized modulation tabs close cleanly',
+     '  );\n}\nfunction SettingsModal({ settings, setSettings, onClose }) {',
+     '  )\n  );\n  /* tabs complete */\n}\nfunction SettingsModal({ settings, setSettings, onClose }) {'),
 
 ]
 
@@ -3835,6 +3852,23 @@ def repair_capture_band_count_binding(document, path):
     return True
 
 
+def augment_modulation_tabs(document):
+    """Add the second internal LFO controls to the shipping materialized UI."""
+    html = document.get('html', '')
+    marker = 'data-spectr-settings-tab'
+    if marker not in html or 'data-spectr-modulation-select' in html:
+        return False
+    needle = 'opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"]] }))\n  )'
+    replacement = 'opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"] ] })) ,\n    React.createElement(SpectrSettingsField, { label: "LFO 2", hint: "Enable second modulation source" }, React.createElement(SpectrSettingsToggle, { value: value.lfo2Enabled || false, onChange: (next) => publish("lfo2Enabled", 4010, next) })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 shape", hint: "Second waveform" }, React.createElement(SpectrSettingsChips, { value: value.lfo2Shape || 0, onChange: (next) => publish("lfo2Shape", 4011, next), opts: [[0,"Sin"],[1,"Tri"],[2,"Square"],[3,"Saw"]] })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 rate", hint: "Beats per cycle" }, React.createElement(SpectrSettingsSlider, { value: value.lfo2Rate || 4, min: 0.25, max: 16, step: 0.25, onChange: (next) => publish("lfo2Rate", 4012, next), fmt: (next) => next.toFixed(2) })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 depth", hint: "Modulation amount" }, React.createElement(SpectrSettingsSlider, { value: value.lfo2Depth || 0, min: 0, max: 1, step: 0.01, onChange: (next) => publish("lfo2Depth", 4013, next) })),\n    React.createElement(SpectrSettingsField, { label: "Targets", hint: "Select modulation destinations" }, React.createElement("div", { style: { display: "flex", gap: 5 } }, React.createElement("button", { type: "button", "data-spectr-modulation-select": "all", onClick: () => setValue((current) => ({ ...current, targetSelection: "all" })), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { type: "button", "data-spectr-modulation-select": "none", onClick: () => setValue((current) => ({ ...current, targetSelection: "none" })), style: { padding: "5px 10px" } }, "NONE")))\n  )'
+    if 'LFO 2' in html:
+        needle = 'React.createElement(SpectrSettingsField, { label: "LFO 2 depth", hint: "Modulation amount" }, React.createElement(SpectrSettingsSlider, { value: value.lfo2Depth || 0, min: 0, max: 1, step: 0.01, onChange: (next) => publish("lfo2Depth", 4013, next) }))\n  )'
+        replacement = needle[:-4] + ',\n    React.createElement(SpectrSettingsField, { label: "Targets", hint: "Select modulation destinations" }, React.createElement("div", { style: { display: "flex", gap: 5 } }, React.createElement("button", { type: "button", "data-spectr-modulation-select": "all", onClick: () => setValue((current) => ({ ...current, targetSelection: "all" })), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { type: "button", "data-spectr-modulation-select": "none", onClick: () => setValue((current) => ({ ...current, targetSelection: "none" })), style: { padding: "5px 10px" } }, "NONE")))\n  )'
+    if needle not in html:
+        raise RuntimeError('modulation target field missing from materialized document')
+    document['html'] = html.replace(needle, replacement, 1)
+    return True
+
+
 def check_script_blocks(label, blocks):
     """Parse JavaScript blocks with the same Node parser as the browser oracle."""
     import subprocess
@@ -3947,6 +3981,10 @@ def main():
         print('applied         ', label)
 
     document = json.loads(raw)
+    if augment_modulation_tabs(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          second internal LFO controls')
     if repair_capture_band_count_binding(document, PATH):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True

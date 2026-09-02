@@ -15,6 +15,13 @@ const surfaceEnd = document.html.indexOf('\nfunction SnapBtn(', surfaceStart);
 assert(surfaceStart >= 0 && surfaceEnd > surfaceStart,
   'shipping Settings/status surface missing');
 const shippingSurface = document.html.slice(surfaceStart, surfaceEnd);
+assert.match(shippingSurface, /data-spectr-settings-tabs/, 'modulation settings tab surface missing');
+assert.match(shippingSurface, /data-spectr-settings-tab.*general/, 'General settings tab missing');
+assert.match(shippingSurface, /data-spectr-settings-tab.*modulation/, 'Modulation settings tab missing');
+assert.match(shippingSurface, /position: "sticky"/, 'settings tabs are not fixed while content scrolls');
+assert.match(shippingSurface, /label: "LFO 2"/, 'second internal LFO controls missing');
+assert.match(shippingSurface, /data-spectr-modulation-select.*all/, 'modulation select-all control missing');
+assert.match(shippingSurface, /data-spectr-modulation-select.*none/, 'modulation select-none control missing');
 const shortDwell = shippingSurface.replace(
   'const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;',
   'const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 280 : 220;');

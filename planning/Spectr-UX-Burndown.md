@@ -57,7 +57,7 @@ for that confirmation.
 | AUT-1 | Recorded automation/playback is sample-accurate | Processor playback implemented | Exact-sample/block-partition proof covers scheduled processor events, not DAW recording/AUv2 | Logic test required | Open |
 | AUT-2 | Bands and viewport animate during host playback | Done | Native frame-lane and Perfetto proof passed | Pending in Logic with new PKG | Waiting human/host confirmation |
 | AUT-3 | Logic automation lanes are visible and behave correctly | Parameter surface implemented | Real-host automated receipt unavailable | Pending in Logic with new PKG | Waiting human/host confirmation |
-| MOD-1 | Internal modulation/LFO Settings UI | Done | Focused bridge/layout coverage exists; official-SDK native rerun pending | Pending visual/audible check in new PKG | Waiting automated proof + human confirmation |
+| MOD-1 | Internal modulation/LFO Settings UI | Done | Settings now exposes fixed General/Modulation tabs, two LFO surfaces (on/off, waveform, rate, depth), and target select-all/none controls; materialized script parser passes | Pending visual/audible check in new PKG | Waiting automated proof + human confirmation |
 | MOD-2 | Whole-bank, Snapshot A/B, and Morph targets | Implemented | Four-target proof is not yet integrated into this branch; current distinctness assertion fails | Pending audible check in new PKG | Open |
 | MOD-3 | Third-party host modulation works alongside internal modulation | Pulp successor foundation committed (`35364ef25f`, test extension `c757b68096`); Spectr composition not yet integrated | Release `pulp-test-clap-host-validation '[modulation]'` passes 3 cases / 23 assertions, including sorted offsets 3/99 and per-block reset; full suite remains green (5 cases / 3652 assertions) | Logic/REAPER after landed Pulp API | Open |
 
@@ -198,8 +198,8 @@ product behavior.
 
 ### 6. Settings
 
-- [ ] Modulation layout is stable.
-- [ ] Header and close control remain fixed while content scrolls.
+- [x] Modulation layout is stable, with fixed General/Modulation tabs and two LFO surfaces.
+- [x] Header, close control, and settings tabs remain fixed while content scrolls.
 - [ ] Close hover/press, Escape, and outside-click behavior pass.
 - [ ] Copy is centered and preserves Copied feedback.
 - [ ] Status Info is not truncated and unnecessary scrollbars are absent.
