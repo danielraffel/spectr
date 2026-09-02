@@ -328,6 +328,10 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     r.store.set_value(spectr::kParamLfoRate, 8.0f);
     r.store.set_value(spectr::kParamLfoDepth, 0.75f);
     r.store.set_value(spectr::kParamLfoTarget, 3.0f);
+    r.store.set_value(spectr::kParamLfo2Enabled, 1.0f);
+    r.store.set_value(spectr::kParamLfo2Shape, 1.0f);
+    r.store.set_value(spectr::kParamLfo2Rate, 2.0f);
+    r.store.set_value(spectr::kParamLfo2Depth, 0.25f);
     REQUIRE(r.proc->apply_surface_params(true));
     r.proc->field().bands[47] = {6.25f, false};
     r.proc->capture_snapshot(SnapshotBank::Slot::A);
@@ -360,6 +364,10 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     CHECK(payload["modulation"]["beats_per_cycle"].get<double>() == Approx(8.0));
     CHECK(payload["modulation"]["depth"].get<double>() == Approx(0.75));
     CHECK(payload["modulation"]["target"].get<int64_t>() == 3);
+    CHECK(payload["modulation"]["lfo2_enabled"].getBool());
+    CHECK(payload["modulation"]["lfo2_shape"].get<int64_t>() == 1);
+    CHECK(payload["modulation"]["lfo2_beats_per_cycle"].get<double>() == Approx(2.0));
+    CHECK(payload["modulation"]["lfo2_depth"].get<double>() == Approx(0.25));
     REQUIRE(payload["snapshots"].isObject());
     CHECK(payload["snapshots"]["A"]["populated"].getBool());
     CHECK(payload["snapshots"]["B"]["populated"].getBool());
@@ -1062,6 +1070,23 @@ TEST_CASE("M9.5 bridge param_set: missing id or value errors") {
     const auto no_val = r.dispatch(
         R"({"type":"param_set","payload":{"id":1}})");
     CHECK(response_has_error(no_val, "param value missing"));
+}
+
+TEST_CASE("modulation target bridge accepts all and none target sets") {
+    Rig r;
+    const auto all = r.dispatch(
+        R"({"type":"modulation_targets_set","payload":{"targets":["bank","snapshot-a","snapshot-b","morph"]}})");
+    REQUIRE(response_ok(all));
+    CHECK(r.proc->modulation_settings().target_mask == 0x0f);
+
+    const auto none = r.dispatch(
+        R"({"type":"modulation_targets_set","payload":{"targets":[]}})");
+    REQUIRE(response_ok(none));
+    CHECK(r.proc->modulation_settings().target_mask == 0x00);
+
+    const auto unknown = r.dispatch(
+        R"({"type":"modulation_targets_set","payload":{"targets":["sidechain"]}})");
+    CHECK(response_has_error(unknown, "unknown modulation target"));
 }
 
 // ── M9.5 slice 2 — PatternLibrary persistence through plugin_state ──
