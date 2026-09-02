@@ -3963,6 +3963,17 @@ def adjust_settings_panel_extent(document):
     return True
 
 
+def polish_settings_tab_controls(document):
+    """Use fixed ink tabs with left/right/Home/End keyboard navigation."""
+    html = document.get('html', '')
+    old = 'onClick: () => setTab(key), style: { flex: 1, height: 28, border: "1px solid " + (tab === key ? "rgba(180,210,255,0.45)" : "rgba(255,255,255,0.1)"), borderRadius: 3, background: tab === key ? "rgba(120,180,255,0.16)" : "rgba(255,255,255,0.03)", color: tab === key ? "#fff" : "rgba(255,255,255,0.55)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 1, cursor: "pointer" }'
+    new = 'onClick: () => setTab(key), onKeyDown: (event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" || event.key === "ArrowLeft" && key === "modulation" ? "general" : "modulation"; setTab(next); (document.querySelector("[data-spectr-settings-tab=\\\"" + next + "\\\"]") || {}).focus(); }, style: { flex: 1, height: 28, border: "none", borderBottom: "2px solid " + (tab === key ? "rgba(120,210,255,0.95)" : "rgba(255,255,255,0.12)"), borderRadius: 0, background: "transparent", color: tab === key ? "#fff" : "rgba(255,255,255,0.55)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 1, cursor: "pointer", transition: "color 120ms ease, border-color 120ms ease" }'
+    if old not in html:
+        return False
+    document['html'] = html.replace(old, new, 1)
+    return True
+
+
 def check_script_blocks(label, blocks):
     """Parse JavaScript blocks with the same Node parser as the browser oracle."""
     import subprocess
@@ -4095,6 +4106,10 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          settings panel extent for two-LFO content')
+    if polish_settings_tab_controls(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          functional ink settings tabs')
     if repair_capture_band_count_binding(document, PATH):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
