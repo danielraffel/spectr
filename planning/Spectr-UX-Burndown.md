@@ -16,8 +16,10 @@ completion evidence.
   `2c4d98c076e04cbcfd72fb538fb505a4dfd60972`; PR #8012's required
   Build and Test run `33583683746` has expanded from its zero-job concurrency
   wedge and is active, but no merge SHA exists yet.
-- Spectr integration worktree: `spectr-ux-burndown-20260901`; the committed
-  branch head is `ea4bf5668bf8eb3df0f73137e63cb893cf7860be`.
+- Spectr integration worktree: `spectr-ux-burndown-20260901`; the integrated
+  implementation head proven below is
+  `3d0d105bb860e8266e8eb70332ec0943080145ef`, followed only by this ledger
+  refresh.
 - The preserved Pulp dropdown/modal worktree remains at
   `d6f5c37b1ea5973a7790721b976360b2b51f0b12`. Its six commits are already
   patch-equivalent on protected `origin/main` `421a5ee07b18429b6b252f0901b6f76b2936c3fe`;
@@ -74,19 +76,30 @@ visual acceptance.
 
 ### 3. Dropdown and modal defaults
 
-- [ ] Escape closes every dropdown and modal.
-- [ ] Outside click closes and consumes the click, with no mutation behind the
+- [x] Escape closes every dropdown and modal.
+- [x] Outside click closes and consumes the click, with no mutation behind the
   popup.
-- [ ] Up/down changes one visible highlight; Return selects and closes.
-- [ ] Hover feedback is distinct from selection.
+- [x] Up/down changes one visible highlight; Return selects and closes.
+- [x] Hover feedback is distinct from selection.
 - [ ] Pulp framework tests and inherited Spectr plugin-format behavior pass.
+
+Exact-head browser evidence: `Spectr-browser-popups` passed in real Chromium at
+`3d0d105bb860e8266e8eb70332ec0943080145ef`. It exercised all five footer
+dropdowns plus Help, Settings, save, Pattern Manager, and band-context popups.
+The outside activation sequence was consumed with the underlying editor and
+processing state unchanged; a planted click-through control failed before the
+fix. This does not replace the clean merged-SDK native and plugin-format pass.
 
 ### 4. Preset parity
 
-- [ ] Preset Manager matches the source layout without overlapping actions.
-- [ ] Long names truncate before Snapshot controls.
-- [ ] Selection updates both name and SVG with centered text/icons.
-- [ ] Flare behavior is correct for negative bands and crossings through 0 dB.
+- [x] Preset Manager matches the source layout without overlapping actions.
+- [x] Long names truncate before Snapshot controls.
+- [x] Selection updates both name and SVG with centered text/icons.
+- [x] Flare behavior is correct for negative bands and crossings through 0 dB.
+
+Exact-head evidence: the full real-Chromium editor matrix passed at
+`3d0d105bb860e8266e8eb70332ec0943080145ef`, and the SDK-independent integrated
+Flare oracle preserved negative, positive, and exact-zero band behavior.
 
 ### 5. Unified status overlay
 
@@ -101,7 +114,12 @@ visual acceptance.
 - [ ] Close hover/press, Escape, and outside-click behavior pass.
 - [ ] Copy is centered and preserves Copied feedback.
 - [ ] Status Info is not truncated and unnecessary scrollbars are absent.
-- [ ] Loading build info resolves promptly and cannot remain stuck.
+- [x] Loading build info resolves promptly and cannot remain stuck.
+
+Exact-head browser evidence: the real-Chromium build-info harness reproduced
+indefinite loading with its planted no-timeout control, then proved the shipping
+component transitions an unresolved request to `BUILD INFO UNAVAILABLE` after
+the 1.5-second bound at `3d0d105bb860e8266e8eb70332ec0943080145ef`.
 
 ### 7. Internal modulation
 
