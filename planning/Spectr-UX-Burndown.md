@@ -69,7 +69,7 @@ for that confirmation.
 | COR-2 | Minimap edge drag cannot move opposite trim | Current interaction exists | Final exact-SDK regression pending | Pending in new PKG | Open final acceptance |
 | COR-3 | Fast band drawing and minimap interaction remain intact | Current interaction exists | Final performance/regression pass pending | Pending in new PKG | Open final acceptance |
 | DEL-1 | Exact-head architectural/adversarial review | Not applicable | Review receipt pending | Not applicable | Open |
-| DEL-2 | Spectr PR merged with required checks green | Branch exists | CI/merge receipt pending | Not applicable | Open |
+| DEL-2 | Spectr PR merged with required checks green | Spectr branch remains clean; Pulp modulation successor is pushed as PR #8028 at exact head `f2a04d1dcd5adf2ff9019bf750b74fb983456dca` | PR #8028 checks are active; merge receipt pending | Not applicable | Open |
 | DEL-3 | Logic AUv2 and REAPER VST3/CLAP acceptance | Formats implemented | Host receipts pending | Pending | Open |
 | DEL-4 | Signed, notarized, installed, launch-verified M5 PKG | Packaging path exists | Official-SDK build and artifact verification pending | Pending | Blocked on authoritative official Darwin ARM64 SDK |
 
