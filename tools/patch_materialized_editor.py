@@ -2700,6 +2700,8 @@ function App() {'''),
 SUPERSEDED_SENTINELS = {
     'materialized modulation tabs stay visible above scrolling content':
         'data-spectr-settings-general-tab',
+    'materialized modulation tabs close cleanly':
+        'data-spectr-settings-general-tab',
     'filter bank applies host automation without React hydration':
         'getGains: () => Array.from(targetGainsRef.current)',
     'status disable clears immediately and selected preset is retained':
