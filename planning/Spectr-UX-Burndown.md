@@ -273,6 +273,18 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   typography (`701ff6b`), preset Apply-close plus `P` shortcut (`8fd9f82`), and
   minimap endpoint/performance evidence (`e6588ae`).
 
+### 2026-09-02 package checkpoint
+
+- Exact current Spectr head `db99a489f34101f370acc26b82f2050d7149d5d4` was
+  configured and built in Release against official Pulp SDK `v0.829.0`
+  (`cc75fa91cf6942a197b2fb00b38ac679de3cbcd1`).
+- `artifacts/Spectr-1.0.3.pkg` was signed, notarized, stapled, and validated;
+  SHA-256 is
+  `56c3a65adce9a7e695001eb82fb9d4bc9ef298c68d15028cecf1b2a93889b2ab`.
+- The package includes the Settings tab/content, typography, and preset fixes
+  above. It must not be treated as cursor acceptance proof until AU host
+  cursor transitions are observed after installation.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
