@@ -11,11 +11,12 @@ completion evidence.
 
 - The primary `/Users/danielraffel/Code/pulp` checkout is unrelated recovery
   state and is outside this workstream.
-- Pulp typed dispatch worktree:
-  `pulp-widget-bridge-realtime-dispatch-20260901`, commit
-  `2c4d98c076e04cbcfd72fb538fb505a4dfd60972`; PR #8012's required
-  Build and Test run `33583683746` has expanded from its zero-job concurrency
-  wedge and is active, but no merge SHA exists yet.
+- Pulp typed dispatch PR #8012 merged its exact proven head
+  `2c4d98c076e04cbcfd72fb538fb505a4dfd60972` to protected main as
+  `aadb837854df498fd368e9fe28e55420b991241f`. The merge contains the dispatch
+  API, implementation, focused repaint/rAF test, and Vellum watch event. The
+  clean successor checkout is `pulp-8012-merged-sdk-20260902`; the prior local
+  refresh worktree is superseded and remains unpushed.
 - Spectr integration worktree: `spectr-ux-burndown-20260901`; the integrated
   implementation head proven below is
   `3d0d105bb860e8266e8eb70332ec0943080145ef`, followed only by this ledger
