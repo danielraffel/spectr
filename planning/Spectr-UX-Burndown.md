@@ -225,12 +225,10 @@ component transitions an unresolved request to `BUILD INFO UNAVAILABLE` after
 - [ ] One clean M5-testable PKG records the exact merged Spectr and Pulp SDK
   SHAs and passes signing, notarization, installation, and launch checks.
 
-Current package wake condition: Root supplies an authoritative official Darwin
-ARM64 SDK release asset containing the merged #8012 dispatch implementation.
-Only then may this branch record its immutable tag, source SHA, and asset
-SHA-256; configure the exact-SHA Release build; rerun native and host acceptance;
-land Spectr; and package. Until then, the release-lane queue is an external
-dependency, not permission to use a PR-head or locally built SDK.
+The former package wake condition is superseded: official Pulp SDK `v0.829.0`
+(`cc75fa91cf6942a197b2fb00b38ac679de3cbcd1`) is available and the signed,
+notarized package below was built and installed against it. Remaining package
+work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
 
 ### 2026-09-02 verification checkpoint
 
