@@ -232,6 +232,20 @@ SHA-256; configure the exact-SHA Release build; rerun native and host acceptance
 land Spectr; and package. Until then, the release-lane queue is an external
 dependency, not permission to use a PR-head or locally built SDK.
 
+### 2026-09-02 verification checkpoint
+
+- Release `build-release-0829/Spectr-test '[modulation]'`: 1 case / 3,110
+  assertions passed.
+- Release `build-release-0829/Spectr-test '[automation]'`: 2 cases / 1,103
+  assertions passed.
+- Release `build-release-0829/Spectr-native-n1-test '[host-automation-live]'`:
+  1 case / 13 assertions passed.
+- Release `build-release-0829/Spectr-native-n1-test '[dismissal]'`: 2 cases /
+  350 assertions passed. Runtime geometry warnings are expected from the
+  dismissal fixture and did not fail the tests.
+- These are fresh local evidence only; Logic AUv2 lanes, REAPER editor/
+  automation receipts, COR-1/2/3 review, and PR #8028 landing remain open.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
