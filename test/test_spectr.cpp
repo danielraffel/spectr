@@ -161,6 +161,70 @@ TEST_CASE("Spectr applies internal modulation on the audio owner",
     CHECK(modulated > unmodulated * 2.5f);
 }
 
+TEST_CASE("scheduled processor playback changes gain on the exact sample across partitions",
+          "[automation][rt]") {
+    constexpr std::size_t material_samples = 512;
+    constexpr std::size_t event_sample = 173;
+    constexpr float input_value = 0.5f;
+    constexpr float automated_db = -12.0f;
+    const auto render = [=](std::size_t block_size) {
+        pulp::format::HeadlessHost host(spectr::create_spectr);
+        host.state().set_value(spectr::kMix, 0.0f);
+        host.state().set_value(spectr::kOutputTrim, 0.0f);
+        host.prepare(48000.0, 512);
+
+        pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+        std::fill(in.channel(0).begin(), in.channel(0).end(), input_value);
+        std::fill(in.channel(1).begin(), in.channel(1).end(), -input_value);
+        const float* input_channels[] = {
+            in.channel(0).data(), in.channel(1).data()};
+        pulp::audio::BufferView<const float> input(
+            input_channels, 2, block_size);
+        auto output = out.view();
+
+        const auto warmup_samples = static_cast<std::size_t>(
+            spectr::kSpectralLatency + spectr::kSpectralFftSize);
+        const auto warmup_blocks =
+            (warmup_samples + block_size - 1) / block_size;
+        for (std::size_t block = 0; block < warmup_blocks; ++block)
+            host.process(output, input);
+
+        std::vector<float> rendered;
+        rendered.reserve(material_samples);
+        for (std::size_t offset = 0; offset < material_samples;
+             offset += block_size) {
+            pulp::state::ParameterEventQueue events;
+            const bool after_event = offset > event_sample;
+            REQUIRE(events.push({
+                spectr::kOutputTrim, 0, after_event ? automated_db : 0.0f, 0}));
+            if (offset <= event_sample && event_sample < offset + block_size) {
+                REQUIRE(events.push({
+                    spectr::kOutputTrim,
+                    static_cast<int32_t>(event_sample - offset),
+                    automated_db,
+                    0}));
+            }
+            host.process(output, input, events);
+            rendered.insert(
+                rendered.end(), out.channel(0).begin(), out.channel(0).end());
+        }
+        return rendered;
+    };
+
+    const auto one_block = render(material_samples);
+    const auto split = render(64);
+    REQUIRE(one_block.size() == material_samples);
+    REQUIRE(split.size() == one_block.size());
+    const float automated_gain = std::pow(10.0f, automated_db * 0.05f);
+    for (std::size_t sample = 0; sample < material_samples; ++sample) {
+        const float expected = input_value
+            * (sample < event_sample ? 1.0f : automated_gain);
+        INFO("sample=" << sample);
+        CHECK(one_block[sample] == Approx(expected).margin(1.0e-6f));
+        CHECK(split[sample] == Approx(one_block[sample]).margin(1.0e-6f));
+    }
+}
+
 TEST_CASE("Spectr has correct descriptor") {
     pulp::format::HeadlessHost host(spectr::create_spectr);
     auto desc = host.descriptor();

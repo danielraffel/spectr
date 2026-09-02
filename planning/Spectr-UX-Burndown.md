@@ -7,6 +7,72 @@ automation, host-acceptance, and package work. A checked box requires committed
 implementation plus the named evidence; a local visual impression is not
 completion evidence.
 
+## Status vocabulary
+
+Do not report checkbox ratios as implementation progress. Report every item
+using four independent fields:
+
+- **Implementation** — whether the shipping code exists.
+- **Automated proof** — exactly what passed, and whether an official-SDK rerun
+  is still required.
+- **Human confirmation** — visual, interaction, audible, or real-host sign-off.
+- **Overall** — `Done` only when all required fields are complete; otherwise
+  `Waiting automated proof`, `Waiting human confirmation`, or `Open`.
+
+Most visual and interaction rows require Daniel to confirm the new packaged
+build. A browser test or older development-SDK run cannot silently substitute
+for that confirmation.
+
+## Shareable item-by-item status
+
+| ID | Item from the UX burn-down | Implementation | Automated proof | Human confirmation | Overall |
+| --- | --- | --- | --- | --- | --- |
+| CUR-1 | Crosshair over band-editing canvas | Done | Prior native cursor suite passed; official-SDK rerun pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
+| CUR-2 | Open hand over movable viewport | Done (`grab`) | Prior native cursor suite passed; official-SDK rerun pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
+| CUR-3 | Closed/grabbing hand while moving viewport | Done (`grabbing`) | Prior native cursor suite passed; official-SDK rerun pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
+| CUR-4 | Left/right resize cursor over viewport trims | Done (horizontal resize) | Prior native cursor suite passed; official-SDK rerun pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
+| PRE-1 | Preset Manager matches original source HTML | Mostly implemented | Registered shipping-surface Chromium test passes 8 factory + saved-user states; source A/B comparison remains report-only and needs review | Pending in new PKG | Open |
+| PRE-2 | Selected-preset detail layout and action overlap | Implemented for known factory layout | User/edit-state overlap proof pending | Pending in new PKG | Open |
+| PRE-3 | Long names truncate before Snapshot controls | Done | Exact-head real-Chromium matrix passed | Pending in new PKG | Waiting human confirmation |
+| PRE-4 | Icons/text vertically centered for every selection | Implemented | Every preset/edit-state coverage pending | Pending in new PKG | Open |
+| PRE-5 | Selected preset name and SVG both update | Done | Exact-head real-Chromium matrix passed | Pending in new PKG | Waiting human confirmation |
+| PRE-6 | Flare correctly handles negative, positive, and zero bands | Current sign-preserving behavior implemented | Unit and native oracles pass current contract | Required: decide whether stopping at 0 dB is desired | Open product decision |
+| DDM-1 | Escape closes every dropdown and modal | Done | Every Spectr surface passed in real Chromium; official-SDK native/plugin replay pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
+| DDM-2 | Outside click closes and consumes without mute/draw | Done | No-underlying-mutation negative-control coverage passed; official-SDK native/plugin replay pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
+| DDM-3 | Up/down changes highlighted item | Done | Real-Chromium coverage passed; official-SDK native/plugin replay pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
+| DDM-4 | Return selects and closes | Done | Real-Chromium coverage passed; official-SDK native/plugin replay pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
+| DDM-5 | Hover feedback differs from selection | Done | Real-Chromium coverage passed; official-SDK native/plugin replay pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
+| OVL-1 | Status text vertically centered | Done | Real-Chromium geometry coverage passed; official-SDK native rerun pending | Pending in new PKG | Waiting automated proof + human confirmation |
+| OVL-2 | Status overlay below graph top ruler | Done | Real-Chromium geometry coverage passed; official-SDK native rerun pending | Pending in new PKG | Waiting automated proof + human confirmation |
+| OVL-3 | Status updates immediately while dragging | Done | Live-drag browser and native coverage exists; official-SDK rerun pending | Pending in new PKG | Waiting automated proof + human confirmation |
+| OVL-4 | Latest status remains visible longer | Done (2.2 s normal; 2.8 s mute/unmute) | Dynamic browser timing oracle needs repair; prior result was invalidated by virtual-time behavior | Pending in new PKG | Open |
+| OVL-5 | Status disappears without an empty box | Done | Real-Chromium expiration coverage passed; official-SDK native rerun pending | Pending in new PKG | Waiting automated proof + human confirmation |
+| SET-1 | Fixed header with content scrolling beneath | Done | Native geometry coverage exists; official-SDK rerun pending | Pending in new PKG | Waiting automated proof + human confirmation |
+| SET-2 | Fixed close button with hover/press feedback | Done | Native interaction coverage exists; official-SDK rerun pending | Pending in new PKG | Waiting automated proof + human confirmation |
+| SET-3 | Escape/outside click closes Settings | Done | Real-Chromium coverage passed; official-SDK native/plugin replay pending | Pending in new PKG and hosts | Waiting automated proof + human confirmation |
+| SET-4 | Copy is centered and retains Copied feedback | Implemented | Registered Chromium runtime proof passes COPY/COPYING/COPIED and centering | Pending in new PKG | Waiting human confirmation |
+| SET-5 | Status Info description is not truncated | Implemented | Registered Chromium rendered geometry proof passes | Pending in new PKG | Waiting human confirmation |
+| SET-6 | No unnecessary scrollbar when content fits | Implemented | Registered Chromium fit/overflow proof passes | Pending in new PKG | Waiting human confirmation |
+| SET-7 | Loading build info cannot remain stuck | Done | Real-Chromium timeout test and planted negative control passed | Pending in new PKG | Waiting human confirmation |
+| AUT-1 | Recorded automation/playback is sample-accurate | Processor playback implemented | Exact-sample/block-partition proof covers scheduled processor events, not DAW recording/AUv2 | Logic test required | Open |
+| AUT-2 | Bands and viewport animate during host playback | Done | Native frame-lane and Perfetto proof passed | Pending in Logic with new PKG | Waiting human/host confirmation |
+| AUT-3 | Logic automation lanes are visible and behave correctly | Parameter surface implemented | Real-host automated receipt unavailable | Pending in Logic with new PKG | Waiting human/host confirmation |
+| MOD-1 | Internal modulation/LFO Settings UI | Done | Focused bridge/layout coverage exists; official-SDK native rerun pending | Pending visual/audible check in new PKG | Waiting automated proof + human confirmation |
+| MOD-2 | Whole-bank, Snapshot A/B, and Morph targets | Implemented | Four-target proof is not yet integrated into this branch; current distinctness assertion fails | Pending audible check in new PKG | Open |
+| MOD-3 | Third-party host modulation works alongside internal modulation | Blocked implementation | Pulp exposes clamped effective values and CLAP currently collapses PARAM_MOD timing; Spectr cannot safely reconstruct raw/sample-timed offsets | Logic/REAPER after Pulp API repair | Blocked |
+
+### Additional correctness and delivery gates
+
+| ID | Item | Implementation | Automated proof | Human confirmation | Overall |
+| --- | --- | --- | --- | --- | --- |
+| COR-1 | Right-side dBFS scale is semantically correct | Review pending | Pending | Pending if behavior changes | Open |
+| COR-2 | Minimap edge drag cannot move opposite trim | Current interaction exists | Final exact-SDK regression pending | Pending in new PKG | Open final acceptance |
+| COR-3 | Fast band drawing and minimap interaction remain intact | Current interaction exists | Final performance/regression pass pending | Pending in new PKG | Open final acceptance |
+| DEL-1 | Exact-head architectural/adversarial review | Not applicable | Review receipt pending | Not applicable | Open |
+| DEL-2 | Spectr PR merged with required checks green | Branch exists | CI/merge receipt pending | Not applicable | Open |
+| DEL-3 | Logic AUv2 and REAPER VST3/CLAP acceptance | Formats implemented | Host receipts pending | Pending | Open |
+| DEL-4 | Signed, notarized, installed, launch-verified M5 PKG | Packaging path exists | Official-SDK build and artifact verification pending | Pending | Blocked on authoritative official Darwin ARM64 SDK |
+
 ## Protected source state
 
 - The primary `/Users/danielraffel/Code/pulp` checkout is unrelated recovery
@@ -19,12 +85,16 @@ completion evidence.
   refresh worktree is superseded and remains unpushed. PR #8012 is merged, not
   waiting in the merge queue.
 - Official SDK publication is blocked on the dedicated
-  `pulp-build-vm-release` lane. The `v0.828.1` Release CLI run `33610508668`
-  still has Darwin ARM64 job `100184337658` queued with no assigned runner, so
-  no authoritative Darwin ARM64 SDK asset or digest exists yet. Pulp PR #8019
+  `pulp-build-vm-release` lane. The `v0.828.1` Darwin ARM64 build completed
+  successfully and produced temporary Actions artifact `9857949914` with
+  SHA-256 `c786ad6358ad7d40c483a171f77068f25cb2c62a2d8bf87b6a449baf05eb4c31`,
+  built from `e051fed05a2f50b0f64893c924b4ef95b3a86d77` and containing merged
+  #8012. Release run `33610508668` was later cancelled while waiting on
+  Darwin x64, so no authoritative GitHub Release asset or digest exists yet.
+  Pulp PR #8019
   is the live `v0.828.2` bump candidate at exact head
   `35cacda37d243988dfe1643acc8279af52348eea`; its PR-head Build and Test macOS
-  job `100208586394` is actively running on M5 runner
+  job `100208586394` is the PR-head Build and Test candidate on M5 runner
   `m5-pulp-gate-01-8976-6`. That PR-head job is not an official SDK release.
   Root owns restoring release-lane capacity and will provide the authoritative
   release asset. Spectr must remain frozen: do not retry, rebuild, or pin an
@@ -108,11 +178,17 @@ fix. This does not replace the clean merged-SDK native and plugin-format pass.
 - [x] Preset Manager matches the source layout without overlapping actions.
 - [x] Long names truncate before Snapshot controls.
 - [x] Selection updates both name and SVG with centered text/icons.
-- [x] Flare behavior is correct for negative bands and crossings through 0 dB.
+- [x] Flare preserves positive, negative, and exact-zero bands under the current
+  sign-preserving scaling contract.
+- [ ] Product sign-off decides whether Flare should remain sign-preserving or
+  cross 0 dB during compression; the current implementation intentionally
+  approaches zero without crossing it.
 
 Exact-head evidence: the full real-Chromium editor matrix passed at
 `3d0d105bb860e8266e8eb70332ec0943080145ef`, and the SDK-independent integrated
-Flare oracle preserved negative, positive, and exact-zero band behavior.
+Flare oracle preserved negative, positive, and exact-zero band behavior. That
+proves the current math, not that the sign-preserving interaction is the desired
+product behavior.
 
 ### 5. Unified status overlay
 

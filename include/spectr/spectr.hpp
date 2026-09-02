@@ -20,6 +20,7 @@
 #include <bitset>
 #include <memory>
 #include <mutex>
+#include <type_traits>
 #include <vector>
 
 #if defined(SPECTR_NATIVE_EDITOR)
@@ -61,6 +62,8 @@ struct AudioModulationState {
     ModulationSettings settings{};
     SnapshotBank snapshots{};
 };
+static_assert(std::is_trivially_copyable_v<AudioModulationState>,
+              "audio modulation publication must remain allocation-free POD");
 
 /// Declare that this build's format gives the user no way to resize the
 /// editor, so the editor must draw its own resize grip (see
