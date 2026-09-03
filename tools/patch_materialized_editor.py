@@ -2872,7 +2872,17 @@ def repair_cursor_state(document):
         indent, value = match.groups()
         return indent + 'setCursor(' + value + ');\n' + match.group(0)
 
-    html, count = assignment.subn(mirror, html)
+    # Do not mirror again when the materialized surface already has one
+    # React publication per imperative write (a rerun must be idempotent).
+    if html.count('setCursor(') < html.count('wrapRef.current.style.cursor ='):
+        html, count = assignment.subn(mirror, html)
+    else:
+        count = 0
+    # A prior invocation may have mirrored an assignment already emitted by
+    # the authored template. Collapse only identical adjacent publications.
+    html = re.sub(
+        r'(?m)^(\s*)setCursor\(([^;]+)\);\n\1setCursor\(\2\);\n',
+        r'\1setCursor(\2);\n', html)
     # The authored source can already contain mirrored writes after a rerun.
     # Avoid stacking duplicate state calls while still requiring every native
     # cursor assignment to have a preceding React publication.

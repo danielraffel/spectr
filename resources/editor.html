@@ -2907,10 +2907,12 @@ window.PatternManager = PatternManager;`,
     replaceSpectrSource(
       [
         "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }",
+        "  const [cursor, setCursor] = useState('crosshair');",
         "  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, band }",
       ].join('\n'),
       [
         "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }",
+        "  const [cursor, setCursor] = useState('crosshair');",
         "  const hoverBand = hover && !hover.mini ? hover.band : -1;",
         "  useEffect(() => {",
         "    if (!onStatus) return;",
