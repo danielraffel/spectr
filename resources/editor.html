@@ -228,6 +228,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     // visual-only IIR/FFT/Hybrid selector as if those were audible modes.
     const replaceSpectrSource = (needle, replacement, label) => {
       if (!template.includes(needle)) {
+        // The checked-in source may already carry this durable patch (for
+        // example after a materialized-runtime refresh). Treat that state as
+        // idempotently applied so browser/native harnesses can execute the
+        // current source instead of failing before mounting the editor.
+        if (template.includes(replacement)) return;
         throw new Error('Spectr source patch point missing: ' + label);
       }
       template = template.replace(needle, replacement);
