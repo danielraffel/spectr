@@ -10500,6 +10500,15 @@
       applySpectrToolbarOpticalCentering();
       const prior = g5.__spectrResponsiveLayoutReceipt__;
       if (prior) applySpectrResponsiveLayout(prior.width, prior.height, false);
+      // State-atlas replay can release the overlay claim while replacing the
+      // live Settings portal. Reassert it after the state transition has
+      // completed so Escape/outside routing targets the current panel.
+      if (next === "settings" && typeof g5.claimOverlay === "function") {
+        const livePanel = globalThis.document?.querySelector?.(
+          "[data-spectr-settings-panel]");
+        const liveId = livePanel && (livePanel.__pulpId || livePanel.id);
+        if (liveId) g5.claimOverlay(String(liveId), true);
+      }
     }
     return activeCapturedState;
   };
