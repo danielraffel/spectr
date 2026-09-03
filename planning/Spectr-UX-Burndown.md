@@ -329,6 +329,18 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   installation and cursor observation; Logic Record/Stop tracing and REAPER
   acceptance remain separate host gates.
 
+### 2026-09-02 Pulp dispatch landing observation
+
+- Pulp PR #8028 remains open at exact head
+  `f2a04d1dcd5adf2ff9019bf750b74fb983456dca`; it has no merge timestamp.
+- Current checks are not a merge proof: macOS Build/Test is failed, UBSan is
+  failed, and ASan plus macOS coverage are pending; TSan and the Linux/static
+  lanes are green. This is observation-only—no retry, cancel, rebase, or queue
+  mutation was performed.
+- Spectr package provenance is independent of this still-open PR because it is
+  built against the official SDK release `v0.829.0`; do not claim Pulp #8028 is
+  landed until its authoritative required checks and merge state change.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
