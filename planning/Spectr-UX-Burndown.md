@@ -411,10 +411,13 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
 - Current staged package: `artifacts/Spectr-1.0.8.pkg`, SHA-256
   `6ed118ee2e221c7606d102d5c1974fe8a55a2eebf1879f14696e2283f328c2a4`;
   `spctl --assess --type install` reports `accepted` and `source=Notarized
-  Developer ID`.
-- The focused Release receipts above were rerun from the clean Spectr source;
-  the cached `build-release-current` lane remains non-authoritative because it
-  embeds an older Pulp core and reproduces a stale Settings overlay failure.
+  Developer ID`. Its AU payload matches the current `build-release-current`
+  binary, but that exact lane still fails the strict Settings active-overlay
+  assertion; this package must not be presented as the Settings fix.
+- The older `build-release-0829` lane passes Settings (167 assertions), but its
+  embedded runtime predates the ScrollView upgrade and is stale. The current
+  package therefore remains blocked on fixing and rerunning Settings in the
+  exact-current lane.
 - Browser tests 199 (popups), 201 (build-info timeout), 202 (UX polish), and
   203 (preset parity) were attempted but remain open: the local headless
   fixture reports `source patch point missing`/stale generated artifacts and a
