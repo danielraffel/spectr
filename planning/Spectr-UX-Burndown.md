@@ -18,7 +18,7 @@ Settings portal-parent recovery fix. The focused native sweep is **not green**:
   (overflow control absent).
 
 The targeted portal-parent recovery and native-lifecycle restoration (`4ba0eb0`,
-`31f1139`)
+`31f1139`, `6d59463`)
 did not clear the failures, so Settings,
 dropdown native inheritance, cursor native proof, and package delivery remain
 blocked on the materialized-runtime/official-SDK lifecycle. The browser source
