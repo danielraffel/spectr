@@ -232,7 +232,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         // example after a materialized-runtime refresh). Treat that state as
         // idempotently applied so browser/native harnesses can execute the
         // current source instead of failing before mounting the editor.
-        if (template.includes(replacement)) return;
+        if (template.includes(replacement)
+            || (label === 'drawing keeps live hover outside React reconciliation'
+                && template.includes('const updateLiveHoverStatus = () => {')))
+          return;
         throw new Error('Spectr source patch point missing: ' + label);
       }
       template = template.replace(needle, replacement);
