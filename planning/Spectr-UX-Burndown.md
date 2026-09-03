@@ -30,6 +30,11 @@ unaccepted. After making the source adapter tolerate the already-applied hover
 patch, the popup harness now reaches the application but times out opening the
 Bands menu; that is a genuine current harness/runtime failure, not a pass.
 This remains unverified, not a feature pass.
+
+The current official-SDK rerun now passes `every native dropdown dismisses by
+Escape and outside press` and `remaining native modal panels share Escape and
+outside dismissal`. Settings remains the exception: its live panel is still
+unclaimable after the portal transition (`active_overlay == nullptr`).
 The checked-in Settings screenshot is non-black and structurally complete, but
 it is artifact evidence only, not proof of live interaction.
 
