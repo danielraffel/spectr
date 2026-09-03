@@ -8947,6 +8947,18 @@
     if (typeof bridge.domRemove === "function") bridge.domRemove(nodeId, 1);
     else bridge.removeWidget(nodeId);
     bridge.domAppend(parentId, nodeId, materializedNodeTag(node), "scroll");
+    // __domRemove(..., preserve=1) intentionally clears _nativeCreated for
+    // the retained JS subtree. The direct native domAppend fast path does not
+    // run Element.appendChild, so restore that lifecycle bit explicitly (and
+    // for every descendant) or later React commits treat live labels as
+    // detached and skip their native updates/event wiring.
+    const markNative = (element) => {
+      if (!element) return;
+      element._nativeCreated = true;
+      const children = Array.isArray(element._children) ? element._children : [];
+      for (const child of children) markNative(child);
+    };
+    markNative(node);
     for (const child of nativeChildren) {
       const childId = String(child.__pulpId || child.id || "");
       if (childId) bridge.domAppend(
