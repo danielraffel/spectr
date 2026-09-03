@@ -4001,6 +4001,67 @@ def add_modulation_target_toggles(document):
     return changed
 
 
+def harden_modulation_bridge(document):
+    """Prevent an early AUv2 bridge race from blanking the Settings root."""
+    html = document.get('html', '')
+    changed = False
+    marker = '  const [tab, setTab] = React.useState("general");\n'
+    if marker in html and 'const spectrModulationBridge =' not in html:
+        html = html.replace(marker, marker +
+            '  const spectrModulationBridge = typeof window !== "undefined" && window.pulp\n'
+            '    && typeof window.pulp.postMessage === "function" ? window.pulp : null;\n', 1)
+        changed = True
+    effect = ('  React.useEffect(() => {\n'
+              '    let live = true;\n'
+              '    Promise.resolve(window.pulp.postMessage("processing_state_get", {}, "spectr-modulation-hydrate"))')
+    guarded_effect = ('  React.useEffect(() => {\n'
+                      '    let live = true;\n'
+                      '    if (!spectrModulationBridge) return () => { live = false; };\n'
+                      '    Promise.resolve(window.pulp.postMessage("processing_state_get", {}, "spectr-modulation-hydrate"))')
+    if effect in html:
+        html = html.replace(effect, guarded_effect, 1)
+        html = html.replace('  }, []);\n  const publish = (key, id, next) => {',
+                            '  }, [spectrModulationBridge]);\n  const publish = (key, id, next) => {', 1)
+        changed = True
+    publish = ('  const publish = (key, id, next) => {\n'
+               '    setValue((current) => ({ ...current, [key]: next }));\n'
+               '    Promise.resolve(window.pulp.postMessage("param_set",')
+    guarded_publish = ('  const publish = (key, id, next) => {\n'
+                       '    setValue((current) => ({ ...current, [key]: next }));\n'
+                       '    if (!spectrModulationBridge) return;\n'
+                       '    Promise.resolve(window.pulp.postMessage("param_set",')
+    if publish in html:
+        html = html.replace(publish, guarded_publish, 1)
+        changed = True
+    target_call = 'Promise.resolve(window.pulp.postMessage("modulation_targets_set", { targets }, "spectr-modulation-targets"))'
+    if target_call in html and 'if (!spectrModulationBridge) return; Promise.resolve(window.pulp.postMessage("modulation_targets_set"' not in html:
+        html = html.replace(target_call, 'if (!spectrModulationBridge) return; ' + target_call, 1)
+        changed = True
+    document['html'] = html
+    return changed
+
+
+def harden_settings_overlay(document):
+    """Mark the Settings scrim as the native overlay owner as well as its panel."""
+    html = document.get('html', '')
+    old = '"aria-label": "Settings", onClick: (event) => { if (event.target === event.currentTarget) onClose(); }, style:'
+    new = '"aria-label": "Settings", overlay: true, onDismiss: onClose, onClick: (event) => { if (event.target === event.currentTarget) onClose(); }, style:'
+    updated = html
+    changed = False
+    if old in updated:
+        updated = updated.replace(old, new, 1)
+        changed = True
+    # The scrim is the single native overlay owner. A nested overlay claim can
+    # race it during React commits and leave active_overlay unset.
+    nested_old = '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", overlay: true, onDismiss: onClose,'
+    if nested_old in updated:
+        updated = updated.replace(nested_old,
+                                  '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true",', 1)
+        changed = True
+    document['html'] = updated
+    return changed
+
+
 def adjust_settings_panel_extent(document):
     html = document.get('html', '')
     if 'maxHeight: "98vh"' in html:
@@ -4200,6 +4261,14 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          independent modulation target toggles')
+    if harden_modulation_bridge(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          AU-safe modulation bridge guard')
+    if harden_settings_overlay(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          native Settings scrim overlay owner')
     if separate_modulation_tab_content(document):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
@@ -4225,6 +4294,7 @@ def main():
         changed = True
         print('applied          merged band-count text binding', PATH)
     html = document['html']
+    _old = ''
     for label, new, expected in post_checks:
         if html.count(new) < expected:
             # Cursor writes are intentionally mirrored into React state by the
