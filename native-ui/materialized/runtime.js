@@ -8946,10 +8946,6 @@
     // ignored by Pulp), so use the DOM removal API's explicit preserve flag.
     if (typeof bridge.domRemove === "function") bridge.domRemove(nodeId, 1);
     else bridge.removeWidget(nodeId);
-    // Preserve mode can leave the retired native entry cached so __domAppend
-    // takes its existing-widget reparent path (which cannot change a plain
-    // View into a ScrollView). Drop that stale native entry before recreation.
-    if (typeof bridge.domRemove === "function") bridge.removeWidget(nodeId);
     bridge.domAppend(parentId, nodeId, materializedNodeTag(node), "scroll");
     // __domRemove(..., preserve=1) intentionally clears _nativeCreated for
     // the retained JS subtree. The direct native domAppend fast path does not
