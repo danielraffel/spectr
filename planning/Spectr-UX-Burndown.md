@@ -475,6 +475,12 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   cases / 1,103 assertions and modulation passes 1 case / 3,110 assertions.
   UX/browser tags are not registered in that binary; their CTest wrappers still
   fail during materialized-source unpack before assertions.
+- Commit `245d1f9` makes the source adapter's `replaceSpectrSource` helper
+  idempotent when a durable replacement is already present. A manually emitted
+  headless popup fixture now reaches `SPECTR_BROWSER_POPUP_OK`,
+  `SPECTR_BROWSER_RESIZE_OK`, and `SPECTR_BROWSER_MUTE_MODES_OK`; CTest's
+  direct Chrome wrapper remains flaky in this headless session (CVDisplayLink
+  failures), so this is harness progress, not final UX proof.
 
 ## Evidence policy
 
