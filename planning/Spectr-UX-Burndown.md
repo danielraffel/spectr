@@ -384,6 +384,9 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   so this is not counted as fresh browser-pass evidence. Native/Release
   proofs from the prior checkpoint remain valid; installed-host cursor and
   Logic/REAPER acceptance are still required.
+- Re-running `tools/patch_materialized_editor.py` is byte-for-byte idempotent
+  on the corrected checkout; all nine materialized script blocks pass
+  `node --check`.
 
 ## Evidence policy
 
