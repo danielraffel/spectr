@@ -356,6 +356,18 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   sent to the #8028 owner. No CI retry, cancellation, rebase, or queue mutation
   was performed.
 
+### 2026-09-03 coverage terminal receipt
+
+- Coverage job `100444692985` completed `failure` at
+  `2026-09-03T00:18:12Z`. The log shows control-SDK consumer compilation
+  failures (`std::jthread`/`std::stop_token` unavailable), repeated
+  infrastructure-safety `test_real_plugin_records_accelerate_load_dependency`
+  failures, and PulpSampler streaming-admission assertions at source line 537.
+  This is not evidence of a Spectr cursor or dispatch regression.
+- ASan `100444609396` remains in progress; PR #8028 remains open at the same
+  exact head. The receipt was sent to the owning implementation session and
+  CI remains observation-only.
+
 ### 2026-09-03 corrected cursor package checkpoint
 
 - Commit `1a6e3a7c87c23afc3f6ecc5d230a2f4b1b7df69c` fixes the cursor
