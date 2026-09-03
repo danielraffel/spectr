@@ -19,10 +19,12 @@ Settings portal-parent recovery fix. The focused native sweep is **not green**:
 
 The targeted portal-parent recovery did not clear the failures, so Settings,
 dropdown native inheritance, cursor native proof, and package delivery remain
-blocked on the materialized-runtime/official-SDK lifecycle. The browser wrappers
-also remain unverified: current Chromium runs stop at the source unpacker
-(`drawing keeps live hover outside React reconciliation`) or macOS headless
-`CVDisplayLinkCreateWithCGDisplay` setup errors before their oracles mount.
+blocked on the materialized-runtime/official-SDK lifecycle. The browser source
+adapter now tolerates the already-applied hover patch (`d9abc22`), addressing
+the previous unpacker stop. The CTest wrappers still do not produce an accepted
+passing oracle on this macOS headless host: Chrome emits
+`CVDisplayLinkCreateWithCGDisplay` setup errors and popup/resize results remain
+unaccepted. This remains unverified, not a feature pass.
 The checked-in Settings screenshot is non-black and structurally complete, but
 it is artifact evidence only, not proof of live interaction.
 
