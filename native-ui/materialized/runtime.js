@@ -9326,7 +9326,11 @@
     // static tree and must not be replayed over General/Modulation React DOM;
     // doing so can collapse the AU panel. Preserve the metadata receipt while
     // leaving geometry, typography and paint under authored live ownership.
-    const liveSettingsLayout = activeCapturedState === "settings";
+    // React commits the newly opened portal before the state-atlas resolver
+    // advances activeCapturedState. Detect the live panel itself so that
+    // this first commit cannot replay stale home metadata over Settings.
+    const liveSettingsLayout = activeCapturedState === "settings"
+      || Boolean(document.querySelector("[data-spectr-settings-panel]"));
     if (liveSettingsLayout) {
       diagnostics.layout_applied = diagnostics.layout_expected;
       diagnostics.text_applied = diagnostics.text_expected;
