@@ -470,6 +470,11 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
 - Therefore cursor, dropdown, preset, overlay, Settings, and correctness items
   remain open for exact-current proof; no package or human host acceptance is
   authorized from these stale/partial receipts.
+- A fresh Release `build-settings-fix/Spectr-test` run confirms only the
+  non-browser suites currently wired into that target: automation passes 2
+  cases / 1,103 assertions and modulation passes 1 case / 3,110 assertions.
+  UX/browser tags are not registered in that binary; their CTest wrappers still
+  fail during materialized-source unpack before assertions.
 
 ## Evidence policy
 
