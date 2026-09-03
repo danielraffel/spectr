@@ -4,7 +4,7 @@ Last updated: 2026-09-03
 
 ## 2026-09-03 current-head verification (official SDK 0.829.0)
 
-The current branch is `ef8358b` (clean apart from the pre-existing untracked
+The current branch is `56ceeca` (clean apart from the pre-existing untracked
 `artifacts/` directory). `Spectr-native-n1-test` was rebuilt against the
 immutable SDK source SHA `cc75fa91cf6942a197b2fb00b38ac679de3cbcd1` after the
 Settings portal-parent recovery fix. The focused native sweep is **not green**:
@@ -35,6 +35,12 @@ The current official-SDK rerun now passes `every native dropdown dismisses by
 Escape and outside press` and `remaining native modal panels share Escape and
 outside dismissal`. Settings remains the exception: its live panel is still
 unclaimable after the portal transition (`active_overlay == nullptr`).
+The current exact-head rerun also reproduces the Settings command materialized
+state mismatch and the missing live overlay (`active_overlay == nullptr`).
+The browser popup harness still times out waiting for the Bands menu, the UX
+polish harness reports that the shipping root did not mount, and the preset
+parity harness times out waiting for the React mount. These are not accepted
+proof for those surfaces.
 The checked-in Settings screenshot is non-black and structurally complete, but
 it is artifact evidence only, not proof of live interaction.
 
