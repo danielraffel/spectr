@@ -48,6 +48,15 @@ proof for those surfaces.
 The checked-in Settings screenshot is non-black and structurally complete, but
 it is artifact evidence only, not proof of live interaction.
 
+### Current visual-proof rule
+
+Every new visual surface must have a PNG rendered from the exact current head
+and an accepted interaction oracle. The checked-in `states/settings.png` is an
+older capture and does not show the newer General/Modulation tabs; it is not
+current-head proof. No Settings, cursor, typography, preset, overlay, or
+package row is complete until its replacement PNG and matching oracle are
+recorded.
+
 This is the durable landing ledger for the final Spectr native-editor UX,
 automation, host-acceptance, and package work. A checked box requires committed
 implementation plus the named evidence; a local visual impression is not
