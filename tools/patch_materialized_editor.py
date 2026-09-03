@@ -4051,12 +4051,16 @@ def harden_settings_overlay(document):
     if old in updated:
         updated = updated.replace(old, new, 1)
         changed = True
-    # The scrim is the single native overlay owner. A nested overlay claim can
-    # race it during React commits and leave active_overlay unset.
+    # Keep the panel marked as an overlay too: the native ScrollView upgrade
+    # preserves this stable panel identity and reclaims it after replacement.
     nested_old = '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", overlay: true, onDismiss: onClose,'
     if nested_old in updated:
-        updated = updated.replace(nested_old,
-                                  '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true",', 1)
+        # Already present in the source/materialized surface.
+        pass
+    elif '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", onClick:' in updated:
+        updated = updated.replace(
+            '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", onClick:',
+            '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", overlay: true, onDismiss: onClose, onClick:', 1)
         changed = True
     document['html'] = updated
     return changed
