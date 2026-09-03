@@ -396,6 +396,8 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   passed.
 - `build-release-0829/Spectr-native-n1-test '[dismissal]'`: 2 cases / 350
   assertions passed. Expected geometry warnings were emitted; no test failed.
+- `build-release-0829/Spectr-native-n1-test '[cursor]'`: 1 case / 54 assertions
+  passed; `Spectr-native-n1-test '[settings]'`: 1 case / 167 assertions passed.
 - Installed AU `auval -v aufx Spec Pulp` succeeded (`AU VALIDATION SUCCEEDED`).
 - `clap-validator validate build-release-0829/CLAP/Spectr.clap`: 20 tests,
   15 passed, 0 failed, 5 skipped (unsupported preset-discovery and note-input
