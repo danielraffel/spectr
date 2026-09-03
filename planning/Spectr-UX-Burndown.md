@@ -285,6 +285,37 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   above. It must not be treated as cursor acceptance proof until AU host
   cursor transitions are observed after installation.
 
+### 2026-09-02 cursor bridge checkpoint
+
+- Commit `d5631db` makes cursor state React-owned in both the authored editor
+  and the materialized shipping document. Every crosshair, grab/grabbing, and
+  trim-resize transition now publishes through `setCursor(...)` while retaining
+  the DOM assignment as a browser fallback.
+- The materialization recipe is replayable; authored and materialized script
+  blocks parse with Node, and the emitted document contains six paired React
+  cursor publications for six imperative writes.
+- AU host cursor observation and a rebuilt package remain open; do not mark the
+  cursor item human-tested until that install check passes.
+
+### UX burn-down audit (current)
+
+- Cursor feedback: implementation complete and script-validated; native AU
+  observation pending.
+- Preset parity/Flare: implementation and automated parity tests complete;
+  human visual confirmation pending for negative-band intent.
+- Dropdown/modal defaults: generic Pulp behavior complete and covered by the
+  authoritative WidgetBridge regression; Spectr host smoke remains pending.
+- Unified status overlay: implementation and native/browser proofs complete.
+- Settings: General/Modulation tabs, sticky scrolling, typography, close,
+  dismissal, and copy feedback implemented and fixture-tested; human install
+  review pending.
+- Automation: deterministic replay and native projection proofs pass;
+  Logic Record/Stop snap-back trace and Logic lane visibility remain open.
+- Modulation: two-LFO settings and host-composition plumbing implemented and
+  Release-tested; host acceptance and final package rebuild remain open.
+- Release/landing: current package predates `d5631db`; rebuild/notarize after
+  cursor acceptance, then verify exact Pulp SDK provenance and installation.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
