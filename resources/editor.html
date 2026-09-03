@@ -65,7 +65,13 @@
 
   <script>
     
+var hoverRef = window.__spectrCaptureHoverRef || (window.__spectrCaptureHoverRef = { current: null });
+var updateLiveHoverStatus = window.__spectrCaptureUpdateLiveHoverStatus || (() => {});
 document.addEventListener('DOMContentLoaded', async function() {
+  // A legacy captured helper can run once before FilterBank's hook scope is
+  // established during browser materialization. Keep its imperative hover
+  // slot defined at the document boundary; the live component shadows this
+  // with its React ref once mounted.
   const loading = document.getElementById('__bundler_loading');
   function setStatus(msg) { if (loading) loading.textContent = msg; }
   // The importer's first stability plateau can occur while this outer bundle
@@ -1833,7 +1839,7 @@ function SettingsModal({ settings, setSettings, onClose }) {`,
       'stable settings toggles');
     replaceSpectrSource(
       '<div onClick={e => e.stopPropagation()} style={{\n        width: 520, maxHeight: \'90vh\', overflowY: \'auto\',',
-      '<div data-spectr-settings-panel data-spectr-overlay="true" onClick={e => e.stopPropagation()} style={{\n        width: 520, maxHeight: \'90vh\', overflowY: \'auto\',',
+      '<div data-spectr-settings-panel data-spectr-settings-live="true" data-spectr-overlay="true" onClick={e => e.stopPropagation()} style={{\n        width: 520, maxHeight: \'90vh\', overflowY: \'auto\',',
       'settings panel hit target');
     replaceSpectrSource(
       '<button onClick={onClose} style={{\n            background: \'transparent\', border: \'none\', color: \'rgba(255,255,255,0.6)\',\n            cursor: \'pointer\', fontSize: 20, padding: 0, lineHeight: 1,',
@@ -2692,6 +2698,13 @@ window.PatternManager = PatternManager;`,
     replaceSpectrSource(
       String.raw`  const persist = (patch) => {`,
       String.raw`  const [closeState, setCloseState] = React.useState('idle');
+  React.useLayoutEffect(() => {
+    const panel = document.querySelector('[data-spectr-settings-panel]');
+    if (!panel) return;
+    panel.setAttribute('data-spectr-settings-live', 'true');
+    if (typeof window.__pulpRefreshMaterializedState__ === 'function') window.__pulpRefreshMaterializedState__();
+    return () => panel.setAttribute('data-spectr-settings-live', 'false');
+  }, []);
   React.useEffect(() => {
     const toggle = document.getElementById('spectr-status-info-toggle');
     if (!toggle) return;
@@ -3123,7 +3136,7 @@ window.PatternManager = PatternManager;`,
     const current = hoverRef.current;
     const pointer = pointerRef.current;
     if (!current || current.mini || !pointer
-        || (pointer.mode !== 'gain' && pointer.mode !== 'mute-brush')) return;
+        ) return;
     const label = liveHoverLabel(current);
     const text = document.querySelector('[data-spectr-status-text]');
     if (!text) return;
@@ -3197,7 +3210,7 @@ window.PatternManager = PatternManager;`,
       'minimap hover uses the pointer-owned ref');
     replaceSpectrSource(
       "      setHover({ band: bandH, x, y });\n      wrapRef.current.style.cursor = 'crosshair';",
-      "      updatePointerHover({ band: bandH, x, y });\n      wrapRef.current.style.cursor = 'crosshair';",
+      "      updatePointerHover({ band: bandH, x, y });\n      wrapRef.current.style.cursor = 'crosshair';\n      updateLiveHoverStatus();",
       'band hover uses the pointer-owned ref');
     replaceSpectrSource(
       "      setHover(null);\n      wrapRef.current.style.cursor = 'default';",

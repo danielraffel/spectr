@@ -305,5 +305,13 @@ print(json.dumps({'canonical_size': list(a.size), 'shipping_size': list(shipping
 } finally {
   socket.close();
   chrome.kill('SIGTERM');
-  if (!requestedOutput) fs.rmSync(scratch, { recursive: true, force: true });
+  if (!requestedOutput) {
+    try { fs.rmSync(scratch, { recursive: true, force: true }); }
+    catch (error) {
+      // Chrome can finish its last profile write just after SIGTERM. Cleanup
+      // is not part of the parity oracle; leave the evidence directory rather
+      // than turning a passed product assertion into a flaky harness failure.
+      if (error?.code !== 'ENOTEMPTY') throw error;
+    }
+  }
 }

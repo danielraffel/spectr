@@ -2184,11 +2184,25 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         "authored settings geometry drifted from the frozen 1320x860 capture");
     const auto* authored_settings_title = find_label(*rig.root, "SETTINGS");
     REQUIRE(authored_settings_title != nullptr);
-    const View* authored_settings_panel = authored_settings_title;
-    while (authored_settings_panel != nullptr
-           && dynamic_cast<const pulp::view::ScrollView*>(
-                  authored_settings_panel) == nullptr)
-        authored_settings_panel = authored_settings_panel->parent();
+    const auto* settings_body_label = find_label(*rig.root, "APPEARANCE");
+    REQUIRE(settings_body_label != nullptr);
+    require_runtime_contract(
+        rig,
+        "(() => { const e = document.querySelector('[data-spectr-settings-body]'); "
+        "return !!e && JSON.stringify(e.style?._props || {}) + ' wants=' "
+        "+ (typeof __pulpElementWantsScrollView__ === 'function' "
+        "? __pulpElementWantsScrollView__(e) : 'missing'); })()",
+        "settings body scroll hint was not visible to the native materializer");
+    const View* settings_body = settings_body_label;
+    while (settings_body != nullptr
+           && dynamic_cast<const pulp::view::ScrollView*>(settings_body) == nullptr)
+        settings_body = settings_body->parent();
+    REQUIRE(settings_body != nullptr);
+    const View* authored_settings_panel = settings_body->parent();
+    // The modal panel is the fixed chrome/container; only its body owns
+    // scrolling. Requiring a second ScrollView here would contradict the
+    // fixed-header/tabs architecture and would make the test reject the
+    // intended single-scroll-owner topology.
     REQUIRE(authored_settings_panel != nullptr);
     CHECK(authored_settings_panel->bounds().x
           == Catch::Approx(400.0f).margin(0.01f));

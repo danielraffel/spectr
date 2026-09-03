@@ -19,7 +19,10 @@ const modulationSurface = document.html.slice(document.html.indexOf('function Sp
 assert.match(shippingSurface, /data-spectr-settings-tabs/, 'modulation settings tab surface missing');
 assert.match(shippingSurface, /data-spectr-settings-tab[\s\S]*general/, 'General settings tab missing');
 assert.match(shippingSurface, /data-spectr-settings-tab[\s\S]*modulation/, 'Modulation settings tab missing');
-assert.match(shippingSurface, /position: "sticky"/, 'settings tabs are not fixed while content scrolls');
+assert.match(shippingSurface, /data-spectr-settings-body/, 'dedicated Settings body scroll surface missing');
+assert.doesNotMatch(shippingSurface, /position: "sticky"/, 'Settings relies on unsupported CSS sticky positioning');
+assert.match(shippingSurface, /data-spectr-settings-header[\s\S]*flexShrink: 0/, 'Settings header is not a fixed flex sibling');
+assert.match(shippingSurface, /data-spectr-settings-tabs[\s\S]*flexShrink: 0/, 'Settings tabs are not fixed with the header');
 assert.match(shippingSurface, /label: "LFO 2"/, 'second internal LFO controls missing');
 assert.match(shippingSurface, /data-spectr-modulation-select.*all/, 'modulation select-all control missing');
 assert.match(shippingSurface, /data-spectr-modulation-select.*none/, 'modulation select-none control missing');
@@ -143,14 +146,16 @@ window.__spectrPolishStart = () => {
       const panel = await waitFor(() =>
         document.querySelector('#__spectr_polish_mount [data-spectr-settings-panel]'),
       'Settings panel');
+      const body = panel.querySelector('[data-spectr-settings-body]');
+      if (!body) throw new Error('Settings body scroll owner missing');
       const shouldOverflow = innerHeight < 1200;
-      const actuallyOverflows = panel.scrollHeight > panel.clientHeight + 1;
+      const actuallyOverflows = body.scrollHeight > body.clientHeight + 1;
       if (actuallyOverflows !== shouldOverflow)
         throw new Error('Settings overflow mismatch: height=' + innerHeight
-          + ' scroll=' + panel.scrollHeight + ' client=' + panel.clientHeight);
-      panel.scrollTop = 100000;
+          + ' scroll=' + body.scrollHeight + ' client=' + body.clientHeight);
+      body.scrollTop = 100000;
       await new Promise(resolve => requestAnimationFrame(resolve));
-      if (shouldOverflow ? panel.scrollTop <= 0 : panel.scrollTop !== 0)
+      if (shouldOverflow ? body.scrollTop <= 0 : body.scrollTop !== 0)
         throw new Error('Settings scroll range disagreed with content fit');
 
       const hint = Array.from(panel.querySelectorAll('div')).find(node =>

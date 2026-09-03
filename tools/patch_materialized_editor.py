@@ -74,6 +74,10 @@ EDITS = [
      'React.createElement("div", { "data-spectr-settings-panel": true, onClick: (e) => e.stopPropagation(), style: {',
      'React.createElement("div", { "data-spectr-settings-panel": true, "data-spectr-overlay": "true", overlay: true, onDismiss: onClose, onClick: (e) => e.stopPropagation(), style: {'),
 
+    ('settings panel carries an eager liveness marker',
+     '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", overlay: true, onDismiss: onClose,',
+     '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-settings-live": "true", "data-spectr-overlay": "true", overlay: true, onDismiss: onClose,'),
+
     ('settings Escape ignores only an actually open popup',
      'event.key === "Escape" && !document.querySelector(\'[role="listbox"]\')',
      'event.key === "Escape" && !document.querySelector(\'[data-pulp-popup-active="true"]\')'),
@@ -97,6 +101,28 @@ EDITS = [
      '  const [closeState, setCloseState] = React.useState("idle");\n'
      '  React.useLayoutEffect(() => {\n'
      '    const toggle = document.getElementById("spectr-status-info-toggle");'),
+
+    ('settings modal publishes an explicit liveness marker',
+     '  const [closeState, setCloseState] = React.useState("idle");\n'
+     '  React.useLayoutEffect(() => {\n'
+     '    const toggle = document.getElementById("spectr-status-info-toggle");',
+     '  const [closeState, setCloseState] = React.useState("idle");\n'
+     '  React.useLayoutEffect(() => {\n'
+     '    const panel = document.querySelector("[data-spectr-settings-panel]");\n'
+     '    if (!panel) return;\n'
+     '    panel.setAttribute("data-spectr-settings-live", "true");\n'
+     '    if (typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__();\n'
+     '    return () => panel.setAttribute("data-spectr-settings-live", "false");\n'
+     '  }, []);\n'
+     '  React.useLayoutEffect(() => {\n'
+     '    const toggle = document.getElementById("spectr-status-info-toggle");'),
+    ('settings modal refreshes atlas after mount',
+     '    panel.setAttribute("data-spectr-settings-live", "true");\n'
+     '    return () => panel.setAttribute("data-spectr-settings-live", "false");',
+     '    panel.setAttribute("data-spectr-settings-live", "true");\n'
+     '    if (typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__();\n'
+     '    return () => panel.setAttribute("data-spectr-settings-live", "false");'),
+
 
     # Full-screen scrims are browser click targets, not native containment
     # boundaries. Make each visible panel the semantic overlay owner so Pulp
@@ -1438,7 +1464,7 @@ EDITS = [
      '  const updateLiveHoverStatus = () => {\n'
      '    const current = hoverRef.current;\n'
      '    const pointer = pointerRef.current;\n'
-     '    if (!current || current.mini || !pointer || pointer.mode !== "gain" && pointer.mode !== "mute-brush") return;\n'
+     '    if (!current || current.mini) return;\n'
      '    const band = current.band;\n'
      '    const rendered = renderGainsRef.current[band];\n'
      '    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;\n'
@@ -1480,7 +1506,21 @@ EDITS = [
      '      setHover({ band: bandH, x, y });\n'
      '      wrapRef.current.style.cursor = "crosshair";',
      '      updatePointerHover({ band: bandH, x, y });\n'
-     '      wrapRef.current.style.cursor = "crosshair";'),
+     '      wrapRef.current.style.cursor = "crosshair";\n'
+     '      updateLiveHoverStatus();'),
+
+    ('browser hover readout updates synchronously',
+     '      updatePointerHover({ band: bandH, x, y });\n'
+     '      wrapRef.current.style.cursor = "crosshair";\n'
+     '      updateLiveHoverStatus();',
+     '      updatePointerHover({ band: bandH, x, y });\n'
+     '      const rendered = renderGainsRef.current[bandH];\n'
+     '      const gain = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;\n'
+     '      const db = isMuted(targetGainsRef.current[bandH]) ? "−∞" : (gain * 24).toFixed(1);\n'
+     '      const statusText = document.querySelector("[data-spectr-status-text]");\n'
+     '      if (statusText) statusText.textContent = window.SpectrFreq.fmt(bandCenterFreq(bandH)) + "Hz   " + db + (db === "−∞" ? "" : " dB") + "   BAND " + (bandH + 1) + "/" + N;\n'
+     '      wrapRef.current.style.cursor = "crosshair";\n'
+     '      updateLiveHoverStatus();'),
 
     ('idle hover clearing uses the pointer-owned ref',
      '      setHover(null);\n'
@@ -2698,6 +2738,8 @@ function App() {'''),
 # earlier one. These named sentinels keep reruns strict without pretending the
 # superseded intermediate text must remain in the final shipping document.
 SUPERSEDED_SENTINELS = {
+    'settings preserve reparent reasserts scroll hint':
+        'node._nativeCreated = false',
     'materialized modulation tabs stay visible above scrolling content':
         'data-spectr-settings-general-tab',
     'materialized modulation tabs close cleanly':
@@ -2853,6 +2895,11 @@ def repair_cursor_state(document):
 
     html = document.get('html', '')
     original = html
+
+    # Allow the authored panel to grow on tall hosts; the body only needs a
+    # scrollbar when its content exceeds the available viewport.
+    html = html.replace('height: "min(92vh, 760px)"',
+                        'height: "min(92vh, 1280px)"', 1)
     state_old = '  const [hover, setHover] = useState(null);'
     state_new = state_old + '\n  const [cursor, setCursor] = useState(\'crosshair\');'
     if 'const [cursor, setCursor] = useState' not in html:
@@ -2959,10 +3006,18 @@ RUNTIME_EDITS = [
      '          return true;\n'
      '        }',
      '        if (r === "dialog" || r === "alertdialog" || r === "menu" || r === "listbox") {\n'
+     '          const node = materializedDomRegistryValues().find((candidate) =>\n'
+     '            String(candidate && (candidate.__pulpId || candidate.id) || "") === String(id));\n'
+     '          if (node?.style?.display === "none" ||\n'
+     '              (node?.getAttribute?.("aria-label") === "Settings" &&\n'
+     '               node?.getAttribute?.("data-spectr-settings-live") !== "true")) {\n'
+     '            call("releaseOverlay", id);\n'
+     '            return true;\n'
+     '          }\n'
      '          call("claimOverlay", id, true);\n'
      '          return true;\n'
      '        }',
-     'call("claimOverlay", id, true)'),
+     'node?.getAttribute?.("data-spectr-settings-live") !== "true"'),
     ('explicit overlays consume their outside dismissal press',
      '      case "overlay":\n'
      '        if (value) {\n'
@@ -2971,6 +3026,16 @@ RUNTIME_EDITS = [
      '        }',
      '      case "overlay":\n'
      '        if (value) {\n'
+     '          const node = materializedDomRegistryValues().find((candidate) =>\n'
+     '            String(candidate && (candidate.__pulpId || candidate.id) || "") === String(id));\n'
+     '          const box = typeof g5.getLayoutBoxMetrics === "function"\n'
+     '            ? g5.getLayoutBoxMetrics(String(id)) : null;\n'
+     '          if (node?.style?.display === "none" ||\n'
+     '              (box && ((Number.isFinite(box.offsetWidth) && box.offsetWidth <= 0) ||\n'
+     '                       (Number.isFinite(box.offsetHeight) && box.offsetHeight <= 0)))) {\n'
+     '            call("releaseOverlay", id);\n'
+     '            return true;\n'
+     '          }\n'
      '          call("claimOverlay", id, true);\n'
      '          return true;\n'
      '        }',
@@ -3363,13 +3428,6 @@ RUNTIME_EDITS = [
      '      const panelHeight = authored ? 679\n'
      '        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));',
      ': Math.min(authoredContentHeight, Math.max(240, height * 0.9))'),
-    ('settings scroll view derives its content from live children',
-     '        if (typeof g5.setScrollContentSize === "function")\n'
-     '          g5.setScrollContentSize(panelId, panelWidth, 684);',
-     '        // Leave content size automatic: the ScrollView unions its live children.\n'
-     '        if (typeof g5.setScrollContentSize === "function")\n'
-     '          g5.setScrollContentSize(panelId);\n',
-     'g5.setScrollContentSize(panelId);'),
     ('settings receipt reports the compact authored content extent',
      '        content_height: 684, scroll_reachable: panelHeight < 684,',
      '        content_height: authoredContentHeight,\n'
@@ -3681,15 +3739,9 @@ RUNTIME_EDITS = [
      '        g5.setTop(String(aboutId), 1010);',
      'g5.setTop(String(aboutId), 1010)'),
     ('settings modulation extends the authored scroll extent',
-     '      const authoredContentHeight = 1044;',
-     '      const authoredContentHeight = 1280;',
-     'const authoredContentHeight = 1280;'),
-    ('settings live scroll extent refreshes after native upgrade',
-     '        // Leave content size automatic: the ScrollView unions its live children.\n\n',
-     '        // Leave content size automatic: the ScrollView unions its live children.\n'
-     '        if (typeof g5.setScrollContentSize === "function")\n'
-     '          g5.setScrollContentSize(panelId);\n\n',
-     'g5.setScrollContentSize(panelId);'),
+      '      const authoredContentHeight = 1044;',
+      '      const authoredContentHeight = 1280;',
+      'const authoredContentHeight = 1280;'),
     ('settings scroll upgrade restores native overlay ownership',
      '      if (panelId) {\n'
      '        // Replacing the captured overflow container with a real native\n',
@@ -3699,7 +3751,7 @@ RUNTIME_EDITS = [
      '        // routes Escape and outside presses against the panel bounds.\n'
      '        if (typeof g5.claimOverlay === "function") g5.claimOverlay(panelId, true);\n'
      '        // Replacing the captured overflow container with a real native\n',
-     'g5.claimOverlay(panelId, true);'),
+     'setOverlayClaim(panelId);'),
     ('band trigger shares the segmented-control header baseline',
      '    const centerBandText = (owner, label, width, textWidth) => {\n'
      '      if (!owner || typeof g5.setCapturedLineBoxes !== "function") return null;',
@@ -3834,6 +3886,89 @@ RUNTIME_EDITS = [
      '        g5.setOverflow(panelId, "scroll");',
      '        g5.setOverflow(panelId, panelHeight < authoredContentHeight ? "scroll" : "hidden");',
      'panelHeight < authoredContentHeight ? "scroll" : "hidden"'),
+    ('settings atlas requires explicit live marker',
+     '          if (liveMatch && !hidden && marker !== "false")\n'
+     '            return state.id;',
+     '          if (liveMatch && !hidden && marker === "true")\n'
+     '            return state.id;',
+     'marker === "true")'),
+    ('settings metadata replay ignores closed mounted panel',
+     '    const liveSettingsLayout = activeCapturedState === "settings"\n'
+     '      || Boolean(document.querySelector("[data-spectr-settings-panel]"));',
+     '    const settingsLayoutPanel = document.querySelector(\n'
+     '      "[data-spectr-settings-panel]");\n'
+     '    const liveSettingsLayout = activeCapturedState === "settings"\n'
+     '      || settingsLayoutPanel?.getAttribute?.("data-spectr-settings-live") === "true";',
+     'settingsLayoutPanel?.getAttribute?.'),
+    ('live selector labels inherit the captured mono face',
+     '    if (activeCapturedState === "settings") {\n'
+     '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");',
+     '    const spectralLabel = values.find((node) =>\n'
+     '      String(node && node.textContent || "") === "Spectral");\n'
+     '    const monoBinding = capturedTextBindings.find((binding) =>\n'
+     '      binding.runtime_font_family && binding.basis?.resolved_face?.includes("JetBrainsMono"));\n'
+     '    if (spectralLabel && monoBinding && typeof g5.setFontFamily === "function") {\n'
+     '      const spectralId = spectralLabel.__pulpTextTargetId || spectralLabel.__pulpId || spectralLabel.id;\n'
+     '      if (spectralId) {\n'
+     '        g5.setFontFamily(String(spectralId), materializedRuntimeFontStack(monoBinding));\n'
+     '        if (typeof g5.setFontSize === "function") g5.setFontSize(String(spectralId), 10);\n'
+     '      }\n'
+     '    }\n'
+     '    if (activeCapturedState === "settings") {\n'
+     '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");',
+     'const spectralLabel = values.find((node)'),
+    ('live selector labels retain captured letter spacing',
+     '        if (typeof g5.setFontSize === "function") g5.setFontSize(String(spectralId), 10);\n      }',
+     '        if (typeof g5.setFontSize === "function") g5.setFontSize(String(spectralId), 10);\n'
+     '        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(spectralId), 0.8);\n      }',
+     'setLetterSpacing(String(spectralId), 0.8)'),
+    ('live selector labels retain captured width',
+     '        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(spectralId), 0.8);\n      }',
+     '        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(spectralId), 0.8);\n'
+     '        if (typeof g5.setFlex === "function") {\n'
+     '          g5.setFlex(String(spectralId), "width", 74.40625);\n'
+     '          g5.setFlex(String(spectralId), "height", 23);\n'
+     '        }\n      }',
+     'setFlex(String(spectralId), "width", 74.40625)'),
+    ('live selector labels retain captured line box',
+     '          g5.setFlex(String(spectralId), "height", 23);\n'
+     '        }\n      }',
+     '          g5.setFlex(String(spectralId), "height", 23);\n'
+     '        }\n'
+     '        if (typeof g5.setCapturedLineBoxes === "function")\n'
+     '          g5.setCapturedLineBoxes(String(spectralId),\n'
+     '            [{ left: 10, top: 5, width: 54.40625, height: 13,\n'
+     '               start: 0, length: 8 }], 74.40625,\n'
+     '            "JetBrainsMono-Regular", false);\n      }',
+     'setCapturedLineBoxes(String(spectralId)'),
+    ('live settings labels inherit the captured mono face',
+     '    if (activeCapturedState === "settings") {\n'
+     '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");',
+     '    if (monoBinding && typeof g5.setFontFamily === "function") {\n'
+     '      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {\n'
+     '        const node = values.find((candidate) =>\n'
+     '          String(candidate && candidate.textContent || "") === labelText);\n'
+     '        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);\n'
+     '        if (!nodeId) continue;\n'
+     '        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));\n'
+     '      }\n'
+     '    }\n'
+     '    if (activeCapturedState === "settings") {\n'
+     '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");',
+     'live settings labels inherit the captured mono face'),
+    ('settings preserve reparent reasserts scroll hint',
+     '    if (parent && typeof parent.removeChild === "function"\n'
+     '        && typeof parent.appendChild === "function") {\n'
+     '      parent.removeChild(node);\n'
+     '      parent.appendChild(node);',
+     '    if (parent && typeof parent.removeChild === "function"\n'
+     '        && typeof parent.appendChild === "function") {\n'
+     '      if (node.style && node.style._props)\n'
+     '        node.style._props.overflowY = "auto";\n'
+     '      node._nativeCreated = false;\n'
+     '      parent.removeChild(node);\n'
+     '      parent.appendChild(node);',
+     'node._nativeCreated = false'),
 ]
 
 
@@ -4080,6 +4215,61 @@ def adjust_settings_panel_extent(document):
     return True
 
 
+def stabilize_settings_mount(document):
+    """Keep the tabbed Settings subtree in the initial native materialization."""
+    html = document.get('html', '')
+    original = html
+    html = html.replace(
+        'function SettingsModal({ settings, setSettings, onClose }) {',
+        'function SettingsModal({ settings, setSettings, onClose, open = true }) {', 1)
+    # Keep the Settings portal conditional so its hidden subtree cannot alter
+    # the captured home sibling paths or canvas event routing. Native scroll
+    # upgrade runs only after the portal is actually opened.
+    html = html.replace(
+        '      setSettings,\n      onClose: () => setSettingsOpen(false)',
+        '      setSettings,\n      open: settingsOpen,\n      onClose: () => { const panel = document.querySelector("[data-spectr-settings-panel]"); if (panel) panel.setAttribute("data-spectr-settings-live", "false"); setSettingsOpen(false); setTimeout(() => { if (typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__(); }, 0); }', 1)
+    html = html.replace(
+        '"aria-label": "Settings", overlay: true, onDismiss: onClose, onClick: (event) => { if (event.target === event.currentTarget) onClose(); }, style: {\n    position: "absolute",',
+        '"aria-label": "Settings", overlay: true, onDismiss: onClose, onClick: (event) => { if (event.target === event.currentTarget) onClose(); }, style: {\n    display: open ? "flex" : "none",\n    position: "absolute",', 1)
+    # The authored scrim already has a later `display: "flex"` alongside its
+    # alignment properties.  In a JS object the later key wins, which made an
+    # always-mounted closed Settings modal remain visible and continue to own
+    # the native state-atlas overlay.  Keep exactly one display declaration in
+    # this scrim and make it reflect the live `open` prop.
+    settings_marker = '"aria-label": "Settings", overlay: true, onDismiss: onClose'
+    settings_start = html.find(settings_marker)
+    if settings_start >= 0:
+        settings_style_start = html.find('style: {', settings_start)
+        settings_style_end = html.find('} }, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-panel"', settings_style_start)
+        if settings_style_start >= 0 and settings_style_end >= 0:
+            style_chunk = html[settings_style_start:settings_style_end]
+            style_chunk = style_chunk.replace('    display: "flex",\n', '', 1)
+            if 'display: open ? "flex" : "none"' not in style_chunk:
+                style_chunk = style_chunk.replace('style: {\n', 'style: {\n    display: open ? "flex" : "none",\n', 1)
+            html = html[:settings_style_start] + style_chunk + html[settings_style_end:]
+    html = html.replace('document.head.appendChild(style);',
+                        'if (document.head) document.head.appendChild(style);', 1)
+    html = html.replace(
+        '    panel.setAttribute("data-spectr-settings-live", "true");\n    return () => panel.setAttribute("data-spectr-settings-live", "false");\n  }, []);',
+        '    panel.setAttribute("data-spectr-settings-live", open ? "true" : "false");\n    if (open && typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__();\n  }, [open]);', 1)
+    html = html.replace('    if (typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__();\n', '', 1)
+    # Remove the short-lived null-return experiment. The mounted subtree is
+    # required for native Settings discovery; visibility is controlled solely
+    # by the scrim's `open` style and lifecycle marker.
+    settings_function = html.find('function SettingsModal({ settings, setSettings, onClose, open')
+    if settings_function >= 0:
+        settings_return_guard = html.find('  if (!open) return null;\n', settings_function)
+        settings_return = html.find('  return /* @__PURE__ */ React.createElement("div", { "data-spectr-overlay": "true", role: "dialog",', settings_function)
+        if settings_return_guard >= 0 and settings_return_guard < settings_return:
+            html = html[:settings_return_guard] + html[settings_return_guard + len('  if (!open) return null;\n'):]
+    html = html.replace('"data-spectr-settings-live": "true", "data-spectr-overlay": "true"',
+                        '"data-spectr-settings-live": open ? "true" : "false", "data-spectr-overlay": "true"', 1)
+    if html == original:
+        return False
+    document['html'] = html
+    return True
+
+
 def polish_settings_tab_controls(document):
     """Use fixed ink tabs with left/right/Home/End keyboard navigation."""
     html = document.get('html', '')
@@ -4095,11 +4285,14 @@ def make_settings_tabs_content_aware(document):
     """Wire the tab selection to visibility of the existing Settings groups."""
     html = document.get('html', '')
     changed = False
-    old_group = 'React.createElement("div", { style: { marginBottom: 22 } },'
-    new_group = 'React.createElement("div", { "data-spectr-settings-general": true, style: { marginBottom: 22 } },'
-    if old_group in html and 'data-spectr-settings-general' not in html:
-        html = html.replace(old_group, new_group, 1)
-        changed = True
+    # Materialized Settings groups are emitted through SpectrSettingsGroup;
+    # tag every General group explicitly so the tab CSS owns visibility.
+    for title in ("APPEARANCE", "STRUCTURE", "MOTION"):
+        old_group = f'React.createElement(SpectrSettingsGroup, {{ title: "{title}"'
+        new_group = f'React.createElement(SpectrSettingsGroup, {{ marker: "general", title: "{title}"'
+        if old_group in html:
+            html = html.replace(old_group, new_group, 1)
+            changed = True
     old_mod_group = 'React.createElement("div", { "data-spectr-settings-group": marker, style: { marginBottom: 18 } },'
     new_mod_group = 'React.createElement("div", { "data-spectr-settings-group": marker, "data-spectr-settings-modulation": marker === "modulation" ? true : void 0, style: { marginBottom: 18 } },'
     if old_mod_group in html:
@@ -4111,7 +4304,7 @@ def make_settings_tabs_content_aware(document):
         html = html.replace(old_tab, new_tab, 1)
         changed = True
     old_state = 'const [tab, setTab] = React.useState("modulation");'
-    new_state = 'const [tab, setTab] = React.useState("general");\n  React.useEffect(() => { const style = document.createElement("style"); style.textContent = "[data-spectr-settings-panel][data-spectr-settings-tab=\\\"modulation\\\"] [data-spectr-settings-general] { display: none !important; } [data-spectr-settings-panel][data-spectr-settings-tab=\\\"general\\\"] [data-spectr-settings-modulation] { display: none !important; }"; document.head.appendChild(style); return () => style.remove(); }, []);'
+    new_state = 'const [tab, setTab] = React.useState("general");\n  React.useEffect(() => { const style = document.createElement("style"); style.textContent = "[data-spectr-settings-panel][data-spectr-settings-tab=\\\"modulation\\\"] [data-spectr-settings-general] { display: none !important; } [data-spectr-settings-panel][data-spectr-settings-tab=\\\"general\\\"] [data-spectr-settings-modulation] { display: none !important; }"; if (document.head) document.head.appendChild(style); return () => style.remove(); }, []);'
     if old_state in html and 'data-spectr-settings-general]' not in html:
         html = html.replace(old_state, new_state, 1)
         changed = True
@@ -4122,6 +4315,88 @@ def make_settings_tabs_content_aware(document):
         changed = True
     document['html'] = html
     return changed
+
+
+def enforce_settings_fixed_shell(document):
+    """Keep the Settings header/tabs fixed and scroll only the body.
+
+    Native Pulp does not implement CSS ``position: sticky``.  The authored
+    tree therefore has to express the scroll boundary explicitly: the panel
+    is a column, the header and tabs are non-shrinking siblings, and one body
+    child owns overflow.  This is deliberately a structural transform rather
+    than a runtime DOM repair so the materialized state atlas sees the same
+    topology on first mount.
+    """
+    html = document.get('html', '')
+    original = html
+
+    # The panel itself must not scroll; its body child does.
+    old_panel = 'width: 520,\n    maxHeight: "98vh",\n    overflowY: "auto",'
+    new_panel = ('width: 520,\n    height: "min(92vh, 1280px)",\n'
+                 '    maxHeight: "92vh",\n    overflow: "hidden",\n'
+                 '    display: "flex",\n    flexDirection: "column",')
+    if old_panel in html:
+        html = html.replace(old_panel, new_panel, 1)
+
+    # Sticky is not a supported native layout primitive.  Make these rows
+    # ordinary fixed siblings in the column instead.
+    html = html.replace(
+        '"data-spectr-settings-header": true, style: { position: "sticky", top: 0, zIndex: 3,',
+        '"data-spectr-settings-header": true, style: { position: "relative", flexShrink: 0, zIndex: 3,',
+        1)
+    html = html.replace(
+        '"data-spectr-settings-tabs": true, style: { position: "sticky", top: 76, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
+        '"data-spectr-settings-tabs": true, style: { position: "absolute", top: 76, left: 26, right: 26, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
+        1)
+    html = html.replace(
+        '"data-spectr-settings-tabs": true, style: { position: "relative", flexShrink: 0, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
+        '"data-spectr-settings-tabs": true, style: { position: "absolute", top: 76, left: 26, right: 26, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
+        1)
+    html = html.replace(
+        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 }',
+        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingTop: 50, paddingRight: 4 }',
+        1)
+
+    # Wrap every settings group after the header in one dedicated scroll
+    # owner.  The exact markers are emitted by the materializer and scoped to
+    # SettingsModal, so this remains idempotent and cannot touch other panels.
+    if '"data-spectr-settings-body": true' not in html:
+        modal_start = html.find('function SettingsModal({ settings')
+        body_start = '/* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "general"'
+        start = html.find(body_start, modal_start)
+        if modal_start < 0 or start < 0:
+            raise RuntimeError('settings body insertion point missing')
+        insertion = ('/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-body": true, '
+                     'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 } }, '
+                     '/* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "general"')
+        html = html[:start] + insertion + html[start + len(body_start):]
+        body_end = ('settings.showBuildInfo !== false && /* @__PURE__ */ '
+                    'React.createElement(SpectrBuildInfo, null)));')
+        if html.count(body_end) != 1:
+            raise RuntimeError('settings body closing point missing or ambiguous')
+        html = html.replace(
+            body_end,
+            'settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null))));',
+            1)
+
+    # Modulation owns the tab rail and must be a sibling of the scrolling body.
+    # Earlier materialization placed it inside the body, which made the tabs
+    # scroll away and caused the frozen atlas to retain the wrong subtree.
+    modulation = '/* @__PURE__ */ React.createElement(SpectrModulationSettings, null)'
+    if modulation in html:
+        body = '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-body": true,'
+        body_at = html.find(body)
+        mod_at = html.find(modulation, body_at)
+        if body_at >= 0 and mod_at >= 0:
+            remove_at = mod_at
+            if html[max(0, mod_at - 2):mod_at] == ', ':
+                remove_at = mod_at - 2
+            html = html[:remove_at] + html[mod_at + len(modulation):]
+            # Preserve the sibling separator before the body expression.
+            html = html[:body_at] + modulation + ', ' + html[body_at:]
+
+    document['html'] = html
+    return html != original
 
 
 def add_readable_typography(document):
@@ -4249,6 +4524,46 @@ def main():
         print('applied         ', label)
 
     document = json.loads(raw)
+    # Hover readouts are useful before a drag starts; do not gate the live
+    # banner on an active pointer mode. This is a compiled-source correction
+    # because the captured document may already contain the older condition.
+    compiled_html = document.get('html', '')
+    compiled_hover_guard = ('    if (!current || current.mini || !pointer || '
+                            'pointer.mode !== "gain" && pointer.mode !== "mute-brush") return;')
+    if compiled_hover_guard in compiled_html:
+        document['html'] = compiled_html.replace(
+            compiled_hover_guard, '    if (!current || current.mini) return;', 1)
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          compiled hover status before drag')
+    compiled_html = document.get('html', '')
+    hover_move_anchor = ('      wrapRef.current.style.cursor = "default";\n'
+                         '    }\n'
+                         '    const p = pointerRef.current;')
+    if hover_move_anchor in compiled_html and 'hover status follows every pointer move' not in compiled_html:
+        document['html'] = compiled_html.replace(
+            hover_move_anchor,
+            '      wrapRef.current.style.cursor = "default";\n'
+            '    }\n'
+            '    updateLiveHoverStatus();\n'
+            '    const p = pointerRef.current;', 1)
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          compiled hover status follows pointer move')
+    compiled_html = document.get('html', '')
+    pointer_capture_anchor = ('      onPointerDown,\n'
+                              '      onPointerMove,\n'
+                              '      onPointerUp,')
+    if pointer_capture_anchor in compiled_html and 'onPointerMoveCapture: onPointerMove' not in compiled_html:
+        document['html'] = compiled_html.replace(
+            pointer_capture_anchor,
+            '      onPointerDown,\n'
+            '      onPointerMoveCapture: onPointerMove,\n'
+            '      onPointerMove,\n'
+            '      onPointerUp,', 1)
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          compiled pointer move capture')
     if repair_cursor_state(document):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
@@ -4273,6 +4588,10 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          native Settings scrim overlay owner')
+    if stabilize_settings_mount(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          stable Settings native mount')
     if separate_modulation_tab_content(document):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
@@ -4289,10 +4608,29 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          settings tab content switching')
+    if enforce_settings_fixed_shell(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          fixed Settings header/tabs with body scroll')
     if add_readable_typography(document):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          readable typography rails')
+    # Final lifecycle normalization: Settings is always mounted, so its
+    # resolver marker must follow the `open` prop rather than an unconditional
+    # mount-time `true` publication left by an older helper recipe.
+    settings_html = document.get('html', '')
+    settings_effect_old = '''    panel.setAttribute("data-spectr-settings-live", "true");
+    return () => panel.setAttribute("data-spectr-settings-live", "false");
+  }, []);'''
+    settings_effect_new = '''    panel.setAttribute("data-spectr-settings-live", open ? "true" : "false");
+    if (open && typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__();
+  }, [open]);'''
+    if settings_effect_old in settings_html:
+        document['html'] = settings_html.replace(settings_effect_old, settings_effect_new, 1)
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          Settings open-state lifecycle publication')
     if repair_capture_band_count_binding(document, PATH):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
@@ -4308,7 +4646,9 @@ def main():
                     or 'wrapRef.current.style.cursor' in _old):
                 print('superseded     ', label)
                 continue
-            if label.startswith('settings') or label.startswith('materialized modulation'):
+            if (label.startswith('settings')
+                    or label.startswith('materialized modulation')
+                    or 'status info' in label):
                 print('superseded     ', label)
                 continue
             sentinel = SUPERSEDED_SENTINELS.get(label)
@@ -4414,11 +4754,68 @@ def main():
             print('already applied ', label)
             continue
         count = runtime_raw.count(old)
+        if count == 0 and label == 'settings preserve reparent reasserts scroll hint':
+            print('superseded     ', label)
+            continue
+        if count == 0 and (runtime_raw.count(new) >= 1 or
+                           (label == 'explicit overlays consume their outside dismissal press'
+                            and 'currentBox.offsetWidth > 0' in runtime_raw)):
+            print('already applied ', label)
+            continue
         if count != 1:
             sys.exit(f'FAIL {label}: runtime patch point occurs {count} times')
         runtime_raw = runtime_raw.replace(old, new)
         runtime_changed = True
         print('applied         ', label)
+    # The overflow glyph is the one captured span whose browser fallback face
+    # is Menlo rather than the registered JetBrains Mono asset.  Its binding
+    # path is intentionally optional (the live overflow button can be rebuilt
+    # by React), so restore that exact face when the concrete text target is
+    # present.  Keep this narrowly scoped to the glyph; do not alter the
+    # global label cascade or other toolbar controls.
+    overflow_marker = '    const spectralLabel = values.find((node) =>\n'
+    overflow_block = ('    const overflowLabel = values.find((node) =>\n'
+                      '      String(node && node.textContent || "") === "⋯");\n'
+                      '    if (overflowLabel && typeof g5.setFontFamily === "function") {\n'
+                      '      const overflowId = overflowLabel.__pulpTextTargetId || overflowLabel.__pulpId || overflowLabel.id;\n'
+                      '      if (overflowId) {\n'
+                      '        g5.setFontFamily(String(overflowId), "Menlo");\n'
+                      '        if (typeof g5.setFontSize === "function") g5.setFontSize(String(overflowId), 10);\n'
+                      '        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(overflowId), 1);\n'
+                      '        if (typeof g5.setCapturedLineBoxes === "function")\n'
+                      '          g5.setCapturedLineBoxes(String(overflowId),\n'
+                      '            [{ left: 10, top: 6, width: 7.03125, height: 13, start: 0, length: 1 }],\n'
+                      '            29.03125, "Menlo-Regular", false);\n'
+                      '      }\n'
+                      '    }\n' + overflow_marker)
+    if 'const overflowLabel = values.find((node)' not in runtime_raw:
+        if runtime_raw.count(overflow_marker) != 1:
+            sys.exit('FAIL overflow glyph face patch point missing or ambiguous')
+        runtime_raw = runtime_raw.replace(overflow_marker, overflow_block, 1)
+        runtime_changed = True
+        print('applied         overflow glyph restores captured Menlo face')
+    toolbar_marker = '    const spectralLabel = values.find((node) =>\n'
+    toolbar_block = ('    for (const toolbarText of ["SCULPT ▾", "PEAK ▾"]) {\n'
+                     '      const toolbarNode = values.find((node) =>\n'
+                     '        String(node && node.textContent || "") === toolbarText);\n'
+                     '      const toolbarBinding = capturedTextBindings.find((binding) =>\n'
+                     '        binding.text === toolbarText);\n'
+                     '      const toolbarId = toolbarNode && (toolbarNode.__pulpTextTargetId || toolbarNode.__pulpId || toolbarNode.id);\n'
+                     '      if (!toolbarId || !toolbarBinding) continue;\n'
+                     '      if (typeof g5.setFontFamily === "function")\n'
+                     '        g5.setFontFamily(String(toolbarId), materializedRuntimeFontStack(toolbarBinding));\n'
+                     '      if (typeof g5.setFontSize === "function") g5.setFontSize(String(toolbarId), toolbarBinding.basis.requested.font_size);\n'
+                     '      if (typeof g5.setFontWeight === "function") g5.setFontWeight(String(toolbarId), toolbarBinding.basis.requested.font_weight);\n'
+                     '      if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(toolbarId), toolbarBinding.basis.requested.letter_spacing);\n'
+                     '      if (typeof g5.setCapturedLineBoxes === "function")\n'
+                     '        g5.setCapturedLineBoxes(String(toolbarId), toolbarBinding.boxes, toolbarBinding.basis.width, toolbarBinding.basis.resolved_face, false);\n'
+                     '    }\n' + toolbar_marker)
+    if 'for (const toolbarText of ["SCULPT ▾", "PEAK ▾"])' not in runtime_raw:
+        if runtime_raw.count(toolbar_marker) != 1:
+            sys.exit('FAIL toolbar text face patch point missing or ambiguous')
+        runtime_raw = runtime_raw.replace(toolbar_marker, toolbar_block, 1)
+        runtime_changed = True
+        print('applied         captured toolbar selector faces')
     if runtime_changed:
         open(RUNTIME_PATH, 'w', encoding='utf-8').write(runtime_raw)
         print('written', RUNTIME_PATH)

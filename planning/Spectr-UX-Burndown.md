@@ -2,6 +2,82 @@
 
 Last updated: 2026-09-03
 
+## 2026-09-03 restore verification (latest)
+
+- **Not release-ready; no new PKG or PNG proof.** The only artifact remains
+  `artifacts/Spectr-1.0.8.pkg` and is not evidence for this worktree.
+- `native frozen state atlas interactions and persistence` is still red: the
+  native tree contains a retained/root-sized Settings subtree, so the fixed
+  520x679 panel/body topology assertions fail.
+- `native N1 mounts live QuickJS widgets without an editor fallback` is red on
+  the rebuilt SDK: the center canvas tap hits `__behavior_pr_1` but publishes
+  no editor request (hit-tree shows the live canvas `pe=0`).
+- `Spectr-browser-analyzer` is red: synthetic canvas hover still times out
+  waiting for `BAND n/32` in the unified status banner.
+- Passing focused evidence remains limited to build-info timeout, browser UX
+  polish, and preset parity; these do not clear the native/input blockers.
+- Pulp successor `fd6480394` is committed locally and its WidgetBridge suite
+  passes (162 assertions / 28 cases); Spectr N1 still fails against that SDK,
+  so this is not yet an end-to-end dispatch landing.
+- A bounded trace confirmed callback aliases can be present for the live canvas
+  (`__behavior_pr_1:pointerdown/move/up`), yet the native tap still publishes
+  no request; the remaining defect is inside native event delivery/dispatch,
+  not callback registration-map creation.
+
+## 2026-09-03 coordinator recheck (current)
+
+The three-gate recheck was run against `build-settings-pulpfix2` at the
+current worktree state. All three remain red, so the UX burn-down is not ready
+for a new package or visual sign-off:
+
+- `native N1 mounts live QuickJS widgets without an editor fallback`: **FAIL**;
+  the live canvas target is `__behavior_pr_1`, callback aliases exist for its
+  pointer events, but the center tap publishes no request (`requests=[]`).
+- `native frozen state atlas interactions and persistence`: **FAIL**; the
+  retained Settings root is still `0,0,1320x860` instead of the authored
+  `400,90.5,520x679` panel, and the body-only `ScrollView` is not discoverable.
+- `Spectr-browser-analyzer`: **FAIL**; synthetic pointer motion still times
+  out waiting for `BAND n/32` in the unified status banner.
+
+These are implementation/proof blockers, not human-installation issues. The
+existing `artifacts/Spectr-1.0.8.pkg` remains old and is not evidence for this
+state. Do not produce or request install testing until the native dispatch,
+Settings topology, and analyzer gates pass and exact-head PNGs are regenerated.
+
+### Dispatch repair landed in the active Pulp successor
+
+Pulp successor commit `eedc64bb3` makes the anchored live CanvasWidget the
+visible, hit-testable owner (and hides the source command canvas), while
+explicitly keeping the behavior owner `PointerEvents::auto`. Its focused
+WidgetBridge sole-owner test passes. Spectr still needs an SDK rebuild against
+that exact commit and a passing N1 end-to-end request assertion before CUR,
+DDM, and the native overlay rows can advance.
+
+## 2026-09-03 latest verification (current worktree)
+
+The managed-Chrome UX-polish oracle now passes, including Settings body
+overflow behavior at normal and tall host sizes. Native focused checks also
+pass for N1 mounting, Settings command/cursor routing, and Settings
+Escape/outside dismissal. The remaining native parity failure is structural:
+the frozen state atlas predates the authored `data-spectr-settings-body`
+wrapper, so `APPEARANCE` is not present in the native tree. No package is
+release-ready until that atlas is regenerated and the body-only ScrollView /
+fixed-header-tab proof passes.
+
+The owning Pulp dispatch seam was repaired in the preserved dispatch worktree
+(`8a183432c` / SDK copy `4fce448a`): `bindCanvasBehaviorAt` no longer hides the
+anchored live CanvasWidget or disables its hit testing. Its focused Pulp test
+passes (31 assertions), and Spectr's rebuilt N1, Settings-command, and
+Escape/outside native checks pass against the rebuilt SDK. The frozen-atlas
+topology check and browser analyzer oracle remain the only red gates in this
+slice.
+
+The analyzer oracle is still red on the current head: synthetic pointer motion
+does not produce the expected `BAND n/32` status text. This is an unresolved
+hover event-path defect, not a headless unpacking failure. The standalone
+Release review build succeeds, and `Spectr-browser-ux-polish` remains green;
+those results do not clear the analyzer or frozen-atlas gates.
+
 ## 2026-09-03 current-head verification (official SDK 0.829.0)
 
 The current branch is `ef62a9b` (clean apart from the pre-existing untracked
@@ -536,6 +612,18 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   `SPECTR_BROWSER_RESIZE_OK`, and `SPECTR_BROWSER_MUTE_MODES_OK`; CTest's
   direct Chrome wrapper remains flaky in this headless session (CVDisplayLink
   failures), so this is harness progress, not final UX proof.
+
+### 2026-09-03 Settings lifecycle follow-up
+
+- Ultra review confirms the required Griddy-like topology: one overlay owner,
+  fixed header/tabs, and a dedicated scrolling body; post-mount retries remain
+  suspect and must be removed before release.
+- Current runtime changes release hidden Settings overlay claims, gate stale
+  retry callbacks on the live marker, provide explicit ScrollView extents, and
+  keep hidden Settings out of home metadata accounting.
+- Exact-current focused results: Settings command and Escape/outside dismissal
+  pass; frozen state-atlas still fails the overflow ellipsis paint-origin
+  assertion; base N1 still fails a canvas tap publication assertion. No PKG.
 
 ## Evidence policy
 
