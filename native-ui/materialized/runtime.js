@@ -8944,9 +8944,22 @@
     // Preserve the live React/native bookkeeping while swapping the native
     // container type. `removeWidget` only accepts an id (extra arguments are
     // ignored by Pulp), so use the DOM removal API's explicit preserve flag.
-    if (typeof bridge.domRemove === "function") bridge.domRemove(nodeId, 1);
-    else bridge.removeWidget(nodeId);
-    bridge.domAppend(parentId, nodeId, materializedNodeTag(node), "scroll");
+    // Prefer the authored DOM lifecycle for the replacement. It invokes the
+    // SDK's supported __domRemove(..., preserve=1) and then __domAppend with
+    // the scroll hint, restoring parent bookkeeping, native flags, attrs and
+    // event registrations in one path. Direct bridge calls bypass those
+    // contracts and differ across SDK releases.
+    if (parent && typeof parent.removeChild === "function"
+        && typeof parent.appendChild === "function") {
+      parent.removeChild(node);
+      parent.appendChild(node);
+    } else if (typeof bridge.domRemove === "function") {
+      bridge.domRemove(nodeId, 1);
+      bridge.domAppend(parentId, nodeId, materializedNodeTag(node), "scroll");
+    } else {
+      bridge.removeWidget(nodeId);
+      bridge.domAppend(parentId, nodeId, materializedNodeTag(node), "scroll");
+    }
     // __domRemove(..., preserve=1) intentionally clears _nativeCreated for
     // the retained JS subtree. The direct native domAppend fast path does not
     // run Element.appendChild, so restore that lifecycle bit explicitly (and
