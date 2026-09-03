@@ -8956,8 +8956,16 @@
       if (!element) return;
       element._nativeCreated = true;
       const children = Array.isArray(element._children) ? element._children : [];
-      for (const child of children) markNative(child);
+      for (const child of children) {
+        // The preserve path can clear the reverse parent pointer while the
+        // parent still owns the child in `_children`. Restore both sides so
+        // selector ancestry, overlay routing, and subsequent React commits all
+        // see the same live tree.
+        child._parentElement = element;
+        markNative(child);
+      }
     };
+    node._parentElement = parent;
     markNative(node);
     for (const child of nativeChildren) {
       const childId = String(child.__pulpId || child.id || "");
