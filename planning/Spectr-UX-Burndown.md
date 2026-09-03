@@ -316,6 +316,19 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
 - Release/landing: current package predates `d5631db`; rebuild/notarize after
   cursor acceptance, then verify exact Pulp SDK provenance and installation.
 
+### 2026-09-02 package 1.0.4 checkpoint
+
+- `artifacts/Spectr-1.0.4.pkg` was rebuilt from exact clean Spectr head
+  `48b27ba2d518a21d6bbd44bc3b33ae504d3d72e2` against official Pulp SDK
+  `v0.829.0`, source SHA `cc75fa91cf6942a197b2fb00b38ac679de3cbcd1`.
+- SHA-256:
+  `2db0072ba303191e26398d758bab0664202f45657efa41fb0feb2ce147da9fec`.
+- Notarization submission `e9194ed3-5843-4c12-a8b9-7a6ed5a702f4` was accepted;
+  staple validation passed and `spctl` reports Notarized Developer ID.
+- The package includes the React/native cursor bridge. It is ready for AU/VST3
+  installation and cursor observation; Logic Record/Stop tracing and REAPER
+  acceptance remain separate host gates.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
