@@ -424,6 +424,20 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   temporary-directory cleanup failure. These are not counted as product proof
   until the fixture is regenerated and rerun.
 
+### 2026-09-03 Settings lifecycle repair checkpoint
+
+- Root cause is confirmed: the ScrollView upgrade used `removeWidget(id)` with
+  `preserve_js_dom_state=false`, retiring React/native bookkeeping and leaving
+  the replacement outside the root interaction state.
+- Pulp successor worktree `/Users/danielraffel/Code/pulp-spectr-settings-overlay-20260902`
+  carries commit `2b870f4e1` adding the preserve-state argument to
+  `removeWidget(id, preserve_js_dom_state)`.
+- Spectr carries commit `ea148f7` passing that preserve flag during the Settings
+  ScrollView replacement. The exact-current binary still uses the pre-fix SDK;
+  rebuild against the successor SDK is required before this can be called green.
+- No package was produced and no visible app launch is required; the strict
+  headless Settings dismissal gate remains the wake condition.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
