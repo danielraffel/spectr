@@ -17,14 +17,18 @@ Settings portal-parent recovery fix. The focused native sweep is **not green**:
   interaction (authored title absent), and whole-bound button hit testing
   (overflow control absent).
 
-The targeted portal-parent recovery did not clear the failures, so Settings,
+The targeted portal-parent recovery and native-lifecycle restoration (`4ba0eb0`)
+did not clear the failures, so Settings,
 dropdown native inheritance, cursor native proof, and package delivery remain
 blocked on the materialized-runtime/official-SDK lifecycle. The browser source
 adapter now tolerates the already-applied hover patch (`d9abc22`), addressing
 the previous unpacker stop. The CTest wrappers still do not produce an accepted
 passing oracle on this macOS headless host: Chrome emits
 `CVDisplayLinkCreateWithCGDisplay` setup errors and popup/resize results remain
-unaccepted. This remains unverified, not a feature pass.
+unaccepted. After making the source adapter tolerate the already-applied hover
+patch, the popup harness now reaches the application but times out opening the
+Bands menu; that is a genuine current harness/runtime failure, not a pass.
+This remains unverified, not a feature pass.
 The checked-in Settings screenshot is non-black and structurally complete, but
 it is artifact evidence only, not proof of live interaction.
 
