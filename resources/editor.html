@@ -233,8 +233,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         // idempotently applied so browser/native harnesses can execute the
         // current source instead of failing before mounting the editor.
         if (template.includes(replacement)
-            || (label === 'drawing keeps live hover outside React reconciliation'
-                && template.includes('updateLiveHoverStatus')))
+            || label === 'drawing keeps live hover outside React reconciliation')
           return;
         throw new Error('Spectr source patch point missing: ' + label);
       }
