@@ -8946,11 +8946,6 @@
     // ignored by Pulp), so use the DOM removal API's explicit preserve flag.
     if (typeof bridge.domRemove === "function") bridge.domRemove(nodeId, 1);
     else bridge.removeWidget(nodeId);
-    // The official SDK retires the native widget even when the JS DOM identity
-    // is preserved. Recreate the same id as a ScrollView before reattaching it;
-    // domAppend only links an existing native widget and cannot resurrect the
-    // retired entry by itself.
-    bridge.createCol(nodeId, parentId);
     bridge.domAppend(parentId, nodeId, materializedNodeTag(node), "scroll");
     for (const child of nativeChildren) {
       const childId = String(child.__pulpId || child.id || "");
