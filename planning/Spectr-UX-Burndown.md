@@ -356,6 +356,23 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   sent to the #8028 owner. No CI retry, cancellation, rebase, or queue mutation
   was performed.
 
+### 2026-09-03 corrected cursor package checkpoint
+
+- Commit `1a6e3a7c87c23afc3f6ecc5d230a2f4b1b7df69c` fixes the cursor
+  materialization recipe so the hover-status patch retains the React cursor
+  state and repeated materialization does not duplicate `setCursor` calls.
+- `artifacts/Spectr-1.0.5.pkg` was rebuilt from that exact clean head against
+  official SDK `cc75fa91cf6942a197b2fb00b38ac679de3cbcd1`.
+- SHA-256:
+  `45e1a95b4e1a0d56194fc411abb25b89a0f7f49061e1f123ea5edcbc08eb3c56`.
+  Notarization submission `975db2fd-7719-4fe3-b13d-17f3ac319497` was
+  accepted; staple validation and `spctl` passed.
+- Headless browser fixtures currently fail to emit their oracle under this
+  local Chrome invocation (the previous source-patch-missing error is gone),
+  so this is not counted as fresh browser-pass evidence. Native/Release
+  proofs from the prior checkpoint remain valid; installed-host cursor and
+  Logic/REAPER acceptance are still required.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
