@@ -8916,7 +8916,17 @@
   }
   function ensureSpectrNativeScrollView(node, values) {
     if (!node) return false;
-    if (node.__spectrNativeScrollView === true) return true;
+    if (node.__spectrNativeScrollView === true) {
+      // State-atlas replay may retire the native subtree while retaining the
+      // JS node and its lifecycle bit.  Do not trust the marker alone: an
+      // absent/empty metrics object means the bridge registry no longer owns
+      // this id and the container must be materialized again.
+      const id = String(node.__pulpId || node.id || "");
+      const metrics = id && typeof g5.getLayoutBoxMetrics === "function"
+        ? g5.getLayoutBoxMetrics(id) : null;
+      if (metrics && Object.keys(metrics).length > 0) return true;
+      node.__spectrNativeScrollView = false;
+    }
     const bridge = g5.__pulpNativeBridgeFunctions__;
     if (typeof bridge?.createCol !== "function"
         || typeof bridge?.domAppend !== "function"
@@ -8931,9 +8941,18 @@
       || values.find((candidate) =>
         materializedElementChildren(candidate, registrySet).includes(node))
       || null;
-    const parentId = String(parent && (parent.__pulpId || parent.id) || "");
-    if (!nodeId || !parentId) return false;
-    const nativeChildren = materializedElementChildren(node, registrySet);
+    const parentId = String(parent && (parent.__pulpId || parent.id)
+      || behaviorRootId || "");
+    // An empty parent id is the bridge's documented root sentinel.  This is
+    // the valid fallback when state-atlas replay has detached the DOM edge and
+    // no retained App parent can be recovered.
+    if (!nodeId) return false;
+    // Retired subtrees may have had descendants removed from the materialized
+    // registry even though React's DOM shim still owns them in _children.
+    // Preserve those raw children so a reopened Settings panel recreates its
+    // labels/controls instead of returning an empty native container.
+    const nativeChildren = (Array.isArray(node._children) ? node._children : [])
+      .filter(Boolean);
     const temporaryId = nodeId + "__spectr_scroll_upgrade";
     bridge.createCol(temporaryId, parentId);
     for (const child of nativeChildren) {
@@ -8980,11 +8999,17 @@
     };
     node._parentElement = parent;
     markNative(node);
-    for (const child of nativeChildren) {
-      const childId = String(child.__pulpId || child.id || "");
-      if (childId) bridge.domAppend(
-        nodeId, childId, materializedNodeTag(child), "");
-    }
+    const appendNativeSubtree = (element, parentId) => {
+      if (!element) return;
+      const childId = String(element.__pulpId || element.id || "");
+      if (!childId) return;
+      const hint = typeof __pulpElementWantsScrollView__ === "function"
+        && __pulpElementWantsScrollView__(element) ? "scroll" : "";
+      bridge.domAppend(parentId, childId, materializedNodeTag(element), hint);
+      const children = Array.isArray(element._children) ? element._children : [];
+      for (const child of children) appendNativeSubtree(child, childId);
+    };
+    for (const child of nativeChildren) appendNativeSubtree(child, nodeId);
     // Mirror the rest of Element.appendChild's reattachment contract. The
     // direct bridge path intentionally bypasses those JS-side hooks.
     const rehydrateNative = (element) => {
@@ -9014,6 +9039,31 @@
       node.style._flushAll();
     node.__spectrNativeScrollView = true;
     return true;
+  }
+  // React's state-atlas replay can detach the DOM-shim edge for a live modal
+  // while retaining both the shim node and its native widget.  The resulting
+  // orphan is still discoverable by querySelector(), but overlay routing uses
+  // the native id and subsequent lifecycle passes cannot recover its parent.
+  // Restore the logical edge to the stable App root before any native upgrade
+  // or overlay claim.  This is deliberately limited to Settings and only runs
+  // when the node has no parent, so normal React ownership remains authoritative.
+  function restoreSpectrSettingsDomParent(node, values) {
+    if (!node || node.parentElement || node._parentElement) return null;
+    const root = globalThis.document?.querySelector?.(
+      '[data-screen-label="Spectr main"]')
+      || values.find((candidate) =>
+      candidate && candidate !== node
+      && candidate.getAttribute?.("data-screen-label") === "Spectr main")
+      || values.find((candidate) =>
+        candidate && candidate !== node
+        && String(candidate.id || candidate.__pulpId || "")
+          === String(behaviorRootId || ""))
+      || globalThis.document?.body || null;
+    if (!root) return null;
+    if (!Array.isArray(root._children)) root._children = [];
+    if (!root._children.includes(node)) root._children.push(node);
+    node._parentElement = root;
+    return root;
   }
   function applySpectrResponsiveLayout(width, height, restoreCapturedGeometry) {
     width = Math.max(1, Math.round(Number(width) || 1320));
@@ -9177,6 +9227,7 @@
       ? g5.__pulpFindMaterializedElement__("[data-spectr-settings-panel]") : null;
     let settingsReceipt = null;
     if (settingsPanel) {
+      restoreSpectrSettingsDomParent(settingsPanel, values);
       const nativeScrollView = ensureSpectrNativeScrollView(settingsPanel, values);
       const authored = width === 1320 && height === 860;
       const panelWidth = Math.min(520, Math.max(360, width - 40));
@@ -10506,8 +10557,36 @@
       if (next === "settings" && typeof g5.claimOverlay === "function") {
         const livePanel = globalThis.document?.querySelector?.(
           "[data-spectr-settings-panel]");
+        // The atlas transition may retire the native panel after the
+        // responsive pass has upgraded it. Revalidate/recreate the bridge
+        // widget at the final transition boundary before claiming overlay
+        // ownership; otherwise claimOverlay silently no-ops on the stale id.
+        if (livePanel) {
+          const liveValues = materializedDomRegistryValues();
+          restoreSpectrSettingsDomParent(livePanel, liveValues);
+          ensureSpectrNativeScrollView(livePanel, liveValues);
+        }
+        const claimLiveSettings = () => {
+          const panel = globalThis.document?.querySelector?.(
+            "[data-spectr-settings-panel]");
+          if (!panel) return;
+          const values = materializedDomRegistryValues();
+          restoreSpectrSettingsDomParent(panel, values);
+          ensureSpectrNativeScrollView(panel, values);
+          const id = panel.__pulpId || panel.id;
+          if (id) g5.claimOverlay(String(id), true);
+        };
         const liveId = livePanel && (livePanel.__pulpId || livePanel.id);
         if (liveId) g5.claimOverlay(String(liveId), true);
+        // React's portal commit can run one or two host callbacks after the
+        // atlas resolver. Reassert at the next frames as well; each pass is
+        // idempotent and only targets a still-mounted Settings panel.
+        let claimFrames = 0;
+        const retryClaim = () => {
+          claimLiveSettings();
+          if (++claimFrames < 16) requestAnimationFrame(retryClaim);
+        };
+        requestAnimationFrame(retryClaim);
       }
     }
     return activeCapturedState;
