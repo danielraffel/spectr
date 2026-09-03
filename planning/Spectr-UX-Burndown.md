@@ -388,6 +388,22 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   on the corrected checkout; all nine materialized script blocks pass
   `node --check`.
 
+### 2026-09-03 release/format verification receipt
+
+- `build-release-0829/Spectr-test '[modulation]'`: 1 case / 3,110 assertions
+  passed.
+- `build-release-0829/Spectr-test '[automation]'`: 2 cases / 1,103 assertions
+  passed.
+- `build-release-0829/Spectr-native-n1-test '[dismissal]'`: 2 cases / 350
+  assertions passed. Expected geometry warnings were emitted; no test failed.
+- Installed AU `auval -v aufx Spec Pulp` succeeded (`AU VALIDATION SUCCEEDED`).
+- `clap-validator validate build-release-0829/CLAP/Spectr.clap`: 20 tests,
+  15 passed, 0 failed, 5 skipped (unsupported preset-discovery and note-input
+  capabilities); one scan-time warning remains advisory.
+- These receipts strengthen release/native evidence but do not replace
+  Logic/REAPER host acceptance, cursor observation in AU, or the open Pulp
+  modulation dependency in PR #8028.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
