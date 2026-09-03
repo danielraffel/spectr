@@ -451,6 +451,26 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   uncommitted. `artifacts/Spectr-1.0.8.pkg` remains known-bad and no new PKG is
   authorized until the strict gate and screenshot proof pass.
 
+### 2026-09-03 full UX validation audit
+
+- Current exact SDK-overlay `Spectr-native-n1-test` sweep ran 11 native cases;
+  7 failed: N1 mount, proportional resize, Settings command, Settings
+  dismissal, Flare mixed-sign behavior, frozen state-atlas interaction, and
+  whole-bound button hit testing. These are current failures, not completion
+  evidence.
+- The older `build-release-0829` binary passes cursor (54), dropdown (253),
+  dismissal (350), Settings (167), modal dismissal (520), and host-automation
+  (13), but is stale relative to the current runtime and cannot certify this
+  branch. Its Flare case also fails (18/19 assertions).
+- Current automation and modulation suites pass only on the existing
+  `build-ux-dispatch-sdk` binary (automation 2/1,103; modulation 1/3,110).
+  Browser UX groups remain unverified: current materialized source unpack fails
+  at a missing patch point before feature assertions, with headless display and
+  temp-directory cleanup errors as secondary harness issues.
+- Therefore cursor, dropdown, preset, overlay, Settings, and correctness items
+  remain open for exact-current proof; no package or human host acceptance is
+  authorized from these stale/partial receipts.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
