@@ -341,6 +341,21 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   built against the official SDK release `v0.829.0`; do not claim Pulp #8028 is
   landed until its authoritative required checks and merge state change.
 
+### 2026-09-03 Pulp #8028 failure receipts
+
+- UBSan job `100444609436` completed `failure` at `2026-09-03T00:01:40Z`.
+  Its CTest summary names GPU recipe/probe/trace/DPR self-tests `18849`,
+  `18911`–`18914`, `18918`, `18920`–`18923`, install-layout `18977`, and
+  sampler evidence `19083`/`19084`; this is a test-level implementation or
+  baseline gate, not a dispatch transport failure.
+- The macOS job `100444687696` failed before CTest because Homebrew could not
+  download its API metadata (`curl 56`, HTTP status `000`, proxy CONNECT
+  aborted). ASan job `100444609396` and coverage job `100444692985` are still
+  `in_progress`.
+- These receipts were fetched with `ghapp api .../actions/jobs/<id>/logs` and
+  sent to the #8028 owner. No CI retry, cancellation, rebase, or queue mutation
+  was performed.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
