@@ -8972,6 +8972,30 @@
       if (childId) bridge.domAppend(
         nodeId, childId, materializedNodeTag(child), "");
     }
+    // Mirror the rest of Element.appendChild's reattachment contract. The
+    // direct bridge path intentionally bypasses those JS-side hooks.
+    const rehydrateNative = (element) => {
+      if (!element) return;
+      if (typeof __pulpRememberNativeElement__ === "function")
+        __pulpRememberNativeElement__(element);
+      if (typeof __replayMediaAttributes__ === "function")
+        __replayMediaAttributes__(element);
+      if (typeof __replayAriaAttributes__ === "function")
+        __replayAriaAttributes__(element);
+      if (typeof __replaySvgPathAttributes__ === "function")
+        __replaySvgPathAttributes__(element);
+      if (typeof __pulpRegisterAutoDomEvents__ === "function")
+        __pulpRegisterAutoDomEvents__(element);
+      if (typeof __pulpReplayNativeEventListeners__ === "function")
+        __pulpReplayNativeEventListeners__(element);
+      if (element.style && typeof element.style._flushAll === "function")
+        element.style._flushAll();
+      if (typeof element._reapplyStylesheets === "function")
+        element._reapplyStylesheets();
+      const children = Array.isArray(element._children) ? element._children : [];
+      for (const child of children) rehydrateNative(child);
+    };
+    rehydrateNative(node);
     bridge.removeWidget(temporaryId);
     if (node.style && typeof node.style._flushAll === "function")
       node.style._flushAll();
