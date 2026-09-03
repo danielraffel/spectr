@@ -8922,10 +8922,17 @@
         || typeof bridge?.domAppend !== "function"
         || typeof bridge?.removeWidget !== "function") return false;
     const nodeId = String(node.__pulpId || node.id || "");
-    const parent = node.parentElement || node._parentElement || null;
+    // Portal-backed materialized elements may not expose parentElement after
+    // native teardown, while the authored registry still owns the node in its
+    // parent's _children list. Recover that authoritative parent before the
+    // replacement so official SDK builds receive a valid native parent ID.
+    const registrySet = new Set(values);
+    const parent = node.parentElement || node._parentElement
+      || values.find((candidate) =>
+        materializedElementChildren(candidate, registrySet).includes(node))
+      || null;
     const parentId = String(parent && (parent.__pulpId || parent.id) || "");
     if (!nodeId || !parentId) return false;
-    const registrySet = new Set(values);
     const nativeChildren = materializedElementChildren(node, registrySet);
     const temporaryId = nodeId + "__spectr_scroll_upgrade";
     bridge.createCol(temporaryId, parentId);
