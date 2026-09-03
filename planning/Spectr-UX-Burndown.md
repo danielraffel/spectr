@@ -406,6 +406,21 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   Logic/REAPER host acceptance, cursor observation in AU, or the open Pulp
   modulation dependency in PR #8028.
 
+### 2026-09-03 current package and browser-harness audit
+
+- Current staged package: `artifacts/Spectr-1.0.8.pkg`, SHA-256
+  `6ed118ee2e221c7606d102d5c1974fe8a55a2eebf1879f14696e2283f328c2a4`;
+  `spctl --assess --type install` reports `accepted` and `source=Notarized
+  Developer ID`.
+- The focused Release receipts above were rerun from the clean Spectr source;
+  the cached `build-release-current` lane remains non-authoritative because it
+  embeds an older Pulp core and reproduces a stale Settings overlay failure.
+- Browser tests 199 (popups), 201 (build-info timeout), 202 (UX polish), and
+  203 (preset parity) were attempted but remain open: the local headless
+  fixture reports `source patch point missing`/stale generated artifacts and a
+  temporary-directory cleanup failure. These are not counted as product proof
+  until the fixture is regenerated and rerun.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
