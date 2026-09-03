@@ -8933,7 +8933,10 @@
       if (childId) bridge.domAppend(
         temporaryId, childId, materializedNodeTag(child), "");
     }
-    bridge.removeWidget(nodeId);
+    // Preserve the live React/native bookkeeping while swapping the native
+    // container type. Without this flag the bridge retires the widget's JS
+    // registration, leaving the replacement detached from overlay routing.
+    bridge.removeWidget(nodeId, 1);
     bridge.domAppend(parentId, nodeId, materializedNodeTag(node), "scroll");
     for (const child of nativeChildren) {
       const childId = String(child.__pulpId || child.id || "");
