@@ -1,6 +1,6 @@
 # Spectr UX and Automation Burn-down
 
-Last updated: 2026-09-02
+Last updated: 2026-09-03
 
 This is the durable landing ledger for the final Spectr native-editor UX,
 automation, host-acceptance, and package work. A checked box requires committed
@@ -71,7 +71,7 @@ for that confirmation.
 | DEL-1 | Exact-head architectural/adversarial review | Not applicable | Review receipt pending | Not applicable | Open |
 | DEL-2 | Spectr PR merged with required checks green | Spectr branch remains clean; Pulp modulation successor is pushed as PR #8028 at exact head `f2a04d1dcd5adf2ff9019bf750b74fb983456dca` | Build, baseline-diff, macOS-universal, linux-arm64, linux-x64, examples, and TSan are green; macOS Build + Test job `100444687696` failed before tests on Homebrew proxy CONNECT abort (curl 56 / HTTP 000), while ASan, UBSan, and macOS coverage remain pending | Not applicable | Open |
 | DEL-3 | Logic AUv2 and REAPER VST3/CLAP acceptance | Formats implemented and the notarized PKG is installed into the system plugin locations | Installed AU `auval -v aufx Spec Pulp` passes; installed system CLAP validation passes 21 tests (16 passed, 0 failed, 5 skipped); REAPER smoke unit harness passes 39 tests. Real REAPER AU editor-open smoke was `INCONCLUSIVE` because the host scan cache did not publish the target (documented harness limitation); Logic automation and REAPER editor/automation receipts remain pending | Pending Logic/REAPER interaction and automation confirmation | Open |
-| DEL-4 | Signed, notarized, installed, launch-verified M5 PKG | Exact-current-head (`302b265`) four-payload Release build completed against official Pulp v0.829.0 SDK (`cc75fa91cf6942a197b2fb00b38ac679de3cbcd1`) and installed | `artifacts/Spectr-1.0.2.pkg` SHA-256 `97becdb35be6787c12f2bbdcae919ebf0781bddd56182f3f275ea556928cfe94`; Apple notarization submission `ebdc0763-75dd-415f-b30b-307121e2911a` accepted; staple, `spctl`, installer signature, AU, and CLAP checks pass | Standalone launch and DAW host confirmation pending | Waiting human/host confirmation |
+| DEL-4 | Signed, notarized, installed, launch-verified M5 PKG | Exact-current-head (`1a6e3a7c87c23afc3f6ecc5d230a2f4b1b7df69c`) four-payload Release build completed against official Pulp v0.829.0 SDK (`cc75fa91cf6942a197b2fb00b38ac679de3cbcd1`) | `artifacts/Spectr-1.0.5.pkg` SHA-256 `45e1a95b4e1a0d56194fc411abb25b89a0f7f49061e1f123ea5edcbc08eb3c56`; Apple notarization submission `975db2fd-7719-4fe3-b13d-17f3ac319497` accepted; staple and `spctl` passed; fresh AU/CLAP/native receipts recorded below | Standalone launch and Logic/REAPER host confirmation pending | Waiting human/host confirmation |
 
 ## Protected source state
 
