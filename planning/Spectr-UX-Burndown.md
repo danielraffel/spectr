@@ -53,6 +53,12 @@ WidgetBridge sole-owner test passes. Spectr still needs an SDK rebuild against
 that exact commit and a passing N1 end-to-end request assertion before CUR,
 DDM, and the native overlay rows can advance.
 
+The first SDK-linked Spectr rerun against the eed library archives still fails
+N1 (`requests=[]`); the live target is now opacity `0.0` in the native hit tree.
+That is concrete evidence that the Pulp ownership handoff is not yet correctly
+wired for Spectr's anchored target. The commit is preserved, but it is not yet
+an end-to-end fix and must not be treated as a green dispatch landing.
+
 ## 2026-09-03 latest verification (current worktree)
 
 The managed-Chrome UX-polish oracle now passes, including Settings body
