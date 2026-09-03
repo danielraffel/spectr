@@ -2,6 +2,30 @@
 
 Last updated: 2026-09-03
 
+## 2026-09-03 current-head verification (official SDK 0.829.0)
+
+The current branch is `ef8358b` (clean apart from the pre-existing untracked
+`artifacts/` directory). `Spectr-native-n1-test` was rebuilt against the
+immutable SDK source SHA `cc75fa91cf6942a197b2fb00b38ac679de3cbcd1` after the
+Settings portal-parent recovery fix. The focused native sweep is **not green**:
+
+- Passed: semantic popup navigation, selected-tab hover, host automation and
+  the non-UX native bridge cases.
+- Failed: live N1 mount (authored `spectral_label` absent), Settings command and
+  Escape/outside dismissal (materialized state/overlay unavailable), Flare
+  mixed-sign oracle (positive-band contract), frozen state-atlas Settings
+  interaction (authored title absent), and whole-bound button hit testing
+  (overflow control absent).
+
+The targeted portal-parent recovery did not clear the failures, so Settings,
+dropdown native inheritance, cursor native proof, and package delivery remain
+blocked on the materialized-runtime/official-SDK lifecycle. The browser wrappers
+also remain unverified: current Chromium runs stop at the source unpacker
+(`drawing keeps live hover outside React reconciliation`) or macOS headless
+`CVDisplayLinkCreateWithCGDisplay` setup errors before their oracles mount.
+The checked-in Settings screenshot is non-black and structurally complete, but
+it is artifact evidence only, not proof of live interaction.
+
 This is the durable landing ledger for the final Spectr native-editor UX,
 automation, host-acceptance, and package work. A checked box requires committed
 implementation plus the named evidence; a local visual impression is not
