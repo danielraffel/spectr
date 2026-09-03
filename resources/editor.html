@@ -2892,6 +2892,18 @@ window.PatternManager = PatternManager;`,
       "          window.spectrPublishMode('analyzer', next);\n          fireStatus('ANALYZER → ' + next.toUpperCase());\n          return next;",
       'keyboard analyzer mode publication');
 
+    // Cursor changes must be React-owned so Pulp's WidgetBridge observes them
+    // and forwards the matching NSCursor to AU/VST3/CLAP hosts. Keep the DOM
+    // assignment as a browser fallback, but publish every transition through
+    // the authored style prop as well.
+    replaceSpectrSource(
+      "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }",
+      "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }\n  const [cursor, setCursor] = useState('crosshair');",
+      'cursor state reaches native style commits');
+    replaceSpectrSource(
+      "        cursor: 'crosshair',",
+      "        cursor,",
+      'filter surface cursor is React-owned');
     replaceSpectrSource(
       [
         "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }",
@@ -3383,6 +3395,15 @@ window.PatternManager = PatternManager;`,
       "} }, React.createElement('span', { 'aria-live': 'polite' }, copyState)));",
       "} }, React.createElement('span', { 'aria-live': 'polite', style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', lineHeight: 1 } }, copyState)));",
       'copy feedback remains centered in every state');
+
+    // Mirror imperative cursor writes into the React-owned style prop. The
+    // browser DOM assignment remains as a fallback, while WidgetBridge sees
+    // the state update and forwards the cursor to native hosts.
+    template = template.replace(
+      /(\n\s*)wrapRef\.current\.style\.cursor = ([^;]+);/g,
+      (match, indent, value) => match.includes('setCursor(')
+        ? match
+        : indent + 'setCursor(' + value + ');' + match);
 
     const resourceScript = '<script>window.__resources = ' +
       JSON.stringify(resourceMap).split('</' + 'script>').join('<\\/' + 'script>') +

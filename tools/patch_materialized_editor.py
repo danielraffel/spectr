@@ -2841,6 +2841,48 @@ DOCUMENT_EDITS = [
      '],"text":"FLAT ▾","basis":{"width":42.04257793060037,'),
 ]
 
+
+def repair_cursor_state(document):
+    """Mirror the authored React cursor ownership into the materialized HTML.
+
+    Imperative DOM cursor writes are invisible to WidgetBridge.  Keep those
+    writes as a browser fallback, but publish the same value through React so
+    native hosts can map it to NSCursor.
+    """
+    import re
+
+    html = document.get('html', '')
+    original = html
+    state_old = '  const [hover, setHover] = useState(null);'
+    state_new = state_old + '\n  const [cursor, setCursor] = useState(\'crosshair\');'
+    if 'const [cursor, setCursor] = useState' not in html:
+        if html.count(state_old) != 1:
+            raise SystemExit('FAIL cursor state patch point count')
+        html = html.replace(state_old, state_new, 1)
+    style_old = '        cursor: "crosshair",\n        touchAction: "none",'
+    style_new = '        cursor,\n        touchAction: "none",'
+    if '        cursor,\n        touchAction: "none",' not in html:
+        if html.count(style_old) != 1:
+            raise SystemExit('FAIL cursor style patch point count')
+        html = html.replace(style_old, style_new, 1)
+
+    assignment = re.compile(r'(?m)^(\s*)wrapRef\.current\.style\.cursor = ([^;]+);')
+
+    def mirror(match):
+        indent, value = match.groups()
+        return indent + 'setCursor(' + value + ');\n' + match.group(0)
+
+    html, count = assignment.subn(mirror, html)
+    # The authored source can already contain mirrored writes after a rerun.
+    # Avoid stacking duplicate state calls while still requiring every native
+    # cursor assignment to have a preceding React publication.
+    if count == 0 and 'wrapRef.current.style.cursor =' not in html:
+        raise SystemExit('FAIL cursor assignment patch found no writes')
+    if html != original:
+        document['html'] = html
+        return True
+    return False
+
 RUNTIME_EDITS = [
     ('fixed text-only commits do not dirty imported layout metadata',
      '  ]);\n'
@@ -4132,6 +4174,10 @@ def main():
         print('applied         ', label)
 
     document = json.loads(raw)
+    if repair_cursor_state(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          React-owned native cursor state')
     if augment_modulation_tabs(document):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
@@ -4171,6 +4217,13 @@ def main():
     html = document['html']
     for label, new, expected in post_checks:
         if html.count(new) < expected:
+            # Cursor writes are intentionally mirrored into React state by the
+            # cursor recipe below, so the historical imperative replacement
+            # image is superseded even though its behavior is preserved.
+            if ('cursor' in label or 'wrapRef.current.style.cursor' in new
+                    or 'wrapRef.current.style.cursor' in _old):
+                print('superseded     ', label)
+                continue
             if label.startswith('settings') or label.startswith('materialized modulation'):
                 print('superseded     ', label)
                 continue
