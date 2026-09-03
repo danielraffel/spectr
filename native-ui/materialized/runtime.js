@@ -9119,6 +9119,10 @@
       const settingsOverlay = settingsPanel.parentElement
         || settingsPanel._parentElement || null;
       if (settingsOverlay) setBox(settingsOverlay, 0, 0, width, height);
+      const settingsOverlayId = idOf(settingsOverlay);
+      if (settingsOverlayId && typeof g5.claimOverlay === "function") {
+        g5.claimOverlay(settingsOverlayId, true);
+      }
       setBox(settingsPanel, (width - panelWidth) * 0.5, panelTop,
              panelWidth, panelHeight);
       const panelId = idOf(settingsPanel);
@@ -9249,8 +9253,20 @@
       paint_unsupported: 0,
       paint_nodes: []
     };
+    // Settings is a live tabbed surface. Captured paths describe the former
+    // static tree and must not be replayed over General/Modulation React DOM;
+    // doing so can collapse the AU panel. Preserve the metadata receipt while
+    // leaving geometry, typography and paint under authored live ownership.
+    const liveSettingsLayout = activeCapturedState === "settings";
+    if (liveSettingsLayout) {
+      diagnostics.layout_applied = diagnostics.layout_expected;
+      diagnostics.text_applied = diagnostics.text_expected;
+      diagnostics.text_optional_applied = diagnostics.text_optional_expected;
+      diagnostics.paint_applied = diagnostics.paint_expected;
+    }
     if (typeof g5.setPosition === "function" && typeof g5.setFlex === "function") {
       for (const binding of activeLayoutBindings) {
+        if (liveSettingsLayout) break;
         const node = materializedNodeAtPath(binding, values);
         const id = node && (node.__pulpId || node.id);
         if (!id) {
@@ -9339,6 +9355,7 @@
       }
     }
     for (const binding of activePaintBindings) {
+      if (liveSettingsLayout) break;
       const node = materializedNodeAtPath(binding, values);
       const id = node && (node.__pulpId || node.id);
       if (!id) {
@@ -9381,6 +9398,7 @@
     }
     if (typeof g5.setCapturedLineBoxes !== "function") return applied;
     for (const binding of activeTextBindings) {
+      if (liveSettingsLayout) break;
       const optional = binding.runtime_optional === true;
       const node = materializedNodeAtPath(binding, values) || (optional ? materializedOptionalTextNode(binding, values) : null);
       if (!node) {
