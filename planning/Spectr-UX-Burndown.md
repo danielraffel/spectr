@@ -438,6 +438,19 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
 - No package was produced and no visible app launch is required; the strict
   headless Settings dismissal gate remains the wake condition.
 
+### 2026-09-03 exact SDK-overlay retest (still blocked)
+
+- Rebuilt `Spectr-native-n1-test` against the official SDK 0.829.0 overlay plus
+  Pulp commit `2b870f4e1`; no visible standalone launch was performed.
+- `ctest -R 'native settings modal'` still fails at
+  `rig.root->interaction().active_overlay != nullptr` after Settings opens.
+  The state-parity diagnostics switch to `settings`, but the live
+  `[data-spectr-settings-panel]` portal has no native subtree/parent in the
+  interaction tree. This is the remaining lifecycle bug, not a test relaxation.
+- Experimental detached/root reattachment was not accepted as a fix and is
+  uncommitted. `artifacts/Spectr-1.0.8.pkg` remains known-bad and no new PKG is
+  authorized until the strict gate and screenshot proof pass.
+
 ## Evidence policy
 
 - Performance evidence comes from Release binaries (`-O3 -DNDEBUG`) and exact
