@@ -8772,6 +8772,7 @@
     setSvgRect: g5.setSvgRect,
     createCol: g5.createCol,
     domAppend: g5.__domAppend,
+    domRemove: g5.__domRemove,
     removeWidget: g5.removeWidget
   });
   g5.React = React;
@@ -8934,9 +8935,10 @@
         temporaryId, childId, materializedNodeTag(child), "");
     }
     // Preserve the live React/native bookkeeping while swapping the native
-    // container type. Without this flag the bridge retires the widget's JS
-    // registration, leaving the replacement detached from overlay routing.
-    bridge.removeWidget(nodeId, 1);
+    // container type. `removeWidget` only accepts an id (extra arguments are
+    // ignored by Pulp), so use the DOM removal API's explicit preserve flag.
+    if (typeof bridge.domRemove === "function") bridge.domRemove(nodeId, 1);
+    else bridge.removeWidget(nodeId);
     bridge.domAppend(parentId, nodeId, materializedNodeTag(node), "scroll");
     for (const child of nativeChildren) {
       const childId = String(child.__pulpId || child.id || "");
