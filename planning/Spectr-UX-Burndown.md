@@ -1,6 +1,6 @@
 # Spectr UX and Automation Burn-down
 
-Last updated: 2026-09-03
+Last updated: 2026-09-04
 
 ## 2026-09-04 Pulp successor progress (not an SDK/release gate)
 
