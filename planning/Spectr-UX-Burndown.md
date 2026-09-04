@@ -57,6 +57,12 @@ Last updated: 2026-09-04
   green (30 assertions); descendant lifecycle and gesture restoration are not
   yet accepted.
 
+- Pulp `571c02552` fixes `InlineValueEditor::on_focus_changed` to call the base
+  hook, preserving `has_focus()` during restoration alongside its edit commit /
+  cancel behavior. WidgetBridge proof remains green at 119 cases / 1162
+  assertions. The exact head is awaiting a fresh Ultra review after the latest
+  interaction-reparent changes.
+
 ## 2026-09-03 browser mute-mode repair (latest)
 
 - Commit `4e05f47` keeps the generated pointer-hover helpers in the live
