@@ -760,3 +760,8 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   positive band. Focused Settings/mode and Flare checks pass (`167` and `24`
   assertions respectively). The remaining canvas-dispatch work is therefore
   not hidden by button-test noise.
+- The full rebuilt native N1 UX matrix now passes **24/24 test cases and
+  6,657/6,657 assertions**. This includes the canvas-specific N1 gesture
+  coverage, Settings body-only ScrollView lifecycle, all dropdown/modal
+  dismissal/navigation cases, cursor receipts, preset identity/geometry,
+  Flare mixed-sign behavior, button hit targets, and resize-grip checks.
