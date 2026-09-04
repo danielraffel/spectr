@@ -765,3 +765,10 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   coverage, Settings body-only ScrollView lifecycle, all dropdown/modal
   dismissal/navigation cases, cursor receipts, preset identity/geometry,
   Flare mixed-sign behavior, button hit targets, and resize-grip checks.
+- A forced official-SDK Release re-embed/rebuild was attempted against exact
+  head `46820c4`; the Release binary still fails two Settings assertions
+  (`scroll_view == nullptr`, `settings_body == nullptr`) while the same source
+  passes in the development/native matrix. This indicates the current
+  v0.829.0 release SDK/runtime does not yet carry the retained-body topology
+  needed by the repaired materialized surface. No PKG is claimed from that
+  binary; the SDK/release-lane compatibility must be resolved first.
