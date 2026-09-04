@@ -813,3 +813,9 @@ binary; the SDK/release-lane compatibility must be resolved first.
 - No Pulp PR, official SDK refresh, Spectr rebuild, screenshot sign-off, or PKG
   claim is authorized until the framework adds a distinct wrapper/content
   identity or an explicit alias-routing contract with adversarial tests.
+
+Follow-up `5f564f3f3` separates the authored ID registry from scroll-wrapper
+lookup and routes `setScrollContentSize` through the wrapper map; its focused
+336-test suite remains green and the lifetime regression passes 15 assertions.
+The alias layer still needs lifecycle/frame-clock ordering and transactional
+rollback coverage before the Pulp landing gate can be reopened.
