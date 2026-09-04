@@ -34,6 +34,11 @@ Last updated: 2026-09-03
   not yet eliminate—the wrapper-upgrade rollback gate, which still needs an
   end-to-end failure-injection test plus focus/gesture restoration proof.
 
+- Pulp `e3fef1ab3` now restores retained-subtree focus and overlay claims after
+  the internal detach/reattach. The WidgetBridge suite remains green at 119
+  cases / 1162 assertions. Gesture-state and full upgrade rollback coverage
+  remain under adversarial review; SDK/package work stays parked.
+
 ## 2026-09-03 browser mute-mode repair (latest)
 
 - Commit `4e05f47` keeps the generated pointer-hover helpers in the live
