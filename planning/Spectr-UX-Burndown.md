@@ -45,6 +45,12 @@ Last updated: 2026-09-03
   119 cases / 1162 assertions. Descendant frame-clock teardown, gesture-arbiter
   restoration, and stale-alias hardening are still open.
 
+- Pulp `8c7c104e9` hardens attach rollback against reentrant child mutation and
+  makes non-owning ScrollView aliases fail closed unless their wrapper remains
+  live in the bridge identity set. WidgetBridge proof remains green at 119
+  cases / 1162 assertions. Descendant frame-clock and gesture preservation are
+  still under review; no SDK/package claim is made.
+
 ## 2026-09-03 browser mute-mode repair (latest)
 
 - Commit `4e05f47` keeps the generated pointer-hover helpers in the live
