@@ -776,7 +776,21 @@ window.FilterBank = FilterBank;`,
   // through commitMany and are deliberately unaffected: this is a policy for
   // drawing, not a veto on saying "mute".
   const commitDrawnGains = (map) => {
-    if (unmuteOnDrawRef.current) { commitMany(map, true); return; }
+    // Read the policy from the live Settings object at the commit boundary.
+    // The generated materialized surface can preserve the bank callback while
+    // replacing its hook refs; a stale/unavailable ref must not make the
+    // default-on redraw policy silently behave as OFF.
+    if (settings.unmuteOnDraw !== false) {
+      // Drawing is never a mute command. If a mode hands us the categorical
+      // -Infinity sentinel (for example while starting from a hydrated mute),
+      // restore that band's authored finite gain before publishing the edit.
+      const audible = new Map();
+      for (const [index, value] of map)
+        audible.set(index, isMuted(value)
+          ? editBaseGain(targetGainsRef.current[index], index) : value);
+      commitMany(audible, true);
+      return;
+    }
     const held = new Map();
     for (const [index, value] of map)
       held.set(index, isMuted(targetGainsRef.current[index]) ? -Infinity : value);
@@ -3114,24 +3128,32 @@ window.PatternManager = PatternManager;`,
     // a semantic snapshot, not the paint clock: publishing it for every raw
     // sample reconciles the full authored tree and stalls the next sample.
     replaceSpectrSource(
-      "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }\n  const hoverBand = hover && !hover.mini ? hover.band : -1;",
-      String.raw`  const [hover, setHover] = useState(null); // { band, freq, db, x, y }
-  const hoverRef = useRef(null);
-  const statusRefreshAtRef = useRef(0);
-  const hoverBand = hover && !hover.mini ? hover.band : -1;
+      '  const canvasRef = useRef(null);\n  const overlayRef = useRef(null);',
+      String.raw`  const canvasRef = useRef(null);
+  const overlayRef = useRef(null);
+  // These helpers are declared at the component boundary so generated
+  // materialized variants cannot leave pointer handlers referencing a helper
+  // from a discarded patch scope.
   const updatePointerHover = next => {
     hoverRef.current = next;
     if (!pointerRef.current || !pointerRef.current.mode) setHover(next);
   };
   const liveHoverLabel = current => {
     if (!current || current.mini) return '';
-    const band = current.band;
-    const rendered = renderGainsRef.current[band];
+    const rendered = renderGainsRef.current[current.band];
     const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;
-    const db = isMuted(targetGainsRef.current[band]) ? '−∞' : (gv * 24).toFixed(1);
-    return window.SpectrFreq.fmt(bandCenterFreq(band)) + 'Hz   '
-      + db + (db === '−∞' ? '' : ' dB') + '   BAND ' + (band + 1) + '/' + N;
-  };
+    const db = isMuted(targetGainsRef.current[current.band]) ? '−∞' : (gv * 24).toFixed(1);
+    return window.SpectrFreq.fmt(bandCenterFreq(current.band)) + 'Hz   ' + db
+      + (db === '−∞' ? '' : ' dB') + '   BAND ' + (current.band + 1) + '/' + N;
+  };`,
+      'stable pointer helper closure');
+    replaceSpectrSource(
+      "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }\n  const hoverBand = hover && !hover.mini ? hover.band : -1;",
+      String.raw`  const [hover, setHover] = useState(null); // { band, freq, db, x, y }
+  const hoverRef = useRef(null);
+  const statusRefreshAtRef = useRef(0);
+  const hoverBand = hover && !hover.mini ? hover.band : -1;
+  // The stable component-boundary insertion owns the pointer helper closures.
   const updateLiveHoverStatus = () => {
     const current = hoverRef.current;
     const pointer = pointerRef.current;

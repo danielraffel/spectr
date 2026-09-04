@@ -697,7 +697,7 @@ window.spectrStartOracle = () => {
             const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
             return br.width * br.height - ar.width * ar.height;
           })[0], 'interactive filter canvas');
-        const target = canvas.parentElement;
+        let target = canvas.parentElement;
         const rect = target.getBoundingClientRect();
         const bandX = band => rect.left
           + (56 + (band + 0.5) * (target.clientWidth - 112) / 32)
@@ -759,6 +759,17 @@ window.spectrStartOracle = () => {
         let band = 2;
         for (const enabled of [true, false]) {
           await setRedrawUnmutes(enabled);
+          // Settings updates can replace the materialized canvas wrapper.
+          // Always dispatch the mode matrix to the live node, never to a
+          // detached pre-toggle element whose React handlers have retired.
+          const liveCanvas = await spectrWaitFor(() => Array.from(
+            document.querySelectorAll('canvas'))
+            .filter(candidate => getComputedStyle(candidate).pointerEvents !== 'none')
+            .sort((a, b) => {
+              const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+              return br.width * br.height - ar.width * ar.height;
+            })[0], 'live interactive filter canvas after redraw policy');
+          target = liveCanvas.parentElement;
           for (const [modeName, digit] of MODES) {
             spectrKey(digit, 'Digit' + digit);
             await spectrWaitFor(
