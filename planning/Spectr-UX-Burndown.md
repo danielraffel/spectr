@@ -723,3 +723,8 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   in the native self-removing manager hit-target matrix, so this is not green.
 - No package was produced; exact-current UX matrix, canvas dispatch, host
   acceptance, and release gates remain open.
+- The same full test now gets past Settings and snapshot setup, but fails at
+  the native self-removing Pattern Manager cycle: the retained menu label's
+  logical click owner differs from the native hit target after the atlas
+  transition. This is additional evidence that the reparent/replay path is
+  not yet release-ready.
