@@ -22,6 +22,12 @@ Last updated: 2026-09-03
   1162 assertions. SDK rebuild and Spectr native reruns remain held until the
   exception-atomic and lifecycle/focus restoration review clears.
 
+- Pulp follow-up `2363beba7` extends that policy to flex, box-sizing, and
+  position updates, with the retained-wrapper regression still green (30
+  assertions in the targeted case). This is framework progress only; the
+  rollback, focus/gesture, stale-pointer, and legacy-reparent gates remain
+  open, so no SDK or PKG is authorized.
+
 ## 2026-09-03 browser mute-mode repair (latest)
 
 - Commit `4e05f47` keeps the generated pointer-hover helpers in the live
