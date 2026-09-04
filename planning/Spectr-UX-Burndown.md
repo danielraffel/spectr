@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-03
 
+## 2026-09-03 modulation settings update
+
+- Settings now ships as one scroll surface with modulation inline; the legacy
+  tab rail and tab state are removed from the emitted modulation component.
+- Each LFO has an always-visible enable toggle. Main LFO Shape/Rate/Depth rows
+  render only when `enabled` is true; LFO 2 Shape/Rate/Depth rows render only
+  when `lfo2Enabled` is true, so disabling either source collapses its options.
+- Both enable toggles publish their host parameters (`4000` and `4010`) and
+  re-expand synchronously when turned back on. Emitted application scripts
+  pass `node --check`; native/browser release gates remain blocked by the
+  pre-existing N1, frozen-atlas, and analyzer failures recorded below.
+
 ## 2026-09-03 restore verification (latest)
 
 - **Not release-ready; no new PKG or PNG proof.** The only artifact remains
@@ -46,18 +58,21 @@ Settings topology, and analyzer gates pass and exact-head PNGs are regenerated.
 
 ### Dispatch repair landed in the active Pulp successor
 
-Pulp successor commit `eedc64bb3` makes the anchored live CanvasWidget the
+Pulp successor commit `d6c123307` makes the anchored live CanvasWidget the
 visible, hit-testable owner (and hides the source command canvas), while
 explicitly keeping the behavior owner `PointerEvents::auto`. Its focused
 WidgetBridge sole-owner test passes. Spectr still needs an SDK rebuild against
 that exact commit and a passing N1 end-to-end request assertion before CUR,
 DDM, and the native overlay rows can advance.
 
-The first SDK-linked Spectr rerun against the eed library archives still fails
-N1 (`requests=[]`); the live target is now opacity `0.0` in the native hit tree.
-That is concrete evidence that the Pulp ownership handoff is not yet correctly
-wired for Spectr's anchored target. The commit is preserved, but it is not yet
-an end-to-end fix and must not be treated as a green dispatch landing.
+The first SDK-linked Spectr rerun against the d6c123307 library archives still
+fails N1 (`requests=[]`); the live target is now opacity `0.0` in the native hit
+tree. That is concrete evidence that the Pulp ownership handoff is not yet
+correctly wired for Spectr's anchored target. The successor audit further found
+that the target's native pointer callback is cleared while Spectr only aliases
+the React callback map; the generic callback-registration seam still needs an
+end-to-end root-click proof. The commit is preserved, but it is not yet an
+end-to-end fix and must not be treated as a green dispatch landing.
 
 ## 2026-09-03 latest verification (current worktree)
 

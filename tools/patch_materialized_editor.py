@@ -24,6 +24,7 @@ Idempotent: re-running it after a successful pass reports "already applied".
 import glob
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -4062,7 +4063,9 @@ def augment_modulation_tabs(document):
 
 def separate_modulation_tab_content(document):
     html = document.get('html', '')
-    if 'data-spectr-settings-general-tab' in html:
+    if ('data-spectr-settings-general-tab' in html
+            or 'const [tab, setTab]' not in html
+            or '/* settings tabs */' in html):
         return False
     start = '    React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },'
     if start not in html:
@@ -4109,6 +4112,71 @@ def strengthen_modulation_state(document):
     if 'aria-pressed": value.targetSelection === "none"' not in html:
         html = html.replace('"data-spectr-modulation-select": "none", onClick:', '"data-spectr-modulation-select": "none", "aria-pressed": value.targetSelection === "none", onClick:', 1)
         changed = True
+    document['html'] = html
+    return changed
+
+
+def simplify_settings_single_scroll(document):
+    """Ship one stable Settings scroll surface with modulation inline.
+
+    The tabbed variant is not reliable in the native materialized atlas yet.
+    Keep both General and modulation controls in one body for this release,
+    hide the tab rail, and canonicalize duplicate modulation mounts left by
+    earlier idempotent transforms.  This preserves every LFO control while
+    removing the competing tab/overlay topology.
+    """
+    html = document.get('html', '')
+    # Repair the intermediate shape produced by an interrupted prior pass.
+    html = re.sub(
+        r'  \),\n  \);\n  /\* tabs complete \*/\n\}\nReact\.createElement\(SpectrModulationSettings, null\),\s*',
+        '  );\n}\n', html, count=1)
+    html = html.replace('"NONE")])))\n  );\n}\nfunction SettingsModal',
+                        '"NONE")]))))\n  );\n}\nfunction SettingsModal', 1)
+    start = html.find('function SpectrModulationSettings() {')
+    end = html.find('\nfunction SettingsModal(', start)
+    if start < 0 or end <= start:
+        return False
+    segment = html[start:end]
+    original = segment
+    # The single-scroll release has no tab state or tab event handlers.  Strip
+    # the legacy tab helper/effect as well as the hidden rail so the emitted
+    # component cannot reference stale ``tab``/``setTab`` bindings.
+    segment = re.sub(r'\n  /\* settings tabs \*/', '', segment, count=1)
+    segment = re.sub(r'\n  React\.useEffect\(\(\) => \{ const style = document\.createElement\("style"\);.*?return \(\) => style\.remove\(\); \}, \[\]\);', '', segment, count=1, flags=re.S)
+    segment = re.sub(r'\n  const tabButton = \(key, label\) => .*?(?=\n  return )', '', segment, count=1, flags=re.S)
+    segment = segment.replace('  const [tab, setTab] = React.useState("general");\n', '')
+    segment = segment.replace('  const [tab, setTab] = React.useState("modulation");\n', '')
+    segment = segment.replace('    tab === "modulation" && React.createElement(SpectrSettingsGroup,',
+                              '    React.createElement(SpectrSettingsGroup,')
+    segment = segment.replace('    tab === "modulation" && ', '')
+    segment = segment.replace('    tab === "general" && React.createElement("div", { "data-spectr-settings-general-tab": true, style: { padding: "10px 4px", color: "rgba(255,255,255,0.5)", fontFamily: "var(--sans)", fontSize: 10 } }, "General editor settings are shown below."),\n', '')
+    # Remove the tab rail while leaving its containing surface harmless.
+    segment = segment.replace('style: { position: "absolute", top: 76, left: 26, right: 26, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
+                              'style: { display: "none" }', 1)
+    segment = segment.replace('    React.createElement("div", { role: "tablist", style: { display: "flex", gap: 5, marginBottom: 14 } }, tabButton("general", "GENERAL"), tabButton("modulation", "MODULATION")),\n', '')
+    # Each LFO toggle is the disclosure control: its options disappear while
+    # disabled and re-expand immediately when enabled.
+    for label, state in [
+            ('Shape', 'value.enabled'), ('Rate', 'value.enabled'),
+            ('Depth', 'value.enabled'), ('LFO 2 shape', 'value.lfo2Enabled'),
+            ('LFO 2 rate', 'value.lfo2Enabled'),
+            ('LFO 2 depth', 'value.lfo2Enabled')]:
+        segment = segment.replace(
+            f'    React.createElement(SpectrSettingsField, {{ label: "{label}"',
+            f'    {state} && React.createElement(SpectrSettingsField, {{ label: "{label}"', 1)
+        segment = segment.replace(
+            f'    /* @__PURE__ */ React.createElement(SpectrSettingsField, {{ label: "{label}"',
+            f'    {state} && /* @__PURE__ */ React.createElement(SpectrSettingsField, {{ label: "{label}"', 1)
+    if segment != original:
+        html = html[:start] + segment + html[end:]
+    # Canonicalize the SettingsModal call site to exactly one inline LFO group.
+    calls = re.compile(r'(?:/\* @__PURE__ \*/ )?React\.createElement\(SpectrModulationSettings, null\),\s*')
+    html = calls.sub('', html)
+    body_anchor = 'settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null)'
+    if body_anchor in html and 'React.createElement(SpectrModulationSettings, null), ' not in html:
+        html = html.replace(body_anchor,
+                            'React.createElement(SpectrModulationSettings, null), ' + body_anchor, 1)
+    changed = html != document.get('html', '')
     document['html'] = html
     return changed
 
@@ -4608,6 +4676,10 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          settings tab content switching')
+    if simplify_settings_single_scroll(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          single-scroll Settings with inline modulation')
     if enforce_settings_fixed_shell(document):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
