@@ -692,6 +692,21 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   realtime audio timing. Deterministic audio tests own that claim.
 - A skipped, unavailable, or dirty-provenance gate is not a pass.
 - Update this ledger in the same commit as each coherent completed slice.
+
+### 2026-09-03 exact-head browser/native recheck
+
+- On Spectr head `c84ba9954169b45c951de647f504042515de8792`, the current
+  browser-side release gates pass: `Spectr-browser-build-info-timeout`,
+  `Spectr-browser-ux-polish`, and `Spectr-browser-preset-parity` (3/3).
+- The focused native Settings command test passes 54 assertions, but the
+  native N1 canvas tap still publishes no editor request (`requests=[]`) on
+  the available SDK-linked binary. The frozen Settings replay likewise still
+  fails to discover the body-only native `ScrollView` on that binary.
+- Pulp successor commit `2de6d5efa20e4895530ac0a76b940eb02a2fe7e8` remains the
+  authoritative dispatch candidate; its focused WidgetBridge tests 14402 and
+  14450 pass. A fresh SDK rebuild was not started because the preserved
+  successor checkout lacks its prepared external VST3 dependency, so no
+  end-to-end dispatch or release claim is made from this observation.
 # 2026-09-04 Settings body-scroll lifecycle follow-up
 
 - The durable materialized document now contains the authored
