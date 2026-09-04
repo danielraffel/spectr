@@ -740,3 +740,17 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   consequently advances to the next real assertion: selected preset title/SVG
   identity is still incoherent after selecting `factory:tilt`. Preset parity
   remains open pending a live-state text/identity repair.
+
+### 2026-09-04 Native preset identity repair
+
+- Commit `11731c6` repairs the replayed Pattern Manager title so its live text
+  follows the selected pattern identity, and replaces the unsupported DOM-SVG
+  attribute check with a native `SvgRectWidget` geometry comparison.
+- The rebuilt official-SDK frozen state-atlas test passes `886` assertions,
+  including Settings body-only scrolling, modal lifecycle, preset selection,
+  and native preview geometry changing between `factory:tilt` and
+  `factory:flat`.
+- The complete native N1 binary is `19/24` test cases green (`6978/7068`
+  assertions). The five remaining failures are confined to canvas hit/input
+  ownership and resize-grip overlap caused by the two full-surface materialized
+  canvas siblings; this is the next shared Pulp dispatch blocker.
