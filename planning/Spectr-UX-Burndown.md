@@ -2,6 +2,23 @@
 
 Last updated: 2026-09-03
 
+## 2026-09-03 dispatch owner/target diagnosis (not a fix)
+
+- Rebuilt the Pulp successor bridge target (122 assertions / 9 cases passed)
+  and reran Spectr N1 against a freshly installed SDK from that worktree.
+- Instrumentation proves `bindCanvasBehaviorAt` binds
+  `browser:canvas:0 -> Browser_canvas_11` from `__behavior_pr_1` and
+  `browser:canvas:1 -> Browser_canvas_22` from `__behavior_pr_2`, both relaying
+  to `__behavior_pr_3`.
+- The candidate runtime registration/owner-transparency experiment changed the
+  native hit target between `__behavior_pr_3` and `Browser_canvas_22`, but the
+  tap still produced `requests=[]`; it is therefore **not accepted**.
+- The remaining defect is narrower than callback registration: the runtime's
+  materialized canvas registry does not identify the anchored Browser canvas
+  objects used by native binding, and React can restore the full-size wrapper's
+  hit policy after the bind. No product change is claimed from this experiment;
+  diagnostic edits were reverted.
+
 ## 2026-09-03 modulation settings update
 
 - Settings now ships as one scroll surface with modulation inline; the legacy
