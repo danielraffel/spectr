@@ -19,6 +19,12 @@ Last updated: 2026-09-04
   siblings. The same WidgetBridge proof remains green (119 cases / 1,167
   assertions). Ultra review is required before SDK refresh.
 
+- The exact-head Ultra review remains blocked on a deeper callback-lifetime
+  contract: frame-clock callbacks may self-remove their executing view, and
+  retained descendant lifecycle hooks are still root-only. The Pulp view suite
+  also remains green (57 cases / 319 assertions), but this does not authorize
+  an SDK refresh or Spectr package.
+
 ## 2026-09-04 Pulp successor progress (not an SDK/release gate)
 
 - Pulp successor `0cc311d66` now preserves a retained ScrollView wrapper on
