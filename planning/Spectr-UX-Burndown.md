@@ -16,6 +16,12 @@ Last updated: 2026-09-03
   landed. Spectr remains parked on the official SDK with N1, Settings topology,
   and analyzer gates unresolved.
 
+- Follow-up Pulp head `782a01397` adds a live `style_target` policy so retained
+  scroll wrappers receive visibility, pointer-events, opacity, background,
+  cursor, and transform updates; its regression suite is green at 119 cases /
+  1162 assertions. SDK rebuild and Spectr native reruns remain held until the
+  exception-atomic and lifecycle/focus restoration review clears.
+
 ## 2026-09-03 browser mute-mode repair (latest)
 
 - Commit `4e05f47` keeps the generated pointer-hover helpers in the live
