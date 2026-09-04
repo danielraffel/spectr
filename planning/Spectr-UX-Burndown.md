@@ -26,6 +26,15 @@ removal-lifetime suites still pass (122 and 429 assertions). This closes relay-
 local teardown UAFs; outer dispatcher root destruction remains outside the
 current contract and is not claimed as solved.
 
+## 2026-09-03 exact-head SDK retest
+
+The Release SDK install from Pulp `2de6d5efa20e4895530ac0a76b940eb02a2fe7e8`
+completed successfully at `/tmp/pulp-sdk-2de6d5efa-v3`, and Spectr rebuilt its
+native N1 target against that prefix. N1 remains **FAIL**: the wrapper wins the
+native hit test and the center tap produces `requests=[]` despite the live
+canvas being visible. Settings frozen-atlas remains **FAIL** (root-sized panel,
+no body ScrollView), so no exact-head package or visual sign-off is authorized.
+
 ## 2026-09-03 restore verification (latest)
 
 - **Not release-ready; no new PKG or PNG proof.** The only artifact remains
