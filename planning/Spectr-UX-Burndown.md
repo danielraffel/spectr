@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-03
 
+## 2026-09-04 Pulp successor progress (not an SDK/release gate)
+
+- Pulp successor `0cc311d66` now preserves a retained ScrollView wrapper on
+  repeated and ordinary reparent operations, rejects self/descendant cycles,
+  attaches the wrapper before retained content, publishes aliases after the
+  structural attach, and routes overflow/scroll-behavior/overscroll writes to
+  the wrapper. The focused WidgetBridge suite is green (119 cases, 1158
+  assertions).
+- This does **not** authorize an SDK rebuild or Spectr package yet. Ultra still
+  requires exception-atomic attach/rollback coverage and a complete policy for
+  generic style/visibility/geometry/ARIA proxying before the Pulp head can be
+  landed. Spectr remains parked on the official SDK with N1, Settings topology,
+  and analyzer gates unresolved.
+
 ## 2026-09-03 browser mute-mode repair (latest)
 
 - Commit `4e05f47` keeps the generated pointer-hover helpers in the live
