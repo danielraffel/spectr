@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-03
 
+## 2026-09-03 browser mute-mode repair (latest)
+
+- Commit `4e05f47` keeps the generated pointer-hover helpers in the live
+  `FilterBank` closure and makes redraw-unmute policy read the live Settings
+  value at draw-commit time. This removes the `liveHoverLabel`/
+  `updatePointerHover` runtime errors that prevented draw publication.
+- The complete browser UX matrix is green on this head: resize, popups,
+  mute-modes, build-info-timeout, UX-polish, and preset-parity (6/6).
+- This is source-level/browser proof only. Native exact-SDK dispatch,
+  current-head screenshots, Logic host acceptance, and release packaging remain
+  outstanding as recorded below.
+
 ## 2026-09-03 dispatch owner/target diagnosis (not a fix)
 
 - Rebuilt the Pulp successor bridge target (122 assertions / 9 cases passed)
