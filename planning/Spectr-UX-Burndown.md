@@ -14,6 +14,12 @@ Last updated: 2026-09-03
   pass `node --check`; native/browser release gates remain blocked by the
   pre-existing N1, frozen-atlas, and analyzer failures recorded below.
 
+Pulp successor follow-up `5b11945a3` broadens materialized owner discovery to
+include click, wheel, mouse, pointer, and split-channel registrations. Its
+focused WidgetBridge, animation, and removal-lifetime suites pass (122, 162,
+and 429 assertions respectively). Spectr still requires an SDK rebuilt from
+that exact commit before this can be treated as an end-to-end N1 repair.
+
 ## 2026-09-03 restore verification (latest)
 
 - **Not release-ready; no new PKG or PNG proof.** The only artifact remains
