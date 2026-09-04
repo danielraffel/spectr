@@ -51,6 +51,12 @@ Last updated: 2026-09-03
   cases / 1162 assertions. Descendant frame-clock and gesture preservation are
   still under review; no SDK/package claim is made.
 
+- Pulp `ba8b20179` re-runs the derived focus-gain hook when restoring a focused
+  retained child, so TextEditor/InlineValueEditor caret state can recover in
+  addition to the root focus slot. Targeted wrapper identity proof remains
+  green (30 assertions); descendant lifecycle and gesture restoration are not
+  yet accepted.
+
 ## 2026-09-03 browser mute-mode repair (latest)
 
 - Commit `4e05f47` keeps the generated pointer-hover helpers in the live
