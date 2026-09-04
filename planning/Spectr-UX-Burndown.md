@@ -20,6 +20,12 @@ focused WidgetBridge, animation, and removal-lifetime suites pass (122, 162,
 and 429 assertions respectively). Spectr still requires an SDK rebuilt from
 that exact commit before this can be treated as an end-to-end N1 repair.
 
+Pulp follow-up `2de6d5efa20e4895530ac0a76b940eb02a2fe7e8` adds post-callback
+lifetime checks to the pointer, wheel, and click relays. The focused bridge and
+removal-lifetime suites still pass (122 and 429 assertions). This closes relay-
+local teardown UAFs; outer dispatcher root destruction remains outside the
+current contract and is not claimed as solved.
+
 ## 2026-09-03 restore verification (latest)
 
 - **Not release-ready; no new PKG or PNG proof.** The only artifact remains
