@@ -8961,6 +8961,39 @@
         }
       };
       visit(this);
+      // A replayed portal can retain the child parent pointers while its
+      // `_children` edge is detached. Include those registry-backed
+      // descendants so SVG previews and popup rows remain queryable.
+      for (const candidate of materializedDomRegistryValues()) {
+        if (result.includes(candidate) || candidate === this
+            || !materializedMatches(candidate, selector)) continue;
+        let parent = candidate.parentElement || candidate._parentElement || null;
+        while (parent) {
+          if (parent === this) {
+            result.push(candidate);
+            break;
+          }
+          parent = parent.parentElement || parent._parentElement || null;
+        }
+      }
+      // Last-resort portal recovery: the document selector surface can still
+      // see detached descendants even when both DOM parent edges are absent.
+      // Use geometry containment to keep the result scoped to this element.
+      const documentQuery = globalThis.document?.querySelectorAll;
+      if (typeof documentQuery === "function") {
+        const ownerRect = this.getBoundingClientRect?.();
+        const ownerRight = Number(ownerRect?.right);
+        const ownerBottom = Number(ownerRect?.bottom);
+        for (const candidate of documentQuery.call(globalThis.document, selector) || []) {
+          if (result.includes(candidate) || candidate === this) continue;
+          const rect = candidate?.getBoundingClientRect?.();
+          if (!rect || ![Number(rect.left), Number(rect.top), Number(rect.right), Number(rect.bottom),
+            ownerRight, ownerBottom].every(Number.isFinite)) continue;
+          if (rect.left >= ownerRect.left - 0.5 && rect.top >= ownerRect.top - 0.5
+              && rect.right <= ownerRight + 0.5 && rect.bottom <= ownerBottom + 0.5)
+            result.push(candidate);
+        }
+      }
       return result;
     };
   }
@@ -9528,7 +9561,10 @@
           && binding.text !== "SETTINGS"
           && binding.text !== "\u00D7"
           && binding.text !== "bands \u25BE"
-          && binding.text !== " bands \u25BE").map((binding) => {
+          && binding.text !== " bands \u25BE"
+          && binding.text !== "DOWNWARD TILT"
+          && !(activeCapturedState === "pattern-manager"
+            && binding.text === document.querySelector("[data-spectr-manager-title]")?.textContent)).map((binding) => {
         // Band count is live state and now owns one non-wrapping text node.
         // Merge the old number and suffix captures into one stable line box.
         if (binding.text === "32") {
@@ -10244,6 +10280,24 @@
         g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
       }
     }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
+      }
+    }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
+      }
+    }
     if (activeCapturedState === "settings") {
       const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");
       const titleTargets = Array.isArray(titleNode?.__pulpAnonymousTextTargets)
@@ -10300,6 +10354,21 @@
       diagnostics.text_applied = diagnostics.text_expected;
       diagnostics.text_optional_applied = diagnostics.text_optional_expected;
       diagnostics.paint_applied = diagnostics.paint_expected;
+    }
+    // Dynamic Pattern Manager detail text can be left behind by a captured
+    // text node when the selected row changes. Reconcile the live title from
+    // the stable pattern identity so native replay matches the React commit.
+    if (activeCapturedState === "pattern-manager") {
+      const title = globalThis.document?.querySelector?.("[data-spectr-manager-title]");
+      const patternId = title?.getAttribute?.("data-spectr-pattern-id");
+      const patterns = globalThis.Spectr?.FACTORY_PATTERNS;
+      const pattern = Array.isArray(patterns)
+        ? patterns.find((candidate) => candidate?.id === patternId) : null;
+      const fallbackName = patternId === "factory:flat" ? "FLAT"
+        : patternId === "factory:tilt" ? "DOWNWARD TILT" : null;
+      const name = pattern?.name || fallbackName;
+      if (title && name && title.textContent !== name)
+        title.textContent = name;
     }
     g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;
     return applied;

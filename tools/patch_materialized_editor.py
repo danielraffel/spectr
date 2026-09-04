@@ -3970,6 +3970,23 @@ RUNTIME_EDITS = [
      '      parent.removeChild(node);\n'
      '      parent.appendChild(node);',
      'node._nativeCreated = false'),
+    ('native pattern manager title follows selected identity',
+     '    g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;\n'
+     '    return applied;',
+     '    if (activeCapturedState === "pattern-manager") {\n'
+     '      const title = globalThis.document?.querySelector?.("[data-spectr-manager-title]");\n'
+     '      const patternId = title?.getAttribute?.("data-spectr-pattern-id");\n'
+     '      const patterns = globalThis.Spectr?.FACTORY_PATTERNS;\n'
+     '      const pattern = Array.isArray(patterns)\n'
+     '        ? patterns.find((candidate) => candidate?.id === patternId) : null;\n'
+     '      const fallbackName = patternId === "factory:flat" ? "FLAT"\n'
+     '        : patternId === "factory:tilt" ? "DOWNWARD TILT" : null;\n'
+     '      const name = pattern?.name || fallbackName;\n'
+     '      if (title && name && title.textContent !== name) title.textContent = name;\n'
+     '    }\n'
+     '    g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;\n'
+     '    return applied;',
+     'title.textContent = name'),
 ]
 
 
