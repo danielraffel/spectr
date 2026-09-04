@@ -13,6 +13,12 @@ Last updated: 2026-09-04
   assertions. Ultra review is being repinned to this exact SHA; SDK rebuild,
   Spectr reruns, and package work remain held until that verdict is explicit.
 
+- Follow-up Pulp head `dad9f7e8efbd314db126d84b8a5e308d892723cc` additionally
+  preserves interaction state across ordinary retained-widget reparenting and
+  uses a bounded, allocation-free frame-clock walk that tolerates shifted
+  siblings. The same WidgetBridge proof remains green (119 cases / 1,167
+  assertions). Ultra review is required before SDK refresh.
+
 ## 2026-09-04 Pulp successor progress (not an SDK/release gate)
 
 - Pulp successor `0cc311d66` now preserves a retained ScrollView wrapper on
