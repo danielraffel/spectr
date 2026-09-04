@@ -797,5 +797,19 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   (`scroll_view == nullptr`, `settings_body == nullptr`) while the same source
   passes in the development/native matrix. This indicates the current
   v0.829.0 release SDK/runtime does not yet carry the retained-body topology
-  needed by the repaired materialized surface. No PKG is claimed from that
-  binary; the SDK/release-lane compatibility must be resolved first.
+needed by the repaired materialized surface. No PKG is claimed from that
+binary; the SDK/release-lane compatibility must be resolved first.
+
+### 2026-09-04 Pulp successor identity audit
+
+- Pulp successor head `c910bd88b` is clean and rebased onto current `origin/main`.
+- Focused WidgetBridge/ScrollView/responsive coverage passes 336/336; the
+  retained-container lifetime test passes 11 assertions.
+- The safer ScrollView-wrapper experiment preserves the original View and its
+  callbacks, but currently gives the wrapper and retained content the same
+  native ID. Subsequent DOM parent resolution or attribute writes can therefore
+  address the wrong node. This is a framework identity/alias blocker, not a
+  Spectr implementation failure.
+- No Pulp PR, official SDK refresh, Spectr rebuild, screenshot sign-off, or PKG
+  claim is authorized until the framework adds a distinct wrapper/content
+  identity or an explicit alias-routing contract with adversarial tests.
