@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-04
 
+## 2026-09-04 review-only PKG 1.0.9
+
+- Built four Release payloads from exact Spectr head
+  `35ee93cbc2a5460e2a71e39be948be9c3ba63b0a` against distribution-eligible
+  Pulp SDK 0.829.0 (`cc75fa91cf6942a197b2fb00b38ac679de3cbcd1`).
+- Review artifact: `artifacts/review-1.0.9/Spectr-1.0.9.pkg`, SHA-256
+  `9a45ada469d475f1f64f32579788501333da196569f90d3aca4f09ab2429302b`.
+  Notarization `8673de53-22be-45e6-9bdb-2efe3fbb6594` is accepted; staple,
+  Gatekeeper, installer signature, and bundle relocatability checks pass.
+- This is not final acceptance. Exact-current tests report: core 167/169 cases,
+  native 22/24 cases (Settings body/ScrollView topology), and browser UX 6/7
+  groups (analyzer live-hover status). The artifact is for structured human UX
+  review while the generic Pulp imported-view lifecycle solution is reviewed.
+
 ## 2026-09-04 exact-head framework follow-up (not an SDK/release gate)
 
 - Pulp successor `efdac7578df8557a04c83f254cd58c4ea17256f7` is clean and
