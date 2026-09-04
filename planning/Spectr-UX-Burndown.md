@@ -735,3 +735,8 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   (325 preview rects, 314 distributed bars) but its descendant selector call
   throws `not a function` in the replayed materialized wrapper. This remains a
   harness/runtime compatibility issue to resolve before claiming preset proof.
+- The native materialized wrapper measured as `Element` with no
+  `querySelectorAll`; the runtime fallback now supplies that method. The test
+  consequently advances to the next real assertion: selected preset title/SVG
+  identity is still incoherent after selecting `factory:tilt`. Preset parity
+  remains open pending a live-state text/identity repair.
