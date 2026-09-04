@@ -728,3 +728,6 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   logical click owner differs from the native hit target after the atlas
   transition. This is additional evidence that the reparent/replay path is
   not yet release-ready.
+- Independent focused native checks against the rebuilt binary still pass:
+  cursor `54` assertions and dropdown Escape/outside/arrow/Return coverage
+  `253` assertions. These are useful slice receipts, not a release gate.
