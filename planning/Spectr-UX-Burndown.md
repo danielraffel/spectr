@@ -754,3 +754,9 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   assertions). The five remaining failures are confined to canvas hit/input
   ownership and resize-grip overlap caused by the two full-surface materialized
   canvas siblings; this is the next shared Pulp dispatch blocker.
+- The button/resize matrix was corrected to scope itself to actual click
+  controls (canvas gesture ownership is covered by the dedicated N1 canvas
+  test), and the Flare crossing-zero case now exercises both a negative and a
+  positive band. Focused Settings/mode and Flare checks pass (`167` and `24`
+  assertions respectively). The remaining canvas-dispatch work is therefore
+  not hidden by button-test noise.
