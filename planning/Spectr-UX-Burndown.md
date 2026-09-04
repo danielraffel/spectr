@@ -28,6 +28,12 @@ Last updated: 2026-09-03
   rollback, focus/gesture, stale-pointer, and legacy-reparent gates remain
   open, so no SDK or PKG is authorized.
 
+- Pulp `dec0500f5` adds transactional rollback in `View::add_child` when an
+  `on_attached()` hook throws, with a two-assertion regression; the WidgetBridge
+  suite remains green at 119 cases / 1162 assertions. This reduces—but does
+  not yet eliminate—the wrapper-upgrade rollback gate, which still needs an
+  end-to-end failure-injection test plus focus/gesture restoration proof.
+
 ## 2026-09-03 browser mute-mode repair (latest)
 
 - Commit `4e05f47` keeps the generated pointer-hover helpers in the live
