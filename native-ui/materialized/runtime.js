@@ -5485,6 +5485,25 @@
       getAttribute(_name) {
         return null;
       },
+      // Keep selector traversal available for registry fallback wrappers as
+      // well as real DOM elements. State-atlas replay can temporarily return
+      // this lightweight wrapper for a retained popup node; without these
+      // methods its descendants become uninspectable and event routing loses
+      // the live row.
+      querySelector(selector) {
+        return g5.__pulpFindMaterializedElement__?.(selector, this) || null;
+      },
+      querySelectorAll(selector) {
+        return materializedDomRegistryValues().filter((candidate) => {
+          if (candidate === this || !materializedMatches(candidate, selector)) return false;
+          let parent = candidate.parentElement || candidate._parentElement || null;
+          while (parent) {
+            if (parent === this) return true;
+            parent = parent.parentElement || parent._parentElement || null;
+          }
+          return false;
+        });
+      },
       getBoundingClientRect() {
         const rect = g().getLayoutRect?.(id);
         if (!rect) return emptyLayoutRect();

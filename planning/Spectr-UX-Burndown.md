@@ -731,3 +731,7 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
 - Independent focused native checks against the rebuilt binary still pass:
   cursor `54` assertions and dropdown Escape/outside/arrow/Return coverage
   `253` assertions. These are useful slice receipts, not a release gate.
+- The native frozen-state test now reaches Pattern Manager detail rendering
+  (325 preview rects, 314 distributed bars) but its descendant selector call
+  throws `not a function` in the replayed materialized wrapper. This remains a
+  harness/runtime compatibility issue to resolve before claiming preset proof.
