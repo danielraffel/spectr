@@ -2,6 +2,17 @@
 
 Last updated: 2026-09-04
 
+## 2026-09-04 exact-head framework follow-up (not an SDK/release gate)
+
+- Pulp successor `efdac7578df8557a04c83f254cd58c4ea17256f7` is clean and
+  lineage-active. It adds a liveness re-check before retained-child lifecycle
+  dispatch, rejects duplicate retained ScrollView aliases without disturbing
+  the existing alias, and makes focus-restoration failure independent from
+  overlay/popup restoration.
+- The focused WidgetBridge suite remains green at 119 cases / 1,167
+  assertions. Ultra review is being repinned to this exact SHA; SDK rebuild,
+  Spectr reruns, and package work remain held until that verdict is explicit.
+
 ## 2026-09-04 Pulp successor progress (not an SDK/release gate)
 
 - Pulp successor `0cc311d66` now preserves a retained ScrollView wrapper on
