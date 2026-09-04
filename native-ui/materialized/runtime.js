@@ -9009,8 +9009,18 @@
     // shim's private _children edge was detached during portal replay.  Use
     // the registry as the authoritative child list so upgrading the Settings
     // panel to a ScrollView reattaches the complete header/body subtree.
+    // During state-atlas replay the DOM shim can lose the parent's `_children`
+    // array even though every retained child still points back at the parent.
+    // Recover that direct edge from the authoritative registry before asking
+    // the bridge to upgrade the container; otherwise the ScrollView is empty
+    // (the Settings labels/controls disappear from the native tree).
+    const retainedChildren = values.filter((candidate) => {
+      if (!candidate || candidate === node) return false;
+      return candidate.parentElement === node || candidate._parentElement === node;
+    });
     const nativeChildren = materializedElementChildren(node, registrySet)
       .concat(Array.isArray(node._children) ? node._children : [])
+      .concat(retainedChildren)
       .filter((child, index, all) => child && all.indexOf(child) === index);
     const temporaryId = nodeId + "__spectr_scroll_upgrade";
     // Preserve the live React/native bookkeeping while swapping the native
@@ -9021,19 +9031,26 @@
     // the scroll hint, restoring parent bookkeeping, native flags, attrs and
     // event registrations in one path. Direct bridge calls bypass those
     // contracts and differ across SDK releases.
-    // Re-append through Pulp's DOM bridge. Its existing-widget path upgrades
-    // a retained plain container to ScrollView while preserving the native
-    // child subtree and authored parent relationship.
+    // Re-append through Pulp's DOM bridge. The merged SDK's existing-widget
+    // path upgrades a retained plain container to ScrollView while preserving
+    // the native child subtree and authored parent relationship.
     bridge.domAppend(parentId, nodeId, materializedNodeTag(node), "scroll");
     // __domRemove(..., preserve=1) intentionally clears _nativeCreated for
     // the retained JS subtree. The direct native domAppend fast path does not
     // run Element.appendChild, so restore that lifecycle bit explicitly (and
     // for every descendant) or later React commits treat live labels as
     // detached and skip their native updates/event wiring.
+    const childrenFor = (element) => {
+      const direct = (Array.isArray(element?._children) ? element._children : [])
+        .concat(values.filter((candidate) => candidate && candidate !== element
+          && (candidate.parentElement === element
+              || candidate._parentElement === element)));
+      return direct.filter((child, index, all) => child && all.indexOf(child) === index);
+    };
     const markNative = (element) => {
       if (!element) return;
       element._nativeCreated = true;
-      const children = Array.isArray(element._children) ? element._children : [];
+      const children = childrenFor(element);
       for (const child of children) {
         // The preserve path can clear the reverse parent pointer while the
         // parent still owns the child in `_children`. Restore both sides so
@@ -9052,7 +9069,7 @@
       const hint = typeof __pulpElementWantsScrollView__ === "function"
         && __pulpElementWantsScrollView__(element) ? "scroll" : "";
       bridge.domAppend(parentId, childId, materializedNodeTag(element), hint);
-      const children = Array.isArray(element._children) ? element._children : [];
+      const children = childrenFor(element);
       for (const child of children) appendNativeSubtree(child, childId);
     };
     for (const child of nativeChildren) appendNativeSubtree(child, nodeId);
@@ -9072,11 +9089,22 @@
         __pulpRegisterAutoDomEvents__(element);
       if (typeof __pulpReplayNativeEventListeners__ === "function")
         __pulpReplayNativeEventListeners__(element);
+      // A preserved state-atlas subtree may keep its React props while the
+      // bridge's callback registrations were cleared by detach().  Rebind
+      // those handlers explicitly; otherwise retained controls remain visible
+      // and hit-testable but their clicks become no-ops after Settings closes.
+      if (element.props && typeof element.props === "object") {
+        for (const key of Object.keys(element.props)) {
+          if (isEventHandler(key))
+            applyEventHandler(String(element.__pulpId || element.id || ""),
+              key, element.props[key]);
+        }
+      }
       if (element.style && typeof element.style._flushAll === "function")
         element.style._flushAll();
       if (typeof element._reapplyStylesheets === "function")
         element._reapplyStylesheets();
-      const children = Array.isArray(element._children) ? element._children : [];
+      const children = childrenFor(element);
       for (const child of children) rehydrateNative(child);
     };
     rehydrateNative(node);
@@ -9085,6 +9113,15 @@
       node.style._flushAll();
     node.__spectrNativeScrollView = true;
     return true;
+  }
+  function ensureSpectrSettingsScrollOwner(panel, values) {
+    if (!panel) return false;
+    const body = panel.querySelector?.("[data-spectr-settings-body]")
+      || globalThis.document?.querySelector?.(
+        "[data-spectr-settings-body]")
+      || values.find((candidate) =>
+        candidate?.getAttribute?.("data-spectr-settings-body") !== null);
+    return ensureSpectrNativeScrollView(body || panel, values);
   }
   // React's state-atlas replay can detach the DOM-shim edge for a live modal
   // while retaining both the shim node and its native widget.  The resulting
@@ -9281,20 +9318,35 @@
       if (!live && candidateId && typeof g5.releaseOverlay === "function")
         g5.releaseOverlay(String(candidateId));
     }
-    const settingsPanel = typeof g5.__pulpFindMaterializedElement__ === "function"
-      ? g5.__pulpFindMaterializedElement__("[data-spectr-settings-panel]") : null;
+    const settingsPanel = (typeof g5.__pulpFindMaterializedElement__ === "function"
+      ? g5.__pulpFindMaterializedElement__("[data-spectr-settings-panel]") : null)
+      || globalThis.document?.querySelector?.("[data-spectr-settings-panel]")
+      || values.find((candidate) =>
+        candidate?.getAttribute?.("data-spectr-settings-panel") !== null);
     const settingsOwner = settingsPanel && (settingsPanel.parentElement
       || settingsPanel._parentElement);
     const settingsHidden = !!(settingsPanel?.style?.display === "none"
-      || settingsOwner?.style?.display === "none");
+      || settingsOwner?.style?.display === "none"
+      // A portal can detach its owner before React reapplies display:none;
+      // the live marker is the authoritative open/closed state in that gap.
+      || settingsPanel?.getAttribute?.("data-spectr-settings-live") !== "true");
     let settingsReceipt = null;
     if (settingsPanel) {
       restoreSpectrSettingsDomParent(settingsPanel, values);
       // Keep modal chrome outside the scroll owner. The authored body wrapper
       // is the only element upgraded to a native ScrollView; this preserves a
       // fixed title/tab rail while the settings fields move underneath it.
+      // Portal-backed settings panels can expose the panel node while their
+      // DOM-shim descendant edge is detached during state-atlas replay. Use
+      // the global selector/registry as a fallback so the authored body is
+      // still upgraded to the native ScrollView (and groups remain beneath
+      // the fixed header/tabs shell).
       const settingsBody = settingsPanel.querySelector?.(
-        "[data-spectr-settings-body]");
+        "[data-spectr-settings-body]")
+        || globalThis.document?.querySelector?.(
+          "[data-spectr-settings-body]")
+        || values.find((candidate) =>
+          candidate?.getAttribute?.("data-spectr-settings-body") !== null);
       const nativeScrollView = ensureSpectrNativeScrollView(
         settingsBody || settingsPanel, values);
       const authored = width === 1320 && height === 860;
@@ -9539,17 +9591,17 @@
         const closeId = close && (close.__pulpId || close.id);
         g5.setPosition(String(headerId), "sticky");
         // The panel has 27px authored content padding. Pull the sticky
-        // chrome over that padding and put the same inset back inside
-        // the header, so title/close geometry stays unchanged while no
-        // scrolling field can paint around the opaque top strip.
-        g5.setLeft(String(headerId), 0);
-        g5.setTop(String(headerId), 0);
+        // chrome over that padding; the header's authored padding then keeps
+        // the title/close controls inset once (without double-translating
+        // them outside the panel).
+        g5.setLeft(String(headerId), -26);
+        g5.setTop(String(headerId), -26);
         g5.setFlex(String(headerId), "width", stickyHeaderWidth);
         g5.setFlex(String(headerId), "height", 72);
         // Captured descendants retain absolute layout bindings, so move
         // the visible title and close action back to their authored inset.
-        if (titleWrapperId) g5.setTransform(String(titleWrapperId), 1, 0, 0, 1, 27, 27);
-        if (closeId) g5.setTransform(String(closeId), 1, 0, 0, 1, 27, 27);
+        if (titleWrapperId) g5.setTransform(String(titleWrapperId), 1, 0, 0, 1, 0, 0);
+        if (closeId) g5.setTransform(String(closeId), 1, 0, 0, 1, 0, 0);
         g5.setBackground(String(headerId), "rgba(14,18,25,1)");
       }
       const modulation = globalThis.document?.querySelector?.(
@@ -9557,7 +9609,7 @@
       const modulationId = modulation && (modulation.__pulpId || modulation.id);
       if (modulationId) {
         g5.setPosition(String(modulationId), "absolute");
-        g5.setLeft(String(modulationId), 27);
+        g5.setLeft(String(modulationId), 0);
         g5.setTop(String(modulationId), 652);
         g5.setFlex(String(modulationId), "width", 466);
         g5.setFlex(String(modulationId), "height", 214);
@@ -9567,7 +9619,7 @@
       const feedbackId = feedback && (feedback.__pulpId || feedback.id);
       if (feedbackId) {
         g5.setPosition(String(feedbackId), "absolute");
-        g5.setLeft(String(feedbackId), 27);
+        g5.setLeft(String(feedbackId), 0);
         g5.setTop(String(feedbackId), 884);
         g5.setFlex(String(feedbackId), "width", 466);
         g5.setFlex(String(feedbackId), "height", 108);
@@ -9577,7 +9629,7 @@
       const aboutId = about && (about.__pulpId || about.id);
       if (aboutId) {
         g5.setPosition(String(aboutId), "absolute");
-        g5.setLeft(String(aboutId), 27);
+        g5.setLeft(String(aboutId), 0);
         g5.setTop(String(aboutId), 1010);
         g5.setFlex(String(aboutId), "width", 466);
         g5.setFlex(String(aboutId), "height", 252);
@@ -9763,6 +9815,15 @@
             [{ left: 10, top: 5, width: 54.40625, height: 13,
                start: 0, length: 8 }], 74.40625,
             "JetBrainsMono-Regular", false);
+      }
+    }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
       }
     }
     if (monoBinding && typeof g5.setFontFamily === "function") {
@@ -11145,7 +11206,7 @@
         if (livePanel) {
           const liveValues = materializedDomRegistryValues();
           restoreSpectrSettingsDomParent(livePanel, liveValues);
-          ensureSpectrNativeScrollView(livePanel, liveValues);
+          ensureSpectrSettingsScrollOwner(livePanel, liveValues);
         }
         const claimLiveSettings = () => {
           const panel = globalThis.document?.querySelector?.(
@@ -11162,7 +11223,7 @@
           }
           const values = materializedDomRegistryValues();
           restoreSpectrSettingsDomParent(panel, values);
-          ensureSpectrNativeScrollView(panel, values);
+          ensureSpectrSettingsScrollOwner(panel, values);
           const id = panel.__pulpId || panel.id;
           if (id) g5.claimOverlay(String(id), true);
         };

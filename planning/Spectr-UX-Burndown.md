@@ -692,3 +692,34 @@ work is exact-current-HEAD provenance only; do not substitute a PR-head SDK.
   realtime audio timing. Deterministic audio tests own that claim.
 - A skipped, unavailable, or dirty-provenance gate is not a pass.
 - Update this ledger in the same commit as each coherent completed slice.
+# 2026-09-04 Settings body-scroll lifecycle follow-up
+
+- The durable materialized document now contains the authored
+  `data-spectr-settings-body` wrapper. Runtime rehydration resolves that body
+  through the global materialized selector/registry when portal ancestry is
+  detached, upgrades the body to the native `ScrollView`, and leaves the
+  Settings panel as the fixed shell.
+- The preserved Pulp successor SDK (`2de6d5efa20e4895530ac0a76b940eb02a2fe7e8`)
+  was used for a focused rebuild. The native Settings test reached the full
+  topology and passed 363/364 assertions after the body-only upgrade; the one
+  remaining failure is a snapshot-capture button revision not advancing after
+  the Settings state-atlas reparent. This is not a green acceptance result.
+- Header/group geometry is now inside the panel bounds (`settings_body` at
+  `427,211.5`, `466x529.184`; feedback group at `427,1095.5`, `466x108`).
+- No package was produced. The exact-current native matrix, canvas dispatch,
+  host acceptance, and release PKG gates remain open.
+
+### 2026-09-04 Settings retained-subtree repair
+
+- Runtime now reconstructs direct Settings-body children from retained DOM
+  parent pointers when state-atlas replay drops the parent's `_children` list;
+  this prevents an empty native ScrollView after reopening Settings.
+- Retained event props are explicitly rebound after the native reparent, and a
+  detached/closed Settings panel is now treated as hidden from its live marker,
+  releasing its overlay claim so the next home click is not consumed.
+- Focused native checks: Settings command/cursor `54` assertions passed and the
+  dismissal matrix passed `350` assertions. The full frozen state-atlas case
+  now reaches the post-Settings manager/snapshot phases; it still fails later
+  in the native self-removing manager hit-target matrix, so this is not green.
+- No package was produced; exact-current UX matrix, canvas dispatch, host
+  acceptance, and release gates remain open.
