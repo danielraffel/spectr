@@ -10195,6 +10195,15 @@
         g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
       }
     }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
+      }
+    }
     if (activeCapturedState === "settings") {
       const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");
       const titleTargets = Array.isArray(titleNode?.__pulpAnonymousTextTargets)
