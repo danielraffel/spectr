@@ -161,6 +161,90 @@ TEST_CASE("Spectr applies internal modulation on the audio owner",
     CHECK(modulated > unmodulated * 2.5f);
 }
 
+TEST_CASE("Spectr keeps host band automation and internal modulation both audible",
+          "[modulation][coexistence][spectral][rt]") {
+    // MOD-3. The burn-down asks that host modulation and internal modulation
+    // coexist; nothing asserted it. The failure modes are symmetric and a
+    // single "it still makes sound" check catches neither: internal modulation
+    // could overwrite the host-authored field (host contribution lost), or the
+    // host field could be applied last and flatten the LFO (internal
+    // contribution lost). So this measures BOTH directions.
+    //
+    // Scope, stated rather than implied: the host contribution exercised here
+    // is band-gain automation, which is parameter-reachable. The snapshot
+    // A/B morph path is the other host axis and is NOT covered — morph only
+    // engages once both snapshot slots are captured, which goes through the
+    // editor bridge rather than the parameter surface, so it needs a different
+    // harness than this one.
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+    const auto render_peak = [](bool modulation_enabled, float band_db) {
+        pulp::format::HeadlessHost host(spectr::create_spectr);
+        host.prepare(sample_rate, block_size);
+        pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+        const float* input_channels[] = {
+            in.channel(0).data(), in.channel(1).data()};
+        pulp::audio::BufferView<const float> input(
+            input_channels, 2, block_size);
+        auto output = out.view();
+        std::uint64_t rendered = 0;
+        float peak = 0.0f;
+        const auto blocks = static_cast<std::size_t>(
+            (spectr::kSpectralLatency + spectr::kSpectralFftSize)
+                / block_size + 6);
+        for (std::size_t block = 0; block < blocks; ++block) {
+            for (std::size_t sample = 0; sample < block_size; ++sample) {
+                const float value = 0.25f * std::sin(
+                    2.0 * 3.14159265358979323846 * 997.0
+                    * static_cast<double>(rendered + sample) / sample_rate);
+                in.channel(0)[sample] = value;
+                in.channel(1)[sample] = value;
+            }
+            rendered += block_size;
+            pulp::state::ParameterEventQueue events;
+            // The host contribution: every band automated to one authored dB.
+            for (std::size_t band = 0; band < 32; ++band)
+                REQUIRE(events.push({
+                    spectr::band_gain_param_id(band), 0, band_db, 0}));
+            REQUIRE(events.push({spectr::kParamLfoEnabled, 0,
+                                 modulation_enabled ? 1.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                                 static_cast<float>(spectr::LfoShape::Square),
+                                 0}));
+            REQUIRE(events.push({spectr::kParamLfoRate, 0, 16.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                                 static_cast<float>(
+                                     spectr::ModulationTarget::WholeBank),
+                                 0}));
+            host.process(output, input, events);
+            for (float sample : out.channel(0))
+                peak = std::max(peak, std::abs(sample));
+        }
+        return peak;
+    };
+
+    const float host_only_deep = render_peak(false, -12.0f);
+    const float host_only_shallow = render_peak(false, -3.0f);
+    const float both_deep = render_peak(true, -12.0f);
+    const float both_shallow = render_peak(true, -3.0f);
+
+    // Positive control: the host contribution must be observable on its own,
+    // or the two comparisons below are measuring nothing.
+    REQUIRE(host_only_deep > 0.01f);
+    REQUIRE(host_only_shallow > host_only_deep * 1.5f);
+
+    // Internal modulation still reaches the output while the host is driving
+    // every band. If the host field were applied last it would flatten the LFO
+    // and this would collapse to equality.
+    CHECK(both_deep > host_only_deep * 2.5f);
+
+    // ...and the host's authored dB still reaches the output while modulation
+    // is running. If internal modulation overwrote the field, these two would
+    // be equal regardless of what the host asked for.
+    CHECK(both_shallow > both_deep * 1.2f);
+}
+
 TEST_CASE("scheduled processor playback changes gain on the exact sample across partitions",
           "[automation][rt]") {
     constexpr std::size_t material_samples = 512;
