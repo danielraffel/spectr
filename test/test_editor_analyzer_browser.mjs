@@ -1104,9 +1104,19 @@ window.spectrStartOracle = () => {
       spectrPointer(target, 'pointermove', x, y - 48);
       await spectrFrames(2);
       const secondLiveStatus = document.querySelector('[data-spectr-status-text]')?.textContent;
-      if (!firstLiveStatus?.includes('BAND') || !secondLiveStatus?.includes('BAND')
-          || firstLiveStatus === secondLiveStatus)
-        throw new Error('live hover gain status did not follow the drag');
+      // Report WHICH of the three conditions failed. Conflating "the banner
+      // never showed a band", "it showed one but stopped updating", and "it
+      // updated but to the same text" into one message costs a debugging cycle
+      // every time this reds, and they have different causes.
+      if (!firstLiveStatus?.includes('BAND'))
+        throw new Error('live hover gain status absent at drag start; banner read '
+          + JSON.stringify(firstLiveStatus ?? null));
+      if (!secondLiveStatus?.includes('BAND'))
+        throw new Error('live hover gain status disappeared during the drag; banner read '
+          + JSON.stringify(secondLiveStatus ?? null));
+      if (firstLiveStatus === secondLiveStatus)
+        throw new Error('live hover gain status did not follow the drag; banner stayed at '
+          + JSON.stringify(firstLiveStatus));
       // A sustained edit must not outlive the banner's inactivity timer. Move
       // often enough to represent active input, but long enough that the old
       // one-shot 1.4 s timeout would have removed the banner mid-gesture.

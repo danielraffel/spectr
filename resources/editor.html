@@ -238,9 +238,17 @@ document.addEventListener('DOMContentLoaded', async function() {
         // example after a materialized-runtime refresh). Treat that state as
         // idempotently applied so browser/native harnesses can execute the
         // current source instead of failing before mounting the editor.
-        if (template.includes(replacement)
-            || label === 'drawing keeps live hover outside React reconciliation')
-          return;
+        // Only a genuinely already-applied patch may be skipped. There used to
+        // be a second escape hatch here naming one label, and it hid a real
+        // failure for as long as it existed: an earlier patch began inserting
+        // the cursor state between the two lines that patch's needle expected
+        // to be adjacent, so the needle stopped matching, the definition of
+        // updateLiveHoverStatus was never installed, and both of its call sites
+        // silently resolved to the module-level no-op stub. The live status
+        // banner then stopped following a drag with nothing reporting why.
+        // A patch that cannot find its point is a patch that is not applied;
+        // say so rather than continuing.
+        if (template.includes(replacement)) return;
         throw new Error('Spectr source patch point missing: ' + label);
       }
       template = template.replace(needle, replacement);
@@ -3148,8 +3156,9 @@ window.PatternManager = PatternManager;`,
   };`,
       'stable pointer helper closure');
     replaceSpectrSource(
-      "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }\n  const hoverBand = hover && !hover.mini ? hover.band : -1;",
+      "  const [hover, setHover] = useState(null); // { band, freq, db, x, y }\n  const [cursor, setCursor] = useState('crosshair');\n  const hoverBand = hover && !hover.mini ? hover.band : -1;",
       String.raw`  const [hover, setHover] = useState(null); // { band, freq, db, x, y }
+  const [cursor, setCursor] = useState('crosshair');
   const hoverRef = useRef(null);
   const statusRefreshAtRef = useRef(0);
   const hoverBand = hover && !hover.mini ? hover.band : -1;
