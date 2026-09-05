@@ -523,6 +523,46 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             --shipping-only
             ${SPECTR_CHROME_EXECUTABLE})
     set_tests_properties(Spectr-browser-preset-parity PROPERTIES TIMEOUT 120)
+    # The negative control for the check above. test_preset_parity_browser.mjs
+    # has always accepted --plant-overlap, which injects an action collision
+    # into factory:flat, but nothing ever passed it: the flag is the 5th
+    # positional argument and the registration above supplies three. So the
+    # overlap assertion has been running green since it was written without any
+    # evidence it can go red -- a blind oracle.
+    #
+    # WILL_FAIL inverts the verdict: this test passes only when the script
+    # REJECTS the planted overlap. If someone weakens the overlap check, the
+    # control turns green->red here rather than silently agreeing with them.
+    # Verified by hand before registering: baseline exits 0, planted exits 1
+    # with "factory:flat action overlap: APPLY/★ DEFAULT".
+    add_test(NAME Spectr-browser-preset-parity-negative-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_preset_parity_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            --shipping-only
+            ${SPECTR_CHROME_EXECUTABLE}
+            ${CMAKE_CURRENT_BINARY_DIR}/preset-parity-negative-control
+            --plant-overlap)
+    set_tests_properties(Spectr-browser-preset-parity-negative-control PROPERTIES
+        TIMEOUT 120
+        WILL_FAIL TRUE)
+    # Second negative control, for the long-name truncation assertion. Same
+    # reasoning: the check is only worth having if it can go red, and this
+    # proves it does. --plant-untruncated reports the title box at its full
+    # unwrapped width, as if the name had never been clipped; the containment
+    # assertion must reject it. Verified: baseline exits 0, planted exits 1 with
+    # "preset title spills 308px past the detail panel instead of truncating".
+    add_test(NAME Spectr-browser-preset-truncation-negative-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_preset_parity_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            --shipping-only
+            ${SPECTR_CHROME_EXECUTABLE}
+            ${CMAKE_CURRENT_BINARY_DIR}/preset-truncation-negative-control
+            --plant-untruncated)
+    set_tests_properties(Spectr-browser-preset-truncation-negative-control PROPERTIES
+        TIMEOUT 120
+        WILL_FAIL TRUE)
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────

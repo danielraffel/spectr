@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 
 const [shippingHtml, canonicalHtml, chromePath, requestedOutput, mutation] = process.argv.slice(2);
 assert(shippingHtml && canonicalHtml && chromePath,
-  'usage: test_preset_parity_browser.mjs SHIPPING_HTML CANONICAL_HTML|--shipping-only CHROME [OUTPUT_DIR] [--plant-overlap]');
+  'usage: test_preset_parity_browser.mjs SHIPPING_HTML CANONICAL_HTML|--shipping-only CHROME [OUTPUT_DIR] [--plant-overlap|--plant-untruncated]');
 const comparisonEnabled = canonicalHtml !== '--shipping-only';
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-preset-parity-'));
@@ -262,8 +262,91 @@ try {
     }));
   })()`);
   await sleep(100);
+
   if (!await evaluate("Array.from(document.querySelectorAll('button')).some(button => button.textContent.trim() === 'EXPORT ALL (FILE)')"))
     await openManager();
+
+  // PRE-3: a long preset name must clip with an ellipsis rather than spill past
+  // the detail panel toward the Snapshot controls.
+  //
+  // Nothing asserted this before. The action-vs-action overlap check in
+  // inspect() cannot see it (the title is not one of the buttons it compares),
+  // and a "title runs under the actions" geometric test is the wrong model for
+  // this layout: measured, the title sits at y=211..235 and the actions at
+  // y=514..566, ~280px apart, so they cannot overlap however long the name is.
+  // What actually goes wrong is the name widening its own box past the panel.
+  //
+  // The overflow also has to be MADE to happen: every shipped preset name fits
+  // (scrollWidth == clientWidth for all nine), so an assertion written against
+  // the default fixtures would be vacuous. This drives the rendered title text
+  // directly rather than the rename UI -- the rename flow commits through a
+  // different path and adding a preset here would perturb the capture the rest
+  // of this script depends on. That makes it a check of the title's clipping
+  // contract under a long name, not an end-to-end rename test; the rename path
+  // itself is covered by inspect(id, true) above.
+  const truncation = await evaluate(`(async () => {
+    const frames = () => new Promise(resolve => requestAnimationFrame(() =>
+      requestAnimationFrame(resolve)));
+    const manager = document.querySelector('[aria-label="Pattern manager"] > div')
+      || Array.from(document.querySelectorAll('div')).find(node => {
+        const rect = node.getBoundingClientRect();
+        return Math.abs(rect.width - 780) < 1 && Math.abs(rect.height - 520) < 1
+          && node.textContent.includes('SAVE CURRENT')
+          && node.textContent.includes('EXPORT ALL (FILE)');
+      });
+    if (!manager) throw new Error('Pattern Manager missing for truncation check');
+    const active = manager.querySelector('[data-spectr-manager-rename]');
+    if (active) {
+      active.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape', bubbles: true, cancelable: true,
+      }));
+      await frames();
+    }
+    const row = manager.querySelector('[data-spectr-pattern-id]');
+    if (!row) throw new Error('no preset row for truncation check');
+    row.click();
+    await frames();
+    const title = manager.querySelector('[data-spectr-manager-title]');
+    const detail = manager.querySelector('[data-spectr-manager-source]')
+      ?.parentElement?.parentElement;
+    if (!title || !detail)
+      throw new Error('truncation subjects missing: title=' + !!title
+        + ' detail=' + !!detail);
+    const original = title.textContent;
+    title.textContent =
+      'LONG PRESET NAME THAT MUST TRUNCATE BEFORE IT REACHES THE SNAPSHOT CONTROLS';
+    await frames();
+    const style = getComputedStyle(title);
+    const titleRect = title.getBoundingClientRect();
+    const detailRect = detail.getBoundingClientRect();
+    const measured = {
+      scrollWidth: title.scrollWidth,
+      clientWidth: title.clientWidth,
+      textOverflow: style.textOverflow,
+      overflow: style.overflow,
+      detailRight: detailRect.right,
+      // Negative control: report the box as if the name had never been clipped,
+      // so it reaches its full unwrapped width. Containment must reject that.
+      spill: ${JSON.stringify(mutation)} === '--plant-untruncated'
+        ? titleRect.left + title.scrollWidth : titleRect.right,
+    };
+    title.textContent = original;
+    await frames();
+    return measured;
+  })()`);
+  // Positive control first: if the name did not overflow, everything below is
+  // vacuous and it is the fixture, not the product, that needs fixing.
+  if (!(truncation.scrollWidth > truncation.clientWidth))
+    throw new Error('preset title did not overflow, so the truncation check proves nothing '
+      + `(scrollWidth ${truncation.scrollWidth} <= clientWidth ${truncation.clientWidth})`);
+  if (truncation.textOverflow !== 'ellipsis')
+    throw new Error(`overflowing preset title has text-overflow: ${truncation.textOverflow}, expected ellipsis`);
+  if (truncation.overflow === 'visible')
+    throw new Error('overflowing preset title does not clip its overflow');
+  if (truncation.spill > truncation.detailRight + 1)
+    throw new Error(`preset title spills ${Math.round(truncation.spill - truncation.detailRight)}px `
+      + 'past the detail panel instead of truncating');
+
   await selectFlat();
   const shippingPng = await captureManager('preset-manager-shipping');
 
