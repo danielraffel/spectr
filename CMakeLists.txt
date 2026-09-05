@@ -471,6 +471,28 @@ find_program(SPECTR_NODE_EXECUTABLE NAMES node)
 find_program(SPECTR_CHROME_EXECUTABLE
     NAMES "Google Chrome" google-chrome chromium chromium-browser
     PATHS "/Applications/Google Chrome.app/Contents/MacOS")
+# The seven browser oracles below are the ONLY coverage for the status overlay,
+# preset detail, Settings polish, and dropdown rows. If node or Chrome is
+# missing they are simply never registered, so a run without them is not a
+# weaker green -- it is a green with that entire surface unmeasured, and
+# nothing says so. Make the absence loud. Off by default so a contributor
+# without Chrome can still build and test; CI turns it on.
+option(SPECTR_REQUIRE_BROWSER_LANE
+    "Fail if the headless-Chromium oracles cannot be registered" OFF)
+if(NOT (SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE))
+    if(SPECTR_REQUIRE_BROWSER_LANE)
+        message(FATAL_ERROR
+            "SPECTR_REQUIRE_BROWSER_LANE=ON but the browser oracle lane cannot run: "
+            "node=${SPECTR_NODE_EXECUTABLE} chrome=${SPECTR_CHROME_EXECUTABLE}. "
+            "Every status-overlay, preset-detail, Settings-polish and dropdown "
+            "assertion lives in that lane; without it they are unmeasured.")
+    else()
+        message(WARNING
+            "Spectr browser oracle lane DISABLED (node=${SPECTR_NODE_EXECUTABLE} "
+            "chrome=${SPECTR_CHROME_EXECUTABLE}). The status-overlay, preset-detail, "
+            "Settings-polish and dropdown rows will not be measured by this build.")
+    endif()
+endif()
 if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     add_test(NAME Spectr-browser-analyzer
         COMMAND ${SPECTR_NODE_EXECUTABLE}

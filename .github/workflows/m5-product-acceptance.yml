@@ -91,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           ctest --test-dir "$SPECTR_BUILD_DIR" --output-on-failure --no-tests=error \
-            -R '(^#34:|^#34 bridge|^native N1|^native editor|^native settings|^native semantic|^native selected|^every native dropdown|^remaining native modal|^native Flare|^native frozen|^native buttons|^editor resize|^editors default|^the AU v2|^a resize|^native: |editor authority|import fidelity|materialized|Built Spectr|Spectr editor)'
+            -R '(^#34:|^#34 bridge|^native N1|^native editor|^native settings|^native semantic|^native selected|^every native dropdown|^remaining native modal|^native Flare|^native frozen|^native buttons|^editor resize|^editors default|^the AU v2|^a resize|^native: |editor authority|import fidelity|materialized|Built Spectr|Spectr editor|^Spectr-browser-)'
           env CI=0 PULP_DISABLE_PLUGIN_EDITOR=0 PULP_HEADLESS=0 PULP_TEST_MODE=0 \
             ctest --test-dir "$SPECTR_BUILD_DIR" --output-on-failure --no-tests=error \
               -R '^Pulp host loads'
