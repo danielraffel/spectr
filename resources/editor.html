@@ -1759,6 +1759,10 @@ function SettingsModal({ settings, setSettings, onClose }) {
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
+  // Every text-size change -- including the mount-time default -- reaches the
+  // native knob through this one effect. Settings is always mounted in the
+  // native runtime, so the default applies at startup rather than on first open.
+  React.useEffect(() => { spectrApplyTextScale(settings.textSize); }, [settings.textSize]);
   const persist = (patch) => {`,
       'settings modal Escape');
     replaceSpectrSource(
@@ -1773,6 +1777,42 @@ function SettingsModal({ settings, setSettings, onClose }) {
     {subtitle && <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 10, fontFamily: 'var(--sans)' }}>{subtitle}</div>}
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
   </div>;
+}
+// ---- text size ----
+// Spectr's type sizes are ~95 scattered fontSize literals. A CSS zoom or a
+// root transform scales a browser preview and reaches nothing else: the native
+// render lowers every one of those literals through the WidgetBridge
+// setFontSize funnel into Yoga, and a transform never touches that funnel.
+// The bridge's own scale knob sits in front of it and is the single lever that
+// multiplies all of them at once.
+const SPECTR_TEXT_SCALES = { small: 1, medium: 1.2, large: 1.45 };
+function spectrTextSize(settings) {
+  const size = settings && settings.textSize;
+  return Object.prototype.hasOwnProperty.call(SPECTR_TEXT_SCALES, size) ? size : 'medium';
+}
+function spectrApplyTextScale(size) {
+  const key = Object.prototype.hasOwnProperty.call(SPECTR_TEXT_SCALES, size) ? size : 'medium';
+  const scale = SPECTR_TEXT_SCALES[key];
+  const host = typeof globalThis !== 'undefined' ? globalThis : window;
+  let applied = false;
+  // ================== THE NATIVE TEXT-SCALE CALL SITE ==================
+  // WidgetBridge::set_imported_text_scale(float) -- default 1.0, clamped to
+  // [0.5, 4.0] -- reaches an imported document as this bridge global, the same
+  // shape as every other typeof-guarded bridge global probe the materialized
+  // runtime makes. It is Pulp PR #8088 and is NOT in v0.834.0, the official
+  // release Spectr pins, and Spectr never pins an unofficial SDK build. So this
+  // stays a capability probe rather than an assumed call: the day a release
+  // exposes the knob, this one line begins scaling every native label and
+  // nothing else in Spectr changes. Until then the selection is recorded and
+  // inert, which is the honest state -- no CSS stand-in is installed to imitate
+  // a native relayout that did not happen.
+  if (typeof host.setImportedTextScale === 'function') {
+    host.setImportedTextScale(scale);
+    applied = true;
+  }
+  // ================ END THE NATIVE TEXT-SCALE CALL SITE ================
+  host.__spectrTextScale = { size: key, scale, applied };
+  return scale;
 }
 function SpectrSettingsField({ label, hint, children }) {
   return <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -2772,6 +2812,12 @@ window.PatternManager = PatternManager;`,
               opts={[['live', 'Live'], ['precision', 'Precision']]} />
           </SpectrSettingsField>
         </SpectrSettingsGroup>
+        <SpectrSettingsGroup marker="typography" title="TYPOGRAPHY" subtitle="How large Spectr text renders.">
+          <SpectrSettingsField label="Text size" hint="Scales every label, chip, and readout">
+            <SpectrSettingsChips value={spectrTextSize(settings)} onChange={v => persist({ textSize: v })}
+              opts={[['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']]} />
+          </SpectrSettingsField>
+        </SpectrSettingsGroup>
         <SpectrSettingsGroup marker="feedback" title="FEEDBACK" subtitle="Choose which interaction details Spectr shows.">
           <SpectrSettingsField label="Status info" hint="Hover, mute, and drag">
             <SpectrSettingsToggle statusInfo value={settings.statusInfo !== false}
@@ -2784,6 +2830,12 @@ window.PatternManager = PatternManager;`,
         </SpectrSettingsGroup>
         {settings.showBuildInfo !== false && <SpectrBuildInfo />}`,
       'status info is a normal scrollable settings field');
+    // Medium is the shipping default. Small is the scale the pre-1.0 build
+    // rendered at, kept as an option rather than as the default.
+    replaceSpectrSource(
+      '  "motionMode": "live",',
+      '  "motionMode": "live",\n  "textSize": "medium",',
+      'default text size');
     replaceSpectrSource(
       String.raw`  const fireStatus = useAppC((msg) => {
     setStatus(msg + '|' + Date.now());`,

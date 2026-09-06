@@ -2900,13 +2900,17 @@ def repair_cursor_state(document):
     # Allow the authored panel to grow on tall hosts; the body only needs a
     # scrollbar when its content exceeds the available viewport.
     html = html.replace('height: "min(92vh, 760px)"',
-                        'height: "min(92vh, 1400px)"', 1)
+                        'height: "min(92vh, 1500px)"', 1)
     # Revealing the MODULATION group added real content to the single-scroll
     # Settings body, which at the previous 1280px cap could no longer fit on a
     # tall host. Raise the cap so a large window still shows the panel without
     # a scrollbar, and upgrade an artifact already carrying the old value.
     html = html.replace('height: "min(92vh, 1280px)"',
-                        'height: "min(92vh, 1400px)"', 1)
+                        'height: "min(92vh, 1500px)"', 1)
+    # The TYPOGRAPHY group costs another ~80px of body content, which put the
+    # 1400px cap back under the fit-without-scrolling threshold on a tall host.
+    html = html.replace('height: "min(92vh, 1400px)"',
+                        'height: "min(92vh, 1500px)"', 1)
     state_old = '  const [hover, setHover] = useState(null);'
     state_new = state_old + '\n  const [cursor, setCursor] = useState(\'crosshair\');'
     if 'const [cursor, setCursor] = useState' not in html:
@@ -4431,7 +4435,7 @@ def enforce_settings_fixed_shell(document):
 
     # The panel itself must not scroll; its body child does.
     old_panel = 'width: 520,\n    maxHeight: "98vh",\n    overflowY: "auto",'
-    new_panel = ('width: 520,\n    height: "min(92vh, 1400px)",\n'
+    new_panel = ('width: 520,\n    height: "min(92vh, 1500px)",\n'
                  '    maxHeight: "92vh",\n    overflow: "hidden",\n'
                  '    display: "flex",\n    flexDirection: "column",')
     if old_panel in html:
@@ -4509,6 +4513,117 @@ def add_readable_typography(document):
         return False
     document['html'] = html.replace(marker, style + marker, 1)
     return True
+
+
+# The text-size module, character for character as resources/editor.html
+# defines it. Nothing here may drift from the browser source: the check in
+# add_text_size_setting below re-reads that file and refuses to run if it has.
+MODULE_TEXT = (
+    '// ---- text size ----\n'
+    "// Spectr's type sizes are ~95 scattered fontSize literals. A CSS zoom or a\n"
+    '// root transform scales a browser preview and reaches nothing else: the native\n'
+    '// render lowers every one of those literals through the WidgetBridge\n'
+    '// setFontSize funnel into Yoga, and a transform never touches that funnel.\n'
+    "// The bridge's own scale knob sits in front of it and is the single lever that\n"
+    '// multiplies all of them at once.\n'
+    'const SPECTR_TEXT_SCALES = { small: 1, medium: 1.2, large: 1.45 };\n'
+    'function spectrTextSize(settings) {\n'
+    '  const size = settings && settings.textSize;\n'
+    "  return Object.prototype.hasOwnProperty.call(SPECTR_TEXT_SCALES, size) ? size : 'medium';\n"
+    '}\n'
+    'function spectrApplyTextScale(size) {\n'
+    "  const key = Object.prototype.hasOwnProperty.call(SPECTR_TEXT_SCALES, size) ? size : 'medium';\n"
+    '  const scale = SPECTR_TEXT_SCALES[key];\n'
+    "  const host = typeof globalThis !== 'undefined' ? globalThis : window;\n"
+    '  let applied = false;\n'
+    '  // ================== THE NATIVE TEXT-SCALE CALL SITE ==================\n'
+    '  // WidgetBridge::set_imported_text_scale(float) -- default 1.0, clamped to\n'
+    '  // [0.5, 4.0] -- reaches an imported document as this bridge global, the same\n'
+    '  // shape as every other typeof-guarded bridge global probe the materialized\n'
+    '  // runtime makes. It is Pulp PR #8088 and is NOT in v0.834.0, the official\n'
+    '  // release Spectr pins, and Spectr never pins an unofficial SDK build. So this\n'
+    '  // stays a capability probe rather than an assumed call: the day a release\n'
+    '  // exposes the knob, this one line begins scaling every native label and\n'
+    '  // nothing else in Spectr changes. Until then the selection is recorded and\n'
+    '  // inert, which is the honest state -- no CSS stand-in is installed to imitate\n'
+    '  // a native relayout that did not happen.\n'
+    "  if (typeof host.setImportedTextScale === 'function') {\n"
+    '    host.setImportedTextScale(scale);\n'
+    '    applied = true;\n'
+    '  }\n'
+    '  // ================ END THE NATIVE TEXT-SCALE CALL SITE ================\n'
+    '  host.__spectrTextScale = { size: key, scale, applied };\n'
+    '  return scale;\n'
+    '}\n')
+
+
+def add_text_size_setting(document):
+    """Add the user-facing Text size control and its one native call site.
+
+    Placement is not cosmetic.  A row added to a group that came from the
+    original capture (APPEARANCE, STRUCTURE, MOTION) paints at the group's
+    FIRST child position, on top of the row already there -- the same runtime
+    property that keeps the REDRAW UNMUTES toggle out of the settings panel.
+    A group the patch layer synthesises has no captured geometry of its own,
+    so its children lay out live; FEEDBACK is the worked example, and it later
+    took a second row (Build info) without overlapping.  TYPOGRAPHY is
+    therefore its own synthesised group rather than a row in APPEARANCE.
+    """
+    html = document.get('html', '')
+    original = html
+
+    module = MODULE_TEXT
+    # A mechanical image is only mechanical while it still matches. Prove it
+    # against the browser source rather than asserting it in a comment.
+    source = open(SOURCE_PATH, encoding='utf-8').read()
+    if module not in source:
+        sys.exit('FAIL text size: MODULE_TEXT has drifted from ' + SOURCE_PATH)
+    anchor = '}\nfunction SpectrSettingsField({ label, hint, children }) {'
+    if 'function spectrApplyTextScale(' not in html:
+        if html.count(anchor) != 1:
+            raise RuntimeError('text-size module insertion point missing')
+        html = html.replace(
+            anchor,
+            '}\n' + module + 'function SpectrSettingsField({ label, hint, children }) {',
+            1)
+
+    effect_anchor = ('  React.useLayoutEffect(() => {\n'
+                     '    const toggle = document.getElementById("spectr-status-info-toggle");')
+    effect = ('  // Every text-size change -- including the mount-time default -- reaches the\n'
+              '  // native knob through this one effect. Settings is always mounted in the\n'
+              '  // native runtime, so the default applies at startup rather than on first open.\n'
+              '  React.useEffect(() => { spectrApplyTextScale(settings.textSize); }, [settings.textSize]);\n')
+    if 'spectrApplyTextScale(settings.textSize)' not in html:
+        if html.count(effect_anchor) != 1:
+            raise RuntimeError('text-size effect insertion point missing')
+        html = html.replace(effect_anchor, effect + effect_anchor, 1)
+
+    feedback = ('/* @__PURE__ */ React.createElement(SpectrSettingsGroup, '
+                '{ marker: "feedback", title: "FEEDBACK", '
+                'subtitle: "Choose which interaction details Spectr shows." },')
+    typography = (
+        '/* @__PURE__ */ React.createElement(SpectrSettingsGroup, '
+        '{ marker: "typography", title: "TYPOGRAPHY", '
+        'subtitle: "How large Spectr text renders." }, '
+        '/* @__PURE__ */ React.createElement(SpectrSettingsField, '
+        '{ label: "Text size", hint: "Scales every label, chip, and readout" }, '
+        '/* @__PURE__ */ React.createElement(SpectrSettingsChips, '
+        '{ value: spectrTextSize(settings), onChange: (v) => persist({ textSize: v }), '
+        'opts: [["small", "Small"], ["medium", "Medium"], ["large", "Large"]] }))), ')
+    if 'marker: "typography"' not in html:
+        if html.count(feedback) != 1:
+            raise RuntimeError('text-size group insertion point missing')
+        html = html.replace(feedback, typography + feedback, 1)
+
+    defaults_anchor = '  "motionMode": "live",'
+    if '"textSize"' not in html:
+        if html.count(defaults_anchor) != 1:
+            raise RuntimeError('text-size default insertion point missing')
+        html = html.replace(defaults_anchor,
+                            defaults_anchor + '\n  "textSize": "medium",', 1)
+
+    document['html'] = html
+    return html != original
 
 
 def check_script_blocks(label, blocks):
@@ -4719,6 +4834,10 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          readable typography rails')
+    if add_text_size_setting(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          user-facing text size control')
     # Final lifecycle normalization: Settings is always mounted, so its
     # resolver marker must follow the `open` prop rather than an unconditional
     # mount-time `true` publication left by an older helper recipe.
