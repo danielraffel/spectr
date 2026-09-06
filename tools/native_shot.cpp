@@ -318,6 +318,101 @@ struct Rig {
              "spectr-native-shot-target-state");
     }
 
+    // Report the modulation group's own DOM state: how many toggles the group
+    // has, what each one is checked to, and how many destination chips are
+    // actually mounted. A click that changes none of these is not a drive, and
+    // two identical PNGs cannot tell the difference on their own.
+    void report_modulation_dom(const char* label) {
+        eval(std::string(R"JS((() => {
+  const inModulation = (n) => {
+    for (let p = n; p; p = p.parentElement || p._parentElement)
+      if (p.getAttribute && p.getAttribute('data-spectr-settings-modulation') != null) return true;
+    return false;
+  };
+  let toggles = Array.from(document.querySelectorAll(
+    '[data-spectr-settings-modulation] [data-spectr-setting-toggle]') || []);
+  if (toggles.length === 0)
+    toggles = Array.from(document.querySelectorAll('[data-spectr-setting-toggle]') || [])
+      .filter(inModulation);
+  const checked = toggles.map((t) => String(t.getAttribute('aria-checked'))).join(',');
+  const chips = Array.from(document.querySelectorAll('[data-spectr-modulation-target]') || []);
+  const q = (sel) => { const e = document.querySelector(sel);
+    return e ? String(e.getAttribute('aria-pressed')) : 'absent'; };
+  console.log('[shot] DOM )JS") + label + R"JS(: mod_toggles=' + toggles.length
+    + ' aria-checked=[' + checked + ']'
+    + ' destination_chips_mounted=' + chips.length
+    + ' bank=' + q('[data-spectr-modulation-target="bank"]')
+    + ' snapshot-a=' + q('[data-spectr-modulation-target="snapshot-a"]')
+    + ' snapshot-b=' + q('[data-spectr-modulation-target="snapshot-b"]')
+    + ' morph=' + q('[data-spectr-modulation-target="morph"]')
+    + ' ALL=' + q('[data-spectr-modulation-select="all"]')
+    + ' NONE=' + q('[data-spectr-modulation-select="none"]'));
+})();)JS",
+             "spectr-native-shot-dom-state");
+    }
+
+    // Read the same state back out of the NATIVE side. The DOM is the runtime's
+    // own opinion; this is what the plugin will actually modulate with. The
+    // store write lands immediately, but ModulationSettings is rebuilt on the
+    // param-sync lane that process() drives, so pump audio before reading it.
+    void report_native_state(const char* label) {
+        feed_tone(4);
+        settle(clock, 8);
+        const auto mod = processor.modulation_settings();
+        std::printf("[shot] NATIVE %s: store[4000 lfo_enabled]=%.3f "
+                    "store[4010 lfo2_enabled]=%.3f | modulation_settings"
+                    " enabled=%d lfo2_enabled=%d target_mask=0x%02X\n",
+                    label, store.get_value(spectr::kParamLfoEnabled),
+                    store.get_value(spectr::kParamLfo2Enabled),
+                    mod.enabled ? 1 : 0, mod.lfo2_enabled ? 1 : 0,
+                    static_cast<unsigned>(mod.target_mask));
+    }
+
+    // Drive one of the modulation group's toggles with a real synthesized
+    // click. The shipping asset gives them NO distinguishing attribute -- both
+    // are plain [data-spectr-setting-toggle] buttons, which is why the previous
+    // [data-spectr-modulation-lfo] selector could never resolve -- so resolve
+    // the runtime's own element id live and activate that. Index 0 is "LFO",
+    // index 1 is "LFO 2"; the destination chips are gated on LFO 2.
+    void activate_modulation_toggle(int index, const char* label) {
+        std::string script = R"JS((() => {
+  const inModulation = (n) => {
+    for (let p = n; p; p = p.parentElement || p._parentElement)
+      if (p.getAttribute && p.getAttribute('data-spectr-settings-modulation') != null) return true;
+    return false;
+  };
+  let toggles = Array.from(document.querySelectorAll(
+    '[data-spectr-settings-modulation] [data-spectr-setting-toggle]') || []);
+  if (toggles.length === 0)
+    toggles = Array.from(document.querySelectorAll('[data-spectr-setting-toggle]') || [])
+      .filter(inModulation);
+  const el = toggles[__IDX__];
+  if (!el) throw new Error('modulation toggle index __IDX__ is absent; the group has '
+    + toggles.length + ' [data-spectr-setting-toggle] element(s)');
+  const id = el.id || el.__pulpId;
+  if (!id) throw new Error('modulation toggle index __IDX__ has no resolvable element id');
+  console.log('[shot] drive toggle __IDX__ id=' + id
+    + ' aria-checked(before)=' + el.getAttribute('aria-checked'));
+  if (!globalThis.__pulpActivateMaterializedElement__('#' + id, 'click', null))
+    throw new Error('activation failed for modulation toggle index __IDX__ (id=' + id + ')');
+  if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+    globalThis.__pulpRuntimeSettle__(8);
+  const after = document.querySelector('#' + id);
+  console.log('[shot] drive toggle __IDX__ id=' + id + ' aria-checked(after)='
+    + (after ? after.getAttribute('aria-checked') : 'absent'));
+})();)JS";
+        const std::string needle{"__IDX__"};
+        const std::string value = std::to_string(index);
+        for (auto pos = script.find(needle); pos != std::string::npos;
+             pos = script.find(needle, pos + value.size()))
+            script.replace(pos, needle.size(), value);
+        std::printf("[shot] driving modulation toggle %d (%s)\n", index, label);
+        eval(script, "spectr-native-shot-activate-toggle");
+        settle(clock, 16);
+        root->layout_children();
+        settle(clock, 8);
+    }
+
     // Dump the settings body's own children. A correct viewport with nothing
     // painted means the clip is no longer the problem and the children are --
     // so measure them rather than infer from a blank picture.
@@ -429,6 +524,85 @@ void capture_view_tree(pulp::view::View& root,
                 stats.non_background_coverage, stats.opaque_coverage,
                 path.string().c_str());
     if (!ok) ++g_failures;
+}
+
+// Absolute position of a view in root space: bounds are parent-relative, so a
+// crop rect taken from bounds() alone lands in the wrong place.
+void absolute_origin(const pulp::view::View& view, float& out_x, float& out_y) {
+    float x = 0.0f;
+    float y = 0.0f;
+    for (const auto* node = &view; node != nullptr; node = node->parent()) {
+        x += node->bounds().x;
+        y += node->bounds().y;
+    }
+    out_x = x;
+    out_y = y;
+}
+
+// Capture ONE region and floor it there. The whole-frame floor passes on the
+// dimmed editor behind the modal alone, so it cannot certify that the
+// modulation group painted; cropping first makes the floor measure the region
+// actually under review. A slice that fails the floor is reported, never
+// quietly downgraded.
+void capture_slice(Rig& rig,
+                   const std::filesystem::path& dir,
+                   const std::string& name,
+                   pulp::view::ScreenshotBackend backend,
+                   float scale,
+                   const pulp::view::View& region) {
+    const auto png = pulp::view::render_to_png(
+        *rig.root, static_cast<std::uint32_t>(kDesignWidth),
+        static_cast<std::uint32_t>(kDesignHeight), scale, backend);
+    if (png.empty()) {
+        std::fprintf(stderr, "FAIL %s: backend produced no bytes\n", name.c_str());
+        ++g_failures;
+        return;
+    }
+    float ox = 0.0f;
+    float oy = 0.0f;
+    absolute_origin(region, ox, oy);
+    const auto& box = region.bounds();
+    const auto px = [scale](float value) {
+        return static_cast<std::uint32_t>(std::lround(std::max(0.0f, value) * scale));
+    };
+    const std::uint32_t x = px(ox);
+    const std::uint32_t y = px(oy);
+    const std::uint32_t w = px(box.width);
+    const std::uint32_t h = px(box.height);
+    if (w == 0 || h == 0) {
+        std::fprintf(stderr,
+                     "SKIP %s: region measures %.1fx%.1f in native coordinates,"
+                     " so no honest slice can be cropped\n",
+                     name.c_str(), box.width, box.height);
+        ++g_failures;
+        return;
+    }
+    const auto cropped = pulp::view::crop_png(png, x, y, w, h);
+    if (cropped.empty()) {
+        std::fprintf(stderr, "FAIL %s: crop_png(%u,%u,%u,%u) returned nothing\n",
+                     name.c_str(), x, y, w, h);
+        ++g_failures;
+        return;
+    }
+    const auto stats = pulp::view::analyze_screenshot_content(cropped);
+    const auto path = dir / (name + ".png");
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(cropped.data()),
+              static_cast<std::streamsize>(cropped.size()));
+    out.close();
+    const bool ok = stats.passes_content_floor();
+    std::printf("%s %s  %ux%u  colors=%u lum_sd=%.2f nonbg=%.3f opaque=%.3f"
+                "  crop=[%u,%u %ux%u]  %s\n",
+                ok ? "OK  " : "SKIP", name.c_str(), stats.width, stats.height,
+                stats.unique_colors, stats.luminance_stddev,
+                stats.non_background_coverage, stats.opaque_coverage,
+                x, y, w, h, path.string().c_str());
+    if (!ok) {
+        std::fprintf(stderr,
+                     "SKIP %s: region slice failed the SDK content floor -- this"
+                     " capture does NOT prove the group painted\n", name.c_str());
+        ++g_failures;
+    }
 }
 
 void capture(Rig& rig,
@@ -660,6 +834,11 @@ int main(int argc, char** argv) {
         // MODULATION heading is right while the section is short, but once
         // LFO 2 is open its destination chips sit below the fold -- anchoring
         // there is what made three target states capture byte-identically.
+        // Appended to every capture taken after the settings body has been
+        // unwedged (see below), so a diagnostic capture can never be mistaken
+        // for a capture of the shipping layout.
+        std::string capture_suffix;
+
         const auto show_modulation = [&](const std::string& name,
                                          const char* anchor) {
             settle(rig.clock, 24);
@@ -680,41 +859,180 @@ int main(int argc, char** argv) {
             settle(rig.clock, 24);
             std::printf("%s: anchor '%s' at content y=%.1f, scrolled to %.1f\n",
                         name.c_str(), anchor, y, owner->scroll_y());
-            capture(rig, dir, prefix + name, backend, scale);
+            capture(rig, dir, prefix + name + capture_suffix, backend, scale);
+            // Region floor. `owner` is the settings body viewport: the native
+            // group boxes inside it report zero height (see the SPECTR_SHOT_DUMP
+            // subtree), so the viewport is the tightest rect that can be
+            // derived from the live tree without inventing one. It still
+            // excludes the whole dimmed editor behind the modal, which is what
+            // makes the whole-frame floor unable to certify this group.
+            capture_slice(rig, dir, prefix + name + capture_suffix
+                              + "-GROUP-SLICE", backend, scale, *owner);
         };
 
-        rig.activate("[data-spectr-modulation-lfo]");
-        show_modulation("04-settings-MODULATION-lfo1-expanded", "MODULATION");
+        rig.report_modulation_dom("before any drive");
+        rig.report_native_state("before any drive");
+        show_modulation("04-MODULATION-collapsed", "MODULATION");
 
-        rig.activate("[data-spectr-modulation-lfo2]");
-        show_modulation("05-settings-MODULATION-lfo2-expanded", "MODULATION");
+        // ── The settings body lays out at zero height (SDK 0.835.0) ───────
+        //
+        // Everything above this point is the SHIPPING layout, and it paints
+        // nothing: the ScrollView's content child carries flex_basis = 0 with
+        // flex_grow = 0, so it resolves to its 50px top padding and every
+        // settings group inside it collapses to 458x0 -- while the labels
+        // inside those groups still report real intrinsic heights (IH=594.8
+        // on the content node, 12.0 on 'APPEARANCE'). The [PROBE] block above
+        // reproduces the same collapse from three SDK primitives with no
+        // Spectr asset involved, so this is a layout fault, not a mount fault:
+        // the widgets exist, they are just sized to nothing.
+        //
+        // A blank body cannot prove either modulation state, so the rig
+        // restores the content node's basis to auto and relays out. Captures
+        // after this point are named -UNWEDGED: they are evidence about the
+        // widget tree and the destination-selection behaviour, NOT evidence
+        // that the shipping panel paints today. The -GROUP-SLICE floors above
+        // are the record of what the shipping path actually renders.
+        {
+            auto* content = scroll->child_count() > 0
+                                ? scroll->child_at(0) : nullptr;
+            if (content == nullptr) {
+                std::fprintf(stderr,
+                             "settings body has no content child - cannot "
+                             "unwedge; every capture below stays blank\n");
+            } else {
+                const auto report = [&](const char* when) {
+                    std::printf("[unwedge] %s: content=[%.1fx%.1f] basis=%.2f "
+                                "grow=%.2f shrink=%.2f IH=%.1f scroll_content_h=%.1f\n",
+                                when, content->bounds().width,
+                                content->bounds().height,
+                                content->flex().flex_basis,
+                                content->flex().flex_grow,
+                                content->flex().flex_shrink,
+                                content->intrinsic_height(),
+                                scroll->content_size().height);
+                    const std::size_t shown = content->child_count() < 6
+                                                  ? content->child_count() : 6;
+                    for (std::size_t i = 0; i < shown; ++i) {
+                        const auto* kid = content->child_at(i);
+                        if (kid == nullptr) continue;
+                        std::printf("[unwedge]   group %zu: [%.1f,%.1f %.1fx%.1f] IH=%.1f\n",
+                                    i, kid->bounds().x, kid->bounds().y,
+                                    kid->bounds().width, kid->bounds().height,
+                                    kid->intrinsic_height());
+                    }
+                };
+                report("before");
+                content->flex().flex_basis = -1.0f;   // -1 = use preferred/intrinsic
+                content->flex().flex_shrink = 0.0f;
+                content->invalidate_layout();
+                pulp::view::View* relayout_root = scroll;
+                while (relayout_root->parent()) relayout_root = relayout_root->parent();
+                relayout_root->layout_children();
+                // The ScrollView caches a child-derived content extent, and it
+                // was computed while the content was still collapsed. Refresh
+                // it, or set_scroll() clamps every later anchor to 0 against a
+                // stale 531px extent.
+                scroll->use_automatic_content_size();
+                settle(rig.clock, 24);
+                report("after");
 
-        // Only NOW may the destination chips be asserted. Requiring them
-        // before this point would make the correct collapsed state red.
-        rig.require_reachable("[data-spectr-modulation-target=\"bank\"]");
-        rig.require_reachable("[data-spectr-modulation-target=\"snapshot-a\"]");
-        rig.require_reachable("[data-spectr-modulation-target=\"snapshot-b\"]");
-        rig.require_reachable("[data-spectr-modulation-target=\"morph\"]");
-        rig.require_reachable("[data-spectr-modulation-select=\"all\"]");
-        rig.require_reachable("[data-spectr-modulation-select=\"none\"]");
+                float tallest = 0.0f;
+                for (std::size_t i = 0; i < content->child_count(); ++i) {
+                    const auto* kid = content->child_at(i);
+                    if (kid != nullptr && kid->bounds().height > tallest)
+                        tallest = kid->bounds().height;
+                }
+                if (tallest <= 0.0f) {
+                    std::fprintf(stderr,
+                                 "UNWEDGE FAILED: settings groups are still "
+                                 "zero-height after restoring flex_basis=auto; "
+                                 "every capture below is blank and no "
+                                 "modulation state can be proven visually\n");
+                } else {
+                    capture_suffix = "-UNWEDGED";
+                    std::printf("[unwedge] settings groups now lay out "
+                                "(tallest group %.1fpx); captures below are "
+                                "suffixed -UNWEDGED\n", tallest);
+                    show_modulation("04b-MODULATION-collapsed", "MODULATION");
+                }
+            }
+        }
 
-        rig.activate("[data-spectr-modulation-select=\"none\"]");
-        rig.report_target_state("NONE");
-        show_modulation("06-settings-MODULATION-targets-none", "Targets");
+        // ── Drive LFO 1 ──────────────────────────────────────────────
+        rig.activate_modulation_toggle(0, "LFO");
+        rig.report_modulation_dom("after LFO 1 on");
+        rig.report_native_state("after LFO 1 on");
+        show_modulation("05-MODULATION-lfo1-expanded", "MODULATION");
+
+        // ── Drive LFO 2 ──────────────────────────────────────────────
+        // The destination chips are gated on LFO 2, not LFO 1: the shipping
+        // asset renders the "Targets" field inside `value.lfo2Enabled && ...`.
+        // Turning only the first toggle on can never reveal them.
+        rig.activate_modulation_toggle(1, "LFO 2");
+        rig.report_modulation_dom("after LFO 2 on");
+        rig.report_native_state("after LFO 2 on");
+        show_modulation("06-MODULATION-lfo2-expanded", "Targets");
+
+        // Now an ASSERTION, not a probe. With both LFOs driven on, absent
+        // destination chips are a product bug, so name every selector that
+        // failed to mount rather than skipping past them.
+        {
+            const char* required[] = {
+                "[data-spectr-modulation-target=\"bank\"]",
+                "[data-spectr-modulation-target=\"snapshot-a\"]",
+                "[data-spectr-modulation-target=\"snapshot-b\"]",
+                "[data-spectr-modulation-target=\"morph\"]",
+                "[data-spectr-modulation-select=\"all\"]",
+                "[data-spectr-modulation-select=\"none\"]",
+            };
+            std::string missing;
+            for (const char* selector : required) {
+                const bool mounted = rig.is_mounted(selector);
+                std::printf("destination selector %-46s %s\n", selector,
+                            mounted ? "MOUNTED" : "ABSENT");
+                if (!mounted) {
+                    if (!missing.empty()) missing += ", ";
+                    missing += selector;
+                }
+            }
+            if (!missing.empty())
+                throw std::runtime_error(
+                    "PRODUCT BUG: both modulation toggles are driven on, but "
+                    "these destination-selection elements never mounted: "
+                    + missing);
+            for (const char* selector : required) rig.require_reachable(selector);
+        }
+
+        // ── Drive one destination chip SELECTED, then back to DISABLED ───
+        // MORPH starts unpressed; one click selects it, a second clears it.
+        rig.activate("[data-spectr-modulation-target=\"morph\"]");
+        rig.report_modulation_dom("after MORPH click 1");
+        rig.report_native_state("after MORPH click 1");
+        show_modulation("07-MODULATION-target-morph-SELECTED", "Targets");
 
         rig.activate("[data-spectr-modulation-target=\"morph\"]");
-        rig.report_target_state("MORPH");
-        show_modulation("07-settings-MODULATION-targets-morph-only", "Targets");
+        rig.report_modulation_dom("after MORPH click 2");
+        rig.report_native_state("after MORPH click 2");
+        show_modulation("08-MODULATION-target-morph-DISABLED", "Targets");
 
+        // ALL / NONE drive the whole destination set at once.
         rig.activate("[data-spectr-modulation-select=\"all\"]");
-        rig.report_target_state("ALL");
-        show_modulation("08-settings-MODULATION-targets-all", "Targets");
+        rig.report_modulation_dom("after ALL");
+        rig.report_native_state("after ALL");
+        show_modulation("09-MODULATION-targets-all", "Targets");
+
+        rig.activate("[data-spectr-modulation-select=\"none\"]");
+        rig.report_modulation_dom("after NONE");
+        rig.report_native_state("after NONE");
+        show_modulation("10-MODULATION-targets-none", "Targets");
 
         // Back to the collapsed state, proving the disclosure closes as well
         // as it opens -- a one-way drive would hide a stuck-open bug.
-        rig.activate("[data-spectr-modulation-lfo2]");
-        rig.activate("[data-spectr-modulation-lfo]");
-        show_modulation("09-settings-MODULATION-collapsed-again", "MODULATION");
+        rig.activate_modulation_toggle(1, "LFO 2");
+        rig.activate_modulation_toggle(0, "LFO");
+        rig.report_modulation_dom("after collapsing both");
+        rig.report_native_state("after collapsing both");
+        show_modulation("11-MODULATION-collapsed-again", "MODULATION");
     } catch (const std::exception& failure) {
         std::fprintf(stderr, "FAIL: %s\n", failure.what());
         return 1;
