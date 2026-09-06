@@ -69,6 +69,12 @@ const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
 
 } // namespace
 
+// Catch2 renders a std::uint8_t as a character, so a mask mismatch prints as
+// unreadable punctuation. Compare masks as ints and a failure names the bits.
+static constexpr int mask_int(std::uint8_t mask) noexcept {
+    return static_cast<int>(mask);
+}
+
 TEST_CASE("#34: the full static parameter surface is registered") {
     Wired w;
     CHECK(w.store.param_count() == kExpectedParamCount);
@@ -520,8 +526,8 @@ TEST_CASE("host target automation reclaims the modulation destination") {
     // The editor selects every destination. This is editor state: it has no
     // parameter lane of its own.
     REQUIRE(w.proc->set_modulation_target_mask(spectr::kModulationTargetMaskAll));
-    REQUIRE(w.proc->modulation_settings().target_mask
-            == spectr::kModulationTargetMaskAll);
+    REQUIRE(mask_int(w.proc->modulation_settings().target_mask)
+            == mask_int(spectr::kModulationTargetMaskAll));
 
     // An unrelated LFO parameter edit must not discard the selection. Before
     // the fix, apply_surface_params() overwrote the whole settings struct with
@@ -529,8 +535,8 @@ TEST_CASE("host target automation reclaims the modulation destination") {
     w.store.set_value(spectr::kParamLfoDepth, 0.75f);
     REQUIRE(w.proc->apply_surface_params(false));
     CHECK(w.proc->modulation_settings().depth == Approx(0.75f));
-    CHECK(w.proc->modulation_settings().target_mask
-          == spectr::kModulationTargetMaskAll);
+    CHECK(mask_int(w.proc->modulation_settings().target_mask)
+          == mask_int(spectr::kModulationTargetMaskAll));
 
     // Moving kParamLfoTarget does discard it: that lane is host-automatable
     // and must never be silently swallowed by an earlier editor selection.
@@ -539,7 +545,9 @@ TEST_CASE("host target automation reclaims the modulation destination") {
     REQUIRE(w.proc->apply_surface_params(false));
     const auto after = w.proc->modulation_settings();
     CHECK(after.target == spectr::ModulationTarget::SnapshotB);
-    CHECK(after.target_mask == spectr::kModulationTargetMaskUnset);
-    CHECK(spectr::resolve_modulation_target_mask(after)
-          == spectr::modulation_target_bit(spectr::ModulationTarget::SnapshotB));
+    CHECK(mask_int(after.target_mask)
+          == mask_int(spectr::kModulationTargetMaskUnset));
+    CHECK(mask_int(spectr::resolve_modulation_target_mask(after))
+          == mask_int(spectr::modulation_target_bit(
+                 spectr::ModulationTarget::SnapshotB)));
 }

@@ -51,6 +51,12 @@ BandField ramp_field(float start, float step) {
 
 } // namespace
 
+// Catch2 renders a std::uint8_t as a character, so a mask mismatch prints as
+// unreadable punctuation. Compare masks as ints and a failure names the bits.
+static constexpr int mask_int(std::uint8_t mask) noexcept {
+    return static_cast<int>(mask);
+}
+
 TEST_CASE("M8 morph_fields: t=0 returns A, t=1 returns B") {
     const auto A = make_field(-12.0f);
     const auto B = make_field(+6.0f);
@@ -196,15 +202,17 @@ TEST_CASE("an unset target mask follows the automatable target enum") {
     spectr::ModulationSettings settings;
     // A fresh settings object carries no explicit destination selection, so
     // the automatable enum lane decides.
-    CHECK(settings.target_mask == spectr::kModulationTargetMaskUnset);
+    CHECK(mask_int(settings.target_mask)
+          == mask_int(spectr::kModulationTargetMaskUnset));
     settings.target = spectr::ModulationTarget::SnapshotB;
-    CHECK(spectr::resolve_modulation_target_mask(settings)
-          == spectr::modulation_target_bit(spectr::ModulationTarget::SnapshotB));
+    CHECK(mask_int(spectr::resolve_modulation_target_mask(settings))
+          == mask_int(spectr::modulation_target_bit(
+                 spectr::ModulationTarget::SnapshotB)));
 
     // An explicitly empty selection is a different statement — the user asked
     // for no destinations — and must not be confused with "unset".
     settings.target_mask = 0;
-    CHECK(spectr::resolve_modulation_target_mask(settings) == 0);
+    CHECK(mask_int(spectr::resolve_modulation_target_mask(settings)) == 0);
 
     spectr::BandField canonical;
     canonical.bands[0].gain_db = 0.0f;
@@ -236,7 +244,7 @@ TEST_CASE("plugin state round-trips the modulation target mask") {
     a.set_state_store(&store_a);
     a.define_parameters(store_a);
     REQUIRE(a.set_modulation_target_mask(kMask));
-    REQUIRE(a.modulation_settings().target_mask == kMask);
+    REQUIRE(mask_int(a.modulation_settings().target_mask) == mask_int(kMask));
     const auto blob = a.serialize_plugin_state();
     REQUIRE_FALSE(blob.empty());
 
@@ -244,10 +252,10 @@ TEST_CASE("plugin state round-trips the modulation target mask") {
     pulp::state::StateStore store_b;
     b.set_state_store(&store_b);
     b.define_parameters(store_b);
-    REQUIRE(b.modulation_settings().target_mask
-            == spectr::kModulationTargetMaskUnset);
+    REQUIRE(mask_int(b.modulation_settings().target_mask)
+            == mask_int(spectr::kModulationTargetMaskUnset));
     REQUIRE(b.deserialize_plugin_state(blob));
-    CHECK(b.modulation_settings().target_mask == kMask);
+    CHECK(mask_int(b.modulation_settings().target_mask) == mask_int(kMask));
 }
 
 TEST_CASE("a plugin state blob without a target mask loads as unset") {
@@ -292,8 +300,8 @@ TEST_CASE("a plugin state blob without a target mask loads as unset") {
     REQUIRE(b.set_modulation_target_mask(0));
     const std::vector<uint8_t> legacy(json.begin(), json.end());
     REQUIRE(b.deserialize_plugin_state(legacy));
-    CHECK(b.modulation_settings().target_mask
-          == spectr::kModulationTargetMaskUnset);
+    CHECK(mask_int(b.modulation_settings().target_mask)
+          == mask_int(spectr::kModulationTargetMaskUnset));
 }
 
 TEST_CASE("tempo LFO waveform is deterministic and bounded") {

@@ -42,6 +42,12 @@ struct Rig {
 
 } // namespace
 
+// Catch2 renders a std::uint8_t as a character, so a mask mismatch prints as
+// unreadable punctuation. Compare masks as ints and a failure names the bits.
+static constexpr int mask_int(std::uint8_t mask) noexcept {
+    return static_cast<int>(mask);
+}
+
 TEST_CASE("M9 preset round-trip preserves working state") {
     Rig a;
     // Build a non-default state across both flat params and supplemental.
@@ -118,11 +124,12 @@ TEST_CASE("preset round-trip preserves the modulation target selection") {
     REQUIRE_FALSE(json.empty());
 
     Rig b;
-    REQUIRE(b.proc->modulation_settings().target_mask
-            == spectr::kModulationTargetMaskUnset);
+    REQUIRE(mask_int(b.proc->modulation_settings().target_mask)
+            == mask_int(spectr::kModulationTargetMaskUnset));
     const auto result = load_preset_from_string(*b.proc, json);
     REQUIRE(result);
-    CHECK(b.proc->modulation_settings().target_mask == kMask);
+    CHECK(mask_int(b.proc->modulation_settings().target_mask)
+          == mask_int(kMask));
     // Control: the parameter-backed LFO fields travel too, so a failure above
     // is the selection specifically and not a dead preset path.
     CHECK(b.store.get_value(spectr::kParamLfoDepth) == Approx(0.8f));
