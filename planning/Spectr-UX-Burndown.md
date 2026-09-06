@@ -2,6 +2,73 @@
 
 Last updated: 2026-09-04
 
+## 2026-09-06 wrap-up: PKG critical path and corrected proof labels
+
+This section supersedes older "CLOSED"/"Done" labels below wherever the two
+disagree. It records what actually gates the PKG today and which rows were
+labelled from an instrument that cannot see the surface they claim to prove.
+
+### The PKG is gated on two Pulp fixes reaching an OFFICIAL SDK
+
+Spectr never pins an unofficial SDK build, so the PKG cannot be built until a
+tagged release carries both fixes for the defects Daniel reported:
+
+| Pulp PR | Defect it fixes | State |
+| --- | --- | --- |
+| #8097 | `SNAPSHOT` painted truncated (`SNAPSHO`) — measure walked `own -> inherited -> "Inter"` while paint resolved `own -> "Inter"`, so a pinned box measured right and painted wrong | MERGED 2026-09-06T23:18:48Z |
+| #8094 | Settings body collapsed (blank / ~50px) — the retained-scroll split cleared `flex_grow`/`flex_shrink` but left `flex_basis: 0` behind, so content main size resolved to `0 + padding` | OPEN, auto-merge armed |
+
+The latest official SDK **v0.835.0 was tagged 2026-09-06T01:40Z and contains
+NEITHER**. A PKG built against it today would ship the exact two defects the
+burn-down exists to close. Verified over git transport (zero API cost):
+
+    git merge-base --is-ancestor b1ef8b9112e7c6f831bb9c31324b0862f8ab0f5b v0.835.0   # 8097 -> false
+
+`tools/ci/pulp-sdk-release.json` is still pinned to v0.829.0. Three fields move
+on the bump: `asset_sha256`, `release_tag`, `source_git_sha`.
+
+Order matters: if the pending `release/version-bump` PR (#8099) tags before
+#8094 merges, the resulting SDK carries the SNAPSHOT fix but not the Settings
+fix, and the PKG is still half-defective. The bump has to land after #8094.
+
+### Corrected proof labels
+
+The adversarial exact-head review (DEL-1) found rows marked closed on an
+instrument that cannot observe the surface the row is about. A browser lane
+runs the materialized document in Chromium; it never builds or runs the SDK,
+so it cannot prove anything about native Skia raster.
+
+| Row | Was | Is |
+| --- | --- | --- |
+| MOD-1 | "Automated proof CLOSED" | Browser-only. The driven oracle is real and green, but it drives the DOM. The native modulation capture still SKIPs on the shipping path and only produces a frame through the diagnostic `-UNWEDGED` route until #8094 lands in an SDK |
+| PRE-3, OVL-1..5, SET-4, SET-5, SET-7, COR-3 | "Done" | Done with BROWSER-ONLY proof. Already labelled as such in the rows themselves; repeated here so the summary does not read as native coverage |
+
+`Spectr-native-shot` is the branch's only native/Skia instrument and it is
+**not wired into CMake `add_test` or `m5-product-acceptance.yml`** — so no CI
+lane exercises it. That is why browser-only labels drifted into reading as
+closure.
+
+### Landed since the last doc update
+
+| Commit | What |
+| --- | --- |
+| `3f45692` | `tools/native_shot.cpp`: region-cropped captures with a PER-REGION content floor (a whole-frame floor passes on the dimmed editor behind the modal alone, so it cannot certify the modulation group painted), root-space `absolute_origin()` because bounds are parent-relative, DOM + native state readback that pumps audio first (`ModulationSettings` is rebuilt on the param-sync lane `process()` drives), and live element-id resolution because the shipping asset gives both toggles the same `[data-spectr-setting-toggle]` attribute |
+| `ae1011e5` | SET-4/SET-5 flaky oracle closed, 6/6 |
+| `fef56c4`, `d28de22`, `c1f3eb4`, `2e42824` | earlier UX fixes, previously unrecorded here |
+
+### Still open
+
+PRE-1 (blocked on Daniel's threshold decision), PRE-2, PRE-4, PRE-6 (open
+product decision), SET-1 + SET-6 (blocked on #8094 reaching an SDK), AUT-3
+(needs a real Logic host; not observable from any automated oracle), MOD-3,
+COR-1, COR-3, DEL-2, DEL-3, DEL-4.
+
+COR-1 has a concrete fix ready: the right analyzer ruler's `0` is given the
+same emphasis colour the left gain ruler's `0` uses, but the two zeros sit
+`0.7916666 * halfH` apart and mean different things. Stop sharing the
+emphasis, label the heads `dBFS (analyzer)` vs `dB (gain)`, regenerate
+`native-ui/materialized/materialized-document.runtime.json`.
+
 ## 2026-09-04 review-only PKG 1.0.9
 
 - Built four Release payloads from exact Spectr head
@@ -357,7 +424,7 @@ for that confirmation.
 | AUT-1 | Recorded automation/playback is sample-accurate | Processor playback implemented | RERUN DONE on official SDK v0.834.0 (source 688a709b, contains the Pulp lifecycle contract f9bb36025): `Spectr renders scheduled band automation without control-worker latency`, `scheduled processor playback changes gain on the exact sample across partitions`, and `Spectr output automation is smoothed and block-partition invariant` all PASS | Logic test required | Waiting human/host confirmation only |
 | AUT-2 | Bands and viewport animate during host playback | Done | RERUN DONE on official SDK v0.834.0 (source 688a709b, contains the Pulp lifecycle contract f9bb36025): `native host automation projects through the compact live frame lane` PASSES; `"#37: host mode automation advances the editor projection"` PASSES | Pending in Logic with new PKG | Waiting human/host confirmation only |
 | AUT-3 | Logic automation lanes are visible and behave correctly | Parameter surface implemented | NO AUTOMATED ORACLE IS POSSIBLE. Whether Logic renders automation lanes is not observable headlessly; auval/clap-validator prove scan+load, not lane rendering. Needs a real host and therefore a built PKG. `src/param_surface.cpp` proves the lanes are DECLARED, which is necessary but not sufficient | Pending in Logic with new PKG | BLOCKED: needs a real Logic host (decision: accept as human-confirmation-only?) |
-| MOD-1 | Internal modulation/LFO Settings UI | Done, and a REAL BUG found and fixed: the single-scroll release hid the Settings tab RAIL with display:none, but that container also held the MODULATION group, so every LFO and target control was mounted and UNREACHABLE | CLOSED. The static-regex assertions passed on the hidden markup -- they read emitted source text and cannot see a zero-height box behind display:none. Replaced with a DRIVEN oracle in `Spectr-browser-ux-polish` (mode 'modulation'): walks the ancestor chain for display:none, requires a rendered box, clicks the real target/ALL/NONE buttons and asserts the `modulation_targets_set` bridge payload delta plus the control's own restyle. Planted negative severs the onClick and requires a timeout, asserted on the exact message. Whole browser lane green | Pending visual/audible check in new PKG | Automated proof CLOSED; waiting human confirmation |
+| MOD-1 | Internal modulation/LFO Settings UI | Done, and a REAL BUG found and fixed: the single-scroll release hid the Settings tab RAIL with display:none, but that container also held the MODULATION group, so every LFO and target control was mounted and UNREACHABLE | CLOSED. The static-regex assertions passed on the hidden markup -- they read emitted source text and cannot see a zero-height box behind display:none. Replaced with a DRIVEN oracle in `Spectr-browser-ux-polish` (mode 'modulation'): walks the ancestor chain for display:none, requires a rendered box, clicks the real target/ALL/NONE buttons and asserts the `modulation_targets_set` bridge payload delta plus the control's own restyle. Planted negative severs the onClick and requires a timeout, asserted on the exact message. Whole browser lane green. CORRECTION: this is a BROWSER-ONLY oracle -- it drives the DOM in Chromium and never builds or runs the SDK, so it cannot prove the native Skia surface Daniel asked to see. The native capture SKIPs on the shipping path and only renders through the diagnostic `-UNWEDGED` route until #8094 lands in an SDK | Pending visual/audible check in new PKG | Automated proof BROWSER-ONLY; native proof blocked on #8094 |
 | MOD-2 | Whole-bank, Snapshot A/B, and Morph targets | Implemented; independent Bank/A/B/Morph toggles now preserve a mixed target mask, with ALL/NONE shortcuts | RERUN DONE on official SDK v0.834.0 (source 688a709b, contains the Pulp lifecycle contract f9bb36025): `internal modulation targets snapshots and host morph independently`, `internal modulation target mask composes selected destinations`, and `modulation target bridge accepts all and none target sets` all PASS | Pending audible check in new PKG | Waiting human confirmation only |
 | MOD-3 | Host and internal modulation coexist | Implemented | CORRECTION: this row had NO oracle. Now covered by `Spectr keeps host band automation and internal modulation both audible` `[modulation][coexistence]`, which measures BOTH directions (internal modulation still audible while the host drives every band; the host's authored dB still audible while modulation runs) against a positive control. Both directions confirmed by planted negatives with the recompile observed: disabling modulation_settings.enabled reds one assertion, clearing host_field only while modulation is enabled reds the other. NOT covered: the snapshot A/B morph host axis, which needs the editor bridge rather than the parameter surface | Pending in new PKG and hosts | Waiting human confirmation |
 
