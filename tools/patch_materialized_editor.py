@@ -2900,7 +2900,13 @@ def repair_cursor_state(document):
     # Allow the authored panel to grow on tall hosts; the body only needs a
     # scrollbar when its content exceeds the available viewport.
     html = html.replace('height: "min(92vh, 760px)"',
-                        'height: "min(92vh, 1280px)"', 1)
+                        'height: "min(92vh, 1400px)"', 1)
+    # Revealing the MODULATION group added real content to the single-scroll
+    # Settings body, which at the previous 1280px cap could no longer fit on a
+    # tall host. Raise the cap so a large window still shows the panel without
+    # a scrollbar, and upgrade an artifact already carrying the old value.
+    html = html.replace('height: "min(92vh, 1280px)"',
+                        'height: "min(92vh, 1400px)"', 1)
     state_old = '  const [hover, setHover] = useState(null);'
     state_new = state_old + '\n  const [cursor, setCursor] = useState(\'crosshair\');'
     if 'const [cursor, setCursor] = useState' not in html:
@@ -4168,8 +4174,16 @@ def simplify_settings_single_scroll(document):
     segment = segment.replace('    tab === "modulation" && ', '')
     segment = segment.replace('    tab === "general" && React.createElement("div", { "data-spectr-settings-general-tab": true, style: { padding: "10px 4px", color: "rgba(255,255,255,0.5)", fontFamily: "var(--sans)", fontSize: 10 } }, "General editor settings are shown below."),\n', '')
     # Remove the tab rail while leaving its containing surface harmless.
+    # The rail's TABLIST is what the single-scroll release drops -- not the
+    # surface it sits in, which also contains the MODULATION group. Hiding the
+    # container hid the modulation controls themselves: they stayed mounted, so
+    # every static source assertion kept passing while the user could not reach
+    # a single LFO or target control. Neutralise the rail's positioning instead,
+    # and repair an artifact that already carries the hidden form.
     segment = segment.replace('style: { position: "absolute", top: 76, left: 26, right: 26, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
-                              'style: { display: "none" }', 1)
+                              'style: {}', 1)
+    segment = segment.replace('"data-spectr-settings-tabs": true, style: { display: "none" }',
+                              '"data-spectr-settings-tabs": true, style: {}', 1)
     segment = segment.replace('    React.createElement("div", { role: "tablist", style: { display: "flex", gap: 5, marginBottom: 14 } }, tabButton("general", "GENERAL"), tabButton("modulation", "MODULATION")),\n', '')
     # Each LFO toggle is the disclosure control: its options disappear while
     # disabled and re-expand immediately when enabled.
@@ -4417,7 +4431,7 @@ def enforce_settings_fixed_shell(document):
 
     # The panel itself must not scroll; its body child does.
     old_panel = 'width: 520,\n    maxHeight: "98vh",\n    overflowY: "auto",'
-    new_panel = ('width: 520,\n    height: "min(92vh, 1280px)",\n'
+    new_panel = ('width: 520,\n    height: "min(92vh, 1400px)",\n'
                  '    maxHeight: "92vh",\n    overflow: "hidden",\n'
                  '    display: "flex",\n    flexDirection: "column",')
     if old_panel in html:

@@ -125,6 +125,92 @@ window.__spectrPolishStart = () => {
         return;
       }
 
+      if (${JSON.stringify(mode)} === 'modulation') {
+        const style = document.createElement('style');
+        style.textContent = 'html,body{width:100%!important;height:100%!important;'
+          + 'position:fixed!important;inset:0!important;overflow:hidden!important}'
+          + '#root{display:none!important}#__spectr_polish_mount{position:fixed;inset:0}';
+        document.head.appendChild(style);
+        const Harness = () => {
+          const [settings, setSettings] = React.useState({
+            theme: 'spectral', metaphor: 'columns', bloom: 1,
+            spectrumIntensity: 1, bandCount: 32, muteStyle: 'cutout',
+            showMinimap: true, showRulers: true, motionMode: 'live',
+            statusInfo: true, showBuildInfo: true,
+          });
+          return React.createElement(SettingsModal, {
+            settings, setSettings, onClose() {},
+          });
+        };
+        ReactDOM.createRoot(mount).render(React.createElement(Harness));
+        const panel = await waitFor(() =>
+          document.querySelector('#__spectr_polish_mount [data-spectr-settings-panel]'),
+        'Settings panel');
+        const names = ['bank', 'snapshot-a', 'snapshot-b', 'morph'];
+        const buttonFor = key => panel.querySelector(
+          '[data-spectr-modulation-target="' + key + '"]');
+        const bank = await waitFor(() => buttonFor('bank'), 'bank target control');
+
+        // REACHABILITY. Mounted is not reachable: an ancestor display:none
+        // renders every static source assertion vacuous.
+        for (let node = bank; node && node !== document.body; node = node.parentElement) {
+          if (getComputedStyle(node).display === 'none')
+            throw new Error('modulation controls are hidden by an ancestor '
+              + 'display:none: ' + (node.getAttribute('data-spectr-settings-tabs')
+                ? 'data-spectr-settings-tabs' : node.tagName));
+        }
+        const box = bank.getBoundingClientRect();
+        if (box.width <= 0 || box.height <= 0)
+          throw new Error('modulation target control has no rendered box');
+
+        // WIRING. Assert the delta, not an absolute mask: the mount effect
+        // defaults the mask to all-selected when the host reports no targets.
+        const pressed = () => names.filter(key =>
+          buttonFor(key).getAttribute('aria-pressed') === 'true');
+        const before = pressed();
+        // The bridge carries unrelated traffic (editor_ready and friends), so
+        // filter to the message this control owns. Waiting on raw call count
+        // lets an unrelated message satisfy the wait and mask a dead handler.
+        const modCalls = () => window.__spectrBridgeCalls.filter(
+          entry => entry.type === 'modulation_targets_set');
+        window.__spectrBridgeCalls.length = 0;
+        bank.click();
+        await waitFor(() => modCalls().length >= 1, 'bank click bridge write');
+        const call = modCalls()[0];
+        const expected = before.includes('bank')
+          ? before.filter(key => key !== 'bank')
+          : before.concat(['bank']);
+        const sortedJoin = list => list.slice().sort().join(',');
+        if (sortedJoin(call.payload.targets) !== sortedJoin(expected))
+          throw new Error('bank click sent [' + call.payload.targets
+            + '] want [' + expected + ']');
+        if (sortedJoin(pressed()) !== sortedJoin(expected))
+          throw new Error('bank click did not restyle its own control');
+
+        const none = panel.querySelector('[data-spectr-modulation-select="none"]');
+        if (!none) throw new Error('NONE control missing');
+        none.click();
+        await waitFor(() => modCalls().length >= 2, 'NONE bridge write');
+        if (modCalls()[1].payload.targets.length !== 0)
+          throw new Error('NONE left targets selected');
+        const all = panel.querySelector('[data-spectr-modulation-select="all"]');
+        if (!all) throw new Error('ALL control missing');
+        all.click();
+        await waitFor(() => modCalls().length >= 3, 'ALL bridge write');
+        if (sortedJoin(modCalls()[2].payload.targets) !== sortedJoin(names))
+          throw new Error('ALL selected [' + modCalls()[2].payload.targets + ']');
+        // This mode finishes far faster than the copy-feedback scenarios, so
+        // the shipping bundle may still be mounting. Wait for it rather than
+        // reading a not-yet-mounted root as a failure.
+        await waitFor(() => {
+          const shipped = document.querySelector('#root');
+          return shipped && shipped.children.length > 0;
+        }, 'shipping root mount');
+        assertFinalSurface();
+        result.textContent = 'SPECTR_MODULATION_OK';
+        return;
+      }
+
       const style = document.createElement('style');
       style.textContent = 'html,body{width:100%!important;height:100%!important;'
         + 'position:fixed!important;inset:0!important;transform:none!important;overflow:hidden!important}'
@@ -205,9 +291,11 @@ const run = ({ componentSource, mode, width, height }) => {
   let html = fs.readFileSync(browserHtmlPath, 'utf8');
   const mock = `<script>
 window.spectrPublishMode = () => {};
+window.__spectrBridgeCalls = [];
 window.pulp = {
   on() { return () => {}; },
-  postMessage(type) {
+  postMessage(type, payload) {
+    window.__spectrBridgeCalls.push({ type, payload });
     if (type === 'build_info_get') return Promise.resolve({ ok: true, payload: {
       ok: true, product_version: '1.0.0', product_sha: '0123456789abcdef',
       product_provenance_known: true, product_dirty: false,
@@ -288,4 +376,27 @@ for (const [label, height] of [['overflowing', 860], ['fitting', 1800]]) {
   assert.equal(oracleText(settings), 'SPECTR_SETTINGS_POLISH_OK', label);
 }
 
-console.log('Spectr UX polish: dwell negative control red; copy, hint, and overflow scenarios green');
+const modulation = run({
+  componentSource: shippingSurface, mode: 'modulation', width: 1320, height: 860,
+});
+assert.equal(modulation.error, undefined, modulation.error && modulation.error.message);
+assert.equal(modulation.status, 0, modulation.stderr.slice(-2000));
+assert.equal(oracleText(modulation), 'SPECTR_MODULATION_OK');
+
+// Negative control for the driven check above. The static regex assertions at
+// the top of this file cannot tell a wired control from a dead one -- they read
+// emitted source text. This severs the target button's handler and requires the
+// driven oracle to notice, so a future weakening turns this green->red.
+const deadTargets = shippingSurface.replace(
+  'onClick: () => publishTargetMask((value.targetMask || 0) ^ bit)',
+  'onClick: () => {}');
+assert.notEqual(deadTargets, shippingSurface,
+  'modulation target handler needle did not match; the negative control would be blind');
+const deadModulation = run({
+  componentSource: deadTargets, mode: 'modulation', width: 1320, height: 860,
+});
+assert.equal(deadModulation.status, 0, deadModulation.stderr.slice(-2000));
+assert.equal(oracleText(deadModulation),
+  'SPECTR_POLISH_ORACLE_ERROR: timed out waiting for bank click bridge write');
+
+console.log('Spectr UX polish: dwell + modulation negative controls red; copy, hint, overflow, and driven modulation scenarios green');
