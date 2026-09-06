@@ -312,6 +312,50 @@ window.__spectrPolishStart = () => {
         // assertion would pass without the disclosure ever working.
         if (buttonFor('bank'))
           throw new Error('Targets reachable with LFO 2 off; disclosure not gating');
+
+        // The Targets row publishes target_mask, and the audio path applies that
+        // one mask to BOTH LFOs, so a patch running only LFO 1 must still be
+        // able to reach it. Drive LFO 1 alone and require the row to appear.
+        const lfo1Matches = toggles.filter(toggle => {
+          for (let node = toggle.parentElement, hops = 0;
+               node && hops < 4; node = node.parentElement, ++hops) {
+            const heading = node.firstElementChild
+              && node.firstElementChild.firstElementChild;
+            if (heading && heading.textContent.trim() === 'LFO') return true;
+          }
+          return false;
+        });
+        if (lfo1Matches.length !== 1)
+          throw new Error('want exactly one LFO 1 toggle, found '
+            + lfo1Matches.length + ' among ' + toggles.length
+            + ' settings toggles');
+        const lfo1 = lfo1Matches[0];
+        if (lfo1.getAttribute('aria-checked') !== 'false')
+          throw new Error('LFO 1 did not start off, so opening it proves nothing');
+        lfo1.click();
+        const lfo1Bank = await waitFor(() => buttonFor('bank'),
+          'Targets control with LFO 1 on and LFO 2 still off');
+        if (lfo2.getAttribute('aria-checked') !== 'false')
+          throw new Error('LFO 2 came on by itself; the LFO-1-only case that the '
+            + 'gate defect broke was never exercised');
+        const lfo1Box = lfo1Bank.getBoundingClientRect();
+        if (lfo1Box.width <= 0 || lfo1Box.height <= 0)
+          throw new Error('LFO-1-only Targets control has no rendered box');
+        // The hint is the only thing telling the user this one row governs both
+        // LFOs, which is exactly what makes reaching it from LFO 1 legitimate.
+        const hintNodes = Array.from(panel.querySelectorAll('*')).filter(
+          node => node.children.length === 0
+            && node.textContent.trim() === 'Destinations both LFOs modulate');
+        if (hintNodes.length !== 1)
+          throw new Error('want one Targets hint naming both LFOs, found '
+            + hintNodes.length);
+        // NEGATIVE CONTROL for the widened gate: turning every LFO back off must
+        // retract the row, or the gate is not gating and the assertion above
+        // would pass against an unconditional Targets row.
+        lfo1.click();
+        await waitFor(() => !buttonFor('bank'),
+          'Targets control to retract once every LFO is off again');
+
         lfo2.click();
         const bank = await waitFor(() => buttonFor('bank'),
           'bank target control after opening the LFO 2 disclosure');

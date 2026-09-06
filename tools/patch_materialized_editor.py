@@ -2875,6 +2875,123 @@ SUPERSEDED_SENTINELS = {
         'React.createElement(SpectrModulationSettings, null)',
 }
 
+
+# ---------------------------------------------------------------------------
+# Superseded-edit allowlists.
+#
+# EDITS is a historical recipe: a later step legitimately subsumes an earlier
+# step's replacement, so some edits are expected to find no patch point. That
+# is the ONLY legitimate reason for an edit to no-op.
+#
+# Everything else that stops matching -- an SDK bump, an upstream editor
+# refactor, a re-capture that moves a needle -- is drift, and drift must turn
+# this run RED. Previously every no-op printed "superseded" and continued, so a
+# moved needle silently shipped an unpatched editor with a green build.
+#
+# SUPERSEDED_EDITS names edits whose patch point is legitimately gone by the
+# time the edit runs. POST_CHECK_EXEMPT_EDITS names edits whose replacement is
+# legitimately overwritten by a LATER recipe step, so it is absent from the
+# finished document. Both are label lists, both are checked at startup against
+# EDITS so a renamed label cannot rot into a silent exemption, and an entry
+# that stops being needed is reported as prunable in the run summary.
+#
+# Adding a label here is a claim that the edit is genuinely subsumed. Prove
+# that before adding one; the default answer to a missing needle is to
+# re-author the needle.
+SUPERSEDED_EDITS = frozenset({
+    # Proven subsumed: a LATER edit in this same list takes this edit's
+    # replacement text as its own patch point, so by the time this edit runs
+    # the text it looks for has already been rewritten downstream.
+    'settings status semantics commit with the modal mount',
+    #   consumed by: settings modal publishes an explicit liveness marker
+    'live status text has text-independent geometry',
+    #   consumed by: live status text declares fixed single-line geometry
+    'live status text is one fixed-size label',
+    #   consumed by: live status text declares fixed single-line geometry
+    'live status text declares fixed single-line geometry',
+    #   consumed by: live status text is optically centered
+    'live status text is optically centered',
+    #   consumed by: status text uses an integer-centered line box
+    'band count label shares one vertical center',
+    #   consumed by: band trigger suffix shares the centered flex line
+    'band count trigger reflects selection immediately',
+    #   consumed by: band trigger suffix shares the centered flex line
+    'band trigger suffix shares the centered flex line',
+    #   consumed by: band trigger suffix uses native-supported spacing
+    'band trigger suffix uses native-supported spacing',
+    #   consumed by: band trigger suffix spacing survives materialization
+    'status info defaults on',
+    #   consumed by: shipping settings default build information on
+    'preset trigger shows selected name',
+    #   consumed by: selected preset trigger truncates without losing its full title
+    'drawing keeps live hover outside React reconciliation',
+    #   consumed by: live hover status reuses the current label
+    'band hover uses the pointer-owned ref',
+    #   consumed by: browser hover readout updates synchronously
+    'settings status label stays stable across toggle repaint',
+    #   consumed by: settings header separates title and status control in one captured line
+    'settings status title uses color without a frozen-width box',
+    #   consumed by: settings header separates title and status control in one captured line
+    'settings toggle does not reshape text during materialized updates',
+    #   consumed by: settings title is distinct from the status control
+    'settings status label extends inward from the captured action slot',
+    #   consumed by: settings switch occupies an intentional position in the header
+    'settings switch occupies an intentional position in the header',
+    #   consumed by: settings switch label fits the captured action slot
+    'settings switch label fits the captured action slot',
+    #   consumed by: settings switch uses authored width after stale binding removal
+    'settings switch aligns to the header action edge',
+    #   consumed by: settings switch position comes from the corrected capture binding
+    'settings switch label is centered within its control',
+    #   consumed by: settings switch names its actual state
+    'status info is appended as a standard scrollable field',
+    #   consumed by: shipping settings optionally show build information below feedback
+    'internal modulation settings own host parameters',
+    #   consumed by: materialized modulation settings expose fixed tabs
+
+    # Patch point rewritten wholesale by one of the named helper functions
+    # below (repair_cursor_state, simplify_settings_single_scroll,
+    # augment_modulation_tabs, separate_modulation_tab_content, ...) rather
+    # than by another entry in EDITS. These are a baseline snapshot of the
+    # no-op set as it stood when the strict check was introduced; each was
+    # confirmed to no-op on a clean checkout, not individually re-derived.
+    'settings backdrop only dismisses a true outside click',
+    'settings backdrop migration retains overlay identity',
+    'settings panel owns native overlay containment',
+    'settings panel carries an eager liveness marker',
+    'settings dismissal listener commits with the modal mount',
+    'settings modal publishes an explicit liveness marker',
+    'settings modal refreshes atlas after mount',
+    'settings modal motion mode publication',
+    'band dropdown inactive items retain a surface',
+    'minimap press uses grabbing cursor',
+    'minimap release retains physical cursor',
+    'minimap deferred release retains physical cursor',
+    'rail popup trigger semantics',
+    'browser hover readout updates synchronously',
+    'idle hover clearing uses the pointer-owned ref',
+    'minimap release publishes one final React viewport',
+    'settings groups fit the authored viewport without clipping rows',
+    'status info no longer adds an uncaptured settings row',
+    'settings header exposes stable sticky identity',
+    'settings status semantics follow persisted state',
+    'settings groups retain stable materialized identity',
+    'settings header is an authored fixed scroll boundary',
+    'settings sticky header stays inside the panel boundary',
+    'app accepts compact host automation projections',
+    'app subscribes to one live automation projection per frame',
+    'materialized modulation settings expose fixed tabs',
+    'materialized modulation tabs stay visible above scrolling content',
+    'materialized modulation tabs close cleanly',
+})
+
+POST_CHECK_EXEMPT_EDITS = frozenset({
+    # The internal-modulation group is re-emitted in full by
+    # separate_modulation_tab_content(), which reorders the fields this edit
+    # placed, so its replacement is no longer present verbatim at the end.
+    'settings render internal modulation before feedback',
+})
+
 # Generated bindings live outside the escaped `html` string. Keep these
 # materialization-only corrections explicit rather than teaching HTML edits to
 # rewrite unrelated top-level document data.
@@ -4032,7 +4149,7 @@ RUNTIME_EDITS = [
      '    }\n'
      '    if (activeCapturedState === "settings") {\n'
      '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");',
-     'live settings labels inherit the captured mono face'),
+     '      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {'),
     ('settings preserve reparent reasserts scroll hint',
      '    if (parent && typeof parent.removeChild === "function"\n'
      '        && typeof parent.appendChild === "function") {\n'
@@ -4354,6 +4471,16 @@ RUNTIME_EDITS = [
 ]
 
 
+# The Targets row publishes `target_mask`, which the audio path applies to
+# BOTH internal LFOs (include/spectr/modulation.hpp reads it once, and
+# src/spectr.cpp hands the second LFO a copy of the same settings struct).
+# Gating that row on LFO 2 alone hid the only destination control an
+# LFO-1-only patch has, so the gate must be "any LFO on".
+TARGETS_GATE = '(value.enabled || value.lfo2Enabled)'
+TARGETS_HINT_OLD = 'label: "Targets", hint: "Select modulation destinations"'
+TARGETS_HINT_NEW = 'label: "Targets", hint: "Destinations both LFOs modulate"'
+
+
 def escaped(value):
     return json.dumps(value)[1:-1]
 
@@ -4432,10 +4559,10 @@ def augment_modulation_tabs(document):
     if marker not in html or 'data-spectr-modulation-select' in html:
         return False
     needle = 'opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"]] }))\n  )'
-    replacement = 'opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"] ] })) ,\n    React.createElement(SpectrSettingsField, { label: "LFO 2", hint: "Enable second modulation source" }, React.createElement(SpectrSettingsToggle, { value: value.lfo2Enabled || false, onChange: (next) => publish("lfo2Enabled", 4010, next) })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 shape", hint: "Second waveform" }, React.createElement(SpectrSettingsChips, { value: value.lfo2Shape || 0, onChange: (next) => publish("lfo2Shape", 4011, next), opts: [[0,"Sin"],[1,"Tri"],[2,"Square"],[3,"Saw"]] })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 rate", hint: "Beats per cycle" }, React.createElement(SpectrSettingsSlider, { value: value.lfo2Rate || 4, min: 0.25, max: 16, step: 0.25, onChange: (next) => publish("lfo2Rate", 4012, next), fmt: (next) => next.toFixed(2) })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 depth", hint: "Modulation amount" }, React.createElement(SpectrSettingsSlider, { value: value.lfo2Depth || 0, min: 0, max: 1, step: 0.01, onChange: (next) => publish("lfo2Depth", 4013, next) })),\n    React.createElement(SpectrSettingsField, { label: "Targets", hint: "Select modulation destinations" }, React.createElement("div", { style: { display: "flex", gap: 5 } }, React.createElement("button", { type: "button", "data-spectr-modulation-select": "all", onClick: () => setValue((current) => ({ ...current, targetSelection: "all" })), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { type: "button", "data-spectr-modulation-select": "none", onClick: () => setValue((current) => ({ ...current, targetSelection: "none" })), style: { padding: "5px 10px" } }, "NONE")))\n  )'
+    replacement = 'opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"] ] })) ,\n    React.createElement(SpectrSettingsField, { label: "LFO 2", hint: "Enable second modulation source" }, React.createElement(SpectrSettingsToggle, { value: value.lfo2Enabled || false, onChange: (next) => publish("lfo2Enabled", 4010, next) })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 shape", hint: "Second waveform" }, React.createElement(SpectrSettingsChips, { value: value.lfo2Shape || 0, onChange: (next) => publish("lfo2Shape", 4011, next), opts: [[0,"Sin"],[1,"Tri"],[2,"Square"],[3,"Saw"]] })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 rate", hint: "Beats per cycle" }, React.createElement(SpectrSettingsSlider, { value: value.lfo2Rate || 4, min: 0.25, max: 16, step: 0.25, onChange: (next) => publish("lfo2Rate", 4012, next), fmt: (next) => next.toFixed(2) })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 depth", hint: "Modulation amount" }, React.createElement(SpectrSettingsSlider, { value: value.lfo2Depth || 0, min: 0, max: 1, step: 0.01, onChange: (next) => publish("lfo2Depth", 4013, next) })),\n    React.createElement(SpectrSettingsField, { label: "Targets", hint: "Destinations both LFOs modulate" }, React.createElement("div", { style: { display: "flex", gap: 5 } }, React.createElement("button", { type: "button", "data-spectr-modulation-select": "all", onClick: () => setValue((current) => ({ ...current, targetSelection: "all" })), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { type: "button", "data-spectr-modulation-select": "none", onClick: () => setValue((current) => ({ ...current, targetSelection: "none" })), style: { padding: "5px 10px" } }, "NONE")))\n  )'
     if 'LFO 2' in html:
         needle = 'React.createElement(SpectrSettingsField, { label: "LFO 2 depth", hint: "Modulation amount" }, React.createElement(SpectrSettingsSlider, { value: value.lfo2Depth || 0, min: 0, max: 1, step: 0.01, onChange: (next) => publish("lfo2Depth", 4013, next) }))\n  )'
-        replacement = needle[:-4] + ',\n    React.createElement(SpectrSettingsField, { label: "Targets", hint: "Select modulation destinations" }, React.createElement("div", { style: { display: "flex", gap: 5 } }, React.createElement("button", { type: "button", "data-spectr-modulation-select": "all", onClick: () => setValue((current) => ({ ...current, targetSelection: "all" })), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { type: "button", "data-spectr-modulation-select": "none", onClick: () => setValue((current) => ({ ...current, targetSelection: "none" })), style: { padding: "5px 10px" } }, "NONE")))\n  )'
+        replacement = needle[:-4] + ',\n    React.createElement(SpectrSettingsField, { label: "Targets", hint: "Destinations both LFOs modulate" }, React.createElement("div", { style: { display: "flex", gap: 5 } }, React.createElement("button", { type: "button", "data-spectr-modulation-select": "all", onClick: () => setValue((current) => ({ ...current, targetSelection: "all" })), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { type: "button", "data-spectr-modulation-select": "none", onClick: () => setValue((current) => ({ ...current, targetSelection: "none" })), style: { padding: "5px 10px" } }, "NONE")))\n  )'
     if needle not in html:
         raise RuntimeError('modulation target field missing from materialized document')
     document['html'] = html.replace(needle, replacement, 1)
@@ -4543,19 +4670,36 @@ def simplify_settings_single_scroll(document):
     segment = segment.replace('"data-spectr-settings-tabs": true, style: { display: "none" }',
                               '"data-spectr-settings-tabs": true, style: {}', 1)
     segment = segment.replace('    React.createElement("div", { role: "tablist", style: { display: "flex", gap: 5, marginBottom: 14 } }, tabButton("general", "GENERAL"), tabButton("modulation", "MODULATION")),\n', '')
-    # Each LFO toggle is the disclosure control: its options disappear while
-    # disabled and re-expand immediately when enabled.
-    # Target/Targets belong to the same disclosure as the rest of each LFO's
-    # options. Omitting them left both destination rows on screen while their
-    # LFO was off, which reads as controls that do nothing and gives no hint
-    # that the toggle above is what enables them.
+    # Repair a document materialized by the older recipe, which gated the
+    # shared Targets mask on LFO 2 alone.
+    for prefix in ('', '/* @__PURE__ */ '):
+        stale = ('    value.lfo2Enabled && ' + prefix
+                 + 'React.createElement(SpectrSettingsField, { label: "Targets"')
+        segment = segment.replace(
+            stale,
+            ('    ' + TARGETS_GATE + ' && ' + prefix
+             + 'React.createElement(SpectrSettingsField, { label: "Targets"'), 1)
+    # The hint has to name the scope the mask actually has, now that the row is
+    # reachable with only LFO 1 on.
+    segment = segment.replace(TARGETS_HINT_OLD, TARGETS_HINT_NEW)
+    # Each LFO toggle is the disclosure control: its per-LFO options disappear
+    # while that LFO is off and re-expand immediately when it is enabled.
+    # Target belongs to LFO 1's disclosure. Omitting it left the row on screen
+    # while its LFO was off, which reads as a control that does nothing and
+    # gives no hint that the toggle above is what enables it.
+    #
+    # Targets is NOT a per-LFO row. It publishes `target_mask`, which
+    # apply_internal_modulation reads once for BOTH LFOs (spectr.cpp copies the
+    # whole settings struct, mask included, into the second pass), so gating it
+    # on LFO 2 alone left an LFO-1-only patch with no way to choose what LFO 1
+    # modulates. Show it whenever ANY LFO is on; hide it only when neither is.
     for label, state in [
             ('Shape', 'value.enabled'), ('Rate', 'value.enabled'),
             ('Depth', 'value.enabled'), ('Target', 'value.enabled'),
             ('LFO 2 shape', 'value.lfo2Enabled'),
             ('LFO 2 rate', 'value.lfo2Enabled'),
             ('LFO 2 depth', 'value.lfo2Enabled'),
-            ('Targets', 'value.lfo2Enabled')]:
+            ('Targets', TARGETS_GATE)]:
         segment = segment.replace(
             f'    React.createElement(SpectrSettingsField, {{ label: "{label}"',
             f'    {state} && React.createElement(SpectrSettingsField, {{ label: "{label}"', 1)
@@ -5061,6 +5205,14 @@ def main():
         label, old, new = edit[:3]
         if old in new:
             sys.exit(f'FAIL {label}: patch point survives its own replacement')
+    unknown = sorted(set(SUPERSEDED_EDITS) - {edit[0] for edit in EDITS})
+    if unknown:
+        sys.exit('FAIL SUPERSEDED_EDITS names labels that are not edits: '
+                 + ', '.join(unknown))
+    unknown = sorted(set(POST_CHECK_EXEMPT_EDITS) - {edit[0] for edit in EDITS})
+    if unknown:
+        sys.exit('FAIL POST_CHECK_EXEMPT_EDITS names labels that are not '
+                 'edits: ' + ', '.join(unknown))
 
     raw = open(PATH, encoding='utf-8').read()
     # The capture pipeline and this script serialize with different JSON
@@ -5075,6 +5227,11 @@ def main():
         changed = True
         print('applied          collapsed duplicate settings helpers')
     post_checks = []
+    applied_edits = []
+    already_applied_edits = []
+    allowlisted_no_ops = []
+    missing_edits = []
+    missing_post_checks = []
     later_patch_points = {edit[1] for edit in EDITS}
     for edit in EDITS:
         label, old, new = edit[:3]
@@ -5083,12 +5240,14 @@ def main():
         sentinel = SUPERSEDED_SENTINELS.get(label)
         sentinel_e = escaped(sentinel) if sentinel else None
         if sentinel_e and sentinel_e in raw:
+            allowlisted_no_ops.append(label)
             print('superseded     ', label)
             continue
         # One JSX patch point can transpile into repeated identical literals
         # (for example the two preset footer buttons). Once the old image is
         # gone, any emitted replacement count proves this edit was applied.
         if raw.count(new_e) >= expected and raw.count(old_e) == 0:
+            already_applied_edits.append(label)
             print('already applied ', label)
             if new not in later_patch_points:
                 post_checks.append((label, new, expected))
@@ -5096,9 +5255,16 @@ def main():
         count = raw.count(old_e)
         if count == 0:
             # A later mechanical edit can legitimately subsume an earlier
-            # replacement. Keep the historical recipe runnable while still
-            # post-checking every replacement this invocation can identify.
-            print('superseded     ', label)
+            # replacement. Those cases are enumerated in SUPERSEDED_EDITS and
+            # nowhere else: an unlisted needle that stops matching is drift,
+            # not history, and must turn the run red rather than skip the edit
+            # and let an unpatched editor ship.
+            if label in SUPERSEDED_EDITS:
+                allowlisted_no_ops.append(label)
+                print('superseded     ', label)
+                continue
+            missing_edits.append(label)
+            print('MISSING        ', label)
             continue
         if count != expected:
             sys.exit(f'FAIL {label}: patch point occurs {count} times')
@@ -5106,6 +5272,7 @@ def main():
         if new not in later_patch_points:
             post_checks.append((label, new, expected))
         changed = True
+        applied_edits.append(label)
         print('applied         ', label)
 
     for label, old, new in DOCUMENT_EDITS:
@@ -5244,29 +5411,64 @@ def main():
         changed = True
         print('applied          merged band-count text binding', PATH)
     html = document['html']
-    _old = ''
+    # A replacement that applied, or was already present, but cannot be found
+    # in the finished document was overwritten by a LATER recipe step. Only
+    # the enumerated cases are legitimate; anything else means this run
+    # produced a document that does not carry an edit it reported.
+    #
+    # The predecessor of this loop matched by label PREFIX ('settings*',
+    # 'materialized modulation*', '*status info*') plus a `_old` term that was
+    # bound to '' immediately above and never reassigned inside the loop, so
+    # that disjunct was dead. Both are replaced by the explicit list below.
     for label, new, expected in post_checks:
         if html.count(new) < expected:
-            # Cursor writes are intentionally mirrored into React state by the
-            # cursor recipe below, so the historical imperative replacement
-            # image is superseded even though its behavior is preserved.
-            if ('cursor' in label or 'wrapRef.current.style.cursor' in new
-                    or 'wrapRef.current.style.cursor' in _old):
-                print('superseded     ', label)
-                continue
-            if (label.startswith('settings')
-                    or label.startswith('materialized modulation')
-                    or 'status info' in label):
-                print('superseded     ', label)
-                continue
             sentinel = SUPERSEDED_SENTINELS.get(label)
             if sentinel and sentinel in html:
                 continue
-            sys.exit(f'FAIL {label}: post-check did not find the replacement')
+            if label in POST_CHECK_EXEMPT_EDITS:
+                allowlisted_no_ops.append(label)
+                print('superseded     ', label)
+                continue
+            missing_post_checks.append(label)
+            print('MISSING        ', label, '(post-check)')
     for label, _old, new in DOCUMENT_EDITS:
         if new not in raw:
             sys.exit(f'FAIL {label}: document post-check did not find the replacement')
     check_emitted_scripts(html)
+
+    # Account for every edit, then refuse to write a document that is missing
+    # one. A silently skipped edit used to leave the build green and ship an
+    # unpatched editor; the summary makes the skip visible and the exit below
+    # makes it fatal.
+    stale_allowlist = sorted(
+        (set(SUPERSEDED_EDITS) | set(POST_CHECK_EXEMPT_EDITS))
+        & (set(applied_edits) | set(already_applied_edits))
+        - set(allowlisted_no_ops))
+    print()
+    print(f'summary  edits declared        {len(EDITS)}')
+    print(f'summary  applied this run      {len(applied_edits)}')
+    print(f'summary  already applied       {len(already_applied_edits)}')
+    print(f'summary  allowlisted no-ops    {len(allowlisted_no_ops)}')
+    print(f'summary  missing (not allowed) {len(missing_edits) + len(missing_post_checks)}')
+    if stale_allowlist:
+        print('summary  allowlisted but applied -- prune these from '
+              'SUPERSEDED_EDITS / POST_CHECK_EXEMPT_EDITS:')
+        for label in stale_allowlist:
+            print('           ', label)
+    if missing_edits or missing_post_checks:
+        print()
+        print('FAIL: edits found no match and are not on the superseded '
+              'allowlist. An SDK bump or an upstream editor refactor most '
+              'likely moved these needles. Re-author the needle, or add the '
+              'label to SUPERSEDED_EDITS / POST_CHECK_EXEMPT_EDITS with a '
+              'reason once you have proved the edit is genuinely subsumed. '
+              'Nothing was written.')
+        for label in missing_edits:
+            print('  patch point missing:', label)
+        for label in missing_post_checks:
+            print('  post-check missing: ', label)
+        sys.exit(1)
+
     if changed:
         open(PATH, 'w', encoding='utf-8').write(raw)
         print('written', PATH)
@@ -5375,6 +5577,13 @@ def main():
         runtime_raw = runtime_raw.replace(old, new)
         runtime_changed = True
         print('applied         ', label)
+        # The sentinel is the only thing that makes this edit idempotent. If it
+        # is not observable now, the next run applies the edit again and stacks
+        # another copy of its block. That is how the mono-face edit duplicated
+        # itself on every invocation.
+        if sentinel not in runtime_raw:
+            sys.exit(f'FAIL {label}: sentinel is absent after applying the '
+                     'edit, so a re-run would stack a duplicate')
     # The overflow glyph is the one captured span whose browser fallback face
     # is Menlo rather than the registered JetBrains Mono asset.  Its binding
     # path is intentionally optional (the live overflow button can be rebuilt
