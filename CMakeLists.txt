@@ -550,7 +550,15 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             ${SPECTR_CHROME_EXECUTABLE})
-    set_tests_properties(Spectr-browser-ux-polish PROPERTIES TIMEOUT 90)
+    # This suite launches Chrome nine times in series (six scenarios plus three
+    # negative controls), each bounded to 30s by the runner itself, so its own
+    # ceiling is ~270s and no wall-clock under that can bound it. A 90s budget
+    # was under the suite: six consecutive fully-passing runs on a loaded host
+    # measured 72/75/77/92/97/111s, so 90s would have killed three of the six
+    # mid-run and reported a ctest timeout instead of naming the slow launch.
+    # Budget above the runner so a real hang surfaces as the runner's own
+    # per-launch timeout, which says which scenario hung.
+    set_tests_properties(Spectr-browser-ux-polish PROPERTIES TIMEOUT 300)
     add_test(NAME Spectr-browser-preset-parity
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_preset_parity_browser.mjs

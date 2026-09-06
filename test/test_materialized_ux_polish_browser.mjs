@@ -45,19 +45,57 @@ const shortDwell = shippingSurface.replace(
   'const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 280 : 220;');
 assert.notEqual(shortDwell, shippingSurface, 'status dwell mutation did not plant');
 
-// Negative controls for the driven text-size scenario. The first severs the
-// control's handler, so a wiring regression that a static read of the emitted
-// source cannot see turns this red. The second leaves the wiring intact and
-// only corrupts the Large scale, so a value regression is caught separately
-// from a wiring one.
+// TEXT SIZE, as Spectr actually ships it. The shipping surface carries the
+// scale table and the one native call site, and deliberately exposes NO size
+// chooser.
+//
+// WHY THE CHOOSER IS ABSENT -- this is a PIN constraint, not a product
+// decision, and the assertion below should not be read as one. The chooser
+// drives WidgetBridge::set_imported_text_scale, which is not in the SDK Spectr
+// currently pins (v0.834.0). Shipping the chooser against that SDK ships a
+// control that moves nothing, so the materialization recipe strips it:
+// tools/patch_materialized_editor.py, add_text_size_setting -- which also
+// hard-exits if an unrecognised TYPOGRAPHY group survives. The browser lane
+// still authors the group in JSX (resources/editor.html), so the two lanes
+// disagree BY DESIGN and this suite asserts the native lane.
+//
+// TO RESTORE IT: bump the SDK pin to a release that carries
+// WidgetBridge::set_imported_text_scale, confirm the knob relayouts a native
+// host, then delete add_text_size_setting's strip step and flip the three
+// assertions below (chooser present, options reachable, each option's click
+// reaching the call site at its table scale). The scale table, spectrTextSize,
+// and the spectrApplyTextScale call site are all still wired at the medium
+// default precisely so that restoring the group is the only edit needed.
+//
+// Assert both halves, so restoring an INERT chooser against the current pin
+// and dropping the live call site each turn this red.
+assert.match(shippingSurface,
+  /const SPECTR_TEXT_SCALES = \{ small: 1, medium: 1\.2, large: 1\.45 \};/,
+  'text scale table missing from the shipping surface');
+assert.match(shippingSurface,
+  /React\.useEffect\(\(\) => \{ spectrApplyTextScale\(settings\.textSize\); \}/,
+  'mount-time text scale call site missing from the shipping surface');
+assert.doesNotMatch(shippingSurface, /marker: "typography"/,
+  'shipping Settings carries a text-size chooser the pinned SDK cannot honour');
+// Positive control for the absence above, on the same instrument: a surface
+// this slice failed to capture would satisfy doesNotMatch vacuously.
+assert.match(shippingSurface, /marker: "feedback"/,
+  'settings-group needle broke; the TYPOGRAPHY absence above would be vacuous');
+
+// Controls for the driven text-size scenario below. The first severs the one
+// effect that carries the setting to the native knob, so a wiring regression
+// no static read of the emitted source can see turns this red. The second
+// leaves the wiring intact and only flattens the MEDIUM scale every host
+// actually renders at, so a value regression is caught separately.
 const deadTextSize = shippingSurface.replace(
-  'onChange: (v) => persist({ textSize: v })', 'onChange: () => {}');
+  'React.useEffect(() => { spectrApplyTextScale(settings.textSize); }, [settings.textSize]);',
+  'React.useEffect(() => {}, [settings.textSize]);');
 assert.notEqual(deadTextSize, shippingSurface,
-  'text size handler needle did not match; its negative control would be blind');
-const flatLargeScale = shippingSurface.replace(
-  'large: 1.45 };', 'large: 1 };');
-assert.notEqual(flatLargeScale, shippingSurface,
-  'text scale table needle did not match; its negative control would be blind');
+  'text scale effect needle did not match; its control would be blind');
+const flatMediumScale = shippingSurface.replace(
+  'medium: 1.2,', 'medium: 1,');
+assert.notEqual(flatMediumScale, shippingSurface,
+  'text scale table needle did not match; its control would be blind');
 
 const oracle = (componentSource, mode, settingsJson) => `<script>
 window.__spectrPolishStart = () => {
@@ -85,10 +123,16 @@ window.__spectrPolishStart = () => {
   const mount = document.createElement('div');
   mount.id = '__spectr_polish_mount';
   document.body.appendChild(mount);
-  const assertFinalSurface = () => {
-    const unpackedRoot = document.querySelector('#root');
-    if (!unpackedRoot || unpackedRoot.children.length === 0)
-      throw new Error('shipping unpacked root did not mount');
+  // The shipping bundle mounts on its own schedule, independently of whatever
+  // a scenario drives in its own mount point. A scenario that finishes quickly
+  // can reach here first, so wait for that root rather than reading a
+  // not-yet-mounted one as a failure. The gate is unchanged: a root that never
+  // mounts, or a bundle that errors, still fails.
+  const assertFinalSurface = async () => {
+    await waitFor(() => {
+      const unpackedRoot = document.querySelector('#root');
+      return unpackedRoot && unpackedRoot.children.length > 0;
+    }, 'shipping unpacked root to mount');
     if (document.getElementById('__bundler_err'))
       throw new Error('shipping bundle emitted __bundler_err');
   };
@@ -141,7 +185,7 @@ window.__spectrPolishStart = () => {
         if (scheduledDelays[0] !== 2200 || scheduledDelays[1] !== 2800)
           throw new Error('status dwell schedule mismatch: '
             + scheduledDelays.join(','));
-        assertFinalSurface();
+        await assertFinalSurface();
         result.textContent = 'SPECTR_STATUS_DWELL_OK';
         return;
       }
@@ -158,88 +202,57 @@ window.__spectrPolishStart = () => {
             settings, setSettings, onClose() {},
           });
         };
-        // Anything the shipping bundle already published is not this scenario's
-        // evidence. Clear immediately before render so the first entry is the
-        // mount-time application of the default this harness was handed.
-        window.__spectrTextScaleCalls.length = 0;
-        ReactDOM.createRoot(mount).render(React.createElement(Harness));
-        const panel = await waitFor(() =>
-          document.querySelector('#__spectr_polish_mount [data-spectr-settings-panel]'),
-        'Settings panel');
-        const group = await waitFor(() =>
-          panel.querySelector('[data-spectr-settings-group="typography"]'),
-        'Text size group');
-        const keys = ['small', 'medium', 'large'];
-        const chip = key => group.querySelector(
-          '[data-spectr-setting-option="' + key + '"]');
-        for (const key of keys)
-          if (!chip(key)) throw new Error('Text size option missing: ' + key);
-
-        // REACHABILITY. Mounted is not reachable: an ancestor display:none
-        // renders every static source assertion vacuous.
-        for (let node = chip('large'); node && node !== document.body;
-             node = node.parentElement)
-          if (getComputedStyle(node).display === 'none')
-            throw new Error('Text size control is hidden by an ancestor '
-              + 'display:none: ' + node.tagName);
-        for (const key of keys) {
-          const box = chip(key).getBoundingClientRect();
-          if (box.width <= 0 || box.height <= 0)
-            throw new Error('Text size option ' + key + ' has no rendered box');
-        }
-
-        // CLIPPING. A new group is the case that goes wrong: the row can spill
-        // past the scrolling body, or land on top of the group after it.
-        const body = panel.querySelector('[data-spectr-settings-body]');
-        if (!body) throw new Error('Settings body scroll owner missing');
-        const bodyRect = body.getBoundingClientRect();
-        for (const key of keys) {
-          const box = chip(key).getBoundingClientRect();
-          if (box.left < bodyRect.left - 0.5 || box.right > bodyRect.right + 0.5)
-            throw new Error('Text size option ' + key
-              + ' spilled outside the settings body');
-        }
-        const feedback = panel.querySelector('[data-spectr-settings-group="feedback"]');
-        if (!feedback) throw new Error('FEEDBACK group missing');
-        const own = group.getBoundingClientRect();
-        const next = feedback.getBoundingClientRect();
-        if (own.right > next.left && next.right > own.left
-            && own.bottom > next.top && next.bottom > own.top)
-          throw new Error('Text size group overlaps the FEEDBACK group');
-
-        // WIRING + VALUE. The stub below stands in for the bridge knob, so
-        // this proves the call site fires with the right scale -- it does not
-        // and cannot prove a native relayout, which needs the SDK that carries
-        // the knob.
-        const pressed = () => keys.filter(key =>
-          chip(key).getAttribute('aria-pressed') === 'true');
-        const calls = window.__spectrTextScaleCalls;
-        await waitFor(() => calls.length >= 1, 'mount-time text scale write');
-        if (calls[0] !== 1.2)
-          throw new Error('default applied scale ' + calls[0] + ' want 1.2');
-        if (pressed().join(',') !== 'medium')
-          throw new Error('default selection is [' + pressed() + '] want [medium]');
-
-        const select = async (key, want) => {
-          const before = calls.length;
-          chip(key).click();
-          await waitFor(() => calls.length > before, key + ' text scale write');
-          const got = calls[calls.length - 1];
-          if (got !== want)
-            throw new Error(key + ' applied scale ' + got + ' want ' + want);
-          if (pressed().join(',') !== key)
-            throw new Error(key + ' left the selection at [' + pressed() + ']');
-        };
-        await select('small', 1);
-        await select('large', 1.45);
-        await select('medium', 1.2);
-
+        // The shipping bundle owns its own copy of the scale module and writes
+        // through the same stub. Let it finish mounting FIRST, then take a
+        // baseline, so what this scenario reads is unambiguously the harness's
+        // own mount-time write and not a leftover from #root.
         await waitFor(() => {
           const shipped = document.querySelector('#root');
           return shipped && shipped.children.length > 0;
         }, 'shipping root mount');
-        assertFinalSurface();
-        result.textContent = 'SPECTR_TEXT_SIZE_OK';
+        const calls = window.__spectrTextScaleCalls;
+        const baseline = calls.length;
+        ReactDOM.createRoot(mount).render(React.createElement(Harness));
+        const panel = await waitFor(() =>
+          document.querySelector('#__spectr_polish_mount [data-spectr-settings-panel]'),
+        'Settings panel');
+
+        // POSITIVE CONTROL for the absence checks below, in the same
+        // instrument. A panel that rendered no groups at all -- or rendered
+        // them under an ancestor display:none -- would satisfy every "no
+        // chooser" check vacuously. Prove this query can SEE a shipped group,
+        // reachable and with a real box, before trusting it not to find one.
+        const feedback = await waitFor(() =>
+          panel.querySelector('[data-spectr-settings-group="feedback"]'),
+        'FEEDBACK group');
+        for (let node = feedback; node && node !== document.body;
+             node = node.parentElement)
+          if (getComputedStyle(node).display === 'none')
+            throw new Error('FEEDBACK group is hidden by an ancestor '
+              + 'display:none: ' + node.tagName);
+        const feedbackBox = feedback.getBoundingClientRect();
+        if (feedbackBox.width <= 0 || feedbackBox.height <= 0)
+          throw new Error('FEEDBACK group has no rendered box');
+
+        // ABSENCE. Spectr renders every host at one scale, so shipping
+        // Settings offers no size chooser. No chip group in this surface uses
+        // these option keys, so the query is specific to the text-size row.
+        if (panel.querySelector('[data-spectr-settings-group="typography"]'))
+          throw new Error('Settings rendered a TYPOGRAPHY group');
+        for (const key of ['small', 'medium', 'large'])
+          if (panel.querySelector('[data-spectr-setting-option="' + key + '"]'))
+            throw new Error('Settings rendered a text size option: ' + key);
+
+        // WIRING + VALUE. The stub stands in for the bridge knob, so this
+        // proves the mount-time call site fires with the scale the settings it
+        // was handed name -- it does not and cannot prove a native relayout,
+        // which needs the SDK that carries the knob.
+        await waitFor(() => calls.length > baseline, 'mount-time text scale write');
+        const written = calls.slice(baseline);
+        if (written.some(value => value !== written[0]))
+          throw new Error('text scale writes disagreed: ' + written.join(','));
+        await assertFinalSurface();
+        result.textContent = 'SPECTR_TEXT_SIZE_OK:' + written[0];
         return;
       }
 
@@ -267,7 +280,41 @@ window.__spectrPolishStart = () => {
         const names = ['bank', 'snapshot-a', 'snapshot-b', 'morph'];
         const buttonFor = key => panel.querySelector(
           '[data-spectr-modulation-target="' + key + '"]');
-        const bank = await waitFor(() => buttonFor('bank'), 'bank target control');
+        // Each LFO owns its destinations behind its own disclosure, so the
+        // Targets row does not exist until LFO 2 is on. Drive the real control
+        // instead of reaching past it: the toggle carries no unique attribute,
+        // so find it by the field label a user reads.
+        const toggles = Array.from(
+          panel.querySelectorAll('[data-spectr-setting-toggle]'));
+        // POSITIVE CONTROL for the LFO 2 lookup below. A panel that rendered no
+        // toggles at all would make "found 0 LFO 2 toggles" read as a product
+        // defect when the instrument is what broke.
+        if (toggles.length === 0)
+          throw new Error('no settings toggles rendered at all; '
+            + 'the LFO 2 lookup below would be blind');
+        const labelled = toggles.filter(toggle => {
+          for (let node = toggle.parentElement, hops = 0;
+               node && hops < 4; node = node.parentElement, ++hops) {
+            const heading = node.firstElementChild
+              && node.firstElementChild.firstElementChild;
+            if (heading && heading.textContent.trim() === 'LFO 2') return true;
+          }
+          return false;
+        });
+        if (labelled.length !== 1)
+          throw new Error('want exactly one LFO 2 toggle, found ' + labelled.length
+            + ' among ' + toggles.length + ' settings toggles');
+        const lfo2 = labelled[0];
+        if (lfo2.getAttribute('aria-checked') !== 'false')
+          throw new Error('LFO 2 did not start off, so opening it proves nothing');
+        // NEGATIVE CONTROL for the disclosure itself: if Targets is reachable
+        // before the click, the gate below is not gating and every later
+        // assertion would pass without the disclosure ever working.
+        if (buttonFor('bank'))
+          throw new Error('Targets reachable with LFO 2 off; disclosure not gating');
+        lfo2.click();
+        const bank = await waitFor(() => buttonFor('bank'),
+          'bank target control after opening the LFO 2 disclosure');
 
         // REACHABILITY. Mounted is not reachable: an ancestor display:none
         // renders every static source assertion vacuous.
@@ -317,14 +364,7 @@ window.__spectrPolishStart = () => {
         await waitFor(() => modCalls().length >= 3, 'ALL bridge write');
         if (sortedJoin(modCalls()[2].payload.targets) !== sortedJoin(names))
           throw new Error('ALL selected [' + modCalls()[2].payload.targets + ']');
-        // This mode finishes far faster than the copy-feedback scenarios, so
-        // the shipping bundle may still be mounting. Wait for it rather than
-        // reading a not-yet-mounted root as a failure.
-        await waitFor(() => {
-          const shipped = document.querySelector('#root');
-          return shipped && shipped.children.length > 0;
-        }, 'shipping root mount');
-        assertFinalSurface();
+        await assertFinalSurface();
         result.textContent = 'SPECTR_MODULATION_OK';
         return;
       }
@@ -395,7 +435,7 @@ window.__spectrPolishStart = () => {
       centered(button);
       await waitFor(() => button.textContent.trim() === 'COPY', 'Copy feedback reset');
       centered(button);
-      assertFinalSurface();
+      await assertFinalSurface();
       result.textContent = 'SPECTR_SETTINGS_POLISH_OK';
     } catch (error) {
       result.textContent = 'SPECTR_POLISH_ORACLE_ERROR: ' + error.message;
@@ -525,47 +565,52 @@ assert.equal(deadModulation.status, 0, deadModulation.stderr.slice(-2000));
 assert.equal(oracleText(deadModulation),
   'SPECTR_POLISH_ORACLE_ERROR: timed out waiting for bank click bridge write');
 
-// TEXT SIZE. Driven, not read: the panel is mounted with the SHIPPED defaults,
-// each option is clicked, and the scale that reaches the bridge knob is the
-// assertion. A static read of the emitted source cannot tell a live control
-// from a dead one -- MOD-1 was exactly that failure.
+// TEXT SIZE. Driven, not read: the panel is mounted with the SHIPPED defaults
+// and the assertion is the scale that reaches the native call site, plus the
+// deliberate ABSENCE of a chooser. A static read of the emitted source cannot
+// tell a live call site from a dead one -- MOD-1 was exactly that failure.
+// The shipped default is Medium, read out of the document rather than restated
+// here, so this run's expected scale is the table's medium entry.
+assert.equal(shippedDefaults.textSize, 'medium',
+  'shipped text size default is no longer Medium');
 const textSize = run({
   componentSource: shippingSurface, mode: 'textsize',
   width: 1320, height: 860, settings: shippedDefaults,
 });
 assert.equal(textSize.error, undefined, textSize.error && textSize.error.message);
 assert.equal(textSize.status, 0, textSize.stderr.slice(-2000));
-assert.equal(oracleText(textSize), 'SPECTR_TEXT_SIZE_OK');
+assert.equal(oracleText(textSize), 'SPECTR_TEXT_SIZE_OK:1.2');
 
-// Negative control 1 -- wiring. Sever the handler and the driven scenario must
-// stop seeing a scale write; every static assertion still passes.
+// Control 1 -- wiring. Sever the mount-time effect and the driven scenario
+// must stop seeing a scale write; every static assertion still passes.
 const deadTextSizeRun = run({
   componentSource: deadTextSize, mode: 'textsize',
   width: 1320, height: 860, settings: shippedDefaults,
 });
 assert.equal(deadTextSizeRun.status, 0, deadTextSizeRun.stderr.slice(-2000));
 assert.equal(oracleText(deadTextSizeRun),
-  'SPECTR_POLISH_ORACLE_ERROR: timed out waiting for small text scale write');
+  'SPECTR_POLISH_ORACLE_ERROR: timed out waiting for mount-time text scale write');
 
-// Negative control 2 -- value. Leave the wiring intact and flatten Large back
-// to 1.0, the scale the pre-1.0 build shipped at.
-const flatLargeRun = run({
-  componentSource: flatLargeScale, mode: 'textsize',
+// Control 2 -- value. Leave the wiring intact and flatten MEDIUM back to 1.0,
+// the scale the pre-1.0 build shipped at. The oracle reports what it read
+// rather than a verdict, so this reads 1 where the shipping table reads 1.2:
+// the scenario is measuring the real table, not a constant.
+const flatMediumRun = run({
+  componentSource: flatMediumScale, mode: 'textsize',
   width: 1320, height: 860, settings: shippedDefaults,
 });
-assert.equal(flatLargeRun.status, 0, flatLargeRun.stderr.slice(-2000));
-assert.equal(oracleText(flatLargeRun),
-  'SPECTR_POLISH_ORACLE_ERROR: large applied scale 1 want 1.45');
+assert.equal(flatMediumRun.status, 0, flatMediumRun.stderr.slice(-2000));
+assert.equal(oracleText(flatMediumRun), 'SPECTR_TEXT_SIZE_OK:1');
 
-// Negative control 3 -- the default. Hand the same shipping surface the old
-// Small default; Medium is the release default and the oracle must say so.
-const smallDefaultRun = run({
+// Control 3 -- the non-default entries stay live even with no chooser. A host
+// that persisted Large before the chooser was withdrawn must still reach the
+// call site at 1.45, which is what keeps that table row meaningful.
+const largeSettingRun = run({
   componentSource: shippingSurface, mode: 'textsize',
   width: 1320, height: 860,
-  settings: { ...shippedDefaults, textSize: 'small' },
+  settings: { ...shippedDefaults, textSize: 'large' },
 });
-assert.equal(smallDefaultRun.status, 0, smallDefaultRun.stderr.slice(-2000));
-assert.equal(oracleText(smallDefaultRun),
-  'SPECTR_POLISH_ORACLE_ERROR: default applied scale 1 want 1.2');
+assert.equal(largeSettingRun.status, 0, largeSettingRun.stderr.slice(-2000));
+assert.equal(oracleText(largeSettingRun), 'SPECTR_TEXT_SIZE_OK:1.45');
 
-console.log('Spectr UX polish: dwell, modulation, and three text-size negative controls red; copy, hint, overflow, driven modulation, and driven text-size scenarios green');
+console.log('Spectr UX polish: dwell and modulation negative controls red; copy, hint, overflow, driven modulation, and driven text-size (medium default, no chooser, flattened-table and Large controls) scenarios green');
