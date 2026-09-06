@@ -4191,11 +4191,17 @@ def simplify_settings_single_scroll(document):
     segment = segment.replace('    React.createElement("div", { role: "tablist", style: { display: "flex", gap: 5, marginBottom: 14 } }, tabButton("general", "GENERAL"), tabButton("modulation", "MODULATION")),\n', '')
     # Each LFO toggle is the disclosure control: its options disappear while
     # disabled and re-expand immediately when enabled.
+    # Target/Targets belong to the same disclosure as the rest of each LFO's
+    # options. Omitting them left both destination rows on screen while their
+    # LFO was off, which reads as controls that do nothing and gives no hint
+    # that the toggle above is what enables them.
     for label, state in [
             ('Shape', 'value.enabled'), ('Rate', 'value.enabled'),
-            ('Depth', 'value.enabled'), ('LFO 2 shape', 'value.lfo2Enabled'),
+            ('Depth', 'value.enabled'), ('Target', 'value.enabled'),
+            ('LFO 2 shape', 'value.lfo2Enabled'),
             ('LFO 2 rate', 'value.lfo2Enabled'),
-            ('LFO 2 depth', 'value.lfo2Enabled')]:
+            ('LFO 2 depth', 'value.lfo2Enabled'),
+            ('Targets', 'value.lfo2Enabled')]:
         segment = segment.replace(
             f'    React.createElement(SpectrSettingsField, {{ label: "{label}"',
             f'    {state} && React.createElement(SpectrSettingsField, {{ label: "{label}"', 1)

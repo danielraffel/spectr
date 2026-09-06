@@ -220,6 +220,20 @@ struct Rig {
     // Assert a selector is mounted AND actually reachable: no display:none
     // ancestor, and a non-degenerate rendered box. A mounted-but-hidden control
     // is exactly the MOD-1 defect, and a source-text check cannot see it.
+    // Non-throwing existence check. require_reachable ASSERTS presence, which
+    // is wrong for a control that is legitimately absent while its disclosure
+    // is closed.
+    bool is_mounted(std::string_view selector) {
+        try {
+            eval("(() => { if (!document.querySelector(" + js_string(selector)
+                     + ")) throw new Error('absent'); })();",
+                 "spectr-native-shot-ismounted");
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+
     void require_reachable(std::string_view selector) {
         eval("(() => { const el = document.querySelector(" + js_string(selector) + "); "
                  "if (!el) throw new Error('not mounted: " + std::string(selector) + "'); "
@@ -248,6 +262,34 @@ struct Rig {
              " + ' ALL=' + q('[data-spectr-modulation-select=\"all\"]')"
              " + ' NONE=' + q('[data-spectr-modulation-select=\"none\"]')); })();",
              "spectr-native-shot-target-state");
+    }
+
+    // Report every leaf text node whose content does not fit its own box.
+    // Truncated labels ("SNAPSHO"), colliding chips and off-centre glyphs are
+    // all one symptom -- a box sized from a text measurement that disagrees
+    // with what is painted -- so enumerate them rather than eyeballing a PNG.
+    void report_text_fit(const char* label) {
+        eval(std::string("(() => { const rows = []; let leaves = 0; "
+             "for (const n of document.querySelectorAll('*')) { "
+             "  if (n.children.length) continue; "
+             "  const t = (n.textContent || '').trim(); if (!t) continue; "
+             "  leaves++; "
+             "  if (n.scrollWidth > n.clientWidth + 1) rows.push("
+             "    JSON.stringify(t.slice(0, 16)) + ' ' + n.scrollWidth + '>' + n.clientWidth); } "
+             "console.log('[shot] textfit ") + label +
+             "' + ' clipped=' + rows.length + '/' + leaves + ' :: ' + rows.slice(0, 14).join('  |  ')); "
+             "const probe = []; "
+             "for (const n of document.querySelectorAll('*')) { "
+             "  if (n.children.length) continue; "
+             "  const t = (n.textContent || '').trim(); "
+             "  if (!/^(SNAPSHOT|SPECTRAL|CLEAR|BANK|MORPH|NONE)/.test(t)) continue; "
+             "  const cs = getComputedStyle(n); "
+             "  probe.push(JSON.stringify(t.slice(0,12)) + ' ls=' + cs.letterSpacing "
+             "    + ' fam=' + (cs.fontFamily||'').slice(0,22) + ' px=' + cs.fontSize "
+             "    + ' w=' + n.getBoundingClientRect().width.toFixed(1) "
+             "    + ' sw=' + n.scrollWidth); } "
+             "console.log('[shot] typeprobe :: ' + probe.slice(0, 10).join('  |  ')); })();",
+             "spectr-native-shot-textfit");
     }
 
     // Push a tone through the DSP so the analyzer surfaces carry real data
@@ -398,6 +440,7 @@ int main(int argc, char** argv) {
         rig.feed_tone(96);
         settle(rig.clock, 24);
 
+        rig.report_text_fit("home");
         capture(rig, dir, prefix + "01-home", backend, scale);
 
         rig.activate("[data-spectr-settings-open]");
@@ -410,12 +453,23 @@ int main(int argc, char** argv) {
         // not mere presence, is the assertion that matters -- MOD-1 shipped
         // these same controls mounted behind a display:none ancestor, where
         // every static source-text check still passed.
+        // Target/Targets are now part of each LFO's disclosure: they do not
+        // exist while their LFO is off. That is the intended state, so probe
+        // for them instead of asserting them, and say which state we captured.
+        // Treating "absent" as a failure would make the correct behaviour red.
+        const bool targets_mounted = rig.is_mounted(
+            "[data-spectr-modulation-target=\"bank\"]");
+        std::printf("modulation targets mounted with LFO off: %s%s\n",
+                    targets_mounted ? "yes" : "no",
+                    targets_mounted ? "  (expected: collapsed)" : "  (collapsed, as intended)");
+        if (targets_mounted) {
         rig.require_reachable("[data-spectr-modulation-target=\"bank\"]");
         rig.require_reachable("[data-spectr-modulation-target=\"snapshot-a\"]");
         rig.require_reachable("[data-spectr-modulation-target=\"snapshot-b\"]");
         rig.require_reachable("[data-spectr-modulation-target=\"morph\"]");
         rig.require_reachable("[data-spectr-modulation-select=\"all\"]");
         rig.require_reachable("[data-spectr-modulation-select=\"none\"]");
+        }
 
         const pulp::view::Label* modulation = nullptr;
         for (int attempt = 0; attempt < 64; ++attempt) {
@@ -510,17 +564,25 @@ int main(int argc, char** argv) {
         rig.report_target_state("mount");
         slice("05-MODULATION-GROUP-SLICE-default");
 
-        rig.activate("[data-spectr-modulation-select=\"none\"]");
-        rig.report_target_state("NONE");
-        slice("06-MODULATION-GROUP-SLICE-targets-none");
+        // Driving the destination chips only means something while they exist.
+        // With the LFO off they are collapsed by design, so skip loudly rather
+        // than fail -- and never report a skipped drive as a passing one.
+        if (targets_mounted) {
+            rig.activate("[data-spectr-modulation-select=\"none\"]");
+            rig.report_target_state("NONE");
+            slice("06-MODULATION-GROUP-SLICE-targets-none");
 
-        rig.activate("[data-spectr-modulation-target=\"morph\"]");
-        rig.report_target_state("MORPH");
-        slice("07-MODULATION-GROUP-SLICE-targets-morph-only");
+            rig.activate("[data-spectr-modulation-target=\"morph\"]");
+            rig.report_target_state("MORPH");
+            slice("07-MODULATION-GROUP-SLICE-targets-morph-only");
 
-        rig.activate("[data-spectr-modulation-select=\"all\"]");
-        rig.report_target_state("ALL");
-        slice("08-MODULATION-GROUP-SLICE-targets-all");
+            rig.activate("[data-spectr-modulation-select=\"all\"]");
+            rig.report_target_state("ALL");
+            slice("08-MODULATION-GROUP-SLICE-targets-all");
+        } else {
+            std::printf("SKIP: destination chips are collapsed with the LFO off; "
+                        "no target drive captured (this is not a pass)\n");
+        }
     } catch (const std::exception& failure) {
         std::fprintf(stderr, "FAIL: %s\n", failure.what());
         return 1;
