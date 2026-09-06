@@ -69,6 +69,83 @@ same emphasis colour the left gain ruler's `0` uses, but the two zeros sit
 emphasis, label the heads `dBFS (analyzer)` vs `dB (gain)`, regenerate
 `native-ui/materialized/materialized-document.runtime.json`.
 
+## 2026-09-06 round-trip architecture: which direction actually works
+
+Answering "do we always need to go through the React import flow, or can we
+just change the native code?" — measured, not assumed.
+
+**Direction B (edit the native artifact) is the ONLY direction that works
+today, and it works by hand-patching a committed blob.**
+
+`native-ui/materialized/materialized-document.runtime.json` is tracked in git
+and nothing in the build produces it:
+
+| probe | result |
+|---|---|
+| `add_custom_command`/`add_custom_target` in `CMakeLists.txt` | 0 |
+| ...that OUTPUT the runtime json | 0 |
+| control: file referenced in `CMakeLists.txt` | 3 (consumed, never produced) |
+| `git ls-files` the runtime json | COMMITTED |
+| files in the repo that write `materialized-document.json` | 1 — the patcher itself |
+
+**Direction A (change the design, re-import) does not exist as a producer.**
+`tools/patch_materialized_editor.py` says so in its own docstring: *"no recipe
+in this repo reproduces the checked-in pair (danielraffel/spectr#48), so
+editor-behaviour fixes have to be applied to it by hand."* The single SDK
+importer invocation in the whole repo is
+`tools/validate_native_import_parity.mjs:76`, and it is a **validator**:
+
+```
+pulp import-design --from claude --file resources/editor.html \
+  --mode baked --emit ir-json --materialized-canvas-composition --validate
+```
+
+It emits `ir-json` to compare against, never the shipping pair.
+
+**The gap is in the Pulp SDK, not only in Spectr.** `--emit` accepts
+`js, ir-json, cpp, swiftui, classnames`
+(`tools/import-design/pulp_import_design.cpp:1787`). There is **no emit target
+that produces a materialized runtime document**. So the materialized lane —
+the lane Spectr ships — is import-only-once by construction: you can capture
+into it, and you can validate against it, but you cannot regenerate it.
+
+### What this costs, and why the last few days felt slow
+
+Every UX change had to be expressed as a literal string patch in a
+**5,642-line** hand-maintained script whose needles break whenever the
+document drifts. That is the mechanism behind "this is not validating our
+framework if it is this difficult to make small changes" — the difficulty is
+real and structural, not a tooling-familiarity problem.
+
+### The fix, at the right layer
+
+1. **SDK (durable):** add a `--emit materialized-runtime` target so the pair is
+   reproducible. Then re-import becomes possible, the patcher becomes the
+   no-op its docstring predicts, and both directions exist.
+2. **Spectr (interim, already true):** hand-edits to the committed runtime doc
+   survive a build, so native-side iteration is safe today — it is just
+   expensive. The patcher now fails loudly on a drifted needle rather than
+   silently no-opping (`96058ef`), which removes the worst failure mode.
+
+Until (1) lands, "change the design and re-import" is not a supported
+workflow for Spectr, and any plan that assumes it is will stall.
+
+### Release mechanics — corrected
+
+An earlier note in this file implied #8094 and #8099 must merge in a
+particular order. Measured correction:
+
+- Version-at-Land runs on every push to main and **succeeded** on #8097's
+  merge (`b1ef8b911`, run 34066531966) — but main's `VERSION` is still
+  `0.835.0`. On this repo it opens a `release/version-bump` PR rather than
+  pushing; #8099 was created 23:19:29, one minute after #8097 merged.
+- So a bump follows *each* merge as its own PR. If #8099 lands first, #8094
+  gets its own bump PR afterwards. Ordering changes **latency, not
+  correctness** — worst case is two tags instead of one.
+- Newest tag is `v0.835.0` and `git merge-base --is-ancestor b1ef8b911 v0.835.0`
+  is false: **no released SDK carries either UX fix.** That, not ordering, is
+  the PKG blocker.
+
 ## 2026-09-04 review-only PKG 1.0.9
 
 - Built four Release payloads from exact Spectr head
