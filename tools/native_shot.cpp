@@ -116,15 +116,69 @@ void dump_tree(const pulp::view::View& view, int depth, int max_depth) {
     const auto bounds = view.bounds();
     std::string indent(static_cast<std::size_t>(depth) * 2, ' ');
     std::string text;
-    if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view))
-        text = " text='" + std::string(label->text()) + "'";
-    std::printf("%s%s [%.1f,%.1f %.1fx%.1f] vis=%d children=%zu%s\n",
+    if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view)) {
+        char buf[192];
+        std::snprintf(buf, sizeof(buf),
+                      " text='%s' fs=%.2f own=%d ih=%.2f iw=%.2f",
+                      std::string(label->text()).c_str(),
+                      label->font_size(), label->has_own_font_size() ? 1 : 0,
+                      label->intrinsic_height(), label->intrinsic_width());
+        text = buf;
+    }
+    const auto& fx = view.flex();
+    std::printf("%s%s [%.1f,%.1f %.1fx%.1f] vis=%d children=%zu"
+                " grow=%.2f shrink=%.2f pref=%.1fx%.1f min_h=%.1f max_h=%.1f"
+                " pad_t=%.1f pad=%.1f dir=%d IH=%.1f IW=%.1f dh=%.1f/%d abs=%d"
+                " basis=%.1f dbasis=%.1f/%d%s\n",
                 indent.c_str(), typeid(view).name(), bounds.x, bounds.y,
                 bounds.width, bounds.height, view.visible() ? 1 : 0,
-                view.child_count(), text.c_str());
+                view.child_count(),
+                fx.flex_grow, fx.flex_shrink,
+                fx.preferred_width, fx.preferred_height,
+                fx.min_height, fx.max_height,
+                fx.padding_top, fx.padding,
+                static_cast<int>(fx.direction),
+                view.intrinsic_height(), view.intrinsic_width(),
+                fx.dim_height.value, static_cast<int>(fx.dim_height.unit),
+                static_cast<int>(view.position()), fx.flex_basis,
+                fx.dim_flex_basis.value, static_cast<int>(fx.dim_flex_basis.unit),
+                text.c_str());
     for (std::size_t index = 0; index < view.child_count(); ++index)
         dump_tree(*view.child_at(index), depth + 1, max_depth);
 }
+
+// Ancestor chain of a label, innermost first. A clipped label is almost never
+// clipped by itself: the constraint lives in some ancestor's box, and printing
+// only the label measures the wrong thing.
+void dump_label_chain(const pulp::view::View& root, std::string_view text) {
+    const pulp::view::Label* label = find_label(root, text);
+    if (label == nullptr) {
+        std::printf("[CHAIN] label '%s' NOT FOUND\n", std::string(text).c_str());
+        return;
+    }
+    std::printf("[CHAIN] '%s' fs=%.2f iw=%.2f ih=%.2f\n",
+                std::string(label->text()).c_str(), label->font_size(),
+                label->intrinsic_width(), label->intrinsic_height());
+    int depth = 0;
+    for (const pulp::view::View* node = label; node != nullptr;
+         node = node->parent(), ++depth) {
+        const auto b = node->bounds();
+        const auto& fx = node->flex();
+        std::printf("  [%d] %-28s [%.1f,%.1f %.1fx%.1f] IW=%.1f grow=%.2f"
+                    " shrink=%.2f basis=%.1f dbasis=%.1f/%d pref_w=%.1f"
+                    " dim_w=%.1f/%d min_w=%.1f max_w=%.1f dir=%d children=%zu\n",
+                    depth, typeid(*node).name(), b.x, b.y, b.width, b.height,
+                    node->intrinsic_width(), fx.flex_grow, fx.flex_shrink,
+                    fx.flex_basis, fx.dim_flex_basis.value,
+                    static_cast<int>(fx.dim_flex_basis.unit),
+                    fx.preferred_width, fx.dim_width.value,
+                    static_cast<int>(fx.dim_width.unit),
+                    fx.min_width, fx.max_width,
+                    static_cast<int>(fx.direction), node->child_count());
+        if (depth >= 6) break;
+    }
+}
+
 
 // Offset of `view` in `ancestor`'s CONTENT space. ScrollView::paint_all
 // translates its children by (-scroll_x, -scroll_y) rather than rewriting their
@@ -262,6 +316,24 @@ struct Rig {
              " + ' ALL=' + q('[data-spectr-modulation-select=\"all\"]')"
              " + ' NONE=' + q('[data-spectr-modulation-select=\"none\"]')); })();",
              "spectr-native-shot-target-state");
+    }
+
+    // Dump the settings body's own children. A correct viewport with nothing
+    // painted means the clip is no longer the problem and the children are --
+    // so measure them rather than infer from a blank picture.
+    void report_settings_children() {
+        eval("(() => { const body = document.querySelector('[data-spectr-settings-body]'); "
+             "if (!body) { console.log('[shot] children: NO settings body'); return; } "
+             "const br = body.getBoundingClientRect(); "
+             "const kids = Array.from(body.children).slice(0, 8).map((n, i) => { "
+             "  const r = n.getBoundingClientRect(); const cs = getComputedStyle(n); "
+             "  return i + ':' + n.tagName + ' [' + r.x.toFixed(0) + ',' + r.y.toFixed(0) "
+             "    + ' ' + r.width.toFixed(0) + 'x' + r.height.toFixed(0) + ']' "
+             "    + ' disp=' + cs.display + ' vis=' + cs.visibility + ' op=' + cs.opacity; }); "
+             "console.log('[shot] body [' + br.x.toFixed(0) + ',' + br.y.toFixed(0) + ' ' "
+             "  + br.width.toFixed(0) + 'x' + br.height.toFixed(0) + '] childCount=' "
+             "  + body.children.length + ' :: ' + kids.join('  |  ')); })();",
+             "spectr-native-shot-children");
     }
 
     // Report every leaf text node whose content does not fit its own box.
@@ -440,7 +512,10 @@ int main(int argc, char** argv) {
         rig.feed_tone(96);
         settle(rig.clock, 24);
 
+        if (std::getenv("SPECTR_PROBE_TEXT") != nullptr)
+            dump_label_chain(*rig.root, std::getenv("SPECTR_PROBE_TEXT"));
         rig.report_text_fit("home");
+        rig.report_settings_children();
         capture(rig, dir, prefix + "01-home", backend, scale);
 
         rig.activate("[data-spectr-settings-open]");
@@ -496,6 +571,26 @@ int main(int argc, char** argv) {
                         candidate->content_size().width,
                         candidate->content_size().height);
 
+        // The DOM shim reports 0x0 rects and undefined styles, so it cannot
+        // explain a blank panel. Walk the NATIVE children of the body instead:
+        // this distinguishes "laid out somewhere sane but not painted" from
+        // "laid out at zero size or off-viewport".
+        {
+            const auto& sb = scroll->bounds();
+            std::printf("native body bounds=[%.1f,%.1f %.1fx%.1f] scroll_y=%.1f children=%zu\n",
+                        sb.x, sb.y, sb.width, sb.height, scroll->scroll_y(),
+                        scroll->child_count());
+            const std::size_t shown = scroll->child_count() < 6 ? scroll->child_count() : 6;
+            for (std::size_t i = 0; i < shown; ++i) {
+                const auto* kid = scroll->child_at(i);
+                if (kid == nullptr) { std::printf("  child %zu: null\n", i); continue; }
+                const auto& r = kid->bounds();
+                std::printf("  child %zu: [%.1f,%.1f %.1fx%.1f] visible=%s children=%zu\n",
+                            i, r.x, r.y, r.width, r.height,
+                            kid->visible() ? "yes" : "NO", kid->child_count());
+            }
+        }
+
         float modulation_y = 0.0f;
         content_offset(*modulation, *scroll, modulation_y);
         std::printf("settings body: viewport=%.1fx%.1f content=%.1f  "
@@ -505,8 +600,42 @@ int main(int argc, char** argv) {
                     group->bounds().y, group->bounds().width,
                     group->bounds().height, modulation_y);
         if (std::getenv("SPECTR_SHOT_DUMP") != nullptr) {
+            {
+                using namespace pulp::view;
+                auto probe = std::make_unique<ScrollView>();
+                probe->set_bounds({0, 0, 466, 531});
+                probe->flex().padding_top = 50.0f;
+                auto content_owned = std::make_unique<View>();
+                View* pc = content_owned.get();
+                pc->flex().flex_grow = 0.0f;
+                pc->flex().flex_shrink = 0.0f;
+                pc->flex().padding_top = 50.0f;
+                pc->flex().flex_basis = 0.0f;
+                auto group_owned = std::make_unique<View>();
+                View* pg = group_owned.get();
+                auto lab_owned = std::make_unique<Label>("APPEARANCE");
+                Label* pl = lab_owned.get();
+                pl->set_font_size(9.0f);
+                pg->add_child(std::move(lab_owned));
+                pc->add_child(std::move(group_owned));
+                probe->add_child(std::move(content_owned));
+                probe->layout_children();
+                std::printf("[PROBE] content=%.1fx%.1f group=%.1fx%.1f label=%.1fx%.1f "
+                            "label_ih=%.1f content_IH=%.1f\n",
+                            pc->bounds().width, pc->bounds().height,
+                            pg->bounds().width, pg->bounds().height,
+                            pl->bounds().width, pl->bounds().height,
+                            pl->intrinsic_height(), pc->intrinsic_height());
+            }
             std::printf("--- settings body subtree ---\n");
-            dump_tree(*scroll, 0, 3);
+            dump_tree(*scroll, 0, 9);
+            {
+                pulp::view::View* relayout_root = scroll;
+                while (relayout_root->parent()) relayout_root = relayout_root->parent();
+                relayout_root->layout_children();
+                std::printf("--- settings body subtree AFTER forced relayout ---\n");
+                dump_tree(*scroll, 0, 9);
+            }
             std::printf("--- end subtree ---\n");
         }
 
@@ -518,71 +647,74 @@ int main(int argc, char** argv) {
                     scroll->scroll_y());
         capture(rig, dir, prefix + "03-settings-SHIPPING-scrolled", backend, scale);
 
-        // ── Diagnostic 1: give the body the viewport its panel implies ─────
+        // ── The MODULATION disclosure, driven on the SHIPPING panel ───────
         //
-        // The body ScrollView commits at a stub 50px viewport inside a 679px
-        // panel, so the shipping frames above show an empty modal. Forcing only
-        // the viewport height -- changing nothing else -- makes the groups that
-        // DO lay out correctly visible, which separates "the content is
-        // missing" from "the content is clipped".
-        const float forced = panel_height_for(*scroll) > 0.0f
-                                 ? panel_height_for(*scroll)
-                                 : 529.0f;
-        scroll->flex().preferred_height = forced;
-        scroll->flex().preferred_width = scroll->bounds().width;
-        rig.root->layout_children();
-        settle(rig.clock, 16);
-        scroll->set_scroll(0.0f, 0.0f);
-        settle(rig.clock, 16);
-        std::printf("forced settings viewport to %.1f (actual %.1f)\n", forced,
-                    scroll->bounds().height);
-        capture(rig, dir, prefix + "04-DIAGNOSTIC-forced-viewport-settings",
-                backend, scale);
-
-        // ── Diagnostic 2: the MODULATION group, rendered as its own root ────
-        //
-        // The group is laid out correctly (its own box and children are sane);
-        // it is its ZERO-HEIGHT parent wrapper that clips it away. Rendering the
-        // group's own subtree therefore shows the real native widgets at their
-        // real size WITHOUT distorting the surrounding layout, which is what
-        // forcing the ancestors' heights does. These frames are a component
-        // slice and are named so -- they are not evidence of how the group
-        // currently presents inside the panel.
-        const auto group_width =
-            static_cast<std::uint32_t>(group->bounds().width > 1.0f
-                                           ? group->bounds().width
-                                           : 466.0f);
-        const auto group_height =
-            static_cast<std::uint32_t>(group->bounds().height > 1.0f
-                                           ? group->bounds().height
-                                           : 214.0f);
-        const auto slice = [&](const std::string& name) {
-            settle(rig.clock, 12);
-            capture_view_tree(*group, group_width, group_height, dir,
-                              prefix + name, backend, scale, false);
+        // Target selection is progressive disclosure: the destination chips do
+        // not exist until their LFO is enabled, so a capture taken with the
+        // LFOs off cannot show them. Drive the real toggles with real clicks
+        // and re-scroll after each one, because enabling an LFO grows the
+        // scroll content and the group moves.
+        // `anchor` is re-found on every call: enabling an LFO re-renders the
+        // group, so a View* captured before the click can be stale, and the
+        // node we want in view moves as the content grows. Scrolling to the
+        // MODULATION heading is right while the section is short, but once
+        // LFO 2 is open its destination chips sit below the fold -- anchoring
+        // there is what made three target states capture byte-identically.
+        const auto show_modulation = [&](const std::string& name,
+                                         const char* anchor) {
+            settle(rig.clock, 24);
+            const pulp::view::Label* node = find_label(*rig.root, anchor);
+            if (node == nullptr)
+                throw std::runtime_error(std::string("anchor '") + anchor
+                                         + "' not found for " + name);
+            auto* owner = owning_scroll_view(*node);
+            if (owner == nullptr)
+                throw std::runtime_error(std::string("anchor '") + anchor
+                                         + "' is outside any ScrollView");
+            float y = 0.0f;
+            if (!content_offset(*node, *owner, y))
+                throw std::runtime_error(std::string("anchor '") + anchor
+                                         + "' is not under its ScrollView");
+            const float want = y - 24.0f;
+            owner->set_scroll(0.0f, want < 0.0f ? 0.0f : want);
+            settle(rig.clock, 24);
+            std::printf("%s: anchor '%s' at content y=%.1f, scrolled to %.1f\n",
+                        name.c_str(), anchor, y, owner->scroll_y());
+            capture(rig, dir, prefix + name, backend, scale);
         };
-        rig.report_target_state("mount");
-        slice("05-MODULATION-GROUP-SLICE-default");
 
-        // Driving the destination chips only means something while they exist.
-        // With the LFO off they are collapsed by design, so skip loudly rather
-        // than fail -- and never report a skipped drive as a passing one.
-        if (targets_mounted) {
-            rig.activate("[data-spectr-modulation-select=\"none\"]");
-            rig.report_target_state("NONE");
-            slice("06-MODULATION-GROUP-SLICE-targets-none");
+        rig.activate("[data-spectr-modulation-lfo]");
+        show_modulation("04-settings-MODULATION-lfo1-expanded", "MODULATION");
 
-            rig.activate("[data-spectr-modulation-target=\"morph\"]");
-            rig.report_target_state("MORPH");
-            slice("07-MODULATION-GROUP-SLICE-targets-morph-only");
+        rig.activate("[data-spectr-modulation-lfo2]");
+        show_modulation("05-settings-MODULATION-lfo2-expanded", "MODULATION");
 
-            rig.activate("[data-spectr-modulation-select=\"all\"]");
-            rig.report_target_state("ALL");
-            slice("08-MODULATION-GROUP-SLICE-targets-all");
-        } else {
-            std::printf("SKIP: destination chips are collapsed with the LFO off; "
-                        "no target drive captured (this is not a pass)\n");
-        }
+        // Only NOW may the destination chips be asserted. Requiring them
+        // before this point would make the correct collapsed state red.
+        rig.require_reachable("[data-spectr-modulation-target=\"bank\"]");
+        rig.require_reachable("[data-spectr-modulation-target=\"snapshot-a\"]");
+        rig.require_reachable("[data-spectr-modulation-target=\"snapshot-b\"]");
+        rig.require_reachable("[data-spectr-modulation-target=\"morph\"]");
+        rig.require_reachable("[data-spectr-modulation-select=\"all\"]");
+        rig.require_reachable("[data-spectr-modulation-select=\"none\"]");
+
+        rig.activate("[data-spectr-modulation-select=\"none\"]");
+        rig.report_target_state("NONE");
+        show_modulation("06-settings-MODULATION-targets-none", "Targets");
+
+        rig.activate("[data-spectr-modulation-target=\"morph\"]");
+        rig.report_target_state("MORPH");
+        show_modulation("07-settings-MODULATION-targets-morph-only", "Targets");
+
+        rig.activate("[data-spectr-modulation-select=\"all\"]");
+        rig.report_target_state("ALL");
+        show_modulation("08-settings-MODULATION-targets-all", "Targets");
+
+        // Back to the collapsed state, proving the disclosure closes as well
+        // as it opens -- a one-way drive would hide a stuck-open bug.
+        rig.activate("[data-spectr-modulation-lfo2]");
+        rig.activate("[data-spectr-modulation-lfo]");
+        show_modulation("09-settings-MODULATION-collapsed-again", "MODULATION");
     } catch (const std::exception& failure) {
         std::fprintf(stderr, "FAIL: %s\n", failure.what());
         return 1;

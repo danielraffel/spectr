@@ -7784,7 +7784,24 @@
     }
     return fn(...args);
   }
-  function createWidget(type, id, parentId, props) {
+  function applyButtonCaptionLayout2(textId, hasText) {
+  call2("setPosition", textId, hasText ? "static" : "absolute");
+  if (hasText) return;
+  call2("setTop", textId, 0);
+  call2("setRight", textId, 0);
+  call2("setBottom", textId, 0);
+  call2("setLeft", textId, 0);
+}
+// Lower an HTML text element to a Label carrying CSS's default
+// `white-space: normal`. A native Label defaults to a single line and clips
+// mid-word, whereas the browser box this markup was imported from wraps. An
+// element that authored its own `whiteSpace` still wins: applyAllProps runs
+// after createWidget.
+function createHtmlLabel2(id, text, parentId) {
+  call2("createLabel", id, text, parentId);
+  call2("setWhiteSpace", id, "normal");
+}
+function createWidget(type, id, parentId, props) {
     switch (type) {
       case "View":
       case "Col":
@@ -7917,7 +7934,7 @@
             // box and never its text for exactly this reason. Element children
             // still route to createCol, since asText returns undefined there.
             if (txt !== void 0 && txt.length > 0) {
-              call2("createLabel", id, txt, parentId);
+              createHtmlLabel2(id, txt, parentId);
             } else {
               call2("createCol", id, parentId);
             }
@@ -7948,7 +7965,7 @@
           case "desc": {
             const txt = asText(props.children);
             if (txt !== void 0) {
-              call2("createLabel", id, txt, parentId);
+              createHtmlLabel2(id, txt, parentId);
             } else {
               call2("createRow", id, parentId);
             }
@@ -7961,11 +7978,13 @@
             call2("setFlex", id, "justify_content", "center");
             const textId = id + "__text";
             call2("createLabel", textId, text, id);
-            call2("setPosition", textId, "absolute");
-            call2("setTop", textId, 0);
-            call2("setRight", textId, 0);
-            call2("setBottom", textId, 0);
-            call2("setLeft", textId, 0);
+            // A lowercase HTML <button> is sized by its caption, exactly like
+            // the browser box it was imported from. An absolutely positioned
+            // caption contributes no intrinsic size, which collapses every
+            // text-sized button to padding plus border. Keep it in flow when
+            // it bears text; an empty stub beside authored nested markup
+            // stays a zero-contribution overlay so it claims no flex slot.
+            applyButtonCaptionLayout2(textId, String(text).length > 0);
             call2("setPointerEvents", textId, "none");
             call2("setAccessibilityRole", id, "button");
             if (text) call2("setAccessibilityLabel", id, text);
@@ -8404,6 +8423,12 @@
           if (typeof g4.setText === "function") {
             call2("setText", instance.textTargetId ?? instance.id, newText);
           }
+          // A caption that gains or loses text changes whether it may size
+          // its owner. Re-resolve its box on the same commit.
+          if (instance.textTargetId) {
+            applyButtonCaptionLayout2(instance.textTargetId,
+                                      String(newText).length > 0);
+          }
         }
       }
     },
@@ -8429,6 +8454,11 @@
       markMaterializedTreeDirty();
       if (typeof g4.setText === "function") {
         call2("setText", instance.textTargetId ?? instance.id, "");
+      }
+      // Nested markup is mounting in place of the caption. Return it to a
+      // zero-contribution overlay so it takes no flex slot beside them.
+      if (instance.textTargetId) {
+        applyButtonCaptionLayout2(instance.textTargetId, false);
       }
     },
     // ── Per-commit flush ───────────────────────────────────────────
@@ -8646,6 +8676,12 @@
   function materializeUnder(parentId, child) {
     if (child.onBridge) return;
     createWidget(child.type, child.id, parentId, child.props);
+    // A loose text node wraps by default in CSS (`white-space: normal`), but a
+    // native Label defaults to one line and clips mid-word instead. Synthetic
+    // text targets have no author style of their own to carry the default in,
+    // so state it explicitly. An element that authored its own `whiteSpace`
+    // still wins: applyAllProps runs after this.
+    if (child.anonymousTextTarget) call2("setWhiteSpace", child.id, "normal");
     if (child._dom && typeof child._dom === "object" && child.textTargetId) {
       child._dom.__pulpTextTargetId = child.textTargetId;
     }
@@ -9424,6 +9460,8 @@
         settingsBody || settingsPanel, values);
       const authored = width === 1320 && height === 860;
       const panelWidth = Math.min(520, Math.max(360, width - 40));
+      // Upper bound for the PANEL's own height on a non-authored canvas.
+      // Not the scroll extent: that is child-derived (see below).
       const authoredContentHeight = 1280;
       const panelHeight = authored ? 679
         : Math.min(authoredContentHeight, Math.max(240, height * 0.9));
@@ -9466,20 +9504,50 @@
         // dimensions reset the extent to 0 and make the body impossible to
         // scroll. Keep the authored body extent in sync with the captured
         // settings geometry.
+        // The settings body grows and shrinks as disclosure sections open, so
+        // a fixed extent is wrong in both directions: too small and the tail
+        // of an expanded section is unreachable (scrolling clamps short of
+        // it), too large and the panel scrolls past its own content. Calling
+        // setScrollContentSize with no dimensions selects ScrollView's
+        // child-derived extent, which tracks the laid-out subtree.
         const scrollId = idOf(settingsBody || settingsPanel);
-        if (scrollId && scrollId !== panelId) {
-          g5.setOverflow(scrollId, panelHeight < authoredContentHeight ? "scroll" : "hidden");
+        const scrollTargetId = (scrollId && scrollId !== panelId)
+          ? scrollId : panelId;
+        if (scrollTargetId) {
+          if (scrollTargetId !== panelId) g5.setOverflow(scrollTargetId, "scroll");
           if (typeof g5.setScrollContentSize === "function")
-            g5.setScrollContentSize(scrollId, Math.max(1, panelWidth - 52), authoredContentHeight);
-        } else if (typeof g5.setScrollContentSize === "function") {
-          g5.setScrollContentSize(panelId, Math.max(1, panelWidth - 52), authoredContentHeight);
+            g5.setScrollContentSize(scrollTargetId);
         }
 
       }
+      // Report the extent the panel actually laid out, never the authored
+      // constant. The scroll extent is child-derived now, so a hard-coded
+      // number here would assert reachability the runtime no longer decides --
+      // and this receipt is read as proof that expanded groups are reachable,
+      // which is precisely the claim a stale constant would fake.
+      const measuredContentHeight = (() => {
+        const scrollNode = settingsBody || settingsPanel;
+        const kids = materializedElementChildren(scrollNode, new Set(values))
+          .concat(Array.isArray(scrollNode?._children) ? scrollNode._children : [])
+          .filter((child, index, all) => child && all.indexOf(child) === index);
+        let extent = 0;
+        for (const child of kids) {
+          const childId = String(child.__pulpId || child.id || "");
+          if (!childId || typeof g5.getLayoutRect !== "function") continue;
+          const rect = g5.getLayoutRect(childId);
+          if (!rect || typeof rect.height !== "number") continue;
+          extent = Math.max(extent, (rect.y || 0) + rect.height);
+        }
+        return extent > 0 ? extent : null;
+      })();
       settingsReceipt = {
         width: panelWidth, height: panelHeight, top: panelTop,
-        content_height: authoredContentHeight,
-        scroll_reachable: panelHeight < authoredContentHeight,
+        // null means the tree had not laid out when the receipt was taken --
+        // an unknown, which a reader must not silently read as "fits".
+        content_height: measuredContentHeight,
+        content_extent: "child-derived",
+        scroll_reachable: measuredContentHeight === null
+          ? null : panelHeight < measuredContentHeight,
         native_scroll_view: nativeScrollView,
         authored_skin: true
       };
@@ -9680,36 +9748,12 @@
         if (closeId) g5.setTransform(String(closeId), 1, 0, 0, 1, 0, 0);
         g5.setBackground(String(headerId), "rgba(14,18,25,1)");
       }
-      const modulation = globalThis.document?.querySelector?.(
-        '[data-spectr-settings-group="modulation"]');
-      const modulationId = modulation && (modulation.__pulpId || modulation.id);
-      if (modulationId) {
-        g5.setPosition(String(modulationId), "absolute");
-        g5.setLeft(String(modulationId), 0);
-        g5.setTop(String(modulationId), 652);
-        g5.setFlex(String(modulationId), "width", 466);
-        g5.setFlex(String(modulationId), "height", 214);
-      }
-      const feedback = globalThis.document?.querySelector?.(
-        '[data-spectr-settings-group="feedback"]');
-      const feedbackId = feedback && (feedback.__pulpId || feedback.id);
-      if (feedbackId) {
-        g5.setPosition(String(feedbackId), "absolute");
-        g5.setLeft(String(feedbackId), 0);
-        g5.setTop(String(feedbackId), 884);
-        g5.setFlex(String(feedbackId), "width", 466);
-        g5.setFlex(String(feedbackId), "height", 108);
-      }
-      const about = globalThis.document?.querySelector?.(
-        '[data-spectr-settings-group="about"]');
-      const aboutId = about && (about.__pulpId || about.id);
-      if (aboutId) {
-        g5.setPosition(String(aboutId), "absolute");
-        g5.setLeft(String(aboutId), 0);
-        g5.setTop(String(aboutId), 1010);
-        g5.setFlex(String(aboutId), "width", 466);
-        g5.setFlex(String(aboutId), "height", 252);
-      }
+      // MODULATION, FEEDBACK and ABOUT flow in the settings column exactly
+      // like APPEARANCE, STRUCTURE and MOTION do. They are deliberately NOT
+      // pinned to absolute coordinates: a pinned group contributes nothing to
+      // the scroll content height, so the column below it collapses into dead
+      // space, and a pinned height cannot grow when a group expands (the
+      // modulation targets open when an LFO is enabled).
     }
     for (const binding of activePaintBindings) {
       if (liveSettingsLayout) break;
@@ -9891,6 +9935,87 @@
             [{ left: 10, top: 5, width: 54.40625, height: 13,
                start: 0, length: 8 }], 74.40625,
             "JetBrainsMono-Regular", false);
+      }
+    }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
+      }
+    }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
+      }
+    }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
+      }
+    }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
+      }
+    }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
+      }
+    }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
+      }
+    }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
+      }
+    }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
+      }
+    }
+    if (monoBinding && typeof g5.setFontFamily === "function") {
+      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {
+        const node = values.find((candidate) =>
+          String(candidate && candidate.textContent || "") === labelText);
+        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);
+        if (!nodeId) continue;
+        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));
       }
     }
     if (monoBinding && typeof g5.setFontFamily === "function") {

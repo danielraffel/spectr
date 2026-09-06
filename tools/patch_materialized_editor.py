@@ -1233,7 +1233,7 @@ EDITS = [
 
     ('selected preset trigger truncates without losing its full title',
      'React.createElement("span", { "data-spectr-selected-preset": true, style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1 } }, selectedPatternName, " \\u25BE")',
-     'React.createElement("span", { "data-spectr-selected-preset": true, title: selectedPatternName, style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1, width: 63, overflow: "hidden", whiteSpace: "nowrap" } }, selectedPatternName.length > 6 ? selectedPatternName.slice(0, 6) + "\u2026 \\u25BE" : selectedPatternName + " \\u25BE")'),
+     'React.createElement("span", { "data-spectr-selected-preset": true, title: selectedPatternName, style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1, fontFamily: "var(--mono)" } }, selectedPatternName.length > 14 ? selectedPatternName.slice(0, 14) + "\\u2026" : selectedPatternName, " \\u25BE")'),
 
     ('selected preset name reaches chrome',
      '      status,\n'
@@ -2879,9 +2879,49 @@ SUPERSEDED_SENTINELS = {
 # materialization-only corrections explicit rather than teaching HTML edits to
 # rewrite unrelated top-level document data.
 DOCUMENT_EDITS = [
+    # SNAPSHOT is the one bottom-bar label that declares no letter-spacing, so
+    # the browser measured it at 0 (48px for 8 glyphs) while the native cascade
+    # renders it at the inherited 1 (56px).  56px of text in a 48px baked box
+    # clips one character, which is why the bar read "SNAPSHO".  Declare the
+    # spacing its siblings already use and re-baseline the measurement with it,
+    # so the two halves of the import agree by construction rather than by
+    # inheritance luck.
+    # SNAPSHOT is the one bottom-bar label the native style resolution pins to
+    # an explicit width (dim_w=48, flex_shrink=0); its siblings stay auto-width.
+    # Native measures the string at 48px but PAINTS it at 7.0px/glyph = 56px, so
+    # the surplus is clipped inside the pinned box instead of overflowing
+    # harmlessly the way an auto-width sibling's does.  Measured, not inferred:
+    # the probe reports iw=48 against a painted glyph pitch of 7.0.  Widening the
+    # baked text/layout bindings does nothing -- they do not drive this width --
+    # so raise the authored minimum, which the native box does honour.
+    ('snapshot label keeps its intrinsic width in the bottom bar',
+     'style: { opacity: 0.55, fontSize: 10 } }, \\"SNAPSHOT\\")',
+     'style: { opacity: 0.55, fontSize: 10, flexShrink: 0, whiteSpace: \\"nowrap\\", minWidth: 60, marginRight: 6 } }, \\"SNAPSHOT\\")'),
+    ('snapshot layout binding admits the native shaped advance',
+     '"left":516.125,"top":22,"width":48',
+     '"left":516.125,"top":22,"width":62'),
+    ('snapshot baked measurement admits the native shaped advance',
+     '"text":"SNAPSHOT","basis":{"width":48,',
+     '"text":"SNAPSHOT","basis":{"width":62,'),
+    ('snapshot layout box matches that measurement',
+     '{"left":0,"top":0,"width":48,"height":13,"start":0,"length":8}',
+     '{"left":0,"top":0,"width":62,"height":13,"start":0,"length":8}'),
     ('selected preset binding reflects the deterministic default',
      '],"text":"PRESETS ▾","basis":{"width":63.05546845843935,',
      '],"text":"FLAT ▾","basis":{"width":42.04257793060037,'),
+    # The preset trigger is one of three bottom-bar menu captions and reads like
+    # the other two: the caret is a separate child the way SCULPT and PEAK
+    # declare theirs, and the truncation guard's threshold clears the default
+    # caption instead of cutting it, so the bar reads PRESETS rather than
+    # PRESET(ellipsis).  The caption also names the rail's mono family itself.
+    # A caption whose text comes from state carries no baked measurement, and
+    # without a declared family native resolves it to the default UI face --
+    # measured at 7.5px/glyph against the siblings' 7.0px, with a caret 3px
+    # wider.  Bisected in pixels: fontSize alone changes nothing, letterSpacing
+    # alone changes nothing, the family alone restores parity.
+    ('selected preset caption matches its sibling menu captions',
+     'React.createElement(\\"span\\", { \\"data-spectr-selected-preset\\": true, title: selectedPatternName, style: { marginLeft: 6, display: \\"inline-flex\\", alignItems: \\"center\\", lineHeight: 1, width: 63, overflow: \\"hidden\\", whiteSpace: \\"nowrap\\" } }, selectedPatternName.length > 6 ? selectedPatternName.slice(0, 6) + \\"… \\\\u25BE\\" : selectedPatternName + \\" \\\\u25BE\\")',
+     'React.createElement(\\"span\\", { \\"data-spectr-selected-preset\\": true, title: selectedPatternName, style: { marginLeft: 6, display: \\"inline-flex\\", alignItems: \\"center\\", lineHeight: 1, fontFamily: \\"var(--mono)\\" } }, selectedPatternName.length > 14 ? selectedPatternName.slice(0, 14) + \\"\\\\u2026\\" : selectedPatternName, \\" \\\\u25BE\\")'),
 ]
 
 
@@ -2950,6 +2990,32 @@ def repair_cursor_state(document):
         document['html'] = html
         return True
     return False
+
+# Runtime edits whose patch point no longer exists because a later change
+# replaced the approach outright, not because the edit failed. MODULATION,
+# FEEDBACK and ABOUT were each pinned to absolute coordinates inside the
+# settings column and are now ordinary flow children: a pinned group
+# contributes nothing to the scroll content height, so everything below it
+# collapsed into dead space, and a pinned height cannot grow when a group
+# expands. Listing them here keeps a re-run honest -- the edit is reported as
+# superseded rather than aborting the script on a patch point that is gone on
+# purpose, and rather than silently re-pinning the groups.
+SUPERSEDED_RUNTIME_EDITS = {
+    'settings preserve reparent reasserts scroll hint',
+    'appended settings feedback receives a stable captured slot',
+    'settings about receives a stable captured slot',
+    'settings feedback reserves both persisted toggles',
+    'settings about follows the expanded feedback group',
+    'settings about reserves exact provenance rows',
+    'settings modulation receives its own non-overlapping captured slot',
+    'settings feedback follows the modulation slot',
+    'settings about follows modulation and feedback',
+    # The receipt no longer restates a constant and the body no longer decides
+    # for itself whether it overflows: the scroll extent is child-derived, so
+    # both of these read a number the runtime stopped owning.
+    'settings receipt reports the compact authored content extent',
+    'settings hides the scroll track when all content fits',
+}
 
 RUNTIME_EDITS = [
     ('fixed text-only commits do not dirty imported layout metadata',
@@ -3997,6 +4063,294 @@ RUNTIME_EDITS = [
      '    g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;\n'
      '    return applied;',
      'title.textContent = name'),
+    ('imported buttons and text elements carry the CSS wrapping default',
+     '    }\n'
+     '    return fn(...args);\n'
+     '  }\n'
+     '  function createWidget(type, id, parentId, props) {\n'
+     '    switch (type) {\n'
+     '      case "View":\n'
+     '      case "Col":\n',
+     '    }\n'
+     '    return fn(...args);\n'
+     '  }\n'
+     '  function applyButtonCaptionLayout2(textId, hasText) {\n'
+     '  call2("setPosition", textId, hasText ? "static" : "absolute");\n'
+     '  if (hasText) return;\n'
+     '  call2("setTop", textId, 0);\n'
+     '  call2("setRight", textId, 0);\n'
+     '  call2("setBottom", textId, 0);\n'
+     '  call2("setLeft", textId, 0);\n'
+     '}\n'
+     "// Lower an HTML text element to a Label carrying CSS's default\n"
+     '// `white-space: normal`. A native Label defaults to a single line and clips\n'
+     '// mid-word, whereas the browser box this markup was imported from wraps. An\n'
+     '// element that authored its own `whiteSpace` still wins: applyAllProps runs\n'
+     '// after createWidget.\n'
+     'function createHtmlLabel2(id, text, parentId) {\n'
+     '  call2("createLabel", id, text, parentId);\n'
+     '  call2("setWhiteSpace", id, "normal");\n'
+     '}\n'
+     'function createWidget(type, id, parentId, props) {\n'
+     '    switch (type) {\n'
+     '      case "View":\n'
+     '      case "Col":\n',
+     'function createHtmlLabel2('),
+    ('imported text elements lower to wrapping labels',
+     '            // box and never its text for exactly this reason. Element children\n'
+     '            // still route to createCol, since asText returns undefined there.\n'
+     '            if (txt !== void 0 && txt.length > 0) {\n'
+     '              call2("createLabel", id, txt, parentId);\n'
+     '            } else {\n'
+     '              call2("createCol", id, parentId);\n'
+     '            }\n',
+     '            // box and never its text for exactly this reason. Element children\n'
+     '            // still route to createCol, since asText returns undefined there.\n'
+     '            if (txt !== void 0 && txt.length > 0) {\n'
+     '              createHtmlLabel2(id, txt, parentId);\n'
+     '            } else {\n'
+     '              call2("createCol", id, parentId);\n'
+     '            }\n',
+     'createHtmlLabel2(id, txt, parentId);\n            } else {\n              call2("createCol"'),
+    ('imported description elements lower to wrapping labels',
+     '          case "desc": {\n'
+     '            const txt = asText(props.children);\n'
+     '            if (txt !== void 0) {\n'
+     '              call2("createLabel", id, txt, parentId);\n'
+     '            } else {\n'
+     '              call2("createRow", id, parentId);\n'
+     '            }\n',
+     '          case "desc": {\n'
+     '            const txt = asText(props.children);\n'
+     '            if (txt !== void 0) {\n'
+     '              createHtmlLabel2(id, txt, parentId);\n'
+     '            } else {\n'
+     '              call2("createRow", id, parentId);\n'
+     '            }\n',
+     'createHtmlLabel2(id, txt, parentId);\n            } else {\n              call2("createRow"'),
+    ('button captions size their owner when they bear text',
+     '            call2("setFlex", id, "justify_content", "center");\n'
+     '            const textId = id + "__text";\n'
+     '            call2("createLabel", textId, text, id);\n'
+     '            call2("setPosition", textId, "absolute");\n'
+     '            call2("setTop", textId, 0);\n'
+     '            call2("setRight", textId, 0);\n'
+     '            call2("setBottom", textId, 0);\n'
+     '            call2("setLeft", textId, 0);\n'
+     '            call2("setPointerEvents", textId, "none");\n'
+     '            call2("setAccessibilityRole", id, "button");\n'
+     '            if (text) call2("setAccessibilityLabel", id, text);\n',
+     '            call2("setFlex", id, "justify_content", "center");\n'
+     '            const textId = id + "__text";\n'
+     '            call2("createLabel", textId, text, id);\n'
+     '            // A lowercase HTML <button> is sized by its caption, exactly like\n'
+     '            // the browser box it was imported from. An absolutely positioned\n'
+     '            // caption contributes no intrinsic size, which collapses every\n'
+     '            // text-sized button to padding plus border. Keep it in flow when\n'
+     '            // it bears text; an empty stub beside authored nested markup\n'
+     '            // stays a zero-contribution overlay so it claims no flex slot.\n'
+     '            applyButtonCaptionLayout2(textId, String(text).length > 0);\n'
+     '            call2("setPointerEvents", textId, "none");\n'
+     '            call2("setAccessibilityRole", id, "button");\n'
+     '            if (text) call2("setAccessibilityLabel", id, text);\n',
+     'applyButtonCaptionLayout2(textId, String(text).length > 0)'),
+    ('caption box is re-resolved on the commit that changes its text',
+     '          if (typeof g4.setText === "function") {\n'
+     '            call2("setText", instance.textTargetId ?? instance.id, newText);\n'
+     '          }\n'
+     '        }\n'
+     '      }\n'
+     '    },\n',
+     '          if (typeof g4.setText === "function") {\n'
+     '            call2("setText", instance.textTargetId ?? instance.id, newText);\n'
+     '          }\n'
+     '          // A caption that gains or loses text changes whether it may size\n'
+     '          // its owner. Re-resolve its box on the same commit.\n'
+     '          if (instance.textTargetId) {\n'
+     '            applyButtonCaptionLayout2(instance.textTargetId,\n'
+     '                                      String(newText).length > 0);\n'
+     '          }\n'
+     '        }\n'
+     '      }\n'
+     '    },\n',
+     'String(newText).length > 0'),
+    ('nested markup returns the caption to a zero-contribution overlay',
+     '      markMaterializedTreeDirty();\n'
+     '      if (typeof g4.setText === "function") {\n'
+     '        call2("setText", instance.textTargetId ?? instance.id, "");\n'
+     '      }\n'
+     '    },\n'
+     '    // ── Per-commit flush ───────────────────────────────────────────\n',
+     '      markMaterializedTreeDirty();\n'
+     '      if (typeof g4.setText === "function") {\n'
+     '        call2("setText", instance.textTargetId ?? instance.id, "");\n'
+     '      }\n'
+     '      // Nested markup is mounting in place of the caption. Return it to a\n'
+     '      // zero-contribution overlay so it takes no flex slot beside them.\n'
+     '      if (instance.textTargetId) {\n'
+     '        applyButtonCaptionLayout2(instance.textTargetId, false);\n'
+     '      }\n'
+     '    },\n'
+     '    // ── Per-commit flush ───────────────────────────────────────────\n',
+     'Nested markup is mounting in place of the caption'),
+    ('anonymous text targets carry the CSS wrapping default',
+     '  function materializeUnder(parentId, child) {\n'
+     '    if (child.onBridge) return;\n'
+     '    createWidget(child.type, child.id, parentId, child.props);\n'
+     '    if (child._dom && typeof child._dom === "object" && child.textTargetId) {\n'
+     '      child._dom.__pulpTextTargetId = child.textTargetId;\n'
+     '    }\n',
+     '  function materializeUnder(parentId, child) {\n'
+     '    if (child.onBridge) return;\n'
+     '    createWidget(child.type, child.id, parentId, child.props);\n'
+     '    // A loose text node wraps by default in CSS (`white-space: normal`), but a\n'
+     '    // native Label defaults to one line and clips mid-word instead. Synthetic\n'
+     '    // text targets have no author style of their own to carry the default in,\n'
+     '    // so state it explicitly. An element that authored its own `whiteSpace`\n'
+     '    // still wins: applyAllProps runs after this.\n'
+     '    if (child.anonymousTextTarget) call2("setWhiteSpace", child.id, "normal");\n'
+     '    if (child._dom && typeof child._dom === "object" && child.textTargetId) {\n'
+     '      child._dom.__pulpTextTargetId = child.textTargetId;\n'
+     '    }\n',
+     'if (child.anonymousTextTarget) call2("setWhiteSpace"'),
+    ('settings panel height is bounded independently of the scroll extent',
+     '        settingsBody || settingsPanel, values);\n'
+     '      const authored = width === 1320 && height === 860;\n'
+     '      const panelWidth = Math.min(520, Math.max(360, width - 40));\n'
+     '      const authoredContentHeight = 1280;\n'
+     '      const panelHeight = authored ? 679\n'
+     '        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));\n',
+     '        settingsBody || settingsPanel, values);\n'
+     '      const authored = width === 1320 && height === 860;\n'
+     '      const panelWidth = Math.min(520, Math.max(360, width - 40));\n'
+     "      // Upper bound for the PANEL's own height on a non-authored canvas.\n"
+     '      // Not the scroll extent: that is child-derived (see below).\n'
+     '      const authoredContentHeight = 1280;\n'
+     '      const panelHeight = authored ? 679\n'
+     '        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));\n',
+     'Not the scroll extent: that is child-derived'),
+    ('settings scroll extent is child-derived and the receipt measures it',
+     '        // dimensions reset the extent to 0 and make the body impossible to\n'
+     '        // scroll. Keep the authored body extent in sync with the captured\n'
+     '        // settings geometry.\n'
+     '        const scrollId = idOf(settingsBody || settingsPanel);\n'
+     '        if (scrollId && scrollId !== panelId) {\n'
+     '          g5.setOverflow(scrollId, panelHeight < authoredContentHeight ? "scroll" : "hidden");\n'
+     '          if (typeof g5.setScrollContentSize === "function")\n'
+     '            g5.setScrollContentSize(scrollId, Math.max(1, panelWidth - 52), authoredContentHeight);\n'
+     '        } else if (typeof g5.setScrollContentSize === "function") {\n'
+     '          g5.setScrollContentSize(panelId, Math.max(1, panelWidth - 52), authoredContentHeight);\n'
+     '        }\n'
+     '\n'
+     '      }\n'
+     '      settingsReceipt = {\n'
+     '        width: panelWidth, height: panelHeight, top: panelTop,\n'
+     '        content_height: authoredContentHeight,\n'
+     '        scroll_reachable: panelHeight < authoredContentHeight,\n'
+     '        native_scroll_view: nativeScrollView,\n'
+     '        authored_skin: true\n'
+     '      };\n',
+     '        // dimensions reset the extent to 0 and make the body impossible to\n'
+     '        // scroll. Keep the authored body extent in sync with the captured\n'
+     '        // settings geometry.\n'
+     '        // The settings body grows and shrinks as disclosure sections open, so\n'
+     '        // a fixed extent is wrong in both directions: too small and the tail\n'
+     '        // of an expanded section is unreachable (scrolling clamps short of\n'
+     '        // it), too large and the panel scrolls past its own content. Calling\n'
+     "        // setScrollContentSize with no dimensions selects ScrollView's\n"
+     '        // child-derived extent, which tracks the laid-out subtree.\n'
+     '        const scrollId = idOf(settingsBody || settingsPanel);\n'
+     '        const scrollTargetId = (scrollId && scrollId !== panelId)\n'
+     '          ? scrollId : panelId;\n'
+     '        if (scrollTargetId) {\n'
+     '          if (scrollTargetId !== panelId) g5.setOverflow(scrollTargetId, "scroll");\n'
+     '          if (typeof g5.setScrollContentSize === "function")\n'
+     '            g5.setScrollContentSize(scrollTargetId);\n'
+     '        }\n'
+     '\n'
+     '      }\n'
+     '      // Report the extent the panel actually laid out, never the authored\n'
+     '      // constant. The scroll extent is child-derived now, so a hard-coded\n'
+     '      // number here would assert reachability the runtime no longer decides --\n'
+     '      // and this receipt is read as proof that expanded groups are reachable,\n'
+     '      // which is precisely the claim a stale constant would fake.\n'
+     '      const measuredContentHeight = (() => {\n'
+     '        const scrollNode = settingsBody || settingsPanel;\n'
+     '        const kids = materializedElementChildren(scrollNode, new Set(values))\n'
+     '          .concat(Array.isArray(scrollNode?._children) ? scrollNode._children : [])\n'
+     '          .filter((child, index, all) => child && all.indexOf(child) === index);\n'
+     '        let extent = 0;\n'
+     '        for (const child of kids) {\n'
+     '          const childId = String(child.__pulpId || child.id || "");\n'
+     '          if (!childId || typeof g5.getLayoutRect !== "function") continue;\n'
+     '          const rect = g5.getLayoutRect(childId);\n'
+     '          if (!rect || typeof rect.height !== "number") continue;\n'
+     '          extent = Math.max(extent, (rect.y || 0) + rect.height);\n'
+     '        }\n'
+     '        return extent > 0 ? extent : null;\n'
+     '      })();\n'
+     '      settingsReceipt = {\n'
+     '        width: panelWidth, height: panelHeight, top: panelTop,\n'
+     '        // null means the tree had not laid out when the receipt was taken --\n'
+     '        // an unknown, which a reader must not silently read as "fits".\n'
+     '        content_height: measuredContentHeight,\n'
+     '        content_extent: "child-derived",\n'
+     '        scroll_reachable: measuredContentHeight === null\n'
+     '          ? null : panelHeight < measuredContentHeight,\n'
+     '        native_scroll_view: nativeScrollView,\n'
+     '        authored_skin: true\n'
+     '      };\n',
+     'content_extent: "child-derived"'),
+    ('settings modulation feedback and about flow in the scroll column',
+     '        if (closeId) g5.setTransform(String(closeId), 1, 0, 0, 1, 0, 0);\n'
+     '        g5.setBackground(String(headerId), "rgba(14,18,25,1)");\n'
+     '      }\n'
+     '      const modulation = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="modulation"]\');\n'
+     '      const modulationId = modulation && (modulation.__pulpId || modulation.id);\n'
+     '      if (modulationId) {\n'
+     '        g5.setPosition(String(modulationId), "absolute");\n'
+     '        g5.setLeft(String(modulationId), 0);\n'
+     '        g5.setTop(String(modulationId), 652);\n'
+     '        g5.setFlex(String(modulationId), "width", 466);\n'
+     '        g5.setFlex(String(modulationId), "height", 214);\n'
+     '      }\n'
+     '      const feedback = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="feedback"]\');\n'
+     '      const feedbackId = feedback && (feedback.__pulpId || feedback.id);\n'
+     '      if (feedbackId) {\n'
+     '        g5.setPosition(String(feedbackId), "absolute");\n'
+     '        g5.setLeft(String(feedbackId), 0);\n'
+     '        g5.setTop(String(feedbackId), 884);\n'
+     '        g5.setFlex(String(feedbackId), "width", 466);\n'
+     '        g5.setFlex(String(feedbackId), "height", 108);\n'
+     '      }\n'
+     '      const about = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="about"]\');\n'
+     '      const aboutId = about && (about.__pulpId || about.id);\n'
+     '      if (aboutId) {\n'
+     '        g5.setPosition(String(aboutId), "absolute");\n'
+     '        g5.setLeft(String(aboutId), 0);\n'
+     '        g5.setTop(String(aboutId), 1010);\n'
+     '        g5.setFlex(String(aboutId), "width", 466);\n'
+     '        g5.setFlex(String(aboutId), "height", 252);\n'
+     '      }\n'
+     '    }\n'
+     '    for (const binding of activePaintBindings) {\n'
+     '      if (liveSettingsLayout) break;\n',
+     '        if (closeId) g5.setTransform(String(closeId), 1, 0, 0, 1, 0, 0);\n'
+     '        g5.setBackground(String(headerId), "rgba(14,18,25,1)");\n'
+     '      }\n'
+     '      // MODULATION, FEEDBACK and ABOUT flow in the settings column exactly\n'
+     '      // like APPEARANCE, STRUCTURE and MOTION do. They are deliberately NOT\n'
+     '      // pinned to absolute coordinates: a pinned group contributes nothing to\n'
+     '      // the scroll content height, so the column below it collapses into dead\n'
+     '      // space, and a pinned height cannot grow when a group expands (the\n'
+     '      // modulation targets open when an LFO is enabled).\n'
+     '    }\n'
+     '    for (const binding of activePaintBindings) {\n'
+     '      if (liveSettingsLayout) break;\n',
+     'They are deliberately NOT'),
 ]
 
 
@@ -4237,13 +4591,30 @@ def add_modulation_target_toggles(document):
         html = html.replace(old_publish, new_publish, 1)
         changed = True
     old_buttons = 'React.createElement("div", { style: { display: "flex", gap: 5 } }, React.createElement("button", { type: "button", "data-spectr-modulation-select": "all", "aria-pressed": value.targetSelection === "all", onClick: () => publishTargets("all"), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { type: "button", "data-spectr-modulation-select": "none", "aria-pressed": value.targetSelection === "none", onClick: () => publishTargets("none"), style: { padding: "5px 10px" } }, "NONE"))'
-    new_buttons = 'React.createElement("div", { style: { display: "flex", gap: 5, flexWrap: "wrap" } }, [ [1, "bank", "BANK"], [2, "snapshot-a", "A"], [4, "snapshot-b", "B"], [8, "morph", "MORPH"] ].map(([bit, key, label]) => React.createElement("button", { key, type: "button", "data-spectr-modulation-target": key, "aria-pressed": (value.targetMask & bit) !== 0, onClick: () => publishTargetMask((value.targetMask || 0) ^ bit), style: { padding: "5px 10px" } }, label)).concat([React.createElement("button", { key: "all", type: "button", "data-spectr-modulation-select": "all", "aria-pressed": value.targetMask === 15, onClick: () => publishTargets("all"), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { key: "none", type: "button", "data-spectr-modulation-select": "none", "aria-pressed": value.targetMask === 0, onClick: () => publishTargets("none"), style: { padding: "5px 10px" } }, "NONE")]))'
+    new_buttons = 'React.createElement("div", { style: { display: "flex", gap: 5, flexWrap: "wrap" } }, [ [1, "bank", "BANK"], [2, "snapshot-a", "A"], [4, "snapshot-b", "B"], [8, "morph", "MORPH"] ].map(([bit, key, label]) => React.createElement("button", { key, type: "button", "data-spectr-modulation-target": key, "aria-pressed": (value.targetMask & bit) !== 0, onClick: () => publishTargetMask((value.targetMask || 0) ^ bit), style: { background: (value.targetMask & bit) !== 0 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: (value.targetMask & bit) !== 0 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + ((value.targetMask & bit) !== 0 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 } }, label)).concat([React.createElement("button", { key: "all", type: "button", "data-spectr-modulation-select": "all", "aria-pressed": value.targetMask === 15, onClick: () => publishTargets("all"), style: { background: value.targetMask === 15 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: value.targetMask === 15 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + (value.targetMask === 15 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 } }, "ALL"), React.createElement("button", { key: "none", type: "button", "data-spectr-modulation-select": "none", "aria-pressed": value.targetMask === 0, onClick: () => publishTargets("none"), style: { background: value.targetMask === 0 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: value.targetMask === 0 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + (value.targetMask === 0 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 } }, "NONE")]))'
     if old_buttons in html:
         html = html.replace(old_buttons, new_buttons, 1)
         changed = True
     document['html'] = html
     return changed
 
+
+
+def style_modulation_target_chips(document):
+    """Give the Targets row the same chip skin every other segmented control uses.
+
+    The row was emitted with only `padding`, so BANK/A/B/MORPH/ALL/NONE painted as
+    bare text: `aria-pressed` flipped but nothing visual was bound to it, which made
+    every target-selection state render as an identical image.
+    """
+    html = document.get('html', '')
+    changed = False
+    for old, new in [('"aria-pressed": (value.targetMask & bit) !== 0, onClick: () => publishTargetMask((value.targetMask || 0) ^ bit), style: { padding: "5px 10px" }', '"aria-pressed": (value.targetMask & bit) !== 0, onClick: () => publishTargetMask((value.targetMask || 0) ^ bit), style: { background: (value.targetMask & bit) !== 0 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: (value.targetMask & bit) !== 0 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + ((value.targetMask & bit) !== 0 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 }'), ('"data-spectr-modulation-select": "all", "aria-pressed": value.targetMask === 15, onClick: () => publishTargets("all"), style: { padding: "5px 10px" }', '"data-spectr-modulation-select": "all", "aria-pressed": value.targetMask === 15, onClick: () => publishTargets("all"), style: { background: value.targetMask === 15 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: value.targetMask === 15 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + (value.targetMask === 15 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 }'), ('"data-spectr-modulation-select": "none", "aria-pressed": value.targetMask === 0, onClick: () => publishTargets("none"), style: { padding: "5px 10px" }', '"data-spectr-modulation-select": "none", "aria-pressed": value.targetMask === 0, onClick: () => publishTargets("none"), style: { background: value.targetMask === 0 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: value.targetMask === 0 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + (value.targetMask === 0 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 }')]:
+        if old in html:
+            html = html.replace(old, new)
+            changed = True
+    document['html'] = html
+    return changed
 
 def harden_modulation_bridge(document):
     """Prevent an early AUv2 bridge race from blanking the Settings root."""
@@ -4564,16 +4935,11 @@ MODULE_TEXT = (
 
 
 def add_text_size_setting(document):
-    """Add the user-facing Text size control and its one native call site.
+    """Wire the text scale to its one native call site at the medium default.
 
-    Placement is not cosmetic.  A row added to a group that came from the
-    original capture (APPEARANCE, STRUCTURE, MOTION) paints at the group's
-    FIRST child position, on top of the row already there -- the same runtime
-    property that keeps the REDRAW UNMUTES toggle out of the settings panel.
-    A group the patch layer synthesises has no captured geometry of its own,
-    so its children lay out live; FEEDBACK is the worked example, and it later
-    took a second row (Build info) without overlapping.  TYPOGRAPHY is
-    therefore its own synthesised group rather than a row in APPEARANCE.
+    The scale module, the mount-time effect, and the "medium" shipped default
+    are installed here; Settings exposes no size chooser, so this also strips
+    the TYPOGRAPHY group wherever a capture or an earlier recipe carries one.
     """
     html = document.get('html', '')
     original = html
@@ -4604,9 +4970,12 @@ def add_text_size_setting(document):
             raise RuntimeError('text-size effect insertion point missing')
         html = html.replace(effect_anchor, effect + effect_anchor, 1)
 
-    feedback = ('/* @__PURE__ */ React.createElement(SpectrSettingsGroup, '
-                '{ marker: "feedback", title: "FEEDBACK", '
-                'subtitle: "Choose which interaction details Spectr shows." },')
+    # Spectr renders text at the medium scale for everyone, so Settings exposes
+    # no size chooser and the TYPOGRAPHY group is removed wherever a capture or
+    # an earlier recipe left one. The scale table, spectrTextSize, and the
+    # spectrApplyTextScale bridge call site above stay wired to the medium
+    # default, so a host that gains the native text-scale knob re-enables the
+    # control by restoring this group and nothing else.
     typography = (
         '/* @__PURE__ */ React.createElement(SpectrSettingsGroup, '
         '{ marker: "typography", title: "TYPOGRAPHY", '
@@ -4616,10 +4985,12 @@ def add_text_size_setting(document):
         '/* @__PURE__ */ React.createElement(SpectrSettingsChips, '
         '{ value: spectrTextSize(settings), onChange: (v) => persist({ textSize: v }), '
         'opts: [["small", "Small"], ["medium", "Medium"], ["large", "Large"]] }))), ')
-    if 'marker: "typography"' not in html:
-        if html.count(feedback) != 1:
-            raise RuntimeError('text-size group insertion point missing')
-        html = html.replace(feedback, typography + feedback, 1)
+    if typography in html:
+        html = html.replace(typography, '', 1)
+    # A group that survives the removal image is a group this recipe no longer
+    # recognises; fail loudly rather than ship a chooser that does nothing.
+    if 'marker: "typography"' in html:
+        sys.exit('FAIL text size: an unrecognised TYPOGRAPHY group survives')
 
     defaults_anchor = '  "motionMode": "live",'
     if '"textSize"' not in html:
@@ -4692,6 +5063,11 @@ def main():
             sys.exit(f'FAIL {label}: patch point survives its own replacement')
 
     raw = open(PATH, encoding='utf-8').read()
+    # The capture pipeline and this script serialize with different JSON
+    # separators. Every literal below is authored against the compact form, so
+    # normalize once at load: without it an edit that is already present reads
+    # as `occurs 0 times` and aborts the run purely on whitespace.
+    raw = json.dumps(json.loads(raw), ensure_ascii=False, separators=(',', ':'))
     changed = False
     document = json.loads(raw)
     if repair_duplicate_settings_helpers(document):
@@ -4800,6 +5176,10 @@ def main():
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          independent modulation target toggles')
+    if style_modulation_target_chips(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          modulation target chips carry the segmented skin')
     if harden_modulation_bridge(document):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
@@ -4982,7 +5362,7 @@ def main():
             print('already applied ', label)
             continue
         count = runtime_raw.count(old)
-        if count == 0 and label == 'settings preserve reparent reasserts scroll hint':
+        if count == 0 and label in SUPERSEDED_RUNTIME_EDITS:
             print('superseded     ', label)
             continue
         if count == 0 and (runtime_raw.count(new) >= 1 or
