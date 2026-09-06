@@ -454,6 +454,19 @@ spectr_configure_native_target(Spectr-native-n1-test)
 catch_discover_tests(Spectr-native-n1-test
     PROPERTIES RESOURCE_LOCK spectr_native_materialized_editor)
 
+# Headless capture of the SHIPPING native editor. The browser design source
+# carries no Settings > MODULATION group -- the native patch layer injects it --
+# so a browser screenshot cannot review that surface. This mounts the real
+# materialized runtime through Processor::create_view() and rasterises it with
+# Skia (offscreen Dawn+Skia by default, CPU Skia raster on request).
+add_executable(Spectr-native-shot
+    tools/native_shot.cpp
+)
+target_link_libraries(Spectr-native-shot PRIVATE
+    ${SPECTR_NATIVE_CORE_TARGET}
+)
+spectr_configure_native_target(Spectr-native-shot)
+
 add_executable(Spectr-editor-authority-test
     test/test_editor_authority.cpp
 )
