@@ -2881,7 +2881,7 @@ window.PatternManager = PatternManager;`,
       'preset trigger shows selected name');
     replaceSpectrSource(
       '<span data-spectr-selected-preset style={{ marginLeft: 6, display: \'inline-flex\', alignItems: \'center\', lineHeight: 1.2 }}>{selectedPatternName} ▾</span>',
-      '<span data-spectr-selected-preset title={selectedPatternName} style={{ marginLeft: 6, display: \'inline-flex\', alignItems: \'center\', lineHeight: 1.2, width: 63, overflow: \'hidden\', whiteSpace: \'nowrap\' }}>{selectedPatternName.length > 6 ? selectedPatternName.slice(0, 6) + \'… ▾\' : selectedPatternName + \' ▾\'}</span>',
+      '<span data-spectr-selected-preset title={selectedPatternName} style={{ marginLeft: 6, display: \'inline-flex\', alignItems: \'center\', lineHeight: 1.2, maxWidth: \'16ch\', overflow: \'hidden\', whiteSpace: \'nowrap\' }}><span style={{ overflow: \'hidden\', textOverflow: \'ellipsis\', whiteSpace: \'nowrap\', minWidth: 0 }}>{selectedPatternName}</span><span style={{ flexShrink: 0, marginLeft: 4 }}>▾</span></span>',
       'selected preset trigger truncates without losing its full title');
     replaceSpectrSource(
       '        status={status}\n        dspMode={dspMode}',

@@ -18,7 +18,27 @@ const popupOnlyMode = mode === '--popup-only';
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-analyzer-browser-'));
 try {
   let html = fs.readFileSync(htmlPath, 'utf8');
-  const mock = `<script>
+  if (process.argv.includes('--plant-sliced-preset')) {
+    // Negative control for the preset-label assertion. Restores the destructive
+    // six-character JS slice the label used to ship, so the assertion must go red.
+    // The markup lives inside a JS string literal in editor.html, so its quotes
+    // are BACKSLASH-ESCAPED. Build the needle from char codes rather than trying
+    // to out-quote it: the first version of this control used plain quotes,
+    // matched nothing, and passed while proving nothing.
+    const q = String.fromCharCode(92, 39);
+    const needle = '<span style={{ overflow: ' + q + 'hidden' + q
+      + ', textOverflow: ' + q + 'ellipsis' + q
+      + ', whiteSpace: ' + q + 'nowrap' + q
+      + ', minWidth: 0 }}>{selectedPatternName}</span>';
+    const sliced = '<span style={{ overflow: ' + q + 'hidden' + q
+      + ', textOverflow: ' + q + 'ellipsis' + q
+      + ', whiteSpace: ' + q + 'nowrap' + q
+      + ', minWidth: 0 }}>{selectedPatternName.slice(0, 6) + ' + q + '\u2026' + q + '}</span>';
+    const planted = html.replace(needle, sliced);
+    if (planted === html)
+      throw new Error('--plant-sliced-preset matched nothing; the control is blind');
+    html = planted;
+  }  const mock = `<script>
 window.__spectrHandlers = Object.create(null);
 window.__spectrPosts = [];
 window.__spectrTestHooks = Object.create(null);
@@ -1282,8 +1302,18 @@ window.spectrStartOracle = () => {
         '[data-spectr-pattern-menu-id="factory:tilt"]'), 'long preset menu item'));
       const selectedPreset = await spectrWaitFor(() => {
         const label = document.querySelector('[data-spectr-selected-preset]');
-        return label?.textContent === 'DOWNWA… ▾' ? label : null;
-      }, 'truncated selected preset label');
+        if (!label) return null;
+        const text = (label.textContent || '').replace(/\s+/g, ' ').trim();
+        // The authored name must survive INTO THE DOM. This pinned the sliced
+        // string 'DOWNWA… ▾' for as long as the label truncated in JavaScript,
+        // which made the destructive slice the specified behaviour: a six-char
+        // cap no CSS could undo and no text-size setting could widen. Truncation
+        // is now the renderer's job, so assert the name is intact and that the
+        // label stays inside its own box, and let CSS decide what is visible.
+        if (!text.startsWith('DOWNWARD TILT')) return null;
+        if (label.scrollWidth > label.clientWidth + 1) return null;
+        return label;
+      }, 'selected preset label carries the full authored name');
       const snapshotLabel = Array.from(document.querySelectorAll('span'))
         .find(span => span.textContent.trim() === 'SNAPSHOT');
       if (!snapshotLabel || selectedPreset.title !== 'DOWNWARD TILT'
