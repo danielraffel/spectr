@@ -432,6 +432,10 @@ private:
     std::bitset<kMaxBands> morph_overrides_{};
 
     bool surface_params_drifted_() const noexcept;
+    /// The modulation settings described by the current host parameter lanes.
+    /// `target_mask` is left at the unset sentinel: the caller owns whatever
+    /// explicit destination selection should ride along.
+    ModulationSettings modulation_from_store_() const noexcept;
     void push_surface_param_(pulp::state::ParamID id, std::size_t slot,
                              float value, bool emit_gesture = true);
     static void param_sync_trampoline_(void* ctx, const ParamSyncTask&) noexcept;

@@ -559,8 +559,17 @@ void Spectr::process(
                         static_cast<ModulationTarget>(std::clamp(
                             static_cast<int>(std::lround(
                                 cursor.value(kParamLfoTarget))), 0, 3));
+                    // An explicit destination selection is editor state and
+                    // only reaches this thread through the published snapshot,
+                    // one control-thread pass behind the automation lane. When
+                    // the lane has moved past the target the selection was
+                    // reconciled against, the automated enum wins immediately
+                    // rather than being swallowed until that pass lands.
                     modulation_settings.target_mask =
-                        audio_modulation.settings.target_mask;
+                        modulation_settings.target
+                                == audio_modulation.settings.target
+                            ? audio_modulation.settings.target_mask
+                            : kModulationTargetMaskUnset;
                     modulation_settings.lfo2_enabled =
                         cursor.value(kParamLfo2Enabled) >= 0.5f;
                     modulation_settings.lfo2_shape = static_cast<LfoShape>(
@@ -819,6 +828,17 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // writer; readers treat absence as "no user patterns".
     root.addMember("patterns_json", patterns_.export_json());
 
+    // Internal-modulation destination selection. Every other LFO field is a
+    // StateStore parameter and rides the base state blob; this one is editor
+    // state with no parameter lane, so without it here a saved preset or
+    // session silently loses the user's Targets choice. Absent on a writer
+    // that predates the control; readers treat absence as
+    // `kModulationTargetMaskUnset`, which reproduces that writer's behaviour
+    // exactly — follow the kParamLfoTarget enum — rather than reading as an
+    // empty selection that would silence modulation.
+    root.addMember("modulation_target_mask",
+                   static_cast<int32_t>(modulation_.target_mask));
+
     auto json = choc::json::toString(root, /*useLineBreaks=*/false);
     return {json.begin(), json.end()};
 }
@@ -948,6 +968,8 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             viewport_ = store_view;
             layout_ = store_layout;
             reset_supplemental_state_(snapshots_, patterns_);
+            if (param_store_) modulation_ = modulation_from_store_();
+            else modulation_.target_mask = kModulationTargetMaskUnset;
             morph_derived_ = false;
             morph_overrides_.reset();
             synced_field_ = field_;
@@ -1082,6 +1104,18 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         if (!new_patterns.restore_json(std::string_view(s))) return false;
     }
 
+    // Destination selection. Absent on a writer that predates the Targets
+    // control: the unset sentinel then reproduces that writer's semantics.
+    std::uint8_t new_target_mask = kModulationTargetMaskUnset;
+    if (root.hasObjectMember("modulation_target_mask")) {
+        const auto parsed_mask = read_int_(root["modulation_target_mask"]);
+        if (!parsed_mask) return false;
+        if (*parsed_mask >= 0 && *parsed_mask <= kModulationTargetMaskAll)
+            new_target_mask = static_cast<std::uint8_t>(*parsed_mask);
+        else if (*parsed_mask != kModulationTargetMaskUnset)
+            return false;
+    }
+
     if (version >= 3 && new_morph_derived) {
         const BandField param_field = new_field;
         const bool has_a = new_bank.has(SnapshotBank::Slot::A);
@@ -1112,6 +1146,18 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         layout_ = new_layout;
         morph_derived_ = new_morph_derived;
         morph_overrides_ = new_morph_overrides;
+        // Re-derive the LFO lanes from the restored parameters before the
+        // mask rides along: the audio thread only honours a published mask
+        // while the published target still matches the automation lane, so a
+        // target left over from before the restore would make it discard the
+        // selection this blob just carried.
+        if (param_store_) {
+            const std::uint8_t restored_mask = new_target_mask;
+            modulation_ = modulation_from_store_();
+            modulation_.target_mask = restored_mask;
+        } else {
+            modulation_.target_mask = new_target_mask;
+        }
         publish_processing_state_();
         if (version >= 3) {
             synced_field_ = field_;

@@ -341,6 +341,29 @@ bool Spectr::surface_params_drifted_() const noexcept {
     return false;
 }
 
+ModulationSettings Spectr::modulation_from_store_() const noexcept {
+    ModulationSettings settings;
+    const auto* store = param_store_;
+    if (!store) return settings;
+    settings.enabled = store->get_value(kParamLfoEnabled) >= 0.5f;
+    settings.shape = static_cast<LfoShape>(std::clamp(
+        static_cast<int>(std::lround(store->get_value(kParamLfoShape))), 0, 3));
+    settings.beats_per_cycle = std::clamp(
+        store->get_value(kParamLfoRate), 0.25f, 16.0f);
+    settings.depth = std::clamp(
+        store->get_value(kParamLfoDepth), 0.0f, 1.0f);
+    settings.target = static_cast<ModulationTarget>(std::clamp(
+        static_cast<int>(std::lround(store->get_value(kParamLfoTarget))), 0, 3));
+    settings.lfo2_enabled = store->get_value(kParamLfo2Enabled) >= 0.5f;
+    settings.lfo2_shape = static_cast<LfoShape>(std::clamp(
+        static_cast<int>(std::lround(store->get_value(kParamLfo2Shape))), 0, 3));
+    settings.lfo2_beats_per_cycle = std::clamp(
+        store->get_value(kParamLfo2Rate), 0.25f, 16.0f);
+    settings.lfo2_depth = std::clamp(
+        store->get_value(kParamLfo2Depth), 0.0f, 1.0f);
+    return settings;
+}
+
 bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     auto* store = param_store_;
     if (!store) return false;
@@ -427,23 +450,11 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         }
     }
 
-    ModulationSettings next_modulation;
-    next_modulation.enabled = store->get_value(kParamLfoEnabled) >= 0.5f;
-    next_modulation.shape = static_cast<LfoShape>(std::clamp(
-        static_cast<int>(std::lround(store->get_value(kParamLfoShape))), 0, 3));
-    next_modulation.beats_per_cycle = std::clamp(
-        store->get_value(kParamLfoRate), 0.25f, 16.0f);
-    next_modulation.depth = std::clamp(
-        store->get_value(kParamLfoDepth), 0.0f, 1.0f);
-    next_modulation.target = static_cast<ModulationTarget>(std::clamp(
-        static_cast<int>(std::lround(store->get_value(kParamLfoTarget))), 0, 3));
-    next_modulation.lfo2_enabled = store->get_value(kParamLfo2Enabled) >= 0.5f;
-    next_modulation.lfo2_shape = static_cast<LfoShape>(std::clamp(
-        static_cast<int>(std::lround(store->get_value(kParamLfo2Shape))), 0, 3));
-    next_modulation.lfo2_beats_per_cycle = std::clamp(
-        store->get_value(kParamLfo2Rate), 0.25f, 16.0f);
-    next_modulation.lfo2_depth = std::clamp(
-        store->get_value(kParamLfo2Depth), 0.0f, 1.0f);
+    ModulationSettings next_modulation = modulation_from_store_();
+    // The explicit destination selection is editor state; it is not derived
+    // from a parameter lane, so carry it across rather than resetting it to
+    // the sentinel on every unrelated LFO edit.
+    next_modulation.target_mask = modulation_.target_mask;
     const std::array<float, 9> modulation_values{
         next_modulation.enabled ? 1.0f : 0.0f,
         static_cast<float>(next_modulation.shape),
@@ -454,13 +465,24 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         static_cast<float>(next_modulation.lfo2_shape),
         next_modulation.lfo2_beats_per_cycle,
         next_modulation.lfo2_depth};
+    // Offset of kParamLfoTarget within modulation_values above.
+    constexpr std::size_t kModulationTargetValueIndex = 4;
     bool modulation_changed = false;
+    bool target_lane_changed = false;
     for (std::size_t i = 0; i < modulation_values.size(); ++i) {
         auto& cached = applied_param_cache_[detail::kSlotLfoBase + i];
         if (cached.load(std::memory_order_relaxed) != modulation_values[i]) {
             cached.store(modulation_values[i], std::memory_order_relaxed);
             modulation_changed = true;
+            if (i == kModulationTargetValueIndex) target_lane_changed = true;
         }
+    }
+    if (target_lane_changed) {
+        // The host moved kParamLfoTarget. That lane is automatable and must
+        // never be silently discarded, so it takes authority back from an
+        // earlier editor selection: drop to the sentinel and follow the enum
+        // until the editor explicitly selects destinations again.
+        next_modulation.target_mask = kModulationTargetMaskUnset;
     }
     if (modulation_changed) {
         modulation_ = next_modulation;

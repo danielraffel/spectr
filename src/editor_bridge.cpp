@@ -258,7 +258,11 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     modulation.addMember("lfo2_beats_per_cycle", static_cast<double>(
         modulation_state.lfo2_beats_per_cycle));
     modulation.addMember("lfo2_depth", static_cast<double>(modulation_state.lfo2_depth));
-    modulation.addMember("target_mask", static_cast<std::int32_t>(modulation_state.target_mask));
+    // The resolved selection, never the raw sentinel: the editor draws these
+    // bits directly, so "no explicit selection" must present as the single
+    // enum destination that is actually being modulated.
+    modulation.addMember("target_mask", static_cast<std::int32_t>(
+        resolve_modulation_target_mask(modulation_state)));
     payload.addMember("modulation", modulation);
     payload.addMember("snapshots", snapshots);
     payload.addMember("patterns_json", plugin.patterns().export_json());

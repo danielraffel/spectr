@@ -512,3 +512,34 @@ TEST_CASE("#34: simultaneous morph and band automation preserves the band lane")
     CHECK(state.field.bands[0].gain_db == Approx(0.0f));
     CHECK(state.field.bands[7].gain_db == Approx(-6.0f));
 }
+
+TEST_CASE("host target automation reclaims the modulation destination") {
+    Wired w;
+    w.proc->apply_surface_params(false);  // settle the applied-parameter cache
+
+    // The editor selects every destination. This is editor state: it has no
+    // parameter lane of its own.
+    REQUIRE(w.proc->set_modulation_target_mask(spectr::kModulationTargetMaskAll));
+    REQUIRE(w.proc->modulation_settings().target_mask
+            == spectr::kModulationTargetMaskAll);
+
+    // An unrelated LFO parameter edit must not discard the selection. Before
+    // the fix, apply_surface_params() overwrote the whole settings struct with
+    // one rebuilt from parameters, silently resetting the mask.
+    w.store.set_value(spectr::kParamLfoDepth, 0.75f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->modulation_settings().depth == Approx(0.75f));
+    CHECK(w.proc->modulation_settings().target_mask
+          == spectr::kModulationTargetMaskAll);
+
+    // Moving kParamLfoTarget does discard it: that lane is host-automatable
+    // and must never be silently swallowed by an earlier editor selection.
+    w.store.set_value(spectr::kParamLfoTarget,
+                      static_cast<float>(spectr::ModulationTarget::SnapshotB));
+    REQUIRE(w.proc->apply_surface_params(false));
+    const auto after = w.proc->modulation_settings();
+    CHECK(after.target == spectr::ModulationTarget::SnapshotB);
+    CHECK(after.target_mask == spectr::kModulationTargetMaskUnset);
+    CHECK(spectr::resolve_modulation_target_mask(after)
+          == spectr::modulation_target_bit(spectr::ModulationTarget::SnapshotB));
+}

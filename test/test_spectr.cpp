@@ -161,6 +161,95 @@ TEST_CASE("Spectr applies internal modulation on the audio owner",
     CHECK(modulated > unmodulated * 2.5f);
 }
 
+TEST_CASE("Spectr keeps the modulation target lane audible under host automation",
+          "[modulation][automation][spectral][rt]") {
+    // A DAW automating kParamLfoTarget must change what is modulated even
+    // after the editor has made an explicit Targets selection. Before the fix
+    // an explicit selection outranked the parameter lane outright, so the
+    // automation wrote into a field the audio thread then threw away.
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+    // Renders with the editor selection set to Snapshot A only. No snapshot is
+    // ever captured, so that destination is inert: any audible modulation in
+    // this render can only have come from the automated enum.
+    const auto render_peak = [](bool select_snapshot_a,
+                                spectr::ModulationTarget automated_target) {
+        pulp::format::HeadlessHost host(spectr::create_spectr);
+        host.prepare(sample_rate, block_size);
+        auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+        REQUIRE(plugin != nullptr);
+
+        // Reconcile the control lane on Snapshot A first, so the selection
+        // below is made against that target and the automation genuinely
+        // moves the lane away from it.
+        host.state().set_value(
+            spectr::kParamLfoTarget,
+            static_cast<float>(spectr::ModulationTarget::SnapshotA));
+        plugin->apply_surface_params(false);
+        if (select_snapshot_a) {
+            REQUIRE(plugin->set_modulation_target_mask(
+                spectr::modulation_target_bit(
+                    spectr::ModulationTarget::SnapshotA)));
+        }
+
+        pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+        const float* input_channels[] = {
+            in.channel(0).data(), in.channel(1).data()};
+        pulp::audio::BufferView<const float> input(
+            input_channels, 2, block_size);
+        auto output = out.view();
+        std::uint64_t rendered = 0;
+        float peak = 0.0f;
+        const auto blocks = static_cast<std::size_t>(
+            (spectr::kSpectralLatency + spectr::kSpectralFftSize)
+                / block_size + 6);
+        for (std::size_t block = 0; block < blocks; ++block) {
+            for (std::size_t sample = 0; sample < block_size; ++sample) {
+                const float value = 0.25f * std::sin(
+                    2.0 * 3.14159265358979323846 * 997.0
+                    * static_cast<double>(rendered + sample) / sample_rate);
+                in.channel(0)[sample] = value;
+                in.channel(1)[sample] = value;
+            }
+            rendered += block_size;
+            pulp::state::ParameterEventQueue events;
+            for (std::size_t band = 0; band < 32; ++band)
+                REQUIRE(events.push({
+                    spectr::band_gain_param_id(band), 0, -12.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                                 static_cast<float>(spectr::LfoShape::Square),
+                                 0}));
+            REQUIRE(events.push({spectr::kParamLfoRate, 0, 16.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                                 static_cast<float>(automated_target), 0}));
+            host.process(output, input, events);
+            for (float sample : out.channel(0))
+                peak = std::max(peak, std::abs(sample));
+        }
+        return peak;
+    };
+
+    const float inert = render_peak(
+        true, spectr::ModulationTarget::SnapshotA);
+    const float automated = render_peak(
+        true, spectr::ModulationTarget::WholeBank);
+    const float no_selection = render_peak(
+        false, spectr::ModulationTarget::WholeBank);
+
+    // Positive control: the render produces audio at all, so the comparisons
+    // below are not two flavours of silence.
+    REQUIRE(inert > 0.01f);
+    // Automating the target lane away from the selected destination is
+    // audible. This is the assertion the defect broke.
+    CHECK(automated > inert * 2.5f);
+    // And it lands in the same place as the enum-only path: an earlier editor
+    // selection does not leave the automation in some third state.
+    CHECK(no_selection > inert * 2.5f);
+    CHECK(automated == Approx(no_selection).epsilon(0.1));
+}
+
 TEST_CASE("Spectr keeps host band automation and internal modulation both audible",
           "[modulation][coexistence][spectral][rt]") {
     // MOD-3. The burn-down asks that host modulation and internal modulation
