@@ -497,13 +497,13 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                 // fixture registers its own listener first and reports whether
                 // that one fired. Without this line a "the modal stayed open"
                 // result cannot be told from "the event never arrived".
-                std::string js =
-                    "(() => { const target = (typeof window !== 'undefined') "
-                    "? window : globalThis; let controlFired = false; "
-                    "if (typeof target.addEventListener === 'function') "
-                    "target.addEventListener('keydown', () => { controlFired = true; }); "
-                    "const report = () => console.log('[key-control] dispatchEvent=' "
-                    "+ (typeof target.dispatchEvent) + ' listener_fired=' + controlFired); "
+                                std::string js =
+                    "(() => { const targets = []; "
+                    "if (typeof document !== 'undefined') targets.push(document); "
+                    "if (typeof window !== 'undefined' && window !== document) targets.push(window); "
+                    "let controlFired = 0; "
+                    "for (const t of targets) if (typeof t.addEventListener === 'function') "
+                    "t.addEventListener('keydown', () => { controlFired++; }, true); "
                     "const ev = { type: 'keydown', key: '";
                 js += key;
                 js += "', code: '";
@@ -511,9 +511,12 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                 js += "', bubbles: true, cancelable: true, "
                       "preventDefault() { this.defaultPrevented = true; }, "
                       "stopPropagation() {} }; "
-                      "if (typeof target.dispatchEvent === 'function') "
-                      "target.dispatchEvent(ev); "
-                      "report(); "
+                      "for (const t of targets) if (typeof t.dispatchEvent === 'function') "
+                      "t.dispatchEvent(ev); "
+                      "const guard = (typeof document !== 'undefined' && document.querySelector) "
+                      "? document.querySelector(\"[data-pulp-popup-active='true']\") : 'no-qs'; "
+                      "console.log('[key-control] targets=' + targets.length + "
+                      "' listeners_fired=' + controlFired + ' popup_active_guard=' + guard); "
                       "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
                       "globalThis.__pulpRuntimeSettle__(12); })();";
                 bridge->load_script(js, "spectr-key-js-fixture");
