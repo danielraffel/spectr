@@ -38,6 +38,13 @@ The plot drag and the minimap drag move disjoint state. That double
 dissociation is what makes each positive result evidence about the control it
 names, rather than evidence that any drag moves everything.
 
+The two band checks are also deliberately separate, because they fail
+independently. `no-skipped-bands` asks *were all the bands touched* — a hole in
+the run is a fast drag outrunning its own painting. `profile-tracks-drag` asks
+*were they touched with the right values* — a gesture that reaches the field and
+paints every band a single flat value passes the first check and fails the
+second.
+
 ## Re-running the detector
 
 ```sh
@@ -45,8 +52,9 @@ python3 tools/gesture_invariants.py \
   --probe        docs/evidence/2026-09-07/cor/gestures.json \
   --opposite-trim mini-left:min_hz \
   --opposite-trim mini-right:max_hz \
-  --no-skipped-bands bands-fast \
-  --span-preserved   mini-pan \
+  --no-skipped-bands     bands-fast \
+  --profile-tracks-drag  bands-fast \
+  --span-preserved       mini-pan \
   --no-effect        offtarget-control \
   --resize docs/evidence/2026-09-07/cor/resize-792x516.state.json \
   --resize docs/evidence/2026-09-07/cor/resize-990x645.state.json \
@@ -65,6 +73,8 @@ Recorded output:
   min_hz: held at 80.7217 across all 42 delivered samples
 [no-skipped-bands] bands-fast
   painted 29 contiguous bands 2..30 over 63 delivered samples, never skipping and never shrinking
+[profile-tracks-drag] bands-fast
+  29 painted bands hold 28 distinct values, monotone down from 10.229 dB to -12.856 dB, matching a pointer that moved +1050,+300
 [span-preserved] mini-pan
   span held at 1.73841 decades (max drift 3.92e-06) while min_hz moved 80.72 -> 143.00
 [no-effect control] offtarget-control
@@ -84,6 +94,8 @@ Re-run any row by adding its `--plant` to the command above.
 | `frozen-drag` | 1 | the dragged edge held still → *"took only 1 distinct value… so 'the opposite trim never moved' is vacuous, not a pass"* |
 | `band-hole` | 1 | one band removed from the painted set → *"sample 61 touched bands 2..30 but skipped [16] — a fast drag left 1 band(s) behind"* |
 | `band-shrink` | 1 | the painted set shrank → *"sample 61 touches 14 bands after sample 60 touched 28"* |
+| `profile-flat` | 1 | every painted band given one value → *"only 1 distinct values across 29 painted bands — the drag touched every band but stopped tracking the pointer, which 'no band was skipped' alone would have passed"* |
+| `profile-kink` | 1 | one band's value reversed → *"the painted profile is not monotone over bands 2..30: it reverses at band(s) [16]"* |
 | `span-drift` | 1 | a 10% span excursion mid-pan → *"the viewport span drifted by 0.04139 decades"* |
 | `control-moves` | 1 | the off-target control made to move → *"any drag moves it"* |
 | `layout-drift` | 1 | one size's layout digest changed |
@@ -97,6 +109,17 @@ Two further reds use no plant at all, only real data pointed the wrong way:
 * `--resize nodrag-792x516.state.json --resize resize-792x516.state.json` → RED,
   the gesture outcome differs, proving that clause is live rather than
   trivially satisfied.
+* `--profile-tracks-drag mini-left` → RED, *"no band was painted, so there is no
+  profile to judge"* — the check refuses a gesture it cannot judge instead of
+  passing it.
+
+`profile-tracks-drag` also caught a defect in **itself** before it was believed.
+Written with a strict `>`, it reddened the real capture at band 30. The cause was
+the instrument, not the app: a sculpt move repaints the whole span from the
+previously painted band to the current one at the current value, so the final
+band and the one before it necessarily share a value. The check is non-strict
+now — a **reversal** is the defect, and a curve that stopped tracking is caught
+by the distinct-value clause instead.
 
 ## Not established here
 

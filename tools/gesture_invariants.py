@@ -47,6 +47,8 @@ PLANTS = [
     "span-drift",
     "layout-drift",
     "one-size",
+    "profile-flat",
+    "profile-kink",
 ]
 
 
@@ -179,6 +181,81 @@ def check_no_skipped_bands(g: dict, plant: str | None) -> list[str]:
     return failures
 
 
+def check_profile_tracks_drag(g: dict, plant: str | None) -> list[str]:
+    """A monotone drag must draw a monotone curve.
+
+    "No band was skipped" says every band was touched; it says nothing about
+    what they were touched WITH. A drag whose pointer descends steadily across
+    the field and leaves a flat shelf behind has painted every band and painted
+    them all wrong — the gesture reached the field but stopped tracking. So the
+    final profile over the painted run must be monotone in the same direction
+    the pointer moved, with as many distinct values as the pointer had
+    positions to hand it.
+    """
+    samples = g["samples"]
+    if len(samples) < 3:
+        return [f"INCONCLUSIVE only {len(samples)} delivered samples"]
+    pre, final = samples[0]["gain_db"], samples[-1]["gain_db"]
+    painted = changed_bands(pre, final)
+    if not painted:
+        return ["no band was painted, so there is no profile to judge"]
+
+    profile = [final[i] for i in painted]
+    if plant == "profile-flat":
+        profile = [profile[0]] * len(profile)
+        print("  CONTROL: planted a flat shelf where the drag descended")
+    if plant == "profile-kink":
+        profile = list(profile)
+        mid = len(profile) // 2
+        profile[mid] = profile[0]
+        print(f"  CONTROL: planted a non-monotone kink at painted band "
+              f"{painted[mid]}")
+
+    dy = samples[-1]["y"] - samples[0]["y"]
+    dx = samples[-1]["x"] - samples[0]["x"]
+    if abs(dy) < 1.0 or abs(dx) < 1.0:
+        return ["INCONCLUSIVE the drag did not move in both axes, so a "
+                "profile slope is not defined"]
+    # Screen y grows downward and gain grows upward, so a downward-right drag
+    # must leave gains falling as the band index rises.
+    rising = (dy < 0) == (dx > 0)
+    # Non-strict on purpose. Each move repaints the whole span from the
+    # previously painted band to the current one at the current value, so the
+    # last band and the one before it legitimately share a value at every
+    # release — and so does any pair the pointer crossed within one sample.
+    # A strict test calls that a defect. What must never happen is a REVERSAL,
+    # and a curve that stopped tracking is caught by the distinct-value clause
+    # below rather than by pretending every step is a new value.
+    ok = all((b >= a) if rising else (b <= a)
+             for a, b in zip(profile, profile[1:]))
+
+    failures = []
+    if not ok:
+        breaks = [painted[i + 1] for i, (a, b) in
+                  enumerate(zip(profile, profile[1:]))
+                  if not ((b >= a) if rising else (b <= a))]
+        failures.append(
+            f"the painted profile is not monotone over bands "
+            f"{painted[0]}..{painted[-1]}: it reverses at band(s) "
+            f"{breaks[:6]}{'...' if len(breaks) > 6 else ''}. The pointer moved "
+            f"{dx:+.0f},{dy:+.0f}, so the curve should fall "
+            f"{'up' if rising else 'down'} across the run"
+        )
+    distinct = len({round(v, 4) for v in profile})
+    if distinct < max(2, len(profile) // 2):
+        failures.append(
+            f"only {distinct} distinct values across {len(profile)} painted "
+            f"bands — the drag touched every band but stopped tracking the "
+            f"pointer, which 'no band was skipped' alone would have passed"
+        )
+    if not failures:
+        print(f"  {len(profile)} painted bands hold {distinct} distinct values, "
+              f"monotone {'up' if rising else 'down'} from {profile[0]:.3f} dB "
+              f"to {profile[-1]:.3f} dB, matching a pointer that moved "
+              f"{dx:+.0f},{dy:+.0f}")
+    return failures
+
+
 def check_span_preserved(g: dict, tol: float, plant: str | None) -> list[str]:
     """A pan slides the window; it must not also zoom it."""
     samples = [s for s in g["samples"] if s["phase"] in ("down", "move", "up")]
@@ -299,6 +376,10 @@ def main() -> int:
                     action="append", default=[])
     ap.add_argument("--span-preserved", metavar="GESTURE",
                     action="append", default=[])
+    ap.add_argument("--profile-tracks-drag", metavar="GESTURE",
+                    action="append", default=[],
+                    help="the painted curve must follow the pointer path, not "
+                         "merely cover it")
     ap.add_argument("--no-effect", metavar="GESTURE", action="append",
                     default=[], help="off-target control gesture")
     ap.add_argument("--span-tolerance", type=float, default=1e-3,
@@ -313,7 +394,8 @@ def main() -> int:
     args = ap.parse_args()
 
     wanted = (args.opposite_trim or args.no_skipped_bands
-              or args.span_preserved or args.no_effect or args.resize)
+              or args.span_preserved or args.no_effect or args.resize
+              or args.profile_tracks_drag)
     if not wanted:
         print("INCONCLUSIVE no check requested", file=sys.stderr)
         return INCONCLUSIVE
@@ -364,6 +446,13 @@ def main() -> int:
             print(f"[no-skipped-bands] {name}")
             record(f"no-skipped-bands {name}",
                    check_no_skipped_bands(g, args.plant))
+
+    for name in args.profile_tracks_drag:
+        g = need(name)
+        if g:
+            print(f"[profile-tracks-drag] {name}")
+            record(f"profile-tracks-drag {name}",
+                   check_profile_tracks_drag(g, args.plant))
 
     for name in args.span_preserved:
         g = need(name)
