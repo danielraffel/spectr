@@ -4993,10 +4993,23 @@ def enforce_settings_fixed_shell(document):
         '"data-spectr-settings-tabs": true, style: { position: "relative", flexShrink: 0, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
         '"data-spectr-settings-tabs": true, style: { position: "absolute", top: 76, left: 26, right: 26, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
         1)
-    html = html.replace(
-        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 }',
-        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingTop: 50, paddingRight: 4 }',
-        1)
+    # The 50px body offset exists only to clear an absolutely-positioned tab
+    # rail.  simplify_settings_single_scroll may already have neutralised that
+    # rail, in which case the offset is dead space above the first group.
+    # Decide once, here, after the conversions above, and use the same decision
+    # for the body wrapper inserted below.
+    tabs_rail_absolute = (
+        '"data-spectr-settings-tabs": true, style: { position: "absolute", top: 76,'
+        in html)
+    body_style = (
+        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingTop: 50, paddingRight: 4 }'
+        if tabs_rail_absolute else
+        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 }')
+    stale_style = (
+        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 }'
+        if tabs_rail_absolute else
+        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingTop: 50, paddingRight: 4 }')
+    html = html.replace(stale_style, body_style, 1)
 
     # Wrap every settings group after the header in one dedicated scroll
     # owner.  The exact markers are emitted by the materializer and scoped to
@@ -5008,7 +5021,7 @@ def enforce_settings_fixed_shell(document):
         if modal_start < 0 or start < 0:
             raise RuntimeError('settings body insertion point missing')
         insertion = ('/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-body": true, '
-                     'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 } }, '
+                     + body_style + ' }, '
                      '/* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "general"')
         html = html[:start] + insertion + html[start + len(body_start):]
         body_end = ('settings.showBuildInfo !== false && /* @__PURE__ */ '
