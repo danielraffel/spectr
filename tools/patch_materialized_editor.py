@@ -2733,6 +2733,23 @@ function App() {'''),
      '  );\n}\nfunction SettingsModal({ settings, setSettings, onClose }) {',
      '  )\n  );\n  /* tabs complete */\n}\nfunction SettingsModal({ settings, setSettings, onClose }) {'),
 
+    # COR-1: the left ruler is a signed gain axis (0 dB == unity/no change);
+    # the right ruler is the live analyzer's absolute dBFS axis (0 dBFS ==
+    # full scale). Distinct quantities, so distinguish their axis heads and
+    # stop giving the analyzer's 0 the same unity-zero emphasis treatment the
+    # gain ruler's 0 carries -- every analyzer tick renders at equal weight.
+    ('gain ruler head names itself distinctly from the analyzer ruler',
+     'ctx.fillText("dB", inner.x - 8, g.inner.y - 8);',
+     'ctx.fillText("dB (gain)", inner.x - 8, g.inner.y - 8);'),
+
+    ('analyzer ruler ticks share one weight instead of a borrowed unity-zero highlight',
+     'ctx.fillStyle = dbfs === 0 ? "rgba(130,220,180,0.62)" : "rgba(130,220,180,0.30)";',
+     'ctx.fillStyle = "rgba(130,220,180,0.30)";'),
+
+    ('analyzer ruler head names itself distinctly from the gain ruler',
+     'ctx.fillText("dBFS", inner.x + inner.w + 8, g.inner.y - 8);',
+     'ctx.fillText("dBFS (analyzer)", inner.x + inner.w + 8, g.inner.y - 8);'),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an

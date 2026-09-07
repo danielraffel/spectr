@@ -2627,10 +2627,13 @@ window.PatternManager = PatternManager;`,
       String.raw`    ctx.fillStyle = 'rgba(255,255,255,0.30)';
     ctx.fillText('dB', inner.x - 8, g.inner.y - 8);`,
       String.raw`    ctx.fillStyle = 'rgba(255,255,255,0.30)';
-    ctx.fillText('dB', inner.x - 8, g.inner.y - 8);
+    ctx.fillText('dB (gain)', inner.x - 8, g.inner.y - 8);
 
     // The live analyzer is absolute magnitude, not signed EQ gain. Give it a
     // separate dBFS ruler on the right while retaining the shared plot area.
+    // 0 dBFS is full scale, not the "no change" reference 0 dB means on the
+    // gain ruler, so this scale never reuses that ruler's unity-zero
+    // highlight — every tick here carries the same weight.
     const analyzerScale = window.SpectrAnalyzer.scale();
     const analyzerTicks = [-120, -90, -60, -30, 0, 24]
       .filter(value => value >= analyzerScale.floor
@@ -2639,13 +2642,12 @@ window.PatternManager = PatternManager;`,
     for (const dbfs of analyzerTicks) {
       const amount = window.SpectrAnalyzer.normalizeDb(dbfs);
       const y = window.SpectrAnalyzer.project(amount, g.zeroY, g.halfH);
-      ctx.fillStyle = dbfs === 0
-        ? 'rgba(130,220,180,0.62)' : 'rgba(130,220,180,0.30)';
+      ctx.fillStyle = 'rgba(130,220,180,0.30)';
       ctx.fillText((dbfs > 0 ? '+' : '') + dbfs,
         inner.x + inner.w + 8, y);
     }
     ctx.fillStyle = 'rgba(130,220,180,0.38)';
-    ctx.fillText('dBFS', inner.x + inner.w + 8, g.inner.y - 8);`,
+    ctx.fillText('dBFS (analyzer)', inner.x + inner.w + 8, g.inner.y - 8);`,
       'independent analyzer dBFS ruler');
     replaceSpectrSource(
       '  const onPointerDown = (e) => {',

@@ -851,7 +851,7 @@ window.spectrStartOracle = () => {
       await spectrFrames(5);
       if (!spectrBundleClean()) throw new Error('bundle error after hydrated RAFs');
       const expectedDbfsLabels = ['-120', '-90', '-60', '-30', '0', '+24'];
-      if (!window.__spectrCanvasLabels.includes('dBFS')
+      if (!window.__spectrCanvasLabels.includes('dBFS (analyzer)')
           || !expectedDbfsLabels.every(label =>
             window.__spectrCanvasLabels.includes(label)))
         throw new Error('complete calibrated dBFS ruler was not drawn');
