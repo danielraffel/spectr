@@ -234,8 +234,12 @@ TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
     REQUIRE(width->from_string);
     CHECK(width->from_string(width->to_string(width->range.min))
           == Approx(width->range.min).margin(0.0001f));
+    // The formatter displays octaves while the parameter stores log10 units, so
+    // "3.0 oct" is three octaves -- 3 * log10(2) -- not the numeral 3.0, which is
+    // range.max (3.0 decades, i.e. nearly ten octaves).
     CHECK(width->from_string("3.0 oct")
-          == Approx(width->range.max).margin(0.0001f));
+          == Approx(3.0f * spectr::kViewportMinWidthLog).margin(0.0001f));
+    CHECK(width->to_string(width->range.max) == "10.0 oct");
 
     // Band count is a stepped control over the five legal layouts.
     const auto* count = find(w.store, kBandCountId);

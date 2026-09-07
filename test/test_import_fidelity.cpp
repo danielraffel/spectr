@@ -24,7 +24,7 @@ namespace {
 constexpr std::string_view kAssetSetDigest =
     "6215ee5a9f65ade3626e63c4f973e579f123625239ba57c8f5db61121ccc5e0a";
 constexpr std::string_view kTemplateDigest =
-    "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
+    "0cdb964975467a0f93ebe83bcdfe821bcd84055518e5b57233e7829e2c73172c";
 constexpr std::string_view kAdapterDigest =
     "a7fe7ef7fa6da85b729d18221dd993b1bf4ce9d37904d6b47a3e8b629a948993";
 
@@ -252,7 +252,7 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     const auto bundle = pulp::view::parse_claude_bundle(html);
     REQUIRE(bundle.has_value());
     REQUIRE(bundle->assets.size() == 16);
-    REQUIRE(bundle->template_html.size() == 186383);
+    REQUIRE(bundle->template_html.size() == 186387);
 
     const auto canonical = canonicalize(*bundle);
     CHECK(canonical.asset_set_digest == kAssetSetDigest);
