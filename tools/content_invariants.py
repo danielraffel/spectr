@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import appearance_invariants as ai  # noqa: E402
 
 
-def paintable_texts(snapshot: str) -> list[tuple[str, str, ai.Rect]]:
+def paintable_texts(snapshot: str, in_tree: bool = False) -> list[tuple[str, str, ai.Rect]]:
     with open(snapshot, "r", encoding="utf-8") as fh:
         doc = json.load(fh)
     ai.merge_depth_sidecar(snapshot, doc)
@@ -31,9 +31,23 @@ def paintable_texts(snapshot: str) -> list[tuple[str, str, ai.Rect]]:
     out = []
     for n in ai.text_nodes(nodes):
         for text, rect in n.texts:
-            # On-screen, not merely laid out. A string scrolled out of a modal
-            # still has a box with area; it just cannot be seen.
-            if ai.on_screen_box(nodes, n, rect).area > 0:
+            # Which box counts depends on whether a scroll container is in
+            # play, and the snapshot cannot tell us the difference.
+            #
+            # dump_layout_tree records PRE-SCROLL layout positions, so a row
+            # inside a scrolled container reports the box it would occupy
+            # unscrolled. Intersecting that against the container's clip then
+            # says "off screen" for content a viewer is looking straight at.
+            # Applying the clip test there does not make the check stricter, it
+            # makes it wrong.
+            #
+            # So `--in-tree` asserts the honest thing for a scrolling panel:
+            # the string exists with a box that has area, i.e. it is laid out
+            # and paintable. Whether it is scrolled into view is settled by the
+            # screenshot beside it, not by the tree.
+            box = (ai.painted_box(n, rect) if in_tree
+                   else ai.on_screen_box(nodes, n, rect))
+            if box.area > 0:
                 out.append((n.id, text.strip(), n.rect))
     return out
 
@@ -45,11 +59,18 @@ def main() -> int:
                     help="exact string that must be visible and paintable")
     ap.add_argument("--absent", action="append", default=[],
                     help="exact string that must NOT be paintable")
+    ap.add_argument(
+        "--in-tree",
+        action="store_true",
+        help="assert laid-out-and-paintable rather than scrolled-into-view; "
+             "required inside a scroll container, where the snapshot records "
+             "pre-scroll positions and the clip test is invalid",
+    )
     ap.add_argument("--plant", choices=["drop-present", "add-absent"],
                     help="force a failure to prove the check can fail")
     args = ap.parse_args()
 
-    found = paintable_texts(args.snapshot)
+    found = paintable_texts(args.snapshot, args.in_tree)
     visible = {t for _, t, _ in found}
 
     if args.plant == "drop-present" and args.present:
