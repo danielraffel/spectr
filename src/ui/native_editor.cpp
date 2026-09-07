@@ -484,6 +484,40 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                 if (!script.empty())
                     bridge->load_script(script, "spectr-click-fixture");
             }
+
+            // Keys go through the runtime's own listener path, not a native
+            // KeyEvent. The editor registers window.addEventListener('keydown',
+            // ...), so a native event delivered to the View tree is simply not
+            // where the handler is -- dispatching one and reading handled=false
+            // measured the wrong thing rather than the app.
+            if (const auto* key = std::getenv("SPECTR_KEY_JS");
+                key != nullptr && *key != '\0') {
+                // POSITIVE CONTROL, not decoration. A dispatch that reaches
+                // no listener looks exactly like a key the app ignores, so the
+                // fixture registers its own listener first and reports whether
+                // that one fired. Without this line a "the modal stayed open"
+                // result cannot be told from "the event never arrived".
+                std::string js =
+                    "(() => { const target = (typeof window !== 'undefined') "
+                    "? window : globalThis; let controlFired = false; "
+                    "if (typeof target.addEventListener === 'function') "
+                    "target.addEventListener('keydown', () => { controlFired = true; }); "
+                    "const report = () => console.log('[key-control] dispatchEvent=' "
+                    "+ (typeof target.dispatchEvent) + ' listener_fired=' + controlFired); "
+                    "const ev = { type: 'keydown', key: '";
+                js += key;
+                js += "', code: '";
+                js += key;
+                js += "', bubbles: true, cancelable: true, "
+                      "preventDefault() { this.defaultPrevented = true; }, "
+                      "stopPropagation() {} }; "
+                      "if (typeof target.dispatchEvent === 'function') "
+                      "target.dispatchEvent(ev); "
+                      "report(); "
+                      "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+                      "globalThis.__pulpRuntimeSettle__(12); })();";
+                bridge->load_script(js, "spectr-key-js-fixture");
+            }
             if (const auto* fixture = std::getenv("SPECTR_BANDS_PERF_FIXTURE");
                 fixture && std::string_view{fixture} == "1") {
                 bridge->load_script(
@@ -639,6 +673,36 @@ bool Spectr::tick_native_analyzer_(float dt) {
         } else {
             settings_fixture_scrolled_ = true;
         }
+    }
+
+    // Prove the LFO controls reach DSP state, not just paint. A waveform chip
+    // that highlights while ModulationSettings still says Sine looks identical
+    // in every screenshot, so the picture cannot answer this and the parameter
+    // has to be read back.
+    if (const auto* mod_dump = std::getenv("SPECTR_MODULATION_DUMP");
+        mod_dump != nullptr && settings_fixture_scrolled_) {
+        const auto m = modulation_settings();
+        const auto shape_name = [](spectr::LfoShape shape) {
+            switch (shape) {
+                case spectr::LfoShape::Sine: return "Sine";
+                case spectr::LfoShape::Triangle: return "Triangle";
+                case spectr::LfoShape::Square: return "Square";
+                case spectr::LfoShape::Saw: return "Saw";
+            }
+            return "?";
+        };
+        std::ofstream out(mod_dump);
+        out << "{\"enabled\":" << (m.enabled ? "true" : "false")
+            << ",\"shape\":\"" << shape_name(m.shape) << "\""
+            << ",\"beats_per_cycle\":" << m.beats_per_cycle
+            << ",\"depth\":" << m.depth
+            << ",\"lfo2_enabled\":" << (m.lfo2_enabled ? "true" : "false")
+            << ",\"lfo2_shape\":\"" << shape_name(m.lfo2_shape) << "\""
+            << ",\"lfo2_beats_per_cycle\":" << m.lfo2_beats_per_cycle
+            << ",\"lfo2_depth\":" << m.lfo2_depth
+            << ",\"target_mask\":" << static_cast<int>(
+                   spectr::resolve_modulation_target_mask(m))
+            << "}\n";
     }
 
     // Key-driven rows -- Escape closing a modal, arrows moving a highlight --
