@@ -35,17 +35,29 @@ APPEARANCE, STRUCTURE, MOTION, FEEDBACK, MODULATION, ABOUT, COPY. Because each
 group collapsed to zero height the rows stacked at the same y, which is what
 produced the 359 overlapping text pairs. One defect, two symptoms.
 
+## The installed-app pair — SET-1's own caveat, answered
+
+SET-1's status column said **"Not visible in installed builds"** four times over
+the row set, and that is the caveat that has to be contradicted with evidence
+rather than left standing beside a pass. The standalone can screenshot but had
+no way to drive a control first, so `SPECTR_OPEN_SETTINGS=1` opens the modal
+through the same `[data-spectr-settings-open]` activation the shipping
+open-settings command uses, alongside the existing `SPECTR_BANDS_PERF_FIXTURE`.
+
+| file | what it is |
+|---|---|
+| `SET-1-RED-standalone-app-settings-empty.png` | Installed `Spectr.app`, Settings open, **empty body**, on an SDK without #8094. |
+| `SET-1-GREEN-standalone-app-settings-renders.png` | The same app and the same affordance against the #8094 SDK, fully laid out. |
+
+Same binary path, same frame delay, same activation. Only the SDK differs.
+
 ## What these files do NOT establish
 
-The green capture is the shipping native editor path — the materialized runtime
-package through `Processor::create_view()` with the real GPU compositor. It is
-neither a browser fixture nor a DOM assertion, but it is also not the Settings
-modal opened inside a host. SET-1's own wording asks for standalone and AUv2,
-and the standalone screenshot here is the home surface, because the standalone
-entry point exposes `--screenshot` but no way to drive the Settings control.
-
-So the defect is proven fixed on the path that ships it. Closing SET-1 against
-its own text still needs the modal captured in standalone and in Logic.
+AUv2 in Logic is untested here, so SET-1's Logic half is not covered. The
+detector verdicts come from the headless harness running the same materialized
+runtime against the same two SDKs; the screenshots come from the installed app.
+Those are the same code path but not the same process, and that seam is stated
+rather than papered over.
 
 ## Residual findings on the fixed build, still open
 

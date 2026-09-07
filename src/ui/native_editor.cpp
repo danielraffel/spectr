@@ -420,6 +420,21 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                 "if (typeof globalThis.__pulpBindMaterializedCanvases__ === 'function') "
                 "globalThis.__pulpBindMaterializedCanvases__();",
                 "spectr-materialized-bind");
+            // The standalone host can screenshot, but it has no way to drive a
+            // control before the capture, so the Settings modal could not be
+            // photographed in the shipping app at all. Settings renders empty
+            // on an SDK without the retained-scroll flex fix, and that is the
+            // one surface the whole-image content floor cannot judge, so the
+            // capture has to be reachable without a human at the window.
+            if (const auto* open_settings = std::getenv("SPECTR_OPEN_SETTINGS");
+                open_settings && std::string_view{open_settings} == "1") {
+                bridge->load_script(
+                    "if (!globalThis.__pulpActivateMaterializedElement__("
+                    "'[data-spectr-settings-open]', 'click', null)) "
+                    "throw new Error('settings trigger missing'); "
+                    "globalThis.__pulpRuntimeSettle__(16);",
+                    "spectr-open-settings-fixture");
+            }
             if (const auto* fixture = std::getenv("SPECTR_BANDS_PERF_FIXTURE");
                 fixture && std::string_view{fixture} == "1") {
                 bridge->load_script(
