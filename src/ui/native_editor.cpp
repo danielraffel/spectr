@@ -546,10 +546,19 @@ void Spectr::open_native_editor_(pulp::view::View& view) {
 
 bool Spectr::tick_native_analyzer_(float dt) {
     if (!native_scripted_ui_ || !native_scripted_ui_->bridge()) return false;
+#if defined(SPECTR_ENABLE_PERF_FIXTURES)
+    // Test-only: forces an extra host-automation projection every tick to
+    // stress the live-state dispatch path under load. Gated by
+    // SPECTR_ENABLE_PERF_FIXTURES (CMakeLists.txt, default OFF) so this
+    // getenv check -- and the SPECTR_AUTOMATION_PERF_FIXTURE literal itself
+    // -- do not exist in a shipping binary.
     const bool automation_perf_fixture = [] {
         const auto* value = std::getenv("SPECTR_AUTOMATION_PERF_FIXTURE");
         return value != nullptr && std::string_view{value} == "1";
     }();
+#else
+    constexpr bool automation_perf_fixture = false;
+#endif
     const auto host_revision = host_automation_revision();
     const auto projection_revision = automation_perf_fixture
         ? native_host_automation_revision_ + 1

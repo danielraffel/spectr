@@ -247,12 +247,22 @@ pulp_add_binary_data(spectr_native_assets
     NAMESPACE spectr_native
 )
 
+# Test-only automation-perf fixture (SPECTR_AUTOMATION_PERF_FIXTURE env var,
+# read in Spectr::tick_native_analyzer_) forces an extra host-automation
+# projection each tick to stress the live-state dispatch path under load.
+# Default OFF so the literal env-var name and its branch are compiled out of
+# every shipping and default test target; opt in explicitly
+# (-DSPECTR_ENABLE_PERF_FIXTURES=ON) only for a dedicated perf-fixture build.
+option(SPECTR_ENABLE_PERF_FIXTURES
+       "Compile in the test-only SPECTR_AUTOMATION_PERF_FIXTURE tick hook" OFF)
+
 function(spectr_configure_native_target target)
     target_include_directories(${target} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_compile_definitions(${target} PRIVATE
         SPECTR_NATIVE_EDITOR=1
+        $<$<BOOL:${SPECTR_ENABLE_PERF_FIXTURES}>:SPECTR_ENABLE_PERF_FIXTURES=1>
         SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
         SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
         SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
@@ -467,6 +477,23 @@ target_link_libraries(Spectr-native-shot PRIVATE
 )
 spectr_configure_native_target(Spectr-native-shot)
 
+# Registered so the shipping native surface is actually captured by CI, not
+# merely buildable. This binary's whole point is the offscreen Dawn+Skia GPU
+# path (its default backend), so on a host without GPU capture it MUST
+# degrade to a loud, CTest-recognized SKIP (exit 77, matched by
+# SKIP_RETURN_CODE below) rather than a bare FAIL indistinguishable from a
+# real regression -- and CTest reports a SKIP as "Not Run", never "Passed",
+# so a SKIP can never be misread as a PASS.
+add_test(NAME Spectr-native-shot
+    COMMAND $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-shots)
+set_tests_properties(Spectr-native-shot PROPERTIES
+    TIMEOUT 180
+    SKIP_RETURN_CODE 77
+    # Shares the lock with Spectr-native-n1-test: both mount the same
+    # heavyweight native materialized editor runtime and must not race.
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
 add_executable(Spectr-editor-authority-test
     test/test_editor_authority.cpp
 )
@@ -488,8 +515,18 @@ find_program(SPECTR_CHROME_EXECUTABLE
 # preset detail, Settings polish, and dropdown rows. If node or Chrome is
 # missing they are simply never registered, so a run without them is not a
 # weaker green -- it is a green with that entire surface unmeasured, and
-# nothing says so. Make the absence loud. Off by default so a contributor
-# without Chrome can still build and test; CI turns it on.
+# nothing says so. Make the absence loud.
+#
+# Off by default so a contributor without Chrome can still build and test.
+# NOTE: as of this writing no CI workflow passes
+# -DSPECTR_REQUIRE_BROWSER_LANE=ON (verified: zero occurrences of this option
+# name under .github/workflows/). CI configures with the same default as a
+# local build, so on any CI host missing node/Chrome this degrades to the
+# WARNING branch below, not a hard failure -- the browser-oracle surface can
+# go silently unmeasured on CI too. If you are relying on this flag to make
+# CI enforce the browser lane, it currently does not; wire
+# -DSPECTR_REQUIRE_BROWSER_LANE=ON into the relevant workflow's configure step
+# (and confirm that runner actually has node + Chrome) before trusting that.
 option(SPECTR_REQUIRE_BROWSER_LANE
     "Fail if the headless-Chromium oracles cannot be registered" OFF)
 if(NOT (SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE))

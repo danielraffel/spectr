@@ -1316,6 +1316,53 @@ TEST_CASE("native host automation projects through the compact live frame lane",
     storage.require_unchanged();
 }
 
+TEST_CASE("native host automation compact live frame hydrates mode fields into app state",
+          "[native-n1][state-parity][host-automation-live]") {
+    // The sibling "compact live frame lane" test above proves the narrowed
+    // live-state payload (make_editor_live_state_payload) hydrates band gains
+    // and the viewport. It never checks the same narrowed payload's mode
+    // fields (analyzer_mode / edit_mode / visualization_mode / motion_mode)
+    // against the runtime's own app-state surface, so a regression that drops
+    // those four fields from the compact projection -- while leaving gains and
+    // viewport intact -- would pass every existing test in this file.
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Confirm the defaults first. Every target value below must differ from
+    // its default so a later match can only be explained by the compact
+    // live-state payload actually driving the transition, not a coincidental
+    // default. Defaults come straight from param_surface.cpp's ParamInfo
+    // ranges, not from assumption: motion=Live(0), analyzer=Peak(0),
+    // edit=Sculpt(0), visualization=Both(2, the range's declared default is
+    // its max, not index 0).
+    require_app_state(rig,
+        "s.editMode === 'sculpt' && s.analyzerMode === 'peak' "
+        "&& s.visualizationMode === 'both' && s.settings "
+        "&& s.settings.motionMode === 'live'",
+        "expected default edit/analyzer/visualization/motion modes before any "
+        "host automation");
+
+    rig.store.set_value(spectr::kParamMotionMode, 1.0f);
+    rig.store.set_value(spectr::kParamAnalyzerMode, 2.0f);
+    rig.store.set_value(spectr::kParamEditMode, 3.0f);
+    rig.store.set_value(spectr::kParamVisualization, 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 4);
+
+    // dispatch_native_message on this tick carries ONLY
+    // make_editor_live_state_payload's narrow field set (see
+    // src/editor_bridge.cpp) -- no full processing_state_hydrate message is
+    // sent on a plain automation tick. A match here can only be explained by
+    // that narrowed payload's mode fields reaching app state.
+    require_app_state(rig,
+        "s.editMode === 'flare' && s.analyzerMode === 'both' "
+        "&& s.visualizationMode === 'response' && s.settings "
+        "&& s.settings.motionMode === 'precision'",
+        "compact live-state did not hydrate edit/analyzer/visualization/motion mode");
+    storage.require_unchanged();
+}
+
 TEST_CASE("native semantic popup navigation owns one visible highlight and selection",
           "[native-n1][state-parity][dropdown]") {
     PatternStoragePoison storage;

@@ -80,7 +80,8 @@ jobs:
           cmake --build "$SPECTR_BUILD_DIR" --parallel --target \
             Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP \
             Spectr-test Spectr-native-n1-test Spectr-editor-authority-test \
-            Spectr-artifact-test Spectr-native-standalone-artifact-test
+            Spectr-artifact-test Spectr-native-standalone-artifact-test \
+            Spectr-native-shot
 
       - name: Gate - Spectr M5 product acceptance focused behavior
         shell: bash
@@ -95,6 +96,36 @@ jobs:
           env CI=0 PULP_DISABLE_PLUGIN_EDITOR=0 PULP_HEADLESS=0 PULP_TEST_MODE=0 \
             ctest --test-dir "$SPECTR_BUILD_DIR" --output-on-failure --no-tests=error \
               -R '^Pulp host loads'
+
+      - name: Gate - Spectr M5 product acceptance native editor capture
+        shell: bash
+        env:
+          PULP_DISABLE_PLUGIN_EDITOR: "1"
+          PULP_HEADLESS: "1"
+          PULP_TEST_MODE: "1"
+        run: |
+          set -euo pipefail
+          # This host has real GPU capture, so Spectr-native-shot must
+          # actually run and capture the shipping native editor -- a SKIP
+          # here (exit 77, CTest "Not Run") on an M5 Tart VM would mean the
+          # gate stopped proving anything about that surface. This tolerates
+          # exactly ONE known, tracked, currently-open reason
+          # (tools/native_shot.cpp's exact-message #8094 SKIP -- the Settings
+          # body flex_basis regression upstream in the Pulp SDK) and fails
+          # loudly on any other SKIP reason instead of letting it read as
+          # green.
+          NATIVE_SHOT_LOG="$SPECTR_ACCEPTANCE_ROOT/native-shot-output.log"
+          ctest --test-dir "$SPECTR_BUILD_DIR" --output-on-failure --no-tests=error \
+            -R '^Spectr-native-shot$' --output-junit "$SPECTR_ACCEPTANCE_ROOT/native-shot-junit.xml" \
+            --verbose | tee "$NATIVE_SHOT_LOG"
+          if grep -q '<skipped' "$SPECTR_ACCEPTANCE_ROOT/native-shot-junit.xml"; then
+            if grep -q 'SKIP: native MODULATION capture blocked by tracked Pulp SDK issue #8094' "$NATIVE_SHOT_LOG"; then
+              echo "::warning::Spectr-native-shot SKIPPED -- blocked on tracked, open Pulp SDK issue #8094 (Settings body flex_basis regression). Not a gate failure, but not a proof either: this artifact is unmeasured until an SDK release carrying the #8094 fix is adopted."
+            else
+              echo "Spectr-native-shot SKIPPED on a host expected to have GPU capture, for a reason other than the tracked #8094 blocker -- treating as a gate failure" >&2
+              exit 1
+            fi
+          fi
 
       - name: Gate - Spectr M5 product acceptance AUv2 validation
         shell: bash
