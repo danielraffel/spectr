@@ -1061,3 +1061,81 @@ lookup and routes `setScrollContentSize` through the wrapper map; its focused
 336-test suite remains green and the lifetime regression passes 15 assertions.
 The alias layer still needs lifecycle/frame-clock ordering and transactional
 rollback coverage before the Pulp landing gate can be reopened.
+
+### 2026-09-06 Measuring a shift inside a scroll viewport
+
+Removing `paddingTop: 50` from the Settings body was verified by Skia raster
+capture, BEFORE vs AFTER. Recording the method because the obvious measurement
+gives the wrong answer here and will be re-derived wrong otherwise.
+
+**A rigid-shift cross-correlation over the whole panel is the wrong instrument.**
+The Settings body is a scroll viewport, so stripping leading padding does not
+translate the panel. Content above the fold moves up by the removed padding, but
+new content is revealed at the bottom — the lower half is not a translation of
+anything, it is different content. Searching for the single offset that best
+aligns before/after therefore reports a weak, misleading optimum:
+
+| band (device px) | best shift | score at best | score at s=0 |
+|---|---|---|---|
+| top group, 420–780 | 41.0 design px | 8.667 | 16.970 (+49%) |
+| first block, 420–680 | 45.5 design px | 8.447 | 18.510 (+54%) |
+| top half, 420–900 | 45.5 design px | 8.954 | 15.799 (+43%) |
+| lower half, 900–1490 | 10.5 design px | 4.597 | 11.477 (+60%) |
+| **whole panel, 420–1490** | **10.5 design px** | 8.935 | 13.416 (+33%) |
+
+The whole-panel number (10.5) is dominated by the revealed region and is not the
+shift. The per-band numbers drift (41.0 / 45.5) because each band mixes some
+translated and some revealed content.
+
+**The exact measurement is first ink: the first row whose luma exceeds the
+background.** It needs no alignment model and lands on the answer with no
+interpretation. Background here reads exactly 18.04 mean row luma, so a
+threshold of 20.0 separates background from content cleanly:
+
+```
+before: first content row y_dev = 525  (design 262.5)
+after : first content row y_dev = 425  (design 212.5)
+     -> 100 device px = 50.0 design px at scale 2.0
+```
+
+Exactly the `paddingTop: 50` removed, and consistent with the 16-byte artifact
+delta (`len('paddingTop: 50, ')`) in `materialized-document.runtime.json`.
+
+Negative control held exactly: the Home capture is byte-identical before and
+after (0 changed px of 4,540,800). The Settings capture changed 6.669% within
+bbox `(854, 424, 1779, 1485)`.
+
+Generalization: **when the region under test can scroll, reveal, reflow or clip,
+measure a landmark (first ink, an edge, a known glyph row), not a global
+alignment.** Cross-correlation assumes rigid translation; a viewport violates
+that assumption silently and still returns a confident-looking number.
+
+### 2026-09-06 Standalone bundle relink (build-artifact repair)
+
+`build-review-109/Spectr.app` was left damaged by an interrupted build — at one
+point the executable was present with `libwgpu_native.dylib` missing, later the
+dylib was present and the executable gone. Launching it aborted in dyld before
+`main` (`Library missing`, `@rpath/libwgpu_native.dylib`).
+
+This was never a shipping defect. `Spectr_Standalone.dir/build.make:374` carries
+the `copy_if_different` for the runtime, identical in shape to the known-good
+`Spectr_CLAP.dir/build.make:373`, and `target_copy_webgpu_binaries()` sets the
+`@loader_path` rpath and performs the copy in the same function — so the rpath's
+presence on the binary proves the helper applied. The trap:
+
+> **A POST_BUILD `copy_if_different` only fires when the target relinks.**
+> Anything that removes a copied file from the bundle stays removed until the
+> next relink, and the build reports itself up to date.
+
+Repaired with a bounded `-j2` relink of `Spectr_Standalone` through
+`tools/ci/governed-build.sh`. Verified by running the bundle, not by the link
+exit code: `native:Built Spectr Standalone renders headlessly without opening
+audio` (ctest #210) launches the bundle and requires exit 0 — it passed in
+6.66 s, against the same oracle that had reproduced the user's exact dyld error.
+
+**False-green trap hit while doing this.** The first oracle attempt filtered on
+the CMake *target* name (`Spectr-native-standalone-artifact-test`) rather than
+the registered *test* name, and ctest answered `No tests were found!!!` while
+exiting 0 — a zero-match filter that reads as a pass. `ctest -N | grep` for the
+finding plus a total-count control is what caught it. Related: an RC captured
+after a pipe into `tail` reports the tail's status, never ctest's.
