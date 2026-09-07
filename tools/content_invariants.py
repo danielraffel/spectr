@@ -31,7 +31,9 @@ def paintable_texts(snapshot: str) -> list[tuple[str, str, ai.Rect]]:
     out = []
     for n in ai.text_nodes(nodes):
         for text, rect in n.texts:
-            if ai.painted_box(n, rect).area > 0:
+            # On-screen, not merely laid out. A string scrolled out of a modal
+            # still has a box with area; it just cannot be seen.
+            if ai.on_screen_box(nodes, n, rect).area > 0:
                 out.append((n.id, text.strip(), n.rect))
     return out
 

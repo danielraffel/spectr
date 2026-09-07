@@ -299,6 +299,12 @@ namespace {
 // The settings body is the only scroll container in the panel, but the editor
 // tree carries others, so collect them all and let the caller skip any that
 // cannot scroll.
+void collect_depths(const pulp::view::View& view, int depth, std::vector<int>& out) {
+    out.push_back(depth);
+    for (const auto* child : view.sorted_children_by_z_index())
+        collect_depths(*child, depth + 1, out);
+}
+
 void collect_settings_scroll_views(pulp::view::View& view,
                                    std::vector<pulp::view::ScrollView*>& out) {
     if (auto* scroll = dynamic_cast<pulp::view::ScrollView*>(&view))
@@ -609,24 +615,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // whether the header stays put while they move. Scrolling at mount is too
     // early -- the settings body measures 466x0 with no content until Yoga has
     // run -- so wait for a laid-out scroll container and act once.
-    // Dump the laid-out tree from the SAME process that produces the
-    // screenshot. Running the detector on a headless harness while the picture
-    // comes from the installed app leaves a seam -- same code path, different
-    // process -- and a row closed across that seam is closed on an assumption.
-    if (!settings_fixture_dumped_ && settings_fixture_scrolled_) {
-        if (const auto* dump = std::getenv("SPECTR_LAYOUT_DUMP");
-            dump != nullptr && native_editor_root_ != nullptr) {
-            pulp::view::LayoutTreeSnapshotOptions options;
-            options.surface = "standalone";
-            options.viewport_width = native_editor_root_->bounds().width;
-            options.viewport_height = native_editor_root_->bounds().height;
-            std::ofstream out(dump);
-            out << pulp::view::dump_layout_tree(*native_editor_root_, options);
-            settings_fixture_dumped_ = true;
-        }
-    }
-
-    if (!settings_fixture_scrolled_) {
+    {
         if (const auto* scroll_to = std::getenv("SPECTR_SETTINGS_SCROLL");
             scroll_to != nullptr) {
             std::vector<pulp::view::ScrollView*> found;
@@ -638,12 +627,56 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 if (max_y <= 0.0f) continue;
                 scroll->set_scroll(scroll->scroll_x(),
                                    max_y * std::strtof(scroll_to, nullptr));
+                // Deliberately NOT latched. A click that expands a disclosure
+                // grows the content after the first scroll, so a one-shot
+                // scroll lands short and the rows it was meant to reveal stay
+                // below the fold — reporting them as laid out while no viewer
+                // could see them. Re-applying the same fraction each frame is
+                // idempotent and self-corrects as the content grows.
                 settings_fixture_scrolled_ = true;
             }
         } else {
             settings_fixture_scrolled_ = true;
         }
     }
+
+    // Dump the laid-out tree from the SAME process that produces the
+    // screenshot, and rewrite it every tick so the final file is the one
+    // nearest the shutter. Latching it wrote the tree at the FIRST settled
+    // frame while the PNG lands ~100 frames later, which reopens the very
+    // seam this was meant to close: the picture and the measurement then
+    // describe different instants.
+    if (settings_fixture_scrolled_) {
+        if (const auto* dump = std::getenv("SPECTR_LAYOUT_DUMP");
+            dump != nullptr && native_editor_root_ != nullptr) {
+            pulp::view::LayoutTreeSnapshotOptions options;
+            options.surface = "standalone";
+            options.viewport_width = native_editor_root_->bounds().width;
+            options.viewport_height = native_editor_root_->bounds().height;
+            std::ofstream out(dump);
+            out << pulp::view::dump_layout_tree(*native_editor_root_, options);
+            out.close();
+            // dump_layout_tree emits pre-order nodes with no depth, and a
+            // consumer that infers ancestry from rect containment gets it
+            // WRONG for any node that escapes its parent's bounds -- which is
+            // every scrolled row. Without this sidecar a chip scrolled far
+            // below a clipping modal resolves to no clipping ancestor at all
+            // and reads as on-screen.
+            std::vector<int> depths;
+            collect_depths(*native_editor_root_, 0, depths);
+            std::string depth_path{dump};
+            const auto suffix = depth_path.rfind(".layout.json");
+            depth_path = suffix == std::string::npos
+                ? depth_path + ".depths.json"
+                : depth_path.substr(0, suffix) + ".depths.json";
+            std::ofstream depth_out(depth_path);
+            depth_out << '[';
+            for (std::size_t i = 0; i < depths.size(); ++i)
+                depth_out << (i ? "," : "") << depths[i];
+            depth_out << "]\n";
+        }
+    }
+
 
 #if defined(SPECTR_ENABLE_PERF_FIXTURES)
     // Test-only: forces an extra host-automation projection every tick to

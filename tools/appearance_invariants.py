@@ -243,6 +243,50 @@ def painted_box(node: Node, text_rect: Rect) -> Rect:
     return Rect(text_rect.x, text_rect.y, w, h)
 
 
+def ancestry_is_exact(nodes: list[Node]) -> bool:
+    return bool(nodes) and all(n.depth is not None for n in nodes)
+
+
+def inherited_clip(nodes: list[Node], node: Node) -> Optional[Rect]:
+    """The clip every ancestor imposes on this node's own pixels.
+
+    `clipping.rect` on a node is the clip it imposes on its DESCENDANTS, not on
+    itself, so a node's on-screen extent is its painted box intersected with
+    every ancestor's clip. Without this a label scrolled out of a modal still
+    reports a box with area, and a presence check calls it visible — which is
+    exactly the mistake that made off-screen modulation chips look mounted.
+    """
+    if not ancestry_is_exact(nodes):
+        # Inferred ancestry cannot answer this. Containment-stack inference is
+        # wrong for exactly the nodes that matter here — a row scrolled out of
+        # a clipping modal is not contained in its parent, so the stack pops
+        # past the clipper and the node reads as unclipped. Refusing is the
+        # only honest answer; guessing produced a confident wrong one.
+        raise RuntimeError(
+            "visibility requires exact ancestry: this snapshot has no depth "
+            "sidecar, and inferring ancestry from rect containment is wrong "
+            "for any node that escapes its parent's bounds"
+        )
+    by_index = {n.index: n for n in nodes}
+    clip: Optional[Rect] = None
+    for ancestor_index in ancestors(nodes, node.index):
+        ancestor = by_index.get(ancestor_index)
+        if ancestor is None or ancestor.clip_for_children is None:
+            continue
+        if ancestor.overflow not in ("hidden", "scroll"):
+            continue
+        clip = ancestor.clip_for_children if clip is None else clip.intersect(
+            ancestor.clip_for_children)
+    return clip
+
+
+def on_screen_box(nodes: list[Node], node: Node, text_rect: Rect) -> Rect:
+    """What a viewer can actually see of this string."""
+    painted = painted_box(node, text_rect)
+    clip = inherited_clip(nodes, node)
+    return painted if clip is None else painted.intersect(clip)
+
+
 def text_nodes(nodes: list[Node]) -> list[Node]:
     return [n for n in nodes if n.visible and n.texts]
 
