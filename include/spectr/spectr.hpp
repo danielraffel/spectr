@@ -20,6 +20,7 @@
 #include <bitset>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -459,6 +460,31 @@ private:
     bool settings_fixture_scrolled_ = false;
     bool settings_fixture_dumped_ = false;
     bool settings_fixture_key_sent_ = false;
+    // Pointer fixtures. A drag is the only way to reach the states the status
+    // overlay is judged in, and a screenshot cannot be taken mid-gesture, so
+    // the fixture probes the banner's live text between the press and the
+    // release rather than inferring "during" from a picture taken after it.
+    bool drag_fixture_done_ = false;
+    double drag_fixture_finished_ms_ = -1.0;
+    std::size_t status_probe_next_ = 0;
+    bool cursor_probe_done_ = false;
+    // Stepped-drag fixture. A "fast drag" row is a claim about the samples
+    // BETWEEN press and release, so this probe reads processing state after
+    // every delivered move rather than only before and after the gesture: a
+    // before/after pair cannot tell a drag that tracked the pointer from one
+    // that jumped straight to its end point.
+    bool gesture_probe_done_ = false;
+    bool resize_fixture_applied_ = false;
+    bool resize_request_sent_ = false;
+    // Per-tick state trace for externally driven gestures. The AppKit drag
+    // fixture runs over hundreds of frames and only its END state is visible
+    // in a dump, but "an edge drag never moves the opposite trim" is a claim
+    // about every frame in between -- an excursion that returns before the
+    // last frame is exactly the defect and is invisible to a before/after
+    // pair. Accumulated in memory and rewritten whole each tick so the file is
+    // complete even if the process is killed rather than closed.
+    std::string native_state_trace_{};
+    int native_state_trace_tick_ = 0;
     pulp::view::View* native_resize_grip_ = nullptr;
     // Last host size reported to on_view_resized. Under a pinned viewport the
     // ROOT is constant at the authored box, so root bounds are useless as a
@@ -492,6 +518,14 @@ private:
     void open_native_editor_(pulp::view::View& view);
     void close_native_editor_();
     bool tick_native_analyzer_(float dt);
+    // Fixture-only. Writes the laid-out tree plus its depth sidecar under
+    // SPECTR_DRAG_DUMP_PREFIX for one named stage of a gesture, so "during"
+    // and "after" are two artifacts rather than one interpretation.
+    void dump_fixture_stage_(const std::string& stage);
+    // Pump the scripted runtime so a React state change queued by the event
+    // just delivered has actually landed before the next stage is written.
+    void settle_native_runtime_(int frames);
+    static double fixture_now_ms_();
 #endif
 
     [[nodiscard]] pulp::signal::SpectralBandLayout

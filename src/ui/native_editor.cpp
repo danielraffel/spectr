@@ -10,6 +10,7 @@
 #include <pulp/view/buttons.hpp>
 #include <pulp/view/input_events.hpp>
 #include <pulp/view/layout_snapshot.hpp>
+#include <pulp/view/pointer_dispatch.hpp>
 #include <pulp/view/ui_components.hpp>
 #include <pulp/view/view.hpp>
 #include <pulp/view/window_host.hpp>
@@ -21,6 +22,7 @@
 #include <atomic>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -304,6 +306,66 @@ void collect_depths(const pulp::view::View& view, int depth, std::vector<int>& o
     out.push_back(depth);
     for (const auto* child : view.sorted_children_by_z_index())
         collect_depths(*child, depth + 1, out);
+}
+
+// Name a View::CursorStyle so a probe result reads as the cursor a person
+// would see, not an enum ordinal that silently shifts when the enum grows.
+const char* cursor_style_name(pulp::view::View::CursorStyle style) {
+    using CS = pulp::view::View::CursorStyle;
+    switch (style) {
+        case CS::default_: return "default";
+        case CS::pointer: return "pointer";
+        case CS::crosshair: return "crosshair";
+        case CS::text: return "text";
+        case CS::grab: return "grab";
+        case CS::grabbing: return "grabbing";
+        case CS::not_allowed: return "not-allowed";
+        case CS::invisible: return "invisible";
+        case CS::horizontal_resize: return "horizontal-resize";
+        case CS::vertical_resize: return "vertical-resize";
+        case CS::top_left_resize: return "top-left-resize";
+        case CS::top_right_resize: return "top-right-resize";
+        case CS::bottom_left_resize: return "bottom-left-resize";
+        case CS::bottom_right_resize: return "bottom-right-resize";
+        case CS::multi_directional_resize: return "multi-directional-resize";
+        case CS::alias: return "alias";
+        case CS::copy: return "copy";
+        case CS::zoom_in: return "zoom-in";
+        case CS::zoom_out: return "zoom-out";
+        case CS::context_menu: return "context-menu";
+    }
+    return "?";
+}
+
+// The NSCursor a given style resolves to on macOS, transcribed from
+// pulp::view::mac_geometry::set_ns_cursor_for_style. The probe runs headless,
+// so it cannot ask AppKit what is on screen; naming the mapped NSCursor keeps
+// the last hop auditable instead of implied.
+const char* ns_cursor_name(pulp::view::View::CursorStyle style) {
+    using CS = pulp::view::View::CursorStyle;
+    switch (style) {
+        case CS::default_: return "arrowCursor";
+        case CS::pointer: return "pointingHandCursor";
+        case CS::crosshair: return "crosshairCursor";
+        case CS::text: return "IBeamCursor";
+        case CS::grab: return "openHandCursor";
+        case CS::grabbing: return "closedHandCursor";
+        case CS::not_allowed: return "operationNotAllowedCursor";
+        case CS::invisible: return "hidden";
+        case CS::horizontal_resize: return "resizeLeftRightCursor";
+        case CS::vertical_resize: return "resizeUpDownCursor";
+        case CS::top_left_resize:
+        case CS::bottom_right_resize: return "_windowResizeNorthWestSouthEastCursor";
+        case CS::top_right_resize:
+        case CS::bottom_left_resize: return "_windowResizeNorthEastSouthWestCursor";
+        case CS::multi_directional_resize: return "openHandCursor";
+        case CS::alias: return "dragLinkCursor";
+        case CS::copy: return "dragCopyCursor";
+        case CS::zoom_in: return "zoomInCursor";
+        case CS::zoom_out: return "zoomOutCursor";
+        case CS::context_menu: return "contextualMenuCursor";
+    }
+    return "?";
 }
 
 void collect_settings_scroll_views(pulp::view::View& view,
@@ -654,8 +716,83 @@ void Spectr::open_native_editor_(pulp::view::View& view) {
         [this](float dt) { return tick_native_analyzer_(dt); });
 }
 
+double Spectr::fixture_now_ms_() {
+    using clock = std::chrono::steady_clock;
+    static const auto origin = clock::now();
+    return std::chrono::duration<double, std::milli>(clock::now() - origin)
+        .count();
+}
+
+void Spectr::settle_native_runtime_(int frames) {
+    if (!native_scripted_ui_ || !native_scripted_ui_->bridge()) return;
+    try {
+        native_scripted_ui_->bridge()->load_script(
+            "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+            "globalThis.__pulpRuntimeSettle__(" + std::to_string(frames) + ");",
+            "spectr-fixture-settle");
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[fixture] settle failed: %s\n", error.what());
+    }
+}
+
+void Spectr::dump_fixture_stage_(const std::string& stage) {
+    const auto* prefix = std::getenv("SPECTR_DRAG_DUMP_PREFIX");
+    if (prefix == nullptr || *prefix == '\0' || native_editor_root_ == nullptr)
+        return;
+    pulp::view::LayoutTreeSnapshotOptions options;
+    options.surface = "standalone";
+    options.viewport_width = native_editor_root_->bounds().width;
+    options.viewport_height = native_editor_root_->bounds().height;
+    const std::string base = std::string(prefix) + "." + stage;
+    std::ofstream out(base + ".layout.json");
+    out << pulp::view::dump_layout_tree(*native_editor_root_, options);
+    out.close();
+    std::vector<int> depths;
+    collect_depths(*native_editor_root_, 0, depths);
+    std::ofstream depth_out(base + ".depths.json");
+    depth_out << '[';
+    for (std::size_t i = 0; i < depths.size(); ++i)
+        depth_out << (i ? "," : "") << depths[i];
+    depth_out << "]\n";
+    std::fprintf(stderr, "[fixture] stage %s -> %s.layout.json (t=%.0fms)\n",
+                 stage.c_str(), base.c_str(), fixture_now_ms_());
+}
+
 bool Spectr::tick_native_analyzer_(float dt) {
     if (!native_scripted_ui_ || !native_scripted_ui_->bridge()) return false;
+
+    // Host-resize fixture. `on_view_resized` is the one entry point a host uses
+    // to report a new editor frame, so driving it directly exercises the same
+    // code a window drag reaches -- including the pinned-viewport branch that
+    // forces the root back to the authored box. Applied once, before any other
+    // fixture, so the layout dump, the cursor probe and the gesture probe below
+    // all describe the resized editor rather than a mix of two sizes.
+    //
+    // What this does NOT reach: the window-space -> design-space pointer
+    // transform the GPU host applies under a pin. That lives in WindowHost and
+    // needs a real window resize, which a headless capture cannot perform. A
+    // row resting on input mapping at scale != 1 is not closed by this.
+    if (!resize_fixture_applied_ && native_editor_root_ != nullptr) {
+        if (const auto* spec = std::getenv("SPECTR_RESIZE");
+            spec != nullptr && *spec != '\0') {
+            const std::string text{spec};
+            const auto x = text.find('x');
+            if (x != std::string::npos) {
+                const auto w = static_cast<std::uint32_t>(
+                    std::strtoul(text.substr(0, x).c_str(), nullptr, 10));
+                const auto h = static_cast<std::uint32_t>(
+                    std::strtoul(text.substr(x + 1).c_str(), nullptr, 10));
+                if (w > 0 && h > 0) {
+                    on_view_resized(*native_editor_root_, w, h);
+                    std::fprintf(stderr,
+                                 "[resize-fixture] host=%ux%u root=%gx%g\n",
+                                 w, h, native_editor_root_->bounds().width,
+                                 native_editor_root_->bounds().height);
+                }
+            }
+        }
+        resize_fixture_applied_ = true;
+    }
 
     // The About block and its Status Info description sit below the fold, and
     // a capture of the unscrolled panel cannot show whether they truncate or
@@ -752,6 +889,507 @@ bool Spectr::tick_native_analyzer_(float dt) {
                              key, handled ? "yes" : "no");
             }
             settings_fixture_key_sent_ = true;
+        }
+    }
+
+    // ── Cursor probe ────────────────────────────────────────────────────
+    //
+    // CUR-1..4 are about a cursor a person SEES. The previous close rested on
+    // a test named "cursors reach the shipping runtime" -- a value arriving in
+    // a View slot, which is not the same claim and is why those rows were
+    // reopened. This reproduces the shipping resolution instead, verbatim from
+    // the macOS host:
+    //
+    //   mouseMoved:  deliver_hover_and_resolve_cursor(root, pt)
+    //                  -> simulate_hover, a DOM pointermove, a fresh hit test
+    //                set_ns_cursor_for_style(resolution.style);
+    //   mouseDown:   dragTarget = hit_test(pt); deliver_mouse_down(...);
+    //                set_ns_cursor_for_style(dragTarget->cursor());
+    //   mouseDragged: deliver_mouse_drag(...);
+    //                set_ns_cursor_for_style(dragTarget->cursor());
+    //
+    // so what this records is the style the host would hand AppKit, not a slot
+    // somebody wrote. The ancestor chain is recorded alongside it because CSS
+    // `cursor` inherits and View::cursor() does not: a wrapper holding
+    // `crosshair` while the hit child holds `default` is exactly the shape of
+    // a cursor that reaches the runtime and never reaches the screen, and
+    // without the chain that case is indistinguishable from nothing being set.
+    // Latched, unlike the layout dump. The dump is idempotent, but a pointer
+    // probe MUTATES the app it measures: a press with no release leaves the
+    // surface's pointer mode set, and the next tick's hover then reads the
+    // cursor of a drag that is still notionally in progress. That is exactly
+    // how the first run reported `grabbing` at every point including the plot
+    // -- an instrument artefact that looked like a uniform app defect.
+    if (settings_fixture_scrolled_ && !cursor_probe_done_) {
+        const auto* probe_out = std::getenv("SPECTR_CURSOR_PROBE");
+        const auto* probe_points = std::getenv("SPECTR_CURSOR_POINTS");
+        if (probe_out != nullptr && *probe_out != '\0'
+            && probe_points != nullptr && *probe_points != '\0'
+            && native_editor_root_ != nullptr) {
+            auto& root = *native_editor_root_;
+            std::ostringstream out;
+            out << "{\"schema\":\"spectr-cursor-probe-v1\""
+                << ",\"viewport\":{\"w\":" << root.bounds().width
+                << ",\"h\":" << root.bounds().height << "}"
+                << ",\"probes\":[";
+            bool first = true;
+            std::string_view rest{probe_points};
+            while (!rest.empty()) {
+                const auto semi = rest.find(';');
+                const auto spec = rest.substr(0, semi);
+                if (semi == std::string_view::npos) rest = {};
+                else rest.remove_prefix(semi + 1);
+                if (spec.empty()) continue;
+                const auto eq = spec.find('=');
+                if (eq == std::string_view::npos) continue;
+                const std::string name{spec.substr(0, eq)};
+                std::string coords{spec.substr(eq + 1)};
+                // "x,y" is a hover; "x,y>x2,y2" presses at the first point and
+                // drags to the second, which is the only way to reach a
+                // grabbing cursor -- it exists only while a button is held.
+                std::string a_part = coords;
+                std::string b_part;
+                if (const auto gt = coords.find('>'); gt != std::string::npos) {
+                    a_part = coords.substr(0, gt);
+                    b_part = coords.substr(gt + 1);
+                }
+                const auto parse_point = [](const std::string& text,
+                                            pulp::view::Point& value) {
+                    const auto comma = text.find(',');
+                    if (comma == std::string::npos) return false;
+                    value.x = std::strtof(text.substr(0, comma).c_str(), nullptr);
+                    value.y = std::strtof(text.substr(comma + 1).c_str(), nullptr);
+                    return true;
+                };
+                pulp::view::Point a{};
+                pulp::view::Point b{};
+                if (!parse_point(a_part, a)) continue;
+                const bool is_drag = !b_part.empty() && parse_point(b_part, b);
+
+                using CS = pulp::view::View::CursorStyle;
+                CS resolved = CS::default_;
+                std::string hit_id = "<none>";
+                std::string phase = is_drag ? "drag" : "hover";
+                std::vector<std::pair<std::string, CS>> chain;
+                bool hit_missing = false;
+
+                if (is_drag) {
+                    // mouseDown then mouseDragged, exactly as the host orders
+                    // them. The captured target -- not a fresh hit_test at the
+                    // drag point -- is what the host reads the style from, so a
+                    // probe that re-hit-tests mid-drag would measure a
+                    // different mechanism than the one that runs.
+                    pulp::view::ViewCapture capture;
+                    capture.set(root.hit_test(a));
+                    auto* target = capture.live_in(root);
+                    if (target == nullptr) {
+                        hit_missing = true;
+                    } else {
+                        pulp::view::deliver_mouse_down(root, target, a, 0, 1);
+                        if (auto* live = capture.live_in(root)) {
+                            pulp::view::deliver_mouse_drag(root, live, b, 0, 1);
+                        }
+                        if (auto* live = capture.live_in(root)) {
+                            resolved = live->cursor();
+                            hit_id = live->id();
+                            for (auto* v = live; v != nullptr; v = v->parent())
+                                chain.emplace_back(v->id(), v->cursor());
+                        } else {
+                            hit_missing = true;
+                        }
+                        // Release before reading anything else. The style is
+                        // sampled above, while the button is still notionally
+                        // down, because `grabbing` exists only during a drag --
+                        // but leaving the press un-released poisons every later
+                        // probe in the same run.
+                        if (auto* live = capture.live_in(root)) {
+                            pulp::view::MouseUpHost up_host;
+                            pulp::view::deliver_mouse_up(root, live, b, 0, 1,
+                                                         up_host);
+                        }
+                    }
+                } else {
+                    // The SAME function the macOS host's mouseMoved: calls --
+                    // not a copy of its steps. A probe that re-implements the
+                    // host is testing its own copy, and the copy is what goes
+                    // stale; that is how "cursors reach the shipping runtime"
+                    // came to stand beside "not visible in installed builds".
+                    const auto hover =
+                        pulp::view::deliver_hover_and_resolve_cursor(root, a);
+                    if (hover.target == nullptr) {
+                        hit_missing = true;
+                    } else {
+                        resolved = hover.style;
+                        hit_id = hover.target->id();
+                        for (auto* v = hover.target; v != nullptr; v = v->parent())
+                            chain.emplace_back(v->id(), v->cursor());
+                    }
+                }
+
+                out << (first ? "" : ",") << "\n {\"name\":\"" << name << "\""
+                    << ",\"phase\":\"" << phase << "\""
+                    << ",\"point\":{\"x\":" << a.x << ",\"y\":" << a.y << "}";
+                if (is_drag)
+                    out << ",\"to\":{\"x\":" << b.x << ",\"y\":" << b.y << "}";
+                // A miss is reported as a miss. Falling back to "default" here
+                // would make "nothing was under the pointer" -- a broken probe
+                // -- read identically to "the app shows an arrow there", which
+                // is the exact confusion this whole exercise exists to reject.
+                out << ",\"hit\":" << (hit_missing ? "false" : "true")
+                    << ",\"hit_id\":\"" << hit_id << "\""
+                    << ",\"resolved_cursor\":\""
+                    << (hit_missing ? "<no-hit>" : cursor_style_name(resolved))
+                    << "\",\"ns_cursor\":\""
+                    << (hit_missing ? "<no-hit>" : ns_cursor_name(resolved))
+                    << "\",\"ancestor_cursors\":[";
+                for (std::size_t i = 0; i < chain.size(); ++i) {
+                    out << (i ? "," : "") << "{\"id\":\"" << chain[i].first
+                        << "\",\"cursor\":\"" << cursor_style_name(chain[i].second)
+                        << "\"}";
+                }
+                out << "]}";
+                first = false;
+            }
+            out << "\n]}\n";
+            std::ofstream file(probe_out);
+            file << out.str();
+            cursor_probe_done_ = true;
+        }
+    }
+
+    // ── Pointer fixtures ────────────────────────────────────────────────
+    //
+    // The status overlay is judged in states only a DRAG reaches, and a
+    // screenshot cannot be taken in the middle of a gesture. So the press,
+    // each move, and the release are delivered separately through the same
+    // pointer_dispatch verbs a window host calls, and the laid-out tree is
+    // written between them. "Updates while dragging" is then a comparison of
+    // two trees captured before the release, not an inference from a picture
+    // taken after it.
+    //
+    // The tree is the instrument rather than `textContent`, deliberately: the
+    // editor writes the live label straight onto the DOM node, and a value that
+    // reads back from the shim proves nothing about what the native Label
+    // paints. Only the snapshot carries the painted string.
+    if (!drag_fixture_done_ && settings_fixture_scrolled_
+        && native_editor_root_ != nullptr) {
+        if (const auto* spec = std::getenv("SPECTR_DRAG");
+            spec != nullptr && *spec != '\0') {
+            float coords[5] = {0, 0, 0, 0, 0};
+            {
+                std::string_view rest{spec};
+                for (int i = 0; i < 5 && !rest.empty(); ++i) {
+                    const auto comma = rest.find(',');
+                    coords[i] = std::strtof(std::string(rest.substr(0, comma)).c_str(),
+                                            nullptr);
+                    if (comma == std::string_view::npos) break;
+                    rest.remove_prefix(comma + 1);
+                }
+            }
+            const int steps = std::max(1, static_cast<int>(coords[4]));
+            const pulp::view::Point start{coords[0], coords[1]};
+            const pulp::view::Point finish{coords[2], coords[3]};
+            auto* target = native_editor_root_->hit_test(start);
+            std::fprintf(stderr,
+                         "[drag] start=(%.1f,%.1f) end=(%.1f,%.1f) steps=%d "
+                         "target=%s\n",
+                         start.x, start.y, finish.x, finish.y, steps,
+                         target ? (target->id().empty() ? "<anonymous>"
+                                                        : target->id().c_str())
+                                : "NONE");
+            if (target != nullptr) {
+                dump_fixture_stage_("press-before");
+                pulp::view::deliver_mouse_down(*native_editor_root_, target,
+                                               start, 0, 1, true);
+                settle_native_runtime_(4);
+                dump_fixture_stage_("press");
+                for (int i = 1; i <= steps; ++i) {
+                    const float t = static_cast<float>(i) / steps;
+                    const pulp::view::Point p{
+                        start.x + (finish.x - start.x) * t,
+                        start.y + (finish.y - start.y) * t};
+                    pulp::view::deliver_mouse_drag(*native_editor_root_, target,
+                                                   p, 0);
+                    settle_native_runtime_(4);
+                    dump_fixture_stage_("move" + std::to_string(i));
+                }
+                pulp::view::deliver_mouse_up(*native_editor_root_, target,
+                                             finish, 0, 1,
+                                             pulp::view::MouseUpHost{});
+                settle_native_runtime_(4);
+                dump_fixture_stage_("release");
+            }
+            drag_fixture_finished_ms_ = fixture_now_ms_();
+            std::fprintf(stderr, "[drag] released at t=%.0fms\n",
+                         drag_fixture_finished_ms_);
+        }
+        drag_fixture_done_ = true;
+    }
+
+    // Timed probes after the gesture. The overlay's hold and its clean
+    // disappearance are both TIME properties, so they are read on the wall
+    // clock from the same process, at offsets the caller names.
+    if (drag_fixture_done_ && drag_fixture_finished_ms_ >= 0.0) {
+        if (const auto* offsets = std::getenv("SPECTR_STATUS_PROBE_MS");
+            offsets != nullptr && *offsets != '\0') {
+            std::vector<double> wanted;
+            std::string_view rest{offsets};
+            while (!rest.empty()) {
+                const auto comma = rest.find(',');
+                const auto one = rest.substr(0, comma);
+                if (!one.empty())
+                    wanted.push_back(std::strtod(std::string(one).c_str(), nullptr));
+                if (comma == std::string_view::npos) break;
+                rest.remove_prefix(comma + 1);
+            }
+            const double elapsed = fixture_now_ms_() - drag_fixture_finished_ms_;
+            while (status_probe_next_ < wanted.size()
+                   && elapsed >= wanted[status_probe_next_]) {
+                char tag[64];
+                std::snprintf(tag, sizeof(tag), "t%.0f",
+                              wanted[status_probe_next_]);
+                dump_fixture_stage_(tag);
+                std::fprintf(stderr, "[status-probe] %s actual=%.0fms\n", tag,
+                             elapsed);
+                ++status_probe_next_;
+            }
+        }
+    }
+
+    // Ask the HOST for a different editor size, which in the standalone
+    // reaches WindowHost::request_content_size and resizes the real NSWindow.
+    // This is the only headless way to get a window whose size differs from
+    // the authored design box, and therefore the only way to exercise the
+    // pinned-viewport window-space -> design-space pointer transform at a
+    // scale other than 1. A capture at the default size cannot see a
+    // transform bug at all, because there the transform is the identity.
+    if (!resize_request_sent_ && settings_fixture_scrolled_) {
+        if (const auto* spec = std::getenv("SPECTR_REQUEST_RESIZE");
+            spec != nullptr && *spec != '\0') {
+            const std::string text{spec};
+            const auto x = text.find('x');
+            if (x != std::string::npos) {
+                const auto w = static_cast<std::uint32_t>(
+                    std::strtoul(text.substr(0, x).c_str(), nullptr, 10));
+                const auto h = static_cast<std::uint32_t>(
+                    std::strtoul(text.substr(x + 1).c_str(), nullptr, 10));
+                if (w > 0 && h > 0) {
+                    const bool accepted = request_editor_resize(w, h);
+                    std::fprintf(stderr,
+                                 "[request-resize] asked=%ux%u accepted=%s\n",
+                                 w, h, accepted ? "yes" : "no");
+                }
+            }
+        }
+        resize_request_sent_ = true;
+    }
+
+    // Per-tick state trace. SPECTR_STATE_OUT records where a gesture ENDED;
+    // this records the path it took. COR-1's claim -- an edge drag never moves
+    // the opposite trim -- is false if the opposite trim moves at any point,
+    // even briefly, so it can only be judged frame by frame.
+    if (settings_fixture_scrolled_) {
+        if (const auto* trace_path = std::getenv("SPECTR_STATE_TRACE");
+            trace_path != nullptr && *trace_path != '\0') {
+            const auto snap = processing_state_snapshot();
+            const auto n = visible_count(snap.layout);
+            int lo = -1, hi = -1, changed = 0;
+            for (std::uint32_t i = 0; i < n; ++i) {
+                if (snap.field.bands[i].gain_db == 0.0f
+                    && !snap.field.bands[i].muted) continue;
+                if (lo < 0) lo = static_cast<int>(i);
+                hi = static_cast<int>(i);
+                ++changed;
+            }
+            std::ostringstream line;
+            line << "{\"t\":" << native_state_trace_tick_++
+                 << ",\"host_w\":" << native_host_width_
+                 << ",\"host_h\":" << native_host_height_
+                 << ",\"min_hz\":" << snap.viewport.min_hz
+                 << ",\"max_hz\":" << snap.viewport.max_hz
+                 << ",\"n_changed\":" << changed
+                 << ",\"lo\":" << lo << ",\"hi\":" << hi << "}\n";
+            native_state_trace_ += line.str();
+            std::ofstream file(trace_path);
+            file << native_state_trace_;
+        }
+    }
+
+    // Final processing state, rewritten every tick for the same reason the
+    // layout dump is: the file that survives is the one nearest the shutter.
+    // This is what an externally driven gesture -- PULP_TEST_POINTER_DRAG,
+    // which enters through AppKit and therefore through the host's pointer
+    // transform -- leaves behind. The stepped probe below cannot answer that:
+    // it injects in root coordinates and so is blind to the transform by
+    // construction.
+    if (settings_fixture_scrolled_) {
+        if (const auto* state_out = std::getenv("SPECTR_STATE_OUT");
+            state_out != nullptr && *state_out != '\0') {
+            const auto snap = processing_state_snapshot();
+            const auto n = visible_count(snap.layout);
+            std::ostringstream out;
+            out << "{\"schema\":\"spectr-state-v1\""
+                << ",\"host\":{\"w\":" << native_host_width_
+                << ",\"h\":" << native_host_height_ << "}"
+                << ",\"root\":{\"w\":"
+                << (native_editor_root_ ? native_editor_root_->bounds().width : 0.0f)
+                << ",\"h\":"
+                << (native_editor_root_ ? native_editor_root_->bounds().height : 0.0f)
+                << "},\"min_hz\":" << snap.viewport.min_hz
+                << ",\"max_hz\":" << snap.viewport.max_hz
+                << ",\"n_visible\":" << n
+                << ",\"gain_db\":[";
+            for (std::uint32_t i = 0; i < n; ++i)
+                out << (i ? "," : "") << snap.field.bands[i].gain_db;
+            out << "],\"muted\":[";
+            for (std::uint32_t i = 0; i < n; ++i)
+                out << (i ? "," : "")
+                    << (snap.field.bands[i].muted ? "true" : "false");
+            out << "]}\n";
+            std::ofstream file(state_out);
+            file << out.str();
+        }
+    }
+
+    // ── Stepped-gesture probe ───────────────────────────────────────────
+    //
+    // COR-1..3 are claims about what happens DURING a drag: that a minimap
+    // edge never moves the opposite trim, that a fast band sweep leaves no
+    // band behind, that a viewport pan keeps its span. None of those can be
+    // read from a before/after pair, and none can be read from a picture --
+    // the picture is taken after the release. So this delivers a real gesture
+    // through the host's own verbs and reads the plugin's processing state
+    // after EVERY delivered sample.
+    //
+    // deliver_mouse_down / deliver_mouse_drag / deliver_mouse_up with a
+    // ViewCapture is the exact sequence PulpMetalView runs (window_host_mac.mm
+    // mouseDown:/mouseDragged:/mouseUp:), so a target that claims the drag
+    // keeps it here the same way it would under a real pointer. The one thing
+    // this deliberately does not reproduce is the host's PointerCoalescer,
+    // which merges motion between presented frames: every sample here is
+    // delivered. That makes this the ACCURACY instrument and not the latency
+    // one -- coalescing can only ever remove samples, and the row's accuracy
+    // claim has to hold for the samples that do arrive.
+    if (settings_fixture_scrolled_ && !gesture_probe_done_) {
+        const auto* gesture_out = std::getenv("SPECTR_GESTURE_OUT");
+        const auto* gesture_spec = std::getenv("SPECTR_GESTURES");
+        if (gesture_out != nullptr && *gesture_out != '\0'
+            && gesture_spec != nullptr && *gesture_spec != '\0'
+            && native_editor_root_ != nullptr) {
+            auto& root = *native_editor_root_;
+            std::ostringstream out;
+            out << "{\"schema\":\"spectr-gesture-probe-v1\""
+                << ",\"viewport\":{\"w\":" << root.bounds().width
+                << ",\"h\":" << root.bounds().height << "}"
+                << ",\"host\":{\"w\":" << native_host_width_
+                << ",\"h\":" << native_host_height_ << "}"
+                << ",\"gestures\":[";
+
+            // One state sample. gain_db is emitted for every visible band on
+            // every sample on purpose: "which bands did this move touch" is
+            // the whole of the accuracy question, and a summary statistic
+            // (count changed, a hash) cannot answer "which".
+            const auto emit_sample = [this, &out](const char* phase,
+                                                  pulp::view::Point pt) {
+                const auto snap = processing_state_snapshot();
+                const auto n = visible_count(snap.layout);
+                out << "\n   {\"phase\":\"" << phase << "\""
+                    << ",\"x\":" << pt.x << ",\"y\":" << pt.y
+                    << ",\"min_hz\":" << snap.viewport.min_hz
+                    << ",\"max_hz\":" << snap.viewport.max_hz
+                    << ",\"n_visible\":" << n
+                    << ",\"gain_db\":[";
+                for (std::uint32_t i = 0; i < n; ++i)
+                    out << (i ? "," : "") << snap.field.bands[i].gain_db;
+                out << "],\"muted\":[";
+                for (std::uint32_t i = 0; i < n; ++i)
+                    out << (i ? "," : "")
+                        << (snap.field.bands[i].muted ? "true" : "false");
+                out << "]}";
+            };
+
+            bool first_gesture = true;
+            std::string_view rest{gesture_spec};
+            while (!rest.empty()) {
+                const auto semi = rest.find(';');
+                const auto spec = rest.substr(0, semi);
+                if (semi == std::string_view::npos) rest = {};
+                else rest.remove_prefix(semi + 1);
+                if (spec.empty()) continue;
+                const auto eq = spec.find('=');
+                if (eq == std::string_view::npos) continue;
+                const std::string name{spec.substr(0, eq)};
+                std::string coords{spec.substr(eq + 1)};
+                int steps = 24;
+                if (const auto at = coords.find('@'); at != std::string::npos) {
+                    steps = std::atoi(coords.substr(at + 1).c_str());
+                    coords = coords.substr(0, at);
+                }
+                if (steps < 1) steps = 1;
+                const auto gt = coords.find('>');
+                if (gt == std::string::npos) continue;
+                const auto parse_point = [](const std::string& text,
+                                            pulp::view::Point& value) {
+                    const auto comma = text.find(',');
+                    if (comma == std::string::npos) return false;
+                    value.x = std::strtof(text.substr(0, comma).c_str(), nullptr);
+                    value.y = std::strtof(text.substr(comma + 1).c_str(), nullptr);
+                    return true;
+                };
+                pulp::view::Point a{};
+                pulp::view::Point b{};
+                if (!parse_point(coords.substr(0, gt), a)) continue;
+                if (!parse_point(coords.substr(gt + 1), b)) continue;
+
+                out << (first_gesture ? "" : ",")
+                    << "\n  {\"name\":\"" << name << "\""
+                    << ",\"from\":{\"x\":" << a.x << ",\"y\":" << a.y << "}"
+                    << ",\"to\":{\"x\":" << b.x << ",\"y\":" << b.y << "}"
+                    << ",\"steps\":" << steps;
+                first_gesture = false;
+
+                pulp::view::ViewCapture capture;
+                capture.set(root.hit_test(a));
+                auto* target = capture.live_in(root);
+                // A miss is reported as a miss and the gesture is skipped. A
+                // press delivered to nothing produces a perfectly well-formed
+                // sample list in which nothing changes, which reads exactly
+                // like a control that ignores the drag.
+                out << ",\"hit\":" << (target == nullptr ? "false" : "true")
+                    << ",\"hit_id\":\""
+                    << (target == nullptr ? std::string{"<none>"} : target->id())
+                    << "\",\"samples\":[";
+                if (target == nullptr) {
+                    out << "]}";
+                    continue;
+                }
+                emit_sample("pre", a);
+                pulp::view::deliver_mouse_down(root, target, a, 0, 1);
+                out << ",";
+                emit_sample("down", a);
+                for (int i = 1; i <= steps; ++i) {
+                    const float t = static_cast<float>(i)
+                                  / static_cast<float>(steps);
+                    const pulp::view::Point pt{a.x + (b.x - a.x) * t,
+                                               a.y + (b.y - a.y) * t};
+                    auto* live = capture.live_in(root);
+                    if (live == nullptr) break;
+                    pulp::view::deliver_mouse_drag(root, live, pt, 0, 1);
+                    out << ",";
+                    emit_sample("move", pt);
+                }
+                if (auto* live = capture.live_in(root)) {
+                    pulp::view::MouseUpHost up_host;
+                    pulp::view::deliver_mouse_up(root, live, b, 0, 1, up_host);
+                }
+                out << ",";
+                emit_sample("up", b);
+                out << "]}";
+            }
+            out << "\n ]}\n";
+            std::ofstream file(gesture_out);
+            file << out.str();
+            gesture_probe_done_ = true;
         }
     }
 

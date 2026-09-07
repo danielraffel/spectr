@@ -64,3 +64,172 @@ rather than papered over.
 - `CLIP`: `⋯` measures 8.00px wide in a 7.03px box.
 - `WRAP`: `ZOOMABLE FILTER BANK` needs 36.00px in a 14.00px box (2.57x).
 - `OVERLAP` x2: a Settings row description meets the bottom transport bar.
+
+---
+
+## CUR-1..4 — the cursor over the band canvas, the viewport and its trims
+
+These four rows were once closed on a test named *"native settings command and
+minimap cursors reach the shipping runtime"* while their own status column said
+**"Not visible in installed builds"** four times. A value reaching a
+`View::CursorStyle` slot is not a person seeing a cursor, so they were reopened.
+
+### The two standard instruments cannot tell these rows apart — measured
+
+The red and green captures below are **byte-identical**, and so are their layout
+trees:
+
+```
+3d671d5a85c063ec2f626fdc9d9d163e3cde95e50380218e60d107ec6404155a  CUR-RED-standalone-app.png
+3d671d5a85c063ec2f626fdc9d9d163e3cde95e50380218e60d107ec6404155a  CUR-GREEN-standalone-app.png
+6d9f92be641ee3ce220358629580e1e56a30d29c66e587c07cc6e069962dab0e  CUR-RED.layout.json
+6d9f92be641ee3ce220358629580e1e56a30d29c66e587c07cc6e069962dab0e  CUR-GREEN.layout.json
+```
+
+A broken cursor moves no pixel and no box: a headless capture has no pointer on
+screen to photograph, and the cursor is a per-view slot the layout snapshot does
+not carry. So a screenshot pair and a layout diff both report "no change"
+between a working build and a broken one. **That is why these rows could be
+closed on a proxy with a failing caveat beside them, and it is why the
+mandate's "a screenshot of the installed build" cannot be met in its literal
+form here.** The honest substitute is `CUR-*-annotated.png`: the same installed
+capture with every probe point marked and labelled with the cursor resolved
+there, so each claim names the pixel it is about.
+
+### What is measured instead
+
+`SPECTR_CURSOR_PROBE` runs inside the installed `Spectr.app` and calls
+`pulp::view::deliver_hover_and_resolve_cursor` — **the same function the macOS
+window host's `mouseMoved:` calls**, not a copy of its steps. The host and the
+probe therefore cannot drift apart; re-implementing the host's sequence in a
+test is how "reaches the runtime" came to stand beside "not visible in
+installed builds" in the first place.
+
+| file | what it is |
+|---|---|
+| `CUR-RED.cursor.json` | Every probe point on the installed app with the buttonless-move dispatch removed. |
+| `CUR-GREEN.cursor.json` | The same points, same source, dispatch restored. |
+| `CUR-RED-annotated.png` / `CUR-GREEN-annotated.png` | The installed capture with each point marked and its resolved cursor named. |
+| `CUR-{RED,GREEN}-standalone-app.png` | The unannotated captures (identical, see above). |
+| `CUR-{RED,GREEN}.layout.json` + `.depths.json` | The tree behind each capture (identical, see above). |
+
+### Root cause, with the control that makes it a finding
+
+`dispatch_dom_pointer_event` is the only path that fires a JS
+`pointermove`/`mousemove`. Before this change it was reached from exactly two
+places in the repo — the Android GPU surface and the web event translator.
+**Neither macOS host called it.** `mouseMoved:` ran `simulate_hover` (which
+flips `hovered_` and calls `on_hover_move`, and runs no JavaScript) and then
+read `hit_test(pt)->cursor()`. So the app's `onPointerMove` handler — where
+Spectr decides `grab` / `grabbing` / `col-resize` / `crosshair` — never ran on a
+hover, and the filter surface reported the cursor it mounted with (`crosshair`)
+wherever the pointer went.
+
+Measured directly, with a listener installed on the surface from inside the app:
+
+```
+                            JS pointermove events on [data-spectr-filter-surface]
+4 hovers, 0 drags   before      0        <- the finding
+4 hovers, 0 drags   after       4
+0 hovers, 2 drags   before      2        <- the CONTROL: drags always reached JS,
+0 hovers, 2 drags   after       2           so a zero above is an absence, not a
+                                            dead listener
+```
+
+The drag arm is what makes the hover zero mean something. `pointerdown`,
+`pointerup` and drag-driven `pointermove` all fired throughout, so the listener,
+the element lookup and the dispatch harness were all live while hovers produced
+nothing.
+
+### RED then GREEN, one variable
+
+The pair below differs **only** by whether
+`deliver_hover_and_resolve_cursor` performs its DOM dispatch. Same Spectr
+source, same probe, same points, same SDK build tree; the object file was
+deleted before each rebuild and the recompile line confirmed in the build log
+rather than trusting `Built target`.
+
+```
+$ python3 tools/cursor_invariants.py docs/evidence/2026-09-07/CUR-RED.cursor.json \
+    --expect CUR-1-canvas=crosshair --expect CUR-2-viewport=grab \
+    --expect CUR-3-viewport-drag=grabbing \
+    --expect CUR-4-trim-left=ew-resize --expect CUR-4-trim-right=ew-resize \
+    --require-responsive CUR-1-canvas,CUR-2-viewport \
+    --require-responsive CUR-2-viewport,CUR-4-trim-left
+
+  OK   CUR-1-canvas          want=crosshair          got=crosshair
+  RED  CUR-2-viewport        want=grab               got=crosshair
+  OK   CUR-3-viewport-drag   want=grabbing           got=grabbing
+  RED  CUR-4-trim-left       want=horizontal-resize  got=crosshair
+  RED  CUR-4-trim-right      want=horizontal-resize  got=crosshair
+  RED  CUR-1-canvas and CUR-2-viewport both report 'crosshair'
+  RED  CUR-2-viewport and CUR-4-trim-left both report 'crosshair'
+  exit 1
+
+  (same command, CUR-GREEN.cursor.json)
+  OK   CUR-1-canvas          want=crosshair          got=crosshair    ns=crosshairCursor
+  OK   CUR-2-viewport        want=grab               got=grab         ns=openHandCursor
+  OK   CUR-3-viewport-drag   want=grabbing           got=grabbing     ns=closedHandCursor
+  OK   CUR-4-trim-left       want=horizontal-resize  got=…            ns=resizeLeftRightCursor
+  OK   CUR-4-trim-right      want=horizontal-resize  got=…            ns=resizeLeftRightCursor
+  OK   CUR-1-canvas=crosshair differs from CUR-2-viewport=grab
+  OK   CUR-2-viewport=grab differs from CUR-4-trim-left=horizontal-resize
+  exit 0
+```
+
+### Why CUR-1 needed the responsiveness rule
+
+`crosshair` is the value the filter surface **mounts** with, so a rule that only
+asserts "crosshair over the plot" passes on a build where the cursor never
+changes at all — CUR-1 reads OK in the RED column above for exactly that reason.
+`--require-responsive` names two points that must NOT agree, and it is what
+separates "the app is answering" from "the app is showing one constant". In the
+green run the same view `__behavior_pr_3` reports **five** different cursors
+depending on where the pointer is (`crosshair`, `grab`, `grabbing`,
+`horizontal-resize`, and `default` off the plot), which no static value can do.
+
+### The last hop is observed, not transcribed
+
+The in-app probe stops at `View::CursorStyle`. `tools/cursor-proof/` links the
+shipping `window_host_mac_geometry.mm.o` out of the SDK archive, calls
+`set_ns_cursor_for_style`, and reads `[NSCursor currentCursor]` back:
+
+```
+$ tools/cursor-proof/build.sh <sdk-prefix>
+OK    CUR-1  style -> crosshairCursor          current=crosshairCursor
+OK    CUR-2  style -> openHandCursor           current=openHandCursor
+OK    CUR-3  style -> closedHandCursor         current=closedHandCursor
+OK    CUR-4  style -> resizeLeftRightCursor    current=resizeLeftRightCursor
+GREEN
+
+$ NS_CURSOR_PROOF_PLANT=1 …            # the same check, one expectation swapped
+RED   CUR-1  style -> IBeamCursor(PLANTED)     current=<NSCursor: 0x…>
+RED   1 of 4 cursor styles mapped to the wrong NSCursor   (exit 1)
+```
+
+### Every plant, shown reddening a reading that passes unplanted
+
+```
+tools/cursor_invariants.py --plant wrong-cursor   crosshair -> zoom-out          exit 1
+tools/cursor_invariants.py --plant no-hit         hit=false                      exit 3 INCONCLUSIVE
+tools/cursor_invariants.py --plant freeze         two points forced to agree     exit 1
+tools/cursor-proof  NS_CURSOR_PROOF_PLANT=1       one NSCursor expectation swap  exit 1
+```
+
+### What this does NOT establish
+
+- **No human has seen these cursors on screen.** The chain is proven to the
+  `[[NSCursor …] set]` call and read back through `[NSCursor currentCursor]`;
+  nobody has moved a physical mouse over the built app and looked.
+- **Standalone only.** `plugin_view_host_mac.mm` (the AU/VST3/CLAP editor host)
+  and the iOS host still never dispatch a buttonless move, so a Spectr **plugin**
+  editor in a DAW is expected to have the same defect. Measured — both files
+  contain zero calls to `dispatch_dom_pointer_event` — but not fixed and not
+  verified here.
+- **The fix is in an unreleased development SDK.** It is not in any published
+  release, so a Spectr built against a shipped SDK still has the defect.
+- **One probe run mutates the app it measures.** The probe is latched to run
+  once and releases its drag, because a press left un-released poisoned every
+  later hover in the same run — the first run reported `grabbing` at *every*
+  point, including the plot, which looked exactly like a uniform app defect and
+  was an instrument artefact.
