@@ -28,6 +28,7 @@
 #include <pulp/midi/buffer.hpp>
 #include <pulp/state/store.hpp>
 #include <pulp/view/frame_clock.hpp>
+#include <pulp/view/layout_snapshot.hpp>
 #include <pulp/view/screenshot.hpp>
 #include <pulp/view/screenshot_compare.hpp>
 #include <pulp/view/scripted_ui.hpp>
@@ -489,6 +490,52 @@ struct Rig {
     }
 };
 
+// ── Appearance invariants: the layout snapshot beside every capture ────────
+//
+// analyze_screenshot_content() reports whole-image aggregates (unique colours,
+// luminance spread, non-background coverage). Those structurally cannot see two
+// labels painting on top of each other, or a label wider than the box it paints
+// in: both defects preserve the image's colour distribution almost exactly. So
+// every capture also writes the laid-out view tree, and tools/appearance_
+// invariants.py asserts the invariants the pixels cannot carry.
+//
+// dump_layout_tree() emits a pre-order node list without a depth field, so a
+// consumer cannot tell an ancestor from a sibling and would have to infer
+// containment. The depth sidecar removes that guess: it is the same pre-order
+// walk, so index i in the array is depth of node i in the snapshot.
+void collect_depths(const pulp::view::View& view, int depth, std::vector<int>& out) {
+    out.push_back(depth);
+    for (const auto* child : view.sorted_children_by_z_index())
+        collect_depths(*child, depth + 1, out);
+}
+
+void write_layout_snapshot(const pulp::view::View& root,
+                           const std::filesystem::path& dir,
+                           const std::string& name,
+                           float width,
+                           float height) {
+    pulp::view::LayoutTreeSnapshotOptions options;
+    options.surface = name;
+    options.viewport_width = width;
+    options.viewport_height = height;
+    const auto json = pulp::view::dump_layout_tree(root, options);
+
+    const auto path = dir / (name + ".layout.json");
+    std::ofstream out(path);
+    out << json;
+    out.close();
+
+    std::vector<int> depths;
+    collect_depths(root, 0, depths);
+    const auto depth_path = dir / (name + ".depths.json");
+    std::ofstream depth_out(depth_path);
+    depth_out << '[';
+    for (std::size_t i = 0; i < depths.size(); ++i)
+        depth_out << (i ? "," : "") << depths[i];
+    depth_out << "]\n";
+    depth_out.close();
+}
+
 // Capture and gate. A written file is not a result: the SDK content floor is
 // the oracle that separates "rendered" from "a dark empty frame".
 void capture_view_tree(pulp::view::View& root,
@@ -511,6 +558,9 @@ void capture_view_tree(pulp::view::View& root,
     out.write(reinterpret_cast<const char*>(png.data()),
               static_cast<std::streamsize>(png.size()));
     out.close();
+
+    write_layout_snapshot(root, dir, name, static_cast<float>(width),
+                          static_cast<float>(height));
 
     // The whole-frame floor is deliberately lenient and is measured over the
     // ENTIRE capture. A Spectr frame passes it on the dimmed editor behind a
