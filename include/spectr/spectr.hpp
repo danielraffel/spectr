@@ -460,6 +460,7 @@ private:
     bool settings_fixture_scrolled_ = false;
     bool settings_fixture_dumped_ = false;
     bool settings_fixture_key_sent_ = false;
+    bool live_capture_done_ = false;
     // Pointer fixtures. A drag is the only way to reach the states the status
     // overlay is judged in, and a screenshot cannot be taken mid-gesture, so
     // the fixture probes the banner's live text between the press and the

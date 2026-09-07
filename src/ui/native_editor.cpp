@@ -854,6 +854,45 @@ bool Spectr::tick_native_analyzer_(float dt) {
             << "}\n";
     }
 
+    // LIVE-WINDOW capture, as distinct from the offscreen composite.
+    //
+    // Every capture in this harness has gone through view::render_to_png, which
+    // composites the view tree directly and never touches the window server's
+    // invalidation path. A control that is laid out, has ink in that composite,
+    // and still fails to repaint in a real window is invisible to it -- which
+    // is why hand testing found repaint defects that nine detectors passed.
+    //
+    // WindowHost::capture_png() reads the host surface instead, and
+    // supports_compositor_capture() says whether those pixels came from the
+    // VISIBLE compositor or from a deterministic back buffer. That flag is
+    // reported rather than assumed: a back-buffer capture has the same blind
+    // spot as render_to_png, so treating it as a live capture would reintroduce
+    // exactly the error this exists to remove.
+    if (!live_capture_done_) {
+        if (const auto* out = std::getenv("SPECTR_LIVE_CAPTURE");
+            out != nullptr && *out != '\0' && native_editor_root_ != nullptr) {
+            auto* host = native_editor_root_->window_host();
+            if (host == nullptr) {
+                std::fprintf(stderr, "[live-capture] no WindowHost — cannot "
+                                     "capture a live surface\n");
+                live_capture_done_ = true;
+            } else {
+                const auto png = host->capture_png();
+                std::fprintf(stderr,
+                             "[live-capture] bytes=%zu compositor=%s\n",
+                             png.size(),
+                             host->supports_compositor_capture() ? "yes"
+                                                                 : "NO (back buffer)");
+                if (!png.empty()) {
+                    std::ofstream f(out, std::ios::binary);
+                    f.write(reinterpret_cast<const char*>(png.data()),
+                            static_cast<std::streamsize>(png.size()));
+                }
+                live_capture_done_ = true;
+            }
+        }
+    }
+
     // Key-driven rows -- Escape closing a modal, arrows moving a highlight --
     // cannot be reached by clicking, and a capture that cannot reach a state
     // cannot review it. Delivered as a real KeyEvent through the same
