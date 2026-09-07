@@ -1837,12 +1837,31 @@ function SpectrSettingsChips({ value, onChange, opts }) {
 }
 function SpectrSettingsSlider({ value, min, max, step, onChange, fmt }) {
   return <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 200 }}>
-    <input data-spectr-setting-slider type="range" min={min} max={max} step={step} value={value}
-      onInput={event => {
-        const candidate = Number(spectrInputValue(event));
-        if (Number.isFinite(candidate)) onChange(candidate);
+    {/* An explicit track, fill and thumb rather than type="range". The
+        materialized runtime has no native range widget, so the input lowers to
+        a box with no height and no child: it paints as a bare rule and cannot
+        be hit-tested. SpectrSettingsToggle already builds its knob this way. */}
+    <div data-spectr-setting-slider role="slider"
+      aria-valuemin={min} aria-valuemax={max} aria-valuenow={value}
+      onPointerDown={event => {
+        const box = event.currentTarget.getBoundingClientRect();
+        if (!(box.width > 0)) return;
+        const ratio = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
+        const raw = min + ratio * (max - min);
+        const snapped = step ? Math.round(raw / step) * step : raw;
+        const next = Math.max(min, Math.min(max, snapped));
+        if (Number.isFinite(next)) onChange(next);
       }}
-      style={{ flex: 1, accentColor: 'hsl(200,80%,60%)' }} />
+      style={{ position: 'relative', flex: 1, height: 4, borderRadius: 2,
+               background: 'rgba(255,255,255,0.15)', cursor: 'pointer' }}>
+      <div style={{ position: 'absolute', left: 0, top: 0, height: 4, borderRadius: 2,
+                    background: 'hsl(200,80%,60%)',
+                    width: (100 * (value - min) / ((max - min) || 1)) + '%' }} />
+      <div data-spectr-setting-slider-thumb
+        style={{ position: 'absolute', top: -5, width: 14, height: 14, borderRadius: 7,
+                 background: '#fff', border: '1px solid rgba(0,0,0,0.35)', marginLeft: -7,
+                 left: (100 * (value - min) / ((max - min) || 1)) + '%' }} />
+    </div>
     <span className="tnum" style={{ width: 36, textAlign: 'right', fontSize: 10, opacity: 0.75 }}>
       {fmt ? fmt(value) : value.toFixed(2)}
     </span>
