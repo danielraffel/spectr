@@ -8,6 +8,7 @@
 #include <pulp/format/plugin_descriptor.hpp>
 #include <cstdio>
 #include <pulp/view/buttons.hpp>
+#include <pulp/view/input_events.hpp>
 #include <pulp/view/layout_snapshot.hpp>
 #include <pulp/view/ui_components.hpp>
 #include <pulp/view/view.hpp>
@@ -637,6 +638,44 @@ bool Spectr::tick_native_analyzer_(float dt) {
             }
         } else {
             settings_fixture_scrolled_ = true;
+        }
+    }
+
+    // Key-driven rows -- Escape closing a modal, arrows moving a highlight --
+    // cannot be reached by clicking, and a capture that cannot reach a state
+    // cannot review it. Delivered as a real KeyEvent through the same
+    // on_key_event path a window host uses, not as a synthetic JS shortcut,
+    // because the row is about what the app does with a key press.
+    if (!settings_fixture_key_sent_ && settings_fixture_scrolled_) {
+        if (const auto* key = std::getenv("SPECTR_KEY");
+            key != nullptr && native_editor_root_ != nullptr) {
+            const std::string_view name{key};
+            pulp::view::KeyCode code = pulp::view::KeyCode::unknown;
+            if (name == "escape") code = pulp::view::KeyCode::escape;
+            else if (name == "enter") code = pulp::view::KeyCode::enter;
+            else if (name == "tab") code = pulp::view::KeyCode::tab;
+            else if (name == "up") code = pulp::view::KeyCode::up;
+            else if (name == "down") code = pulp::view::KeyCode::down;
+            if (code == pulp::view::KeyCode::unknown) {
+                std::fprintf(stderr, "[key-fixture] unknown key '%s'\n", key);
+            } else {
+                pulp::view::KeyEvent down; down.key = code; down.is_down = true;
+                pulp::view::KeyEvent up;   up.key = code;   up.is_down = false;
+                const bool handled = native_editor_root_->on_key_event(down);
+                native_editor_root_->on_key_event(up);
+                // handled=no is NOT evidence that the app ignores the key.
+                // The editor is a materialized JS tree and nothing has been
+                // shown to forward a native KeyEvent into it, so a false here
+                // is equally consistent with the event never arriving. Any row
+                // resting on this must treat it as inconclusive until a host
+                // key path into the runtime is demonstrated.
+                std::fprintf(stderr,
+                             "[key-fixture] %s handled=%s (a 'no' does not "
+                             "prove the app ignores it -- no native->runtime "
+                             "key route has been demonstrated)\n",
+                             key, handled ? "yes" : "no");
+            }
+            settings_fixture_key_sent_ = true;
         }
     }
 
