@@ -3155,6 +3155,10 @@ SUPERSEDED_RUNTIME_EDITS = {
 }
 
 RUNTIME_EDITS = [
+    ('status overlay follows authored layout, not a frozen capture box',
+     '    const activeLayoutBindings = (authoredLayoutState ? []\n      : (Array.isArray(metadata && metadata.layout_bindings)\n          ? metadata.layout_bindings : [])).filter(\n        (binding) => !isSettingsDescendantBinding(binding)).filter(\n        (binding) => !belongsToAuthoredManagerDetail(binding));',
+     '    const statusOverlayShell = document.querySelector(\n      "[data-spectr-status-shell]") || document.querySelector(\n      "[data-spectr-status-banner]");\n    // The status overlay is authored to sit BELOW the graph\'s top ruler and to\n    // size itself to its own text. A captured box freezes it at\n    // {top:60,height:26} while the ruler line is at y=62, so the banner paints\n    // over the ruler and its 225px readout is clipped into a 210px box. The\n    // authored `top` and the binding are both inert against a frozen box; only\n    // dropping the binding lets the authored layout apply.\n    const isStatusOverlayBinding = (binding) => {\n      const node = materializedNodeAtPath(binding, values, true);\n      const shell = statusOverlayShell;\n      if (!node || !shell) return false;\n      let current = node;\n      while (current) {\n        if (current === shell) return true;\n        current = current.parentElement || current._parentElement || null;\n      }\n      return false;\n    };\n    const activeLayoutBindings = (authoredLayoutState ? []\n      : (Array.isArray(metadata && metadata.layout_bindings)\n          ? metadata.layout_bindings : [])).filter(\n        (binding) => !isSettingsDescendantBinding(binding)).filter(\n        (binding) => !belongsToAuthoredManagerDetail(binding)).filter(\n        (binding) => !isStatusOverlayBinding(binding));',
+     'isStatusOverlayBinding'),
     ('fixed text-only commits do not dirty imported layout metadata',
      '  ]);\n'
      '  var PulpHostConfig = {',

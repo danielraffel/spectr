@@ -9613,11 +9613,32 @@ function createWidget(type, id, parentId, props) {
       }
       return false;
     };
+    const statusOverlayShell = document.querySelector(
+      "[data-spectr-status-shell]") || document.querySelector(
+      "[data-spectr-status-banner]");
+    // The status overlay is authored to sit BELOW the graph's top ruler and to
+    // size itself to its own text. A captured box freezes it at
+    // {top:60,height:26} while the ruler line is at y=62, so the banner paints
+    // over the ruler and its 225px readout is clipped into a 210px box. The
+    // authored `top` and the binding are both inert against a frozen box; only
+    // dropping the binding lets the authored layout apply.
+    const isStatusOverlayBinding = (binding) => {
+      const node = materializedNodeAtPath(binding, values, true);
+      const shell = statusOverlayShell;
+      if (!node || !shell) return false;
+      let current = node;
+      while (current) {
+        if (current === shell) return true;
+        current = current.parentElement || current._parentElement || null;
+      }
+      return false;
+    };
     const activeLayoutBindings = (authoredLayoutState ? []
       : (Array.isArray(metadata && metadata.layout_bindings)
           ? metadata.layout_bindings : [])).filter(
         (binding) => !isSettingsDescendantBinding(binding)).filter(
-        (binding) => !belongsToAuthoredManagerDetail(binding));
+        (binding) => !belongsToAuthoredManagerDetail(binding)).filter(
+        (binding) => !isStatusOverlayBinding(binding));
     // Selected preset names are authored state, not frozen capture text.
     const authoredTextState = activeCapturedState === "bands";
     const activeTextBindings = (authoredTextState ? []

@@ -1014,8 +1014,21 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     // host is testing its own copy, and the copy is what goes
                     // stale; that is how "cursors reach the shipping runtime"
                     // came to stand beside "not visible in installed builds".
+#if defined(SPECTR_HAS_HOVER_DISPATCH)
                     const auto hover =
                         pulp::view::deliver_hover_and_resolve_cursor(root, a);
+#else
+                    // deliver_hover_and_resolve_cursor lands with the Pulp
+                    // hover-dispatch fix and does not exist in the pinned SDK.
+                    // Guarded rather than reimplemented: a probe that copies
+                    // the host's steps tests its own copy, and the copy is what
+                    // goes stale. Without the fix this probe cannot measure
+                    // what it exists to measure, so it reports a miss instead
+                    // of a cursor a viewer never sees.
+                    struct { pulp::view::View* target;
+                             pulp::view::View::CursorStyle style; }
+                        hover{nullptr, pulp::view::View::CursorStyle::default_};
+#endif
                     if (hover.target == nullptr) {
                         hit_missing = true;
                     } else {
