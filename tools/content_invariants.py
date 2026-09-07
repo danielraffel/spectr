@@ -30,6 +30,10 @@ def paintable_texts(snapshot: str, in_tree: bool = False) -> list[tuple[str, str
     ai.resolve_parents(nodes)
     out = []
     for n in ai.text_nodes(nodes):
+        # A per-node `visible` flag does not compose: a label inside a hidden
+        # modal still reports visible. Ask whether a VIEWER can see it.
+        if not ai.effectively_visible(nodes, n):
+            continue
         for text, rect in n.texts:
             # Which box counts depends on whether a scroll container is in
             # play, and the snapshot cannot tell us the difference.

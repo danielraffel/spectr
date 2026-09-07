@@ -287,6 +287,30 @@ def on_screen_box(nodes: list[Node], node: Node, text_rect: Rect) -> Rect:
     return painted if clip is None else painted.intersect(clip)
 
 
+def effectively_visible(nodes: list[Node], node: Node) -> bool:
+    """Visible to a viewer, meaning this node AND every ancestor is visible.
+
+    `dump_layout_tree` emits each node's own `view.visible()` and does not
+    inherit it, so a label inside a hidden modal still reports `visible: true`.
+    Filtering per-node therefore reports a dismissed panel as still on screen —
+    which is exactly how a working dismissal was mis-reported as a defect.
+    Requires exact ancestry for the same reason the clip test does.
+    """
+    if not node.visible:
+        return False
+    if not ancestry_is_exact(nodes):
+        raise RuntimeError(
+            "effective visibility requires exact ancestry: this snapshot has "
+            "no depth sidecar, and a per-node visible flag does not compose"
+        )
+    by_index = {n.index: n for n in nodes}
+    for ancestor_index in ancestors(nodes, node.index):
+        ancestor = by_index.get(ancestor_index)
+        if ancestor is not None and not ancestor.visible:
+            return False
+    return True
+
+
 def text_nodes(nodes: list[Node]) -> list[Node]:
     return [n for n in nodes if n.visible and n.texts]
 
