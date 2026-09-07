@@ -7593,6 +7593,11 @@
   function normalizeHostProps(_type, rawProps) {
     const hasStyle = rawProps.style !== void 0 && rawProps.style !== null && typeof rawProps.style === "object";
     const hasClassName = typeof rawProps.className === "string" && rawProps.className.length > 0;
+    // A render WITHOUT a style/className source yields a differently SHAPED prop
+    // set than one with it: the flattened visual keys (background, border,
+    // textColor) are simply absent rather than removed. The diff below must not
+    // read that absence as a deletion, or the element is erased instead of
+    // restyled. Mark which shape a prop set came from so the two are separable.
     if (!hasStyle && !hasClassName) return rawProps;
     const out = /* @__PURE__ */ Object.create(null);
     const isSafeKey = (k) => k !== "__proto__" && k !== "constructor" && k !== "prototype";
@@ -7614,6 +7619,7 @@
       if (k === "style" || k === "className") continue;
       out[k] = rawProps[k];
     }
+    Object.defineProperty(out, "__pulpDerivedStyle", { value: true, enumerable: false });
     return out;
   }
   function applyAllProps(instance) {
@@ -7684,10 +7690,23 @@
       applySvgPathStrokeState(id, newProps, true);
       mutated = true;
     }
+    // Visual props hoisted out of `style`/`className` are DERIVED, not authored.
+    // When a render arrives without its style source the derived keys are absent
+    // rather than deleted, so resetting them here erases the element (a button
+    // loses fill, border and text in one frame). Only honour a removal when both
+    // prop sets came from the same shape.
+    const derivedShapeChanged =
+      oldProps.__pulpDerivedStyle === true && newProps.__pulpDerivedStyle !== true;
+    const isDerivedVisualKey = (k) =>
+      k === "background" || k === "backgroundGradient" || k === "textColor" ||
+      k === "border" || k === "borderColor" || k === "borderWidth" ||
+      k === "borderTop" || k === "borderRight" ||
+      k === "borderBottom" || k === "borderLeft";
     for (const key of Object.keys(oldProps)) {
       if (isReactInternal(key)) continue;
       if (key === "children") continue;
       if (svgPathStrokeChanged && (key === "stroke" || key === "strokeGradient")) continue;
+      if (derivedShapeChanged && isDerivedVisualKey(key)) continue;
       if (!(key in newProps)) {
         if (isEventHandler(key)) {
           applyEventHandler(id, key, void 0);

@@ -311,6 +311,39 @@ def effectively_visible(nodes: list[Node], node: Node) -> bool:
     return True
 
 
+def visible_overlap_box(nodes: list[Node], node: Node, text_rect: Rect) -> Rect:
+    """What a viewer can see of this string, for overlap purposes.
+
+    Two strings only collide if BOTH are actually on screen. A row clipped away
+    by a modal cannot overlap the toolbar behind it, and reporting that it does
+    invents a defect out of correct clipping.
+
+    Only `overflow: hidden` ancestors are applied. A `scroll` ancestor is
+    deliberately skipped: `dump_layout_tree` records PRE-SCROLL positions, so
+    intersecting a scrolled row against its container's clip says "off screen"
+    for content the viewer is looking straight at. Clipping on hidden is sound
+    because a hidden container does not translate its children.
+    """
+    painted = painted_box(node, text_rect)
+    if not ancestry_is_exact(nodes):
+        return painted
+    by_index = {n.index: n for n in nodes}
+    inside_scroll = False
+    clip: Optional[Rect] = None
+    for ancestor_index in ancestors(nodes, node.index):
+        ancestor = by_index.get(ancestor_index)
+        if ancestor is None:
+            continue
+        if ancestor.overflow == "scroll":
+            inside_scroll = True
+        if ancestor.overflow == "hidden" and ancestor.clip_for_children is not None:
+            clip = (ancestor.clip_for_children if clip is None
+                    else clip.intersect(ancestor.clip_for_children))
+    if inside_scroll or clip is None:
+        return painted
+    return painted.intersect(clip)
+
+
 def text_nodes(nodes: list[Node]) -> list[Node]:
     return [n for n in nodes if n.visible and n.texts]
 
@@ -328,11 +361,11 @@ def detect_overlap(nodes: list[Node], min_area: float) -> tuple[list[Violation],
                 suppressed += 1
                 continue
             for a_text, a_rect in a.texts:
-                pa = painted_box(a, a_rect)
+                pa = visible_overlap_box(nodes, a, a_rect)
                 if pa.area <= 0:
                     continue
                 for b_text, b_rect in b.texts:
-                    pb = painted_box(b, b_rect)
+                    pb = visible_overlap_box(nodes, b, b_rect)
                     if pb.area <= 0:
                         continue
                     hit = pa.intersect(pb)
@@ -382,6 +415,15 @@ def detect_clip(nodes: list[Node], tol: float, strict_height: bool = False) -> l
                 continue  # a zero-height box is COLLAPSE's finding, not CLIP's
             over = rect.h - n.rect.h
             if over <= tol:
+                continue
+            if rect.w <= 0.0:
+                # Multi-line sentinel: Label::intrinsic_width() returns 0 for
+                # these, and measured_height is then a computed wrap ESTIMATE
+                # for the available width -- not the extent that paints. A
+                # header that renders on one line reports two lines' worth here,
+                # so asserting WRAP from it invents a defect. Verified against
+                # pixels: "SPECTR . ZOOMABLE FILTER BANK" paints on one line
+                # while reporting 36px in a 14px box.
                 continue
             if not strict_height and rect.h < n.rect.h * WRAP_RATIO:
                 continue  # leading, not an extra line
