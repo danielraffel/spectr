@@ -490,6 +490,15 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
             // ...), so a native event delivered to the View tree is simply not
             // where the handler is -- dispatching one and reading handled=false
             // measured the wrong thing rather than the app.
+            // A raw eval hook. Distinguishing "the reconciler never handed
+            // the style over" from "the style was handed over and did not take
+            // effect" needs one direct write from JS, and guessing between
+            // those two has already cost this session three wrong theories.
+            if (const auto* script = std::getenv("SPECTR_EVAL");
+                script != nullptr && *script != '\0') {
+                bridge->load_script(std::string(script), "spectr-eval-fixture");
+            }
+
             if (const auto* key = std::getenv("SPECTR_KEY_JS");
                 key != nullptr && *key != '\0') {
                 // POSITIVE CONTROL, not decoration. A dispatch that reaches
