@@ -6,7 +6,9 @@
 #include <pulp/runtime/trace.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/format/plugin_descriptor.hpp>
+#include <cstdio>
 #include <pulp/view/buttons.hpp>
+#include <pulp/view/ui_components.hpp>
 #include <pulp/view/view.hpp>
 #include <pulp/view/window_host.hpp>
 
@@ -292,6 +294,19 @@ void append_trace(std::ostringstream& js,
 
 } // namespace
 
+namespace {
+// The settings body is the only scroll container in the panel, but the editor
+// tree carries others, so collect them all and let the caller skip any that
+// cannot scroll.
+void collect_settings_scroll_views(pulp::view::View& view,
+                                   std::vector<pulp::view::ScrollView*>& out) {
+    if (auto* scroll = dynamic_cast<pulp::view::ScrollView*>(&view))
+        out.push_back(scroll);
+    for (auto* child : view.sorted_children_by_z_index())
+        collect_settings_scroll_views(*child, out);
+}
+} // namespace
+
 std::vector<pulp::view::CommandID> Spectr::commands() const {
     return {kOpenSettingsCommand};
 }
@@ -561,6 +576,31 @@ void Spectr::open_native_editor_(pulp::view::View& view) {
 
 bool Spectr::tick_native_analyzer_(float dt) {
     if (!native_scripted_ui_ || !native_scripted_ui_->bridge()) return false;
+
+    // The About block and its Status Info description sit below the fold, and
+    // a capture of the unscrolled panel cannot show whether they truncate or
+    // whether the header stays put while they move. Scrolling at mount is too
+    // early -- the settings body measures 466x0 with no content until Yoga has
+    // run -- so wait for a laid-out scroll container and act once.
+    if (!settings_fixture_scrolled_) {
+        if (const auto* scroll_to = std::getenv("SPECTR_SETTINGS_SCROLL");
+            scroll_to != nullptr) {
+            std::vector<pulp::view::ScrollView*> found;
+            if (native_editor_root_ != nullptr)
+                collect_settings_scroll_views(*native_editor_root_, found);
+            for (auto* scroll : found) {
+                const float max_y = scroll->content_size().height
+                                  - scroll->bounds().height;
+                if (max_y <= 0.0f) continue;
+                scroll->set_scroll(scroll->scroll_x(),
+                                   max_y * std::strtof(scroll_to, nullptr));
+                settings_fixture_scrolled_ = true;
+            }
+        } else {
+            settings_fixture_scrolled_ = true;
+        }
+    }
+
 #if defined(SPECTR_ENABLE_PERF_FIXTURES)
     // Test-only: forces an extra host-automation projection every tick to
     // stress the live-state dispatch path under load. Gated by

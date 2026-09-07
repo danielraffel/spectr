@@ -454,6 +454,9 @@ private:
     std::unique_ptr<pulp::view::ScriptedUiSession> native_scripted_ui_{};
     std::filesystem::path native_package_path_{};
     pulp::view::View* native_editor_root_ = nullptr;
+    // Latches once the SPECTR_SETTINGS_SCROLL fixture has positioned the
+    // settings body, so the capture is not re-scrolled every frame.
+    bool settings_fixture_scrolled_ = false;
     pulp::view::View* native_resize_grip_ = nullptr;
     // Last host size reported to on_view_resized. Under a pinned viewport the
     // ROOT is constant at the authored box, so root bounds are useless as a
