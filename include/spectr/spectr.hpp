@@ -20,6 +20,7 @@
 #include <bitset>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -459,6 +460,14 @@ private:
     bool settings_fixture_scrolled_ = false;
     bool settings_fixture_dumped_ = false;
     bool settings_fixture_key_sent_ = false;
+    // ── COR gesture / resize fixtures ────────────────────────────────
+    // A "fast drag" row is a claim about the samples BETWEEN press and
+    // release, and a resize row is a claim about more than one window size.
+    // Neither is visible in a screenshot, which is taken once and after the
+    // release, so both need state read from the plugin itself.
+    bool gesture_probe_done_ = false;
+    bool resize_fixture_applied_ = false;
+    bool resize_request_sent_ = false;
     pulp::view::View* native_resize_grip_ = nullptr;
     // Last host size reported to on_view_resized. Under a pinned viewport the
     // ROOT is constant at the authored box, so root bounds are useless as a
