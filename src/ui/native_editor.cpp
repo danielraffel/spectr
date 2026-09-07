@@ -8,6 +8,7 @@
 #include <pulp/format/plugin_descriptor.hpp>
 #include <cstdio>
 #include <pulp/view/buttons.hpp>
+#include <pulp/view/layout_snapshot.hpp>
 #include <pulp/view/ui_components.hpp>
 #include <pulp/view/view.hpp>
 #include <pulp/view/window_host.hpp>
@@ -450,6 +451,32 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                     "globalThis.__pulpRuntimeSettle__(16);",
                     "spectr-open-settings-fixture");
             }
+            // A capture can only photograph what a click has already revealed,
+            // and the states worth reviewing -- an expanded LFO, a selected
+            // target -- exist only after one. Selectors are comma-separated and
+            // applied in order; a miss throws rather than producing a capture
+            // of the state we did not reach, which would be indistinguishable
+            // from a passing capture of a broken one.
+            if (const auto* clicks = std::getenv("SPECTR_CLICK");
+                clicks != nullptr && *clicks != '\0') {
+                std::string script;
+                std::string_view remaining{clicks};
+                while (!remaining.empty()) {
+                    const auto comma = remaining.find(',');
+                    const auto selector = remaining.substr(0, comma);
+                    if (!selector.empty()) {
+                        script += "if (!globalThis.__pulpActivateMaterializedElement__('";
+                        script += std::string(selector);
+                        script += "', 'click', null)) throw new Error('no element: ";
+                        script += std::string(selector);
+                        script += "'); globalThis.__pulpRuntimeSettle__(8); ";
+                    }
+                    if (comma == std::string_view::npos) break;
+                    remaining.remove_prefix(comma + 1);
+                }
+                if (!script.empty())
+                    bridge->load_script(script, "spectr-click-fixture");
+            }
             if (const auto* fixture = std::getenv("SPECTR_BANDS_PERF_FIXTURE");
                 fixture && std::string_view{fixture} == "1") {
                 bridge->load_script(
@@ -582,6 +609,23 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // whether the header stays put while they move. Scrolling at mount is too
     // early -- the settings body measures 466x0 with no content until Yoga has
     // run -- so wait for a laid-out scroll container and act once.
+    // Dump the laid-out tree from the SAME process that produces the
+    // screenshot. Running the detector on a headless harness while the picture
+    // comes from the installed app leaves a seam -- same code path, different
+    // process -- and a row closed across that seam is closed on an assumption.
+    if (!settings_fixture_dumped_ && settings_fixture_scrolled_) {
+        if (const auto* dump = std::getenv("SPECTR_LAYOUT_DUMP");
+            dump != nullptr && native_editor_root_ != nullptr) {
+            pulp::view::LayoutTreeSnapshotOptions options;
+            options.surface = "standalone";
+            options.viewport_width = native_editor_root_->bounds().width;
+            options.viewport_height = native_editor_root_->bounds().height;
+            std::ofstream out(dump);
+            out << pulp::view::dump_layout_tree(*native_editor_root_, options);
+            settings_fixture_dumped_ = true;
+        }
+    }
+
     if (!settings_fixture_scrolled_) {
         if (const auto* scroll_to = std::getenv("SPECTR_SETTINGS_SCROLL");
             scroll_to != nullptr) {
