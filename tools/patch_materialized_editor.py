@@ -1236,7 +1236,7 @@ EDITS = [
 
     ('selected preset trigger truncates without losing its full title',
      'React.createElement("span", { "data-spectr-selected-preset": true, style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1 } }, selectedPatternName, " \\u25BE")',
-     'React.createElement("span", { "data-spectr-selected-preset": true, title: selectedPatternName, style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1, fontFamily: "var(--mono)" } }, selectedPatternName.length > 14 ? selectedPatternName.slice(0, 14) + "\\u2026" : selectedPatternName, " \\u25BE")'),
+     'React.createElement("span", { "data-spectr-selected-preset": true, title: selectedPatternName, style: { marginLeft: 6, display: "inline-flex", alignItems: "center", lineHeight: 1, width: 63, overflow: "hidden", whiteSpace: "nowrap" } }, selectedPatternName.length > 6 ? selectedPatternName.slice(0, 6) + "\u2026 \\u25BE" : selectedPatternName + " \\u25BE")'),
 
     ('selected preset name reaches chrome',
      '      status,\n'
@@ -3105,6 +3105,16 @@ DOCUMENT_EDITS = [
     ('selected preset caption matches its sibling menu captions',
      'React.createElement(\\"span\\", { \\"data-spectr-selected-preset\\": true, title: selectedPatternName, style: { marginLeft: 6, display: \\"inline-flex\\", alignItems: \\"center\\", lineHeight: 1, width: 63, overflow: \\"hidden\\", whiteSpace: \\"nowrap\\" } }, selectedPatternName.length > 6 ? selectedPatternName.slice(0, 6) + \\"… \\\\u25BE\\" : selectedPatternName + \\" \\\\u25BE\\")',
      'React.createElement(\\"span\\", { \\"data-spectr-selected-preset\\": true, title: selectedPatternName, style: { marginLeft: 6, display: \\"inline-flex\\", alignItems: \\"center\\", lineHeight: 1, fontFamily: \\"var(--mono)\\" } }, selectedPatternName.length > 14 ? selectedPatternName.slice(0, 14) + \\"\\\\u2026\\" : selectedPatternName, \\" \\\\u25BE\\")'),
+
+    # The preset dropdown's MANAGE entry is the only way into the preset
+    # manager, and nothing on the surface said it also answers to a chord.
+    # The label carries the chord itself rather than a second child: the
+    # native materialized runtime paints an ADDED child at its container's
+    # first position, on top of what is already there (see the module
+    # docstring), so a separate shortcut span would ship an overlap.
+    ('manage entry names its keyboard chord',
+     '\\"MANAGE\\\\u2026\\"',
+     '\\"MANAGE\\\\u2026  \\\\u21e7\\\\u2318P\\"'),
 ]
 
 
@@ -4543,6 +4553,102 @@ RUNTIME_EDITS = [
      '    for (const binding of activePaintBindings) {\n'
      '      if (liveSettingsLayout) break;\n',
      'They are deliberately NOT'),
+
+    ('preset manager is reachable from a keyboard chord',
+     '  if (capturedStates.length > 0) g5.__pulpRefreshMaterializedState__();\n',
+     '  if (capturedStates.length > 0) g5.__pulpRefreshMaterializedState__();\n'
+     '\n'
+     '  // Preset Manager keyboard shortcut: Cmd+Shift+P (Ctrl+Shift+P elsewhere).\n'
+     '  // The handler replays the same activation the pattern menu performs, so\n'
+     '  // the shortcut and the menu entry cannot drift apart. Two delivery routes\n'
+     '  // are wired because the host uses whichever is available: a registered\n'
+     '  // native chord intercept (exact modifier mask, consumed before any DOM\n'
+     '  // dispatch) and a `document` keydown listener (the host fans unconsumed\n'
+     '  // keys out to script targets as a DOM keydown). A drive-in-flight flag\n'
+     '  // keeps a double delivery from toggling the pattern menu back shut.\n'
+     '  var SPECTR_MOD_SHIFT = 1 << 0;\n'
+     '  var SPECTR_MOD_CTRL = 1 << 1;\n'
+     '  var SPECTR_MOD_CMD = 1 << 4;\n'
+     '  var spectrPresetManagerDriving = false;\n'
+     '  function spectrPresetManagerIsOpen() {\n'
+     '    return !!globalThis.document?.querySelector?.(\'[aria-label="Pattern manager"]\');\n'
+     '  }\n'
+     '  function spectrPatternMenuIsOpen() {\n'
+     '    return !!(typeof g5.__pulpFindMaterializedElement__ === "function"\n'
+     '      && g5.__pulpFindMaterializedElement__(\n'
+     '        "[data-spectr-menu-options]", \'[data-spectr-menu-root="pattern"]\'));\n'
+     '  }\n'
+     '  function spectrDrivePresetManagerSteps(steps, index, attempts) {\n'
+     '    if (index >= steps.length) {\n'
+     '      spectrPresetManagerDriving = false;\n'
+     '      return;\n'
+     '    }\n'
+     '    const activated = g5.__pulpActivateMaterializedElement__(steps[index], "click", {\n'
+     '      type: "click",\n'
+     '      preventDefault: function() {\n'
+     '      },\n'
+     '      stopPropagation: function() {\n'
+     '      },\n'
+     '      stopImmediatePropagation: function() {\n'
+     '      }\n'
+     '    });\n'
+     '    if (activated) {\n'
+     '      if (typeof g5.__pulpRuntimeSettle__ === "function") g5.__pulpRuntimeSettle__(8);\n'
+     '      index += 1;\n'
+     '      attempts = 0;\n'
+     '    } else if (++attempts > 128) {\n'
+     '      spectrPresetManagerDriving = false;\n'
+     '      return;\n'
+     '    }\n'
+     '    if (index >= steps.length) {\n'
+     '      spectrPresetManagerDriving = false;\n'
+     '      return;\n'
+     '    }\n'
+     '    requestAnimationFrame(function() {\n'
+     '      spectrDrivePresetManagerSteps(steps, index, attempts);\n'
+     '    });\n'
+     '  }\n'
+     '  g5.__spectrOpenPresetManager__ = function() {\n'
+     '    if (spectrPresetManagerIsOpen() || spectrPresetManagerDriving) return true;\n'
+     '    const steps = spectrPatternMenuIsOpen()\n'
+     '      ? ["[data-spectr-pattern-manage]"]\n'
+     '      : [\'[data-spectr-menu-root="pattern"] [data-spectr-menu-trigger]\',\n'
+     '         "[data-spectr-pattern-manage]"];\n'
+     '    spectrPresetManagerDriving = true;\n'
+     '    spectrDrivePresetManagerSteps(steps, 0, 0);\n'
+     '    return true;\n'
+     '  };\n'
+     '  if (typeof g5.registerShortcut === "function") {\n'
+     '    g5.registerShortcut(112, SPECTR_MOD_SHIFT | SPECTR_MOD_CMD,\n'
+     '                        "__spectrOpenPresetManager__");\n'
+     '    g5.registerShortcut(112, SPECTR_MOD_SHIFT | SPECTR_MOD_CTRL,\n'
+     '                        "__spectrOpenPresetManager__");\n'
+     '  }\n'
+     '  if (globalThis.document\n'
+     '      && typeof globalThis.document.addEventListener === "function") {\n'
+     '    globalThis.document.addEventListener("keydown", function(event) {\n'
+     '      if (!event) return;\n'
+     '      const key = String(event.key || "");\n'
+     '      if (key !== "p" && key !== "P") return;\n'
+     '      if (!event.shiftKey || event.altKey) return;\n'
+     '      if (!event.metaKey && !event.ctrlKey) return;\n'
+     '      if (typeof event.preventDefault === "function") event.preventDefault();\n'
+     '      g5.__spectrOpenPresetManager__();\n'
+     '    }, true);\n'
+     '  }\n',
+     '__spectrOpenPresetManager__'),
+
+    # Mirror of the document edit above. A baked text measurement that still
+    # describes the shorter string clips the longer one inside its own box --
+    # the SNAPSHOT defect class -- so the text, its basis width, its glyph
+    # count and its layout box all move together. Widths follow the face's
+    # measured pitch (7.1px/glyph at 10.5px + 0.8 letter-spacing) with the
+    # container's 10px side padding, widened for the two symbol glyphs, which
+    # resolve outside the mono face. Verified in pixels, not inferred.
+    ('manage measurement admits the chord it now carries',
+     '"text": "MANAGE\\u2026", "basis": { "width": 69.703125, "resolved_face": "JetBrainsMono-Regular", "resolved_faces": [{ "family_name": "JetBrains Mono", "post_script_name": "JetBrainsMono-Regular", "is_custom_font": true, "glyph_count": 7 }], "requested": { "font_family": \'"JetBrains Mono", ui-monospace, monospace\', "font_size": 10.5, "font_weight": 400, "font_slant": 0, "letter_spacing": 0.8 } }, "boxes": [{ "left": 10, "top": 7, "width": 49.703125, "height": 14, "start": 0, "length": 7 }]',
+     '"text": "MANAGE\\u2026  \\u21e7\\u2318P", "basis": { "width": 130.0, "resolved_face": "JetBrainsMono-Regular", "resolved_faces": [{ "family_name": "JetBrains Mono", "post_script_name": "JetBrainsMono-Regular", "is_custom_font": true, "glyph_count": 12 }], "requested": { "font_family": \'"JetBrains Mono", ui-monospace, monospace\', "font_size": 10.5, "font_weight": 400, "font_slant": 0, "letter_spacing": 0.8 } }, "boxes": [{ "left": 10, "top": 7, "width": 110.0, "height": 14, "start": 0, "length": 12 }]',
+     '"text": "MANAGE\\u2026  \\u21e7\\u2318P"'),
 ]
 
 

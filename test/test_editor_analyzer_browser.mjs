@@ -447,7 +447,7 @@ const spectrTestPopupContracts = async () => {
     throw new Error('save dialog outside click mutated the editor');
 
   await openMenu('pattern');
-  await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…'),
+  await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…  ⇧⌘P'),
     'manager action'));
   let manager = await spectrWaitFor(() => document.querySelector(
     '[aria-label="Pattern manager"]'), 'manager open');
@@ -456,7 +456,7 @@ const spectrTestPopupContracts = async () => {
   await spectrWaitFor(() => !document.querySelector('[aria-label="Pattern manager"]'),
     'manager Escape close');
   await openMenu('pattern');
-  await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…'),
+  await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…  ⇧⌘P'),
     'manager reopen action'));
   manager = await spectrWaitFor(() => document.querySelector(
     '[aria-label="Pattern manager"]'), 'manager reopen');
@@ -1352,7 +1352,7 @@ window.spectrStartOracle = () => {
         'save dialog close');
 
       await spectrClick(presetsButton);
-      await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…'),
+      await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…  ⇧⌘P'),
         'preset manager menu item'));
       const manager = await spectrWaitFor(() => document.querySelector(
         '[aria-label="Pattern manager"]'), 'pattern manager');

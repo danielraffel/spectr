@@ -107,11 +107,11 @@ const openManager = async () => {
         .map(button => button.textContent.trim()).filter(Boolean).join('|'));
     activate(trigger);
   })()`);
-  await waitFor("Array.from(document.querySelectorAll('button')).some(button => button.textContent.trim() === 'MANAGE…')",
+  await waitFor("Array.from(document.querySelectorAll('button')).some(button => button.textContent.trim() === 'MANAGE…  ⇧⌘P')",
     'Manage menu item');
   await evaluate(`(() => {
     const element = Array.from(document.querySelectorAll('button')).find(button =>
-      button.textContent.trim() === 'MANAGE…');
+      button.textContent.trim() === 'MANAGE…  ⇧⌘P');
     const options = { bubbles: true, cancelable: true, button: 0, buttons: 1 };
     element.dispatchEvent(new PointerEvent('pointerdown', options));
     element.dispatchEvent(new MouseEvent('mousedown', options));

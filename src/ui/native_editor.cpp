@@ -7,6 +7,7 @@
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/format/plugin_descriptor.hpp>
 #include <cstdio>
+#include <pulp/view/script_event_dispatch.hpp>
 #include <pulp/view/buttons.hpp>
 #include <pulp/view/input_events.hpp>
 #include <pulp/view/layout_snapshot.hpp>
@@ -900,39 +901,72 @@ bool Spectr::tick_native_analyzer_(float dt) {
         }
     }
 
-    // Key-driven rows -- Escape closing a modal, arrows moving a highlight --
+    // Key-driven rows -- Escape closing a modal, a chord opening a manager --
     // cannot be reached by clicking, and a capture that cannot reach a state
-    // cannot review it. Delivered as a real KeyEvent through the same
-    // on_key_event path a window host uses, not as a synthetic JS shortcut,
-    // because the row is about what the app does with a key press.
+    // cannot review it. `SPECTR_KEY` accepts `[mod+]*key`, e.g. `escape` or
+    // `cmd+shift+p`; modifiers are cmd, meta, ctrl, alt, shift.
+    //
+    // Delivery mirrors a macOS host, in the host's own order: the focused-view
+    // path first (`View::on_key_event`), then the additive script fan-out via
+    // `script_events::dispatch_key_for_root` -- the same entry point the
+    // plugin editor host calls (and the sibling of the standalone host's
+    // `dispatch_global_key`). That second route is what carries a key into the
+    // materialized JS runtime, where it is matched against the bridge's
+    // registered-shortcut table and, if unclaimed, dispatched as a DOM
+    // `keydown`. Both results are reported so a row can say which answered.
     if (!settings_fixture_key_sent_ && settings_fixture_scrolled_) {
         if (const auto* key = std::getenv("SPECTR_KEY");
             key != nullptr && native_editor_root_ != nullptr) {
-            const std::string_view name{key};
+            std::string spec{key};
+            uint16_t mods = 0;
+            for (;;) {
+                const auto plus = spec.find('+');
+                if (plus == std::string::npos || plus + 1 >= spec.size()) break;
+                const std::string mod = spec.substr(0, plus);
+                if (mod == "cmd")        mods |= pulp::view::kModCmd;
+                else if (mod == "meta")  mods |= pulp::view::kModMeta;
+                else if (mod == "ctrl")  mods |= pulp::view::kModCtrl;
+                else if (mod == "alt")   mods |= pulp::view::kModAlt;
+                else if (mod == "shift") mods |= pulp::view::kModShift;
+                else break;
+                spec.erase(0, plus + 1);
+            }
             pulp::view::KeyCode code = pulp::view::KeyCode::unknown;
-            if (name == "escape") code = pulp::view::KeyCode::escape;
-            else if (name == "enter") code = pulp::view::KeyCode::enter;
-            else if (name == "tab") code = pulp::view::KeyCode::tab;
-            else if (name == "up") code = pulp::view::KeyCode::up;
-            else if (name == "down") code = pulp::view::KeyCode::down;
+            if (spec == "escape") code = pulp::view::KeyCode::escape;
+            else if (spec == "enter") code = pulp::view::KeyCode::enter;
+            else if (spec == "tab") code = pulp::view::KeyCode::tab;
+            else if (spec == "up") code = pulp::view::KeyCode::up;
+            else if (spec == "down") code = pulp::view::KeyCode::down;
+            else if (spec.size() == 1) {
+                // Printable single character. Letters fold to lower case: the
+                // host reports the physical key, and the bridge's own matcher
+                // folds 'A'-'Z' the same way.
+                char c = spec[0];
+                if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+                code = static_cast<pulp::view::KeyCode>(c);
+            }
             if (code == pulp::view::KeyCode::unknown) {
                 std::fprintf(stderr, "[key-fixture] unknown key '%s'\n", key);
             } else {
-                pulp::view::KeyEvent down; down.key = code; down.is_down = true;
-                pulp::view::KeyEvent up;   up.key = code;   up.is_down = false;
-                const bool handled = native_editor_root_->on_key_event(down);
+                pulp::view::KeyEvent down; down.key = code;
+                down.modifiers = mods; down.is_down = true;
+                pulp::view::KeyEvent up;   up.key = code;
+                up.modifiers = mods;   up.is_down = false;
+                const bool view_handled = native_editor_root_->on_key_event(down);
+                const bool script_handled =
+                    pulp::view::script_events::dispatch_key_for_root(
+                        *native_editor_root_, static_cast<int>(code), mods,
+                        /*is_down=*/true);
+                pulp::view::script_events::dispatch_key_for_root(
+                    *native_editor_root_, static_cast<int>(code), mods,
+                    /*is_down=*/false);
                 native_editor_root_->on_key_event(up);
-                // handled=no is NOT evidence that the app ignores the key.
-                // The editor is a materialized JS tree and nothing has been
-                // shown to forward a native KeyEvent into it, so a false here
-                // is equally consistent with the event never arriving. Any row
-                // resting on this must treat it as inconclusive until a host
-                // key path into the runtime is demonstrated.
                 std::fprintf(stderr,
-                             "[key-fixture] %s handled=%s (a 'no' does not "
-                             "prove the app ignores it -- no native->runtime "
-                             "key route has been demonstrated)\n",
-                             key, handled ? "yes" : "no");
+                             "[key-fixture] %s mods=%u view_handled=%s "
+                             "script_handled=%s\n",
+                             key, static_cast<unsigned>(mods),
+                             view_handled ? "yes" : "no",
+                             script_handled ? "yes" : "no");
             }
             settings_fixture_key_sent_ = true;
         }
