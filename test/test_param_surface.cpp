@@ -555,3 +555,79 @@ TEST_CASE("host target automation reclaims the modulation destination") {
           == mask_int(spectr::modulation_target_bit(
                  spectr::ModulationTarget::SnapshotB)));
 }
+
+// An editor edit is authoritative right up to the moment the host starts
+// writing. The store carries the edited value, so a host that begins
+// recording latches onto it rather than onto the pre-edit value -- and the
+// edit must not read back as a host mutation, because that would bump the
+// automation revision and make the editor rebuild its whole projection from
+// canonical state, discarding whatever the user was in the middle of.
+TEST_CASE("an editor edit before the host writes becomes the starting state"
+          " and does not read back as host automation") {
+    Wired w;
+    w.proc->apply_surface_params(false);
+    const auto settled = w.proc->host_automation_revision();
+
+    auto field = w.proc->field();
+    field.bands[5].gain_db = 7.5f;
+    REQUIRE(w.proc->replace_processing_state(
+        field, {200.0f, 3200.0f}, w.proc->layout()));
+
+    // What the host sees the instant Record is armed.
+    CHECK(w.store.get_value(kGainBase + 5) == Approx(7.5f));
+
+    // The editor's own write is not a host mutation.
+    CHECK_FALSE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->host_automation_revision() == settled);
+    CHECK(w.proc->field().bands[5].gain_db == Approx(7.5f));
+    CHECK(w.proc->viewport().min_hz == Approx(200.0f).epsilon(0.0001f));
+
+    // A genuine host write still adopts, and continues from the edit.
+    w.store.set_value(kGainBase + 5, 9.0f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->field().bands[5].gain_db == Approx(9.0f));
+    CHECK(w.proc->host_automation_revision() == settled + 1);
+}
+
+// When a host write burst ends, the last written value is the state that
+// stays. Idle polls after the burst must neither revert canonical state to
+// the pre-burst editor value nor manufacture further editor hydrations, and
+// every write in the burst -- the final one included -- must advance the
+// revision the editor projects from, or the editor keeps painting a value
+// the recording already moved past.
+TEST_CASE("a finished host write burst leaves the last written value in place") {
+    Wired w;
+    w.proc->apply_surface_params(false);
+
+    auto field = w.proc->field();
+    field.bands[11].gain_db = -6.0f;
+    REQUIRE(w.proc->replace_processing_state(
+        field, {100.0f, 6400.0f}, w.proc->layout()));
+    REQUIRE(w.proc->field().bands[11].gain_db == Approx(-6.0f));
+    const auto before_burst = w.proc->host_automation_revision();
+
+    const float ramp[] = {-4.0f, -2.0f, 0.0f, 3.5f};
+    for (const float value : ramp) {
+        w.store.set_value(kGainBase + 11, value);
+        REQUIRE(w.proc->apply_surface_params(false));
+        CHECK(w.proc->field().bands[11].gain_db == Approx(value));
+    }
+    const auto at_stop = w.proc->host_automation_revision();
+    CHECK(at_stop == before_burst + 4);
+
+    for (int poll = 0; poll < 4; ++poll) {
+        CHECK_FALSE(w.proc->apply_surface_params(false));
+    }
+    CHECK(w.proc->host_automation_revision() == at_stop);
+    CHECK(w.proc->field().bands[11].gain_db == Approx(3.5f));
+
+    // The editor-to-host mirror moved with the burst, so the next editor
+    // publication diffs against the recorded value and cannot push the
+    // pre-burst value back over it.
+    auto after = w.proc->field();
+    after.bands[20].gain_db = 1.0f;
+    const spectr::Viewport held = w.proc->viewport();
+    REQUIRE(w.proc->replace_processing_state(after, held, w.proc->layout()));
+    CHECK(w.store.get_value(kGainBase + 11) == Approx(3.5f));
+    CHECK(w.proc->field().bands[11].gain_db == Approx(3.5f));
+}
