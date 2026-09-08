@@ -505,11 +505,17 @@ def detect_collapse(nodes: list[Node]) -> list[Violation]:
 # ─────────────────────────────────────────────────────── planted negatives ──
 
 
-def plant(doc: dict, which: str) -> str:
+def plant(doc: dict, which: str, scope: set[int] | None = None) -> str:
     """Mutate the snapshot so a specific detector MUST go red.
 
     The plant is the control. If a detector stays green under its own plant the
     detector is broken, and the tool says so rather than reporting a pass.
+
+    `scope` restricts the candidate nodes to a set of indices into doc["nodes"].
+    It must be passed whenever the run itself is scoped (`--subtree`): a plant
+    outside the reported subtree is filtered away before any detector sees it,
+    so the control reads GREEN while proving nothing. That is not hypothetical
+    — it is how a `--subtree` run of this tool once reported a clean control.
     """
     def measurable(n: Any) -> bool:
         if not isinstance(n, dict) or not n.get("visible", True):
@@ -522,9 +528,16 @@ def plant(doc: dict, which: str) -> str:
         # make the control vacuous rather than reassuring.
         return float(r.get("w", 0)) > 1.0 and float(r.get("h", 0)) > 1.0
 
-    nodes = [n for n in doc.get("nodes", []) if measurable(n)]
+    nodes = [
+        n
+        for i, n in enumerate(doc.get("nodes", []))
+        if (scope is None or i in scope) and measurable(n)
+    ]
     if not nodes:
-        raise SystemExit("cannot plant: snapshot has no visible text-bearing node")
+        raise SystemExit(
+            "cannot plant: no visible text-bearing node"
+            + (" inside the requested subtree" if scope is not None else " in the snapshot")
+        )
 
     if which == "overlap":
         if len(nodes) < 2:
@@ -656,25 +669,35 @@ def main() -> int:
             f"warning: schema is {schema!r}, expected {SCHEMA!r}", file=sys.stderr
         )
 
-    plant_note = plant(doc, args.plant) if args.plant else None
-
-    nodes = load_nodes(doc)
-    exact_ancestry, _ = resolve_parents(nodes)
-
-    if args.subtree:
+    def scoped() -> tuple[list[Node], bool, set[int] | None]:
+        """Load, resolve ancestry, and apply --subtree. Returns (nodes, exact, keep)."""
+        ns = load_nodes(doc)
+        exact, _ = resolve_parents(ns)
+        if not args.subtree:
+            return ns, exact, None
         keep: set[int] = set()
-        for n in nodes:
+        for n in ns:
             if args.subtree in n.id:
                 keep.add(n.index)
                 keep.update(
                     m.index
-                    for m in nodes
-                    if n.index in set(ancestors(nodes, m.index))
+                    for m in ns
+                    if n.index in set(ancestors(ns, m.index))
                 )
-        nodes = [n for n in nodes if n.index in keep]
-        if not nodes:
-            print(f"no node id contains {args.subtree!r}", file=sys.stderr)
-            return 2
+        return [n for n in ns if n.index in keep], exact, keep
+
+    # Scope FIRST, then plant inside that scope. Planting before the subtree
+    # filter puts the control outside the reported set, where no detector can
+    # see it — a green control that proves nothing.
+    nodes, exact_ancestry, keep = scoped()
+    if args.subtree and not nodes:
+        print(f"no node id contains {args.subtree!r}", file=sys.stderr)
+        return 2
+
+    plant_note = plant(doc, args.plant, keep) if args.plant else None
+    if plant_note:
+        # The plant mutated the raw dicts; re-derive so the detectors see it.
+        nodes, exact_ancestry, _ = scoped()
 
     wanted = set(args.only or ["overlap", "clip", "wrap", "collapse"])
     violations: list[Violation] = []

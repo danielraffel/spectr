@@ -321,3 +321,41 @@ beside it, or the tool falls back to inferred ancestry and sees 2 nodes.
 - **One real CLIP violation exists outside the settings panel** and is not
   SET-6: `__behavior_pr_4x__text` at `(96, 825.24)` renders `⋯` measuring
   `8.00px` in a `7.03px` box (0.97px overflow). Recorded, not fixed.
+
+## The `--subtree` control is no longer vacuous
+
+`appearance_invariants.py --subtree X --plant Y` used to plant on the first
+text-bearing node in the **whole** snapshot and *then* filter to the subtree, so
+the planted defect was discarded before any detector could see it. On this
+surface it landed on the `SPECTR` wordmark, outside the settings panel.
+
+The tool caught its own failure and said so — `BROKEN: the planted negative did
+not redden any detector`, exit 4 — which is why the SET-6 control above had to
+be hand-built as a separate planted snapshot. What hid it from me for a while
+was piping the run through `tail -3`: the BROKEN line prints *first*, so the
+truncation showed a clean `GREEN` and dropped the verdict. **Do not pipe a
+detector through `tail`.**
+
+Fixed by scoping first and planting second. Discriminating control, same
+command and same snapshot:
+
+```
+pre-fix   CONTROL: planted CLIP: widened __behavior_pr_a  text to box+40px  -> BROKEN, exit 4
+post-fix  CONTROL: planted CLIP: widened __behavior_pr_14 text to box+40px  -> RED,    exit 1
+```
+
+`__behavior_pr_14` is the "APPEARANCE" label inside the panel. All four plants
+now redden under `--subtree`:
+
+```
+overlap  RED [OVERLAP=1]    moved __behavior_pr_14 onto __behavior_pr_15
+clip     RED [CLIP=1]       widened __behavior_pr_14 text to box+40px
+wrap     RED [WRAP=1]       doubled __behavior_pr_19__text text height
+collapse RED [COLLAPSE=1]   zeroed height of __behavior_pr_14
+```
+
+Behaviour on the no-plant path is unchanged: across all 31 committed layout
+snapshots the pre-fix and post-fix runs are byte-identical, stdout+stderr+exit
+code. That null has a positive control — re-running the same sweep with the
+post-fix side deliberately altered (`--only clip`) reports 10 of 31 differing,
+so the comparison can in fact detect a difference.
