@@ -1093,15 +1093,47 @@ int main(int argc, char** argv) {
                     pulp::view::KeyEvent down; down.key = k.code;
                     down.is_down = true;
                     pulp::view::KeyEvent up; up.key = k.code; up.is_down = false;
-                    const bool handled = rig.root->on_key_event(down);
+                    // Two different paths, and only the second is the one a
+                    // real host uses for script shortcuts. `on_key_event`
+                    // walks the native View tree and never enters JS, so a
+                    // false from it says nothing about the runtime.
+                    // `dispatch_key_for_root` is what
+                    // plugin_view_host_mac.mm calls to deliver a key to the
+                    // bridge attached to this root.
+                    const bool tree = rig.root->on_key_event(down);
                     rig.root->on_key_event(up);
+                    settle(rig.clock, 12);
+                    const bool bridged =
+                        pulp::view::WidgetBridge::dispatch_key_for_root(
+                            *rig.root, static_cast<int>(k.code),
+                            pulp::view::kModNone, true);
+                    pulp::view::WidgetBridge::dispatch_key_for_root(
+                        *rig.root, static_cast<int>(k.code),
+                        pulp::view::kModNone, false);
                     settle(rig.clock, 24);
-                    std::printf("[shortcut] key '%s' handled=%s\n", k.name,
-                                handled ? "yes" : "no");
+                    std::printf("[shortcut] key '%s' tree=%s bridge=%s\n",
+                                k.name, tree ? "yes" : "no",
+                                bridged ? "yes" : "no");
                     std::string lbl = "after-key-";
                     lbl += k.name;
                     dump_mode(lbl.c_str());
                 }
+            }
+            // Control for the dispatch path itself. Escape is a key this
+            // editor demonstrably handles (the overlay-dismiss path), so if
+            // Escape is ALSO refused by the bridge then the bridge is not
+            // reaching the runtime in this harness and every number-key
+            // reading above is about the instrument, not the app.
+            if (rig.root != nullptr) {
+                const bool esc = pulp::view::WidgetBridge::dispatch_key_for_root(
+                    *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+                    pulp::view::kModNone, true);
+                pulp::view::WidgetBridge::dispatch_key_for_root(
+                    *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+                    pulp::view::kModNone, false);
+                settle(rig.clock, 12);
+                std::printf("[shortcut] control: Escape via bridge = %s\n",
+                            esc ? "yes" : "no");
             }
             // Positive control: the same mode change by click.
             rig.activate("[data-spectr-menu-root=\"edit\"] "
