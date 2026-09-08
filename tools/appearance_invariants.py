@@ -328,37 +328,82 @@ def visible_overlap_box(nodes: list[Node], node: Node, text_rect: Rect) -> Rect:
     if not ancestry_is_exact(nodes):
         return painted
     by_index = {n.index: n for n in nodes}
-    inside_scroll = False
     clip: Optional[Rect] = None
     for ancestor_index in ancestors(nodes, node.index):
         ancestor = by_index.get(ancestor_index)
         if ancestor is None:
             continue
         if ancestor.overflow == "scroll":
-            inside_scroll = True
+            # Stop here. Clips ABOVE a scroll container are expressed in
+            # post-scroll coordinates while this box is pre-scroll, so
+            # intersecting the two says "off screen" for content the viewer is
+            # looking straight at. Clips BELOW it share the node's untranslated
+            # frame and have already been applied.
+            break
         if ancestor.overflow == "hidden" and ancestor.clip_for_children is not None:
             clip = (ancestor.clip_for_children if clip is None
                     else clip.intersect(ancestor.clip_for_children))
-    if inside_scroll or clip is None:
+    if clip is None:
         return painted
     return painted.intersect(clip)
 
 
+def scroll_context(nodes: list[Node], node: Node) -> Optional[int]:
+    """Index of the nearest `overflow: scroll` ancestor, or None for fixed chrome.
+
+    Two boxes are only comparable by position when they share one. Snapshot
+    coordinates are PRE-SCROLL, so a row parked at y=810 inside a viewport that
+    ends at y=742 reports a screen position it does not occupy; measured against
+    the fixed toolbar it manufactures an overlap that no viewer can see. Within
+    ONE scroll context the offset is common to both boxes, so their relative
+    geometry survives.
+    """
+    if not ancestry_is_exact(nodes):
+        return None
+    by_index = {n.index: n for n in nodes}
+    for ancestor_index in ancestors(nodes, node.index):
+        ancestor = by_index.get(ancestor_index)
+        if ancestor is not None and ancestor.overflow == "scroll":
+            return ancestor.index
+    return None
+
+
 def text_nodes(nodes: list[Node]) -> list[Node]:
-    return [n for n in nodes if n.visible and n.texts]
+    """Strings a viewer can actually see.
+
+    The per-node `visible` flag does not compose: `dump_layout_tree` emits each
+    node's own `view.visible()` without inheriting it, so every label inside a
+    DISMISSED overlay still reports `visible: true`. Filtering on that flag put
+    the closed Settings panel's 75 zero-area labels into every detector and
+    manufactured 51 findings on a home screen with none. Ancestry is required
+    to answer this; without a depth sidecar the composed answer is unavailable
+    and main() reports the ancestry as INFERRED alongside the count.
+    """
+    if not ancestry_is_exact(nodes):
+        return [n for n in nodes if n.visible and n.texts]
+    return [n for n in nodes if n.texts and effectively_visible(nodes, n)]
 
 
-def detect_overlap(nodes: list[Node], min_area: float) -> tuple[list[Violation], int]:
-    """OVERLAP — two visible text boxes must not intersect."""
+def detect_overlap(nodes: list[Node], min_area: float) -> tuple[list[Violation], int, int]:
+    """OVERLAP — two visible text boxes that share a frame must not intersect."""
     candidates = text_nodes(nodes)
+    contexts = {n.index: scroll_context(nodes, n) for n in candidates}
     violations: list[Violation] = []
     suppressed = 0
+    cross_scroll = 0
     for i in range(len(candidates)):
         a = candidates[i]
         for j in range(i + 1, len(candidates)):
             b = candidates[j]
             if related(nodes, a, b):
                 suppressed += 1
+                continue
+            if contexts[a.index] != contexts[b.index]:
+                # Different scroll frames: their recorded coordinates are not
+                # in the same space, so any intersection between them is an
+                # artifact of pre-scroll positions rather than something on
+                # screen. Reported as skipped, never as a pass.
+                cross_scroll += 1
                 continue
             for a_text, a_rect in a.texts:
                 pa = visible_overlap_box(nodes, a, a_rect)
@@ -380,7 +425,7 @@ def detect_overlap(nodes: list[Node], min_area: float) -> tuple[list[Violation],
                             [a.label, b.label],
                         )
                     )
-    return violations, suppressed
+    return violations, suppressed, cross_scroll
 
 
 # A line box is routinely taller than the glyphs it carries: 13px of text laid
@@ -500,7 +545,21 @@ def plant(doc: dict, which: str) -> str:
         return f"planted CLIP: widened {n.get('id') or n.get('kind')} text to box+40px"
 
     if which == "wrap":
-        n = nodes[0]
+        # WRAP deliberately ignores a zero-width text box: that is the
+        # multi-line sentinel, where measured_height is a wrap ESTIMATE rather
+        # than the extent that paints. Planting on one is vacuous — the plant
+        # lands and the check skips it, and the control reads GREEN while the
+        # detector is fine. Pick a node the check can actually see.
+        single_line = [
+            n for n in nodes
+            if float((n["measured_text_boxes"][0].get("rect") or {}).get("w", 0)) > 0.0
+        ]
+        if not single_line:
+            raise SystemExit(
+                "cannot plant wrap: every text-bearing node in this snapshot "
+                "reports the multi-line width sentinel, which WRAP skips"
+            )
+        n = single_line[0]
         box = n["measured_text_boxes"][0]
         box["rect"]["h"] = float(n["rect"]["h"]) * 2.0 + 8.0
         return f"planted WRAP: doubled {n.get('id') or n.get('kind')} text height"
@@ -620,8 +679,9 @@ def main() -> int:
     wanted = set(args.only or ["overlap", "clip", "wrap", "collapse"])
     violations: list[Violation] = []
     suppressed = 0
+    cross_scroll = 0
     if "overlap" in wanted:
-        v, suppressed = detect_overlap(nodes, args.min_overlap_area)
+        v, suppressed, cross_scroll = detect_overlap(nodes, args.min_overlap_area)
         violations += v
     if "clip" in wanted or "wrap" in wanted:
         for v in detect_clip(nodes, args.width_tolerance, args.strict_height):
@@ -658,6 +718,7 @@ def main() -> int:
             f"surface={surface}  nodes={len(nodes)}  text_nodes={len(counted)}  "
             f"ancestry={'exact' if exact_ancestry else 'INFERRED (no depth field)'}"
             + (f"  ancestor_pairs_skipped={suppressed}" if suppressed else "")
+            + (f"  cross_scroll_pairs_skipped={cross_scroll}" if cross_scroll else "")
         )
         if not counted:
             print(
