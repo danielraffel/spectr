@@ -2782,6 +2782,23 @@ function App() {'''),
      'style: { fontSize: 9.5, opacity: 0.62, marginTop: 2, fontFamily: "var(--sans)", letterSpacing: 0.1 }',
      2),
 
+    # APPLY must apply the preset AND dismiss the manager in one action.
+    # resources/editor.html carries this as its 'apply preset closes manager'
+    # replaceSpectrSource entry, but the materialized runtime was generated
+    # before that patch existed and still wires the bare callback, so the
+    # shipping native editor applied the preset and left the manager open on
+    # top of the result it had just applied. Observed offscreen through the
+    # real create_view path: [data-spectr-manager-action] stayed at 6 across
+    # APPLY while the APPLIED toast fired and the menu label updated. The
+    # detail-pane APPLY button and the row double-click both route through
+    # this one prop, so wrapping it here dismisses the manager for both.
+    ('apply preset closes manager',
+     '      onApply: applyPattern,\n',
+     '      onApply: (pattern) => {\n'
+     '        applyPattern(pattern);\n'
+     '        setManagerOpen(false);\n'
+     '      },\n'),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an

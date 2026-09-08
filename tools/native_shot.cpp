@@ -1217,6 +1217,114 @@ int main(int argc, char** argv) {
                 rig.activate("[data-spectr-pattern-manage]");
                 probe("after-manage");
             }
+            // PRE-5: selecting a preset must update BOTH the displayed name
+            // and the artwork in the detail pane. Probe with querySelector,
+            // which `is_mounted` proves works here -- the element `.attributes`
+            // collection does NOT expose data-* names in this shim, so an
+            // attribute walk reports an empty DOM and is a broken instrument.
+            rig.eval("(function(){var c=['[data-spectr-pattern-row]',"
+                     "'[data-spectr-preset-row]','[data-spectr-pattern-item]',"
+                     "'[data-spectr-manager-row]','[data-spectr-manager-item]',"
+                     "'[data-spectr-pattern]','[data-spectr-manager-list] *',"
+                     "'[data-spectr-manager-detail]','button','canvas','svg'];"
+                     "var f=[];for(var i=0;i<c.length;i++){var n=-1;"
+                     "try{n=document.querySelectorAll(c[i]).length;}"
+                     "catch(e){n=-2;}f.push(c[i]+'='+n);}"
+                     "console.log('[pre5] sel :: '+f.join(' '));})();",
+                     "pre5_sel");
+            auto detail_state = [&rig](const char* label) {
+                std::string js =
+                    "(function(){var d=document.querySelector("
+                    "'[data-spectr-manager-detail]');"
+                    "var art=0,t='';"
+                    "if(d){var all=d.querySelectorAll('*');"
+                    "for(var i=0;i<all.length;i++){var e=all[i];"
+                    "if(e.children.length===0){var x=(e.textContent||'')"
+                    ".trim();if(x)t+=x+' / ';}"
+                    "var tn=(e.tagName||'').toUpperCase();"
+                    "if(tn==='CANVAS'||tn==='SVG'||tn==='IMG')art++;}}"
+                    "else{t=(function(){var a=document.querySelectorAll('*');"
+                    "var o='';for(var i=0;i<a.length;i++){var e=a[i];"
+                    "if(e.children.length===0){var x=(e.textContent||'')"
+                    ".trim();if(/PATTERN|HARMONIC|FLAT|SELECT A/i.test(x))"
+                    "o+=x+' / ';}}return o;})();}"
+                    "console.log('[pre5] ";
+                js += label;
+                js += " :: detailMounted='+(d?1:0)+' art='+art"
+                      "+' text='+(t.slice(0,200)||'(none)'));})();";
+                rig.eval(js, "pre5_detail");
+            };
+            detail_state("before-select");
+            // Click the HARMONIC SERIES row by locating its text leaf and
+            // activating the nearest ancestor that querySelector can address.
+            rig.eval("(function(){var all=document.querySelectorAll('*');"
+                     "var hit=null;for(var i=0;i<all.length;i++){var e=all[i];"
+                     "if(e.children.length)continue;"
+                     "if(/^HARMONIC SERIES$/i.test((e.textContent||'')"
+                     ".trim())){hit=e;break;}}"
+                     "if(!hit){console.log('[pre5] click :: ROW NOT FOUND');"
+                     "return;}"
+                     "var n=hit,depth=0,sel=null;"
+                     "while(n&&depth<8){"
+                     "if(n.tagName&&/^BUTTON$/i.test(n.tagName)){"
+                     "var bs=document.querySelectorAll('button');"
+                     "for(var k=0;k<bs.length;k++)if(bs[k]===n){"
+                     "sel='button:nth-of-type('+(k+1)+')';break;}"
+                     "if(!sel){var all2=document.querySelectorAll('button');"
+                     "sel='button';}break;}"
+                     "n=n.parentNode;depth++;}"
+                     "console.log('[pre5] click :: depth='+depth+' tag='"
+                     "+(n&&n.tagName)+' sel='+sel);"
+                     "if(n&&globalThis.__pulpActivateMaterializedElement__){"
+                     "var bs=document.querySelectorAll('button');var idx=-1;"
+                     "for(var k=0;k<bs.length;k++)if(bs[k]===n)idx=k;"
+                     "console.log('[pre5] click :: buttonIndex='+idx"
+                     "+' of '+bs.length);}})();", "pre5_click");
+            settle(rig.clock, 24);
+            // The rows carry no data hook and are not <button>s, so no
+            // selector can address them. A human selects one by clicking its
+            // pixels, so simulate_click -- the same path the platform host's
+            // mouse handler uses -- is the faithful instrument.
+            // Logical root space is 1320x860 (layout receipt); the capture is
+            // 2640x1720 at scale 2.
+            if (rig.root != nullptr) {
+                // Negative control FIRST: a click on empty detail-pane space
+                // must NOT populate the detail pane. Without it, a populated
+                // pane after the row click is equally consistent with "any
+                // click populates it".
+                rig.root->simulate_click(pulp::view::Point{792.0f, 396.0f});
+                settle(rig.clock, 24);
+                detail_state("after-control-click-empty");
+                rig.root->simulate_click(pulp::view::Point{420.0f, 302.0f});
+                settle(rig.clock, 24);
+            }
+            detail_state("after-select");
+            // PRE-7: APPLY must apply the selected preset AND close the
+            // manager in ONE action. `[data-spectr-manager-action]` is a
+            // validated open/closed signal -- this sweep observed it 0 at
+            // home and 1 after opening the manager, so both poles are known
+            // good and "0 after APPLY" means closed, not merely unfound.
+            auto mgr_state = [&rig](const char* label) {
+                std::string js =
+                    "(function(){var open=document.querySelectorAll("
+                    "'[data-spectr-manager-action]').length;"
+                    "var a=document.querySelectorAll('*');var t='';"
+                    "for(var i=0;i<a.length;i++){var e=a[i];"
+                    "if(e.children.length===0){var x=(e.textContent||'')"
+                    ".trim();if(/HARMONIC|PRESET MANAGER|SELECT A PATTERN/i"
+                    ".test(x))t+=x+' / ';}}"
+                    "console.log('[pre7] ";
+                js += label;
+                js += " :: managerOpen='+open+' marks='+(t||'(none)'));})();";
+                rig.eval(js, "pre7_state");
+            };
+            mgr_state("before-apply");
+            if (rig.root != nullptr) {
+                rig.root->simulate_click(pulp::view::Point{634.0f, 584.0f});
+                settle(rig.clock, 32);
+            }
+            mgr_state("after-apply");
+            capture(rig, dir, prefix + "05c-after-APPLY", backend, scale);
             rig.eval("globalThis.__shotDump=(function(){var o=[];"
                      "var all=document.querySelectorAll('*');"
                      "for(var i=0;i<all.length;i++){var e=all[i];"
