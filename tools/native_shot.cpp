@@ -942,6 +942,10 @@ int main(int argc, char** argv) {
             if (const char* plant = std::getenv("SPECTR_PLANT_OFFSCREEN")) {
                 rig.plant_offscreen(plant);
                 rig.census("PLANT", 0.0f, 0.0f);
+                // Dump a post-plant snapshot too: the button census reads the
+                // JS tree, but the wider hit-test-leaf detector reads the
+                // layout snapshot, and it needs a RED of its own.
+                capture(rig, dir, prefix + "PLANT", backend, scale);
             }
             return g_failures == 0 ? 0 : 1;
         }

@@ -568,3 +568,59 @@ fire. Closing on the editor half would repeat the CUR-1..4 error exactly:
 closing a row on the strongest evidence available rather than on evidence that
 covers what the row claims. Remaining work is one specific thing — a live
 host-window drag.
+
+### COR-4 addendum — the 41-control census was too narrow; a wider one agrees
+
+`__spectrResponsiveLayoutReceipt__.focus_order` is not a focus ring. Its
+construction is `values.filter(node => materializedNodeTag(node) === "button"
+&& node.style?.display !== "none")` (`runtime.js:9573,9589`) — **visible
+`<button>` tags only**. Anything authored as a `div` with a pointer handler —
+sliders, knobs, the graph canvas, the minimap trims — is invisible to it. So
+"38/41 reachable" is true but covers a narrower population than COR-4 claims,
+and a displaced slider would not have been reported.
+
+The wider population is the runtime's own hit-testing accounting rather than
+another guess of mine. In the layout snapshot, 151 of 300 nodes carry a
+`hit_regions` entry, and every entry is exactly the node's own rect — so a node
+carries one when it accepts input. Containers carry one too (the root does), so
+the *controls* are the hit-test **leaves**: a node with a hit region and no
+descendant that has one. That is **100 nodes**, and it includes both
+`Browser_canvas_*` nodes, which the button census could never see.
+
+`tools/reachability_census.py` implements it. Result across the same six host
+sizes (`COR-4-reachability.log`):
+
+```
+660x430 .. 1650x1075, 1320x500:  population=100  reachable=88  excused=12  findings=0
+```
+
+Invariant, and **zero findings** — the same conclusion the narrow census
+reached, now over 2.4x the population and covering non-button controls.
+
+The 12 excused rows are proven, not asserted: an ancestry walk shows all 12 pass
+through `__behavior_pr_4t` / `__behavior_pr_4u`, the closed Settings scroll
+nodes (`overflow: hidden`, the node the receipt names in `scroll_upgrade`).
+Zero residuals fall outside that subtree. The exclusion is not a way to make the
+number look good — with no allowlist the same run reports `findings=12`, and a
+bogus allowlist (`--allow-under __no_such_node__`) excuses nothing, so the
+allowlist does real work and matches only what it names.
+
+RED/GREEN, on the post-plant snapshot at the same size:
+
+```
+baseline    population=100 reachable=88 excused=12 findings=0   exit 0
+post-plant  population=100 reachable=87 excused=12 findings=1   exit 1
+            FINDING  OFFSCREEN __behavior_pr_p [5072.5,4013.0 92.0x22.0]
+```
+
+The detector also refuses to run rather than pass vacuously: zero hit-test
+leaves exits 2 with "the snapshot carries no hit_regions, so nothing could ever
+be reported" — the failure mode that let my first census report `total=0` as
+though it were a clean sweep.
+
+Arms still unproven on this wider detector: **HIDDEN and ZERO** never fire here,
+because no hit-test leaf is currently invisible or degenerate. Only OFFSCREEN is
+armed. Cite it with that caveat.
+
+This does not change the verdict. COR-4 stays **OPEN** on the live host-window
+half; the editor-side half is now proven over a materially better population.
