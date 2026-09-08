@@ -494,6 +494,30 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     # heavyweight native materialized editor runtime and must not race.
     RESOURCE_LOCK spectr_native_materialized_editor)
 
+# Resize reachability (COR-4, editor half): sweeps host sizes through the
+# shipping resize path and asserts every hit-test leaf stays inside the design
+# viewport. Two stages -- capture, then a snapshot detector -- so the exit codes
+# stay distinguishable: 0 pass, 1 a control left the viewport, 3 the premise is
+# unproven (the resize path never reached the runtime, or a capture is
+# missing), 77 no GPU capture on this host. 3 and 77 must never read as a pass.
+# Needs a Python interpreter for the detector; without one the gate is not
+# silently dropped, it is simply not registered and the configure log says so.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-resize-reachability
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_resize_reachability.sh
+            $<TARGET_FILE:Spectr-native-shot>
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_BINARY_DIR}/spectr-resize-reachability)
+    set_tests_properties(Spectr-resize-reachability PROPERTIES
+        TIMEOUT 600
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+else()
+    message(STATUS
+        "Spectr: no Python3 interpreter -- Spectr-resize-reachability not registered")
+endif()
+
 add_executable(Spectr-editor-authority-test
     test/test_editor_authority.cpp
 )

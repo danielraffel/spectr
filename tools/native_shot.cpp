@@ -917,6 +917,13 @@ int main(int argc, char** argv) {
             }
             rig.resize(kDesignWidth, kDesignHeight);
             settle(rig.clock, 24);
+            // RED arm for the snapshot-based detector, which reads the sweep
+            // captures rather than the post-sweep one: displace a control
+            // BEFORE the loop so every captured size carries the defect.
+            if (const char* early = std::getenv("SPECTR_PLANT_BEFORE_SWEEP")) {
+                rig.plant_offscreen(early);
+                settle(rig.clock, 24);
+            }
             std::string spec{sizes};
             std::size_t pos = 0;
             while (pos <= spec.size()) {
@@ -930,7 +937,7 @@ int main(int argc, char** argv) {
                 const float w = std::stof(item.substr(0, ex));
                 const float h = std::stof(item.substr(ex + 1));
                 char name[64];
-                std::snprintf(name, sizeof name, "cor4-%.0fx%.0f", w, h);
+                std::snprintf(name, sizeof name, "resize-%.0fx%.0f", w, h);
                 rig.resize(w, h);
                 settle(rig.clock, 24);
                 rig.print_layout_receipt();
