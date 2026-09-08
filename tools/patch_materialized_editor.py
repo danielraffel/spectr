@@ -2753,6 +2753,35 @@ function App() {'''),
      'ctx.fillText("dBFS", inner.x + inner.w + 8, g.inner.y - 8);',
      'ctx.fillText("dBFS (analyzer)", inner.x + inner.w + 8, g.inner.y - 8);'),
 
+    # Settings' two dim text tiers sat under the WCAG AA 4.5:1 floor. Measured
+    # from the shipping native render at the default plugin size (990x645), the
+    # opacity-0.45 tier (group subtitles, field hints) peaked at 3.83-3.88:1 and
+    # the opacity-0.5 tier (section headers) at 4.41-4.43:1 -- against a floor of
+    # 4.5:1, because at 6.75-7.5px painted these are nowhere near the 18.66px
+    # that would earn the 3:1 large-text exemption. Peak contrast is set by the
+    # authored colour, so this fails identically at every host size; it is not a
+    # small-window artifact. The literal alpha is not the whole story either:
+    # antialiasing at these sizes means even the peak pixel is ~86% covered, so
+    # the analytic value overstates what paints and the replacements below are
+    # chosen against measured pixels rather than the composite formula. Each
+    # needle occurs twice -- once in the live SpectrSettingsGroup/Field and once
+    # in the legacy postMessage Group carried in the embedded capture -- and both
+    # are patched so the two never disagree.
+    ('settings section headers clear the contrast floor',
+     'style: { fontSize: 9, letterSpacing: 2, opacity: 0.5, marginBottom: 4 }',
+     'style: { fontSize: 9, letterSpacing: 2, opacity: 0.68, marginBottom: 4 }',
+     2),
+
+    ('settings group subtitles clear the contrast floor',
+     'style: { fontSize: 10, opacity: 0.45, marginBottom: 10, fontFamily: "var(--sans)" }',
+     'style: { fontSize: 10, opacity: 0.62, marginBottom: 10, fontFamily: "var(--sans)" }',
+     2),
+
+    ('settings field hints clear the contrast floor',
+     'style: { fontSize: 9.5, opacity: 0.45, marginTop: 2, fontFamily: "var(--sans)", letterSpacing: 0.1 }',
+     'style: { fontSize: 9.5, opacity: 0.62, marginTop: 2, fontFamily: "var(--sans)", letterSpacing: 0.1 }',
+     2),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an

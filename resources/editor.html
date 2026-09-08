@@ -1773,8 +1773,8 @@ function SettingsModal({ settings, setSettings, onClose }) {
       'function SettingsModal({ settings, setSettings, onClose }) {',
       String.raw`function SpectrSettingsGroup({ title, subtitle, children, marker }) {
   return <div data-spectr-settings-group={marker} style={{ marginBottom: 18 }}>
-    <div style={{ fontSize: 9, letterSpacing: 2, opacity: 0.5, marginBottom: 4 }}>{title}</div>
-    {subtitle && <div style={{ fontSize: 10, opacity: 0.45, marginBottom: 10, fontFamily: 'var(--sans)' }}>{subtitle}</div>}
+    <div style={{ fontSize: 9, letterSpacing: 2, opacity: 0.68, marginBottom: 4 }}>{title}</div>
+    {subtitle && <div style={{ fontSize: 10, opacity: 0.62, marginBottom: 10, fontFamily: 'var(--sans)' }}>{subtitle}</div>}
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
   </div>;
 }
@@ -1818,7 +1818,7 @@ function SpectrSettingsField({ label, hint, children }) {
   return <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
     <div style={{ width: 110, flexShrink: 0 }}>
       <div style={{ fontSize: 11, color: '#fff', letterSpacing: 0.5 }}>{label}</div>
-      {hint && <div style={{ fontSize: 9.5, opacity: 0.45, marginTop: 2, fontFamily: 'var(--sans)', letterSpacing: 0.1 }}>{hint}</div>}
+      {hint && <div style={{ fontSize: 9.5, opacity: 0.62, marginTop: 2, fontFamily: 'var(--sans)', letterSpacing: 0.1 }}>{hint}</div>}
     </div>
     <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>{children}</div>
   </div>;
