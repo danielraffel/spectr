@@ -401,3 +401,59 @@ extent; a sub-pixel overflow is not proof of visible truncation. The snapshot
 carries no ink extents, so this is stated as a limit of the instrument rather
 than thresholded away. It is recorded as a candidate row, not as a SET-6
 finding.
+
+## CLIP is a candidate-finder, not a detector (2026-09-07)
+
+`appearance_invariants.py --only clip` compares a string's *measured advance*
+(`measured_text_boxes[].rect.w`) against the box it paints in. Measured against
+the render, that advance disagrees with painted ink by **-33% to +21%**:
+
+| node | text | measured | painted ink | box |
+|---|---|---|---|---|
+| `__behavior_pr_y` | `1.08kHz   11.0 dB   BAND 19/32` | 225.0px | 186.7px | 210.0px |
+| `__behavior_pr_p` | `32 bands` | 68.0px | 90.7px | 92.0px |
+
+The error is an order of magnitude larger than the trailing-side-bearing effect
+previously recorded here as "sub-pixel rounding", so no width tolerance can
+separate a false 15px overflow from a true one.
+
+Both of CLIP's standing violations are now proven false positives, by pixels:
+
+* `__behavior_pr_y` — CLIP reports a 15px overflow. The ink spans 186.7px
+  **inset 11.7px on both sides** of its 210px box. Nothing is truncated.
+* `⋯` (`__behavior_pr_4x__text`) — CLIP reports 0.97px. Ink is 6.0px in a 7.0px
+  box, clear [0.7, 0.4], and the crop shows three complete dots with padding.
+  **This resolves the standing caveat on SET-6.**
+
+CLIP has **zero confirmed true positives** across the evidence set, and cannot
+have any: sweeping all 31 snapshots, **0 of 756** visible text nodes have a rect
+that reaches past its clip — the only geometry in which a glyph can be cut.
+(Control: 525 of those 756 do sit under a tighter-than-viewport clip, so the
+query can see clips.) No closed row rests on a CLIP true positive, so nothing is
+invalidated; the finding resolves a caveat rather than voiding a row.
+
+### `tools/ink_extents.py`
+
+Adjudicates CLIP candidates against painted pixels. Asymmetric on purpose: only
+EXONERATED is a conclusion. `--plant` self-tests both claims the tool makes —
+that it can see ink (planting a spill must flip a verdict) and that it can see a
+clip edge. The clip arm reports **NOT ARMED / UNPROVEN** on all 13 adjudicable
+snapshots, because no node's rect reaches its clip; an unarmed control is never
+allowed to read as a pass.
+
+Two incidental findings, neither a defect:
+
+* **NO_INK is usually a disabled control, not a missing one.** The
+  snapshot-recall buttons paint `▸ A` / `▸ B` at luminance 55 on a 12 ground
+  (**1.64:1**) while `CLEAR` in the same frame paints at 219 (13.74:1). Control
+  rules out the overlay scrim: the dimness is identical in the no-overlay
+  frames. These are the *recall* buttons with nothing stored — WCAG 1.4.3
+  exempts inactive components.
+* **SPILL is routine and benign.** `32 bands ▾` and `CLEAR` paint 1.8px / 0.7px
+  past their own rects; nothing clips them, so the ink is drawn, not cut. 0.7px
+  is one image pixel at scale 1.5 — the quantization floor.
+
+Adjudicated: 13 snapshots, all RESOLVED, 0 CANDIDATE. 14 snapshots (OVL-3,
+OVL-4, OVL-5) have no PNG and 4 (CUR, SET-1) pair ambiguously with two PNGs
+each; those are **not adjudicated**, since a wrong pairing measures the wrong
+pixels silently.
