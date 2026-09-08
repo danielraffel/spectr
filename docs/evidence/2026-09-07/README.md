@@ -457,3 +457,114 @@ Adjudicated: 13 snapshots, all RESOLVED, 0 CANDIDATE. 14 snapshots (OVL-3,
 OVL-4, OVL-5) have no PNG and 4 (CUR, SET-1) pair ambiguously with two PNGs
 each; those are **not adjudicated**, since a wrong pairing measures the wrong
 pixels silently.
+
+---
+
+## COR-4 — resize preserves layout and all controls remain reachable
+
+**Verdict: OPEN.** The editor-side half is proven and no defect was found. The
+half a user actually performs — dragging a live host window — is unproven and
+blocked by the same locked display as SET-1/SET-2/SET-6 and AUT-3.
+
+Files: `COR-4-{660x430,792x516,990x645,1320x860,1650x1075,1320x500}.{png,layout.json,depths.json}`,
+`COR-4-sweep.log`, `COR-4-RED-plant-1320x860.png`, `COR-4-RED-plant.log`.
+
+### The control comes first, because the receipt cannot self-report
+
+Under a pinned design viewport the layout receipt is byte-identical at every
+host size *by design* — `src/spectr.cpp:334-366` lays the root out at the
+authored 1320x860 box and publishes those dimensions deliberately, and
+`publish_native_layout_` early-returns when the box is unchanged. So an
+identical receipt is equally consistent with "correct" and with "my resize never
+arrived", and the second reading is what voided CUR-1..4.
+
+`prove_resize_reaches_runtime()` therefore reads an effect only the resize path
+produces: break the root bounds and require `on_view_resized` to repair them.
+Two arms, since a check that cannot fail proves nothing.
+
+```
+[control] resize-reaches-runtime host=990x645 broke=640x400
+          -> after_break=640x400  (armed=yes)
+          -> after_resize=1320x860 (repaired=yes)
+```
+
+### The census population is the runtime's own focus_order
+
+My first census guessed selectors (`button`, `[role=button]`) and returned
+`total=0` on a surface with 41 focusable controls — a guessed population cannot
+report a control it was never told about. It now reads
+`__spectrResponsiveLayoutReceipt__.focus_order`, and every id resolves:
+`population=41 resolved(byId=41,byAttr=0,bySel=0)`.
+
+The second error was subtler: rects come back in **design space** and are
+identical at every host size by construction, so testing them against the *host*
+box manufactures a false OFFSCREEN for every control on a small host (my first
+counts of 26/23/18). The reachability question is whether a control leaves the
+design viewport, which is what the host scales onto the surface.
+
+### Result: invariant across six host sizes
+
+0.5x to 1.25x plus a deliberately wrong aspect (1320x500):
+
+```
+cor4-660x430   38/41 | OFFSCREEN __behavior_pr_4i ; OFFSCREEN __behavior_pr_6t ; ZERO __behavior_pr_12
+cor4-792x516   38/41 | (identical)
+cor4-990x645   38/41 | (identical)
+cor4-1320x860  38/41 | (identical)
+cor4-1650x1075 38/41 | (identical)
+cor4-1320x500  38/41 | (identical)
+```
+
+Delta across sizes: zero. All six captures pass the content floor (colors
+2584-2651, nonbg 0.848-0.849).
+
+The three residuals are **not** resize failures: all size-invariant, all inside
+the closed Settings scroll subtree. `__behavior_pr_4i` and `__behavior_pr_6t`
+descend from `__behavior_pr_4t` (h=1227, `overflow: hidden` — the node the
+receipt names as `scroll_upgrade.nodeId`); `__behavior_pr_12` sits under
+`__behavior_pr_4u`, which is 0x0 while the panel is closed. The receipt reports
+`scroll_reachable: true`, and SET-6's scrolled capture shows that content in
+full.
+
+### RED arm
+
+A census that only ever names the same three rows is indistinguishable from one
+that cannot name anything. `plant_offscreen()` displaces a control the census
+just called reachable:
+
+```
+[plant] __behavior_pr_q [1059.5,10.5] -> [5059.5,4010.5] moved
+PLANT   37/41 | ... ; OFFSCREEN __behavior_pr_q [5059.5,4010.5 92.0x22.0] ; ...
+```
+
+38/41 -> 37/41, naming the displaced control. OFFSCREEN armed. HIDDEN fired
+during probing (`display:none` -> `HIDDEN __behavior_pr_q`). ZERO fires on
+`__behavior_pr_12`. **MISSING has never fired and is unproven** — cite the
+detector with that caveat attached.
+
+### Two runtime findings, both surfaced by the plant failing
+
+Neither is a Spectr bug; both are Pulp materialized-runtime behaviours that
+silently mislead a detector.
+
+1. **`setLeft`/`setTop` silently drop a unit suffix.** The bridge accepts a bare
+   number (px) or a percent string (`runtime.js:6187-6215`); `'4000px'` is
+   neither and is discarded with no error. My first plant "displaced" a control
+   without moving it and would have certified a dead arm as armed.
+2. **A style write's layout does not commit until a layout-affecting write
+   follows.** 24 settled frames after `left=4000`, `getBoundingClientRect` still
+   returned the pre-write rect. `zIndex` did not flush it; `marginLeft` did, and
+   the full displacement appeared at once. A detector that writes and reads in
+   one breath sees no change and concludes, wrongly, that nothing moved.
+
+### Why this does not close the row
+
+All of the above runs in the offscreen GPU harness — the shipping runtime and
+real pixels, not a browser fixture and not a DOM assertion, but not an installed
+build in a resized host window either. The host's `set_design_viewport` scale
+and letterbox math never execute here, and the display has been locked
+(`CGSSessionScreenIsLocked: True`) all session, so no live-window fixture can
+fire. Closing on the editor half would repeat the CUR-1..4 error exactly:
+closing a row on the strongest evidence available rather than on evidence that
+covers what the row claims. Remaining work is one specific thing — a live
+host-window drag.
