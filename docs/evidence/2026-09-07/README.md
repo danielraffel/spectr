@@ -233,3 +233,91 @@ tools/cursor-proof  NS_CURSOR_PROOF_PLANT=1       one NSCursor expectation swap 
   later hover in the same run — the first run reported `grabbing` at *every*
   point, including the plot, which looked exactly like a uniform app defect and
   was an instrument artefact.
+
+## SET-2 / SET-6 / SET-9 re-measured on the SHIPPING SDK
+
+The SET-1 and SET-2 captures above were taken against a pre-release SDK that
+carried #8094 but was not a published release. Their own in-frame About block
+reads `PULP SDK 0.835.0`. That is not the surface anyone ships, so the three
+rows were re-measured against `v0.837.0`.
+
+`SET-837-settings-unscrolled.png` and `SET-837-settings-scrolled.png` print
+their provenance inside the frame, which is what makes them auditable rather
+than asserted:
+
+| field | value |
+|---|---|
+| `PULP SDK` | `0.837.0` |
+| `SDK SHA` | `6914d57d4d400e93bc85b8a0d7b9567943735769` (matches `sdk-provenance.json`) |
+| `SDK SOURCE` | `CLEAN` |
+| `SPECTR SHA` | `0a32e524` |
+| `BUILD` | `Release` |
+
+### The mechanism the images alone cannot show
+
+A scroll check that compares two PNGs cannot distinguish "the body did not
+scroll" from "the body had nothing to scroll", and `scroll_invariants.py` says
+so in its own failure text. The layout trees supply what the pixels cannot:
+
+| build | scroll container | body content | `max_y = content - viewport` |
+|---|---|---|---|
+| no #8094 | `466 x 531` | `462 x 0` | `<= 0` — **cannot scroll at all** |
+| `v0.837.0` | `466 x 531` | `466 x 1246` | `715` — scrolled to `y=715.0` |
+
+So the red verdict on the pre-#8094 build is correct *for that build*, and the
+reason is a zero-height body rather than a fixture that failed to fire. On the
+red build the `SPECTR_SETTINGS_SCROLL` fixture's own `max_y <= 0` guard skips
+`set_scroll` silently, which is why the red pair is byte-identical to the
+unscrolled capture — that pair is the plant input, not independent evidence.
+
+### What the shipping capture establishes
+
+- `scroll_invariants.py` is **GREEN**: header fixed, body scrolled. Both
+  controls redden it (`--plant header-moves`, `--plant body-frozen`).
+- The whole-image diff bbox is `(641, 317, 1334, 1088)`. The scroll container at
+  scale 1.5 is `(640.5, 317.25)-(1339.5, 1113.75)`. The diff matches the
+  container to within a pixel and does **not** touch the header box
+  `(602, 138)-(1378, 245)`, so nothing outside the scrolling region moved.
+- SET-6: `appearance_invariants.py --only clip --only collapse` scoped to the
+  settings panel `__behavior_pr_4u` is **GREEN** over 190 nodes / 75 text nodes.
+- SET-9: `text_contrast.py --scale 1.5 --within 400,90.5,520,679` measures 38
+  text nodes with **0 contrast violations**; `--plant` reddens it.
+
+### Controls, including one that was invalid
+
+`appearance_invariants.py --subtree` plants on the first measurable node in the
+*whole* snapshot, which for this surface is the `SPECTR` wordmark — outside the
+settings panel. Scoped runs therefore reported `GREEN` while the tool printed
+`BROKEN: the planted negative did not redden any detector` and exited 4. The
+valid control plants **inside** the subtree, and both detectors redden:
+
+```
+CLIP     __behavior_pr_14(Label) "APPEARANCE" measures 502.00px in a 462.00px box
+COLLAPSE __behavior_pr_14(Label) carries text "APPEARANCE" but its box is 462.00x0.00
+```
+
+Note that a hand-built plant file needs its `.depths.json` sidecar copied
+beside it, or the tool falls back to inferred ancestry and sees 2 nodes.
+
+## What these files still do NOT establish
+
+- **No live window.** These are offscreen Dawn/Skia captures through
+  `Processor::create_view()` / `ScriptedUiSession`. The standalone's live-window
+  fixtures (`SPECTR_LIVE_CAPTURE`, `SPECTR_OPEN_SETTINGS`, `SPECTR_CURSOR_PROBE`)
+  do not run while the macOS session is locked: the editor window opens and
+  draws a first frame, but the frame clock never ticks, so
+  `tick_native_analyzer_` — which hosts every fixture — is never called. Proven
+  with a positive control: the same log contains the `[gpu-host] first frame`
+  line, and two independent fixtures emit nothing.
+- **No AUv2 in a host.** SET-1's wording covers standalone *and* AUv2. Logic
+  needs an unlocked display too.
+- **`MOTION` is UNMEASURED for contrast** (0 ink px — it sits below the fold in
+  the unscrolled capture). The scrolled capture cannot substitute: its layout
+  rects are recorded without the scroll offset, so 18 nodes read as UNMEASURED
+  against it. SET-9 therefore covers 38 of 39 settings text nodes.
+- **None of these Python detectors is a CI gate.** `add_test` in `CMakeLists.txt`
+  registers `Spectr-native-shot` and the browser suites only; the invariants
+  scripts are run by hand and their output committed here.
+- **One real CLIP violation exists outside the settings panel** and is not
+  SET-6: `__behavior_pr_4x__text` at `(96, 825.24)` renders `⋯` measuring
+  `8.00px` in a `7.03px` box (0.97px overflow). Recorded, not fixed.
