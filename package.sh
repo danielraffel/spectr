@@ -110,6 +110,27 @@ for artifact in "$AU" "$VST3" "$CLAP" "$APP"; do
   [[ -d "$artifact" ]] || { echo "missing installer input: $artifact" >&2; exit 2; }
 done
 
+# Contents/MacOS holds executable code and nothing else. The SDK's control
+# shipping POST_BUILD copies three JSON sidecars next to the artifact, which for
+# a bundle target resolves inside Contents/MacOS, and `codesign --verify --deep
+# --strict` then rejects the bundle:
+#
+#   Spectr: code object is not signed at all
+#   In subcomponent: .../Contents/MacOS/Spectr.AUv2.control-shipping.json
+#
+# The copies are POST_BUILD, so a bundle whose target is already up to date
+# never receives them -- which is the only reason an earlier packaging run
+# succeeded. Drop every non-Mach-O file from Contents/MacOS so the outcome does
+# not depend on whether the link step happened to re-run. The manifests remain
+# authoritative under $BUILD/pulp-control-shipping-manifests.
+for artifact in "$AU" "$VST3" "$CLAP" "$APP"; do
+  while IFS= read -r -d '' sidecar; do
+    file -b "$sidecar" 2>/dev/null | grep -q "Mach-O" && continue
+    echo "[package] dropping non-code sidecar: ${sidecar#"$artifact/"}"
+    rm -f "$sidecar"
+  done < <(find "$artifact/Contents/MacOS" -type f -print0 2>/dev/null || true)
+done
+
 args=(
   --name Spectr
   --version "$VER"
