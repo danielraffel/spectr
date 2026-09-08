@@ -714,6 +714,13 @@ void Spectr::open_native_editor_(pulp::view::View& view) {
     if (!native_frame_clock_) return;
     native_frame_subscription_ = native_frame_clock_->subscribe(
         [this](float dt) { return tick_native_analyzer_(dt); });
+    // Subscribing does not, by itself, wake an idle render loop. The host reads
+    // FrameClock::has_active_subscribers() only at the bottom of a frame it had
+    // already decided to render, and FrameClock::subscribe() performs no
+    // invalidation -- so a subscriber added while the loop is parked is never
+    // observed, and the loop stays parked. Kick it once here; from the next
+    // rendered frame on, the subscriber count keeps it alive on its own.
+    view.request_repaint();
 }
 
 double Spectr::fixture_now_ms_() {
