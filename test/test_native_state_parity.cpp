@@ -3591,3 +3591,54 @@ TEST_CASE("a resize to an unchanged design box republishes nothing",
     INFO("materialized layout passes during four same-box resizes");
     CHECK(passes == 0);
 }
+
+TEST_CASE("settings chips answer a native pointer click and not only the semantic driver",
+          "[native-n1][state-parity][settings][native-pointer]") {
+    // The existing settings coverage enters through
+    // __pulpActivateMaterializedElement__, which invokes the React handler
+    // directly. That proves the handler works when called; it says nothing
+    // about whether a pointer landing on the chip ever reaches it. A user only
+    // ever has the pointer path, so drive it here.
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+
+    const auto comma = static_cast<pulp::view::KeyCode>(',');
+#if defined(__APPLE__)
+    constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+    constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+    REQUIRE(rig.root->on_global_key({
+        .key = comma,
+        .modifiers = primary_modifier,
+        .is_down = true}));
+    settle(rig.clock, 16);
+    require_state(rig, "settings");
+
+    // Positive control: the panel is populated and the pre-click state is the
+    // deterministic default, so a later 'mono' reading cannot be a no-op pass.
+    const auto* appearance = find_label(*rig.root, "APPEARANCE");
+    REQUIRE(appearance != nullptr);
+    const auto* mono_chip = find_label(*rig.root, "Mono");
+    REQUIRE(mono_chip != nullptr);
+    require_app_state(rig, "s.settings.theme === 'spectral'",
+                      "settings did not open on the default theme");
+
+    INFO("phase=native-pointer-click-on-theme-chip");
+    native_click_label(rig, "Mono");
+    require_app_state(rig, "s.settings.theme === 'mono'",
+                      "a native pointer click on the Mono chip did not reach its handler");
+
+    // Same question for a second control group, so a pass is not specific to
+    // one chip's hit geometry.
+    INFO("phase=native-pointer-click-on-metaphor-chip");
+    const auto* shards_chip = find_label(*rig.root, "Shards");
+    REQUIRE(shards_chip != nullptr);
+    native_click_label(rig, "Shards");
+    require_app_state(rig, "s.settings.metaphor === 'shards'",
+                      "a native pointer click on the Shards chip did not reach its handler");
+    storage.require_unchanged();
+}
