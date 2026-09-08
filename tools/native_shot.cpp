@@ -42,6 +42,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <typeinfo>
 #include <exception>
 #include <filesystem>
@@ -151,6 +152,22 @@ void dump_tree(const pulp::view::View& view, int depth, int max_depth) {
 // Ancestor chain of a label, innermost first. A clipped label is almost never
 // clipped by itself: the constraint lives in some ancestor's box, and printing
 // only the label measures the wrong thing.
+std::string view_key(const pulp::view::View& v) {
+    const auto b = v.bounds();
+    char buf[128];
+    std::snprintf(buf, sizeof buf, "%s [%.0f,%.0f %.0fx%.0f]",
+                  typeid(v).name(), b.x, b.y, b.width, b.height);
+    return buf;
+}
+
+// focus_next may cycle; stop the walk the first time it revisits a view.
+pulp::view::View* ring_start(const std::vector<std::string>& seen,
+                             pulp::view::View* candidate) {
+    const auto key = view_key(*candidate);
+    for (const auto& s : seen) if (s == key) return candidate;
+    return nullptr;
+}
+
 void dump_label_chain(const pulp::view::View& root, std::string_view text) {
     const pulp::view::Label* label = find_label(root, text);
     if (label == nullptr) {
@@ -955,6 +972,84 @@ int main(int argc, char** argv) {
                 capture(rig, dir, prefix + "PLANT", backend, scale);
             }
             return g_failures == 0 ? 0 : 1;
+        }
+
+        // DDM-6: is there a keyboard focus ring at all? The SDK exposes
+        // View::focus_next/focus_prev over focusable() views. Walking it is the
+        // only honest way to ask -- the JS receipt's "focus_order" is a list of
+        // visible <button> tags, not a traversal, so it cannot answer this.
+        if (std::getenv("SPECTR_PROBE_FOCUS") != nullptr) {
+            std::size_t focusable = 0;
+            std::function<void(const pulp::view::View&)> count =
+                [&](const pulp::view::View& v) {
+                    if (v.focusable()) ++focusable;
+                    for (std::size_t i = 0; i < v.child_count(); ++i)
+                        if (const auto* c = v.child_at(i)) count(*c);
+                };
+            count(*rig.root);
+            // Control: the tree must be non-trivial, or a zero focusable count
+            // is a statement about an empty tree rather than about focus.
+            std::size_t total = 0;
+            std::function<void(const pulp::view::View&)> all =
+                [&](const pulp::view::View& v) {
+                    ++total;
+                    for (std::size_t i = 0; i < v.child_count(); ++i)
+                        if (const auto* c = v.child_at(i)) all(*c);
+                };
+            all(*rig.root);
+            std::printf("[focus] control: %zu views in the tree\n", total);
+            std::printf("[focus] focusable views: %zu\n", focusable);
+            pulp::view::View* cur = nullptr;
+            std::vector<std::string> ring;
+            for (int i = 0; i < 200; ++i) {
+                auto* next = pulp::view::View::focus_next(*rig.root, cur);
+                if (next == nullptr) break;
+                if (next == ring_start(ring, next)) break;
+                ring.push_back(view_key(*next));
+                cur = next;
+            }
+            std::printf("[focus] focus_next ring length: %zu\n", ring.size());
+            for (std::size_t i = 0; i < ring.size() && i < 12; ++i)
+                std::printf("[focus]   %2zu %s\n", i, ring[i].c_str());
+            // Behavioural arm: does a Tab keystroke through the shipping
+            // dispatch path move focus at all? Report the focused view before
+            // and after rather than asserting a prediction.
+            const auto focused_now = [&]() -> std::string {
+                std::string out = "(none)";
+                std::function<void(const pulp::view::View&)> scan =
+                    [&](const pulp::view::View& v) {
+                        if (v.has_focus()) out = view_key(v);
+                        for (std::size_t i = 0; i < v.child_count(); ++i)
+                            if (const auto* c = v.child_at(i)) scan(*c);
+                    };
+                scan(*rig.root);
+                return out;
+            };
+            std::printf("[focus] focused before Tab: %s\n",
+                        focused_now().c_str());
+            const bool consumed = pulp::view::WidgetBridge::dispatch_key_for_root(
+                *rig.root, static_cast<int>(pulp::view::KeyCode::tab),
+                pulp::view::kModNone, true);
+            settle(rig.clock, 6);
+            std::printf("[focus] Tab consumed by the tree: %s\n",
+                        consumed ? "yes" : "no");
+            std::printf("[focus] focused after Tab:  %s\n",
+                        focused_now().c_str());
+            // Control for the dispatch path itself: Escape is a key this editor
+            // demonstrably handles, so if Escape is also refused the dispatcher
+            // is not reaching the runtime and the Tab reading means nothing.
+            const bool esc = pulp::view::WidgetBridge::dispatch_key_for_root(
+                *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+                pulp::view::kModNone, true);
+            settle(rig.clock, 6);
+            std::printf("[focus] control: Escape consumed: %s\n",
+                        esc ? "yes" : "no");
+            if (total < 50) {
+                std::printf("[focus] instrument unusable: the tree is too small "
+                            "to say anything about focus.\n");
+                return 3;
+            }
+            return 0;
         }
 
         if (std::getenv("SPECTR_PROBE_TEXT") != nullptr)
