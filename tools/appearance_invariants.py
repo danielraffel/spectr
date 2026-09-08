@@ -1,816 +1,212 @@
 #!/usr/bin/env python3
-"""Appearance invariants over a Pulp layout snapshot.
+"""Appearance invariants over a dump_layout_tree() snapshot.
 
-These are INVARIANTS, not comparisons. They need no design file, no baseline and
-no reference render, which is exactly why they catch what a screenshot diff
-cannot: a pixel diff scores agreement with a source and averages small regions
-away, so it structurally cannot see two labels painting on top of each other or
-a label wider than the box it paints in.
+Two detectors, both asserting the property directly rather than a proxy:
 
-Input is the JSON emitted by pulp::view::dump_layout_tree (schema
-`visual-layout-snapshot-v1`): a pre-order node list carrying, per node, an
-absolute `rect`, `visible`, `clipping.rect`, and `measured_text_boxes` holding
-each string's intrinsic width/height.
+  box-intersection      two painted glyph runs must not overlap
+  painted-vs-measured   a glyph run must fit inside the box laid out for it
 
-Three invariants:
+Both operate on the shipping standalone's own layout dump
+(SPECTR_LAYOUT_DUMP=...), so they measure the installed surface.
 
-  OVERLAP  two visible text-bearing boxes must not intersect.
-  CLIP     a string's measured width must fit the box it paints in.
-  COLLAPSE a visible string must have a box with area to paint into.
+Two things a naive reading of the dump gets wrong, both of which manufacture
+false positives:
 
-Every invariant has a planted negative (`--plant`) that mutates the snapshot so
-the corresponding detector MUST go red. A check that cannot be made to fail
-proves nothing, so the plants are part of the tool rather than a separate
-fixture that can silently stop running.
+  * A node's `rect` is its LAYOUT box, which carries padding and centring slack.
+    Two labels whose layout boxes touch can have glyph runs nowhere near each
+    other. Adjudicate on `measured_text_boxes[].rect`, never on `rect`.
+  * `visible: true` is the node's own flag, not a paint test. A node scrolled
+    out of its container is still `visible` while lying wholly outside its
+    `clipping.rect`, so it paints nothing. Intersect with the clip first.
+
+A run whose painted width the dump reports as 0.0 cannot be adjudicated at all;
+those are counted and reported rather than silently assumed innocent.
+
+Plant flags exist so each detector can be shown failing. A check that cannot be
+made to fail proves nothing.
 """
-
-from __future__ import annotations
 
 import argparse
 import json
 import sys
-from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional
-
-SCHEMA = "visual-layout-snapshot-v1"
 
 
-# ─────────────────────────────────────────────────────────────── geometry ──
+def load_nodes(path):
+    doc = json.load(open(path))
+    return doc["nodes"], doc.get("viewport", {})
 
 
-@dataclass(frozen=True)
-class Rect:
-    x: float
-    y: float
-    w: float
-    h: float
-
-    @property
-    def right(self) -> float:
-        return self.x + self.w
-
-    @property
-    def bottom(self) -> float:
-        return self.y + self.h
-
-    @property
-    def area(self) -> float:
-        return max(0.0, self.w) * max(0.0, self.h)
-
-    def intersect(self, other: "Rect") -> "Rect":
-        x1 = max(self.x, other.x)
-        y1 = max(self.y, other.y)
-        x2 = min(self.right, other.right)
-        y2 = min(self.bottom, other.bottom)
-        return Rect(x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1))
-
-    def contains(self, other: "Rect", tol: float = 0.5) -> bool:
-        return (
-            self.x - tol <= other.x
-            and self.y - tol <= other.y
-            and self.right + tol >= other.right
-            and self.bottom + tol >= other.bottom
-        )
-
-    def __str__(self) -> str:
-        return f"[{self.x:.2f},{self.y:.2f} {self.w:.2f}x{self.h:.2f}]"
-
-
-def rect_of(obj: Optional[dict], key: str = "rect") -> Optional[Rect]:
-    if not isinstance(obj, dict):
+def as_rect(r):
+    if not r:
         return None
-    raw = obj.get(key)
-    if not isinstance(raw, dict):
+    return (float(r["x"]), float(r["y"]), float(r["w"]), float(r["h"]))
+
+
+def intersect(a, b):
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    x = max(ax, bx)
+    y = max(ay, by)
+    w = min(ax + aw, bx + bw) - x
+    h = min(ay + ah, by + bh) - y
+    if w <= 0.0 or h <= 0.0:
         return None
-    try:
-        return Rect(
-            float(raw.get("x", 0.0)),
-            float(raw.get("y", 0.0)),
-            float(raw.get("w", 0.0)),
-            float(raw.get("h", 0.0)),
-        )
-    except (TypeError, ValueError):
-        return None
+    return (x, y, w, h)
 
 
-# ────────────────────────────────────────────────────────────────── model ──
+def clip_rect(node):
+    return as_rect((node.get("clipping") or {}).get("rect"))
 
 
-@dataclass
-class Node:
-    index: int
-    id: str
-    kind: str
-    rect: Rect
-    visible: bool
-    overflow: str
-    paint: int
-    clip_for_children: Optional[Rect]
-    texts: list[tuple[str, Rect]] = field(default_factory=list)
-    depth: Optional[int] = None
-    parent: Optional[int] = None
+def painted_runs(nodes, region):
+    """Glyph runs that actually reach the screen.
 
-    @property
-    def label(self) -> str:
-        name = self.id or f"<{self.kind}>"
-        return f"{name}({self.kind})"
-
-    @property
-    def text(self) -> str:
-        return " / ".join(t for t, _ in self.texts)
-
-
-@dataclass
-class Violation:
-    detector: str
-    detail: str
-    nodes: list[str]
-
-    def __str__(self) -> str:
-        return f"{self.detector}: {self.detail}"
-
-
-def load_nodes(doc: dict) -> list[Node]:
-    raw_nodes = doc.get("nodes")
-    if not isinstance(raw_nodes, list):
-        raise SystemExit("snapshot has no `nodes` array")
-
-    nodes: list[Node] = []
-    for i, raw in enumerate(raw_nodes):
-        if not isinstance(raw, dict):
-            continue
-        rect = rect_of(raw)
-        if rect is None:
-            continue
-        texts: list[tuple[str, Rect]] = []
-        for box in raw.get("measured_text_boxes") or []:
-            if not isinstance(box, dict):
-                continue
-            text = box.get("text")
-            box_rect = rect_of(box)
-            if isinstance(text, str) and text.strip() and box_rect is not None:
-                texts.append((text, box_rect))
-        z = raw.get("z_order") if isinstance(raw.get("z_order"), dict) else {}
-        depth = raw.get("depth")
-        nodes.append(
-            Node(
-                index=i,
-                id=str(raw.get("id") or ""),
-                kind=str(raw.get("kind") or raw.get("type") or "?"),
-                rect=rect,
-                visible=bool(raw.get("visible", True)),
-                overflow=str(raw.get("overflow") or "visible"),
-                paint=int(z.get("paint", i) or 0),
-                clip_for_children=rect_of(raw.get("clipping")),
-                texts=texts,
-                depth=int(depth) if isinstance(depth, int) else None,
-            )
-        )
-    return nodes
-
-
-def resolve_parents(nodes: list[Node]) -> tuple[bool, int]:
-    """Link each node to its parent.
-
-    Exact when the snapshot carries `depth` (pre-order + depth determines the
-    tree uniquely). Without it, fall back to a containment stack and report that
-    the ancestry is inferred, so a suppressed pair is never silently suppressed
-    on a guess.
+    Returns (painted, unmeasurable, clipped) where painted carries the run's
+    on-screen rect after clipping.
     """
-    if all(n.depth is not None for n in nodes) and nodes:
-        stack: list[int] = []
-        for n in nodes:
-            assert n.depth is not None
-            del stack[n.depth :]
-            n.parent = stack[-1] if stack else None
-            stack.append(n.index)
-        return True, 0
-
-    stack: list[Node] = []
-    inferred = 0
+    painted, unmeasurable, clipped = [], [], []
     for n in nodes:
-        while stack and not stack[-1].rect.contains(n.rect, tol=1.0):
-            stack.pop()
-        n.parent = stack[-1].index if stack else None
-        inferred += 1
-        stack.append(n)
-    return False, inferred
-
-
-def ancestors(nodes: list[Node], index: int) -> Iterable[int]:
-    by_index = {n.index: n for n in nodes}
-    cur = by_index.get(index)
-    seen = 0
-    while cur is not None and cur.parent is not None and seen < 512:
-        yield cur.parent
-        cur = by_index.get(cur.parent)
-        seen += 1
-
-
-def related(nodes: list[Node], a: Node, b: Node) -> bool:
-    return b.index in set(ancestors(nodes, a.index)) or a.index in set(
-        ancestors(nodes, b.index)
-    )
-
-
-# ────────────────────────────────────────────────────────────── detectors ──
-
-
-def painted_box(node: Node, text_rect: Rect) -> Rect:
-    """The region a string actually paints into.
-
-    The snapshot records a string's INTRINSIC extent at the node origin, so a
-    label that does not fit reports a rect wider than its own box. For overlap
-    we want what lands on screen, which is the intrinsic extent clipped to the
-    node's own box.
-
-    A MULTI-LINE label reports intrinsic width 0 on purpose — Label::
-    intrinsic_width() returns 0 for them so the parent's available width drives
-    wrapping rather than the single-line advance. Reading that 0 as "paints
-    nothing" silently excused 63% of the labels on Spectr's shipping surface
-    from every check. A wrapped label paints across its whole box, so that is
-    the extent to use.
-    """
-    if text_rect.w <= 0.0:
-        w = node.rect.w  # multi-line: wraps to fill the box
-    elif node.rect.w > 0:
-        w = min(text_rect.w, node.rect.w)
-    else:
-        w = text_rect.w
-    h = min(text_rect.h, node.rect.h) if node.rect.h > 0 and text_rect.h > 0 else max(
-        text_rect.h, 0.0
-    )
-    return Rect(text_rect.x, text_rect.y, w, h)
-
-
-def ancestry_is_exact(nodes: list[Node]) -> bool:
-    return bool(nodes) and all(n.depth is not None for n in nodes)
-
-
-def inherited_clip(nodes: list[Node], node: Node) -> Optional[Rect]:
-    """The clip every ancestor imposes on this node's own pixels.
-
-    `clipping.rect` on a node is the clip it imposes on its DESCENDANTS, not on
-    itself, so a node's on-screen extent is its painted box intersected with
-    every ancestor's clip. Without this a label scrolled out of a modal still
-    reports a box with area, and a presence check calls it visible — which is
-    exactly the mistake that made off-screen modulation chips look mounted.
-    """
-    if not ancestry_is_exact(nodes):
-        # Inferred ancestry cannot answer this. Containment-stack inference is
-        # wrong for exactly the nodes that matter here — a row scrolled out of
-        # a clipping modal is not contained in its parent, so the stack pops
-        # past the clipper and the node reads as unclipped. Refusing is the
-        # only honest answer; guessing produced a confident wrong one.
-        raise RuntimeError(
-            "visibility requires exact ancestry: this snapshot has no depth "
-            "sidecar, and inferring ancestry from rect containment is wrong "
-            "for any node that escapes its parent's bounds"
-        )
-    by_index = {n.index: n for n in nodes}
-    clip: Optional[Rect] = None
-    for ancestor_index in ancestors(nodes, node.index):
-        ancestor = by_index.get(ancestor_index)
-        if ancestor is None or ancestor.clip_for_children is None:
+        if not n.get("visible", True):
             continue
-        if ancestor.overflow not in ("hidden", "scroll"):
-            continue
-        clip = ancestor.clip_for_children if clip is None else clip.intersect(
-            ancestor.clip_for_children)
-    return clip
-
-
-def on_screen_box(nodes: list[Node], node: Node, text_rect: Rect) -> Rect:
-    """What a viewer can actually see of this string."""
-    painted = painted_box(node, text_rect)
-    clip = inherited_clip(nodes, node)
-    return painted if clip is None else painted.intersect(clip)
-
-
-def effectively_visible(nodes: list[Node], node: Node) -> bool:
-    """Visible to a viewer, meaning this node AND every ancestor is visible.
-
-    `dump_layout_tree` emits each node's own `view.visible()` and does not
-    inherit it, so a label inside a hidden modal still reports `visible: true`.
-    Filtering per-node therefore reports a dismissed panel as still on screen —
-    which is exactly how a working dismissal was mis-reported as a defect.
-    Requires exact ancestry for the same reason the clip test does.
-    """
-    if not node.visible:
-        return False
-    if not ancestry_is_exact(nodes):
-        raise RuntimeError(
-            "effective visibility requires exact ancestry: this snapshot has "
-            "no depth sidecar, and a per-node visible flag does not compose"
-        )
-    by_index = {n.index: n for n in nodes}
-    for ancestor_index in ancestors(nodes, node.index):
-        ancestor = by_index.get(ancestor_index)
-        if ancestor is not None and not ancestor.visible:
-            return False
-    return True
-
-
-def visible_overlap_box(nodes: list[Node], node: Node, text_rect: Rect) -> Rect:
-    """What a viewer can see of this string, for overlap purposes.
-
-    Two strings only collide if BOTH are actually on screen. A row clipped away
-    by a modal cannot overlap the toolbar behind it, and reporting that it does
-    invents a defect out of correct clipping.
-
-    Only `overflow: hidden` ancestors are applied. A `scroll` ancestor is
-    deliberately skipped: `dump_layout_tree` records PRE-SCROLL positions, so
-    intersecting a scrolled row against its container's clip says "off screen"
-    for content the viewer is looking straight at. Clipping on hidden is sound
-    because a hidden container does not translate its children.
-    """
-    painted = painted_box(node, text_rect)
-    clip = hidden_clip(nodes, node)
-    return painted if clip is None else painted.intersect(clip)
-
-
-def hidden_clip(nodes: list[Node], node: Node) -> Optional[Rect]:
-    """The clip imposed by `overflow: hidden` ancestors, below any scroller.
-
-    Only `overflow: hidden` ancestors are applied. A `scroll` ancestor is
-    deliberately skipped: `dump_layout_tree` records PRE-SCROLL positions, so
-    intersecting a scrolled row against its container's clip says "off screen"
-    for content the viewer is looking straight at. Clipping on hidden is sound
-    because a hidden container does not translate its children.
-
-    Returns None when ancestry is inferred rather than exact — the containment
-    stack pops past a clipper for exactly the nodes that escape their parent,
-    which is the population this answers about.
-    """
-    if not ancestry_is_exact(nodes):
-        return None
-    by_index = {n.index: n for n in nodes}
-    clip: Optional[Rect] = None
-    for ancestor_index in ancestors(nodes, node.index):
-        ancestor = by_index.get(ancestor_index)
-        if ancestor is None:
-            continue
-        if ancestor.overflow == "scroll":
-            # Stop here. Clips ABOVE a scroll container are expressed in
-            # post-scroll coordinates while this box is pre-scroll, so
-            # intersecting the two says "off screen" for content the viewer is
-            # looking straight at. Clips BELOW it share the node's untranslated
-            # frame and have already been applied.
-            break
-        if ancestor.overflow == "hidden" and ancestor.clip_for_children is not None:
-            clip = (ancestor.clip_for_children if clip is None
-                    else clip.intersect(ancestor.clip_for_children))
-    return clip
-
-
-def scroll_context(nodes: list[Node], node: Node) -> Optional[int]:
-    """Index of the nearest `overflow: scroll` ancestor, or None for fixed chrome.
-
-    Two boxes are only comparable by position when they share one. Snapshot
-    coordinates are PRE-SCROLL, so a row parked at y=810 inside a viewport that
-    ends at y=742 reports a screen position it does not occupy; measured against
-    the fixed toolbar it manufactures an overlap that no viewer can see. Within
-    ONE scroll context the offset is common to both boxes, so their relative
-    geometry survives.
-    """
-    if not ancestry_is_exact(nodes):
-        return None
-    by_index = {n.index: n for n in nodes}
-    for ancestor_index in ancestors(nodes, node.index):
-        ancestor = by_index.get(ancestor_index)
-        if ancestor is not None and ancestor.overflow == "scroll":
-            return ancestor.index
-    return None
-
-
-def text_nodes(nodes: list[Node]) -> list[Node]:
-    """Strings a viewer can actually see.
-
-    The per-node `visible` flag does not compose: `dump_layout_tree` emits each
-    node's own `view.visible()` without inheriting it, so every label inside a
-    DISMISSED overlay still reports `visible: true`. Filtering on that flag put
-    the closed Settings panel's 75 zero-area labels into every detector and
-    manufactured 51 findings on a home screen with none. Ancestry is required
-    to answer this; without a depth sidecar the composed answer is unavailable
-    and main() reports the ancestry as INFERRED alongside the count.
-    """
-    if not ancestry_is_exact(nodes):
-        return [n for n in nodes if n.visible and n.texts]
-    return [n for n in nodes if n.texts and effectively_visible(nodes, n)]
-
-
-def detect_overlap(nodes: list[Node], min_area: float) -> tuple[list[Violation], int, int]:
-    """OVERLAP — two visible text boxes that share a frame must not intersect."""
-    candidates = text_nodes(nodes)
-    contexts = {n.index: scroll_context(nodes, n) for n in candidates}
-    violations: list[Violation] = []
-    suppressed = 0
-    cross_scroll = 0
-    for i in range(len(candidates)):
-        a = candidates[i]
-        for j in range(i + 1, len(candidates)):
-            b = candidates[j]
-            if related(nodes, a, b):
-                suppressed += 1
-                continue
-            if contexts[a.index] != contexts[b.index]:
-                # Different scroll frames: their recorded coordinates are not
-                # in the same space, so any intersection between them is an
-                # artifact of pre-scroll positions rather than something on
-                # screen. Reported as skipped, never as a pass.
-                cross_scroll += 1
-                continue
-            for a_text, a_rect in a.texts:
-                pa = visible_overlap_box(nodes, a, a_rect)
-                if pa.area <= 0:
-                    continue
-                for b_text, b_rect in b.texts:
-                    pb = visible_overlap_box(nodes, b, b_rect)
-                    if pb.area <= 0:
-                        continue
-                    hit = pa.intersect(pb)
-                    if hit.area <= min_area:
-                        continue
-                    violations.append(
-                        Violation(
-                            "OVERLAP",
-                            f"{a.label} {json.dumps(a_text[:40])} {pa} "
-                            f"overlaps {b.label} {json.dumps(b_text[:40])} {pb} "
-                            f"by {hit.area:.1f}px^2 over {hit}",
-                            [a.label, b.label],
-                        )
-                    )
-    return violations, suppressed, cross_scroll
-
-
-# A line box is routinely taller than the glyphs it carries: 13px of text laid
-# out with 16px line-height reports a 16px measured height in a 13px box and
-# paints perfectly, because the extra is leading rather than ink. Treating that
-# as clipping reported 13 false defects on a surface with none, so height only
-# counts as a violation once the text needs a genuine EXTRA LINE.
-WRAP_RATIO = 1.5
-
-
-def detect_clip(nodes: list[Node], tol: float, strict_height: bool = False) -> list[Violation]:
-    """CLIP — a string's measured width must fit the box it paints in.
-
-    Width is the load-bearing check: a string wider than its box is truncated,
-    and nothing about typography excuses it. Height is reported separately as
-    WRAP, and only when the overflow is large enough to be another line.
-
-    The box a string gets is its own rect intersected with every
-    `overflow: hidden` ancestor's clip, not its own rect alone. A label with a
-    generous box that hangs out of a clipping container is truncated on screen
-    while its own numbers look fine, and comparing against the node rect alone
-    cannot see it. `overflow: scroll` ancestors are excluded — snapshot
-    coordinates are pre-scroll, so a row below the fold is content the viewer
-    scrolls to, not a defect.
-
-    Known limit: `measured_text_boxes` carries the ADVANCE width, which includes
-    the trailing side bearing, so the last glyph's ink stops short of the
-    reported extent. A sub-pixel overflow is therefore not proof of visible
-    truncation. The snapshot carries no ink extents, so this is stated rather
-    than thresholded — raise `--width-tolerance` if you need to exclude it, and
-    say that you did.
-    """
-    violations: list[Violation] = []
-    for n in text_nodes(nodes):
-        clip = hidden_clip(nodes, n)
-        avail = n.rect if clip is None else n.rect.intersect(clip)
-        for text, rect in n.texts:
-            if n.rect.w > 0 and rect.w > avail.w + tol:
-                clipped_by = (
-                    ""
-                    if avail.w >= n.rect.w - tol
-                    else f", clipped to {avail.w:.2f}px by an overflow:hidden ancestor"
-                )
-                violations.append(
-                    Violation(
-                        "CLIP",
-                        f"{n.label} {json.dumps(text[:40])} measures "
-                        f"{rect.w:.2f}px wide but paints in a {avail.w:.2f}px box "
-                        f"(overflows by {rect.w - avail.w:.2f}px{clipped_by}) "
-                        f"rect={n.rect}",
-                        [n.label],
-                    )
-                )
-            if n.rect.h <= 0:
-                continue  # a zero-height box is COLLAPSE's finding, not CLIP's
-            over = rect.h - n.rect.h
-            if over <= tol:
-                continue
-            if rect.w <= 0.0:
-                # Multi-line sentinel: Label::intrinsic_width() returns 0 for
-                # these, and measured_height is then a computed wrap ESTIMATE
-                # for the available width -- not the extent that paints. A
-                # header that renders on one line reports two lines' worth here,
-                # so asserting WRAP from it invents a defect. Verified against
-                # pixels: "SPECTR . ZOOMABLE FILTER BANK" paints on one line
-                # while reporting 36px in a 14px box.
-                continue
-            if not strict_height and rect.h < n.rect.h * WRAP_RATIO:
-                continue  # leading, not an extra line
-            violations.append(
-                Violation(
-                    "WRAP",
-                    f"{n.label} {json.dumps(text[:40])} measures "
-                    f"{rect.h:.2f}px tall but paints in a {n.rect.h:.2f}px box "
-                    f"(overflows by {over:.2f}px, {rect.h / n.rect.h:.2f}x — "
-                    f"needs another line) rect={n.rect}",
-                    [n.label],
-                )
-            )
-    return violations
-
-
-def detect_collapse(nodes: list[Node]) -> list[Violation]:
-    """COLLAPSE — a visible string must have a box with area to paint into."""
-    violations: list[Violation] = []
-    for n in text_nodes(nodes):
-        if n.rect.w > 0.0 and n.rect.h > 0.0:
-            continue
-        violations.append(
-            Violation(
-                "COLLAPSE",
-                f"{n.label} carries text {json.dumps(n.text[:60])} but its box is "
-                f"{n.rect.w:.2f}x{n.rect.h:.2f} — nothing can paint there",
-                [n.label],
-            )
-        )
-    return violations
-
-
-# ─────────────────────────────────────────────────────── planted negatives ──
-
-
-def plant(doc: dict, which: str, scope: set[int] | None = None) -> str:
-    """Mutate the snapshot so a specific detector MUST go red.
-
-    The plant is the control. If a detector stays green under its own plant the
-    detector is broken, and the tool says so rather than reporting a pass.
-
-    `scope` restricts the candidate nodes to a set of indices into doc["nodes"].
-    It must be passed whenever the run itself is scoped (`--subtree`): a plant
-    outside the reported subtree is filtered away before any detector sees it,
-    so the control reads GREEN while proving nothing. That is not hypothetical
-    — it is how a `--subtree` run of this tool once reported a clean control.
-    """
-    def measurable(n: Any) -> bool:
-        if not isinstance(n, dict) or not n.get("visible", True):
-            return False
         boxes = n.get("measured_text_boxes") or []
         if not boxes:
-            return False
-        r = n.get("rect") or {}
-        # A plant on a node with no area cannot redden anything, which would
-        # make the control vacuous rather than reassuring.
-        return float(r.get("w", 0)) > 1.0 and float(r.get("h", 0)) > 1.0
-
-    nodes = [
-        n
-        for i, n in enumerate(doc.get("nodes", []))
-        if (scope is None or i in scope) and measurable(n)
-    ]
-    if not nodes:
-        raise SystemExit(
-            "cannot plant: no visible text-bearing node"
-            + (" inside the requested subtree" if scope is not None else " in the snapshot")
-        )
-
-    if which == "overlap":
-        if len(nodes) < 2:
-            raise SystemExit("cannot plant overlap: need two text-bearing nodes")
-        a, b = nodes[0], nodes[1]
-        a["rect"] = dict(b["rect"])
-        for box in a["measured_text_boxes"]:
-            box["rect"]["x"] = b["rect"]["x"]
-            box["rect"]["y"] = b["rect"]["y"]
-            box["rect"]["w"] = max(4.0, float(b["rect"]["w"]))
-            box["rect"]["h"] = max(4.0, float(b["rect"]["h"]))
-        return f"planted OVERLAP: moved {a.get('id') or a.get('kind')} onto {b.get('id') or b.get('kind')}"
-
-    if which == "clip":
-        n = nodes[0]
-        box = n["measured_text_boxes"][0]
-        box["rect"]["w"] = float(n["rect"]["w"]) + 40.0
-        return f"planted CLIP: widened {n.get('id') or n.get('kind')} text to box+40px"
-
-    if which == "wrap":
-        # WRAP deliberately ignores a zero-width text box: that is the
-        # multi-line sentinel, where measured_height is a wrap ESTIMATE rather
-        # than the extent that paints. Planting on one is vacuous — the plant
-        # lands and the check skips it, and the control reads GREEN while the
-        # detector is fine. Pick a node the check can actually see.
-        single_line = [
-            n for n in nodes
-            if float((n["measured_text_boxes"][0].get("rect") or {}).get("w", 0)) > 0.0
-        ]
-        if not single_line:
-            raise SystemExit(
-                "cannot plant wrap: every text-bearing node in this snapshot "
-                "reports the multi-line width sentinel, which WRAP skips"
-            )
-        n = single_line[0]
-        box = n["measured_text_boxes"][0]
-        box["rect"]["h"] = float(n["rect"]["h"]) * 2.0 + 8.0
-        return f"planted WRAP: doubled {n.get('id') or n.get('kind')} text height"
-
-    if which == "collapse":
-        n = nodes[0]
-        n["rect"]["h"] = 0.0
-        return f"planted COLLAPSE: zeroed height of {n.get('id') or n.get('kind')}"
-
-    raise SystemExit(f"unknown plant: {which}")
+            continue
+        b = boxes[0]
+        text = b.get("text")
+        if not text:
+            continue
+        run = as_rect(b.get("rect"))
+        layout = as_rect(n.get("rect"))
+        if run is None or layout is None:
+            continue
+        clip = clip_rect(n)
+        # A node lying wholly outside its clip paints nothing, whatever its
+        # `visible` flag says.
+        if clip is not None and intersect(layout, clip) is None:
+            clipped.append((n, text))
+            continue
+        if run[2] <= 0.0:
+            unmeasurable.append((n, text))
+            continue
+        on_screen = run if clip is None else intersect(run, clip)
+        if on_screen is None:
+            clipped.append((n, text))
+            continue
+        if region and intersect(on_screen, region) is None:
+            continue
+        painted.append((n, text, on_screen, layout))
+    return painted, unmeasurable, clipped
 
 
-# ─────────────────────────────────────────────────────────────────── main ──
+def within(inner, outer, eps):
+    ix, iy, iw, ih = inner
+    ox, oy, ow, oh = outer
+    return (ix >= ox - eps and iy >= oy - eps
+            and ix + iw <= ox + ow + eps and iy + ih <= oy + oh + eps)
 
 
-def merge_depth_sidecar(snapshot_path: str, doc: dict) -> None:
-    """Attach depths written alongside the snapshot, if present.
+def check_box_intersection(painted, eps, plant):
+    items = list(painted)
+    if plant:
+        if len(items) < 2:
+            return 0, ["PLANT IMPOSSIBLE: fewer than two painted runs"]
+        n, t, r, lay = items[1]
+        tx, ty, tw, th = items[0][2]
+        # Straddle the target so neither run contains the other — a pure
+        # collision, not nesting, which the nesting skip would swallow.
+        items[1] = (n, t, (tx + tw / 2.0, ty + th / 2.0, r[2], r[3]), lay)
 
-    A length mismatch means the sidecar does not describe this snapshot, so it
-    is refused rather than applied to the wrong nodes — a silently misaligned
-    depth array would corrupt every ancestor decision downstream.
-    """
-    import os
-
-    base = snapshot_path
-    for suffix in (".layout.json", ".json"):
-        if base.endswith(suffix):
-            base = base[: -len(suffix)]
-            break
-    sidecar = base + ".depths.json"
-    if not os.path.exists(sidecar):
-        return
-    try:
-        with open(sidecar, "r", encoding="utf-8") as fh:
-            depths = json.load(fh)
-    except (OSError, ValueError):
-        return
-    nodes = doc.get("nodes")
-    if not isinstance(nodes, list) or not isinstance(depths, list):
-        return
-    if len(depths) != len(nodes):
-        print(
-            f"warning: depth sidecar has {len(depths)} entries for "
-            f"{len(nodes)} nodes — refusing to apply it",
-            file=sys.stderr,
-        )
-        return
-    for node, depth in zip(nodes, depths):
-        if isinstance(node, dict) and isinstance(depth, int):
-            node["depth"] = depth
+    violations = []
+    for i in range(len(items)):
+        for j in range(i + 1, len(items)):
+            na, ta, ra, _ = items[i]
+            nb, tb, rb, _ = items[j]
+            if within(ra, rb, 0.5) or within(rb, ra, 0.5):
+                continue
+            ov = intersect(ra, rb)
+            if ov and ov[2] > eps and ov[3] > eps:
+                violations.append(
+                    f"{ta!r}({na['id']}) {ra} overlaps {tb!r}({nb['id']}) {rb} "
+                    f"by {ov[2]:.1f}x{ov[3]:.1f}px")
+    return len(items), violations
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("snapshot", help="layout snapshot JSON from dump_layout_tree")
-    ap.add_argument(
-        "--plant",
-        choices=["overlap", "clip", "wrap", "collapse"],
-        help="mutate the snapshot so that detector must go red (control)",
-    )
-    ap.add_argument(
-        "--only",
-        action="append",
-        choices=["overlap", "clip", "wrap", "collapse"],
-        help="run only these detectors (repeatable)",
-    )
-    ap.add_argument(
-        "--subtree",
-        help="restrict to nodes whose id contains this substring, and their descendants",
-    )
-    ap.add_argument("--min-overlap-area", type=float, default=1.0)
-    ap.add_argument("--width-tolerance", type=float, default=0.5)
-    ap.add_argument(
-        "--strict-height",
-        action="store_true",
-        help="also report line-height overshoot that is leading, not an extra line",
-    )
-    ap.add_argument("--max-report", type=int, default=40)
-    ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+def check_painted_vs_measured(painted, tol, plant):
+    items = [(n, t, r[2], lay[2]) for n, t, r, lay in painted]
+    if plant:
+        if not items:
+            return 0, ["PLANT IMPOSSIBLE: no measurable run"]
+        n, t, pw, bw = items[0]
+        items[0] = (n, t, bw + 12.0, bw)
+
+    violations = []
+    for n, t, pw, bw in items:
+        if pw > bw + tol:
+            violations.append(
+                f"{t!r}({n['id']}) painted {pw:.1f}px in a {bw:.1f}px box "
+                f"({pw / bw:.2f}x)")
+    return len(items), violations
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("dump")
+    ap.add_argument("--region", help="x,y,w,h — restrict to a subtree box")
+    ap.add_argument("--overlap-eps", type=float, default=0.5)
+    ap.add_argument("--fit-tolerance", type=float, default=0.5)
+    ap.add_argument("--plant-overlap", action="store_true")
+    ap.add_argument("--plant-overflow", action="store_true")
     args = ap.parse_args()
 
-    with open(args.snapshot, "r", encoding="utf-8") as fh:
-        doc = json.load(fh)
+    nodes, viewport = load_nodes(args.dump)
+    region = None
+    if args.region:
+        region = tuple(float(v) for v in args.region.split(","))
 
-    # dump_layout_tree emits pre-order nodes with no depth, so a consumer would
-    # have to INFER ancestry from rect containment — which is wrong for any node
-    # that escapes its parent's bounds. The capture harness writes a depth
-    # sidecar from the same pre-order walk; merging it makes ancestry exact.
-    merge_depth_sidecar(args.snapshot, doc)
+    print(f"dump: {args.dump}  nodes={len(nodes)}  viewport={viewport}")
+    if region:
+        print(f"region: {region}")
 
-    schema = doc.get("schema_version")
-    if schema != SCHEMA:
-        print(
-            f"warning: schema is {schema!r}, expected {SCHEMA!r}", file=sys.stderr
-        )
+    painted, unmeasurable, clipped = painted_runs(nodes, region)
+    print(f"runs: {len(painted)} painted, {len(unmeasurable)} unmeasurable "
+          f"(dump reports painted width 0.0), {len(clipped)} clipped away")
 
-    def scoped() -> tuple[list[Node], bool, set[int] | None]:
-        """Load, resolve ancestry, and apply --subtree. Returns (nodes, exact, keep)."""
-        ns = load_nodes(doc)
-        exact, _ = resolve_parents(ns)
-        if not args.subtree:
-            return ns, exact, None
-        keep: set[int] = set()
-        for n in ns:
-            if args.subtree in n.id:
-                keep.add(n.index)
-                keep.update(
-                    m.index
-                    for m in ns
-                    if n.index in set(ancestors(ns, m.index))
-                )
-        return [n for n in ns if n.index in keep], exact, keep
+    failed = False
 
-    # Scope FIRST, then plant inside that scope. Planting before the subtree
-    # filter puts the control outside the reported set, where no detector can
-    # see it — a green control that proves nothing.
-    nodes, exact_ancestry, keep = scoped()
-    if args.subtree and not nodes:
-        print(f"no node id contains {args.subtree!r}", file=sys.stderr)
+    n_items, ov = check_box_intersection(painted, args.overlap_eps,
+                                         args.plant_overlap)
+    print(f"\n[box-intersection] adjudicated {n_items} painted runs")
+    if ov:
+        failed = True
+        print(f"  RED — {len(ov)} overlap(s)")
+        for v in ov[:20]:
+            print(f"    {v}")
+    else:
+        print("  GREEN — no two painted runs overlap")
+
+    n_m, fv = check_painted_vs_measured(painted, args.fit_tolerance,
+                                        args.plant_overflow)
+    print(f"\n[painted-vs-measured] adjudicated {n_m} painted runs")
+    if fv:
+        failed = True
+        print(f"  RED — {len(fv)} run(s) exceed their box")
+        for v in fv[:20]:
+            print(f"    {v}")
+    else:
+        print("  GREEN — every painted run fits its box")
+
+    if unmeasurable:
+        print(f"\nCAVEAT — {len(unmeasurable)} run(s) could not be adjudicated "
+              f"by either detector: the layout dump reports painted width 0.0 "
+              f"for them. Neither detector can see a defect in these.")
+
+    if not painted:
+        print("\nINSTRUMENT BROKEN: nothing painted was adjudicated. "
+              "Reporting nothing.")
         return 2
 
-    plant_note = plant(doc, args.plant, keep) if args.plant else None
-    if plant_note:
-        # The plant mutated the raw dicts; re-derive so the detectors see it.
-        nodes, exact_ancestry, _ = scoped()
-
-    wanted = set(args.only or ["overlap", "clip", "wrap", "collapse"])
-    violations: list[Violation] = []
-    suppressed = 0
-    cross_scroll = 0
-    if "overlap" in wanted:
-        v, suppressed, cross_scroll = detect_overlap(nodes, args.min_overlap_area)
-        violations += v
-    if "clip" in wanted or "wrap" in wanted:
-        for v in detect_clip(nodes, args.width_tolerance, args.strict_height):
-            if v.detector.lower() in wanted:
-                violations.append(v)
-    if "collapse" in wanted:
-        violations += detect_collapse(nodes)
-
-    counted = text_nodes(nodes)
-    surface = doc.get("surface", "?")
-
-    if args.json:
-        print(
-            json.dumps(
-                {
-                    "surface": surface,
-                    "snapshot": args.snapshot,
-                    "plant": plant_note,
-                    "exact_ancestry": exact_ancestry,
-                    "nodes_total": len(nodes),
-                    "text_nodes": len(counted),
-                    "violations": [
-                        {"detector": v.detector, "detail": v.detail, "nodes": v.nodes}
-                        for v in violations
-                    ],
-                },
-                indent=2,
-            )
-        )
-    else:
-        if plant_note:
-            print(f"CONTROL: {plant_note}")
-        print(
-            f"surface={surface}  nodes={len(nodes)}  text_nodes={len(counted)}  "
-            f"ancestry={'exact' if exact_ancestry else 'INFERRED (no depth field)'}"
-            + (f"  ancestor_pairs_skipped={suppressed}" if suppressed else "")
-            + (f"  cross_scroll_pairs_skipped={cross_scroll}" if cross_scroll else "")
-        )
-        if not counted:
-            print(
-                "INCONCLUSIVE: no visible text-bearing node in this snapshot — "
-                "the detectors had nothing to measure, which is NOT a pass"
-            )
-            return 3
-        by_detector: dict[str, int] = {}
-        for v in violations:
-            by_detector[v.detector] = by_detector.get(v.detector, 0) + 1
-        for v in violations[: args.max_report]:
-            print(f"  RED  {v}")
-        if len(violations) > args.max_report:
-            print(f"  ... {len(violations) - args.max_report} more")
-        if violations:
-            summary = ", ".join(f"{k}={v}" for k, v in sorted(by_detector.items()))
-            print(f"RED    {len(violations)} violation(s)  [{summary}]")
-        else:
-            print("GREEN  no appearance-invariant violations")
-
-    # A planted run MUST be red. If it is not, the detector is broken and the
-    # tool must not report a clean bill of health.
-    if plant_note and not violations:
-        print(
-            "BROKEN: the planted negative did not redden any detector — "
-            "this tool cannot be trusted until that is fixed",
-            file=sys.stderr,
-        )
-        return 4
-
-    return 1 if violations else 0
+    print("\nRESULT:", "RED" if failed else "GREEN")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

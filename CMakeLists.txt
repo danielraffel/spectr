@@ -535,6 +535,91 @@ find_program(SPECTR_NODE_EXECUTABLE NAMES node)
 find_program(SPECTR_CHROME_EXECUTABLE
     NAMES "Google Chrome" google-chrome chromium chromium-browser
     PATHS "/Applications/Google Chrome.app/Contents/MacOS")
+
+# Node-only, deliberately outside the Chrome-gated block below: this executes
+# the shipped reattach ladder out of the materialized document directly, so it
+# still runs on a host with no Chrome -- where every other oracle silently
+# vanishes.
+#
+# What it guards: the ladder's wrappers must return what the React callback
+# returned. A handler stops a press from reaching the nodes behind it by
+# returning a propagation marker, and Settings depends on that -- its panel
+# calls stopPropagation so a press inside never reaches the scrim, whose
+# "pressed outside" handler closes it. Wrappers that dropped the value shipped
+# the #1 user-reported defect: Settings closed on a tap that landed inside it,
+# and toggles appeared to vanish because the panel closed instead of the toggle
+# flipping.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-propagation
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_propagation.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-propagation PROPERTIES TIMEOUT 30)
+    # The negative control. --plant-swallow reinstates the value-dropping
+    # wrappers -- the exact pre-fix code -- and this row passes only when the
+    # suite REJECTS them, so weakening the assertion turns this green->red
+    # instead of silently agreeing. Verified by hand against the real pre-fix
+    # materialized document: it exits 1 on "the click wrapper drops the
+    # propagation marker", so this oracle is known to be able to catch the
+    # defect it was written for, not merely known to be green.
+    add_test(NAME Spectr-materialized-propagation-negative-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_propagation.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-swallow)
+    set_tests_properties(Spectr-materialized-propagation-negative-control PROPERTIES
+        TIMEOUT 30
+        WILL_FAIL TRUE)
+endif()
+
+# Appearance invariants over a dump_layout_tree() snapshot: two painted glyph
+# runs must not overlap, and a run must fit the box laid out for it. Both
+# adjudicate on measured_text_boxes[].rect after intersecting with the node's
+# clip, never on the node's layout rect -- a layout box carries padding and
+# centring slack, and a node scrolled out of its container keeps visible:true
+# while painting nothing, so reading either naively manufactures overlaps that
+# are not on screen.
+#
+# The fixture is a real dump from the shipping standalone with Settings open.
+# It is adjudicated, not assumed: every run this suite reports on was checked
+# against the ink under its rect in the matching screenshot.
+#
+# Coverage is partial and the suite says so on every run. The dump reports a
+# painted width of 0.0 for 63 of the 101 text-bearing Labels -- the tell is an
+# integer box height, the layout line box, where a shaped run carries a
+# fractional one -- and 28 of those have proven ink, including every label in
+# the Settings body. Neither detector can see a defect in those runs.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-appearance-invariants
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/appearance_invariants.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/settings-open-layout.json)
+    set_tests_properties(Spectr-appearance-invariants PROPERTIES TIMEOUT 60)
+
+    # The negative controls. Each plant injects the exact defect its detector
+    # exists to catch -- a straddling collision, and a run wider than its box --
+    # and the row passes only when the detector REJECTS it. A detector that
+    # cannot be made to fail proves nothing, so these turn a weakened assertion
+    # green->red instead of letting it agree silently.
+    add_test(NAME Spectr-appearance-invariants-overlap-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/appearance_invariants.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/settings-open-layout.json
+            --plant-overlap)
+    set_tests_properties(Spectr-appearance-invariants-overlap-control PROPERTIES
+        TIMEOUT 60
+        WILL_FAIL TRUE)
+
+    add_test(NAME Spectr-appearance-invariants-overflow-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/appearance_invariants.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/settings-open-layout.json
+            --plant-overflow)
+    set_tests_properties(Spectr-appearance-invariants-overflow-control PROPERTIES
+        TIMEOUT 60
+        WILL_FAIL TRUE)
+endif()
 # The seven browser oracles below are the ONLY coverage for the status overlay,
 # preset detail, Settings polish, and dropdown rows. If node or Chrome is
 # missing they are simply never registered, so a run without them is not a
