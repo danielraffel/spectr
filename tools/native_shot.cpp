@@ -1058,6 +1058,146 @@ int main(int argc, char** argv) {
         rig.report_settings_children();
         capture(rig, dir, prefix + "01-home", backend, scale);
 
+        // PRE-* surface. The Preset Manager ("PRESET MANAGER" in the shipping
+        // asset, `pattern-manager` in the materialized states) is reached by the
+        // activation recipe the materialized document itself records: open the
+        // PRESETS menu, then click the manage entry. Guarded and terminal so the
+        // settings/modulation sweep below keeps producing byte-identical
+        // evidence when the guard is off.
+        // The shipping SHORTCUTS panel advertises 1/2/3 = "Sculpt · Level ·
+        // Boost". Press the advertised key and watch the edit-mode label. The
+        // control is the same state change driven by a click, which proves the
+        // observation can see the change at all -- without it, "label did not
+        // move" is equally consistent with a broken probe.
+        if (std::getenv("SPECTR_SHORTCUT_PROBE") != nullptr) {
+            auto dump_mode = [&rig](const char* label) {
+                std::string js =
+                    "(function(){var a=document.querySelectorAll('*');var f=[];"
+                    "for(var i=0;i<a.length;i++){var e=a[i];"
+                    "var t=(e.textContent||'').trim();"
+                    "if(e.children.length===0&&t.length<20&&"
+                    "/SCULPT|LEVEL|BOOST|BARS|RESPONSE|BOTH/i.test(t))f.push(t);}"
+                    "console.log('[mode] ";
+                js += label;
+                js += " :: '+(f.join(' , ')||'(none)'));})();";
+                rig.eval(js, "mode_probe");
+            };
+            dump_mode("initial");
+            if (rig.root != nullptr) {
+                struct { pulp::view::KeyCode code; const char* name; } keys[] = {
+                    {pulp::view::KeyCode::num1, "1"},
+                    {pulp::view::KeyCode::num2, "2"},
+                    {pulp::view::KeyCode::num3, "3"},
+                    {pulp::view::KeyCode::num6, "6"}};
+                for (const auto& k : keys) {
+                    pulp::view::KeyEvent down; down.key = k.code;
+                    down.is_down = true;
+                    pulp::view::KeyEvent up; up.key = k.code; up.is_down = false;
+                    const bool handled = rig.root->on_key_event(down);
+                    rig.root->on_key_event(up);
+                    settle(rig.clock, 24);
+                    std::printf("[shortcut] key '%s' handled=%s\n", k.name,
+                                handled ? "yes" : "no");
+                    std::string lbl = "after-key-";
+                    lbl += k.name;
+                    dump_mode(lbl.c_str());
+                }
+            }
+            // Positive control: the same mode change by click.
+            rig.activate("[data-spectr-menu-root=\"edit\"] "
+                         "[data-spectr-menu-trigger]");
+            settle(rig.clock, 12);
+            rig.eval("(function(){var o=document.querySelectorAll("
+                     "'[data-spectr-menu-options] *');var f=[];"
+                     "for(var i=0;i<o.length;i++){var t=(o[i].textContent||'')"
+                     ".trim();if(t&&t.length<24&&o[i].children.length===0)"
+                     "f.push(t);}console.log('[mode] menu-options :: '"
+                     "+f.join(' | '));})();", "edit_menu_options");
+            rig.eval("(function(){var o=document.querySelectorAll("
+                     "'[data-spectr-menu-options] *');var f=[];"
+                     "for(var i=0;i<o.length&&i<14;i++){var e=o[i];var s='';"
+                     "var at=e.attributes||[];"
+                     "for(var j=0;j<at.length;j++)s+=at[j].name+'='+at[j].value+' ';"
+                     "f.push('['+i+'] '+e.tagName+' {'+s+'}');}"
+                     "console.log('[mode] attrs :: '+f.join(' ;; '));})();",
+                     "edit_menu_attrs");
+            rig.eval("(function(){var tries=["
+                     "'[data-spectr-menu-options] button',"
+                     "'[data-spectr-menu-options] button:nth-child(2)',"
+                     "'[data-spectr-menu-options] button:nth-of-type(2)',"
+                     "'[data-spectr-menu-options] > button'];var f=[];"
+                     "for(var i=0;i<tries.length;i++){var n=0,t='';"
+                     "try{var q=document.querySelectorAll(tries[i]);n=q.length;"
+                     "if(n)t=(q[0].textContent||'').trim().slice(0,18);}"
+                     "catch(e){t='THROW';}"
+                     "f.push(tries[i]+' -> '+n+' \"'+t+'\"');}"
+                     "console.log('[mode] sel :: '+f.join(' ;; '));})();",
+                     "sel_probe");
+            // Control: drive the SAME mode change by click. JS locates the
+            // LEVEL button by its own descendant text, derives that button's
+            // nth-child index, and activates it through the ordinary
+            // materialized-element path.
+            rig.eval("(function(){var bs=document.querySelectorAll("
+                     "'[data-spectr-menu-options] button');var hit=-1;"
+                     "for(var i=0;i<bs.length;i++){var d=bs[i]"
+                     ".querySelectorAll('*');var txt='';"
+                     "for(var j=0;j<d.length;j++){if(d[j].children.length===0)"
+                     "txt+=' '+(d[j].textContent||'');}"
+                     "if(/LEVEL/i.test(txt)){hit=i;break;}}"
+                     "if(hit<0){console.log('[mode] control :: LEVEL button "
+                     "NOT FOUND');return;}"
+                     "var sel='[data-spectr-menu-options] button:nth-child('"
+                     "+(hit+2)+')';"
+                     "var ok=globalThis.__pulpActivateMaterializedElement__("
+                     "sel,'click',null);"
+                     "if(typeof globalThis.__pulpRuntimeSettle__==='function')"
+                     "globalThis.__pulpRuntimeSettle__(8);"
+                     "console.log('[mode] control :: idx='+hit+' sel='+sel"
+                     "+' activated='+ok);})();", "click_level_control");
+            settle(rig.clock, 24);
+            dump_mode("after-click-LEVEL");
+            capture(rig, dir, prefix + "06-editmenu-SHIPPING", backend, scale);
+            return 0;
+        }
+
+        if (std::getenv("SPECTR_PRESET_SWEEP") != nullptr) {
+            auto probe = [&rig](const char* label) {
+                static const char* hooks[] = {
+                    "[data-spectr-menu-root=\"pattern\"]",
+                    "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]",
+                    "[data-spectr-menu-options]",
+                    "[data-spectr-pattern-manage]",
+                    "[data-spectr-manager-title]",
+                    "[data-spectr-manager-detail]",
+                    "[data-spectr-manager-action]",
+                    "[data-spectr-manager-source]",
+                    "[data-spectr-overlay]",
+                    "[data-spectr-settings-panel]"};
+                std::printf("[preset] %-14s", label);
+                for (const char* h : hooks)
+                    std::printf(" %s=%s", h, rig.is_mounted(h) ? "1" : "0");
+                std::printf("\n");
+            };
+            probe("home");
+            rig.activate("[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+            probe("after-menu");
+            if (rig.is_mounted("[data-spectr-pattern-manage]")) {
+                rig.activate("[data-spectr-pattern-manage]");
+                probe("after-manage");
+            }
+            rig.eval("globalThis.__shotDump=(function(){var o=[];"
+                     "var all=document.querySelectorAll('*');"
+                     "for(var i=0;i<all.length;i++){var e=all[i];"
+                     "var t=(e.textContent||'').trim();"
+                     "if(t&&t.length<40&&e.children.length===0)o.push(t);}"
+                     "return o.slice(0,60).join(' | ');})();"
+                     "console.log('[preset] text :: '+globalThis.__shotDump);",
+                     "preset_text_dump");
+            rig.print_layout_receipt();
+            capture(rig, dir, prefix + "05-presets-SHIPPING", backend, scale);
+            return 0;
+        }
+
         rig.activate("[data-spectr-settings-open]");
         rig.require_reachable("[data-spectr-settings-panel]");
         rig.print_layout_receipt();
