@@ -3501,6 +3501,35 @@ window.PatternManager = PatternManager;`,
       "<span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', height: '100%', lineHeight: '13px', paddingTop: '6.5px', boxSizing: 'border-box', whiteSpace: 'nowrap' }}>{text}</span>",
       "<span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', height: '100%', lineHeight: '14px', paddingTop: '6px', boxSizing: 'border-box', whiteSpace: 'nowrap' }}>{text}</span>",
       'status text uses an integer-centered line box');
+    // The banner centres itself horizontally. `transform` is the CSS way to
+    // say that and is the wrong tool here: the native materialized runtime
+    // drops the declaration, so `left: 50%` lands the banner's left EDGE on
+    // the viewport centre and the box hangs half its width to the right. A
+    // negative `marginLeft` states the same offset through a property Yoga
+    // composes with `left`, so the centring holds in both runtimes.
+    replaceSpectrSource(
+      "  }, [message, disabled]);\n  return (",
+      "  }, [message, disabled]);\n  const bannerWidth = Math.max(96, Math.min(520, text.length * 8 + 28));\n  return (",
+      'status banner centers on a property the runtime honors');
+    replaceSpectrSource(
+      String.raw`      position: 'absolute', top: 104, left: '50%', transform: 'translateX(-50%)',
+      width: Math.max(96, Math.min(520, text.length * 8 + 28)),`,
+      String.raw`      position: 'absolute', top: 104, left: '50%',
+      marginLeft: -bannerWidth / 2,
+      width: bannerWidth,`,
+      'status banner offsets by half its own width');
+    replaceSpectrSource(
+      "      transition: 'width 0.18s ease, opacity 0.15s ease',",
+      "      transition: 'width 0.18s ease, margin-left 0.18s ease, opacity 0.15s ease',",
+      'status banner animates the offset that now carries its centering');
+    // The flex parent already centres a single line. Fixing the span to the
+    // box height and then padding its top pushes the glyphs off that centre
+    // rather than onto it; without both, the centring is left to the one
+    // thing that measures the text.
+    replaceSpectrSource(
+      "<span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', height: '100%', lineHeight: '14px', paddingTop: '6px', boxSizing: 'border-box', whiteSpace: 'nowrap' }}>{text}</span>",
+      "<span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', lineHeight: '14px', boxSizing: 'border-box', whiteSpace: 'nowrap' }}>{text}</span>",
+      'status text is centered by its flex parent rather than by padding');
     replaceSpectrSource(
       "function SpectrSettingsField({ label, hint, children }) {\n  return <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>\n    <div style={{ width: 110, flexShrink: 0 }}>",
       "function SpectrSettingsField({ label, hint, children }) {\n  return <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>\n    <div style={{ width: 150, flexShrink: 0 }}>",

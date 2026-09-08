@@ -2375,6 +2375,45 @@ function SettingsModal({ settings, setSettings, onClose }) {
      'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "13px", paddingTop: "6.5px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)',
      'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "14px", paddingTop: "6px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)'),
 
+    # The banner centres itself horizontally. `transform` is the CSS way to do
+    # it and is the wrong tool here: the native materialized runtime drops the
+    # declaration, so `left: 50%` puts the banner's left EDGE on the viewport
+    # centre and the whole box hangs half its width to the right. A negative
+    # `marginLeft` expresses the same offset through a property Yoga composes
+    # with `left` in its absolute-layout path, so the centring survives.
+    ('status banner centers on a property the runtime honors',
+     '  }, [message, disabled]);\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "div",\n'
+     '    {\n'
+     '      "data-spectr-status-shell": "true",',
+     '  }, [message, disabled]);\n'
+     '  const bannerWidth = Math.max(96, Math.min(520, text.length * 8 + 28));\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "div",\n'
+     '    {\n'
+     '      "data-spectr-status-shell": "true",'),
+
+    ('status banner offsets by half its own width',
+     '        left: "50%",\n'
+     '        transform: "translateX(-50%)",\n'
+     '        width: Math.max(96, Math.min(520, text.length * 8 + 28)),',
+     '        left: "50%",\n'
+     '        marginLeft: -bannerWidth / 2,\n'
+     '        width: bannerWidth,'),
+
+    ('status banner animates the offset that now carries its centering',
+     '        transition: "width 0.18s ease, opacity 0.15s ease",',
+     '        transition: "width 0.18s ease, margin-left 0.18s ease, opacity 0.15s ease",'),
+
+    # The flex parent already centres a single line vertically. Fixing the
+    # span's height to the box and then padding the top pushes the glyphs off
+    # that centre instead of onto it; removing both leaves the centring to the
+    # one thing that measures the text.
+    ('status text is centered by its flex parent rather than by padding',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "14px", paddingTop: "6px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", lineHeight: "14px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)'),
+
     ('settings hints reserve enough width to remain complete',
      'function SpectrSettingsField({ label, hint, children }) {\n'
      '  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 110, flexShrink: 0 } },',
@@ -2978,6 +3017,14 @@ SUPERSEDED_EDITS = frozenset({
     #   consumed by: live status text is optically centered
     'live status text is optically centered',
     #   consumed by: status text uses an integer-centered line box
+    'status text uses an integer-centered line box',
+    #   consumed by: status text is centered by its flex parent rather than by padding
+    'status banner is content-sized with symmetric padding',
+    #   consumed by: status banner offsets by half its own width
+    'status disable invalidates pending banner effects',
+    #   consumed by: status banner centers on a property the runtime honors
+    'status banner resizes smoothly',
+    #   consumed by: status banner animates the offset that now carries its centering
     'band count label shares one vertical center',
     #   consumed by: band trigger suffix shares the centered flex line
     'band count trigger reflects selection immediately',
