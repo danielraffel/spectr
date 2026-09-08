@@ -325,8 +325,25 @@ def visible_overlap_box(nodes: list[Node], node: Node, text_rect: Rect) -> Rect:
     because a hidden container does not translate its children.
     """
     painted = painted_box(node, text_rect)
+    clip = hidden_clip(nodes, node)
+    return painted if clip is None else painted.intersect(clip)
+
+
+def hidden_clip(nodes: list[Node], node: Node) -> Optional[Rect]:
+    """The clip imposed by `overflow: hidden` ancestors, below any scroller.
+
+    Only `overflow: hidden` ancestors are applied. A `scroll` ancestor is
+    deliberately skipped: `dump_layout_tree` records PRE-SCROLL positions, so
+    intersecting a scrolled row against its container's clip says "off screen"
+    for content the viewer is looking straight at. Clipping on hidden is sound
+    because a hidden container does not translate its children.
+
+    Returns None when ancestry is inferred rather than exact — the containment
+    stack pops past a clipper for exactly the nodes that escape their parent,
+    which is the population this answers about.
+    """
     if not ancestry_is_exact(nodes):
-        return painted
+        return None
     by_index = {n.index: n for n in nodes}
     clip: Optional[Rect] = None
     for ancestor_index in ancestors(nodes, node.index):
@@ -343,9 +360,7 @@ def visible_overlap_box(nodes: list[Node], node: Node, text_rect: Rect) -> Rect:
         if ancestor.overflow == "hidden" and ancestor.clip_for_children is not None:
             clip = (ancestor.clip_for_children if clip is None
                     else clip.intersect(ancestor.clip_for_children))
-    if clip is None:
-        return painted
-    return painted.intersect(clip)
+    return clip
 
 
 def scroll_context(nodes: list[Node], node: Node) -> Optional[int]:
@@ -442,17 +457,40 @@ def detect_clip(nodes: list[Node], tol: float, strict_height: bool = False) -> l
     Width is the load-bearing check: a string wider than its box is truncated,
     and nothing about typography excuses it. Height is reported separately as
     WRAP, and only when the overflow is large enough to be another line.
+
+    The box a string gets is its own rect intersected with every
+    `overflow: hidden` ancestor's clip, not its own rect alone. A label with a
+    generous box that hangs out of a clipping container is truncated on screen
+    while its own numbers look fine, and comparing against the node rect alone
+    cannot see it. `overflow: scroll` ancestors are excluded — snapshot
+    coordinates are pre-scroll, so a row below the fold is content the viewer
+    scrolls to, not a defect.
+
+    Known limit: `measured_text_boxes` carries the ADVANCE width, which includes
+    the trailing side bearing, so the last glyph's ink stops short of the
+    reported extent. A sub-pixel overflow is therefore not proof of visible
+    truncation. The snapshot carries no ink extents, so this is stated rather
+    than thresholded — raise `--width-tolerance` if you need to exclude it, and
+    say that you did.
     """
     violations: list[Violation] = []
     for n in text_nodes(nodes):
+        clip = hidden_clip(nodes, n)
+        avail = n.rect if clip is None else n.rect.intersect(clip)
         for text, rect in n.texts:
-            if n.rect.w > 0 and rect.w > n.rect.w + tol:
+            if n.rect.w > 0 and rect.w > avail.w + tol:
+                clipped_by = (
+                    ""
+                    if avail.w >= n.rect.w - tol
+                    else f", clipped to {avail.w:.2f}px by an overflow:hidden ancestor"
+                )
                 violations.append(
                     Violation(
                         "CLIP",
                         f"{n.label} {json.dumps(text[:40])} measures "
-                        f"{rect.w:.2f}px wide but paints in a {n.rect.w:.2f}px box "
-                        f"(overflows by {rect.w - n.rect.w:.2f}px) rect={n.rect}",
+                        f"{rect.w:.2f}px wide but paints in a {avail.w:.2f}px box "
+                        f"(overflows by {rect.w - avail.w:.2f}px{clipped_by}) "
+                        f"rect={n.rect}",
                         [n.label],
                     )
                 )

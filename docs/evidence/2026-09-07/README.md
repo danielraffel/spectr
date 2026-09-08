@@ -359,3 +359,45 @@ snapshots the pre-fix and post-fix runs are byte-identical, stdout+stderr+exit
 code. That null has a positive control — re-running the same sweep with the
 post-fix side deliberately altered (`--only clip`) reports 10 of 31 differing,
 so the comparison can in fact detect a difference.
+
+## CLIP now measures the box a string actually gets
+
+`detect_clip` compared a string's measured width against **its own node's**
+rect. A label with a generous box that hangs out of an `overflow: hidden`
+ancestor is truncated on screen while its own numbers look fine, and that
+comparison cannot see it — the primitive to do it right (`inherited_clip` /
+`visible_overlap_box`) already existed in this file and CLIP simply never
+consulted it. The box a string gets is its rect intersected with every
+`overflow: hidden` ancestor's clip, and that is what it now compares against.
+
+`overflow: scroll` ancestors stay excluded, for the reason already recorded
+under `visible_overlap_box`: snapshot coordinates are pre-scroll, so
+intersecting a below-the-fold row against its container says "off screen" for
+content the viewer scrolls to.
+
+RED/GREEN, on a plant where the string fits its own box and not the ancestor's
+clip (text 400px, own box 462px, parent clip 300px):
+
+```
+pre-fix   no finding for __behavior_pr_14 — 400 < 462, so the check passes
+post-fix  RED CLIP: "APPEARANCE" measures 400.00px wide but paints in a
+          300.00px box (overflows by 100.00px, clipped to 300.00px by an
+          overflow:hidden ancestor)
+```
+
+**This changes no verdict on any real snapshot.** Across all 31 committed
+layout snapshots the pre-fix and post-fix runs are byte-identical, so the gap
+was latent on this surface rather than hiding a defect. Same positive control
+as above (10 of 31 differ under a deliberate alteration), so that null is a
+real null. The fix is a guard against a false negative, not a discovery.
+
+### The one real CLIP on this surface, and why it is probably not a defect
+
+`__behavior_pr_4x__text` at `(96, 825.24)` renders `⋯` measuring `8.00px` in a
+`7.03px` box — 0.97px over, on the main-window bottom bar, outside the settings
+panel. `measured_text_boxes` carries the **advance** width, which includes the
+trailing side bearing, so the last glyph's ink stops short of the reported
+extent; a sub-pixel overflow is not proof of visible truncation. The snapshot
+carries no ink extents, so this is stated as a limit of the instrument rather
+than thresholded away. It is recorded as a candidate row, not as a SET-6
+finding.
