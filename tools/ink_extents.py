@@ -127,20 +127,43 @@ class Surface:
         return (min(cols) / s, (max(cols) + 1) / s)
 
 
-def measurable(node: dict) -> Optional[dict]:
-    """The single non-zero-width measured text box, if there is exactly one.
+def measurable(node: dict, include_wrapped: bool = False) -> Optional[dict]:
+    """The single measured text box to adjudicate, if there is exactly one.
 
     Most labels here carry `w: 0.0` -- the multi-line sentinel that
-    `Label::intrinsic_width()` returns. Those are not judged: the snapshot
-    records no width to compare against.
+    `Label::intrinsic_width()` returns so the parent's available width drives
+    wrapping instead of the single-line advance. By default those are not
+    judged: the snapshot records no advance to compare against.
+
+    `include_wrapped` substitutes the node's own rect width as the extent, which
+    is what a wrapped label actually paints across. It is the same substitution
+    `appearance_invariants.py` already makes for OVERLAP, and it is the ONLY way
+    to adjudicate these labels at all -- CLIP skips them (a 0 can never
+    overflow) and WRAP skips them (`measured_height` is a wrap estimate that is
+    wrong on this surface). Without it, 63% of the labels on Spectr's shipping
+    surface are excused from every truncation check.
+
+    It is opt-in so that runs recorded before it existed reproduce unchanged.
     """
     if not node.get("visible"):
         return None
-    boxes = [b for b in (node.get("measured_text_boxes") or []) if (b["rect"]["w"] or 0) > 0]
-    return boxes[0] if len(boxes) == 1 else None
+    boxes = node.get("measured_text_boxes") or []
+    sized = [b for b in boxes if (b["rect"]["w"] or 0) > 0]
+    if len(sized) == 1:
+        return sized[0]
+    if not include_wrapped or len(boxes) != 1:
+        return None
+    box = boxes[0]
+    if (box["rect"]["w"] or 0) > 0 or not (box.get("text") or "").strip():
+        return None
+    if (node["rect"]["w"] or 0) <= 0:
+        return None
+    # A wrapped label paints across its whole box, so that is the extent.
+    return {**box, "rect": {**box["rect"], "w": node["rect"]["w"], "wrapped": True}}
 
 
-def classify(surface: Surface, node: dict, margin: float) -> tuple[str, str]:
+def classify(surface: Surface, node: dict, margin: float,
+             include_wrapped: bool = False) -> tuple[str, str]:
     """Adjudicate one node's painted ink against the box AND the clip that bounds it.
 
     The distinction that matters: **only a clip can truncate.** A Label whose own
@@ -151,7 +174,7 @@ def classify(surface: Surface, node: dict, margin: float) -> tuple[str, str]:
     """
     r = node["rect"]
     clip = node["clipping"]["rect"]
-    box = measurable(node)
+    box = measurable(node, include_wrapped)
     if box is None:
         return "SKIP", ""
     if clip["w"] <= 0 or clip["h"] <= 0 or r["w"] <= 0 or r["h"] <= 0:
@@ -200,6 +223,27 @@ def main() -> int:
                          "quantization floor -- at scale 1.5 one image pixel is "
                          "0.67 design px, so a clearance under ~0.7px is noise, "
                          "not a measurement.")
+    ap.add_argument("--scroll-offset", type=float, default=0.0,
+                    help="design px the scrolled content was moved up by. The "
+                         "snapshot records PRE-scroll absolute rects, so on a "
+                         "scrolled capture every box is correct and every y is "
+                         "stale, and bands get scanned where other content now "
+                         "sits. Do not accept an offset because ink appears at "
+                         "the unshifted y -- ink presence is not identity, and "
+                         "unrelated content will happily supply it. Confirm it "
+                         "the way this one was: crop the PNG, read the string, "
+                         "find that string in the dump, and subtract. For "
+                         "Spectr's settings body at scroll bottom that is "
+                         "715.5 ('Enable second modulation source' is recorded "
+                         "at y=1115.5 and paints at y=400.0). Content shifted "
+                         "above the container's clip is off-screen and is "
+                         "skipped, which is correct, not a miss.")
+    ap.add_argument("--include-wrapped", action="store_true",
+                    help="also adjudicate multi-line labels, using the node rect as "
+                         "the painted extent. Without this, every label carrying "
+                         "Label::intrinsic_width()'s 0 sentinel (63%% of this "
+                         "surface) is skipped by this tool AND by CLIP AND by "
+                         "WRAP, so nothing checks it for truncation.")
     ap.add_argument("--plant", action="store_true",
                     help="self-test: paint ink past an exonerated node's edge and "
                          "require this tool to notice")
@@ -227,15 +271,35 @@ def main() -> int:
         )
         return 3
 
+    if args.scroll_offset:
+        clips = {json.dumps(n["clipping"]["rect"], sort_keys=True)
+                 for n in doc.get("nodes", []) if n.get("overflow") == "scroll"}
+        if not clips:
+            print("ink_extents: --scroll-offset given but the snapshot has no "
+                  "scroll container; refusing to shift anything", file=sys.stderr)
+            return 3
+        moved = 0
+        for n in doc.get("nodes", []):
+            if n.get("overflow") == "scroll":
+                continue
+            if json.dumps(n["clipping"]["rect"], sort_keys=True) not in clips:
+                continue
+            n["rect"]["y"] -= args.scroll_offset
+            for b in (n.get("measured_text_boxes") or []):
+                b["rect"]["y"] -= args.scroll_offset
+            moved += 1
+        print(f"scroll: shifted {moved} node(s) up by {args.scroll_offset:.1f} "
+              f"design px to match the scrolled capture")
+
     surface = Surface(doc, image, scale)
-    nodes = [n for n in doc.get("nodes", []) if measurable(n)]
+    nodes = [n for n in doc.get("nodes", []) if measurable(n, args.include_wrapped)]
     if args.node:
         nodes = [n for n in nodes if args.node in n.get("id", "")]
         if not nodes:
             print(f"ink_extents: no measurable node id contains {args.node!r}", file=sys.stderr)
             return 2
 
-    results = [(classify(surface, n, args.margin), n) for n in nodes]
+    results = [(classify(surface, n, args.margin, args.include_wrapped), n) for n in nodes]
     total_text = sum(1 for n in doc.get("nodes", []) if n.get("measured_text_boxes"))
 
     print(f"surface={doc.get('surface','?')}  scale=x{scale:g}  "
@@ -272,7 +336,7 @@ def main() -> int:
         ey0 = int((r["y"] + r["h"] * 0.25) * scale)
         ey1 = int((r["y"] + r["h"] * 0.75) * scale)
         d.rectangle([ex + 1, ey0, ex + int(4 * scale), ey1], fill=255)
-        verdict, _ = classify(Surface(doc, planted, scale), target, args.margin)
+        verdict, _ = classify(Surface(doc, planted, scale), target, args.margin, args.include_wrapped)
         if verdict == "EXONERATED":
             print(f"ink_extents: BROKEN -- planted ink past {target['id']} "
                   f"still reads EXONERATED; this tool cannot see a spill",
@@ -307,7 +371,7 @@ def main() -> int:
             cy0 = int((cr["y"] + cr["h"] * 0.25) * scale)
             cy1 = int((cr["y"] + cr["h"] * 0.75) * scale)
             d2.rectangle([cx - int(2 * scale), cy0, cx, cy1], fill=255)
-            v2, _ = classify(Surface(doc, planted2, scale), ct, args.margin)
+            v2, _ = classify(Surface(doc, planted2, scale), ct, args.margin, args.include_wrapped)
             if v2 != "CANDIDATE":
                 print(f"ink_extents: BROKEN -- ink planted at {ct['id']}'s clip "
                       f"edge reads {v2}, not CANDIDATE; the clip test is blind",
