@@ -245,6 +245,110 @@ struct Rig {
         settle(clock, 24);
     }
 
+    // The census's RED arm. A census that only ever reports the same three
+    // rows is indistinguishable from a census that cannot report anything --
+    // which is exactly what the first version of it did (total=0 on a surface
+    // with 41 controls). So displace a real control out of the design viewport
+    // and require the census to notice. If it does not, "38 ok" is not
+    // evidence of reachability.
+    void plant_offscreen(const std::string& id) {
+        // Two things had to be learned the hard way before this arm was real.
+        //
+        // First, the bridge's setLeft/setTop take a bare number (px) or a
+        // percent string; '4000px' is neither and is dropped silently, so the
+        // first version of this "displaced" a control without moving it and
+        // reported the census as armed when it was not.
+        //
+        // Second, the write commits a layout pass LATE: reading
+        // getBoundingClientRect immediately after returns the pre-write rect,
+        // and the new position only appears on a subsequent read. A detector
+        // that writes and reads in one breath therefore sees no change and
+        // concludes, wrongly, that nothing moved.
+        eval(std::string("(() => {"
+             "  const el = document.getElementById('") + id + "');"
+             "  if (!el) { console.log('[plant] MISSING'); return; }"
+             "  const before = el.getBoundingClientRect();"
+             // left/top are honoured but the layout does not re-run until a
+             // LAYOUT-AFFECTING write follows: 24 settled frames after
+             // left=4000 the rect was unchanged, and a later marginLeft write
+             // made the full displacement appear at once. Margin is both the
+             // flush and the displacement, so use it alone.
+             "  el.style.marginLeft = '4000'; el.style.marginTop = '4000';"
+             "  globalThis.__plantBefore__ = [before.left, before.top];"
+             "})();",
+             "spectr-native-shot-plant");
+        settle(clock, 24);
+        eval("(() => {"
+             "  const el = document.getElementById('" + id + "');"
+             // The flush is triggered by the NEXT bridge write, not by elapsed
+             // frames: 24 settled frames after the write the rect was still
+             // stale, while any further style write made it appear. Nudge it.
+             "  el.style.zIndex = '1';"
+             "  const a = el.getBoundingClientRect();"
+             "  const b = globalThis.__plantBefore__;"
+             "  console.log('[plant] " + id + " [' + b[0].toFixed(1) + ',' + b[1].toFixed(1)"
+             "    + '] -> [' + a.left.toFixed(1) + ',' + a.top.toFixed(1) + '] '"
+             "    + ((a.left !== b[0] || a.top !== b[1]) ? 'moved' : 'NOT MOVED -- arm is dead'));"
+             "})();",
+             "spectr-native-shot-plant-read");
+        settle(clock, 8);
+    }
+
+    // A positive control on the premise every size sweep rests on: did the
+    // host size actually reach the processor?
+    //
+    // Under a pinned design viewport the runtime is SUPPOSED to publish the
+    // same authored box at every host size, so a byte-identical layout receipt
+    // across six sizes is equally consistent with "correct" and with "my
+    // resize() never arrived" -- the exact ambiguity that voided CUR-1..4. So
+    // do not read the receipt for this. Read an effect that only the resize
+    // path produces: on_view_resized's pinned branch restores the root to the
+    // authored box whenever it differs. Break the box first, then look.
+    //
+    // Two arms, because a check that cannot fail proves nothing. The NEGATIVE
+    // arm breaks the box and does NOT resize: the break must survive, or the
+    // instrument is measuring something that repairs itself and the POSITIVE
+    // arm's repair means nothing.
+    bool prove_resize_reaches_runtime(float width, float height) {
+        const pulp::view::Rect authored{0.0f, 0.0f, kDesignWidth, kDesignHeight};
+        const pulp::view::Rect broken{0.0f, 0.0f, 640.0f, 400.0f};
+
+        root->set_bounds(broken);
+        root->layout_children();
+        settle(clock, 4);
+        const auto after_break = root->bounds();
+        const bool negative_armed = after_break.width == broken.width
+                                    && after_break.height == broken.height;
+
+        processor.on_view_resized(*root, static_cast<std::uint32_t>(width),
+                                  static_cast<std::uint32_t>(height));
+        settle(clock, 24);
+        const auto after_resize = root->bounds();
+        const bool positive = after_resize.width == authored.width
+                              && after_resize.height == authored.height;
+
+        std::printf("[control] resize-reaches-runtime host=%.0fx%.0f "
+                    "broke=%.0fx%.0f -> after_break=%.0fx%.0f (armed=%s) "
+                    "-> after_resize=%.0fx%.0f (repaired=%s)\n",
+                    width, height, broken.width, broken.height,
+                    after_break.width, after_break.height,
+                    negative_armed ? "yes" : "NO",
+                    after_resize.width, after_resize.height,
+                    positive ? "yes" : "NO");
+        if (!negative_armed) {
+            std::printf("[control] NOT ARMED: the root repaired itself without "
+                        "a resize, so the repair below is not evidence.\n");
+            return false;
+        }
+        if (!positive) {
+            std::printf("[control] FAILED: on_view_resized did not restore the "
+                        "authored box, so the sweep below never reached the "
+                        "runtime. Report nothing from it.\n");
+            return false;
+        }
+        return true;
+    }
+
     // Print the runtime's own layout receipt, so the geometry claim in this
     // report comes from the shipping runtime rather than from inference.
     void print_layout_receipt() {
@@ -287,6 +391,63 @@ struct Rig {
         } catch (const std::exception&) {
             return false;
         }
+    }
+
+    // COR-4's census. The population is the runtime's OWN focus order, not a
+    // list of selectors I guessed: a guessed list cannot report a control it
+    // was never told about, and the first version of this returned total=0 on
+    // a surface with 41 focusable controls because `button` and `[role=button]`
+    // match nothing in a materialized DesignIR tree.
+    //
+    // Each id is resolved three ways and the census reports which lookup won,
+    // so "not found" is distinguishable from "this runtime addresses nodes
+    // some other way".
+    void census(const char* label, float host_w, float host_h) {
+        (void)host_w; (void)host_h;
+        eval("(() => {"
+             "  const rc = globalThis.__spectrResponsiveLayoutReceipt__;"
+             "  const ids = (rc && rc.focus_order) || [];"
+             "  let byId = 0, byAttr = 0, bySel = 0, missing = 0;"
+             "  let off = 0, zero = 0, hidden = 0, ok = 0;"
+             "  const bad = [];"
+             "  for (const id of ids) {"
+             "    let el = null;"
+             "    if (document.getElementById) el = document.getElementById(id);"
+             "    if (el) byId++;"
+             "    if (!el) { el = document.querySelector('[data-spectr-id=\"' + id + '\"]');"
+             "              if (el) byAttr++; }"
+             "    if (!el) { try { el = document.querySelector('#' + id); } catch (e) { el = null; }"
+             "              if (el) bySel++; }"
+             "    if (!el) { missing++; bad.push('MISSING ' + id); continue; }"
+             "    let hid = false;"
+             "    for (let n = el; n; n = n.parentElement) {"
+             "      const st = (n.style && n.style.display) || '';"
+             "      if (st === 'none') { hid = true; break; } }"
+             "    if (hid) { hidden++; bad.push('HIDDEN ' + id); continue; }"
+             "    const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;"
+             "    if (!r || r.width <= 0 || r.height <= 0) { zero++; bad.push('ZERO ' + id); continue; }"
+             // Rects come back in DESIGN space, and under a pinned viewport
+             // they are identical at every host size by design. Comparing them
+             // against the host box therefore manufactures "offscreen" for
+             // every control on a small host. The reachability question is
+             // whether a control leaves the DESIGN viewport, which is what the
+             // host actually scales onto the surface.
+             "    if (r.left < -0.5 || r.top < -0.5 || r.right > " + std::to_string(kDesignWidth)
+                 + " + 0.5 || r.bottom > " + std::to_string(kDesignHeight) + " + 0.5) {"
+             "      off++; bad.push('OFFSCREEN ' + id + ' ['"
+             "        + r.left.toFixed(1) + ',' + r.top.toFixed(1) + ' '"
+             "        + r.width.toFixed(1) + 'x' + r.height.toFixed(1) + ']'); continue; }"
+             "    ok++;"
+             "  }"
+             "  console.log('[census] " + std::string(label) + " population=' + ids.length"
+             "    + ' resolved(byId=' + byId + ',byAttr=' + byAttr + ',bySel=' + bySel + ')'"
+             "    + ' ok=' + ok + ' offscreen=' + off + ' zero=' + zero"
+             "    + ' hidden=' + hidden + ' missing=' + missing);"
+             "  bad.sort();"
+             "  console.log('[census-digest] " + std::string(label) + " ' + ok + '/' + ids.length + ' | ' + bad.join(' ; '));"
+             "  for (const b of bad) console.log('[census]   ' + b);"
+             "})();",
+             "spectr-native-shot-census");
     }
 
     void require_reachable(std::string_view selector) {
@@ -741,6 +902,49 @@ int main(int argc, char** argv) {
         rig.resize(kDesignWidth, kDesignHeight);
         rig.feed_tone(96);
         settle(rig.clock, 24);
+
+        // COR-4: sweep host sizes through the SHIPPING resize path
+        // (on_view_resized -> __spectrResizeNativeEditor), censusing every
+        // interactive control at each. Separate mode, so it cannot perturb the
+        // fixture sequence below.
+        if (const char* sizes = std::getenv("SPECTR_SIZES")) {
+            // Control first. Nothing below is readable if the resize path is
+            // not actually running, and under a pin the receipt cannot tell.
+            if (!rig.prove_resize_reaches_runtime(990.0f, 645.0f)) {
+                std::printf("[control] abandoning the size sweep: the premise "
+                            "is unproven.\n");
+                return 3;
+            }
+            rig.resize(kDesignWidth, kDesignHeight);
+            settle(rig.clock, 24);
+            std::string spec{sizes};
+            std::size_t pos = 0;
+            while (pos <= spec.size()) {
+                const auto comma = spec.find(',', pos);
+                const auto item = spec.substr(pos, comma == std::string::npos
+                                                       ? std::string::npos
+                                                       : comma - pos);
+                pos = comma == std::string::npos ? spec.size() + 1 : comma + 1;
+                const auto ex = item.find('x');
+                if (ex == std::string::npos) continue;
+                const float w = std::stof(item.substr(0, ex));
+                const float h = std::stof(item.substr(ex + 1));
+                char name[64];
+                std::snprintf(name, sizeof name, "cor4-%.0fx%.0f", w, h);
+                rig.resize(w, h);
+                settle(rig.clock, 24);
+                rig.print_layout_receipt();
+                rig.census(name, w, h);
+                capture(rig, dir, prefix + name, backend, scale);
+            }
+            // RED arm, last: displace a control that the census just called
+            // reachable and re-census at the SAME size. The digest must change.
+            if (const char* plant = std::getenv("SPECTR_PLANT_OFFSCREEN")) {
+                rig.plant_offscreen(plant);
+                rig.census("PLANT", 0.0f, 0.0f);
+            }
+            return g_failures == 0 ? 0 : 1;
+        }
 
         if (std::getenv("SPECTR_PROBE_TEXT") != nullptr)
             dump_label_chain(*rig.root, std::getenv("SPECTR_PROBE_TEXT"));
