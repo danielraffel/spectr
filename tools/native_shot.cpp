@@ -47,6 +47,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -1057,6 +1058,150 @@ int main(int argc, char** argv) {
         rig.report_text_fit("home");
         rig.report_settings_children();
         capture(rig, dir, prefix + "01-home", backend, scale);
+
+        // AUT-4 / AUT-5: what the editor SHOWS while a host writes the band
+        // surface, and what it shows after the write burst stops. The unit
+        // detectors in test/test_param_surface.cpp call apply_surface_params
+        // directly, which cannot see the path a host actually uses: process()
+        // spawns the adoption onto a background lane whose Latest policy
+        // coalesces bursts. A coalesce that drops the final write, a lane that
+        // failed to start, or an editor that never repaints all leave those
+        // detectors green while the shipping surface sits stale.
+        //
+        // Nothing here can be asserted as byte-equality, because the analyzer
+        // strip animates on the tone this pumps. So the floor is MEASURED, not
+        // assumed: two captures of the same held state, the same idle apart as
+        // the pair under test, give the frame-to-frame noise of a surface that
+        // is by construction not moving. The control is the pre-burst frame --
+        // if it does not differ from the post-burst frame, the probe cannot see
+        // a band change at all, and "the surface held" would be four identical
+        // dead frames.
+        if (std::getenv("SPECTR_AUTOMATION_PROBE") != nullptr) {
+            constexpr std::size_t kFirstBand = 8;
+            constexpr std::size_t kLastBand = 40;
+            constexpr float kRamp[] = {-6.0f, -14.0f, -22.0f, 11.0f};
+            constexpr float kFinal = kRamp[3];
+
+            auto revision = [&rig]() {
+                return static_cast<unsigned long long>(
+                    rig.processor.host_automation_revision());
+            };
+            auto idle_round = [&rig]() {
+                rig.feed_tone(6);
+                settle(rig.clock, 20);
+            };
+
+            idle_round();
+            capture(rig, dir, prefix + "aut-A-pre-burst", backend, scale);
+            const auto rev_pre = revision();
+            const float gain_pre = rig.processor.field().bands[kFirstBand].gain_db;
+
+            // A ramp, as automation playback delivers one: several writes in
+            // sequence, the last of which is the value that has to stay.
+            for (const float value : kRamp) {
+                for (std::size_t band = kFirstBand; band <= kLastBand; ++band)
+                    rig.store.set_value(spectr::band_gain_param_id(band), value);
+                rig.feed_tone(3);
+                settle(rig.clock, 10);
+            }
+            idle_round();
+            capture(rig, dir, prefix + "aut-B-post-burst", backend, scale);
+            const auto rev_burst = revision();
+            const float gain_burst = rig.processor.field().bands[kFirstBand].gain_db;
+
+            // Stop. No further writes past this point -- only the idle polling
+            // a host keeps doing while transport sits.
+            idle_round();
+            capture(rig, dir, prefix + "aut-C1-post-idle", backend, scale);
+            const auto rev_idle = revision();
+            const float gain_idle = rig.processor.field().bands[kFirstBand].gain_db;
+
+            idle_round();
+            capture(rig, dir, prefix + "aut-C2-noise-floor", backend, scale);
+
+            const auto png = [&](const char* name) {
+                return (dir / (prefix + name + ".png")).string();
+            };
+            const auto control = pulp::view::compare_screenshot_files(
+                png("aut-A-pre-burst"), png("aut-B-post-burst"));
+            const auto held = pulp::view::compare_screenshot_files(
+                png("aut-B-post-burst"), png("aut-C1-post-idle"));
+            const auto noise = pulp::view::compare_screenshot_files(
+                png("aut-C1-post-idle"), png("aut-C2-noise-floor"));
+
+            std::printf("[aut] revision  pre=%llu burst=%llu idle=%llu\n",
+                        rev_pre, rev_burst, rev_idle);
+            std::printf("[aut] band %zu gain  pre=%.2f burst=%.2f idle=%.2f"
+                        "  (last written %.2f)\n",
+                        kFirstBand, gain_pre, gain_burst, gain_idle, kFinal);
+            std::printf("[aut] control A->B  similarity=%.4f diff_px=%u\n",
+                        control.similarity, control.diff_pixels);
+            std::printf("[aut] held    B->C1 similarity=%.4f diff_px=%u\n",
+                        held.similarity, held.diff_pixels);
+            std::printf("[aut] floor   C1->C2 similarity=%.4f diff_px=%u\n",
+                        noise.similarity, noise.diff_pixels);
+
+            if (!control.valid || !held.valid || !noise.valid) {
+                std::printf("[aut] instrument unusable: a comparison failed"
+                            " (%s | %s | %s)\n", control.error.c_str(),
+                            held.error.c_str(), noise.error.c_str());
+                return 3;
+            }
+            if (control.diff_pixels <= noise.diff_pixels) {
+                std::printf("[aut] instrument unusable: the host write burst"
+                            " moved no more of the screen than a held surface"
+                            " moves on its own, so nothing here can distinguish"
+                            " 'held' from 'blind'.\n");
+                return 3;
+            }
+            auto png_bytes = [](const std::string& path) {
+                std::ifstream in(path, std::ios::binary);
+                return std::vector<std::uint8_t>(
+                    std::istreambuf_iterator<char>(in),
+                    std::istreambuf_iterator<char>());
+            };
+            if (const auto where = pulp::view::diff_bounds(
+                    png_bytes(png("aut-B-post-burst")),
+                    png_bytes(png("aut-C1-post-idle")));
+                where.valid) {
+                std::printf("[aut] B->C1 moved inside %ux%u at %u,%u\n",
+                            where.width, where.height, where.x, where.y);
+            }
+
+            int failures = 0;
+            if (std::abs(gain_burst - kFinal) > 0.01f) {
+                std::printf("[aut] FAIL: the burst's last written value never"
+                            " reached canonical state.\n");
+                ++failures;
+            }
+            if (gain_idle != gain_burst) {
+                std::printf("[aut] FAIL: canonical state moved after the burst"
+                            " stopped.\n");
+                ++failures;
+            }
+            if (rev_idle != rev_burst) {
+                std::printf("[aut] FAIL: idle polling after the burst"
+                            " manufactured %llu further editor hydration(s).\n",
+                            rev_idle - rev_burst);
+                ++failures;
+            }
+            // The held pair may only move as much as a held surface moves on
+            // its own. The 3x is headroom on a measured floor, not a guess at
+            // one.
+            const auto allowed = noise.diff_pixels * 3 + 64;
+            if (held.diff_pixels > allowed) {
+                std::printf("[aut] FAIL: the editor moved after the burst"
+                            " stopped -- %u px against a measured floor of"
+                            " %u (allowed %u).\n",
+                            held.diff_pixels, noise.diff_pixels, allowed);
+                ++failures;
+            }
+            std::printf("[aut] %s\n", failures == 0
+                ? "PASS: the burst changed the surface, the last written value "
+                  "reached it, and it held."
+                : "FAILED");
+            return failures == 0 ? 0 : 1;
+        }
 
         // PRE-* surface. The Preset Manager ("PRESET MANAGER" in the shipping
         // asset, `pattern-manager` in the materialized states) is reached by the
