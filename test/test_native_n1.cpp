@@ -227,8 +227,11 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     const auto band = 16;
     const auto authored_gain = processor.field().bands[band].gain_db;
     const auto canvas_bounds = canvas->bounds();
-    constexpr float graph_pad_left = 56.0f;
-    constexpr float graph_pad_right = 56.0f;
+    // Mirrors getGeom()'s ruler gutters: each side reserves an 8px gap, the
+    // caption's ink (JetBrains Mono 10px advances a flat 6px per character),
+    // and an 8px canvas margin, floored at the 56px the numeric ticks need.
+    constexpr float graph_pad_left = 70.0f;   // 8 + len("dB (gain)") * 6 + 8
+    constexpr float graph_pad_right = 106.0f; // 8 + len("dBFS (analyzer)") * 6 + 8
     constexpr float band_gap = 2.0f;
     constexpr float visible_bands = 32.0f;
     const float inner_width = canvas_bounds.width - graph_pad_left - graph_pad_right;

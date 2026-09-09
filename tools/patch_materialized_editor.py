@@ -2750,12 +2750,51 @@ function App() {'''),
      'ctx.fillText("dBFS", inner.x + inner.w + 8, g.inner.y - 8);',
      'ctx.fillText("dBFS (analyzer)", inner.x + inner.w + 8, g.inner.y - 8);'),
 
+    # Both ruler heads are end-caps on the frequency rule, which spans exactly
+    # inner.x..inner.x + inner.w at the baseline they paint on, so they sit in
+    # the side gutters rather than over the plot. The gutters were still sized
+    # for the numeric ticks alone, so each head painted past the canvas edge --
+    # the left one lost its "d" and the right one everything after "(an".
+    # Size each gutter to the caption it carries: the ruler font is JetBrains
+    # Mono 10px, a monospace face whose advance is a flat 0.6em, so caption ink
+    # is exact without measuring (this runtime never calls measureText).
+    ('ruler gutters reserve room for the captions they carry',
+     'const pad = { l: 56, r: 56, t: 70, b: 120 };',
+     'const captions = { gain: "dB (gain)", analyzer: "dBFS (analyzer)" };\n'
+     '    const captionGutter = (text) => 8 + text.length * 6 + 8;\n'
+     '    const pad = {\n'
+     '      l: Math.max(56, captionGutter(captions.gain)),\n'
+     '      r: Math.max(56, captionGutter(captions.analyzer)),\n'
+     '      t: 70,\n'
+     '      b: 120\n'
+     '    };'),
+
+    ('geometry publishes the ruler captions it reserved room for',
+     'return { w, h, pad, inner, zeroY, halfH, bandW, bandGap };',
+     'return { w, h, pad, inner, zeroY, halfH, bandW, bandGap, captions };'),
+
+    ('gain ruler head paints the caption its gutter was sized for',
+     'ctx.fillText("dB (gain)", inner.x - 8, g.inner.y - 8);',
+     'ctx.fillText(g.captions.gain, inner.x - 8, g.inner.y - 8);'),
+
+    ('analyzer ruler head paints the caption its gutter was sized for',
+     'ctx.fillText("dBFS (analyzer)", inner.x + inner.w + 8, g.inner.y - 8);',
+     'ctx.fillText(g.captions.analyzer, inner.x + inner.w + 8, g.inner.y - 8);'),
+
 ]
 
 # A later edit may deliberately consume the exact replacement image of an
 # earlier one. These named sentinels keep reruns strict without pretending the
 # superseded intermediate text must remain in the final shipping document.
 SUPERSEDED_SENTINELS = {
+    # The two ruler heads now paint from the caption table that getGeom sizes
+    # the gutters from, so the intermediate string literals are gone from the
+    # fillText calls. They survive verbatim in that table, which is what these
+    # sentinels check.
+    'gain ruler head names itself distinctly from the analyzer ruler':
+        'gain: "dB (gain)"',
+    'analyzer ruler head names itself distinctly from the gain ruler':
+        'analyzer: "dBFS (analyzer)"',
     'settings preserve reparent reasserts scroll hint':
         'node._nativeCreated = false',
     'materialized modulation tabs stay visible above scrolling content':
