@@ -3821,3 +3821,198 @@ TEST_CASE("the appearance detectors report defects that are deliberately built",
         CHECK(clipped.size() == 1);
     }
 }
+
+// Arrow traversal must reach EVERY option, in visual order, and Enter must
+// commit the option the highlight is actually on. A single-step assertion
+// cannot see either failure mode this covers: a second keyboard owner that
+// swallows the key leaves the highlight one step behind from the first press
+// onward, and an index kept by a shadow state machine commits a different
+// option than the one painted.
+TEST_CASE("native dropdown arrows reach every option and commit the highlighted one",
+          "[native-n1][state-parity][dropdown][arrow-traversal]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    const std::array<std::string_view, 5> menus{
+        "bands", "edit", "analyzer", "overflow", "pattern"};
+    for (const auto menu : menus) {
+        INFO("menu=" << menu);
+        const auto root = std::string{"[data-spectr-menu-root=\""}
+            + std::string(menu) + "\"]";
+        const auto trigger = root + " [data-spectr-menu-trigger]";
+        const auto options = root + " [data-spectr-menu-options]";
+        const auto items_js = "Array.from(document.querySelectorAll("
+            + js_string(options + " button") + "))";
+
+        const auto press = [&](pulp::view::KeyCode key) {
+            REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+                *rig.root, static_cast<int>(key), pulp::view::kModNone, true));
+            settle(rig.clock, 6);
+        };
+        const auto open_from_keyboard = [&] {
+            rig.bridge().load_script(
+                "document.querySelector(" + js_string(trigger) + ").focus()",
+                "spectr-arrow-focus-trigger");
+            press(pulp::view::KeyCode::down);
+        };
+        // Exactly one option may claim the authoritative highlight, and it must
+        // be the one at `expected` in DOM order.
+        const auto require_highlight_at = [&](int expected, const char* what) {
+            require_runtime_contract(
+                rig,
+                "(() => { const items = " + items_js + "; "
+                "const marked = Array.from(document.querySelectorAll("
+                "'[data-pulp-popup-active=\"true\"]')); "
+                "return marked.length === 1 && items.length > " + std::to_string(expected)
+                + " && marked[0] === items[" + std::to_string(expected) + "]; })()",
+                std::string(what) + " (expected index " + std::to_string(expected) + ")");
+        };
+
+        open_from_keyboard();
+        const auto count = std::stoi(runtime_string(
+            rig, "String(" + items_js + ".length)", "spectr-arrow-option-count"));
+        REQUIRE(count >= 3);
+        require_highlight_at(0, "opening ArrowDown did not highlight the first option");
+
+        // Walk the whole list. Every successive press must advance exactly one.
+        for (int step = 1; step < count; ++step) {
+            press(pulp::view::KeyCode::down);
+            require_highlight_at(step, "ArrowDown skipped or stalled");
+        }
+        // One more wraps to the top rather than sticking at the end.
+        press(pulp::view::KeyCode::down);
+        require_highlight_at(0, "ArrowDown did not wrap to the first option");
+        // And the reverse direction walks back down the same path.
+        for (int step = count - 1; step >= 0; --step) {
+            press(pulp::view::KeyCode::up);
+            require_highlight_at(step, "ArrowUp skipped or stalled");
+        }
+        press(pulp::view::KeyCode::escape);
+        settle(rig.clock, 8);
+        require_runtime_contract(
+            rig, "!document.querySelector(" + js_string(options) + ")",
+            "Escape left the dropdown open");
+    }
+
+    // Enter must commit the option the highlight is on — not an index kept
+    // somewhere else. Two different targets, so an off-by-one cannot pass.
+    for (const int steps : {1, 3}) {
+        INFO("bands commit after steps=" << steps);
+        const std::string root = "[data-spectr-menu-root=\"bands\"]";
+        const std::string options = root + " [data-spectr-menu-options]";
+        rig.bridge().load_script(
+            "document.querySelector(" + js_string(root + " [data-spectr-menu-trigger]")
+            + ").focus()", "spectr-arrow-focus-bands");
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 8);
+        for (int i = 0; i < steps; ++i) {
+            REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+                *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+                pulp::view::kModNone, true));
+            settle(rig.clock, 6);
+        }
+        // Read the highlighted label BEFORE committing, so the expectation is
+        // the painted state rather than a number this test assumes.
+        const auto highlighted_raw = runtime_string(
+            rig,
+            "String(((document.querySelector('[data-pulp-popup-active=\"true\"]')"
+            "?.textContent || '').match(/\\d+/) || [''])[0])",
+            "spectr-arrow-highlighted-label");
+        // runtime_string returns the tail of a thrown message, so the value
+        // arrives with the engine's stack trace appended. Keep the digits.
+        const auto highlighted = highlighted_raw.substr(
+            0, highlighted_raw.find_first_not_of("0123456789"));
+        REQUIRE_FALSE(highlighted.empty());
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::enter),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 12);
+        require_app_state(rig, "s.settings.bandCount === " + highlighted,
+                          "Enter committed an option other than the highlighted one");
+        REQUIRE(spectr::visible_count(rig.processor.layout()) == std::stoi(highlighted));
+    }
+    storage.require_unchanged();
+}
+
+// The preset manager's list is a plain scroll region, not a Pulp popup, so its
+// keyboard walk is Spectr's own. Two things have to hold at once and only a
+// combined assertion sees both: every ArrowDown must advance the selection by
+// exactly one row (an owner that swallows a key stalls it), and the
+// default-on-open star must stay on its own row while the selection walks away
+// from it (a walk that reuses the default slot silently retargets what loads).
+TEST_CASE("preset manager arrows walk the selection and leave the default marker",
+          "[native-n1][state-parity][preset-manager][arrow-nav]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-pattern-manage]");
+    require_app_state(rig, "s.managerOpen === true",
+                      "pattern manager did not open");
+
+    const std::string rows_js = "Array.from(document.querySelectorAll("
+        "'[data-spectr-pattern-list] [data-spectr-pattern-id]'))";
+    // runtime_string returns the tail of a thrown message, so the engine's
+    // stack trace arrives appended. Every value read here is a bare token.
+    const auto first_token = [](const std::string& value) {
+        const auto end = value.find_first_of(" \t\r\n");
+        return end == std::string::npos ? value : value.substr(0, end);
+    };
+    const auto count = std::stoi(first_token(runtime_string(
+        rig, "String(" + rows_js + ".length)", "spectr-preset-row-count")));
+    REQUIRE(count >= 8);
+
+    // Pin the default onto a row the walk will move off, so "the star did not
+    // move" is a claim with something to disprove it.
+    activate(rig, "[data-spectr-pattern-id=\"factory:flat\"]");
+    settle(rig.clock, 4);
+    activate(rig, "[data-spectr-manager-action=\"set-default\"]");
+    settle(rig.clock, 6);
+    require_runtime_contract(
+        rig,
+        "(() => { const marked = Array.from(document.querySelectorAll("
+        "'[data-spectr-pattern-default=\"true\"]')); return marked.length === 1"
+        " && marked[0].getAttribute('data-spectr-pattern-id') === 'factory:flat'; })()",
+        "SET AS DEFAULT did not mark exactly one row");
+
+    const auto press = [&](pulp::view::KeyCode key) {
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(key), pulp::view::kModNone, true));
+        settle(rig.clock, 6);
+    };
+    // Exactly one row selected, at `expected`, and the star still alone on the
+    // row it was pinned to.
+    const auto require_row = [&](int expected, const char* what) {
+        require_runtime_contract(
+            rig,
+            "(() => { const rows = " + rows_js + "; "
+            "const chosen = rows.filter(r => r.getAttribute("
+            "'data-spectr-pattern-selected') === 'true'); "
+            "const starred = rows.filter(r => r.getAttribute("
+            "'data-spectr-pattern-default') === 'true'); "
+            "return chosen.length === 1 && rows.length > " + std::to_string(expected)
+            + " && chosen[0] === rows[" + std::to_string(expected) + "] "
+            "&& starred.length === 1 && starred[0].getAttribute("
+            "'data-spectr-pattern-id') === 'factory:flat'; })()",
+            std::string(what) + " (expected row " + std::to_string(expected) + ")");
+    };
+
+    // Clicking the row above pinned the selection to it; from there the walk is
+    // a plain step per press over the whole list, wrapping at the end.
+    require_row(0, "clicking a preset row did not select exactly that row");
+    for (int step = 1; step < count; ++step) {
+        press(pulp::view::KeyCode::down);
+        require_row(step, "ArrowDown skipped or stalled in the preset list");
+    }
+    press(pulp::view::KeyCode::down);
+    require_row(0, "ArrowDown did not wrap to the first preset");
+    for (int step = count - 1; step >= 0; --step) {
+        press(pulp::view::KeyCode::up);
+        require_row(step, "ArrowUp skipped or stalled in the preset list");
+    }
+    storage.require_unchanged();
+}

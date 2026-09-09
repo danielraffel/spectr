@@ -34,6 +34,22 @@ SOURCE_PATH = 'resources/editor.html'
 CAPTURE_DOCUMENT_PATHS = [
     'native-ui/materialized/materialized-document.json',
     *sorted(glob.glob('native-ui/materialized/states/*.materialized.json')),
+    # Row selection (the moving highlight) and the default-on-open marker are
+    # independent pieces of state. Expose both so the keyboard walk can read
+    # its own cursor and a test can prove the star does not follow it.
+    ('preset rows carry selection and default markers',
+     '      "data-spectr-pattern-id": pattern.id,\n      "data-spectr-pattern-source": pattern.source,\n      onClick,',
+     '      "data-spectr-pattern-id": pattern.id,\n      "data-spectr-pattern-source": pattern.source,\n      "data-spectr-pattern-selected": selected ? "true" : "false",\n      "data-spectr-pattern-default": isDefault ? "true" : "false",\n      onClick,'),
+    # The keyboard walk reads its cursor from the list it is walking, so it
+    # cannot pick up rows from anywhere else on the page.
+    ('preset list root is addressable',
+     'React.createElement("div", { style: { flex: 1, overflow: "auto", padding: "6px 0" } }, /* @__PURE__ */ React.createElement(ListHeader, { label: `FACTORY',
+     'React.createElement("div", { "data-spectr-pattern-list": true, style: { flex: 1, overflow: "auto", padding: "6px 0" } }, /* @__PURE__ */ React.createElement(ListHeader, { label: `FACTORY'),
+    # Arrow keys walk the preset rows, moving only the selection. The default
+    # marker is separate state and is deliberately untouched.
+    ('preset list arrow keys walk the selection',
+     '  usePE(() => {\n    if (!open) return;\n    const onKey = (event) => {\n      if (event.key === "Escape") {\n        event.preventDefault();\n        event.stopPropagation();\n        onClose();\n      }\n    };\n    document.addEventListener("keydown", onKey, true);\n    return () => document.removeEventListener("keydown", onKey, true);\n  }, [open, onClose]);',
+     '  usePE(() => {\n    if (!open) return;\n    const rows = () => Array.prototype.slice.call(\n      document.querySelectorAll("[data-spectr-pattern-list] [data-spectr-pattern-id]"));\n    const editingText = () => {\n      const focused = document.activeElement;\n      const tag = focused && focused.tagName ? String(focused.tagName).toLowerCase() : "";\n      return tag === "input" || tag === "textarea";\n    };\n    const step = (delta) => {\n      const list = rows();\n      if (!list.length) return false;\n      let index = -1;\n      for (let i = 0; i < list.length; i++) {\n        if (list[i].getAttribute("data-spectr-pattern-selected") === "true") index = i;\n      }\n      const next = index < 0\n        ? (delta > 0 ? 0 : list.length - 1)\n        : (index + delta + list.length) % list.length;\n      const id = list[next].getAttribute("data-spectr-pattern-id");\n      if (!id) return false;\n      setSelectedId(id);\n      return true;\n    };\n    const onKey = (event) => {\n      if (event.key === "Escape") {\n        event.preventDefault();\n        event.stopPropagation();\n        onClose();\n        return;\n      }\n      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;\n      // An open Pulp popup owns the keyboard, and a text field owns its own\n      // caret. Consuming the key here would freeze the popup highlight the\n      // same way a second menu keyboard owner once did.\n      if (document.querySelector(\'[data-pulp-popup-active="true"]\')) return;\n      if (editingText()) return;\n      if (!step(event.key === "ArrowDown" ? 1 : -1)) return;\n      event.preventDefault();\n      event.stopPropagation();\n    };\n    document.addEventListener("keydown", onKey, true);\n    return () => document.removeEventListener("keydown", onKey, true);\n  }, [open, onClose, setSelectedId]);'),
 ]
 
 EDITS = [
@@ -2838,6 +2854,13 @@ function App() {'''),
      '        setManagerOpen(false);\n'
      '      },\n'),
 
+    # A capture-phase document keydown listener that preventDefaults the
+    # arrow/Enter keys stops Pulp's popup handler from ever running, so the
+    # authoritative data-pulp-popup-active highlight freezes on the first
+    # option while a second, unscoped highlight walks the DOM.
+    ('generic Pulp popup owns open-menu keyboard navigation',
+     'useEffectChrome(() => {\n    if (!openMenu) return;\n    const menuItems = () => {\n      const found = document.querySelectorAll("[data-spectr-menu-options] button");\n      return found ? Array.prototype.slice.call(found) : [];\n    };\n    let active = -1;\n    const highlight = (items) => {\n      for (let i = 0; i < items.length; i++) {\n        const item = items[i];\n        if (!item || !item.style) continue;\n        if (i === active) {\n          if (item.setAttribute) item.setAttribute("data-spectr-menu-active", "true");\n          item.style.outline = "1px solid rgba(255,255,255,0.75)";\n        } else {\n          if (item.removeAttribute) item.removeAttribute("data-spectr-menu-active");\n          item.style.outline = "0px none transparent";\n        }\n      }\n    };\n    const move = (delta) => {\n      const items = menuItems();\n      if (!items.length) return;\n      active = active < 0\n        ? (delta > 0 ? 0 : items.length - 1)\n        : (active + delta + items.length) % items.length;\n      highlight(items);\n    };\n    const commit = () => {\n      const items = menuItems();\n      if (active < 0 || active >= items.length) return false;\n      const callbacks = globalThis.__pulpReactEventCallbacks__;\n      if (!callbacks || typeof callbacks.get !== "function") return false;\n      let node = items[active];\n      let handler = null;\n      while (node && !handler) {\n        const id = node.__pulpId || node._id || node.id;\n        const found = id ? callbacks.get(String(id) + ":click") : null;\n        if (typeof found === "function") handler = found;\n        else node = node.parentElement || node._parentElement || null;\n      }\n      if (!handler) return false;\n      handler({\n        type: "click", target: node, currentTarget: node,\n        bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0,\n        preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {}\n      });\n      return true;\n    };\n    const onMenuKey = (event) => {\n      const key = event.key;\n      if (key === "Escape") setOpenMenu(null);\n      else if (key === "ArrowDown") move(1);\n      else if (key === "ArrowUp") move(-1);\n      else if (key === "Enter") {\n        if (!commit()) return;\n        setOpenMenu(null);\n      } else return;\n      event.preventDefault();\n      event.stopPropagation();\n    };\n    document.addEventListener("keydown", onMenuKey, true);\n    return () => {\n      document.removeEventListener("keydown", onMenuKey, true);\n    };\n  }, [openMenu]);\n',
+     '// Menu keyboard navigation is owned by the generic Pulp popup handler.\n'),
 ]
 
 # A later edit may deliberately consume the exact replacement image of an
