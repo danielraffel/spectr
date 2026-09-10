@@ -28,6 +28,9 @@ jobs:
       - name: Gate - Spectr M5 product acceptance static contract
         run: python3 tools/ci/test_product_acceptance_contract.py
 
+      - name: Gate - a drag pointer sample enqueues no React commit
+        run: python3 tools/spectr-detectors/drag_hover_no_react_commit.py
+
       - name: Gate - Spectr M5 product acceptance immutable released SDK
         shell: bash
         run: |
