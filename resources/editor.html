@@ -2619,15 +2619,34 @@ window.PatternManager = PatternManager;`,
       'const r = { width: wrap.clientWidth, height: wrap.clientHeight };',
       2,
       'fixed-design canvas geometry');
+    // The two ruler heads are end-caps on the frequency rule, which spans
+    // exactly inner.x..inner.x + inner.w at the very baseline they paint on, so
+    // they belong in the side gutters rather than over the plot. Size each
+    // gutter to the caption it actually carries instead of leaving both at the
+    // narrower width the numeric ticks need: the ruler font is JetBrains Mono
+    // 10px, a monospace face whose advance is a flat 0.6em, so caption ink is
+    // exact without measuring. An undersized gutter paints its caption past the
+    // canvas edge, which is what clipped both heads.
     replaceSpectrSource(
       'const pad = { l: 56, r: 56, t: 56, b: 88 };',
-      'const pad = { l: 56, r: 56, t: 70, b: 120 };',
-      'frequency ruler and minimap clear fixed chrome');
+      String.raw`const captions = { gain: 'dB (gain)', analyzer: 'dBFS (analyzer)' };
+    const captionGutter = text => 8 + text.length * 6 + 8;
+    const pad = {
+      l: Math.max(56, captionGutter(captions.gain)),
+      r: Math.max(56, captionGutter(captions.analyzer)),
+      t: 70,
+      b: 120
+    };`,
+      'ruler gutters reserve room for the captions they carry');
+    replaceSpectrSource(
+      'return { w, h, pad, inner, zeroY, halfH, bandW, bandGap };',
+      'return { w, h, pad, inner, zeroY, halfH, bandW, bandGap, captions };',
+      'geometry publishes the ruler captions it reserved room for');
     replaceSpectrSource(
       String.raw`    ctx.fillStyle = 'rgba(255,255,255,0.30)';
     ctx.fillText('dB', inner.x - 8, g.inner.y - 8);`,
       String.raw`    ctx.fillStyle = 'rgba(255,255,255,0.30)';
-    ctx.fillText('dB (gain)', inner.x - 8, g.inner.y - 8);
+    ctx.fillText(g.captions.gain, inner.x - 8, g.inner.y - 8);
 
     // The live analyzer is absolute magnitude, not signed EQ gain. Give it a
     // separate dBFS ruler on the right while retaining the shared plot area.
@@ -2647,7 +2666,7 @@ window.PatternManager = PatternManager;`,
         inner.x + inner.w + 8, y);
     }
     ctx.fillStyle = 'rgba(130,220,180,0.38)';
-    ctx.fillText('dBFS (analyzer)', inner.x + inner.w + 8, g.inner.y - 8);`,
+    ctx.fillText(g.captions.analyzer, inner.x + inner.w + 8, g.inner.y - 8);`,
       'independent analyzer dBFS ruler');
     replaceSpectrSource(
       '  const onPointerDown = (e) => {',
