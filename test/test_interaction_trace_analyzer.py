@@ -25,6 +25,11 @@ class InteractionTraceAnalyzerTest(unittest.TestCase):
         self.assertIn("w.name NOT IN ('layout_children', 'paint')", query)
         self.assertIn("ABS(s.ts - i.ts) <= 17000000", query)
 
+    def test_automation_query_uses_compact_projection_as_its_input(self) -> None:
+        query = MODULE.build_query("automation")
+        self.assertIn("WHERE name = 'spectr_host_automation_project'", query)
+        self.assertIn("spectr_host_automation_project", query)
+
     def test_parse_output_preserves_percentiles_and_stages(self) -> None:
         output = """
 SPECTR_INTERACTION_PERF|summary|180|0.250000|0.500000|181|4.000000|7.900000|8.200000|8.300000|0|0
@@ -81,6 +86,20 @@ SPECTR_INTERACTION_PERF|stage|gpu_present|181|20.000000|0.200000
                                "gpu_acquire", "gpu_submit", "gpu_present")}
         failures = MODULE.failures_for("minimap", summary, stages, 1.0, 8.5, 16.667)
         self.assertTrue(any("below 150 for minimap" in failure for failure in failures))
+
+    def test_automation_accepts_without_dom_dispatch_or_layout(self) -> None:
+        summary = {
+            "input_count": 180, "input_p95_ms": 0.25, "input_max_ms": 0.5,
+            "frame_count": 180, "frame_p50_ms": 4.0, "frame_p95_ms": 7.9,
+            "frame_p99_ms": 8.2, "frame_max_ms": 8.3,
+            "frames_over_120hz": 0, "frames_over_60hz": 0,
+        }
+        stages = {name: {"count": 180, "total_ms": 1.0, "max_ms": 0.25}
+                  for name in ("paint", "gpu_acquire", "gpu_submit",
+                               "gpu_present", "spectr_host_automation_project")}
+        self.assertEqual(
+            MODULE.failures_for("automation", summary, stages, 1.0, 8.5, 16.667),
+            [])
 
 
 if __name__ == "__main__":

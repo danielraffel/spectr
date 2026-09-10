@@ -24,9 +24,9 @@ namespace {
 constexpr std::string_view kAssetSetDigest =
     "6215ee5a9f65ade3626e63c4f973e579f123625239ba57c8f5db61121ccc5e0a";
 constexpr std::string_view kTemplateDigest =
-    "837fe1182d68abab5944570cd35bea85a2e5d10c6ef8d524a6e7e65b83caca9e";
+    "0cdb964975467a0f93ebe83bcdfe821bcd84055518e5b57233e7829e2c73172c";
 constexpr std::string_view kAdapterDigest =
-    "1bf88b4a918275078f7c4350fba00c49976e1af0b03db7490a2efcf69be1eb9f";
+    "c69cf6bba170a23827bb62fc2a931f9d213b1393c9d8f8fa93a82dca0596944f";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -252,7 +252,7 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     const auto bundle = pulp::view::parse_claude_bundle(html);
     REQUIRE(bundle.has_value());
     REQUIRE(bundle->assets.size() == 16);
-    REQUIRE(bundle->template_html.size() == 186383);
+    REQUIRE(bundle->template_html.size() == 186387);
 
     const auto canonical = canonicalize(*bundle);
     CHECK(canonical.asset_set_digest == kAssetSetDigest);
@@ -761,6 +761,9 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"build-info-copy-failure", "settleCopyState(\\\"COPY UNAVAILABLE\\\")"},
         ContractMarker{"build-info-unique-request-ids", "window.__spectrBuildInfoRequestSerial = (Number(window.__spectrBuildInfoRequestSerial) || 0) + 1;"},
         ContractMarker{"build-info-effect-replay-lifetime", "mountedRef.current = true;"},
+        ContractMarker{"build-info-bounded-loading", "const loadTimer = setTimeout(() => {"},
+        ContractMarker{"build-info-timeout-fallback", "if (live) setLoadFailed(true);", 2},
+        ContractMarker{"build-info-timeout-cleanup", "clearTimeout(loadTimer);", 3},
         ContractMarker{"build-info-unmount-cleanup", "mountedRef.current = false;"},
         ContractMarker{"build-info-late-copy-guard", "if (!mountedRef.current) return;"},
         ContractMarker{"build-info-default-on", "\\\"showBuildInfo\\\": true"},
@@ -796,9 +799,11 @@ TEST_CASE("materialized build-info geometry contracts detect every severed fix")
         spectr_native::runtime_js_size};
     constexpr std::array markers{
         ContractMarker{"build-info-feedback-slot", "g5.setFlex(String(feedbackId), \"height\", 108)"},
-        ContractMarker{"build-info-stable-slot", "g5.setTop(String(aboutId), 774)"},
+        ContractMarker{"modulation-stable-slot", "g5.setTop(String(modulationId), 652)"},
+        ContractMarker{"feedback-stable-slot", "g5.setTop(String(feedbackId), 884)"},
+        ContractMarker{"build-info-stable-slot", "g5.setTop(String(aboutId), 1010)"},
         ContractMarker{"build-info-provenance-height", "g5.setFlex(String(aboutId), \"height\", 252)"},
-        ContractMarker{"build-info-scroll-extent", "const authoredContentHeight = 1044;"},
+        ContractMarker{"build-info-scroll-extent", "const authoredContentHeight = 1280;"},
         ContractMarker{"band-root-reserved-gap", "g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0)"},
     };
     const auto errors = [&](std::string_view candidate) {

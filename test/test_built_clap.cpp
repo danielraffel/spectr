@@ -54,6 +54,10 @@ std::vector<std::pair<std::uint32_t, std::string>> expected_host_parameters() {
         {spectr::kParamLfoRate, "LFO Rate"},
         {spectr::kParamLfoDepth, "LFO Depth"},
         {spectr::kParamLfoTarget, "LFO Target"},
+        {spectr::kParamLfo2Enabled, "LFO 2 Enabled"},
+        {spectr::kParamLfo2Shape, "LFO 2 Shape"},
+        {spectr::kParamLfo2Rate, "LFO 2 Rate"},
+        {spectr::kParamLfo2Depth, "LFO 2 Depth"},
     });
     return expected;
 }

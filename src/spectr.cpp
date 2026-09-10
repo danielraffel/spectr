@@ -501,7 +501,8 @@ void Spectr::process(
         const auto& audio_modulation = audio_modulation_publication_.read();
         const bool has_events = events && !events->events().empty();
         const bool modulation_enabled =
-            state().get_value(kParamLfoEnabled) >= 0.5f;
+            state().get_value(kParamLfoEnabled) >= 0.5f
+            || state().get_value(kParamLfo2Enabled) >= 0.5f;
         if (has_events || modulation_enabled) {
             std::array<pulp::format::ParamSnapshotEntry,
                        kSurfaceCacheSlots + 2> initial{};
@@ -558,6 +559,26 @@ void Spectr::process(
                         static_cast<ModulationTarget>(std::clamp(
                             static_cast<int>(std::lround(
                                 cursor.value(kParamLfoTarget))), 0, 3));
+                    // An explicit destination selection is editor state and
+                    // only reaches this thread through the published snapshot,
+                    // one control-thread pass behind the automation lane. When
+                    // the lane has moved past the target the selection was
+                    // reconciled against, the automated enum wins immediately
+                    // rather than being swallowed until that pass lands.
+                    modulation_settings.target_mask =
+                        modulation_settings.target
+                                == audio_modulation.settings.target
+                            ? audio_modulation.settings.target_mask
+                            : kModulationTargetMaskUnset;
+                    modulation_settings.lfo2_enabled =
+                        cursor.value(kParamLfo2Enabled) >= 0.5f;
+                    modulation_settings.lfo2_shape = static_cast<LfoShape>(
+                        std::clamp(static_cast<int>(std::lround(
+                            cursor.value(kParamLfo2Shape))), 0, 3));
+                    modulation_settings.lfo2_beats_per_cycle = std::clamp(
+                        cursor.value(kParamLfo2Rate), 0.25f, 16.0f);
+                    modulation_settings.lfo2_depth = std::clamp(
+                        cursor.value(kParamLfo2Depth), 0.0f, 1.0f);
                     if (should_reset_stream_history && block_offset == 0) {
                         audio_modulation_phase_ =
                             ctx.position_beats
@@ -565,12 +586,32 @@ void Spectr::process(
                                 modulation_settings.beats_per_cycle));
                         audio_modulation_phase_ -=
                             std::floor(audio_modulation_phase_);
+                        audio_modulation_phase_2_ =
+                            ctx.position_beats
+                            / std::max(0.0625, static_cast<double>(
+                                modulation_settings.lfo2_beats_per_cycle));
+                        audio_modulation_phase_2_ -=
+                            std::floor(audio_modulation_phase_2_);
                     }
                     const float wave = lfo_value(
                         modulation_settings.shape, audio_modulation_phase_);
-                    const BandField audible = apply_internal_modulation(
+                    BandField audible = apply_internal_modulation(
                         host_field, audio_modulation.snapshots, host_morph,
                         modulation_settings, wave);
+                    if (modulation_settings.lfo2_enabled) {
+                        const float wave2 = lfo_value(
+                            modulation_settings.lfo2_shape,
+                            audio_modulation_phase_2_);
+                        ModulationSettings second = modulation_settings;
+                        second.enabled = true;
+                        second.shape = modulation_settings.lfo2_shape;
+                        second.beats_per_cycle =
+                            modulation_settings.lfo2_beats_per_cycle;
+                        second.depth = modulation_settings.lfo2_depth;
+                        audible = apply_internal_modulation(
+                            audible, audio_modulation.snapshots, host_morph,
+                            second, wave2);
+                    }
 
                     pulp::signal::SpectralBandLayout automated;
                     automated.active_bands = static_cast<std::uint32_t>(
@@ -641,6 +682,14 @@ void Spectr::process(
                          * tempo / (60.0 * sample_rate)) / beats_per_cycle;
                     audio_modulation_phase_ -=
                         std::floor(audio_modulation_phase_);
+                    const double beats_per_cycle_2 = std::max(
+                        0.0625, static_cast<double>(
+                            modulation_settings.lfo2_beats_per_cycle));
+                    audio_modulation_phase_2_ +=
+                        (static_cast<double>(out_slice.num_samples())
+                         * tempo / (60.0 * sample_rate)) / beats_per_cycle_2;
+                    audio_modulation_phase_2_ -=
+                        std::floor(audio_modulation_phase_2_);
                     block_offset += out_slice.num_samples();
                 });
 
@@ -779,6 +828,17 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // writer; readers treat absence as "no user patterns".
     root.addMember("patterns_json", patterns_.export_json());
 
+    // Internal-modulation destination selection. Every other LFO field is a
+    // StateStore parameter and rides the base state blob; this one is editor
+    // state with no parameter lane, so without it here a saved preset or
+    // session silently loses the user's Targets choice. Absent on a writer
+    // that predates the control; readers treat absence as
+    // `kModulationTargetMaskUnset`, which reproduces that writer's behaviour
+    // exactly — follow the kParamLfoTarget enum — rather than reading as an
+    // empty selection that would silence modulation.
+    root.addMember("modulation_target_mask",
+                   static_cast<int32_t>(modulation_.target_mask));
+
     auto json = choc::json::toString(root, /*useLineBreaks=*/false);
     return {json.begin(), json.end()};
 }
@@ -908,6 +968,8 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             viewport_ = store_view;
             layout_ = store_layout;
             reset_supplemental_state_(snapshots_, patterns_);
+            if (param_store_) modulation_ = modulation_from_store_();
+            else modulation_.target_mask = kModulationTargetMaskUnset;
             morph_derived_ = false;
             morph_overrides_.reset();
             synced_field_ = field_;
@@ -1042,6 +1104,18 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         if (!new_patterns.restore_json(std::string_view(s))) return false;
     }
 
+    // Destination selection. Absent on a writer that predates the Targets
+    // control: the unset sentinel then reproduces that writer's semantics.
+    std::uint8_t new_target_mask = kModulationTargetMaskUnset;
+    if (root.hasObjectMember("modulation_target_mask")) {
+        const auto parsed_mask = read_int_(root["modulation_target_mask"]);
+        if (!parsed_mask) return false;
+        if (*parsed_mask >= 0 && *parsed_mask <= kModulationTargetMaskAll)
+            new_target_mask = static_cast<std::uint8_t>(*parsed_mask);
+        else if (*parsed_mask != kModulationTargetMaskUnset)
+            return false;
+    }
+
     if (version >= 3 && new_morph_derived) {
         const BandField param_field = new_field;
         const bool has_a = new_bank.has(SnapshotBank::Slot::A);
@@ -1072,6 +1146,18 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         layout_ = new_layout;
         morph_derived_ = new_morph_derived;
         morph_overrides_ = new_morph_overrides;
+        // Re-derive the LFO lanes from the restored parameters before the
+        // mask rides along: the audio thread only honours a published mask
+        // while the published target still matches the automation lane, so a
+        // target left over from before the restore would make it discard the
+        // selection this blob just carried.
+        if (param_store_) {
+            const std::uint8_t restored_mask = new_target_mask;
+            modulation_ = modulation_from_store_();
+            modulation_.target_mask = restored_mask;
+        } else {
+            modulation_.target_mask = new_target_mask;
+        }
         publish_processing_state_();
         if (version >= 3) {
             synced_field_ = field_;

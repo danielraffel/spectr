@@ -74,18 +74,25 @@ TracePrefix="$(tools/install_trace_sdk.sh /path/to/exact-clean-pulp-worktree)"
 Pulp_SHA="$(git -C /path/to/exact-clean-pulp-worktree rev-parse HEAD)"
 cmake -S . -B build-native -DCMAKE_BUILD_TYPE=Release \
   -DPulp_DIR="$TracePrefix/lib/cmake/Pulp" \
-  -DSPECTR_EXPECTED_PULP_SDK_SHA="$Pulp_SHA"
+  -DSPECTR_EXPECTED_PULP_SDK_SHA="$Pulp_SHA" \
+  -DSPECTR_ENABLE_PERF_FIXTURES=ON
 cmake --build build-native --target Spectr_Standalone
 tools/verify_interaction_perf.sh \
   build-native <exact-spectr-sha> <exact-pulp-sdk-sha> artifacts/perf
 ```
 
-The command captures separate band-edit and minimap Perfetto traces, GPU
-screenshots, and JSON receipts. It fails closed when provenance differs, a
-required AppKit/QuickJS/Skia stage is absent, layout or paint repeats more than
-once per delivered input, or the M5 trace misses the 120 Hz p95 / 60 Hz p99
-frame budgets. These are development artifacts; traced binaries must never be
-packaged for distribution.
+The command captures separate band-edit, minimap, and host-automation
+Perfetto traces, GPU screenshots, and JSON receipts. The `automation` workload
+drives `SPECTR_AUTOMATION_PERF_FIXTURE=1`, which only has an effect when the
+binary under test was configured with `-DSPECTR_ENABLE_PERF_FIXTURES=ON` (OFF
+by default, including for every shipping/distribution build) — that fixture
+hook does not exist in an ordinary build, by design, so the `automation`
+workload silently measures unforced host-automation cadence instead of the
+stressed path unless this flag is set. It fails closed when provenance
+differs, a required AppKit/QuickJS/Skia stage is absent, layout or paint
+repeats more than once per delivered input, or the M5 trace misses the 120 Hz
+p95 / 60 Hz p99 frame budgets. These are development artifacts; traced
+binaries must never be packaged for distribution.
 
 ### Spectral build profiles
 

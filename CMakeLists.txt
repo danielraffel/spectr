@@ -247,12 +247,22 @@ pulp_add_binary_data(spectr_native_assets
     NAMESPACE spectr_native
 )
 
+# Test-only automation-perf fixture (SPECTR_AUTOMATION_PERF_FIXTURE env var,
+# read in Spectr::tick_native_analyzer_) forces an extra host-automation
+# projection each tick to stress the live-state dispatch path under load.
+# Default OFF so the literal env-var name and its branch are compiled out of
+# every shipping and default test target; opt in explicitly
+# (-DSPECTR_ENABLE_PERF_FIXTURES=ON) only for a dedicated perf-fixture build.
+option(SPECTR_ENABLE_PERF_FIXTURES
+       "Compile in the test-only SPECTR_AUTOMATION_PERF_FIXTURE tick hook" OFF)
+
 function(spectr_configure_native_target target)
     target_include_directories(${target} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_compile_definitions(${target} PRIVATE
         SPECTR_NATIVE_EDITOR=1
+        $<$<BOOL:${SPECTR_ENABLE_PERF_FIXTURES}>:SPECTR_ENABLE_PERF_FIXTURES=1>
         SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
         SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
         SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
@@ -454,6 +464,60 @@ spectr_configure_native_target(Spectr-native-n1-test)
 catch_discover_tests(Spectr-native-n1-test
     PROPERTIES RESOURCE_LOCK spectr_native_materialized_editor)
 
+# Headless capture of the SHIPPING native editor. The browser design source
+# carries no Settings > MODULATION group -- the native patch layer injects it --
+# so a browser screenshot cannot review that surface. This mounts the real
+# materialized runtime through Processor::create_view() and rasterises it with
+# Skia (offscreen Dawn+Skia by default, CPU Skia raster on request).
+add_executable(Spectr-native-shot
+    tools/native_shot.cpp
+)
+target_link_libraries(Spectr-native-shot PRIVATE
+    ${SPECTR_NATIVE_CORE_TARGET}
+)
+spectr_configure_native_target(Spectr-native-shot)
+
+# Registered so the shipping native surface is actually captured by CI, not
+# merely buildable. This binary's whole point is the offscreen Dawn+Skia GPU
+# path (its default backend), so on a host without GPU capture it MUST
+# degrade to a loud, CTest-recognized SKIP (exit 77, matched by
+# SKIP_RETURN_CODE below) rather than a bare FAIL indistinguishable from a
+# real regression -- and CTest reports a SKIP as "Not Run", never "Passed",
+# so a SKIP can never be misread as a PASS.
+add_test(NAME Spectr-native-shot
+    COMMAND $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-shots)
+set_tests_properties(Spectr-native-shot PROPERTIES
+    TIMEOUT 180
+    SKIP_RETURN_CODE 77
+    # Shares the lock with Spectr-native-n1-test: both mount the same
+    # heavyweight native materialized editor runtime and must not race.
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Resize reachability (COR-4, editor half): sweeps host sizes through the
+# shipping resize path and asserts every hit-test leaf stays inside the design
+# viewport. Two stages -- capture, then a snapshot detector -- so the exit codes
+# stay distinguishable: 0 pass, 1 a control left the viewport, 3 the premise is
+# unproven (the resize path never reached the runtime, or a capture is
+# missing), 77 no GPU capture on this host. 3 and 77 must never read as a pass.
+# Needs a Python interpreter for the detector; without one the gate is not
+# silently dropped, it is simply not registered and the configure log says so.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-resize-reachability
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_resize_reachability.sh
+            $<TARGET_FILE:Spectr-native-shot>
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_BINARY_DIR}/spectr-resize-reachability)
+    set_tests_properties(Spectr-resize-reachability PROPERTIES
+        TIMEOUT 600
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+else()
+    message(STATUS
+        "Spectr: no Python3 interpreter -- Spectr-resize-reachability not registered")
+endif()
+
 add_executable(Spectr-editor-authority-test
     test/test_editor_authority.cpp
 )
@@ -471,6 +535,123 @@ find_program(SPECTR_NODE_EXECUTABLE NAMES node)
 find_program(SPECTR_CHROME_EXECUTABLE
     NAMES "Google Chrome" google-chrome chromium chromium-browser
     PATHS "/Applications/Google Chrome.app/Contents/MacOS")
+
+# Node-only, deliberately outside the Chrome-gated block below: this executes
+# the shipped reattach ladder out of the materialized document directly, so it
+# still runs on a host with no Chrome -- where every other oracle silently
+# vanishes.
+#
+# What it guards: the ladder's wrappers must return what the React callback
+# returned. A handler stops a press from reaching the nodes behind it by
+# returning a propagation marker, and Settings depends on that -- its panel
+# calls stopPropagation so a press inside never reaches the scrim, whose
+# "pressed outside" handler closes it. Wrappers that dropped the value shipped
+# the #1 user-reported defect: Settings closed on a tap that landed inside it,
+# and toggles appeared to vanish because the panel closed instead of the toggle
+# flipping.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-propagation
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_propagation.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-propagation PROPERTIES TIMEOUT 30)
+    # The negative control. --plant-swallow reinstates the value-dropping
+    # wrappers -- the exact pre-fix code -- and this row passes only when the
+    # suite REJECTS them, so weakening the assertion turns this green->red
+    # instead of silently agreeing. Verified by hand against the real pre-fix
+    # materialized document: it exits 1 on "the click wrapper drops the
+    # propagation marker", so this oracle is known to be able to catch the
+    # defect it was written for, not merely known to be green.
+    add_test(NAME Spectr-materialized-propagation-negative-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_propagation.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-swallow)
+    set_tests_properties(Spectr-materialized-propagation-negative-control PROPERTIES
+        TIMEOUT 30
+        WILL_FAIL TRUE)
+endif()
+
+# Appearance invariants over a dump_layout_tree() snapshot: two painted glyph
+# runs must not overlap, and a run must fit the box laid out for it. Both
+# adjudicate on measured_text_boxes[].rect after intersecting with the node's
+# clip, never on the node's layout rect -- a layout box carries padding and
+# centring slack, and a node scrolled out of its container keeps visible:true
+# while painting nothing, so reading either naively manufactures overlaps that
+# are not on screen.
+#
+# The fixture is a real dump from the shipping standalone with Settings open.
+# It is adjudicated, not assumed: every run this suite reports on was checked
+# against the ink under its rect in the matching screenshot.
+#
+# Coverage is partial and the suite says so on every run. The dump reports a
+# painted width of 0.0 for 63 of the 101 text-bearing Labels -- the tell is an
+# integer box height, the layout line box, where a shaped run carries a
+# fractional one -- and 28 of those have proven ink, including every label in
+# the Settings body. Neither detector can see a defect in those runs.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-appearance-invariants
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/appearance_invariants.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/settings-open-layout.json)
+    set_tests_properties(Spectr-appearance-invariants PROPERTIES TIMEOUT 60)
+
+    # The negative controls. Each plant injects the exact defect its detector
+    # exists to catch -- a straddling collision, and a run wider than its box --
+    # and the row passes only when the detector REJECTS it. A detector that
+    # cannot be made to fail proves nothing, so these turn a weakened assertion
+    # green->red instead of letting it agree silently.
+    add_test(NAME Spectr-appearance-invariants-overlap-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/appearance_invariants.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/settings-open-layout.json
+            --plant-overlap)
+    set_tests_properties(Spectr-appearance-invariants-overlap-control PROPERTIES
+        TIMEOUT 60
+        WILL_FAIL TRUE)
+
+    add_test(NAME Spectr-appearance-invariants-overflow-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/appearance_invariants.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/settings-open-layout.json
+            --plant-overflow)
+    set_tests_properties(Spectr-appearance-invariants-overflow-control PROPERTIES
+        TIMEOUT 60
+        WILL_FAIL TRUE)
+endif()
+# The seven browser oracles below are the ONLY coverage for the status overlay,
+# preset detail, Settings polish, and dropdown rows. If node or Chrome is
+# missing they are simply never registered, so a run without them is not a
+# weaker green -- it is a green with that entire surface unmeasured, and
+# nothing says so. Make the absence loud.
+#
+# Off by default so a contributor without Chrome can still build and test.
+# NOTE: as of this writing no CI workflow passes
+# -DSPECTR_REQUIRE_BROWSER_LANE=ON (verified: zero occurrences of this option
+# name under .github/workflows/). CI configures with the same default as a
+# local build, so on any CI host missing node/Chrome this degrades to the
+# WARNING branch below, not a hard failure -- the browser-oracle surface can
+# go silently unmeasured on CI too. If you are relying on this flag to make
+# CI enforce the browser lane, it currently does not; wire
+# -DSPECTR_REQUIRE_BROWSER_LANE=ON into the relevant workflow's configure step
+# (and confirm that runner actually has node + Chrome) before trusting that.
+option(SPECTR_REQUIRE_BROWSER_LANE
+    "Fail if the headless-Chromium oracles cannot be registered" OFF)
+if(NOT (SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE))
+    if(SPECTR_REQUIRE_BROWSER_LANE)
+        message(FATAL_ERROR
+            "SPECTR_REQUIRE_BROWSER_LANE=ON but the browser oracle lane cannot run: "
+            "node=${SPECTR_NODE_EXECUTABLE} chrome=${SPECTR_CHROME_EXECUTABLE}. "
+            "Every status-overlay, preset-detail, Settings-polish and dropdown "
+            "assertion lives in that lane; without it they are unmeasured.")
+    else()
+        message(WARNING
+            "Spectr browser oracle lane DISABLED (node=${SPECTR_NODE_EXECUTABLE} "
+            "chrome=${SPECTR_CHROME_EXECUTABLE}). The status-overlay, preset-detail, "
+            "Settings-polish and dropdown rows will not be measured by this build.")
+    endif()
+endif()
 if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     add_test(NAME Spectr-browser-analyzer
         COMMAND ${SPECTR_NODE_EXECUTABLE}
@@ -485,6 +666,13 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${SPECTR_CHROME_EXECUTABLE}
             --resize-only)
     set_tests_properties(Spectr-browser-resize PROPERTIES TIMEOUT 90)
+    add_test(NAME Spectr-browser-popups
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            ${SPECTR_CHROME_EXECUTABLE}
+            --popup-only)
+    set_tests_properties(Spectr-browser-popups PROPERTIES TIMEOUT 90)
     # Ten checks: five edit modes x redraw-unmutes on/off, asserting the band
     # state each mode's real pointer handler publishes -- not the shared
     # decision point, which would pass even if a mode bypassed it.
@@ -495,6 +683,75 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${SPECTR_CHROME_EXECUTABLE}
             --mute-modes)
     set_tests_properties(Spectr-browser-mute-modes PROPERTIES TIMEOUT 180)
+    add_test(NAME Spectr-browser-build-info-timeout
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_build_info_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            ${SPECTR_CHROME_EXECUTABLE})
+    set_tests_properties(Spectr-browser-build-info-timeout PROPERTIES TIMEOUT 45)
+    add_test(NAME Spectr-browser-ux-polish
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_ux_polish_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            ${SPECTR_CHROME_EXECUTABLE})
+    # This suite launches Chrome nine times in series (six scenarios plus three
+    # negative controls), each bounded to 30s by the runner itself, so its own
+    # ceiling is ~270s and no wall-clock under that can bound it. A 90s budget
+    # was under the suite: six consecutive fully-passing runs on a loaded host
+    # measured 72/75/77/92/97/111s, so 90s would have killed three of the six
+    # mid-run and reported a ctest timeout instead of naming the slow launch.
+    # Budget above the runner so a real hang surfaces as the runner's own
+    # per-launch timeout, which says which scenario hung.
+    set_tests_properties(Spectr-browser-ux-polish PROPERTIES TIMEOUT 300)
+    add_test(NAME Spectr-browser-preset-parity
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_preset_parity_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            --shipping-only
+            ${SPECTR_CHROME_EXECUTABLE})
+    set_tests_properties(Spectr-browser-preset-parity PROPERTIES TIMEOUT 120)
+    # The negative control for the check above. test_preset_parity_browser.mjs
+    # has always accepted --plant-overlap, which injects an action collision
+    # into factory:flat, but nothing ever passed it: the flag is the 5th
+    # positional argument and the registration above supplies three. So the
+    # overlap assertion has been running green since it was written without any
+    # evidence it can go red -- a blind oracle.
+    #
+    # WILL_FAIL inverts the verdict: this test passes only when the script
+    # REJECTS the planted overlap. If someone weakens the overlap check, the
+    # control turns green->red here rather than silently agreeing with them.
+    # Verified by hand before registering: baseline exits 0, planted exits 1
+    # with "factory:flat action overlap: APPLY/★ DEFAULT".
+    add_test(NAME Spectr-browser-preset-parity-negative-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_preset_parity_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            --shipping-only
+            ${SPECTR_CHROME_EXECUTABLE}
+            ${CMAKE_CURRENT_BINARY_DIR}/preset-parity-negative-control
+            --plant-overlap)
+    set_tests_properties(Spectr-browser-preset-parity-negative-control PROPERTIES
+        TIMEOUT 120
+        WILL_FAIL TRUE)
+    # Second negative control, for the long-name truncation assertion. Same
+    # reasoning: the check is only worth having if it can go red, and this
+    # proves it does. --plant-untruncated reports the title box at its full
+    # unwrapped width, as if the name had never been clipped; the containment
+    # assertion must reject it. Verified: baseline exits 0, planted exits 1 with
+    # "preset title spills 308px past the detail panel instead of truncating".
+    add_test(NAME Spectr-browser-preset-truncation-negative-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_preset_parity_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            --shipping-only
+            ${SPECTR_CHROME_EXECUTABLE}
+            ${CMAKE_CURRENT_BINARY_DIR}/preset-truncation-negative-control
+            --plant-untruncated)
+    set_tests_properties(Spectr-browser-preset-truncation-negative-control PROPERTIES
+        TIMEOUT 120
+        WILL_FAIL TRUE)
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────

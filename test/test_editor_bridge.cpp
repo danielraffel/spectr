@@ -328,6 +328,10 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     r.store.set_value(spectr::kParamLfoRate, 8.0f);
     r.store.set_value(spectr::kParamLfoDepth, 0.75f);
     r.store.set_value(spectr::kParamLfoTarget, 3.0f);
+    r.store.set_value(spectr::kParamLfo2Enabled, 1.0f);
+    r.store.set_value(spectr::kParamLfo2Shape, 1.0f);
+    r.store.set_value(spectr::kParamLfo2Rate, 2.0f);
+    r.store.set_value(spectr::kParamLfo2Depth, 0.25f);
     REQUIRE(r.proc->apply_surface_params(true));
     r.proc->field().bands[47] = {6.25f, false};
     r.proc->capture_snapshot(SnapshotBank::Slot::A);
@@ -360,12 +364,51 @@ TEST_CASE("native editor hydration reports the restored field viewport and layou
     CHECK(payload["modulation"]["beats_per_cycle"].get<double>() == Approx(8.0));
     CHECK(payload["modulation"]["depth"].get<double>() == Approx(0.75));
     CHECK(payload["modulation"]["target"].get<int64_t>() == 3);
+    CHECK(payload["modulation"]["lfo2_enabled"].getBool());
+    CHECK(payload["modulation"]["lfo2_shape"].get<int64_t>() == 1);
+    CHECK(payload["modulation"]["lfo2_beats_per_cycle"].get<double>() == Approx(2.0));
+    CHECK(payload["modulation"]["lfo2_depth"].get<double>() == Approx(0.25));
     REQUIRE(payload["snapshots"].isObject());
     CHECK(payload["snapshots"]["A"]["populated"].getBool());
     CHECK(payload["snapshots"]["B"]["populated"].getBool());
     CHECK(payload["snapshots"]["A"]["gain_db"][17].get<double>() == Approx(-9.5));
     CHECK(payload["snapshots"]["A"]["muted"][17].getBool());
     CHECK(payload["snapshots"]["B"]["gain_db"][17].get<double>() == Approx(3.0));
+}
+
+TEST_CASE("host automation publication is compact and revisioned") {
+    Rig r;
+    r.proc->set_layout(spectr::Layout::Bands48);
+    r.proc->viewport() = {280.0f, 340.0f};
+    r.proc->field().bands[17] = {-9.5f, true};
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamMotionMode, 1.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamAnalyzerMode, 2.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamEditMode, 4.0f));
+    REQUIRE(r.proc->set_editor_mode_param(spectr::kParamVisualization, 1.0f));
+
+    constexpr spectr::EditorRevision revision = 42;
+    const auto message = spectr::make_editor_live_state_message(*r.proc, revision);
+    CHECK(message.type == "processing_state_live");
+    CHECK(message.id == "spectr-processing-state-live");
+
+    const auto payload = choc::json::parse(message.payload_json);
+    REQUIRE(payload.isObject());
+    CHECK(payload["revision"].get<int64_t>() == 42);
+    CHECK(payload["n_visible"].get<int64_t>() == 48);
+    CHECK(payload["gain_db"].size() == 48);
+    CHECK(payload["muted"].size() == 48);
+    CHECK(payload["gain_db"][17].get<double>() == Approx(-9.5));
+    CHECK(payload["muted"][17].getBool());
+    CHECK(payload["min_hz"].get<double>() == Approx(280.0));
+    CHECK(payload["max_hz"].get<double>() == Approx(340.0));
+    CHECK(payload["motion_mode"].get<double>() == Approx(1.0));
+    CHECK(payload["analyzer_mode"].get<double>() == Approx(2.0));
+    CHECK(payload["edit_mode"].get<double>() == Approx(4.0));
+    CHECK(payload["visualization_mode"].get<double>() == Approx(1.0));
+    CHECK_FALSE(payload.hasObjectMember("snapshots"));
+    CHECK_FALSE(payload.hasObjectMember("patterns_json"));
+    CHECK_FALSE(payload.hasObjectMember("settings"));
+    CHECK_FALSE(payload.hasObjectMember("modulation"));
 }
 
 TEST_CASE("native editor resolution disclosure uses current product geometry") {
@@ -550,6 +593,8 @@ TEST_CASE("embedded editor gates default publication until native hydration") {
 
     CHECK(html.find("window.pulp.on('processing_state_hydrate'")
           != std::string::npos);
+    CHECK(html.find("window.pulp.on('processing_state_live'")
+          != std::string::npos);
     CHECK(html.find("window.pulp.postMessage('editor_ready'")
           != std::string::npos);
     CHECK(html.find("if (!nativeHydrated) return;")
@@ -560,7 +605,9 @@ TEST_CASE("embedded editor gates default publication until native hydration") {
           != std::string::npos);
     CHECK(html.find("hydrateProcessingState(nativeHydration)")
           != std::string::npos);
-    CHECK(html.find("spectral_resolution_request") != std::string::npos);
+    CHECK(html.find("applyHostAutomationState(state)")
+          != std::string::npos);
+    CHECK(html.find("spectral_resolution_request") == std::string::npos);
     CHECK(html.find("RES {resolution ?") == std::string::npos);
     CHECK(html.find("data-spectr-resolution") == std::string::npos);
 }
@@ -1023,6 +1070,23 @@ TEST_CASE("M9.5 bridge param_set: missing id or value errors") {
     const auto no_val = r.dispatch(
         R"({"type":"param_set","payload":{"id":1}})");
     CHECK(response_has_error(no_val, "param value missing"));
+}
+
+TEST_CASE("modulation target bridge accepts all and none target sets") {
+    Rig r;
+    const auto all = r.dispatch(
+        R"({"type":"modulation_targets_set","payload":{"targets":["bank","snapshot-a","snapshot-b","morph"]}})");
+    REQUIRE(response_ok(all));
+    CHECK(r.proc->modulation_settings().target_mask == 0x0f);
+
+    const auto none = r.dispatch(
+        R"({"type":"modulation_targets_set","payload":{"targets":[]}})");
+    REQUIRE(response_ok(none));
+    CHECK(r.proc->modulation_settings().target_mask == 0x00);
+
+    const auto unknown = r.dispatch(
+        R"({"type":"modulation_targets_set","payload":{"targets":["sidechain"]}})");
+    CHECK(response_has_error(unknown, "unknown modulation target"));
 }
 
 // ── M9.5 slice 2 — PatternLibrary persistence through plugin_state ──

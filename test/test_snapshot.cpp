@@ -15,7 +15,13 @@
 
 #include <pulp/state/store.hpp>
 
+#include <choc/text/choc_JSON.h>
+
+#include <cctype>
 #include <cmath>
+#include <cstdint>
+#include <string>
+#include <vector>
 
 using Catch::Approx;
 using spectr::BandField;
@@ -44,6 +50,12 @@ BandField ramp_field(float start, float step) {
 }
 
 } // namespace
+
+// Catch2 renders a std::uint8_t as a character, so a mask mismatch prints as
+// unreadable punctuation. Compare masks as ints and a failure names the bits.
+static constexpr int mask_int(std::uint8_t mask) noexcept {
+    return static_cast<int>(mask);
+}
 
 TEST_CASE("M8 morph_fields: t=0 returns A, t=1 returns B") {
     const auto A = make_field(-12.0f);
@@ -167,6 +179,129 @@ TEST_CASE("internal modulation targets snapshots and host morph independently") 
         canonical, bank, 0.5f, settings, 1.0f);
     CHECK(audible.bands[0].gain_db == Catch::Approx(6.0f));
     CHECK(canonical.bands[0].gain_db == Catch::Approx(0.0f));
+}
+
+TEST_CASE("internal modulation target mask composes selected destinations") {
+    spectr::BandField canonical;
+    canonical.bands[0].gain_db = 0.0f;
+    spectr::SnapshotBank bank;
+    spectr::BandField a = canonical;
+    a.bands[0].gain_db = 6.0f;
+    bank.capture_into(spectr::SnapshotBank::Slot::A, a, {}, spectr::Layout::Bands32);
+    spectr::ModulationSettings settings;
+    settings.enabled = true;
+    settings.depth = 1.0f;
+    settings.target_mask = (std::uint8_t{1} << 0) | (std::uint8_t{1} << 1);
+    const auto audible = spectr::apply_internal_modulation(
+        canonical, bank, 0.0f, settings, 0.0f);
+    CHECK(audible.bands[0].gain_db == Catch::Approx(3.0f));
+    CHECK(canonical.bands[0].gain_db == Catch::Approx(0.0f));
+}
+
+TEST_CASE("an unset target mask follows the automatable target enum") {
+    spectr::ModulationSettings settings;
+    // A fresh settings object carries no explicit destination selection, so
+    // the automatable enum lane decides.
+    CHECK(mask_int(settings.target_mask)
+          == mask_int(spectr::kModulationTargetMaskUnset));
+    settings.target = spectr::ModulationTarget::SnapshotB;
+    CHECK(mask_int(spectr::resolve_modulation_target_mask(settings))
+          == mask_int(spectr::modulation_target_bit(
+                 spectr::ModulationTarget::SnapshotB)));
+
+    // An explicitly empty selection is a different statement — the user asked
+    // for no destinations — and must not be confused with "unset".
+    settings.target_mask = 0;
+    CHECK(mask_int(spectr::resolve_modulation_target_mask(settings)) == 0);
+
+    spectr::BandField canonical;
+    canonical.bands[0].gain_db = 0.0f;
+    spectr::SnapshotBank bank;
+    settings.enabled = true;
+    settings.depth = 1.0f;
+    settings.target = spectr::ModulationTarget::WholeBank;
+    settings.target_mask = 0;
+    const auto silent = spectr::apply_internal_modulation(
+        canonical, bank, 0.0f, settings, 1.0f);
+    CHECK(silent.bands[0].gain_db == Catch::Approx(0.0f));
+
+    // Positive control: the same LFO with no explicit selection is audible,
+    // so the check above is measuring the selection and not a dead LFO.
+    settings.target_mask = spectr::kModulationTargetMaskUnset;
+    const auto audible = spectr::apply_internal_modulation(
+        canonical, bank, 0.0f, settings, 1.0f);
+    CHECK(audible.bands[0].gain_db == Catch::Approx(12.0f));
+}
+
+TEST_CASE("plugin state round-trips the modulation target mask") {
+    // Bank + Morph: a selection no single enum value can express, so a reader
+    // that quietly fell back to the enum could not fake it.
+    constexpr std::uint8_t kMask =
+        static_cast<std::uint8_t>((std::uint8_t{1} << 0) | (std::uint8_t{1} << 3));
+
+    Spectr a;
+    pulp::state::StateStore store_a;
+    a.set_state_store(&store_a);
+    a.define_parameters(store_a);
+    REQUIRE(a.set_modulation_target_mask(kMask));
+    REQUIRE(mask_int(a.modulation_settings().target_mask) == mask_int(kMask));
+    const auto blob = a.serialize_plugin_state();
+    REQUIRE_FALSE(blob.empty());
+
+    Spectr b;
+    pulp::state::StateStore store_b;
+    b.set_state_store(&store_b);
+    b.define_parameters(store_b);
+    REQUIRE(mask_int(b.modulation_settings().target_mask)
+            == mask_int(spectr::kModulationTargetMaskUnset));
+    REQUIRE(b.deserialize_plugin_state(blob));
+    CHECK(mask_int(b.modulation_settings().target_mask) == mask_int(kMask));
+}
+
+TEST_CASE("a plugin state blob without a target mask loads as unset") {
+    // A writer that predates the Targets control emits no mask member. Such a
+    // blob must restore the pre-control behaviour — follow the enum — and must
+    // NOT read as an explicit empty selection, which would silence modulation.
+    Spectr a;
+    pulp::state::StateStore store_a;
+    a.set_state_store(&store_a);
+    a.define_parameters(store_a);
+    const auto blob = a.serialize_plugin_state();
+    std::string json(blob.begin(), blob.end());
+
+    const auto key = std::string("\"modulation_target_mask\":");
+    auto at = json.find(key);
+    REQUIRE(at != std::string::npos);  // control: the field is there to remove
+    auto end = json.find_first_of(",}", at);
+    REQUIRE(end != std::string::npos);
+    if (json[end] == ',') {
+        ++end;  // this member, plus the separator that follows it
+    } else {
+        // Last member: walk back over the separator that precedes it instead,
+        // otherwise the erase leaves a trailing comma and invalid JSON.
+        while (at > 0 && std::isspace(static_cast<unsigned char>(json[at - 1])))
+            --at;
+        REQUIRE(at > 0);
+        REQUIRE(json[at - 1] == ',');
+        --at;
+    }
+    json.erase(at, end - at);
+    REQUIRE(json.find(key) == std::string::npos);
+    // Control: the surgery must leave a payload the reader still accepts, so a
+    // rejection below is about the missing member, not about broken JSON.
+    REQUIRE(choc::json::parse(json).isObject());
+
+    Spectr b;
+    pulp::state::StateStore store_b;
+    b.set_state_store(&store_b);
+    b.define_parameters(store_b);
+    // Start from an explicit empty selection so a reader that simply left the
+    // member alone, or zeroed it, would be caught.
+    REQUIRE(b.set_modulation_target_mask(0));
+    const std::vector<uint8_t> legacy(json.begin(), json.end());
+    REQUIRE(b.deserialize_plugin_state(legacy));
+    CHECK(mask_int(b.modulation_settings().target_mask)
+          == mask_int(spectr::kModulationTargetMaskUnset));
 }
 
 TEST_CASE("tempo LFO waveform is deterministic and bounded") {

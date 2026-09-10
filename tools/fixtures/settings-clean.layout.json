@@ -1,0 +1,204 @@
+{
+  "schema_version": "visual-layout-snapshot-v1",
+  "surface": "settings",
+  "nodes": [
+    {
+      "id": "settings-panel",
+      "kind": "View",
+      "type": "View",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 760,
+        "h": 600
+      },
+      "visible": true,
+      "overflow": "visible",
+      "depth": 0,
+      "z_order": {
+        "paint": 0,
+        "z_index": 0
+      },
+      "clipping": {
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1000,
+          "h": 800
+        }
+      },
+      "measured_text_boxes": [],
+      "hit_regions": []
+    },
+    {
+      "id": "settings-body",
+      "kind": "ScrollView",
+      "type": "ScrollView",
+      "rect": {
+        "x": 20,
+        "y": 60,
+        "w": 720,
+        "h": 500
+      },
+      "visible": true,
+      "overflow": "visible",
+      "depth": 1,
+      "z_order": {
+        "paint": 1,
+        "z_index": 0
+      },
+      "clipping": {
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1000,
+          "h": 800
+        }
+      },
+      "measured_text_boxes": [],
+      "hit_regions": []
+    },
+    {
+      "id": "grp-status",
+      "kind": "View",
+      "type": "View",
+      "rect": {
+        "x": 20,
+        "y": 60,
+        "w": 720,
+        "h": 120
+      },
+      "visible": true,
+      "overflow": "visible",
+      "depth": 2,
+      "z_order": {
+        "paint": 2,
+        "z_index": 0
+      },
+      "clipping": {
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1000,
+          "h": 800
+        }
+      },
+      "measured_text_boxes": [],
+      "hit_regions": []
+    },
+    {
+      "id": "lbl-status",
+      "kind": "Label",
+      "type": "Label",
+      "rect": {
+        "x": 30,
+        "y": 70,
+        "w": 679,
+        "h": 24
+      },
+      "visible": true,
+      "overflow": "visible",
+      "depth": 3,
+      "z_order": {
+        "paint": 3,
+        "z_index": 0
+      },
+      "clipping": {
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1000,
+          "h": 800
+        }
+      },
+      "measured_text_boxes": [
+        {
+          "text": "STATUS INFO",
+          "rect": {
+            "x": 30,
+            "y": 70,
+            "w": 140,
+            "h": 20
+          }
+        }
+      ],
+      "hit_regions": []
+    },
+    {
+      "id": "lbl-snapshot",
+      "kind": "Label",
+      "type": "Label",
+      "rect": {
+        "x": 30,
+        "y": 104,
+        "w": 679,
+        "h": 24
+      },
+      "visible": true,
+      "overflow": "visible",
+      "depth": 3,
+      "z_order": {
+        "paint": 4,
+        "z_index": 0
+      },
+      "clipping": {
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1000,
+          "h": 800
+        }
+      },
+      "measured_text_boxes": [
+        {
+          "text": "SNAPSHOT A/B MORPH TARGETS AND BANK",
+          "rect": {
+            "x": 30,
+            "y": 104,
+            "w": 520,
+            "h": 20
+          }
+        }
+      ],
+      "hit_regions": []
+    },
+    {
+      "id": "lbl-desc",
+      "kind": "Label",
+      "type": "Label",
+      "rect": {
+        "x": 30,
+        "y": 138,
+        "w": 679,
+        "h": 24
+      },
+      "visible": true,
+      "overflow": "visible",
+      "depth": 3,
+      "z_order": {
+        "paint": 5,
+        "z_index": 0
+      },
+      "clipping": {
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1000,
+          "h": 800
+        }
+      },
+      "measured_text_boxes": [
+        {
+          "text": "Build information and diagnostics",
+          "rect": {
+            "x": 30,
+            "y": 138,
+            "w": 300,
+            "h": 20
+          }
+        }
+      ],
+      "hit_regions": []
+    }
+  ]
+}

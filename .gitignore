@@ -1,6 +1,8 @@
 # Build artifacts
 build/
 build-*/
+artifacts/
+artifacts-*/
 cmake-build-*/
 
 # macOS / Finder

@@ -161,6 +161,243 @@ TEST_CASE("Spectr applies internal modulation on the audio owner",
     CHECK(modulated > unmodulated * 2.5f);
 }
 
+TEST_CASE("Spectr keeps the modulation target lane audible under host automation",
+          "[modulation][automation][spectral][rt]") {
+    // A DAW automating kParamLfoTarget must change what is modulated even
+    // after the editor has made an explicit Targets selection. Before the fix
+    // an explicit selection outranked the parameter lane outright, so the
+    // automation wrote into a field the audio thread then threw away.
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+    // Renders with the editor selection set to Snapshot A only. No snapshot is
+    // ever captured, so that destination is inert: any audible modulation in
+    // this render can only have come from the automated enum.
+    const auto render_peak = [](bool select_snapshot_a,
+                                spectr::ModulationTarget automated_target) {
+        pulp::format::HeadlessHost host(spectr::create_spectr);
+        host.prepare(sample_rate, block_size);
+        auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+        REQUIRE(plugin != nullptr);
+
+        // Reconcile the control lane on Snapshot A first, so the selection
+        // below is made against that target and the automation genuinely
+        // moves the lane away from it.
+        host.state().set_value(
+            spectr::kParamLfoTarget,
+            static_cast<float>(spectr::ModulationTarget::SnapshotA));
+        plugin->apply_surface_params(false);
+        if (select_snapshot_a) {
+            REQUIRE(plugin->set_modulation_target_mask(
+                spectr::modulation_target_bit(
+                    spectr::ModulationTarget::SnapshotA)));
+        }
+
+        pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+        const float* input_channels[] = {
+            in.channel(0).data(), in.channel(1).data()};
+        pulp::audio::BufferView<const float> input(
+            input_channels, 2, block_size);
+        auto output = out.view();
+        std::uint64_t rendered = 0;
+        float peak = 0.0f;
+        const auto blocks = static_cast<std::size_t>(
+            (spectr::kSpectralLatency + spectr::kSpectralFftSize)
+                / block_size + 6);
+        for (std::size_t block = 0; block < blocks; ++block) {
+            for (std::size_t sample = 0; sample < block_size; ++sample) {
+                const float value = 0.25f * std::sin(
+                    2.0 * 3.14159265358979323846 * 997.0
+                    * static_cast<double>(rendered + sample) / sample_rate);
+                in.channel(0)[sample] = value;
+                in.channel(1)[sample] = value;
+            }
+            rendered += block_size;
+            pulp::state::ParameterEventQueue events;
+            for (std::size_t band = 0; band < 32; ++band)
+                REQUIRE(events.push({
+                    spectr::band_gain_param_id(band), 0, -12.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                                 static_cast<float>(spectr::LfoShape::Square),
+                                 0}));
+            REQUIRE(events.push({spectr::kParamLfoRate, 0, 16.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                                 static_cast<float>(automated_target), 0}));
+            host.process(output, input, events);
+            for (float sample : out.channel(0))
+                peak = std::max(peak, std::abs(sample));
+        }
+        return peak;
+    };
+
+    const float inert = render_peak(
+        true, spectr::ModulationTarget::SnapshotA);
+    const float automated = render_peak(
+        true, spectr::ModulationTarget::WholeBank);
+    const float no_selection = render_peak(
+        false, spectr::ModulationTarget::WholeBank);
+
+    // Positive control: the render produces audio at all, so the comparisons
+    // below are not two flavours of silence.
+    REQUIRE(inert > 0.01f);
+    // Automating the target lane away from the selected destination is
+    // audible. This is the assertion the defect broke.
+    CHECK(automated > inert * 2.5f);
+    // And it lands in the same place as the enum-only path: an earlier editor
+    // selection does not leave the automation in some third state.
+    CHECK(no_selection > inert * 2.5f);
+    CHECK(automated == Approx(no_selection).epsilon(0.1));
+}
+
+TEST_CASE("Spectr keeps host band automation and internal modulation both audible",
+          "[modulation][coexistence][spectral][rt]") {
+    // MOD-3. The burn-down asks that host modulation and internal modulation
+    // coexist; nothing asserted it. The failure modes are symmetric and a
+    // single "it still makes sound" check catches neither: internal modulation
+    // could overwrite the host-authored field (host contribution lost), or the
+    // host field could be applied last and flatten the LFO (internal
+    // contribution lost). So this measures BOTH directions.
+    //
+    // Scope, stated rather than implied: the host contribution exercised here
+    // is band-gain automation, which is parameter-reachable. The snapshot
+    // A/B morph path is the other host axis and is NOT covered — morph only
+    // engages once both snapshot slots are captured, which goes through the
+    // editor bridge rather than the parameter surface, so it needs a different
+    // harness than this one.
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+    const auto render_peak = [](bool modulation_enabled, float band_db) {
+        pulp::format::HeadlessHost host(spectr::create_spectr);
+        host.prepare(sample_rate, block_size);
+        pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+        const float* input_channels[] = {
+            in.channel(0).data(), in.channel(1).data()};
+        pulp::audio::BufferView<const float> input(
+            input_channels, 2, block_size);
+        auto output = out.view();
+        std::uint64_t rendered = 0;
+        float peak = 0.0f;
+        const auto blocks = static_cast<std::size_t>(
+            (spectr::kSpectralLatency + spectr::kSpectralFftSize)
+                / block_size + 6);
+        for (std::size_t block = 0; block < blocks; ++block) {
+            for (std::size_t sample = 0; sample < block_size; ++sample) {
+                const float value = 0.25f * std::sin(
+                    2.0 * 3.14159265358979323846 * 997.0
+                    * static_cast<double>(rendered + sample) / sample_rate);
+                in.channel(0)[sample] = value;
+                in.channel(1)[sample] = value;
+            }
+            rendered += block_size;
+            pulp::state::ParameterEventQueue events;
+            // The host contribution: every band automated to one authored dB.
+            for (std::size_t band = 0; band < 32; ++band)
+                REQUIRE(events.push({
+                    spectr::band_gain_param_id(band), 0, band_db, 0}));
+            REQUIRE(events.push({spectr::kParamLfoEnabled, 0,
+                                 modulation_enabled ? 1.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                                 static_cast<float>(spectr::LfoShape::Square),
+                                 0}));
+            REQUIRE(events.push({spectr::kParamLfoRate, 0, 16.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                                 static_cast<float>(
+                                     spectr::ModulationTarget::WholeBank),
+                                 0}));
+            host.process(output, input, events);
+            for (float sample : out.channel(0))
+                peak = std::max(peak, std::abs(sample));
+        }
+        return peak;
+    };
+
+    const float host_only_deep = render_peak(false, -12.0f);
+    const float host_only_shallow = render_peak(false, -3.0f);
+    const float both_deep = render_peak(true, -12.0f);
+    const float both_shallow = render_peak(true, -3.0f);
+
+    // Positive control: the host contribution must be observable on its own,
+    // or the two comparisons below are measuring nothing.
+    REQUIRE(host_only_deep > 0.01f);
+    REQUIRE(host_only_shallow > host_only_deep * 1.5f);
+
+    // Internal modulation still reaches the output while the host is driving
+    // every band. If the host field were applied last it would flatten the LFO
+    // and this would collapse to equality.
+    CHECK(both_deep > host_only_deep * 2.5f);
+
+    // ...and the host's authored dB still reaches the output while modulation
+    // is running. If internal modulation overwrote the field, these two would
+    // be equal regardless of what the host asked for.
+    CHECK(both_shallow > both_deep * 1.2f);
+}
+
+TEST_CASE("scheduled processor playback changes gain on the exact sample across partitions",
+          "[automation][rt]") {
+    constexpr std::size_t material_samples = 512;
+    constexpr std::size_t event_sample = 173;
+    constexpr float input_value = 0.5f;
+    constexpr float automated_db = -12.0f;
+    const auto render = [=](std::size_t block_size) {
+        pulp::format::HeadlessHost host(spectr::create_spectr);
+        host.state().set_value(spectr::kMix, 0.0f);
+        host.state().set_value(spectr::kOutputTrim, 0.0f);
+        host.prepare(48000.0, 512);
+
+        pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+        std::fill(in.channel(0).begin(), in.channel(0).end(), input_value);
+        std::fill(in.channel(1).begin(), in.channel(1).end(), -input_value);
+        const float* input_channels[] = {
+            in.channel(0).data(), in.channel(1).data()};
+        pulp::audio::BufferView<const float> input(
+            input_channels, 2, block_size);
+        auto output = out.view();
+
+        const auto warmup_samples = static_cast<std::size_t>(
+            spectr::kSpectralLatency + spectr::kSpectralFftSize);
+        const auto warmup_blocks =
+            (warmup_samples + block_size - 1) / block_size;
+        for (std::size_t block = 0; block < warmup_blocks; ++block)
+            host.process(output, input);
+
+        std::vector<float> rendered;
+        rendered.reserve(material_samples);
+        for (std::size_t offset = 0; offset < material_samples;
+             offset += block_size) {
+            pulp::state::ParameterEventQueue events;
+            const bool after_event = offset > event_sample;
+            REQUIRE(events.push({
+                spectr::kOutputTrim, 0, after_event ? automated_db : 0.0f, 0}));
+            if (offset <= event_sample && event_sample < offset + block_size) {
+                REQUIRE(events.push({
+                    spectr::kOutputTrim,
+                    static_cast<int32_t>(event_sample - offset),
+                    automated_db,
+                    0}));
+            }
+            host.process(output, input, events);
+            rendered.insert(
+                rendered.end(), out.channel(0).begin(), out.channel(0).end());
+        }
+        return rendered;
+    };
+
+    const auto one_block = render(material_samples);
+    const auto split = render(64);
+    REQUIRE(one_block.size() == material_samples);
+    REQUIRE(split.size() == one_block.size());
+    const float automated_gain = std::pow(10.0f, automated_db * 0.05f);
+    for (std::size_t sample = 0; sample < material_samples; ++sample) {
+        const float expected = input_value
+            * (sample < event_sample ? 1.0f : automated_gain);
+        INFO("sample=" << sample);
+        CHECK(one_block[sample] == Approx(expected).margin(1.0e-6f));
+        CHECK(split[sample] == Approx(one_block[sample]).margin(1.0e-6f));
+    }
+}
+
 TEST_CASE("Spectr has correct descriptor") {
     pulp::format::HeadlessHost host(spectr::create_spectr);
     auto desc = host.descriptor();

@@ -16,6 +16,7 @@
 
 #include <pulp/state/store.hpp>
 
+#include <cstdint>
 #include <string>
 
 using Catch::Approx;
@@ -40,6 +41,12 @@ struct Rig {
 };
 
 } // namespace
+
+// Catch2 renders a std::uint8_t as a character, so a mask mismatch prints as
+// unreadable punctuation. Compare masks as ints and a failure names the bits.
+static constexpr int mask_int(std::uint8_t mask) noexcept {
+    return static_cast<int>(mask);
+}
 
 TEST_CASE("M9 preset round-trip preserves working state") {
     Rig a;
@@ -99,6 +106,33 @@ TEST_CASE("M9 preset round-trip preserves working state") {
     CHECK(b.proc->snapshots().a.field.bands[42].muted   == true);
     CHECK(b.proc->snapshots().b.field.bands[0].gain_db  == Approx(+6.0f));
     CHECK(b.proc->snapshots().active == SnapshotBank::Slot::B);
+}
+
+TEST_CASE("preset round-trip preserves the modulation target selection") {
+    // The Targets selection is the one modulation field with no parameter
+    // lane, so it rides the plugin-state blob rather than the base state.
+    // Snapshot A + Snapshot B: two bits, expressible by no single enum value.
+    constexpr std::uint8_t kMask =
+        static_cast<std::uint8_t>((std::uint8_t{1} << 1) | (std::uint8_t{1} << 2));
+
+    Rig a;
+    a.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    a.store.set_value(spectr::kParamLfoDepth, 0.8f);
+    REQUIRE(a.proc->set_modulation_target_mask(kMask));
+
+    const std::string json = save_preset_to_string(*a.proc, PresetMetadata{});
+    REQUIRE_FALSE(json.empty());
+
+    Rig b;
+    REQUIRE(mask_int(b.proc->modulation_settings().target_mask)
+            == mask_int(spectr::kModulationTargetMaskUnset));
+    const auto result = load_preset_from_string(*b.proc, json);
+    REQUIRE(result);
+    CHECK(mask_int(b.proc->modulation_settings().target_mask)
+          == mask_int(kMask));
+    // Control: the parameter-backed LFO fields travel too, so a failure above
+    // is the selection specifically and not a dead preset path.
+    CHECK(b.store.get_value(spectr::kParamLfoDepth) == Approx(0.8f));
 }
 
 TEST_CASE("M9 schema mismatch returns a clear migration error") {

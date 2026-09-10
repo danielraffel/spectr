@@ -24,6 +24,7 @@ Idempotent: re-running it after a successful pass reports "already applied".
 import glob
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -33,9 +34,28 @@ SOURCE_PATH = 'resources/editor.html'
 CAPTURE_DOCUMENT_PATHS = [
     'native-ui/materialized/materialized-document.json',
     *sorted(glob.glob('native-ui/materialized/states/*.materialized.json')),
+    # Row selection (the moving highlight) and the default-on-open marker are
+    # independent pieces of state. Expose both so the keyboard walk can read
+    # its own cursor and a test can prove the star does not follow it.
+    ('preset rows carry selection and default markers',
+     '      "data-spectr-pattern-id": pattern.id,\n      "data-spectr-pattern-source": pattern.source,\n      onClick,',
+     '      "data-spectr-pattern-id": pattern.id,\n      "data-spectr-pattern-source": pattern.source,\n      "data-spectr-pattern-selected": selected ? "true" : "false",\n      "data-spectr-pattern-default": isDefault ? "true" : "false",\n      onClick,'),
+    # The keyboard walk reads its cursor from the list it is walking, so it
+    # cannot pick up rows from anywhere else on the page.
+    ('preset list root is addressable',
+     'React.createElement("div", { style: { flex: 1, overflow: "auto", padding: "6px 0" } }, /* @__PURE__ */ React.createElement(ListHeader, { label: `FACTORY',
+     'React.createElement("div", { "data-spectr-pattern-list": true, style: { flex: 1, overflow: "auto", padding: "6px 0" } }, /* @__PURE__ */ React.createElement(ListHeader, { label: `FACTORY'),
+    # Arrow keys walk the preset rows, moving only the selection. The default
+    # marker is separate state and is deliberately untouched.
+    ('preset list arrow keys walk the selection',
+     '  usePE(() => {\n    if (!open) return;\n    const onKey = (event) => {\n      if (event.key === "Escape") {\n        event.preventDefault();\n        event.stopPropagation();\n        onClose();\n      }\n    };\n    document.addEventListener("keydown", onKey, true);\n    return () => document.removeEventListener("keydown", onKey, true);\n  }, [open, onClose]);',
+     '  usePE(() => {\n    if (!open) return;\n    const rows = () => Array.prototype.slice.call(\n      document.querySelectorAll("[data-spectr-pattern-list] [data-spectr-pattern-id]"));\n    const editingText = () => {\n      const focused = document.activeElement;\n      const tag = focused && focused.tagName ? String(focused.tagName).toLowerCase() : "";\n      return tag === "input" || tag === "textarea";\n    };\n    const step = (delta) => {\n      const list = rows();\n      if (!list.length) return false;\n      let index = -1;\n      for (let i = 0; i < list.length; i++) {\n        if (list[i].getAttribute("data-spectr-pattern-selected") === "true") index = i;\n      }\n      const next = index < 0\n        ? (delta > 0 ? 0 : list.length - 1)\n        : (index + delta + list.length) % list.length;\n      const id = list[next].getAttribute("data-spectr-pattern-id");\n      if (!id) return false;\n      setSelectedId(id);\n      return true;\n    };\n    const onKey = (event) => {\n      if (event.key === "Escape") {\n        event.preventDefault();\n        event.stopPropagation();\n        onClose();\n        return;\n      }\n      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;\n      // An open Pulp popup owns the keyboard, and a text field owns its own\n      // caret. Consuming the key here would freeze the popup highlight the\n      // same way a second menu keyboard owner once did.\n      if (document.querySelector(\'[data-pulp-popup-active="true"]\')) return;\n      if (editingText()) return;\n      if (!step(event.key === "ArrowDown" ? 1 : -1)) return;\n      event.preventDefault();\n      event.stopPropagation();\n    };\n    document.addEventListener("keydown", onKey, true);\n    return () => document.removeEventListener("keydown", onKey, true);\n  }, [open, onClose, setSelectedId]);'),
 ]
 
 EDITS = [
+    ('settings sliders paint a track and a thumb',
+     'React.createElement(\n    "input",\n    {\n      "data-spectr-setting-slider": true,\n      type: "range",\n      min,\n      max,\n      step,\n      value,\n      onInput: (event) => {\n        const candidate = Number(spectrInputValue(event));\n        if (Number.isFinite(candidate)) onChange(candidate);\n      },\n      style: { flex: 1, accentColor: "hsl(200,80%,60%)" }\n    }\n  )',
+     'React.createElement(\n    "div",\n    {\n      "data-spectr-setting-slider": true,\n      role: "slider",\n      "aria-valuemin": min,\n      "aria-valuemax": max,\n      "aria-valuenow": value,\n      onPointerDown: (event) => {\n        const box = event && event.currentTarget && event.currentTarget.getBoundingClientRect ? event.currentTarget.getBoundingClientRect() : null;\n        if (!box || !(box.width > 0)) return;\n        const x = (event.clientX === undefined ? box.left : event.clientX) - box.left;\n        const ratio = Math.max(0, Math.min(1, x / box.width));\n        const raw = min + ratio * (max - min);\n        const snapped = step ? Math.round(raw / step) * step : raw;\n        const next = Math.max(min, Math.min(max, snapped));\n        if (Number.isFinite(next)) onChange(next);\n      },\n      style: { position: "relative", flex: 1, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.15)", cursor: "pointer" }\n    },\n    React.createElement("div", { style: { position: "absolute", left: 0, top: 0, height: 4, borderRadius: 2, background: "hsl(200,80%,60%)", width: (100 * (value - min) / ((max - min) || 1)) + "%" } }),\n    React.createElement("div", { "data-spectr-setting-slider-thumb": true, style: { position: "absolute", top: -5, width: 14, height: 14, borderRadius: 7, background: "#fff", border: "1px solid rgba(0,0,0,0.35)", marginLeft: -7, left: (100 * (value - min) / ((max - min) || 1)) + "%" } })\n  )'),
     ('save dialog inherits global Escape dismissal',
      '  usePE(() => {\n'
      '    if (open) setDraft(defaultName);\n'
@@ -74,6 +94,10 @@ EDITS = [
      'React.createElement("div", { "data-spectr-settings-panel": true, onClick: (e) => e.stopPropagation(), style: {',
      'React.createElement("div", { "data-spectr-settings-panel": true, "data-spectr-overlay": "true", overlay: true, onDismiss: onClose, onClick: (e) => e.stopPropagation(), style: {'),
 
+    ('settings panel carries an eager liveness marker',
+     '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", overlay: true, onDismiss: onClose,',
+     '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-settings-live": "true", "data-spectr-overlay": "true", overlay: true, onDismiss: onClose,'),
+
     ('settings Escape ignores only an actually open popup',
      'event.key === "Escape" && !document.querySelector(\'[role="listbox"]\')',
      'event.key === "Escape" && !document.querySelector(\'[data-pulp-popup-active="true"]\')'),
@@ -97,6 +121,28 @@ EDITS = [
      '  const [closeState, setCloseState] = React.useState("idle");\n'
      '  React.useLayoutEffect(() => {\n'
      '    const toggle = document.getElementById("spectr-status-info-toggle");'),
+
+    ('settings modal publishes an explicit liveness marker',
+     '  const [closeState, setCloseState] = React.useState("idle");\n'
+     '  React.useLayoutEffect(() => {\n'
+     '    const toggle = document.getElementById("spectr-status-info-toggle");',
+     '  const [closeState, setCloseState] = React.useState("idle");\n'
+     '  React.useLayoutEffect(() => {\n'
+     '    const panel = document.querySelector("[data-spectr-settings-panel]");\n'
+     '    if (!panel) return;\n'
+     '    panel.setAttribute("data-spectr-settings-live", "true");\n'
+     '    if (typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__();\n'
+     '    return () => panel.setAttribute("data-spectr-settings-live", "false");\n'
+     '  }, []);\n'
+     '  React.useLayoutEffect(() => {\n'
+     '    const toggle = document.getElementById("spectr-status-info-toggle");'),
+    ('settings modal refreshes atlas after mount',
+     '    panel.setAttribute("data-spectr-settings-live", "true");\n'
+     '    return () => panel.setAttribute("data-spectr-settings-live", "false");',
+     '    panel.setAttribute("data-spectr-settings-live", "true");\n'
+     '    if (typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__();\n'
+     '    return () => panel.setAttribute("data-spectr-settings-live", "false");'),
+
 
     # Full-screen scrims are browser click targets, not native containment
     # boundaries. Make each visible panel the semantic overlay owner so Pulp
@@ -904,7 +950,13 @@ EDITS = [
     ('selected preset preview has a stable semantic subject',
      '), !isFactory && !editName && /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": "rename-start", onClick: () => setEditName(true), style: iconBtn }, "\\u270E")), /* @__PURE__ */ React.createElement("div", { style: {\n'
      '    background: "rgba(0,0,0,0.35)",',
-     '), !isFactory && !editName && /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": "rename-start", onClick: () => setEditName(true), style: iconBtn }, "\\u270E")), /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-preview": true, style: {\n'
+     '), !isFactory && !editName && /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": "rename-start", onClick: () => setEditName(true), style: iconBtn }, "\\u270E")), /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-preview": true, "data-spectr-pattern-id": pattern.id, style: {\n'
+     '    background: "rgba(0,0,0,0.35)",'),
+
+    ('migrate selected preset preview to stable identity',
+     'React.createElement("div", { "data-spectr-manager-preview": true, style: {\n'
+     '    background: "rgba(0,0,0,0.35)",',
+     'React.createElement("div", { "data-spectr-manager-preview": true, "data-spectr-pattern-id": pattern.id, style: {\n'
      '    background: "rgba(0,0,0,0.35)",'),
 
     ('selected preset metadata has a stable semantic subject',
@@ -921,16 +973,34 @@ EDITS = [
 
     ('selected preset heading subjects are individually addressable',
      'React.createElement("span", { style: { fontSize: 14, letterSpacing: 1, fontWeight: 500 } }, isDefault &&',
-     'React.createElement("span", { "data-spectr-manager-title": true, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500 } }, isDefault &&'),
+     'React.createElement("span", { "data-spectr-manager-title": true, "data-spectr-pattern-id": pattern.id, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "inline-flex", alignItems: "center", minHeight: 26, lineHeight: 1 } }, isDefault &&'),
 
-    ('selected preset heading safely truncates long names',
-     'React.createElement("span", { "data-spectr-manager-title": true, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500 } }, isDefault &&',
-     'React.createElement("span", { "data-spectr-manager-title": true, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, isDefault &&'),
+    ('migrate selected preset title to stable identity',
+     'React.createElement("span", { "data-spectr-manager-title": true, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, isDefault &&',
+     'React.createElement("span", { "data-spectr-manager-title": true, "data-spectr-pattern-id": pattern.id, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "inline-flex", alignItems: "center", minHeight: 26, lineHeight: 1 } }, isDefault &&'),
+
+    ('center selected preset title line box',
+     'React.createElement("span", { "data-spectr-manager-title": true, "data-spectr-pattern-id": pattern.id, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, isDefault &&',
+     'React.createElement("span", { "data-spectr-manager-title": true, "data-spectr-pattern-id": pattern.id, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "inline-flex", alignItems: "center", minHeight: 26, lineHeight: 1 } }, isDefault &&'),
 
     ('selected preset source badge is individually addressable',
      'pattern.name), /* @__PURE__ */ React.createElement("span", { style: {\n'
      '    fontSize: 8.5,',
      'pattern.name), /* @__PURE__ */ React.createElement("span", { "data-spectr-manager-source": true, style: {\n'
+     '    display: "inline-flex",\n'
+     '    alignItems: "center",\n'
+     '    minHeight: 26,\n'
+     '    lineHeight: 1,\n'
+     '    fontSize: 8.5,'),
+
+    ('center selected preset source line box',
+     'React.createElement("span", { "data-spectr-manager-source": true, style: {\n'
+     '    fontSize: 8.5,',
+     'React.createElement("span", { "data-spectr-manager-source": true, style: {\n'
+     '    display: "inline-flex",\n'
+     '    alignItems: "center",\n'
+     '    minHeight: 26,\n'
+     '    lineHeight: 1,\n'
      '    fontSize: 8.5,'),
 
     ('selected preset export actions are individually addressable',
@@ -1414,7 +1484,7 @@ EDITS = [
      '  const updateLiveHoverStatus = () => {\n'
      '    const current = hoverRef.current;\n'
      '    const pointer = pointerRef.current;\n'
-     '    if (!current || current.mini || !pointer || pointer.mode !== "gain" && pointer.mode !== "mute-brush") return;\n'
+     '    if (!current || current.mini) return;\n'
      '    const band = current.band;\n'
      '    const rendered = renderGainsRef.current[band];\n'
      '    const gv = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;\n'
@@ -1456,7 +1526,21 @@ EDITS = [
      '      setHover({ band: bandH, x, y });\n'
      '      wrapRef.current.style.cursor = "crosshair";',
      '      updatePointerHover({ band: bandH, x, y });\n'
-     '      wrapRef.current.style.cursor = "crosshair";'),
+     '      wrapRef.current.style.cursor = "crosshair";\n'
+     '      updateLiveHoverStatus();'),
+
+    ('browser hover readout updates synchronously',
+     '      updatePointerHover({ band: bandH, x, y });\n'
+     '      wrapRef.current.style.cursor = "crosshair";\n'
+     '      updateLiveHoverStatus();',
+     '      updatePointerHover({ band: bandH, x, y });\n'
+     '      const rendered = renderGainsRef.current[bandH];\n'
+     '      const gain = Number.isFinite(rendered) ? clamp(rendered, -1.02, 1.02) : 0;\n'
+     '      const db = isMuted(targetGainsRef.current[bandH]) ? "−∞" : (gain * 24).toFixed(1);\n'
+     '      const statusText = document.querySelector("[data-spectr-status-text]");\n'
+     '      if (statusText) statusText.textContent = window.SpectrFreq.fmt(bandCenterFreq(bandH)) + "Hz   " + db + (db === "−∞" ? "" : " dB") + "   BAND " + (bandH + 1) + "/" + N;\n'
+     '      wrapRef.current.style.cursor = "crosshair";\n'
+     '      updateLiveHoverStatus();'),
 
     ('idle hover clearing uses the pointer-owned ref',
      '      setHover(null);\n'
@@ -2206,6 +2290,50 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '    let live = true;\n'
      '    if (!window.pulp || typeof window.pulp.postMessage !== "function") {'),
 
+    ('shipping build info cannot remain stuck loading',
+     '    mountedRef.current = true;\n'
+     '    let live = true;\n'
+     '    if (!window.pulp || typeof window.pulp.postMessage !== "function") {\n'
+     '      setLoadFailed(true);\n'
+     '      return;\n'
+     '    }\n'
+     '    Promise.resolve(window.pulp.postMessage("build_info_get", {}, requestId("get"))).then(unwrap).then((body) => {\n'
+     '      if (!body || body.ok !== true || !body.product_version || !body.sdk_version)\n'
+     '        throw new Error(body && body.error || "build info unavailable");\n'
+     '      if (live) setInfo(body);\n'
+     '    }).catch((error) => {\n'
+     '      console.error("[Spectr] build info unavailable", error);\n'
+     '      if (live) setLoadFailed(true);\n'
+     '    });\n'
+     '    return () => {\n'
+     '      live = false;\n'
+     '      mountedRef.current = false;\n'
+     '      if (resetTimer.current) clearTimeout(resetTimer.current);\n',
+     '    mountedRef.current = true;\n'
+     '    let live = true;\n'
+     '    if (!window.pulp || typeof window.pulp.postMessage !== "function") {\n'
+     '      setLoadFailed(true);\n'
+     '      return;\n'
+     '    }\n'
+     '    const loadTimer = setTimeout(() => {\n'
+     '      if (live) setLoadFailed(true);\n'
+     '    }, 1500);\n'
+     '    Promise.resolve(window.pulp.postMessage("build_info_get", {}, requestId("get"))).then(unwrap).then((body) => {\n'
+     '      if (!body || body.ok !== true || !body.product_version || !body.sdk_version)\n'
+     '        throw new Error(body && body.error || "build info unavailable");\n'
+     '      clearTimeout(loadTimer);\n'
+     '      if (live) setInfo(body);\n'
+     '    }).catch((error) => {\n'
+     '      console.error("[Spectr] build info unavailable", error);\n'
+     '      clearTimeout(loadTimer);\n'
+     '      if (live) setLoadFailed(true);\n'
+     '    });\n'
+     '    return () => {\n'
+     '      live = false;\n'
+     '      mountedRef.current = false;\n'
+     '      if (resetTimer.current) clearTimeout(resetTimer.current);\n'
+     '      clearTimeout(loadTimer);\n'),
+
     ('shipping settings default build information on',
      '  "showRulers": true,\n  "statusInfo": true,\n  "scheme": "midnight",',
      '  "showRulers": true,\n  "statusInfo": true,\n  "showBuildInfo": true,\n  "scheme": "midnight",'),
@@ -2243,6 +2371,10 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '    if (onStatus && now - statusRefreshAtRef.current >= 700) {',
      '    if (onStatus && now - statusRefreshAtRef.current >= 120) {'),
 
+    ('live status renewal stays off the hot layout cadence',
+     '    if (onStatus && now - statusRefreshAtRef.current >= 120) {',
+     '    if (onStatus && now - statusRefreshAtRef.current >= 700) {'),
+
     ('status remains readable after the latest interaction',
      '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2400 : 1800;',
      '    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;'),
@@ -2258,6 +2390,45 @@ function SettingsModal({ settings, setSettings, onClose }) {
     ('status text uses an integer-centered line box',
      'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "13px", paddingTop: "6.5px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)',
      'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "14px", paddingTop: "6px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)'),
+
+    # The banner centres itself horizontally. `transform` is the CSS way to do
+    # it and is the wrong tool here: the native materialized runtime drops the
+    # declaration, so `left: 50%` puts the banner's left EDGE on the viewport
+    # centre and the whole box hangs half its width to the right. A negative
+    # `marginLeft` expresses the same offset through a property Yoga composes
+    # with `left` in its absolute-layout path, so the centring survives.
+    ('status banner centers on a property the runtime honors',
+     '  }, [message, disabled]);\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "div",\n'
+     '    {\n'
+     '      "data-spectr-status-shell": "true",',
+     '  }, [message, disabled]);\n'
+     '  const bannerWidth = Math.max(96, Math.min(520, text.length * 8 + 28));\n'
+     '  return /* @__PURE__ */ React.createElement(\n'
+     '    "div",\n'
+     '    {\n'
+     '      "data-spectr-status-shell": "true",'),
+
+    ('status banner offsets by half its own width',
+     '        left: "50%",\n'
+     '        transform: "translateX(-50%)",\n'
+     '        width: Math.max(96, Math.min(520, text.length * 8 + 28)),',
+     '        left: "50%",\n'
+     '        marginLeft: -bannerWidth / 2,\n'
+     '        width: bannerWidth,'),
+
+    ('status banner animates the offset that now carries its centering',
+     '        transition: "width 0.18s ease, opacity 0.15s ease",',
+     '        transition: "width 0.18s ease, margin-left 0.18s ease, opacity 0.15s ease",'),
+
+    # The flex parent already centres a single line vertically. Fixing the
+    # span's height to the box and then padding the top pushes the glyphs off
+    # that centre instead of onto it; removing both leaves the centring to the
+    # one thing that measures the text.
+    ('status text is centered by its flex parent rather than by padding',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "14px", paddingTop: "6px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)',
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", lineHeight: "14px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)'),
 
     ('settings hints reserve enough width to remain complete',
      'function SpectrSettingsField({ label, hint, children }) {\n'
@@ -2290,6 +2461,7 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '''/* materialized-build-info-owner */
 function SpectrModulationSettings() {
   const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0 });
+  const [tab, setTab] = React.useState('modulation');
   React.useEffect(() => {
     let live = true;
     Promise.resolve(window.pulp.postMessage("processing_state_get", {}, "spectr-modulation-hydrate")).then((response) => {
@@ -2309,12 +2481,16 @@ function SpectrModulationSettings() {
     setValue((current) => ({ ...current, [key]: next }));
     Promise.resolve(window.pulp.postMessage("param_set", { id, value: typeof next === "boolean" ? next ? 1 : 0 : next }, "spectr-modulation-" + key)).catch((error) => console.error("[Spectr] modulation write failed", error));
   };
-  return /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },
+  const tabButton = (key, label) => React.createElement('button', { key, type: 'button', role: 'tab', 'aria-selected': tab === key, 'data-spectr-settings-tab': key, onClick: () => setTab(key), style: { flex: 1, height: 28, border: '1px solid ' + (tab === key ? 'rgba(180,210,255,0.45)' : 'rgba(255,255,255,0.1)'), borderRadius: 3, background: tab === key ? 'rgba(120,180,255,0.16)' : 'rgba(255,255,255,0.03)', color: tab === key ? '#fff' : 'rgba(255,255,255,0.55)', fontFamily: 'var(--mono)', fontSize: 9.5, letterSpacing: 1, cursor: 'pointer' } }, label);
+  return /* @__PURE__ */ React.createElement('div', { 'data-spectr-settings-tabs': true, style: { marginBottom: 18 } },
+    React.createElement('div', { role: 'tablist', style: { display: 'flex', gap: 5, marginBottom: 14 } }, tabButton('general', 'GENERAL'), tabButton('modulation', 'MODULATION')),
+    React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },
     /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "LFO", hint: "Enable internal modulation" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { value: value.enabled, onChange: (next) => publish("enabled", 4000, next) })),
     /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Shape", hint: "Oscillator waveform" }, /* @__PURE__ */ React.createElement(SpectrSettingsChips, { value: value.shape, onChange: (next) => publish("shape", 4001, next), opts: [[0,"Sin"],[1,"Tri"],[2,"Square"],[3,"Saw"]] })),
     /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Rate", hint: "Beats per cycle" }, /* @__PURE__ */ React.createElement(SpectrSettingsSlider, { value: value.rate, min: 0.25, max: 16, step: 0.25, onChange: (next) => publish("rate", 4002, next), fmt: (next) => next.toFixed(2) })),
     /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Depth", hint: "Modulation amount" }, /* @__PURE__ */ React.createElement(SpectrSettingsSlider, { value: value.depth, min: 0, max: 1, step: 0.01, onChange: (next) => publish("depth", 4003, next) })),
     /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Target", hint: "Shape the bank, snapshots, or morph" }, /* @__PURE__ */ React.createElement(SpectrSettingsChips, { value: value.target, onChange: (next) => publish("target", 4004, next), opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"]] }))
+  )
   );
 }
 function SettingsModal({ settings, setSettings, onClose }) {'''),
@@ -2323,12 +2499,382 @@ function SettingsModal({ settings, setSettings, onClose }) {'''),
      '  ))), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." },',
      '  ))), /* @__PURE__ */ React.createElement(SpectrModulationSettings, null), /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "feedback", title: "FEEDBACK", subtitle: "Choose which interaction details Spectr shows." },'),
 
+    ('native bridge parses compact live automation state',
+     '  const nativeState = { parse: parseNativeState };',
+     '''  const parseNativeLiveState = payload => {
+    const isInteger = value => Number.isFinite(value) && Math.floor(value) === value;
+    const n = payload && Number(payload.n_visible);
+    const gainDb = payload && payload.gain_db;
+    const muted = payload && payload.muted;
+    const minHz = payload && Number(payload.min_hz);
+    const maxHz = payload && Number(payload.max_hz);
+    const revision = payload && Number(payload.revision);
+    const modeIndex = (key, labels) => {
+      const value = payload && Number(payload[key]);
+      return isInteger(value) && labels[value] ? labels[value] : null;
+    };
+    const motionMode = modeIndex('motion_mode', ['live', 'precision']);
+    const analyzerMode = modeIndex('analyzer_mode', ['peak', 'avg', 'both', 'off']);
+    const editMode = modeIndex('edit_mode', ['sculpt', 'level', 'boost', 'flare', 'glide']);
+    const visualizationMode = modeIndex('visualization_mode', ['bars', 'response', 'both']);
+    if (![32, 40, 48, 56, 64].includes(n)
+        || !Array.isArray(gainDb) || gainDb.length !== n
+        || !Array.isArray(muted) || muted.length !== n
+        || !gainDb.every(Number.isFinite)
+        || !muted.every(value => typeof value === 'boolean')
+        || !isInteger(revision) || revision < 0 || revision > 9007199254740991
+        || !Number.isFinite(minHz) || !Number.isFinite(maxHz)
+        || !motionMode || !analyzerMode || !editMode || !visualizationMode
+        || minHz <= 0 || maxHz <= minHz) return null;
+    return {
+      n, gainDb: gainDb.slice(), muted: muted.slice(),
+      gains: gainDb.map((db, index) => muted[index]
+        ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
+      minHz, maxHz, revision,
+      motionMode, analyzerMode, editMode, visualizationMode,
+    };
+  };
+  const nativeState = { parse: parseNativeState, parseLive: parseNativeLiveState };'''),
+
+    ('app accepts compact host automation projections',
+     '''  const acceptNativeState = useAppC((state) => {
+    setNativeHydrated(false);
+    setNativeHydration(state);
+    setSettings((current) => ({ ...current, bandCount: state.n }));
+    setSnapshotStatus({ A: !!state.snapshots.A, B: !!state.snapshots.B });
+    const library = window.SpectrNativePatterns.parse(state.patternsJson);
+    if (library) {
+      setUserPatterns(library.patterns);
+      setDefaultId(library.defaultId);
+    }
+  }, []);''',
+     '''  const nativeLiveModesRef = useAppR(null);
+  const acceptNativeState = useAppC(state => {
+    setNativeHydrated(false);
+    setNativeHydration(state);
+    setSettings((current) => ({ ...current, bandCount: state.n }));
+    setSnapshotStatus({ A: !!state.snapshots.A, B: !!state.snapshots.B });
+    const library = window.SpectrNativePatterns.parse(state.patternsJson);
+    if (library) {
+      setUserPatterns(library.patterns);
+      setDefaultId(library.defaultId);
+    }
+  }, []);
+  const acceptNativeLiveState = useAppC((state) => {
+    const bank = bankRef.current;
+    if (!bank || bank.N !== state.n) {
+      try {
+        window.pulp.postMessage("editor_ready", {}, "spectr-editor-live-resync");
+      } catch (error) {
+        console.error("[Spectr] live-state resync failed", error);
+      }
+      return;
+    }
+    if (typeof bank.applyHostAutomationState !== "function")
+      throw new Error("[Spectr] compact live-state bank method is unavailable");
+    try {
+      bank.applyHostAutomationState(state);
+    } catch (error) {
+      throw new Error("[Spectr] compact live-state bank projection failed: " + error);
+    }
+    const modes = nativeLiveModesRef.current || {};
+    if (modes.motionMode !== state.motionMode)
+      setSettings((current) => ({ ...current, motionMode: state.motionMode }));
+    if (modes.analyzerMode !== state.analyzerMode)
+      setAnalyzerMode(state.analyzerMode);
+    if (modes.editMode !== state.editMode) setEditMode(state.editMode);
+    if (modes.visualizationMode !== state.visualizationMode)
+      setVisualizationMode(state.visualizationMode);
+    nativeLiveModesRef.current = {
+      motionMode: state.motionMode,
+      analyzerMode: state.analyzerMode,
+      editMode: state.editMode,
+      visualizationMode: state.visualizationMode,
+    };
+  }, []);'''),
+
+    ('compact automation parser supports the embedded QuickJS surface',
+     '''  const parseNativeLiveState = payload => {
+    const n = payload && Number(payload.n_visible);''',
+     '''  const parseNativeLiveState = payload => {
+    const isInteger = value => Number.isFinite(value) && Math.floor(value) === value;
+    const n = payload && Number(payload.n_visible);'''),
+
+    ('compact automation parser uses portable integer checks',
+     '''      return Number.isInteger(value) && labels[value] ? labels[value] : null;
+    };''',
+     '''      return isInteger(value) && labels[value] ? labels[value] : null;
+    };'''),
+
+    ('compact automation parser bounds revisions portably',
+     '''        || !Number.isSafeInteger(revision) || revision < 0
+        || !Number.isFinite(minHz)''',
+     '''        || !isInteger(revision) || revision < 0 || revision > 9007199254740991
+        || !Number.isFinite(minHz)'''),
+
+    ('compact automation mode updates avoid frame reconciliation',
+     '''  const acceptNativeLiveState = useAppC((state) => {
+    const bank = bankRef.current;
+    if (!bank || bank.N !== state.n) {
+      try {
+        window.pulp.postMessage("editor_ready", {}, "spectr-editor-live-resync");
+      } catch (error) {
+        console.error("[Spectr] live-state resync failed", error);
+      }
+      return;
+    }
+    bank.applyHostAutomationState(state);
+    setSettings((current) => current.motionMode === state.motionMode ? current : { ...current, motionMode: state.motionMode });
+    setAnalyzerMode((current) => current === state.analyzerMode ? current : state.analyzerMode);
+    setEditMode((current) => current === state.editMode ? current : state.editMode);
+    setVisualizationMode((current) => current === state.visualizationMode ? current : state.visualizationMode);
+  }, []);''',
+     '''  const nativeLiveModesRef = useAppR(null);
+  const acceptNativeLiveState = useAppC((state) => {
+    const bank = bankRef.current;
+    if (!bank || bank.N !== state.n) {
+      try {
+        window.pulp.postMessage("editor_ready", {}, "spectr-editor-live-resync");
+      } catch (error) {
+        console.error("[Spectr] live-state resync failed", error);
+      }
+      return;
+    }
+    if (typeof bank.applyHostAutomationState !== "function")
+      throw new Error("[Spectr] compact live-state bank method is unavailable");
+    try {
+      bank.applyHostAutomationState(state);
+    } catch (error) {
+      throw new Error("[Spectr] compact live-state bank projection failed: " + error);
+    }
+    const modes = nativeLiveModesRef.current || {};
+    if (modes.motionMode !== state.motionMode)
+      setSettings((current) => ({ ...current, motionMode: state.motionMode }));
+    if (modes.analyzerMode !== state.analyzerMode)
+      setAnalyzerMode(state.analyzerMode);
+    if (modes.editMode !== state.editMode) setEditMode(state.editMode);
+    if (modes.visualizationMode !== state.visualizationMode)
+      setVisualizationMode(state.visualizationMode);
+    nativeLiveModesRef.current = {
+      motionMode: state.motionMode,
+      analyzerMode: state.analyzerMode,
+      editMode: state.editMode,
+      visualizationMode: state.visualizationMode,
+    };
+  }, []);'''),
+
+    ('app owns the compact automation parser in its execution realm',
+     '''const { useState: useAppS, useRef: useAppR, useEffect: useAppE, useCallback: useAppC } = React;
+function App() {''',
+     '''const { useState: useAppS, useRef: useAppR, useEffect: useAppE, useCallback: useAppC } = React;
+function parseSpectrNativeLiveState(payload) {
+  const isInteger = value => Number.isFinite(value) && Math.floor(value) === value;
+  const n = payload && Number(payload.n_visible);
+  const gainDb = payload && payload.gain_db;
+  const muted = payload && payload.muted;
+  const minHz = payload && Number(payload.min_hz);
+  const maxHz = payload && Number(payload.max_hz);
+  const revision = payload && Number(payload.revision);
+  const modeIndex = (key, labels) => {
+    const value = payload && Number(payload[key]);
+    return isInteger(value) && labels[value] ? labels[value] : null;
+  };
+  const motionMode = modeIndex("motion_mode", ["live", "precision"]);
+  const analyzerMode = modeIndex("analyzer_mode", ["peak", "avg", "both", "off"]);
+  const editMode = modeIndex("edit_mode", ["sculpt", "level", "boost", "flare", "glide"]);
+  const visualizationMode = modeIndex("visualization_mode", ["bars", "response", "both"]);
+  if (![32, 40, 48, 56, 64].includes(n)
+      || !Array.isArray(gainDb) || gainDb.length !== n
+      || !Array.isArray(muted) || muted.length !== n
+      || !gainDb.every(Number.isFinite)
+      || !muted.every(value => typeof value === "boolean")
+      || !isInteger(revision) || revision < 0 || revision > 9007199254740991
+      || !Number.isFinite(minHz) || !Number.isFinite(maxHz)
+      || !motionMode || !analyzerMode || !editMode || !visualizationMode
+      || minHz <= 0 || maxHz <= minHz) return null;
+  return {
+    n, gainDb: gainDb.slice(), muted: muted.slice(),
+    gains: gainDb.map((db, index) => muted[index]
+      ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
+    minHz, maxHz, revision,
+    motionMode, analyzerMode, editMode, visualizationMode,
+  };
+}
+function App() {'''),
+
+    ('compact automation subscription uses the app-owned parser',
+     '''      const state = window.SpectrNativeState.parseLive(message && message.payload);
+      if (!state) {
+        console.error("[Spectr] rejected malformed native live-state payload");''',
+     '''      const state = parseSpectrNativeLiveState(message && message.payload);
+      if (!state) {
+        console.error("[Spectr] rejected malformed native live-state payload");'''),
+
+    ('compact automation renders explicit mute values portably',
+     '''        renderGainsRef.current = state.gains.map((value) => Number.isFinite(value) ? clamp(value, -1.02, 1.02) : 0).slice(0, N);''',
+     '''        renderGainsRef.current = state.gains.map((value, index) => state.muted[index] ? 0 : clamp(value, -1.02, 1.02)).slice(0, N);''',
+     2),
+
+    ('app subscribes to one live automation projection per frame',
+     '''      acceptNativeState(state);
+    });
+    try {''',
+     '''      acceptNativeState(state);
+    });
+    const unsubscribeLiveState = window.pulp.on("processing_state_live", (message) => {
+      const state = window.SpectrNativeState.parseLive(message && message.payload);
+      if (!state) {
+        console.error("[Spectr] rejected malformed native live-state payload");
+        return;
+      }
+      acceptNativeLiveState(state);
+    });
+    try {'''),
+
+    ('app releases compact live automation subscription',
+     '''    return () => {
+      if (typeof unsubscribeHydration === "function") unsubscribeHydration();
+    };
+  }, [acceptNativeState]);''',
+     '''    return () => {
+      if (typeof unsubscribeHydration === "function") unsubscribeHydration();
+      if (typeof unsubscribeLiveState === "function") unsubscribeLiveState();
+    };
+  }, [acceptNativeState, acceptNativeLiveState]);'''),
+
+    ('filter bank applies host automation without React hydration',
+     '''      },
+      getGains: () => targetGainsRef.current.slice(),
+      view,
+      N
+    };''',
+     '''      },
+      applyHostAutomationState: (state) => {
+        if (!Number.isSafeInteger(state.revision) || state.revision < nativeAppliedRevisionRef.current) return false;
+        nativeProjectionRef.current = true;
+        nativeAppliedRevisionRef.current = state.revision;
+        mutedGainDbRef.current = state.gainDb.slice(0, N);
+        targetGainsRef.current = state.gains.slice(0, N);
+        renderGainsRef.current = state.gains.map((value, index) => state.muted[index] ? 0 : clamp(value, -1.02, 1.02)).slice(0, N);
+        viewRef.current.lmin = Math.log10(state.minHz);
+        viewRef.current.lmax = Math.log10(state.maxHz);
+        if (renderAllRef.current) renderAllRef.current();
+        return true;
+      },
+      getGains: () => Array.from(targetGainsRef.current),
+      view,
+      N
+    };'''),
+
+    ('host automation defers canvas draw to the frame loop',
+     '''        viewRef.current.lmin = Math.log10(state.minHz);
+        viewRef.current.lmax = Math.log10(state.maxHz);
+        if (renderAllRef.current) renderAllRef.current();
+        return true;
+      },
+      getGains: () => Array.from(targetGainsRef.current),''',
+     '''        viewRef.current.lmin = Math.log10(state.minHz);
+        viewRef.current.lmax = Math.log10(state.maxHz);
+        return true;
+      },
+      getGains: () => Array.from(targetGainsRef.current),'''),
+
+    ('materialized modulation settings expose fixed tabs',
+     'function SpectrModulationSettings() {\n  const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0 });',
+     'function SpectrModulationSettings() {\n  /* settings tabs */\n  const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0, lfo2Enabled: false, lfo2Shape: 0, lfo2Rate: 4, lfo2Depth: 0, targetSelection: "all" });\n  const [tab, setTab] = React.useState("modulation");'),
+
+    ('materialized modulation tabs stay visible above scrolling content',
+     '  return /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },',
+     '  const tabButton = (key, label) => React.createElement("button", { key, type: "button", role: "tab", "aria-selected": tab === key, "data-spectr-settings-tab": key, onClick: () => setTab(key), style: { flex: 1, height: 28, border: "1px solid " + (tab === key ? "rgba(180,210,255,0.45)" : "rgba(255,255,255,0.1)"), borderRadius: 3, background: tab === key ? "rgba(120,180,255,0.16)" : "rgba(255,255,255,0.03)", color: tab === key ? "#fff" : "rgba(255,255,255,0.55)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 1, cursor: "pointer" } }, label);\n  return /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-tabs": true, style: { position: "sticky", top: 76, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" } },\n    React.createElement("div", { role: "tablist", style: { display: "flex", gap: 5, marginBottom: 14 } }, tabButton("general", "GENERAL"), tabButton("modulation", "MODULATION")),\n    React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },'),
+
+    ('materialized modulation tabs close cleanly',
+     '  );\n}\nfunction SettingsModal({ settings, setSettings, onClose }) {',
+     '  )\n  );\n  /* tabs complete */\n}\nfunction SettingsModal({ settings, setSettings, onClose }) {'),
+
+    # COR-1: the left ruler is a signed gain axis (0 dB == unity/no change);
+    # the right ruler is the live analyzer's absolute dBFS axis (0 dBFS ==
+    # full scale). Distinct quantities, so distinguish their axis heads and
+    # stop giving the analyzer's 0 the same unity-zero emphasis treatment the
+    # gain ruler's 0 carries -- every analyzer tick renders at equal weight.
+    ('gain ruler head names itself distinctly from the analyzer ruler',
+     'ctx.fillText("dB", inner.x - 8, g.inner.y - 8);',
+     'ctx.fillText("dB (gain)", inner.x - 8, g.inner.y - 8);'),
+
+    ('analyzer ruler ticks share one weight instead of a borrowed unity-zero highlight',
+     'ctx.fillStyle = dbfs === 0 ? "rgba(130,220,180,0.62)" : "rgba(130,220,180,0.30)";',
+     'ctx.fillStyle = "rgba(130,220,180,0.30)";'),
+
+    ('analyzer ruler head names itself distinctly from the gain ruler',
+     'ctx.fillText("dBFS", inner.x + inner.w + 8, g.inner.y - 8);',
+     'ctx.fillText("dBFS (analyzer)", inner.x + inner.w + 8, g.inner.y - 8);'),
+
+    # Settings' two dim text tiers sat under the WCAG AA 4.5:1 floor. Measured
+    # from the shipping native render at the default plugin size (990x645), the
+    # opacity-0.45 tier (group subtitles, field hints) peaked at 3.83-3.88:1 and
+    # the opacity-0.5 tier (section headers) at 4.41-4.43:1 -- against a floor of
+    # 4.5:1, because at 6.75-7.5px painted these are nowhere near the 18.66px
+    # that would earn the 3:1 large-text exemption. Peak contrast is set by the
+    # authored colour, so this fails identically at every host size; it is not a
+    # small-window artifact. The literal alpha is not the whole story either:
+    # antialiasing at these sizes means even the peak pixel is ~86% covered, so
+    # the analytic value overstates what paints and the replacements below are
+    # chosen against measured pixels rather than the composite formula. Each
+    # needle occurs twice -- once in the live SpectrSettingsGroup/Field and once
+    # in the legacy postMessage Group carried in the embedded capture -- and both
+    # are patched so the two never disagree.
+    ('settings section headers clear the contrast floor',
+     'style: { fontSize: 9, letterSpacing: 2, opacity: 0.5, marginBottom: 4 }',
+     'style: { fontSize: 9, letterSpacing: 2, opacity: 0.68, marginBottom: 4 }',
+     2),
+
+    ('settings group subtitles clear the contrast floor',
+     'style: { fontSize: 10, opacity: 0.45, marginBottom: 10, fontFamily: "var(--sans)" }',
+     'style: { fontSize: 10, opacity: 0.62, marginBottom: 10, fontFamily: "var(--sans)" }',
+     2),
+
+    ('settings field hints clear the contrast floor',
+     'style: { fontSize: 9.5, opacity: 0.45, marginTop: 2, fontFamily: "var(--sans)", letterSpacing: 0.1 }',
+     'style: { fontSize: 9.5, opacity: 0.62, marginTop: 2, fontFamily: "var(--sans)", letterSpacing: 0.1 }',
+     2),
+
+    # APPLY must apply the preset AND dismiss the manager in one action.
+    # resources/editor.html carries this as its 'apply preset closes manager'
+    # replaceSpectrSource entry, but the materialized runtime was generated
+    # before that patch existed and still wires the bare callback, so the
+    # shipping native editor applied the preset and left the manager open on
+    # top of the result it had just applied. Observed offscreen through the
+    # real create_view path: [data-spectr-manager-action] stayed at 6 across
+    # APPLY while the APPLIED toast fired and the menu label updated. The
+    # detail-pane APPLY button and the row double-click both route through
+    # this one prop, so wrapping it here dismisses the manager for both.
+    ('apply preset closes manager',
+     '      onApply: applyPattern,\n',
+     '      onApply: (pattern) => {\n'
+     '        applyPattern(pattern);\n'
+     '        setManagerOpen(false);\n'
+     '      },\n'),
+
+    # A capture-phase document keydown listener that preventDefaults the
+    # arrow/Enter keys stops Pulp's popup handler from ever running, so the
+    # authoritative data-pulp-popup-active highlight freezes on the first
+    # option while a second, unscoped highlight walks the DOM.
+    ('generic Pulp popup owns open-menu keyboard navigation',
+     'useEffectChrome(() => {\n    if (!openMenu) return;\n    const menuItems = () => {\n      const found = document.querySelectorAll("[data-spectr-menu-options] button");\n      return found ? Array.prototype.slice.call(found) : [];\n    };\n    let active = -1;\n    const highlight = (items) => {\n      for (let i = 0; i < items.length; i++) {\n        const item = items[i];\n        if (!item || !item.style) continue;\n        if (i === active) {\n          if (item.setAttribute) item.setAttribute("data-spectr-menu-active", "true");\n          item.style.outline = "1px solid rgba(255,255,255,0.75)";\n        } else {\n          if (item.removeAttribute) item.removeAttribute("data-spectr-menu-active");\n          item.style.outline = "0px none transparent";\n        }\n      }\n    };\n    const move = (delta) => {\n      const items = menuItems();\n      if (!items.length) return;\n      active = active < 0\n        ? (delta > 0 ? 0 : items.length - 1)\n        : (active + delta + items.length) % items.length;\n      highlight(items);\n    };\n    const commit = () => {\n      const items = menuItems();\n      if (active < 0 || active >= items.length) return false;\n      const callbacks = globalThis.__pulpReactEventCallbacks__;\n      if (!callbacks || typeof callbacks.get !== "function") return false;\n      let node = items[active];\n      let handler = null;\n      while (node && !handler) {\n        const id = node.__pulpId || node._id || node.id;\n        const found = id ? callbacks.get(String(id) + ":click") : null;\n        if (typeof found === "function") handler = found;\n        else node = node.parentElement || node._parentElement || null;\n      }\n      if (!handler) return false;\n      handler({\n        type: "click", target: node, currentTarget: node,\n        bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0,\n        preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {}\n      });\n      return true;\n    };\n    const onMenuKey = (event) => {\n      const key = event.key;\n      if (key === "Escape") setOpenMenu(null);\n      else if (key === "ArrowDown") move(1);\n      else if (key === "ArrowUp") move(-1);\n      else if (key === "Enter") {\n        if (!commit()) return;\n        setOpenMenu(null);\n      } else return;\n      event.preventDefault();\n      event.stopPropagation();\n    };\n    document.addEventListener("keydown", onMenuKey, true);\n    return () => {\n      document.removeEventListener("keydown", onMenuKey, true);\n    };\n  }, [openMenu]);\n',
+     '// Menu keyboard navigation is owned by the generic Pulp popup handler.\n'),
 ]
 
 # A later edit may deliberately consume the exact replacement image of an
 # earlier one. These named sentinels keep reruns strict without pretending the
 # superseded intermediate text must remain in the final shipping document.
 SUPERSEDED_SENTINELS = {
+    'settings preserve reparent reasserts scroll hint':
+        'node._nativeCreated = false',
+    'materialized modulation tabs stay visible above scrolling content':
+        'data-spectr-settings-general-tab',
+    'materialized modulation tabs close cleanly':
+        'data-spectr-settings-general-tab',
+    'filter bank applies host automation without React hydration':
+        'getGains: () => Array.from(targetGainsRef.current)',
     'status disable clears immediately and selected preset is retained':
         'const [selectedPatternId, setSelectedPatternId] = useAppS(null);',
     'selected preset name updates with applied state':
@@ -2457,16 +3003,293 @@ SUPERSEDED_SENTINELS = {
         'React.createElement(SpectrModulationSettings, null)',
 }
 
+
+# ---------------------------------------------------------------------------
+# Superseded-edit allowlists.
+#
+# EDITS is a historical recipe: a later step legitimately subsumes an earlier
+# step's replacement, so some edits are expected to find no patch point. That
+# is the ONLY legitimate reason for an edit to no-op.
+#
+# Everything else that stops matching -- an SDK bump, an upstream editor
+# refactor, a re-capture that moves a needle -- is drift, and drift must turn
+# this run RED. Previously every no-op printed "superseded" and continued, so a
+# moved needle silently shipped an unpatched editor with a green build.
+#
+# SUPERSEDED_EDITS names edits whose patch point is legitimately gone by the
+# time the edit runs. POST_CHECK_EXEMPT_EDITS names edits whose replacement is
+# legitimately overwritten by a LATER recipe step, so it is absent from the
+# finished document. Both are label lists, both are checked at startup against
+# EDITS so a renamed label cannot rot into a silent exemption, and an entry
+# that stops being needed is reported as prunable in the run summary.
+#
+# Adding a label here is a claim that the edit is genuinely subsumed. Prove
+# that before adding one; the default answer to a missing needle is to
+# re-author the needle.
+SUPERSEDED_EDITS = frozenset({
+    # Proven subsumed: a LATER edit in this same list takes this edit's
+    # replacement text as its own patch point, so by the time this edit runs
+    # the text it looks for has already been rewritten downstream.
+    'settings status semantics commit with the modal mount',
+    #   consumed by: settings modal publishes an explicit liveness marker
+    'live status text has text-independent geometry',
+    #   consumed by: live status text declares fixed single-line geometry
+    'live status text is one fixed-size label',
+    #   consumed by: live status text declares fixed single-line geometry
+    'live status text declares fixed single-line geometry',
+    #   consumed by: live status text is optically centered
+    'live status text is optically centered',
+    #   consumed by: status text uses an integer-centered line box
+    'status text uses an integer-centered line box',
+    #   consumed by: status text is centered by its flex parent rather than by padding
+    'status banner is content-sized with symmetric padding',
+    #   consumed by: status banner offsets by half its own width
+    'status disable invalidates pending banner effects',
+    #   consumed by: status banner centers on a property the runtime honors
+    'status banner resizes smoothly',
+    #   consumed by: status banner animates the offset that now carries its centering
+    'band count label shares one vertical center',
+    #   consumed by: band trigger suffix shares the centered flex line
+    'band count trigger reflects selection immediately',
+    #   consumed by: band trigger suffix shares the centered flex line
+    'band trigger suffix shares the centered flex line',
+    #   consumed by: band trigger suffix uses native-supported spacing
+    'band trigger suffix uses native-supported spacing',
+    #   consumed by: band trigger suffix spacing survives materialization
+    'status info defaults on',
+    #   consumed by: shipping settings default build information on
+    'preset trigger shows selected name',
+    #   consumed by: selected preset trigger truncates without losing its full title
+    'drawing keeps live hover outside React reconciliation',
+    #   consumed by: live hover status reuses the current label
+    'band hover uses the pointer-owned ref',
+    #   consumed by: browser hover readout updates synchronously
+    'settings status label stays stable across toggle repaint',
+    #   consumed by: settings header separates title and status control in one captured line
+    'settings status title uses color without a frozen-width box',
+    #   consumed by: settings header separates title and status control in one captured line
+    'settings toggle does not reshape text during materialized updates',
+    #   consumed by: settings title is distinct from the status control
+    'settings status label extends inward from the captured action slot',
+    #   consumed by: settings switch occupies an intentional position in the header
+    'settings switch occupies an intentional position in the header',
+    #   consumed by: settings switch label fits the captured action slot
+    'settings switch label fits the captured action slot',
+    #   consumed by: settings switch uses authored width after stale binding removal
+    'settings switch aligns to the header action edge',
+    #   consumed by: settings switch position comes from the corrected capture binding
+    'settings switch label is centered within its control',
+    #   consumed by: settings switch names its actual state
+    'status info is appended as a standard scrollable field',
+    #   consumed by: shipping settings optionally show build information below feedback
+    'internal modulation settings own host parameters',
+    #   consumed by: materialized modulation settings expose fixed tabs
+
+    # Patch point rewritten wholesale by one of the named helper functions
+    # below (repair_cursor_state, simplify_settings_single_scroll,
+    # augment_modulation_tabs, separate_modulation_tab_content, ...) rather
+    # than by another entry in EDITS. These are a baseline snapshot of the
+    # no-op set as it stood when the strict check was introduced; each was
+    # confirmed to no-op on a clean checkout, not individually re-derived.
+    'settings backdrop only dismisses a true outside click',
+    'settings backdrop migration retains overlay identity',
+    'settings panel owns native overlay containment',
+    'settings panel carries an eager liveness marker',
+    'settings dismissal listener commits with the modal mount',
+    'settings modal publishes an explicit liveness marker',
+    'settings modal refreshes atlas after mount',
+    'settings modal motion mode publication',
+    'band dropdown inactive items retain a surface',
+    'minimap press uses grabbing cursor',
+    'minimap release retains physical cursor',
+    'minimap deferred release retains physical cursor',
+    'rail popup trigger semantics',
+    'browser hover readout updates synchronously',
+    'idle hover clearing uses the pointer-owned ref',
+    'minimap release publishes one final React viewport',
+    'settings groups fit the authored viewport without clipping rows',
+    'status info no longer adds an uncaptured settings row',
+    'settings header exposes stable sticky identity',
+    'settings status semantics follow persisted state',
+    'settings groups retain stable materialized identity',
+    'settings header is an authored fixed scroll boundary',
+    'settings sticky header stays inside the panel boundary',
+    'app accepts compact host automation projections',
+    'app subscribes to one live automation projection per frame',
+    'materialized modulation settings expose fixed tabs',
+    'materialized modulation tabs stay visible above scrolling content',
+    'materialized modulation tabs close cleanly',
+})
+
+POST_CHECK_EXEMPT_EDITS = frozenset({
+    # The internal-modulation group is re-emitted in full by
+    # separate_modulation_tab_content(), which reorders the fields this edit
+    # placed, so its replacement is no longer present verbatim at the end.
+    'settings render internal modulation before feedback',
+})
+
 # Generated bindings live outside the escaped `html` string. Keep these
 # materialization-only corrections explicit rather than teaching HTML edits to
 # rewrite unrelated top-level document data.
 DOCUMENT_EDITS = [
+    # SNAPSHOT is the one bottom-bar label that declares no letter-spacing, so
+    # the browser measured it at 0 (48px for 8 glyphs) while the native cascade
+    # renders it at the inherited 1 (56px).  56px of text in a 48px baked box
+    # clips one character, which is why the bar read "SNAPSHO".  Declare the
+    # spacing its siblings already use and re-baseline the measurement with it,
+    # so the two halves of the import agree by construction rather than by
+    # inheritance luck.
+    # SNAPSHOT is the one bottom-bar label the native style resolution pins to
+    # an explicit width (dim_w=48, flex_shrink=0); its siblings stay auto-width.
+    # Native measures the string at 48px but PAINTS it at 7.0px/glyph = 56px, so
+    # the surplus is clipped inside the pinned box instead of overflowing
+    # harmlessly the way an auto-width sibling's does.  Measured, not inferred:
+    # the probe reports iw=48 against a painted glyph pitch of 7.0.  Widening the
+    # baked text/layout bindings does nothing -- they do not drive this width --
+    # so raise the authored minimum, which the native box does honour.
+    ('snapshot label keeps its intrinsic width in the bottom bar',
+     'style: { opacity: 0.55, fontSize: 10 } }, \\"SNAPSHOT\\")',
+     'style: { opacity: 0.55, fontSize: 10, flexShrink: 0, whiteSpace: \\"nowrap\\", minWidth: 60, marginRight: 6 } }, \\"SNAPSHOT\\")'),
+    ('snapshot layout binding admits the native shaped advance',
+     '"left":516.125,"top":22,"width":48',
+     '"left":516.125,"top":22,"width":62'),
+    ('snapshot baked measurement admits the native shaped advance',
+     '"text":"SNAPSHOT","basis":{"width":48,',
+     '"text":"SNAPSHOT","basis":{"width":62,'),
+    ('snapshot layout box matches that measurement',
+     '{"left":0,"top":0,"width":48,"height":13,"start":0,"length":8}',
+     '{"left":0,"top":0,"width":62,"height":13,"start":0,"length":8}'),
     ('selected preset binding reflects the deterministic default',
      '],"text":"PRESETS ▾","basis":{"width":63.05546845843935,',
      '],"text":"FLAT ▾","basis":{"width":42.04257793060037,'),
+    # The preset trigger is one of three bottom-bar menu captions and reads like
+    # the other two: the caret is a separate child the way SCULPT and PEAK
+    # declare theirs, and the truncation guard's threshold clears the default
+    # caption instead of cutting it, so the bar reads PRESETS rather than
+    # PRESET(ellipsis).  The caption also names the rail's mono family itself.
+    # A caption whose text comes from state carries no baked measurement, and
+    # without a declared family native resolves it to the default UI face --
+    # measured at 7.5px/glyph against the siblings' 7.0px, with a caret 3px
+    # wider.  Bisected in pixels: fontSize alone changes nothing, letterSpacing
+    # alone changes nothing, the family alone restores parity.
+    ('selected preset caption matches its sibling menu captions',
+     'React.createElement(\\"span\\", { \\"data-spectr-selected-preset\\": true, title: selectedPatternName, style: { marginLeft: 6, display: \\"inline-flex\\", alignItems: \\"center\\", lineHeight: 1, width: 63, overflow: \\"hidden\\", whiteSpace: \\"nowrap\\" } }, selectedPatternName.length > 6 ? selectedPatternName.slice(0, 6) + \\"… \\\\u25BE\\" : selectedPatternName + \\" \\\\u25BE\\")',
+     'React.createElement(\\"span\\", { \\"data-spectr-selected-preset\\": true, title: selectedPatternName, style: { marginLeft: 6, display: \\"inline-flex\\", alignItems: \\"center\\", lineHeight: 1, fontFamily: \\"var(--mono)\\" } }, selectedPatternName.length > 14 ? selectedPatternName.slice(0, 14) + \\"\\\\u2026\\" : selectedPatternName, \\" \\\\u25BE\\")'),
+
+    # The preset dropdown's MANAGE entry is the only way into the preset
+    # manager, and nothing on the surface said it also answers to a chord.
+    # The label carries the chord itself rather than a second child: the
+    # native materialized runtime paints an ADDED child at its container's
+    # first position, on top of what is already there (see the module
+    # docstring), so a separate shortcut span would ship an overlap.
+    ('manage entry names its keyboard chord',
+     '\\"MANAGE\\\\u2026\\"',
+     '\\"MANAGE\\\\u2026  \\\\u21e7\\\\u2318P\\"'),
 ]
 
+
+def repair_cursor_state(document):
+    """Mirror the authored React cursor ownership into the materialized HTML.
+
+    Imperative DOM cursor writes are invisible to WidgetBridge.  Keep those
+    writes as a browser fallback, but publish the same value through React so
+    native hosts can map it to NSCursor.
+    """
+    import re
+
+    html = document.get('html', '')
+    original = html
+
+    # Allow the authored panel to grow on tall hosts; the body only needs a
+    # scrollbar when its content exceeds the available viewport.
+    html = html.replace('height: "min(92vh, 760px)"',
+                        'height: "min(92vh, 1500px)"', 1)
+    # Revealing the MODULATION group added real content to the single-scroll
+    # Settings body, which at the previous 1280px cap could no longer fit on a
+    # tall host. Raise the cap so a large window still shows the panel without
+    # a scrollbar, and upgrade an artifact already carrying the old value.
+    html = html.replace('height: "min(92vh, 1280px)"',
+                        'height: "min(92vh, 1500px)"', 1)
+    # The TYPOGRAPHY group costs another ~80px of body content, which put the
+    # 1400px cap back under the fit-without-scrolling threshold on a tall host.
+    html = html.replace('height: "min(92vh, 1400px)"',
+                        'height: "min(92vh, 1500px)"', 1)
+    state_old = '  const [hover, setHover] = useState(null);'
+    state_new = state_old + '\n  const [cursor, setCursor] = useState(\'crosshair\');'
+    if 'const [cursor, setCursor] = useState' not in html:
+        if html.count(state_old) != 1:
+            raise SystemExit('FAIL cursor state patch point count')
+        html = html.replace(state_old, state_new, 1)
+    style_old = '        cursor: "crosshair",\n        touchAction: "none",'
+    style_new = '        cursor,\n        touchAction: "none",'
+    if '        cursor,\n        touchAction: "none",' not in html:
+        if html.count(style_old) != 1:
+            raise SystemExit('FAIL cursor style patch point count')
+        html = html.replace(style_old, style_new, 1)
+
+    assignment = re.compile(r'(?m)^(\s*)wrapRef\.current\.style\.cursor = ([^;]+);')
+
+    def mirror(match):
+        indent, value = match.groups()
+        return indent + 'setCursor(' + value + ');\n' + match.group(0)
+
+    # Do not mirror again when the materialized surface already has one
+    # React publication per imperative write (a rerun must be idempotent).
+    if html.count('setCursor(') < html.count('wrapRef.current.style.cursor ='):
+        html, count = assignment.subn(mirror, html)
+    else:
+        count = 0
+    # A prior invocation may have mirrored an assignment already emitted by
+    # the authored template. Collapse only identical adjacent publications.
+    html = re.sub(
+        r'(?m)^(\s*)setCursor\(([^;]+)\);\n\1setCursor\(\2\);\n',
+        r'\1setCursor(\2);\n', html)
+    # The authored source can already contain mirrored writes after a rerun.
+    # Avoid stacking duplicate state calls while still requiring every native
+    # cursor assignment to have a preceding React publication.
+    if count == 0 and 'wrapRef.current.style.cursor =' not in html:
+        raise SystemExit('FAIL cursor assignment patch found no writes')
+    if html != original:
+        document['html'] = html
+        return True
+    return False
+
+# Runtime edits whose patch point no longer exists because a later change
+# replaced the approach outright, not because the edit failed. MODULATION,
+# FEEDBACK and ABOUT were each pinned to absolute coordinates inside the
+# settings column and are now ordinary flow children: a pinned group
+# contributes nothing to the scroll content height, so everything below it
+# collapsed into dead space, and a pinned height cannot grow when a group
+# expands. Listing them here keeps a re-run honest -- the edit is reported as
+# superseded rather than aborting the script on a patch point that is gone on
+# purpose, and rather than silently re-pinning the groups.
+SUPERSEDED_RUNTIME_EDITS = {
+    'settings preserve reparent reasserts scroll hint',
+    'appended settings feedback receives a stable captured slot',
+    'settings about receives a stable captured slot',
+    'settings feedback reserves both persisted toggles',
+    'settings about follows the expanded feedback group',
+    'settings about reserves exact provenance rows',
+    'settings modulation receives its own non-overlapping captured slot',
+    'settings feedback follows the modulation slot',
+    'settings about follows modulation and feedback',
+    # The receipt no longer restates a constant and the body no longer decides
+    # for itself whether it overflows: the scroll extent is child-derived, so
+    # both of these read a number the runtime stopped owning.
+    'settings receipt reports the compact authored content extent',
+    'settings hides the scroll track when all content fits',
+}
+
 RUNTIME_EDITS = [
+    ('derived style props are not deletions',
+     '      if (svgPathStrokeChanged && (key === "stroke" || key === "strokeGradient")) continue;\n      if (!(key in newProps)) {',
+     '      if (svgPathStrokeChanged && (key === "stroke" || key === "strokeGradient")) continue;\n      if (derivedShapeChanged && isDerivedVisualKey(key)) continue;\n      if (!(key in newProps)) {',
+     'derivedShapeChanged'),
+
+    ('status overlay follows authored layout, not a frozen capture box',
+     '    const activeLayoutBindings = (authoredLayoutState ? []\n      : (Array.isArray(metadata && metadata.layout_bindings)\n          ? metadata.layout_bindings : [])).filter(\n        (binding) => !isSettingsDescendantBinding(binding)).filter(\n        (binding) => !belongsToAuthoredManagerDetail(binding));',
+     '    const statusOverlayShell = document.querySelector(\n      "[data-spectr-status-shell]") || document.querySelector(\n      "[data-spectr-status-banner]");\n    // The status overlay is authored to sit BELOW the graph\'s top ruler and to\n    // size itself to its own text. A captured box freezes it at\n    // {top:60,height:26} while the ruler line is at y=62, so the banner paints\n    // over the ruler and its 225px readout is clipped into a 210px box. The\n    // authored `top` and the binding are both inert against a frozen box; only\n    // dropping the binding lets the authored layout apply.\n    const isStatusOverlayBinding = (binding) => {\n      const node = materializedNodeAtPath(binding, values, true);\n      const shell = statusOverlayShell;\n      if (!node || !shell) return false;\n      let current = node;\n      while (current) {\n        if (current === shell) return true;\n        current = current.parentElement || current._parentElement || null;\n      }\n      return false;\n    };\n    const activeLayoutBindings = (authoredLayoutState ? []\n      : (Array.isArray(metadata && metadata.layout_bindings)\n          ? metadata.layout_bindings : [])).filter(\n        (binding) => !isSettingsDescendantBinding(binding)).filter(\n        (binding) => !belongsToAuthoredManagerDetail(binding)).filter(\n        (binding) => !isStatusOverlayBinding(binding));',
+     'isStatusOverlayBinding'),
     ('fixed text-only commits do not dirty imported layout metadata',
      '  ]);\n'
      '  var PulpHostConfig = {',
@@ -2532,10 +3355,18 @@ RUNTIME_EDITS = [
      '          return true;\n'
      '        }',
      '        if (r === "dialog" || r === "alertdialog" || r === "menu" || r === "listbox") {\n'
+     '          const node = materializedDomRegistryValues().find((candidate) =>\n'
+     '            String(candidate && (candidate.__pulpId || candidate.id) || "") === String(id));\n'
+     '          if (node?.style?.display === "none" ||\n'
+     '              (node?.getAttribute?.("aria-label") === "Settings" &&\n'
+     '               node?.getAttribute?.("data-spectr-settings-live") !== "true")) {\n'
+     '            call("releaseOverlay", id);\n'
+     '            return true;\n'
+     '          }\n'
      '          call("claimOverlay", id, true);\n'
      '          return true;\n'
      '        }',
-     'call("claimOverlay", id, true)'),
+     'node?.getAttribute?.("data-spectr-settings-live") !== "true"'),
     ('explicit overlays consume their outside dismissal press',
      '      case "overlay":\n'
      '        if (value) {\n'
@@ -2544,6 +3375,16 @@ RUNTIME_EDITS = [
      '        }',
      '      case "overlay":\n'
      '        if (value) {\n'
+     '          const node = materializedDomRegistryValues().find((candidate) =>\n'
+     '            String(candidate && (candidate.__pulpId || candidate.id) || "") === String(id));\n'
+     '          const box = typeof g5.getLayoutBoxMetrics === "function"\n'
+     '            ? g5.getLayoutBoxMetrics(String(id)) : null;\n'
+     '          if (node?.style?.display === "none" ||\n'
+     '              (box && ((Number.isFinite(box.offsetWidth) && box.offsetWidth <= 0) ||\n'
+     '                       (Number.isFinite(box.offsetHeight) && box.offsetHeight <= 0)))) {\n'
+     '            call("releaseOverlay", id);\n'
+     '            return true;\n'
+     '          }\n'
      '          call("claimOverlay", id, true);\n'
      '          return true;\n'
      '        }',
@@ -2935,14 +3776,7 @@ RUNTIME_EDITS = [
      '      const authoredContentHeight = 728;\n'
      '      const panelHeight = authored ? 679\n'
      '        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));',
-     'const authoredContentHeight = 1044;'),
-    ('settings scroll view derives its content from live children',
-     '        if (typeof g5.setScrollContentSize === "function")\n'
-     '          g5.setScrollContentSize(panelId, panelWidth, 684);',
-     '        // Leave content size automatic: the ScrollView unions its live children.\n'
-     '        if (typeof g5.setScrollContentSize === "function")\n'
-     '          g5.setScrollContentSize(panelId);\n',
-     'g5.setScrollContentSize(panelId);'),
+     ': Math.min(authoredContentHeight, Math.max(240, height * 0.9))'),
     ('settings receipt reports the compact authored content extent',
      '        content_height: 684, scroll_reachable: panelHeight < 684,',
      '        content_height: authoredContentHeight,\n'
@@ -3129,7 +3963,7 @@ RUNTIME_EDITS = [
      '        g5.setFlex(String(feedbackId), "height", 76);\n'
      '      }\n'
      '    }',
-     'g5.setTop(String(feedbackId), 652)'),
+     'g5.setTop(String(feedbackId), 884)'),
     ('settings header remains fixed while its body scrolls',
      '    if (activeCapturedState === "settings") {\n'
      '      const feedback = globalThis.document?.querySelector?.(\n',
@@ -3178,7 +4012,7 @@ RUNTIME_EDITS = [
     ('settings feedback extends the authored scroll extent',
      '      const authoredContentHeight = 672;',
      '      const authoredContentHeight = 728;',
-     'const authoredContentHeight = 1044;'),
+     'const authoredContentHeight = 1280;'),
     ('settings about receives a stable captured slot',
      '      if (feedbackId) {\n'
      '        g5.setPosition(String(feedbackId), "absolute");\n'
@@ -3206,11 +4040,11 @@ RUNTIME_EDITS = [
      '        g5.setFlex(String(aboutId), "height", 192);\n'
      '      }\n'
      '    }',
-     'g5.setTop(String(aboutId), 774)'),
+     'g5.setTop(String(aboutId), 1010)'),
     ('settings about extends the authored scroll extent',
      '      const authoredContentHeight = 728;',
      '      const authoredContentHeight = 952;',
-     'const authoredContentHeight = 1044;'),
+     'const authoredContentHeight = 1280;'),
     ('settings feedback reserves both persisted toggles',
      '        g5.setFlex(String(feedbackId), "height", 76);',
      '        g5.setFlex(String(feedbackId), "height", 108);',
@@ -3218,7 +4052,7 @@ RUNTIME_EDITS = [
     ('settings about follows the expanded feedback group',
      '        g5.setTop(String(aboutId), 742);',
      '        g5.setTop(String(aboutId), 774);',
-     'g5.setTop(String(aboutId), 774)'),
+     'g5.setTop(String(aboutId), 1010)'),
     ('settings about reserves exact provenance rows',
      '        g5.setFlex(String(aboutId), "height", 192);',
      '        g5.setFlex(String(aboutId), "height", 252);',
@@ -3226,13 +4060,37 @@ RUNTIME_EDITS = [
     ('settings exact provenance extends the authored scroll extent',
      '      const authoredContentHeight = 952;',
      '      const authoredContentHeight = 1044;',
-     'const authoredContentHeight = 1044;'),
-    ('settings live scroll extent refreshes after native upgrade',
-     '        // Leave content size automatic: the ScrollView unions its live children.\n\n',
-     '        // Leave content size automatic: the ScrollView unions its live children.\n'
-     '        if (typeof g5.setScrollContentSize === "function")\n'
-     '          g5.setScrollContentSize(panelId);\n\n',
-     'g5.setScrollContentSize(panelId);'),
+     'const authoredContentHeight = 1280;'),
+    ('settings modulation receives its own non-overlapping captured slot',
+     '      const feedback = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="feedback"]\');\n'
+     '      const feedbackId = feedback && (feedback.__pulpId || feedback.id);',
+     '      const modulation = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="modulation"]\');\n'
+     '      const modulationId = modulation && (modulation.__pulpId || modulation.id);\n'
+     '      if (modulationId) {\n'
+     '        g5.setPosition(String(modulationId), "absolute");\n'
+     '        g5.setLeft(String(modulationId), 27);\n'
+     '        g5.setTop(String(modulationId), 652);\n'
+     '        g5.setFlex(String(modulationId), "width", 466);\n'
+     '        g5.setFlex(String(modulationId), "height", 214);\n'
+     '      }\n'
+     '      const feedback = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="feedback"]\');\n'
+     '      const feedbackId = feedback && (feedback.__pulpId || feedback.id);',
+     'g5.setTop(String(modulationId), 652)'),
+    ('settings feedback follows the modulation slot',
+     '        g5.setTop(String(feedbackId), 652);',
+     '        g5.setTop(String(feedbackId), 884);',
+     'g5.setTop(String(feedbackId), 884)'),
+    ('settings about follows modulation and feedback',
+     '        g5.setTop(String(aboutId), 774);',
+     '        g5.setTop(String(aboutId), 1010);',
+     'g5.setTop(String(aboutId), 1010)'),
+    ('settings modulation extends the authored scroll extent',
+      '      const authoredContentHeight = 1044;',
+      '      const authoredContentHeight = 1280;',
+      'const authoredContentHeight = 1280;'),
     ('settings scroll upgrade restores native overlay ownership',
      '      if (panelId) {\n'
      '        // Replacing the captured overflow container with a real native\n',
@@ -3242,7 +4100,7 @@ RUNTIME_EDITS = [
      '        // routes Escape and outside presses against the panel bounds.\n'
      '        if (typeof g5.claimOverlay === "function") g5.claimOverlay(panelId, true);\n'
      '        // Replacing the captured overflow container with a real native\n',
-     'g5.claimOverlay(panelId, true);'),
+     'setOverlayClaim(panelId);'),
     ('band trigger shares the segmented-control header baseline',
      '    const centerBandText = (owner, label, width, textWidth) => {\n'
      '      if (!owner || typeof g5.setCapturedLineBoxes !== "function") return null;',
@@ -3377,7 +4235,501 @@ RUNTIME_EDITS = [
      '        g5.setOverflow(panelId, "scroll");',
      '        g5.setOverflow(panelId, panelHeight < authoredContentHeight ? "scroll" : "hidden");',
      'panelHeight < authoredContentHeight ? "scroll" : "hidden"'),
+    ('settings atlas requires explicit live marker',
+     '          if (liveMatch && !hidden && marker !== "false")\n'
+     '            return state.id;',
+     '          if (liveMatch && !hidden && marker === "true")\n'
+     '            return state.id;',
+     'marker === "true")'),
+    ('settings metadata replay ignores closed mounted panel',
+     '    const liveSettingsLayout = activeCapturedState === "settings"\n'
+     '      || Boolean(document.querySelector("[data-spectr-settings-panel]"));',
+     '    const settingsLayoutPanel = document.querySelector(\n'
+     '      "[data-spectr-settings-panel]");\n'
+     '    const liveSettingsLayout = activeCapturedState === "settings"\n'
+     '      || settingsLayoutPanel?.getAttribute?.("data-spectr-settings-live") === "true";',
+     'settingsLayoutPanel?.getAttribute?.'),
+    ('live selector labels inherit the captured mono face',
+     '    if (activeCapturedState === "settings") {\n'
+     '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");',
+     '    const spectralLabel = values.find((node) =>\n'
+     '      String(node && node.textContent || "") === "Spectral");\n'
+     '    const monoBinding = capturedTextBindings.find((binding) =>\n'
+     '      binding.runtime_font_family && binding.basis?.resolved_face?.includes("JetBrainsMono"));\n'
+     '    if (spectralLabel && monoBinding && typeof g5.setFontFamily === "function") {\n'
+     '      const spectralId = spectralLabel.__pulpTextTargetId || spectralLabel.__pulpId || spectralLabel.id;\n'
+     '      if (spectralId) {\n'
+     '        g5.setFontFamily(String(spectralId), materializedRuntimeFontStack(monoBinding));\n'
+     '        if (typeof g5.setFontSize === "function") g5.setFontSize(String(spectralId), 10);\n'
+     '      }\n'
+     '    }\n'
+     '    if (activeCapturedState === "settings") {\n'
+     '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");',
+     'const spectralLabel = values.find((node)'),
+    ('live selector labels retain captured letter spacing',
+     '        if (typeof g5.setFontSize === "function") g5.setFontSize(String(spectralId), 10);\n      }',
+     '        if (typeof g5.setFontSize === "function") g5.setFontSize(String(spectralId), 10);\n'
+     '        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(spectralId), 0.8);\n      }',
+     'setLetterSpacing(String(spectralId), 0.8)'),
+    ('live selector labels retain captured width',
+     '        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(spectralId), 0.8);\n      }',
+     '        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(spectralId), 0.8);\n'
+     '        if (typeof g5.setFlex === "function") {\n'
+     '          g5.setFlex(String(spectralId), "width", 74.40625);\n'
+     '          g5.setFlex(String(spectralId), "height", 23);\n'
+     '        }\n      }',
+     'setFlex(String(spectralId), "width", 74.40625)'),
+    ('live selector labels retain captured line box',
+     '          g5.setFlex(String(spectralId), "height", 23);\n'
+     '        }\n      }',
+     '          g5.setFlex(String(spectralId), "height", 23);\n'
+     '        }\n'
+     '        if (typeof g5.setCapturedLineBoxes === "function")\n'
+     '          g5.setCapturedLineBoxes(String(spectralId),\n'
+     '            [{ left: 10, top: 5, width: 54.40625, height: 13,\n'
+     '               start: 0, length: 8 }], 74.40625,\n'
+     '            "JetBrainsMono-Regular", false);\n      }',
+     'setCapturedLineBoxes(String(spectralId)'),
+    ('live settings labels inherit the captured mono face',
+     '    if (activeCapturedState === "settings") {\n'
+     '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");',
+     '    if (monoBinding && typeof g5.setFontFamily === "function") {\n'
+     '      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {\n'
+     '        const node = values.find((candidate) =>\n'
+     '          String(candidate && candidate.textContent || "") === labelText);\n'
+     '        const nodeId = node && (node.__pulpTextTargetId || node.__pulpId || node.id);\n'
+     '        if (!nodeId) continue;\n'
+     '        g5.setFontFamily(String(nodeId), materializedRuntimeFontStack(monoBinding));\n'
+     '      }\n'
+     '    }\n'
+     '    if (activeCapturedState === "settings") {\n'
+     '      const titleNode = globalThis.document?.querySelector?.("[data-spectr-settings-title]");',
+     '      for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {'),
+    ('settings preserve reparent reasserts scroll hint',
+     '    if (parent && typeof parent.removeChild === "function"\n'
+     '        && typeof parent.appendChild === "function") {\n'
+     '      parent.removeChild(node);\n'
+     '      parent.appendChild(node);',
+     '    if (parent && typeof parent.removeChild === "function"\n'
+     '        && typeof parent.appendChild === "function") {\n'
+     '      if (node.style && node.style._props)\n'
+     '        node.style._props.overflowY = "auto";\n'
+     '      node._nativeCreated = false;\n'
+     '      parent.removeChild(node);\n'
+     '      parent.appendChild(node);',
+     'node._nativeCreated = false'),
+    ('native pattern manager title follows selected identity',
+     '    g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;\n'
+     '    return applied;',
+     '    if (activeCapturedState === "pattern-manager") {\n'
+     '      const title = globalThis.document?.querySelector?.("[data-spectr-manager-title]");\n'
+     '      const patternId = title?.getAttribute?.("data-spectr-pattern-id");\n'
+     '      const patterns = globalThis.Spectr?.FACTORY_PATTERNS;\n'
+     '      const pattern = Array.isArray(patterns)\n'
+     '        ? patterns.find((candidate) => candidate?.id === patternId) : null;\n'
+     '      const fallbackName = patternId === "factory:flat" ? "FLAT"\n'
+     '        : patternId === "factory:tilt" ? "DOWNWARD TILT" : null;\n'
+     '      const name = pattern?.name || fallbackName;\n'
+     '      if (title && name && title.textContent !== name) title.textContent = name;\n'
+     '    }\n'
+     '    g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;\n'
+     '    return applied;',
+     'title.textContent = name'),
+    ('imported buttons and text elements carry the CSS wrapping default',
+     '    }\n'
+     '    return fn(...args);\n'
+     '  }\n'
+     '  function createWidget(type, id, parentId, props) {\n'
+     '    switch (type) {\n'
+     '      case "View":\n'
+     '      case "Col":\n',
+     '    }\n'
+     '    return fn(...args);\n'
+     '  }\n'
+     '  function applyButtonCaptionLayout2(textId, hasText) {\n'
+     '  call2("setPosition", textId, hasText ? "static" : "absolute");\n'
+     '  if (hasText) return;\n'
+     '  call2("setTop", textId, 0);\n'
+     '  call2("setRight", textId, 0);\n'
+     '  call2("setBottom", textId, 0);\n'
+     '  call2("setLeft", textId, 0);\n'
+     '}\n'
+     "// Lower an HTML text element to a Label carrying CSS's default\n"
+     '// `white-space: normal`. A native Label defaults to a single line and clips\n'
+     '// mid-word, whereas the browser box this markup was imported from wraps. An\n'
+     '// element that authored its own `whiteSpace` still wins: applyAllProps runs\n'
+     '// after createWidget.\n'
+     'function createHtmlLabel2(id, text, parentId) {\n'
+     '  call2("createLabel", id, text, parentId);\n'
+     '  call2("setWhiteSpace", id, "normal");\n'
+     '}\n'
+     'function createWidget(type, id, parentId, props) {\n'
+     '    switch (type) {\n'
+     '      case "View":\n'
+     '      case "Col":\n',
+     'function createHtmlLabel2('),
+    ('imported text elements lower to wrapping labels',
+     '            // box and never its text for exactly this reason. Element children\n'
+     '            // still route to createCol, since asText returns undefined there.\n'
+     '            if (txt !== void 0 && txt.length > 0) {\n'
+     '              call2("createLabel", id, txt, parentId);\n'
+     '            } else {\n'
+     '              call2("createCol", id, parentId);\n'
+     '            }\n',
+     '            // box and never its text for exactly this reason. Element children\n'
+     '            // still route to createCol, since asText returns undefined there.\n'
+     '            if (txt !== void 0 && txt.length > 0) {\n'
+     '              createHtmlLabel2(id, txt, parentId);\n'
+     '            } else {\n'
+     '              call2("createCol", id, parentId);\n'
+     '            }\n',
+     'createHtmlLabel2(id, txt, parentId);\n            } else {\n              call2("createCol"'),
+    ('imported description elements lower to wrapping labels',
+     '          case "desc": {\n'
+     '            const txt = asText(props.children);\n'
+     '            if (txt !== void 0) {\n'
+     '              call2("createLabel", id, txt, parentId);\n'
+     '            } else {\n'
+     '              call2("createRow", id, parentId);\n'
+     '            }\n',
+     '          case "desc": {\n'
+     '            const txt = asText(props.children);\n'
+     '            if (txt !== void 0) {\n'
+     '              createHtmlLabel2(id, txt, parentId);\n'
+     '            } else {\n'
+     '              call2("createRow", id, parentId);\n'
+     '            }\n',
+     'createHtmlLabel2(id, txt, parentId);\n            } else {\n              call2("createRow"'),
+    ('button captions size their owner when they bear text',
+     '            call2("setFlex", id, "justify_content", "center");\n'
+     '            const textId = id + "__text";\n'
+     '            call2("createLabel", textId, text, id);\n'
+     '            call2("setPosition", textId, "absolute");\n'
+     '            call2("setTop", textId, 0);\n'
+     '            call2("setRight", textId, 0);\n'
+     '            call2("setBottom", textId, 0);\n'
+     '            call2("setLeft", textId, 0);\n'
+     '            call2("setPointerEvents", textId, "none");\n'
+     '            call2("setAccessibilityRole", id, "button");\n'
+     '            if (text) call2("setAccessibilityLabel", id, text);\n',
+     '            call2("setFlex", id, "justify_content", "center");\n'
+     '            const textId = id + "__text";\n'
+     '            call2("createLabel", textId, text, id);\n'
+     '            // A lowercase HTML <button> is sized by its caption, exactly like\n'
+     '            // the browser box it was imported from. An absolutely positioned\n'
+     '            // caption contributes no intrinsic size, which collapses every\n'
+     '            // text-sized button to padding plus border. Keep it in flow when\n'
+     '            // it bears text; an empty stub beside authored nested markup\n'
+     '            // stays a zero-contribution overlay so it claims no flex slot.\n'
+     '            applyButtonCaptionLayout2(textId, String(text).length > 0);\n'
+     '            call2("setPointerEvents", textId, "none");\n'
+     '            call2("setAccessibilityRole", id, "button");\n'
+     '            if (text) call2("setAccessibilityLabel", id, text);\n',
+     'applyButtonCaptionLayout2(textId, String(text).length > 0)'),
+    ('caption box is re-resolved on the commit that changes its text',
+     '          if (typeof g4.setText === "function") {\n'
+     '            call2("setText", instance.textTargetId ?? instance.id, newText);\n'
+     '          }\n'
+     '        }\n'
+     '      }\n'
+     '    },\n',
+     '          if (typeof g4.setText === "function") {\n'
+     '            call2("setText", instance.textTargetId ?? instance.id, newText);\n'
+     '          }\n'
+     '          // A caption that gains or loses text changes whether it may size\n'
+     '          // its owner. Re-resolve its box on the same commit.\n'
+     '          if (instance.textTargetId) {\n'
+     '            applyButtonCaptionLayout2(instance.textTargetId,\n'
+     '                                      String(newText).length > 0);\n'
+     '          }\n'
+     '        }\n'
+     '      }\n'
+     '    },\n',
+     'String(newText).length > 0'),
+    ('nested markup returns the caption to a zero-contribution overlay',
+     '      markMaterializedTreeDirty();\n'
+     '      if (typeof g4.setText === "function") {\n'
+     '        call2("setText", instance.textTargetId ?? instance.id, "");\n'
+     '      }\n'
+     '    },\n'
+     '    // ── Per-commit flush ───────────────────────────────────────────\n',
+     '      markMaterializedTreeDirty();\n'
+     '      if (typeof g4.setText === "function") {\n'
+     '        call2("setText", instance.textTargetId ?? instance.id, "");\n'
+     '      }\n'
+     '      // Nested markup is mounting in place of the caption. Return it to a\n'
+     '      // zero-contribution overlay so it takes no flex slot beside them.\n'
+     '      if (instance.textTargetId) {\n'
+     '        applyButtonCaptionLayout2(instance.textTargetId, false);\n'
+     '      }\n'
+     '    },\n'
+     '    // ── Per-commit flush ───────────────────────────────────────────\n',
+     'Nested markup is mounting in place of the caption'),
+    ('anonymous text targets carry the CSS wrapping default',
+     '  function materializeUnder(parentId, child) {\n'
+     '    if (child.onBridge) return;\n'
+     '    createWidget(child.type, child.id, parentId, child.props);\n'
+     '    if (child._dom && typeof child._dom === "object" && child.textTargetId) {\n'
+     '      child._dom.__pulpTextTargetId = child.textTargetId;\n'
+     '    }\n',
+     '  function materializeUnder(parentId, child) {\n'
+     '    if (child.onBridge) return;\n'
+     '    createWidget(child.type, child.id, parentId, child.props);\n'
+     '    // A loose text node wraps by default in CSS (`white-space: normal`), but a\n'
+     '    // native Label defaults to one line and clips mid-word instead. Synthetic\n'
+     '    // text targets have no author style of their own to carry the default in,\n'
+     '    // so state it explicitly. An element that authored its own `whiteSpace`\n'
+     '    // still wins: applyAllProps runs after this.\n'
+     '    if (child.anonymousTextTarget) call2("setWhiteSpace", child.id, "normal");\n'
+     '    if (child._dom && typeof child._dom === "object" && child.textTargetId) {\n'
+     '      child._dom.__pulpTextTargetId = child.textTargetId;\n'
+     '    }\n',
+     'if (child.anonymousTextTarget) call2("setWhiteSpace"'),
+    ('settings panel height is bounded independently of the scroll extent',
+     '        settingsBody || settingsPanel, values);\n'
+     '      const authored = width === 1320 && height === 860;\n'
+     '      const panelWidth = Math.min(520, Math.max(360, width - 40));\n'
+     '      const authoredContentHeight = 1280;\n'
+     '      const panelHeight = authored ? 679\n'
+     '        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));\n',
+     '        settingsBody || settingsPanel, values);\n'
+     '      const authored = width === 1320 && height === 860;\n'
+     '      const panelWidth = Math.min(520, Math.max(360, width - 40));\n'
+     "      // Upper bound for the PANEL's own height on a non-authored canvas.\n"
+     '      // Not the scroll extent: that is child-derived (see below).\n'
+     '      const authoredContentHeight = 1280;\n'
+     '      const panelHeight = authored ? 679\n'
+     '        : Math.min(authoredContentHeight, Math.max(240, height * 0.9));\n',
+     'Not the scroll extent: that is child-derived'),
+    ('settings scroll extent is child-derived and the receipt measures it',
+     '        // dimensions reset the extent to 0 and make the body impossible to\n'
+     '        // scroll. Keep the authored body extent in sync with the captured\n'
+     '        // settings geometry.\n'
+     '        const scrollId = idOf(settingsBody || settingsPanel);\n'
+     '        if (scrollId && scrollId !== panelId) {\n'
+     '          g5.setOverflow(scrollId, panelHeight < authoredContentHeight ? "scroll" : "hidden");\n'
+     '          if (typeof g5.setScrollContentSize === "function")\n'
+     '            g5.setScrollContentSize(scrollId, Math.max(1, panelWidth - 52), authoredContentHeight);\n'
+     '        } else if (typeof g5.setScrollContentSize === "function") {\n'
+     '          g5.setScrollContentSize(panelId, Math.max(1, panelWidth - 52), authoredContentHeight);\n'
+     '        }\n'
+     '\n'
+     '      }\n'
+     '      settingsReceipt = {\n'
+     '        width: panelWidth, height: panelHeight, top: panelTop,\n'
+     '        content_height: authoredContentHeight,\n'
+     '        scroll_reachable: panelHeight < authoredContentHeight,\n'
+     '        native_scroll_view: nativeScrollView,\n'
+     '        authored_skin: true\n'
+     '      };\n',
+     '        // dimensions reset the extent to 0 and make the body impossible to\n'
+     '        // scroll. Keep the authored body extent in sync with the captured\n'
+     '        // settings geometry.\n'
+     '        // The settings body grows and shrinks as disclosure sections open, so\n'
+     '        // a fixed extent is wrong in both directions: too small and the tail\n'
+     '        // of an expanded section is unreachable (scrolling clamps short of\n'
+     '        // it), too large and the panel scrolls past its own content. Calling\n'
+     "        // setScrollContentSize with no dimensions selects ScrollView's\n"
+     '        // child-derived extent, which tracks the laid-out subtree.\n'
+     '        const scrollId = idOf(settingsBody || settingsPanel);\n'
+     '        const scrollTargetId = (scrollId && scrollId !== panelId)\n'
+     '          ? scrollId : panelId;\n'
+     '        if (scrollTargetId) {\n'
+     '          if (scrollTargetId !== panelId) g5.setOverflow(scrollTargetId, "scroll");\n'
+     '          if (typeof g5.setScrollContentSize === "function")\n'
+     '            g5.setScrollContentSize(scrollTargetId);\n'
+     '        }\n'
+     '\n'
+     '      }\n'
+     '      // Report the extent the panel actually laid out, never the authored\n'
+     '      // constant. The scroll extent is child-derived now, so a hard-coded\n'
+     '      // number here would assert reachability the runtime no longer decides --\n'
+     '      // and this receipt is read as proof that expanded groups are reachable,\n'
+     '      // which is precisely the claim a stale constant would fake.\n'
+     '      const measuredContentHeight = (() => {\n'
+     '        const scrollNode = settingsBody || settingsPanel;\n'
+     '        const kids = materializedElementChildren(scrollNode, new Set(values))\n'
+     '          .concat(Array.isArray(scrollNode?._children) ? scrollNode._children : [])\n'
+     '          .filter((child, index, all) => child && all.indexOf(child) === index);\n'
+     '        let extent = 0;\n'
+     '        for (const child of kids) {\n'
+     '          const childId = String(child.__pulpId || child.id || "");\n'
+     '          if (!childId || typeof g5.getLayoutRect !== "function") continue;\n'
+     '          const rect = g5.getLayoutRect(childId);\n'
+     '          if (!rect || typeof rect.height !== "number") continue;\n'
+     '          extent = Math.max(extent, (rect.y || 0) + rect.height);\n'
+     '        }\n'
+     '        return extent > 0 ? extent : null;\n'
+     '      })();\n'
+     '      settingsReceipt = {\n'
+     '        width: panelWidth, height: panelHeight, top: panelTop,\n'
+     '        // null means the tree had not laid out when the receipt was taken --\n'
+     '        // an unknown, which a reader must not silently read as "fits".\n'
+     '        content_height: measuredContentHeight,\n'
+     '        content_extent: "child-derived",\n'
+     '        scroll_reachable: measuredContentHeight === null\n'
+     '          ? null : panelHeight < measuredContentHeight,\n'
+     '        native_scroll_view: nativeScrollView,\n'
+     '        authored_skin: true\n'
+     '      };\n',
+     'content_extent: "child-derived"'),
+    ('settings modulation feedback and about flow in the scroll column',
+     '        if (closeId) g5.setTransform(String(closeId), 1, 0, 0, 1, 0, 0);\n'
+     '        g5.setBackground(String(headerId), "rgba(14,18,25,1)");\n'
+     '      }\n'
+     '      const modulation = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="modulation"]\');\n'
+     '      const modulationId = modulation && (modulation.__pulpId || modulation.id);\n'
+     '      if (modulationId) {\n'
+     '        g5.setPosition(String(modulationId), "absolute");\n'
+     '        g5.setLeft(String(modulationId), 0);\n'
+     '        g5.setTop(String(modulationId), 652);\n'
+     '        g5.setFlex(String(modulationId), "width", 466);\n'
+     '        g5.setFlex(String(modulationId), "height", 214);\n'
+     '      }\n'
+     '      const feedback = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="feedback"]\');\n'
+     '      const feedbackId = feedback && (feedback.__pulpId || feedback.id);\n'
+     '      if (feedbackId) {\n'
+     '        g5.setPosition(String(feedbackId), "absolute");\n'
+     '        g5.setLeft(String(feedbackId), 0);\n'
+     '        g5.setTop(String(feedbackId), 884);\n'
+     '        g5.setFlex(String(feedbackId), "width", 466);\n'
+     '        g5.setFlex(String(feedbackId), "height", 108);\n'
+     '      }\n'
+     '      const about = globalThis.document?.querySelector?.(\n'
+     '        \'[data-spectr-settings-group="about"]\');\n'
+     '      const aboutId = about && (about.__pulpId || about.id);\n'
+     '      if (aboutId) {\n'
+     '        g5.setPosition(String(aboutId), "absolute");\n'
+     '        g5.setLeft(String(aboutId), 0);\n'
+     '        g5.setTop(String(aboutId), 1010);\n'
+     '        g5.setFlex(String(aboutId), "width", 466);\n'
+     '        g5.setFlex(String(aboutId), "height", 252);\n'
+     '      }\n'
+     '    }\n'
+     '    for (const binding of activePaintBindings) {\n'
+     '      if (liveSettingsLayout) break;\n',
+     '        if (closeId) g5.setTransform(String(closeId), 1, 0, 0, 1, 0, 0);\n'
+     '        g5.setBackground(String(headerId), "rgba(14,18,25,1)");\n'
+     '      }\n'
+     '      // MODULATION, FEEDBACK and ABOUT flow in the settings column exactly\n'
+     '      // like APPEARANCE, STRUCTURE and MOTION do. They are deliberately NOT\n'
+     '      // pinned to absolute coordinates: a pinned group contributes nothing to\n'
+     '      // the scroll content height, so the column below it collapses into dead\n'
+     '      // space, and a pinned height cannot grow when a group expands (the\n'
+     '      // modulation targets open when an LFO is enabled).\n'
+     '    }\n'
+     '    for (const binding of activePaintBindings) {\n'
+     '      if (liveSettingsLayout) break;\n',
+     'They are deliberately NOT'),
+
+    ('preset manager is reachable from a keyboard chord',
+     '  if (capturedStates.length > 0) g5.__pulpRefreshMaterializedState__();\n',
+     '  if (capturedStates.length > 0) g5.__pulpRefreshMaterializedState__();\n'
+     '\n'
+     '  // Preset Manager keyboard shortcut: Cmd+Shift+P (Ctrl+Shift+P elsewhere).\n'
+     '  // The handler replays the same activation the pattern menu performs, so\n'
+     '  // the shortcut and the menu entry cannot drift apart. Two delivery routes\n'
+     '  // are wired because the host uses whichever is available: a registered\n'
+     '  // native chord intercept (exact modifier mask, consumed before any DOM\n'
+     '  // dispatch) and a `document` keydown listener (the host fans unconsumed\n'
+     '  // keys out to script targets as a DOM keydown). A drive-in-flight flag\n'
+     '  // keeps a double delivery from toggling the pattern menu back shut.\n'
+     '  var SPECTR_MOD_SHIFT = 1 << 0;\n'
+     '  var SPECTR_MOD_CTRL = 1 << 1;\n'
+     '  var SPECTR_MOD_CMD = 1 << 4;\n'
+     '  var spectrPresetManagerDriving = false;\n'
+     '  function spectrPresetManagerIsOpen() {\n'
+     '    return !!globalThis.document?.querySelector?.(\'[aria-label="Pattern manager"]\');\n'
+     '  }\n'
+     '  function spectrPatternMenuIsOpen() {\n'
+     '    return !!(typeof g5.__pulpFindMaterializedElement__ === "function"\n'
+     '      && g5.__pulpFindMaterializedElement__(\n'
+     '        "[data-spectr-menu-options]", \'[data-spectr-menu-root="pattern"]\'));\n'
+     '  }\n'
+     '  function spectrDrivePresetManagerSteps(steps, index, attempts) {\n'
+     '    if (index >= steps.length) {\n'
+     '      spectrPresetManagerDriving = false;\n'
+     '      return;\n'
+     '    }\n'
+     '    const activated = g5.__pulpActivateMaterializedElement__(steps[index], "click", {\n'
+     '      type: "click",\n'
+     '      preventDefault: function() {\n'
+     '      },\n'
+     '      stopPropagation: function() {\n'
+     '      },\n'
+     '      stopImmediatePropagation: function() {\n'
+     '      }\n'
+     '    });\n'
+     '    if (activated) {\n'
+     '      if (typeof g5.__pulpRuntimeSettle__ === "function") g5.__pulpRuntimeSettle__(8);\n'
+     '      index += 1;\n'
+     '      attempts = 0;\n'
+     '    } else if (++attempts > 128) {\n'
+     '      spectrPresetManagerDriving = false;\n'
+     '      return;\n'
+     '    }\n'
+     '    if (index >= steps.length) {\n'
+     '      spectrPresetManagerDriving = false;\n'
+     '      return;\n'
+     '    }\n'
+     '    requestAnimationFrame(function() {\n'
+     '      spectrDrivePresetManagerSteps(steps, index, attempts);\n'
+     '    });\n'
+     '  }\n'
+     '  g5.__spectrOpenPresetManager__ = function() {\n'
+     '    if (spectrPresetManagerIsOpen() || spectrPresetManagerDriving) return true;\n'
+     '    const steps = spectrPatternMenuIsOpen()\n'
+     '      ? ["[data-spectr-pattern-manage]"]\n'
+     '      : [\'[data-spectr-menu-root="pattern"] [data-spectr-menu-trigger]\',\n'
+     '         "[data-spectr-pattern-manage]"];\n'
+     '    spectrPresetManagerDriving = true;\n'
+     '    spectrDrivePresetManagerSteps(steps, 0, 0);\n'
+     '    return true;\n'
+     '  };\n'
+     '  if (typeof g5.registerShortcut === "function") {\n'
+     '    g5.registerShortcut(112, SPECTR_MOD_SHIFT | SPECTR_MOD_CMD,\n'
+     '                        "__spectrOpenPresetManager__");\n'
+     '    g5.registerShortcut(112, SPECTR_MOD_SHIFT | SPECTR_MOD_CTRL,\n'
+     '                        "__spectrOpenPresetManager__");\n'
+     '  }\n'
+     '  if (globalThis.document\n'
+     '      && typeof globalThis.document.addEventListener === "function") {\n'
+     '    globalThis.document.addEventListener("keydown", function(event) {\n'
+     '      if (!event) return;\n'
+     '      const key = String(event.key || "");\n'
+     '      if (key !== "p" && key !== "P") return;\n'
+     '      if (!event.shiftKey || event.altKey) return;\n'
+     '      if (!event.metaKey && !event.ctrlKey) return;\n'
+     '      if (typeof event.preventDefault === "function") event.preventDefault();\n'
+     '      g5.__spectrOpenPresetManager__();\n'
+     '    }, true);\n'
+     '  }\n',
+     '__spectrOpenPresetManager__'),
+
+    # Mirror of the document edit above. A baked text measurement that still
+    # describes the shorter string clips the longer one inside its own box --
+    # the SNAPSHOT defect class -- so the text, its basis width, its glyph
+    # count and its layout box all move together. Widths follow the face's
+    # measured pitch (7.1px/glyph at 10.5px + 0.8 letter-spacing) with the
+    # container's 10px side padding, widened for the two symbol glyphs, which
+    # resolve outside the mono face. Verified in pixels, not inferred.
+    ('manage measurement admits the chord it now carries',
+     '"text": "MANAGE\\u2026", "basis": { "width": 69.703125, "resolved_face": "JetBrainsMono-Regular", "resolved_faces": [{ "family_name": "JetBrains Mono", "post_script_name": "JetBrainsMono-Regular", "is_custom_font": true, "glyph_count": 7 }], "requested": { "font_family": \'"JetBrains Mono", ui-monospace, monospace\', "font_size": 10.5, "font_weight": 400, "font_slant": 0, "letter_spacing": 0.8 } }, "boxes": [{ "left": 10, "top": 7, "width": 49.703125, "height": 14, "start": 0, "length": 7 }]',
+     '"text": "MANAGE\\u2026  \\u21e7\\u2318P", "basis": { "width": 130.0, "resolved_face": "JetBrainsMono-Regular", "resolved_faces": [{ "family_name": "JetBrains Mono", "post_script_name": "JetBrainsMono-Regular", "is_custom_font": true, "glyph_count": 12 }], "requested": { "font_family": \'"JetBrains Mono", ui-monospace, monospace\', "font_size": 10.5, "font_weight": 400, "font_slant": 0, "letter_spacing": 0.8 } }, "boxes": [{ "left": 10, "top": 7, "width": 110.0, "height": 14, "start": 0, "length": 12 }]',
+     '"text": "MANAGE\\u2026  \\u21e7\\u2318P"'),
 ]
+
+
+# The Targets row publishes `target_mask`, which the audio path applies to
+# BOTH internal LFOs (include/spectr/modulation.hpp reads it once, and
+# src/spectr.cpp hands the second LFO a copy of the same settings struct).
+# Gating that row on LFO 2 alone hid the only destination control an
+# LFO-1-only patch has, so the gate must be "any LFO on".
+TARGETS_GATE = '(value.enabled || value.lfo2Enabled)'
+TARGETS_HINT_OLD = 'label: "Targets", hint: "Select modulation destinations"'
+TARGETS_HINT_NEW = 'label: "Targets", hint: "Destinations both LFOs modulate"'
 
 
 def escaped(value):
@@ -3451,6 +4803,614 @@ def repair_capture_band_count_binding(document, path):
     return True
 
 
+def augment_modulation_tabs(document):
+    """Add the second internal LFO controls to the shipping materialized UI."""
+    html = document.get('html', '')
+    marker = 'data-spectr-settings-tab'
+    if marker not in html or 'data-spectr-modulation-select' in html:
+        return False
+    needle = 'opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"]] }))\n  )'
+    replacement = 'opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"] ] })) ,\n    React.createElement(SpectrSettingsField, { label: "LFO 2", hint: "Enable second modulation source" }, React.createElement(SpectrSettingsToggle, { value: value.lfo2Enabled || false, onChange: (next) => publish("lfo2Enabled", 4010, next) })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 shape", hint: "Second waveform" }, React.createElement(SpectrSettingsChips, { value: value.lfo2Shape || 0, onChange: (next) => publish("lfo2Shape", 4011, next), opts: [[0,"Sin"],[1,"Tri"],[2,"Square"],[3,"Saw"]] })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 rate", hint: "Beats per cycle" }, React.createElement(SpectrSettingsSlider, { value: value.lfo2Rate || 4, min: 0.25, max: 16, step: 0.25, onChange: (next) => publish("lfo2Rate", 4012, next), fmt: (next) => next.toFixed(2) })),\n    React.createElement(SpectrSettingsField, { label: "LFO 2 depth", hint: "Modulation amount" }, React.createElement(SpectrSettingsSlider, { value: value.lfo2Depth || 0, min: 0, max: 1, step: 0.01, onChange: (next) => publish("lfo2Depth", 4013, next) })),\n    React.createElement(SpectrSettingsField, { label: "Targets", hint: "Destinations both LFOs modulate" }, React.createElement("div", { style: { display: "flex", gap: 5 } }, React.createElement("button", { type: "button", "data-spectr-modulation-select": "all", onClick: () => setValue((current) => ({ ...current, targetSelection: "all" })), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { type: "button", "data-spectr-modulation-select": "none", onClick: () => setValue((current) => ({ ...current, targetSelection: "none" })), style: { padding: "5px 10px" } }, "NONE")))\n  )'
+    if 'LFO 2' in html:
+        needle = 'React.createElement(SpectrSettingsField, { label: "LFO 2 depth", hint: "Modulation amount" }, React.createElement(SpectrSettingsSlider, { value: value.lfo2Depth || 0, min: 0, max: 1, step: 0.01, onChange: (next) => publish("lfo2Depth", 4013, next) }))\n  )'
+        replacement = needle[:-4] + ',\n    React.createElement(SpectrSettingsField, { label: "Targets", hint: "Destinations both LFOs modulate" }, React.createElement("div", { style: { display: "flex", gap: 5 } }, React.createElement("button", { type: "button", "data-spectr-modulation-select": "all", onClick: () => setValue((current) => ({ ...current, targetSelection: "all" })), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { type: "button", "data-spectr-modulation-select": "none", onClick: () => setValue((current) => ({ ...current, targetSelection: "none" })), style: { padding: "5px 10px" } }, "NONE")))\n  )'
+    if needle not in html:
+        raise RuntimeError('modulation target field missing from materialized document')
+    document['html'] = html.replace(needle, replacement, 1)
+    return True
+
+
+def separate_modulation_tab_content(document):
+    html = document.get('html', '')
+    if ('data-spectr-settings-general-tab' in html
+            or 'const [tab, setTab]' not in html
+            or '/* settings tabs */' in html):
+        return False
+    start = '    React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },'
+    if start not in html:
+        raise RuntimeError('modulation group missing from tab surface')
+    html = html.replace(start, '    tab === "modulation" && React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation." },', 1)
+    close = '  )\n  );\n  /* tabs complete */'
+    if close not in html:
+        raise RuntimeError('modulation tab close missing')
+    html = html.replace(close, '  ),\n    tab === "general" && React.createElement("div", { "data-spectr-settings-general-tab": true, style: { padding: "10px 4px", color: "rgba(255,255,255,0.5)", fontFamily: "var(--sans)", fontSize: 10 } }, "General editor settings are shown below."),\n  );\n  /* tabs complete */', 1)
+    document['html'] = html
+    return True
+
+
+def strengthen_modulation_state(document):
+    """Keep both LFOs and target select-all/none state bridge-backed."""
+    html = document.get('html', '')
+    changed = False
+    old_state = 'const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0 });'
+    new_state = 'const [value, setValue] = React.useState({ enabled: false, shape: 0, rate: 4, depth: 0.5, target: 0, lfo2Enabled: false, lfo2Shape: 0, lfo2Rate: 4, lfo2Depth: 0, targetSelection: "all" });'
+    if old_state in html:
+        html = html.replace(old_state, new_state, 1)
+        changed = True
+    old_hydrate = '        target: Number(modulation.target) || 0\n      });'
+    new_hydrate = '        target: Number(modulation.target) || 0,\n        lfo2Enabled: modulation.lfo2_enabled === true,\n        lfo2Shape: Number(modulation.lfo2_shape) || 0,\n        lfo2Rate: Number(modulation.lfo2_beats_per_cycle) || 4,\n        lfo2Depth: Number(modulation.lfo2_depth) || 0,\n        targetSelection: Number.isFinite(Number(modulation.target_mask)) ? (Number(modulation.target_mask) ? "all" : "none") : (Array.isArray(modulation.targets) ? (modulation.targets.length ? "all" : "none") : "all")\n      });'
+    if old_hydrate in html:
+        html = html.replace(old_hydrate, new_hydrate, 1)
+        changed = True
+    old_publish = '  const tabButton = (key, label) => React.createElement'
+    new_publish = '  const publishTargets = (selection) => { const targets = selection === "all" ? ["bank", "snapshot-a", "snapshot-b", "morph"] : []; setValue((current) => ({ ...current, targetSelection: selection })); Promise.resolve(window.pulp.postMessage("modulation_targets_set", { targets }, "spectr-modulation-targets")).catch((error) => console.error("[Spectr] modulation target write failed", error)); };\n  const tabButton = (key, label) => React.createElement'
+    if 'spectr-modulation-targets' not in html:
+        if old_publish not in html:
+            raise RuntimeError('modulation tab button seam missing')
+        html = html.replace(old_publish, new_publish, 1)
+        changed = True
+    if 'publishTargets("all")' not in html:
+        html = html.replace('onClick: () => setValue((current) => ({ ...current, targetSelection: "all" }))', 'onClick: () => publishTargets("all")', 1)
+        changed = True
+    if 'publishTargets("none")' not in html:
+        html = html.replace('onClick: () => setValue((current) => ({ ...current, targetSelection: "none" }))', 'onClick: () => publishTargets("none")', 1)
+        changed = True
+    if 'aria-pressed": value.targetSelection === "all"' not in html:
+        html = html.replace('"data-spectr-modulation-select": "all", onClick:', '"data-spectr-modulation-select": "all", "aria-pressed": value.targetSelection === "all", onClick:', 1)
+        changed = True
+    if 'aria-pressed": value.targetSelection === "none"' not in html:
+        html = html.replace('"data-spectr-modulation-select": "none", onClick:', '"data-spectr-modulation-select": "none", "aria-pressed": value.targetSelection === "none", onClick:', 1)
+        changed = True
+    document['html'] = html
+    return changed
+
+
+def simplify_settings_single_scroll(document):
+    """Ship one stable Settings scroll surface with modulation inline.
+
+    The tabbed variant is not reliable in the native materialized atlas yet.
+    Keep both General and modulation controls in one body for this release,
+    hide the tab rail, and canonicalize duplicate modulation mounts left by
+    earlier idempotent transforms.  This preserves every LFO control while
+    removing the competing tab/overlay topology.
+    """
+    html = document.get('html', '')
+    # Repair the intermediate shape produced by an interrupted prior pass.
+    html = re.sub(
+        r'  \),\n  \);\n  /\* tabs complete \*/\n\}\nReact\.createElement\(SpectrModulationSettings, null\),\s*',
+        '  );\n}\n', html, count=1)
+    html = html.replace('"NONE")])))\n  );\n}\nfunction SettingsModal',
+                        '"NONE")]))))\n  );\n}\nfunction SettingsModal', 1)
+    start = html.find('function SpectrModulationSettings() {')
+    end = html.find('\nfunction SettingsModal(', start)
+    if start < 0 or end <= start:
+        return False
+    segment = html[start:end]
+    original = segment
+    # The single-scroll release has no tab state or tab event handlers.  Strip
+    # the legacy tab helper/effect as well as the hidden rail so the emitted
+    # component cannot reference stale ``tab``/``setTab`` bindings.
+    segment = re.sub(r'\n  /\* settings tabs \*/', '', segment, count=1)
+    segment = re.sub(r'\n  React\.useEffect\(\(\) => \{ const style = document\.createElement\("style"\);.*?return \(\) => style\.remove\(\); \}, \[\]\);', '', segment, count=1, flags=re.S)
+    segment = re.sub(r'\n  const tabButton = \(key, label\) => .*?(?=\n  return )', '', segment, count=1, flags=re.S)
+    segment = segment.replace('  const [tab, setTab] = React.useState("general");\n', '')
+    segment = segment.replace('  const [tab, setTab] = React.useState("modulation");\n', '')
+    segment = segment.replace('    tab === "modulation" && React.createElement(SpectrSettingsGroup,',
+                              '    React.createElement(SpectrSettingsGroup,')
+    segment = segment.replace('    tab === "modulation" && ', '')
+    segment = segment.replace('    tab === "general" && React.createElement("div", { "data-spectr-settings-general-tab": true, style: { padding: "10px 4px", color: "rgba(255,255,255,0.5)", fontFamily: "var(--sans)", fontSize: 10 } }, "General editor settings are shown below."),\n', '')
+    # Remove the tab rail while leaving its containing surface harmless.
+    # The rail's TABLIST is what the single-scroll release drops -- not the
+    # surface it sits in, which also contains the MODULATION group. Hiding the
+    # container hid the modulation controls themselves: they stayed mounted, so
+    # every static source assertion kept passing while the user could not reach
+    # a single LFO or target control. Neutralise the rail's positioning instead,
+    # and repair an artifact that already carries the hidden form.
+    segment = segment.replace('style: { position: "absolute", top: 76, left: 26, right: 26, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
+                              'style: {}', 1)
+    segment = segment.replace('"data-spectr-settings-tabs": true, style: { display: "none" }',
+                              '"data-spectr-settings-tabs": true, style: {}', 1)
+    segment = segment.replace('    React.createElement("div", { role: "tablist", style: { display: "flex", gap: 5, marginBottom: 14 } }, tabButton("general", "GENERAL"), tabButton("modulation", "MODULATION")),\n', '')
+    # Repair a document materialized by the older recipe, which gated the
+    # shared Targets mask on LFO 2 alone.
+    for prefix in ('', '/* @__PURE__ */ '):
+        stale = ('    value.lfo2Enabled && ' + prefix
+                 + 'React.createElement(SpectrSettingsField, { label: "Targets"')
+        segment = segment.replace(
+            stale,
+            ('    ' + TARGETS_GATE + ' && ' + prefix
+             + 'React.createElement(SpectrSettingsField, { label: "Targets"'), 1)
+    # The hint has to name the scope the mask actually has, now that the row is
+    # reachable with only LFO 1 on.
+    segment = segment.replace(TARGETS_HINT_OLD, TARGETS_HINT_NEW)
+    # Each LFO toggle is the disclosure control: its per-LFO options disappear
+    # while that LFO is off and re-expand immediately when it is enabled.
+    # Target belongs to LFO 1's disclosure. Omitting it left the row on screen
+    # while its LFO was off, which reads as a control that does nothing and
+    # gives no hint that the toggle above is what enables it.
+    #
+    # Targets is NOT a per-LFO row. It publishes `target_mask`, which
+    # apply_internal_modulation reads once for BOTH LFOs (spectr.cpp copies the
+    # whole settings struct, mask included, into the second pass), so gating it
+    # on LFO 2 alone left an LFO-1-only patch with no way to choose what LFO 1
+    # modulates. Show it whenever ANY LFO is on; hide it only when neither is.
+    for label, state in [
+            ('Shape', 'value.enabled'), ('Rate', 'value.enabled'),
+            ('Depth', 'value.enabled'), ('Target', 'value.enabled'),
+            ('LFO 2 shape', 'value.lfo2Enabled'),
+            ('LFO 2 rate', 'value.lfo2Enabled'),
+            ('LFO 2 depth', 'value.lfo2Enabled'),
+            ('Targets', TARGETS_GATE)]:
+        segment = segment.replace(
+            f'    React.createElement(SpectrSettingsField, {{ label: "{label}"',
+            f'    {state} && React.createElement(SpectrSettingsField, {{ label: "{label}"', 1)
+        segment = segment.replace(
+            f'    /* @__PURE__ */ React.createElement(SpectrSettingsField, {{ label: "{label}"',
+            f'    {state} && /* @__PURE__ */ React.createElement(SpectrSettingsField, {{ label: "{label}"', 1)
+    if segment != original:
+        html = html[:start] + segment + html[end:]
+    # Canonicalize the SettingsModal call site to exactly one inline LFO group.
+    calls = re.compile(r'(?:/\* @__PURE__ \*/ )?React\.createElement\(SpectrModulationSettings, null\),\s*')
+    html = calls.sub('', html)
+    body_anchor = 'settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null)'
+    if body_anchor in html and 'React.createElement(SpectrModulationSettings, null), ' not in html:
+        html = html.replace(body_anchor,
+                            'React.createElement(SpectrModulationSettings, null), ' + body_anchor, 1)
+    changed = html != document.get('html', '')
+    document['html'] = html
+    return changed
+
+
+def add_modulation_target_toggles(document):
+    """Expose independent Bank/A/B/Morph target toggles without losing masks."""
+    html = document.get('html', '')
+    changed = False
+    old_hydrate = 'targetSelection: Number.isFinite(Number(modulation.target_mask)) ? (Number(modulation.target_mask) ? "all" : "none") : (Array.isArray(modulation.targets) ? (modulation.targets.length ? "all" : "none") : "all")'
+    new_hydrate = 'targetMask: Number.isFinite(Number(modulation.target_mask)) ? (Number(modulation.target_mask) & 15) : (Array.isArray(modulation.targets) ? modulation.targets.reduce((mask, target) => mask | ({ bank: 1, "snapshot-a": 2, "snapshot-b": 4, morph: 8 }[target] || 0), 0) : 15),\n        targetSelection: "all"'
+    if old_hydrate in html:
+        html = html.replace(old_hydrate, new_hydrate, 1)
+        changed = True
+    old_publish = 'const publishTargets = (selection) => { const targets = selection === "all" ? ["bank", "snapshot-a", "snapshot-b", "morph"] : []; setValue((current) => ({ ...current, targetSelection: selection })); Promise.resolve(window.pulp.postMessage("modulation_targets_set", { targets }, "spectr-modulation-targets")).catch((error) => console.error("[Spectr] modulation target write failed", error)); };'
+    new_publish = 'const publishTargetMask = (mask) => { const targetNames = ["bank", "snapshot-a", "snapshot-b", "morph"]; const targets = targetNames.filter((_, index) => (mask & (1 << index)) !== 0); setValue((current) => ({ ...current, targetMask: mask, targetSelection: mask === 15 ? "all" : mask === 0 ? "none" : "custom" })); Promise.resolve(window.pulp.postMessage("modulation_targets_set", { targets }, "spectr-modulation-targets")).catch((error) => console.error("[Spectr] modulation target write failed", error)); };\n  const publishTargets = (selection) => publishTargetMask(selection === "all" ? 15 : 0);'
+    if old_publish in html and 'publishTargetMask' not in html:
+        html = html.replace(old_publish, new_publish, 1)
+        changed = True
+    old_buttons = 'React.createElement("div", { style: { display: "flex", gap: 5 } }, React.createElement("button", { type: "button", "data-spectr-modulation-select": "all", "aria-pressed": value.targetSelection === "all", onClick: () => publishTargets("all"), style: { padding: "5px 10px" } }, "ALL"), React.createElement("button", { type: "button", "data-spectr-modulation-select": "none", "aria-pressed": value.targetSelection === "none", onClick: () => publishTargets("none"), style: { padding: "5px 10px" } }, "NONE"))'
+    new_buttons = 'React.createElement("div", { style: { display: "flex", gap: 5, flexWrap: "wrap" } }, [ [1, "bank", "BANK"], [2, "snapshot-a", "A"], [4, "snapshot-b", "B"], [8, "morph", "MORPH"] ].map(([bit, key, label]) => React.createElement("button", { key, type: "button", "data-spectr-modulation-target": key, "aria-pressed": (value.targetMask & bit) !== 0, onClick: () => publishTargetMask((value.targetMask || 0) ^ bit), style: { background: (value.targetMask & bit) !== 0 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: (value.targetMask & bit) !== 0 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + ((value.targetMask & bit) !== 0 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 } }, label)).concat([React.createElement("button", { key: "all", type: "button", "data-spectr-modulation-select": "all", "aria-pressed": value.targetMask === 15, onClick: () => publishTargets("all"), style: { background: value.targetMask === 15 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: value.targetMask === 15 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + (value.targetMask === 15 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 } }, "ALL"), React.createElement("button", { key: "none", type: "button", "data-spectr-modulation-select": "none", "aria-pressed": value.targetMask === 0, onClick: () => publishTargets("none"), style: { background: value.targetMask === 0 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: value.targetMask === 0 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + (value.targetMask === 0 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 } }, "NONE")]))'
+    if old_buttons in html:
+        html = html.replace(old_buttons, new_buttons, 1)
+        changed = True
+    document['html'] = html
+    return changed
+
+
+
+def style_modulation_target_chips(document):
+    """Give the Targets row the same chip skin every other segmented control uses.
+
+    The row was emitted with only `padding`, so BANK/A/B/MORPH/ALL/NONE painted as
+    bare text: `aria-pressed` flipped but nothing visual was bound to it, which made
+    every target-selection state render as an identical image.
+    """
+    html = document.get('html', '')
+    changed = False
+    for old, new in [('"aria-pressed": (value.targetMask & bit) !== 0, onClick: () => publishTargetMask((value.targetMask || 0) ^ bit), style: { padding: "5px 10px" }', '"aria-pressed": (value.targetMask & bit) !== 0, onClick: () => publishTargetMask((value.targetMask || 0) ^ bit), style: { background: (value.targetMask & bit) !== 0 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: (value.targetMask & bit) !== 0 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + ((value.targetMask & bit) !== 0 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 }'), ('"data-spectr-modulation-select": "all", "aria-pressed": value.targetMask === 15, onClick: () => publishTargets("all"), style: { padding: "5px 10px" }', '"data-spectr-modulation-select": "all", "aria-pressed": value.targetMask === 15, onClick: () => publishTargets("all"), style: { background: value.targetMask === 15 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: value.targetMask === 15 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + (value.targetMask === 15 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 }'), ('"data-spectr-modulation-select": "none", "aria-pressed": value.targetMask === 0, onClick: () => publishTargets("none"), style: { padding: "5px 10px" }', '"data-spectr-modulation-select": "none", "aria-pressed": value.targetMask === 0, onClick: () => publishTargets("none"), style: { background: value.targetMask === 0 ? "rgba(120,180,255,0.18)" : "rgba(255,255,255,0.03)", color: value.targetMask === 0 ? "#fff" : "rgba(255,255,255,0.7)", border: "1px solid " + (value.targetMask === 0 ? "rgba(180,210,255,0.4)" : "rgba(255,255,255,0.1)"), padding: "5px 10px", fontSize: 10, letterSpacing: 0.8, fontFamily: "var(--mono)", cursor: "pointer", borderRadius: 3 }')]:
+        if old in html:
+            html = html.replace(old, new)
+            changed = True
+    document['html'] = html
+    return changed
+
+def harden_modulation_bridge(document):
+    """Prevent an early AUv2 bridge race from blanking the Settings root."""
+    html = document.get('html', '')
+    changed = False
+    marker = '  const [tab, setTab] = React.useState("general");\n'
+    if marker in html and 'const spectrModulationBridge =' not in html:
+        html = html.replace(marker, marker +
+            '  const spectrModulationBridge = typeof window !== "undefined" && window.pulp\n'
+            '    && typeof window.pulp.postMessage === "function" ? window.pulp : null;\n', 1)
+        changed = True
+    effect = ('  React.useEffect(() => {\n'
+              '    let live = true;\n'
+              '    Promise.resolve(window.pulp.postMessage("processing_state_get", {}, "spectr-modulation-hydrate"))')
+    guarded_effect = ('  React.useEffect(() => {\n'
+                      '    let live = true;\n'
+                      '    if (!spectrModulationBridge) return () => { live = false; };\n'
+                      '    Promise.resolve(window.pulp.postMessage("processing_state_get", {}, "spectr-modulation-hydrate"))')
+    if effect in html:
+        html = html.replace(effect, guarded_effect, 1)
+        html = html.replace('  }, []);\n  const publish = (key, id, next) => {',
+                            '  }, [spectrModulationBridge]);\n  const publish = (key, id, next) => {', 1)
+        changed = True
+    publish = ('  const publish = (key, id, next) => {\n'
+               '    setValue((current) => ({ ...current, [key]: next }));\n'
+               '    Promise.resolve(window.pulp.postMessage("param_set",')
+    guarded_publish = ('  const publish = (key, id, next) => {\n'
+                       '    setValue((current) => ({ ...current, [key]: next }));\n'
+                       '    if (!spectrModulationBridge) return;\n'
+                       '    Promise.resolve(window.pulp.postMessage("param_set",')
+    if publish in html:
+        html = html.replace(publish, guarded_publish, 1)
+        changed = True
+    target_call = 'Promise.resolve(window.pulp.postMessage("modulation_targets_set", { targets }, "spectr-modulation-targets"))'
+    if target_call in html and 'if (!spectrModulationBridge) return; Promise.resolve(window.pulp.postMessage("modulation_targets_set"' not in html:
+        html = html.replace(target_call, 'if (!spectrModulationBridge) return; ' + target_call, 1)
+        changed = True
+    document['html'] = html
+    return changed
+
+
+def harden_settings_overlay(document):
+    """Mark the Settings scrim as the native overlay owner as well as its panel."""
+    html = document.get('html', '')
+    old = '"aria-label": "Settings", onClick: (event) => { if (event.target === event.currentTarget) onClose(); }, style:'
+    new = '"aria-label": "Settings", overlay: true, onDismiss: onClose, onClick: (event) => { if (event.target === event.currentTarget) onClose(); }, style:'
+    updated = html
+    changed = False
+    if old in updated:
+        updated = updated.replace(old, new, 1)
+        changed = True
+    # Keep the panel marked as an overlay too: the native ScrollView upgrade
+    # preserves this stable panel identity and reclaims it after replacement.
+    nested_old = '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", overlay: true, onDismiss: onClose,'
+    if nested_old in updated:
+        # Already present in the source/materialized surface.
+        pass
+    elif '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", onClick:' in updated:
+        updated = updated.replace(
+            '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", onClick:',
+            '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", overlay: true, onDismiss: onClose, onClick:', 1)
+        changed = True
+    document['html'] = updated
+    return changed
+
+
+def adjust_settings_panel_extent(document):
+    html = document.get('html', '')
+    if 'maxHeight: "98vh"' in html:
+        return False
+    if 'maxHeight: "92vh"' in html:
+        document['html'] = html.replace('maxHeight: "92vh"', 'maxHeight: "98vh"', 1)
+        return True
+    needle = 'width: 520,\n    maxHeight: "90vh",\n    overflowY: "auto"'
+    if needle not in html:
+        raise RuntimeError('settings panel extent missing')
+    document['html'] = html.replace(needle, 'width: 520,\n    maxHeight: "98vh",\n    overflowY: "auto"', 1)
+    return True
+
+
+def stabilize_settings_mount(document):
+    """Keep the tabbed Settings subtree in the initial native materialization."""
+    html = document.get('html', '')
+    original = html
+    html = html.replace(
+        'function SettingsModal({ settings, setSettings, onClose }) {',
+        'function SettingsModal({ settings, setSettings, onClose, open = true }) {', 1)
+    # Keep the Settings portal conditional so its hidden subtree cannot alter
+    # the captured home sibling paths or canvas event routing. Native scroll
+    # upgrade runs only after the portal is actually opened.
+    html = html.replace(
+        '      setSettings,\n      onClose: () => setSettingsOpen(false)',
+        '      setSettings,\n      open: settingsOpen,\n      onClose: () => { const panel = document.querySelector("[data-spectr-settings-panel]"); if (panel) panel.setAttribute("data-spectr-settings-live", "false"); setSettingsOpen(false); setTimeout(() => { if (typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__(); }, 0); }', 1)
+    html = html.replace(
+        '"aria-label": "Settings", overlay: true, onDismiss: onClose, onClick: (event) => { if (event.target === event.currentTarget) onClose(); }, style: {\n    position: "absolute",',
+        '"aria-label": "Settings", overlay: true, onDismiss: onClose, onClick: (event) => { if (event.target === event.currentTarget) onClose(); }, style: {\n    display: open ? "flex" : "none",\n    position: "absolute",', 1)
+    # The authored scrim already has a later `display: "flex"` alongside its
+    # alignment properties.  In a JS object the later key wins, which made an
+    # always-mounted closed Settings modal remain visible and continue to own
+    # the native state-atlas overlay.  Keep exactly one display declaration in
+    # this scrim and make it reflect the live `open` prop.
+    settings_marker = '"aria-label": "Settings", overlay: true, onDismiss: onClose'
+    settings_start = html.find(settings_marker)
+    if settings_start >= 0:
+        settings_style_start = html.find('style: {', settings_start)
+        settings_style_end = html.find('} }, /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-panel"', settings_style_start)
+        if settings_style_start >= 0 and settings_style_end >= 0:
+            style_chunk = html[settings_style_start:settings_style_end]
+            style_chunk = style_chunk.replace('    display: "flex",\n', '', 1)
+            if 'display: open ? "flex" : "none"' not in style_chunk:
+                style_chunk = style_chunk.replace('style: {\n', 'style: {\n    display: open ? "flex" : "none",\n', 1)
+            html = html[:settings_style_start] + style_chunk + html[settings_style_end:]
+    html = html.replace('document.head.appendChild(style);',
+                        'if (document.head) document.head.appendChild(style);', 1)
+    html = html.replace(
+        '    panel.setAttribute("data-spectr-settings-live", "true");\n    return () => panel.setAttribute("data-spectr-settings-live", "false");\n  }, []);',
+        '    panel.setAttribute("data-spectr-settings-live", open ? "true" : "false");\n    if (open && typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__();\n  }, [open]);', 1)
+    html = html.replace('    if (typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__();\n', '', 1)
+    # Remove the short-lived null-return experiment. The mounted subtree is
+    # required for native Settings discovery; visibility is controlled solely
+    # by the scrim's `open` style and lifecycle marker.
+    settings_function = html.find('function SettingsModal({ settings, setSettings, onClose, open')
+    if settings_function >= 0:
+        settings_return_guard = html.find('  if (!open) return null;\n', settings_function)
+        settings_return = html.find('  return /* @__PURE__ */ React.createElement("div", { "data-spectr-overlay": "true", role: "dialog",', settings_function)
+        if settings_return_guard >= 0 and settings_return_guard < settings_return:
+            html = html[:settings_return_guard] + html[settings_return_guard + len('  if (!open) return null;\n'):]
+    html = html.replace('"data-spectr-settings-live": "true", "data-spectr-overlay": "true"',
+                        '"data-spectr-settings-live": open ? "true" : "false", "data-spectr-overlay": "true"', 1)
+    if html == original:
+        return False
+    document['html'] = html
+    return True
+
+
+def polish_settings_tab_controls(document):
+    """Use fixed ink tabs with left/right/Home/End keyboard navigation."""
+    html = document.get('html', '')
+    old = 'onClick: () => setTab(key), style: { flex: 1, height: 28, border: "1px solid " + (tab === key ? "rgba(180,210,255,0.45)" : "rgba(255,255,255,0.1)"), borderRadius: 3, background: tab === key ? "rgba(120,180,255,0.16)" : "rgba(255,255,255,0.03)", color: tab === key ? "#fff" : "rgba(255,255,255,0.55)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 1, cursor: "pointer" }'
+    new = 'onClick: () => setTab(key), onKeyDown: (event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" || event.key === "ArrowLeft" && key === "modulation" ? "general" : "modulation"; setTab(next); (document.querySelector("[data-spectr-settings-tab=\\\"" + next + "\\\"]") || {}).focus(); }, style: { flex: 1, height: 28, border: "none", borderBottom: "2px solid " + (tab === key ? "rgba(120,210,255,0.95)" : "rgba(255,255,255,0.12)"), borderRadius: 0, background: "transparent", color: tab === key ? "#fff" : "rgba(255,255,255,0.55)", fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: 1, cursor: "pointer", transition: "color 120ms ease, border-color 120ms ease" }'
+    if old not in html:
+        return False
+    document['html'] = html.replace(old, new, 1)
+    return True
+
+
+def make_settings_tabs_content_aware(document):
+    """Wire the tab selection to visibility of the existing Settings groups."""
+    html = document.get('html', '')
+    changed = False
+    # Materialized Settings groups are emitted through SpectrSettingsGroup;
+    # tag every General group explicitly so the tab CSS owns visibility.
+    for title in ("APPEARANCE", "STRUCTURE", "MOTION"):
+        old_group = f'React.createElement(SpectrSettingsGroup, {{ title: "{title}"'
+        new_group = f'React.createElement(SpectrSettingsGroup, {{ marker: "general", title: "{title}"'
+        if old_group in html:
+            html = html.replace(old_group, new_group, 1)
+            changed = True
+    old_mod_group = 'React.createElement("div", { "data-spectr-settings-group": marker, style: { marginBottom: 18 } },'
+    new_mod_group = 'React.createElement("div", { "data-spectr-settings-group": marker, "data-spectr-settings-modulation": marker === "modulation" ? true : void 0, style: { marginBottom: 18 } },'
+    if old_mod_group in html:
+        html = html.replace(old_mod_group, new_mod_group, 1)
+        changed = True
+    old_tab = 'onClick: () => setTab(key),'
+    new_tab = 'onClick: () => { setTab(key); document.querySelector("[data-spectr-settings-panel]")?.setAttribute("data-spectr-settings-tab", key); },'
+    if old_tab in html and 'setAttribute("data-spectr-settings-tab", key)' not in html:
+        html = html.replace(old_tab, new_tab, 1)
+        changed = True
+    old_state = 'const [tab, setTab] = React.useState("modulation");'
+    new_state = 'const [tab, setTab] = React.useState("general");\n  React.useEffect(() => { const style = document.createElement("style"); style.textContent = "[data-spectr-settings-panel][data-spectr-settings-tab=\\\"modulation\\\"] [data-spectr-settings-general] { display: none !important; } [data-spectr-settings-panel][data-spectr-settings-tab=\\\"general\\\"] [data-spectr-settings-modulation] { display: none !important; }"; if (document.head) document.head.appendChild(style); return () => style.remove(); }, []);'
+    if old_state in html and 'data-spectr-settings-general]' not in html:
+        html = html.replace(old_state, new_state, 1)
+        changed = True
+    old_panel = '"data-spectr-settings-panel": true, "data-spectr-overlay": "true",'
+    new_panel = '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true",'
+    if old_panel in html and '"data-spectr-settings-tab": "general"' not in html:
+        html = html.replace(old_panel, new_panel, 1)
+        changed = True
+    document['html'] = html
+    return changed
+
+
+def enforce_settings_fixed_shell(document):
+    """Keep the Settings header/tabs fixed and scroll only the body.
+
+    Native Pulp does not implement CSS ``position: sticky``.  The authored
+    tree therefore has to express the scroll boundary explicitly: the panel
+    is a column, the header and tabs are non-shrinking siblings, and one body
+    child owns overflow.  This is deliberately a structural transform rather
+    than a runtime DOM repair so the materialized state atlas sees the same
+    topology on first mount.
+    """
+    html = document.get('html', '')
+    original = html
+
+    # The panel itself must not scroll; its body child does.
+    old_panel = 'width: 520,\n    maxHeight: "98vh",\n    overflowY: "auto",'
+    new_panel = ('width: 520,\n    height: "min(92vh, 1500px)",\n'
+                 '    maxHeight: "92vh",\n    overflow: "hidden",\n'
+                 '    display: "flex",\n    flexDirection: "column",')
+    if old_panel in html:
+        html = html.replace(old_panel, new_panel, 1)
+
+    # Sticky is not a supported native layout primitive.  Make these rows
+    # ordinary fixed siblings in the column instead.
+    html = html.replace(
+        '"data-spectr-settings-header": true, style: { position: "sticky", top: 0, zIndex: 3,',
+        '"data-spectr-settings-header": true, style: { position: "relative", flexShrink: 0, zIndex: 3,',
+        1)
+    html = html.replace(
+        '"data-spectr-settings-tabs": true, style: { position: "sticky", top: 76, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
+        '"data-spectr-settings-tabs": true, style: { position: "absolute", top: 76, left: 26, right: 26, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
+        1)
+    html = html.replace(
+        '"data-spectr-settings-tabs": true, style: { position: "relative", flexShrink: 0, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
+        '"data-spectr-settings-tabs": true, style: { position: "absolute", top: 76, left: 26, right: 26, zIndex: 2, padding: "8px 0", background: "rgba(14,18,25,1)" }',
+        1)
+    # The 50px body offset exists only to clear an absolutely-positioned tab
+    # rail.  simplify_settings_single_scroll may already have neutralised that
+    # rail, in which case the offset is dead space above the first group.
+    # Decide once, here, after the conversions above, and use the same decision
+    # for the body wrapper inserted below.
+    tabs_rail_absolute = (
+        '"data-spectr-settings-tabs": true, style: { position: "absolute", top: 76,'
+        in html)
+    body_style = (
+        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingTop: 50, paddingRight: 4 }'
+        if tabs_rail_absolute else
+        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 }')
+    stale_style = (
+        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 }'
+        if tabs_rail_absolute else
+        'style: { flex: 1, minHeight: 0, overflowY: "auto", paddingTop: 50, paddingRight: 4 }')
+    html = html.replace(stale_style, body_style, 1)
+
+    # Wrap every settings group after the header in one dedicated scroll
+    # owner.  The exact markers are emitted by the materializer and scoped to
+    # SettingsModal, so this remains idempotent and cannot touch other panels.
+    if '"data-spectr-settings-body": true' not in html:
+        modal_start = html.find('function SettingsModal({ settings')
+        body_start = '/* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "general"'
+        start = html.find(body_start, modal_start)
+        if modal_start < 0 or start < 0:
+            raise RuntimeError('settings body insertion point missing')
+        insertion = ('/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-body": true, '
+                     + body_style + ' }, '
+                     '/* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "general"')
+        html = html[:start] + insertion + html[start + len(body_start):]
+        body_end = ('settings.showBuildInfo !== false && /* @__PURE__ */ '
+                    'React.createElement(SpectrBuildInfo, null)));')
+        if html.count(body_end) != 1:
+            raise RuntimeError('settings body closing point missing or ambiguous')
+        html = html.replace(
+            body_end,
+            'settings.showBuildInfo !== false && /* @__PURE__ */ React.createElement(SpectrBuildInfo, null))));',
+            1)
+
+    # Modulation owns the tab rail and must be a sibling of the scrolling body.
+    # Earlier materialization placed it inside the body, which made the tabs
+    # scroll away and caused the frozen atlas to retain the wrong subtree.
+    modulation = '/* @__PURE__ */ React.createElement(SpectrModulationSettings, null)'
+    if modulation in html:
+        body = '/* @__PURE__ */ React.createElement("div", { "data-spectr-settings-body": true,'
+        body_at = html.find(body)
+        mod_at = html.find(modulation, body_at)
+        if body_at >= 0 and mod_at >= 0:
+            remove_at = mod_at
+            if html[max(0, mod_at - 2):mod_at] == ', ':
+                remove_at = mod_at - 2
+            html = html[:remove_at] + html[mod_at + len(modulation):]
+            # Preserve the sibling separator before the body expression.
+            html = html[:body_at] + modulation + ', ' + html[body_at:]
+
+    document['html'] = html
+    return html != original
+
+
+def add_readable_typography(document):
+    """Scale compact labels up while constraining them to their control rails."""
+    html = document.get('html', '')
+    if 'spectr-readable-type' in html:
+        return False
+    style = '<style id="spectr-readable-type">button,[role="button"],[role="tab"]{font-size:clamp(11px,.9vw,14px)!important;line-height:1.15;white-space:nowrap}button span,[role="button"] span,[role="tab"] span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-spectr-settings-group]>div:first-child{font-size:clamp(10px,.82vw,13px)!important}</style>'
+    marker = '</head>'
+    if marker not in html:
+        return False
+    document['html'] = html.replace(marker, style + marker, 1)
+    return True
+
+
+# The text-size module, character for character as resources/editor.html
+# defines it. Nothing here may drift from the browser source: the check in
+# add_text_size_setting below re-reads that file and refuses to run if it has.
+MODULE_TEXT = (
+    '// ---- text size ----\n'
+    "// Spectr's type sizes are ~95 scattered fontSize literals. A CSS zoom or a\n"
+    '// root transform scales a browser preview and reaches nothing else: the native\n'
+    '// render lowers every one of those literals through the WidgetBridge\n'
+    '// setFontSize funnel into Yoga, and a transform never touches that funnel.\n'
+    "// The bridge's own scale knob sits in front of it and is the single lever that\n"
+    '// multiplies all of them at once.\n'
+    'const SPECTR_TEXT_SCALES = { small: 1, medium: 1.2, large: 1.45 };\n'
+    'function spectrTextSize(settings) {\n'
+    '  const size = settings && settings.textSize;\n'
+    "  return Object.prototype.hasOwnProperty.call(SPECTR_TEXT_SCALES, size) ? size : 'medium';\n"
+    '}\n'
+    'function spectrApplyTextScale(size) {\n'
+    "  const key = Object.prototype.hasOwnProperty.call(SPECTR_TEXT_SCALES, size) ? size : 'medium';\n"
+    '  const scale = SPECTR_TEXT_SCALES[key];\n'
+    "  const host = typeof globalThis !== 'undefined' ? globalThis : window;\n"
+    '  let applied = false;\n'
+    '  // ================== THE NATIVE TEXT-SCALE CALL SITE ==================\n'
+    '  // WidgetBridge::set_imported_text_scale(float) -- default 1.0, clamped to\n'
+    '  // [0.5, 4.0] -- reaches an imported document as this bridge global, the same\n'
+    '  // shape as every other typeof-guarded bridge global probe the materialized\n'
+    '  // runtime makes. It is Pulp PR #8088 and is NOT in v0.834.0, the official\n'
+    '  // release Spectr pins, and Spectr never pins an unofficial SDK build. So this\n'
+    '  // stays a capability probe rather than an assumed call: the day a release\n'
+    '  // exposes the knob, this one line begins scaling every native label and\n'
+    '  // nothing else in Spectr changes. Until then the selection is recorded and\n'
+    '  // inert, which is the honest state -- no CSS stand-in is installed to imitate\n'
+    '  // a native relayout that did not happen.\n'
+    "  if (typeof host.setImportedTextScale === 'function') {\n"
+    '    host.setImportedTextScale(scale);\n'
+    '    applied = true;\n'
+    '  }\n'
+    '  // ================ END THE NATIVE TEXT-SCALE CALL SITE ================\n'
+    '  host.__spectrTextScale = { size: key, scale, applied };\n'
+    '  return scale;\n'
+    '}\n')
+
+
+def add_text_size_setting(document):
+    """Wire the text scale to its one native call site at the medium default.
+
+    The scale module, the mount-time effect, and the "medium" shipped default
+    are installed here; Settings exposes no size chooser, so this also strips
+    the TYPOGRAPHY group wherever a capture or an earlier recipe carries one.
+    """
+    html = document.get('html', '')
+    original = html
+
+    module = MODULE_TEXT
+    # A mechanical image is only mechanical while it still matches. Prove it
+    # against the browser source rather than asserting it in a comment.
+    source = open(SOURCE_PATH, encoding='utf-8').read()
+    if module not in source:
+        sys.exit('FAIL text size: MODULE_TEXT has drifted from ' + SOURCE_PATH)
+    anchor = '}\nfunction SpectrSettingsField({ label, hint, children }) {'
+    if 'function spectrApplyTextScale(' not in html:
+        if html.count(anchor) != 1:
+            raise RuntimeError('text-size module insertion point missing')
+        html = html.replace(
+            anchor,
+            '}\n' + module + 'function SpectrSettingsField({ label, hint, children }) {',
+            1)
+
+    effect_anchor = ('  React.useLayoutEffect(() => {\n'
+                     '    const toggle = document.getElementById("spectr-status-info-toggle");')
+    effect = ('  // Every text-size change -- including the mount-time default -- reaches the\n'
+              '  // native knob through this one effect. Settings is always mounted in the\n'
+              '  // native runtime, so the default applies at startup rather than on first open.\n'
+              '  React.useEffect(() => { spectrApplyTextScale(settings.textSize); }, [settings.textSize]);\n')
+    if 'spectrApplyTextScale(settings.textSize)' not in html:
+        if html.count(effect_anchor) != 1:
+            raise RuntimeError('text-size effect insertion point missing')
+        html = html.replace(effect_anchor, effect + effect_anchor, 1)
+
+    # Spectr renders text at the medium scale for everyone, so Settings exposes
+    # no size chooser and the TYPOGRAPHY group is removed wherever a capture or
+    # an earlier recipe left one. The scale table, spectrTextSize, and the
+    # spectrApplyTextScale bridge call site above stay wired to the medium
+    # default, so a host that gains the native text-scale knob re-enables the
+    # control by restoring this group and nothing else.
+    typography = (
+        '/* @__PURE__ */ React.createElement(SpectrSettingsGroup, '
+        '{ marker: "typography", title: "TYPOGRAPHY", '
+        'subtitle: "How large Spectr text renders." }, '
+        '/* @__PURE__ */ React.createElement(SpectrSettingsField, '
+        '{ label: "Text size", hint: "Scales every label, chip, and readout" }, '
+        '/* @__PURE__ */ React.createElement(SpectrSettingsChips, '
+        '{ value: spectrTextSize(settings), onChange: (v) => persist({ textSize: v }), '
+        'opts: [["small", "Small"], ["medium", "Medium"], ["large", "Large"]] }))), ')
+    if typography in html:
+        html = html.replace(typography, '', 1)
+    # A group that survives the removal image is a group this recipe no longer
+    # recognises; fail loudly rather than ship a chooser that does nothing.
+    if 'marker: "typography"' in html:
+        sys.exit('FAIL text size: an unrecognised TYPOGRAPHY group survives')
+
+    defaults_anchor = '  "motionMode": "live",'
+    if '"textSize"' not in html:
+        if html.count(defaults_anchor) != 1:
+            raise RuntimeError('text-size default insertion point missing')
+        html = html.replace(defaults_anchor,
+                            defaults_anchor + '\n  "textSize": "medium",', 1)
+
+    document['html'] = html
+    return html != original
+
+
 def check_script_blocks(label, blocks):
     """Parse JavaScript blocks with the same Node parser as the browser oracle."""
     import subprocess
@@ -3509,8 +5469,21 @@ def main():
         label, old, new = edit[:3]
         if old in new:
             sys.exit(f'FAIL {label}: patch point survives its own replacement')
+    unknown = sorted(set(SUPERSEDED_EDITS) - {edit[0] for edit in EDITS})
+    if unknown:
+        sys.exit('FAIL SUPERSEDED_EDITS names labels that are not edits: '
+                 + ', '.join(unknown))
+    unknown = sorted(set(POST_CHECK_EXEMPT_EDITS) - {edit[0] for edit in EDITS})
+    if unknown:
+        sys.exit('FAIL POST_CHECK_EXEMPT_EDITS names labels that are not '
+                 'edits: ' + ', '.join(unknown))
 
     raw = open(PATH, encoding='utf-8').read()
+    # The capture pipeline and this script serialize with different JSON
+    # separators. Every literal below is authored against the compact form, so
+    # normalize once at load: without it an edit that is already present reads
+    # as `occurs 0 times` and aborts the run purely on whitespace.
+    raw = json.dumps(json.loads(raw), ensure_ascii=False, separators=(',', ':'))
     changed = False
     document = json.loads(raw)
     if repair_duplicate_settings_helpers(document):
@@ -3518,6 +5491,11 @@ def main():
         changed = True
         print('applied          collapsed duplicate settings helpers')
     post_checks = []
+    applied_edits = []
+    already_applied_edits = []
+    allowlisted_no_ops = []
+    missing_edits = []
+    missing_post_checks = []
     later_patch_points = {edit[1] for edit in EDITS}
     for edit in EDITS:
         label, old, new = edit[:3]
@@ -3526,12 +5504,14 @@ def main():
         sentinel = SUPERSEDED_SENTINELS.get(label)
         sentinel_e = escaped(sentinel) if sentinel else None
         if sentinel_e and sentinel_e in raw:
+            allowlisted_no_ops.append(label)
             print('superseded     ', label)
             continue
         # One JSX patch point can transpile into repeated identical literals
         # (for example the two preset footer buttons). Once the old image is
         # gone, any emitted replacement count proves this edit was applied.
         if raw.count(new_e) >= expected and raw.count(old_e) == 0:
+            already_applied_edits.append(label)
             print('already applied ', label)
             if new not in later_patch_points:
                 post_checks.append((label, new, expected))
@@ -3539,9 +5519,16 @@ def main():
         count = raw.count(old_e)
         if count == 0:
             # A later mechanical edit can legitimately subsume an earlier
-            # replacement. Keep the historical recipe runnable while still
-            # post-checking every replacement this invocation can identify.
-            print('superseded     ', label)
+            # replacement. Those cases are enumerated in SUPERSEDED_EDITS and
+            # nowhere else: an unlisted needle that stops matching is drift,
+            # not history, and must turn the run red rather than skip the edit
+            # and let an unpatched editor ship.
+            if label in SUPERSEDED_EDITS:
+                allowlisted_no_ops.append(label)
+                print('superseded     ', label)
+                continue
+            missing_edits.append(label)
+            print('MISSING        ', label)
             continue
         if count != expected:
             sys.exit(f'FAIL {label}: patch point occurs {count} times')
@@ -3549,6 +5536,7 @@ def main():
         if new not in later_patch_points:
             post_checks.append((label, new, expected))
         changed = True
+        applied_edits.append(label)
         print('applied         ', label)
 
     for label, old, new in DOCUMENT_EDITS:
@@ -3563,21 +5551,188 @@ def main():
         print('applied         ', label)
 
     document = json.loads(raw)
+    # Hover readouts are useful before a drag starts; do not gate the live
+    # banner on an active pointer mode. This is a compiled-source correction
+    # because the captured document may already contain the older condition.
+    compiled_html = document.get('html', '')
+    compiled_hover_guard = ('    if (!current || current.mini || !pointer || '
+                            'pointer.mode !== "gain" && pointer.mode !== "mute-brush") return;')
+    if compiled_hover_guard in compiled_html:
+        document['html'] = compiled_html.replace(
+            compiled_hover_guard, '    if (!current || current.mini) return;', 1)
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          compiled hover status before drag')
+    compiled_html = document.get('html', '')
+    hover_move_anchor = ('      wrapRef.current.style.cursor = "default";\n'
+                         '    }\n'
+                         '    const p = pointerRef.current;')
+    if hover_move_anchor in compiled_html and 'hover status follows every pointer move' not in compiled_html:
+        document['html'] = compiled_html.replace(
+            hover_move_anchor,
+            '      wrapRef.current.style.cursor = "default";\n'
+            '    }\n'
+            '    updateLiveHoverStatus();\n'
+            '    const p = pointerRef.current;', 1)
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          compiled hover status follows pointer move')
+    compiled_html = document.get('html', '')
+    pointer_capture_anchor = ('      onPointerDown,\n'
+                              '      onPointerMove,\n'
+                              '      onPointerUp,')
+    if pointer_capture_anchor in compiled_html and 'onPointerMoveCapture: onPointerMove' not in compiled_html:
+        document['html'] = compiled_html.replace(
+            pointer_capture_anchor,
+            '      onPointerDown,\n'
+            '      onPointerMoveCapture: onPointerMove,\n'
+            '      onPointerMove,\n'
+            '      onPointerUp,', 1)
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          compiled pointer move capture')
+    if repair_cursor_state(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          React-owned native cursor state')
+    if augment_modulation_tabs(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          second internal LFO controls')
+    if strengthen_modulation_state(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          bridge-backed LFO2 and target selection state')
+    if add_modulation_target_toggles(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          independent modulation target toggles')
+    if style_modulation_target_chips(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          modulation target chips carry the segmented skin')
+    if harden_modulation_bridge(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          AU-safe modulation bridge guard')
+    if harden_settings_overlay(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          native Settings scrim overlay owner')
+    if stabilize_settings_mount(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          stable Settings native mount')
+    if separate_modulation_tab_content(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          separate General and Modulation tab content')
+    if adjust_settings_panel_extent(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          settings panel extent for two-LFO content')
+    if polish_settings_tab_controls(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          functional ink settings tabs')
+    if make_settings_tabs_content_aware(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          settings tab content switching')
+    if simplify_settings_single_scroll(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          single-scroll Settings with inline modulation')
+    if enforce_settings_fixed_shell(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          fixed Settings header/tabs with body scroll')
+    if add_readable_typography(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          readable typography rails')
+    if add_text_size_setting(document):
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          user-facing text size control')
+    # Final lifecycle normalization: Settings is always mounted, so its
+    # resolver marker must follow the `open` prop rather than an unconditional
+    # mount-time `true` publication left by an older helper recipe.
+    settings_html = document.get('html', '')
+    settings_effect_old = '''    panel.setAttribute("data-spectr-settings-live", "true");
+    return () => panel.setAttribute("data-spectr-settings-live", "false");
+  }, []);'''
+    settings_effect_new = '''    panel.setAttribute("data-spectr-settings-live", open ? "true" : "false");
+    if (open && typeof window.__pulpRefreshMaterializedState__ === "function") window.__pulpRefreshMaterializedState__();
+  }, [open]);'''
+    if settings_effect_old in settings_html:
+        document['html'] = settings_html.replace(settings_effect_old, settings_effect_new, 1)
+        raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        changed = True
+        print('applied          Settings open-state lifecycle publication')
     if repair_capture_band_count_binding(document, PATH):
         raw = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
         changed = True
         print('applied          merged band-count text binding', PATH)
     html = document['html']
+    # A replacement that applied, or was already present, but cannot be found
+    # in the finished document was overwritten by a LATER recipe step. Only
+    # the enumerated cases are legitimate; anything else means this run
+    # produced a document that does not carry an edit it reported.
+    #
+    # The predecessor of this loop matched by label PREFIX ('settings*',
+    # 'materialized modulation*', '*status info*') plus a `_old` term that was
+    # bound to '' immediately above and never reassigned inside the loop, so
+    # that disjunct was dead. Both are replaced by the explicit list below.
     for label, new, expected in post_checks:
         if html.count(new) < expected:
             sentinel = SUPERSEDED_SENTINELS.get(label)
             if sentinel and sentinel in html:
                 continue
-            sys.exit(f'FAIL {label}: post-check did not find the replacement')
+            if label in POST_CHECK_EXEMPT_EDITS:
+                allowlisted_no_ops.append(label)
+                print('superseded     ', label)
+                continue
+            missing_post_checks.append(label)
+            print('MISSING        ', label, '(post-check)')
     for label, _old, new in DOCUMENT_EDITS:
         if new not in raw:
             sys.exit(f'FAIL {label}: document post-check did not find the replacement')
     check_emitted_scripts(html)
+
+    # Account for every edit, then refuse to write a document that is missing
+    # one. A silently skipped edit used to leave the build green and ship an
+    # unpatched editor; the summary makes the skip visible and the exit below
+    # makes it fatal.
+    stale_allowlist = sorted(
+        (set(SUPERSEDED_EDITS) | set(POST_CHECK_EXEMPT_EDITS))
+        & (set(applied_edits) | set(already_applied_edits))
+        - set(allowlisted_no_ops))
+    print()
+    print(f'summary  edits declared        {len(EDITS)}')
+    print(f'summary  applied this run      {len(applied_edits)}')
+    print(f'summary  already applied       {len(already_applied_edits)}')
+    print(f'summary  allowlisted no-ops    {len(allowlisted_no_ops)}')
+    print(f'summary  missing (not allowed) {len(missing_edits) + len(missing_post_checks)}')
+    if stale_allowlist:
+        print('summary  allowlisted but applied -- prune these from '
+              'SUPERSEDED_EDITS / POST_CHECK_EXEMPT_EDITS:')
+        for label in stale_allowlist:
+            print('           ', label)
+    if missing_edits or missing_post_checks:
+        print()
+        print('FAIL: edits found no match and are not on the superseded '
+              'allowlist. An SDK bump or an upstream editor refactor most '
+              'likely moved these needles. Re-author the needle, or add the '
+              'label to SUPERSEDED_EDITS / POST_CHECK_EXEMPT_EDITS with a '
+              'reason once you have proved the edit is genuinely subsumed. '
+              'Nothing was written.')
+        for label in missing_edits:
+            print('  patch point missing:', label)
+        for label in missing_post_checks:
+            print('  post-check missing: ', label)
+        sys.exit(1)
+
     if changed:
         open(PATH, 'w', encoding='utf-8').write(raw)
         print('written', PATH)
@@ -3673,11 +5828,75 @@ def main():
             print('already applied ', label)
             continue
         count = runtime_raw.count(old)
+        if count == 0 and label in SUPERSEDED_RUNTIME_EDITS:
+            print('superseded     ', label)
+            continue
+        if count == 0 and (runtime_raw.count(new) >= 1 or
+                           (label == 'explicit overlays consume their outside dismissal press'
+                            and 'currentBox.offsetWidth > 0' in runtime_raw)):
+            print('already applied ', label)
+            continue
         if count != 1:
             sys.exit(f'FAIL {label}: runtime patch point occurs {count} times')
         runtime_raw = runtime_raw.replace(old, new)
         runtime_changed = True
         print('applied         ', label)
+        # The sentinel is the only thing that makes this edit idempotent. If it
+        # is not observable now, the next run applies the edit again and stacks
+        # another copy of its block. That is how the mono-face edit duplicated
+        # itself on every invocation.
+        if sentinel not in runtime_raw:
+            sys.exit(f'FAIL {label}: sentinel is absent after applying the '
+                     'edit, so a re-run would stack a duplicate')
+    # The overflow glyph is the one captured span whose browser fallback face
+    # is Menlo rather than the registered JetBrains Mono asset.  Its binding
+    # path is intentionally optional (the live overflow button can be rebuilt
+    # by React), so restore that exact face when the concrete text target is
+    # present.  Keep this narrowly scoped to the glyph; do not alter the
+    # global label cascade or other toolbar controls.
+    overflow_marker = '    const spectralLabel = values.find((node) =>\n'
+    overflow_block = ('    const overflowLabel = values.find((node) =>\n'
+                      '      String(node && node.textContent || "") === "⋯");\n'
+                      '    if (overflowLabel && typeof g5.setFontFamily === "function") {\n'
+                      '      const overflowId = overflowLabel.__pulpTextTargetId || overflowLabel.__pulpId || overflowLabel.id;\n'
+                      '      if (overflowId) {\n'
+                      '        g5.setFontFamily(String(overflowId), "Menlo");\n'
+                      '        if (typeof g5.setFontSize === "function") g5.setFontSize(String(overflowId), 10);\n'
+                      '        if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(overflowId), 1);\n'
+                      '        if (typeof g5.setCapturedLineBoxes === "function")\n'
+                      '          g5.setCapturedLineBoxes(String(overflowId),\n'
+                      '            [{ left: 10, top: 6, width: 7.03125, height: 13, start: 0, length: 1 }],\n'
+                      '            29.03125, "Menlo-Regular", false);\n'
+                      '      }\n'
+                      '    }\n' + overflow_marker)
+    if 'const overflowLabel = values.find((node)' not in runtime_raw:
+        if runtime_raw.count(overflow_marker) != 1:
+            sys.exit('FAIL overflow glyph face patch point missing or ambiguous')
+        runtime_raw = runtime_raw.replace(overflow_marker, overflow_block, 1)
+        runtime_changed = True
+        print('applied         overflow glyph restores captured Menlo face')
+    toolbar_marker = '    const spectralLabel = values.find((node) =>\n'
+    toolbar_block = ('    for (const toolbarText of ["SCULPT ▾", "PEAK ▾"]) {\n'
+                     '      const toolbarNode = values.find((node) =>\n'
+                     '        String(node && node.textContent || "") === toolbarText);\n'
+                     '      const toolbarBinding = capturedTextBindings.find((binding) =>\n'
+                     '        binding.text === toolbarText);\n'
+                     '      const toolbarId = toolbarNode && (toolbarNode.__pulpTextTargetId || toolbarNode.__pulpId || toolbarNode.id);\n'
+                     '      if (!toolbarId || !toolbarBinding) continue;\n'
+                     '      if (typeof g5.setFontFamily === "function")\n'
+                     '        g5.setFontFamily(String(toolbarId), materializedRuntimeFontStack(toolbarBinding));\n'
+                     '      if (typeof g5.setFontSize === "function") g5.setFontSize(String(toolbarId), toolbarBinding.basis.requested.font_size);\n'
+                     '      if (typeof g5.setFontWeight === "function") g5.setFontWeight(String(toolbarId), toolbarBinding.basis.requested.font_weight);\n'
+                     '      if (typeof g5.setLetterSpacing === "function") g5.setLetterSpacing(String(toolbarId), toolbarBinding.basis.requested.letter_spacing);\n'
+                     '      if (typeof g5.setCapturedLineBoxes === "function")\n'
+                     '        g5.setCapturedLineBoxes(String(toolbarId), toolbarBinding.boxes, toolbarBinding.basis.width, toolbarBinding.basis.resolved_face, false);\n'
+                     '    }\n' + toolbar_marker)
+    if 'for (const toolbarText of ["SCULPT ▾", "PEAK ▾"])' not in runtime_raw:
+        if runtime_raw.count(toolbar_marker) != 1:
+            sys.exit('FAIL toolbar text face patch point missing or ambiguous')
+        runtime_raw = runtime_raw.replace(toolbar_marker, toolbar_block, 1)
+        runtime_changed = True
+        print('applied         captured toolbar selector faces')
     if runtime_changed:
         open(RUNTIME_PATH, 'w', encoding='utf-8').write(runtime_raw)
         print('written', RUNTIME_PATH)

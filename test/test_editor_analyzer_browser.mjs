@@ -13,11 +13,32 @@ assert(htmlPath && chromePath, 'usage: test_editor_analyzer_browser.mjs HTML CHR
 const resizeOnlyMode = mode === '--resize-only';
 const jsOnlyMode = mode === '--js-only';
 const muteModesMode = mode === '--mute-modes';
+const popupOnlyMode = mode === '--popup-only';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-analyzer-browser-'));
 try {
   let html = fs.readFileSync(htmlPath, 'utf8');
-  const mock = `<script>
+  if (process.argv.includes('--plant-sliced-preset')) {
+    // Negative control for the preset-label assertion. Restores the destructive
+    // six-character JS slice the label used to ship, so the assertion must go red.
+    // The markup lives inside a JS string literal in editor.html, so its quotes
+    // are BACKSLASH-ESCAPED. Build the needle from char codes rather than trying
+    // to out-quote it: the first version of this control used plain quotes,
+    // matched nothing, and passed while proving nothing.
+    const q = String.fromCharCode(92, 39);
+    const needle = '<span style={{ overflow: ' + q + 'hidden' + q
+      + ', textOverflow: ' + q + 'ellipsis' + q
+      + ', whiteSpace: ' + q + 'nowrap' + q
+      + ', minWidth: 0 }}>{selectedPatternName}</span>';
+    const sliced = '<span style={{ overflow: ' + q + 'hidden' + q
+      + ', textOverflow: ' + q + 'ellipsis' + q
+      + ', whiteSpace: ' + q + 'nowrap' + q
+      + ', minWidth: 0 }}>{selectedPatternName.slice(0, 6) + ' + q + '\u2026' + q + '}</span>';
+    const planted = html.replace(needle, sliced);
+    if (planted === html)
+      throw new Error('--plant-sliced-preset matched nothing; the control is blind');
+    html = planted;
+  }  const mock = `<script>
 window.__spectrHandlers = Object.create(null);
 window.__spectrPosts = [];
 window.__spectrTestHooks = Object.create(null);
@@ -262,6 +283,222 @@ const spectrOutsideClick = async target => {
   }));
   await spectrFrames(2);
 };
+const spectrOutsideActivation = async target => {
+  const events = [
+    new PointerEvent('pointerdown', {
+      bubbles: true, cancelable: true, pointerId: 81, pointerType: 'mouse',
+      isPrimary: true, button: 0, buttons: 1,
+    }),
+    new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, buttons: 1 }),
+    new PointerEvent('pointerup', {
+      bubbles: true, cancelable: true, pointerId: 81, pointerType: 'mouse',
+      isPrimary: true, button: 0, buttons: 0,
+    }),
+    new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0, buttons: 0 }),
+    new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }),
+  ];
+  for (const event of events) target.dispatchEvent(event);
+  await spectrFrames(2);
+  return events;
+};
+const spectrTestPopupContracts = async () => {
+  const menuTrigger = key => {
+    const root = document.querySelector('[data-spectr-menu-root="' + key + '"]');
+    const host = root && root.querySelector('[data-spectr-menu-trigger]');
+    return host && (host.matches('button') ? host : host.querySelector('button'));
+  };
+  const menuOptions = key => document.querySelector(
+    '[data-spectr-menu-root="' + key + '"] [data-spectr-menu-options]');
+  const openMenu = async key => {
+    const trigger = menuTrigger(key);
+    if (!trigger) throw new Error(key + ' menu trigger missing');
+    await spectrClick(trigger);
+    await spectrWaitFor(() => menuOptions(key), key + ' menu open');
+    return trigger;
+  };
+  const productState = () => {
+    const app = window.__spectrTestHooks.appState?.() || {};
+    return JSON.stringify({
+      app: {
+        settings: app.settings,
+        editMode: app.editMode,
+        analyzerMode: app.analyzerMode,
+        visualizationMode: app.visualizationMode,
+        snapshotStatus: app.snapshotStatus,
+        userPatterns: app.userPatterns,
+        defaultId: app.defaultId,
+      },
+      processing: spectrLatestState(),
+      posts: spectrStatePosts().length,
+    });
+  };
+  const assertEscape = async (key, selector = null) => {
+    await openMenu(key);
+    const escape = spectrKey('Escape', 'Escape');
+    if (!escape.defaultPrevented) throw new Error(key + ' Escape was not consumed');
+    await spectrWaitFor(() => !(selector ? document.querySelector(selector) : menuOptions(key)),
+      key + ' Escape close');
+    if (document.activeElement !== menuTrigger(key))
+      throw new Error(key + ' Escape did not restore trigger focus');
+  };
+  const assertOutsideConsumed = async key => {
+    await openMenu(key);
+    const visualization = Array.from(document.querySelectorAll(
+      '[data-spectr-visualization] button')).find(button =>
+        button.textContent.trim() === 'BARS');
+    if (!visualization) throw new Error('outside-click mutation control missing');
+    const before = productState();
+    const events = await spectrOutsideActivation(visualization);
+    await spectrWaitFor(() => !menuOptions(key), key + ' outside close');
+    if (events.some(event => !event.defaultPrevented))
+      throw new Error(key + ' outside activation was not fully consumed');
+    if (productState() !== before)
+      throw new Error(key + ' outside activation mutated an underlying control');
+  };
+  const assertKeyboardSelection = async key => {
+    const trigger = await openMenu(key);
+    const options = Array.from(menuOptions(key).querySelectorAll('button:not([disabled])'));
+    if (options.length < 2) throw new Error(key + ' menu needs two keyboard options');
+    const selectionBefore = productState();
+    const down = spectrKey('ArrowDown', 'ArrowDown');
+    if (!down.defaultPrevented || document.activeElement !== options[0])
+      throw new Error(key + ' ArrowDown did not highlight first option');
+    const secondDown = spectrKey('ArrowDown', 'ArrowDown');
+    if (!secondDown.defaultPrevented || document.activeElement !== options[1])
+      throw new Error(key + ' second ArrowDown did not highlight second option');
+    options[0].dispatchEvent(new PointerEvent('pointerover', {
+      bubbles: true, cancelable: true, pointerId: 82, pointerType: 'mouse',
+      isPrimary: true,
+    }));
+    options[0].dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    await spectrFrames(1);
+    if (productState() !== selectionBefore)
+      throw new Error(key + ' hover changed selection');
+    const up = spectrKey('ArrowUp', 'ArrowUp');
+    if (!up.defaultPrevented || document.activeElement !== options[0])
+      throw new Error(key + ' ArrowUp did not restore first highlight');
+    const enter = spectrKey('Enter', 'Enter');
+    if (!enter.defaultPrevented) throw new Error(key + ' Return was not consumed');
+    await spectrWaitFor(() => !menuOptions(key), key + ' Return close');
+    if (document.activeElement !== trigger)
+      throw new Error(key + ' Return did not restore trigger focus');
+  };
+
+  for (const key of ['bands', 'edit', 'analyzer', 'overflow', 'pattern']) {
+    await assertEscape(key);
+    await assertOutsideConsumed(key);
+    await assertKeyboardSelection(key);
+  }
+
+  const helpTrigger = menuTrigger('help');
+  await spectrClick(helpTrigger);
+  await spectrWaitFor(() => document.querySelector('[aria-label="Keyboard shortcuts"]'),
+    'help open');
+  const helpEscape = spectrKey('Escape', 'Escape');
+  if (!helpEscape.defaultPrevented) throw new Error('help Escape was not consumed');
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Keyboard shortcuts"]'),
+    'help Escape close');
+  await spectrClick(helpTrigger);
+  await spectrWaitFor(() => document.querySelector('[aria-label="Keyboard shortcuts"]'),
+    'help reopen');
+  const helpBefore = productState();
+  const helpEvents = await spectrOutsideActivation(document.querySelector(
+    '[data-spectr-visualization] button'));
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Keyboard shortcuts"]'),
+    'help outside close');
+  if (helpEvents.some(event => !event.defaultPrevented) || productState() !== helpBefore)
+    throw new Error('help outside activation reached the underlying editor');
+
+  const settingsOpen = document.querySelector('[data-spectr-settings-open]');
+  await spectrClick(settingsOpen);
+  let settingsPanel = await spectrWaitFor(() => document.querySelector(
+    '[data-spectr-settings-panel]'), 'settings open');
+  const settingsEscape = spectrKey('Escape', 'Escape');
+  if (!settingsEscape.defaultPrevented) throw new Error('settings Escape was not consumed');
+  await spectrWaitFor(() => !document.querySelector('[data-spectr-settings-panel]'),
+    'settings Escape close');
+  await spectrClick(settingsOpen);
+  settingsPanel = await spectrWaitFor(() => document.querySelector(
+    '[data-spectr-settings-panel]'), 'settings reopen');
+  const settingsBefore = productState();
+  await spectrClick(settingsPanel.parentElement);
+  await spectrWaitFor(() => !document.querySelector('[data-spectr-settings-panel]'),
+    'settings outside close');
+  if (productState() !== settingsBefore)
+    throw new Error('settings outside click mutated the editor');
+
+  await openMenu('pattern');
+  await spectrClick(document.querySelector('[data-spectr-save-current]'));
+  const saveDialog = await spectrWaitFor(() => document.querySelector(
+    '[data-spectr-save-dialog]'), 'save dialog open');
+  const saveEscape = spectrKey('Escape', 'Escape');
+  if (!saveEscape.defaultPrevented) throw new Error('save dialog Escape was not consumed');
+  await spectrWaitFor(() => !document.querySelector('[data-spectr-save-dialog]'),
+    'save dialog Escape close');
+  await openMenu('pattern');
+  await spectrClick(document.querySelector('[data-spectr-save-current]'));
+  const reopenedSaveDialog = await spectrWaitFor(() => document.querySelector(
+    '[data-spectr-save-dialog]'), 'save dialog reopen');
+  const saveBefore = productState();
+  await spectrClick(reopenedSaveDialog);
+  await spectrWaitFor(() => !document.querySelector('[data-spectr-save-dialog]'),
+    'save dialog outside close');
+  if (productState() !== saveBefore)
+    throw new Error('save dialog outside click mutated the editor');
+
+  await openMenu('pattern');
+  await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…  ⇧⌘P'),
+    'manager action'));
+  let manager = await spectrWaitFor(() => document.querySelector(
+    '[aria-label="Pattern manager"]'), 'manager open');
+  const managerEscape = spectrKey('Escape', 'Escape');
+  if (!managerEscape.defaultPrevented) throw new Error('manager Escape was not consumed');
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Pattern manager"]'),
+    'manager Escape close');
+  await openMenu('pattern');
+  await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…  ⇧⌘P'),
+    'manager reopen action'));
+  manager = await spectrWaitFor(() => document.querySelector(
+    '[aria-label="Pattern manager"]'), 'manager reopen');
+  const managerBefore = productState();
+  await spectrClick(manager);
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Pattern manager"]'),
+    'manager outside close');
+  if (productState() !== managerBefore)
+    throw new Error('manager outside click mutated the editor');
+
+  const canvas = Array.from(document.querySelectorAll('canvas'))
+    .find(candidate => getComputedStyle(candidate).pointerEvents !== 'none');
+  const bandTarget = canvas && canvas.parentElement;
+  if (!bandTarget) throw new Error('band context target missing');
+  const bandRect = bandTarget.getBoundingClientRect();
+  bandTarget.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true,
+    clientX: bandRect.left + bandRect.width * 0.4,
+    clientY: bandRect.top + bandRect.height * 0.45,
+  }));
+  await spectrWaitFor(() => document.querySelector('[aria-label="Band actions"]'),
+    'band context open');
+  spectrKey('Escape', 'Escape');
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Band actions"]'),
+    'band context Escape close');
+  bandTarget.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true,
+    clientX: bandRect.left + bandRect.width * 0.4,
+    clientY: bandRect.top + bandRect.height * 0.45,
+  }));
+  await spectrWaitFor(() => document.querySelector('[aria-label="Band actions"]'),
+    'band context reopen');
+  const bandBefore = productState();
+  const bandOutsideEvents = await spectrOutsideActivation(document.querySelector(
+    '[data-spectr-visualization] button'));
+  await spectrWaitFor(() => !document.querySelector('[aria-label="Band actions"]'),
+    'band context outside close');
+  if (bandOutsideEvents.some(event => !event.defaultPrevented)
+      || productState() !== bandBefore)
+    throw new Error('band context outside activation reached the underlying editor');
+  if (!spectrBundleClean()) throw new Error('popup contract emitted a runtime error');
+};
 const spectrTestNativeResizeSurface = async () => {
   if (document.getElementById('spectr-resize-grip')
       || document.getElementById('spectr-resize-status'))
@@ -322,6 +559,12 @@ window.spectrStartOracle = () => {
         throw new Error('editor did not scale proportionally');
       if (bodyRect.width > innerWidth + 0.5 || bodyRect.height > innerHeight + 0.5)
         throw new Error('editor overflowed its host viewport');
+      if (new URL(location.href).searchParams.has('popup-only')) {
+        await spectrTestPopupContracts();
+        result.textContent = 'SPECTR_BROWSER_POPUP_OK';
+        document.documentElement.dataset.spectrOracle = 'POPUP_OK';
+        return;
+      }
       if (resizeOnly) {
         await spectrTestNativeResizeSurface();
         result.textContent = 'SPECTR_BROWSER_RESIZE_OK';
@@ -372,6 +615,65 @@ window.spectrStartOracle = () => {
           && state.mutedGainDb.every(Number.isFinite) && state;
       }, reopened ? 'finite reopened hydration' : 'finite initial hydration');
       step(reopened ? 'reopened-hydrated' : 'initial-hydrated');
+      if ((window.__spectrHandlers.processing_state_live?.size || 0) !== 1)
+        throw new Error('native live-state listener count is not one');
+      const beforeLive = window.__spectrTestHooks.renderState();
+      const livePayload = {
+        revision: 0,
+        n_visible: 32,
+        gain_db: Array.from({ length: 32 }, (_, index) => index - 16),
+        muted: Array.from({ length: 32 }, (_, index) => index === 7),
+        min_hz: 220,
+        max_hz: 8800,
+        motion_mode: 1,
+        analyzer_mode: 2,
+        edit_mode: 3,
+        visualization_mode: 1,
+      };
+      window.__spectrEmit('processing_state_live', livePayload);
+      const projectedLive = await spectrWaitFor(() => {
+        const state = window.__spectrTestHooks.renderState?.();
+        return state
+          && Math.abs(state.targetGains[0] - livePayload.gain_db[0] / 24) < 1e-9
+          && state.targetGains[7] === -Infinity
+          && Math.abs(state.view.lmin - Math.log10(livePayload.min_hz)) < 1e-9
+          && Math.abs(state.view.lmax - Math.log10(livePayload.max_hz)) < 1e-9
+          && state;
+      }, 'imperative native live-state projection');
+      if (projectedLive.gains.some((value, index) =>
+          value !== (index === 7 ? 0 : Math.max(-1.02,
+            Math.min(1.02, livePayload.gain_db[index] / 24)))))
+        throw new Error('native live-state canvas projection diverged from audible values');
+      if (projectedLive.reactGains.some((value, index) =>
+          value !== beforeLive.reactGains[index]))
+        throw new Error('native live-state reconciled React gains on the frame path');
+      if (projectedLive.reactView.lmin !== beforeLive.reactView.lmin
+          || projectedLive.reactView.lmax !== beforeLive.reactView.lmax)
+        throw new Error('native live-state reconciled React viewport on the frame path');
+      window.__spectrEmit('processing_state_live', {
+        ...livePayload,
+        revision: -1,
+        gain_db: new Array(32).fill(24),
+        min_hz: 20,
+        max_hz: 20000,
+      });
+      await spectrFrames(2);
+      const afterStaleLive = window.__spectrTestHooks.renderState();
+      if (Math.abs(afterStaleLive.targetGains[0]
+          - livePayload.gain_db[0] / 24) > 1e-9
+          || Math.abs(afterStaleLive.view.lmin
+          - Math.log10(livePayload.min_hz)) > 1e-9)
+        throw new Error('invalid native live-state overwrote the latest projection');
+      // Restore the fixture's authoritative full state before the remaining
+      // interaction oracle. This also proves a topology/full-state refresh
+      // can still supersede the compact frame lane when one is required.
+      window.__spectrEmit('processing_state_hydrate', window.__spectrHydration);
+      await spectrWaitFor(() => {
+        const state = window.__spectrTestHooks.renderState?.();
+        return state && state.targetGains.every(value => value === -Infinity)
+          && Math.abs(state.view.lmin - Math.log10(window.__spectrHydration.min_hz)) < 1e-9
+          && Math.abs(state.view.lmax - Math.log10(window.__spectrHydration.max_hz)) < 1e-9;
+      }, 'full hydration after native live-state projection');
       if (document.querySelector('[data-spectr-status-banner]'))
         throw new Error('empty status banner was mounted');
       Object.defineProperty(document, 'hasFocus', {
@@ -415,7 +717,7 @@ window.spectrStartOracle = () => {
             const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
             return br.width * br.height - ar.width * ar.height;
           })[0], 'interactive filter canvas');
-        const target = canvas.parentElement;
+        let target = canvas.parentElement;
         const rect = target.getBoundingClientRect();
         const bandX = band => rect.left
           + (56 + (band + 0.5) * (target.clientWidth - 112) / 32)
@@ -477,6 +779,17 @@ window.spectrStartOracle = () => {
         let band = 2;
         for (const enabled of [true, false]) {
           await setRedrawUnmutes(enabled);
+          // Settings updates can replace the materialized canvas wrapper.
+          // Always dispatch the mode matrix to the live node, never to a
+          // detached pre-toggle element whose React handlers have retired.
+          const liveCanvas = await spectrWaitFor(() => Array.from(
+            document.querySelectorAll('canvas'))
+            .filter(candidate => getComputedStyle(candidate).pointerEvents !== 'none')
+            .sort((a, b) => {
+              const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+              return br.width * br.height - ar.width * ar.height;
+            })[0], 'live interactive filter canvas after redraw policy');
+          target = liveCanvas.parentElement;
           for (const [modeName, digit] of MODES) {
             spectrKey(digit, 'Digit' + digit);
             await spectrWaitFor(
@@ -538,7 +851,7 @@ window.spectrStartOracle = () => {
       await spectrFrames(5);
       if (!spectrBundleClean()) throw new Error('bundle error after hydrated RAFs');
       const expectedDbfsLabels = ['-120', '-90', '-60', '-30', '0', '+24'];
-      if (!window.__spectrCanvasLabels.includes('dBFS')
+      if (!window.__spectrCanvasLabels.includes('dBFS (analyzer)')
           || !expectedDbfsLabels.every(label =>
             window.__spectrCanvasLabels.includes(label)))
         throw new Error('complete calibrated dBFS ruler was not drawn');
@@ -811,9 +1124,19 @@ window.spectrStartOracle = () => {
       spectrPointer(target, 'pointermove', x, y - 48);
       await spectrFrames(2);
       const secondLiveStatus = document.querySelector('[data-spectr-status-text]')?.textContent;
-      if (!firstLiveStatus?.includes('BAND') || !secondLiveStatus?.includes('BAND')
-          || firstLiveStatus === secondLiveStatus)
-        throw new Error('live hover gain status did not follow the drag');
+      // Report WHICH of the three conditions failed. Conflating "the banner
+      // never showed a band", "it showed one but stopped updating", and "it
+      // updated but to the same text" into one message costs a debugging cycle
+      // every time this reds, and they have different causes.
+      if (!firstLiveStatus?.includes('BAND'))
+        throw new Error('live hover gain status absent at drag start; banner read '
+          + JSON.stringify(firstLiveStatus ?? null));
+      if (!secondLiveStatus?.includes('BAND'))
+        throw new Error('live hover gain status disappeared during the drag; banner read '
+          + JSON.stringify(secondLiveStatus ?? null));
+      if (firstLiveStatus === secondLiveStatus)
+        throw new Error('live hover gain status did not follow the drag; banner stayed at '
+          + JSON.stringify(firstLiveStatus));
       // A sustained edit must not outlive the banner's inactivity timer. Move
       // often enough to represent active input, but long enough that the old
       // one-shot 1.4 s timeout would have removed the banner mid-gesture.
@@ -975,6 +1298,29 @@ window.spectrStartOracle = () => {
       const presetsButton = menuTrigger('pattern');
       if (!presetsButton) throw new Error('preset dropdown trigger missing');
       await spectrClick(presetsButton);
+      await spectrClick(await spectrWaitFor(() => document.querySelector(
+        '[data-spectr-pattern-menu-id="factory:tilt"]'), 'long preset menu item'));
+      const selectedPreset = await spectrWaitFor(() => {
+        const label = document.querySelector('[data-spectr-selected-preset]');
+        if (!label) return null;
+        const text = (label.textContent || '').replace(/\s+/g, ' ').trim();
+        // The authored name must survive INTO THE DOM. This pinned the sliced
+        // string 'DOWNWA… ▾' for as long as the label truncated in JavaScript,
+        // which made the destructive slice the specified behaviour: a six-char
+        // cap no CSS could undo and no text-size setting could widen. Truncation
+        // is now the renderer's job, so assert the name is intact and that the
+        // label stays inside its own box, and let CSS decide what is visible.
+        if (!text.startsWith('DOWNWARD TILT')) return null;
+        if (label.scrollWidth > label.clientWidth + 1) return null;
+        return label;
+      }, 'selected preset label carries the full authored name');
+      const snapshotLabel = Array.from(document.querySelectorAll('span'))
+        .find(span => span.textContent.trim() === 'SNAPSHOT');
+      if (!snapshotLabel || selectedPreset.title !== 'DOWNWARD TILT'
+          || selectedPreset.getBoundingClientRect().right
+            > snapshotLabel.getBoundingClientRect().left + 0.5)
+        throw new Error('long preset name escaped into the Snapshot controls');
+      await spectrClick(presetsButton);
       const saveCurrent = await spectrWaitFor(() =>
         document.querySelector('[data-spectr-save-current]'), 'save current menu item');
       await spectrClick(saveCurrent);
@@ -1006,10 +1352,52 @@ window.spectrStartOracle = () => {
         'save dialog close');
 
       await spectrClick(presetsButton);
-      await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…'),
+      await spectrClick(await spectrWaitFor(() => spectrButton('MANAGE…  ⇧⌘P'),
         'preset manager menu item'));
       const manager = await spectrWaitFor(() => document.querySelector(
         '[aria-label="Pattern manager"]'), 'pattern manager');
+      await spectrClick(await spectrWaitFor(() => manager.querySelector(
+        '[data-spectr-pattern-id="factory:tilt"]'), 'tilt pattern row'));
+      const tiltSelection = await spectrWaitFor(() => {
+        const title = manager.querySelector('[data-spectr-manager-title]');
+        const preview = manager.querySelector('[data-spectr-manager-preview]');
+        const signature = Array.from(preview?.querySelectorAll('svg rect') || [])
+          .map(rect => rect.getAttribute('y') + ':' + rect.getAttribute('height')).join('|');
+        return title?.textContent === 'DOWNWARD TILT'
+          && title.dataset.spectrPatternId === 'factory:tilt'
+          && preview?.dataset.spectrPatternId === 'factory:tilt'
+          && signature ? { title, preview, signature } : null;
+      }, 'tilt title and SVG selection');
+      await spectrClick(manager.querySelector('[data-spectr-pattern-id="factory:flat"]'));
+      const flatSelection = await spectrWaitFor(() => {
+        const title = manager.querySelector('[data-spectr-manager-title]');
+        const preview = manager.querySelector('[data-spectr-manager-preview]');
+        const signature = Array.from(preview?.querySelectorAll('svg rect') || [])
+          .map(rect => rect.getAttribute('y') + ':' + rect.getAttribute('height')).join('|');
+        return title?.textContent.endsWith('FLAT')
+          && title.dataset.spectrPatternId === 'factory:flat'
+          && preview?.dataset.spectrPatternId === 'factory:flat'
+          && signature !== tiltSelection.signature ? { title, preview } : null;
+      }, 'flat title and SVG selection');
+      const sourceBadge = manager.querySelector('[data-spectr-manager-source]');
+      const actions = Array.from(manager.querySelectorAll(
+        '[data-spectr-manager-actions] button'));
+      const actionRects = actions.map(button => button.getBoundingClientRect());
+      const titleRect = flatSelection.title.getBoundingClientRect();
+      const sourceRect = sourceBadge?.getBoundingClientRect();
+      if (!sourceRect || getComputedStyle(flatSelection.title.parentElement).alignItems !== 'center'
+          || Math.abs((titleRect.top + titleRect.bottom)
+            - (sourceRect.top + sourceRect.bottom)) > 4)
+        throw new Error('selected preset text and source icon lost their shared center');
+      for (let a = 0; a < actionRects.length; ++a) {
+        for (let b = a + 1; b < actionRects.length; ++b) {
+          if (Math.min(actionRects[a].right, actionRects[b].right)
+                - Math.max(actionRects[a].left, actionRects[b].left) > 0.5
+              && Math.min(actionRects[a].bottom, actionRects[b].bottom)
+                - Math.max(actionRects[a].top, actionRects[b].top) > 0.5)
+            throw new Error('preset manager actions overlap');
+        }
+      }
       await spectrClick(await spectrWaitFor(() => manager.querySelector(
         '[data-spectr-pattern-id="user:test-0"]'), 'saved pattern row'));
       await spectrClick(await spectrWaitFor(() => Array.from(manager.querySelectorAll('button'))
@@ -1275,7 +1663,12 @@ setTimeout(window.spectrStartOracle, 0);
     || run.stderr;
 
   const initialUrl = `file://${instrumented}`;
-  if (muteModesMode) {
+  if (popupOnlyMode) {
+    const run = runChrome(initialUrl + '?popup-only=1', 1320, 860);
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /data-spectr-oracle="POPUP_OK"/, failure(run));
+    process.exitCode = 0;
+  } else if (muteModesMode) {
     const run = runChrome(initialUrl + '?mute-modes=1', 1320, 860);
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /data-spectr-oracle="MUTE_MODES_OK"/, failure(run));

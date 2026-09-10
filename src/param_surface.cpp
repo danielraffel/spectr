@@ -97,6 +97,18 @@ std::string octaves_string(float width_log) {
     return buf;
 }
 
+float parse_octaves(std::string_view text) {
+    // Accept the formatter's numeric value with an optional "oct" suffix.
+    // StateStore performs range clamping after parsing, so preserve the raw
+    // logarithmic value here and let the parameter contract own bounds.
+    std::string s(text);
+    float octaves = 0.0f;
+    if (std::sscanf(s.c_str(), "%f", &octaves) != 1
+        || !std::isfinite(octaves) || octaves <= 0.0f)
+        return 0.0f;
+    return octaves * kViewportMinWidthLog;
+}
+
 void add_enum_labels(pulp::state::ParamInfo& info,
                      std::initializer_list<const char*> labels) {
     for (const char* label : labels) info.value_labels.emplace_back(label);
@@ -162,6 +174,7 @@ void register_surface_params(pulp::state::StateStore& store) {
                       kViewportMaxWidthLog};
         info.group_id = kGroupViewport;
         info.to_string = [](float v) { return octaves_string(v); };
+        info.from_string = [](const std::string& s) { return parse_octaves(s); };
         store.add_parameter(info);
     }
     {
@@ -262,6 +275,43 @@ void register_surface_params(pulp::state::StateStore& store) {
         add_enum_labels(info, {"Whole Bank", "Snapshot A", "Snapshot B", "Morph"});
         store.add_parameter(info);
     }
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamLfo2Enabled;
+        info.name = "LFO 2 Enabled";
+        info.range = {0.0f, 1.0f, 0.0f, 1.0f};
+        info.group_id = kGroupModulation;
+        info.kind = pulp::state::ParamKind::Toggle;
+        add_enum_labels(info, {"Off", "On"});
+        store.add_parameter(info);
+    }
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamLfo2Shape;
+        info.name = "LFO 2 Shape";
+        info.range = {0.0f, 3.0f, 0.0f, 1.0f};
+        info.group_id = kGroupModulation;
+        info.kind = pulp::state::ParamKind::Enum;
+        add_enum_labels(info, {"Sine", "Triangle", "Square", "Saw"});
+        store.add_parameter(info);
+    }
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamLfo2Rate;
+        info.name = "LFO 2 Rate";
+        info.unit = "beats";
+        info.range = {0.25f, 16.0f, 4.0f};
+        info.group_id = kGroupModulation;
+        store.add_parameter(info);
+    }
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamLfo2Depth;
+        info.name = "LFO 2 Depth";
+        info.range = {0.0f, 1.0f, 0.0f};
+        info.group_id = kGroupModulation;
+        store.add_parameter(info);
+    }
 }
 
 } // namespace spectr
@@ -289,6 +339,29 @@ bool Spectr::surface_params_drifted_() const noexcept {
         }
     }
     return false;
+}
+
+ModulationSettings Spectr::modulation_from_store_() const noexcept {
+    ModulationSettings settings;
+    const auto* store = param_store_;
+    if (!store) return settings;
+    settings.enabled = store->get_value(kParamLfoEnabled) >= 0.5f;
+    settings.shape = static_cast<LfoShape>(std::clamp(
+        static_cast<int>(std::lround(store->get_value(kParamLfoShape))), 0, 3));
+    settings.beats_per_cycle = std::clamp(
+        store->get_value(kParamLfoRate), 0.25f, 16.0f);
+    settings.depth = std::clamp(
+        store->get_value(kParamLfoDepth), 0.0f, 1.0f);
+    settings.target = static_cast<ModulationTarget>(std::clamp(
+        static_cast<int>(std::lround(store->get_value(kParamLfoTarget))), 0, 3));
+    settings.lfo2_enabled = store->get_value(kParamLfo2Enabled) >= 0.5f;
+    settings.lfo2_shape = static_cast<LfoShape>(std::clamp(
+        static_cast<int>(std::lround(store->get_value(kParamLfo2Shape))), 0, 3));
+    settings.lfo2_beats_per_cycle = std::clamp(
+        store->get_value(kParamLfo2Rate), 0.25f, 16.0f);
+    settings.lfo2_depth = std::clamp(
+        store->get_value(kParamLfo2Depth), 0.0f, 1.0f);
+    return settings;
 }
 
 bool Spectr::apply_surface_params(bool apply_morph) noexcept {
@@ -377,29 +450,39 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         }
     }
 
-    ModulationSettings next_modulation;
-    next_modulation.enabled = store->get_value(kParamLfoEnabled) >= 0.5f;
-    next_modulation.shape = static_cast<LfoShape>(std::clamp(
-        static_cast<int>(std::lround(store->get_value(kParamLfoShape))), 0, 3));
-    next_modulation.beats_per_cycle = std::clamp(
-        store->get_value(kParamLfoRate), 0.25f, 16.0f);
-    next_modulation.depth = std::clamp(
-        store->get_value(kParamLfoDepth), 0.0f, 1.0f);
-    next_modulation.target = static_cast<ModulationTarget>(std::clamp(
-        static_cast<int>(std::lround(store->get_value(kParamLfoTarget))), 0, 3));
-    const std::array<float, 5> modulation_values{
+    ModulationSettings next_modulation = modulation_from_store_();
+    // The explicit destination selection is editor state; it is not derived
+    // from a parameter lane, so carry it across rather than resetting it to
+    // the sentinel on every unrelated LFO edit.
+    next_modulation.target_mask = modulation_.target_mask;
+    const std::array<float, 9> modulation_values{
         next_modulation.enabled ? 1.0f : 0.0f,
         static_cast<float>(next_modulation.shape),
         next_modulation.beats_per_cycle,
         next_modulation.depth,
-        static_cast<float>(next_modulation.target)};
+        static_cast<float>(next_modulation.target),
+        next_modulation.lfo2_enabled ? 1.0f : 0.0f,
+        static_cast<float>(next_modulation.lfo2_shape),
+        next_modulation.lfo2_beats_per_cycle,
+        next_modulation.lfo2_depth};
+    // Offset of kParamLfoTarget within modulation_values above.
+    constexpr std::size_t kModulationTargetValueIndex = 4;
     bool modulation_changed = false;
+    bool target_lane_changed = false;
     for (std::size_t i = 0; i < modulation_values.size(); ++i) {
         auto& cached = applied_param_cache_[detail::kSlotLfoBase + i];
         if (cached.load(std::memory_order_relaxed) != modulation_values[i]) {
             cached.store(modulation_values[i], std::memory_order_relaxed);
             modulation_changed = true;
+            if (i == kModulationTargetValueIndex) target_lane_changed = true;
         }
+    }
+    if (target_lane_changed) {
+        // The host moved kParamLfoTarget. That lane is automatable and must
+        // never be silently discarded, so it takes authority back from an
+        // earlier editor selection: drop to the sentinel and follow the enum
+        // until the editor explicitly selects destinations again.
+        next_modulation.target_mask = kModulationTargetMaskUnset;
     }
     if (modulation_changed) {
         modulation_ = next_modulation;
@@ -426,6 +509,16 @@ float Spectr::editor_mode_param(pulp::state::ParamID id) const noexcept {
 ModulationSettings Spectr::modulation_settings() const noexcept {
     std::lock_guard<std::mutex> lock(processing_state_mutex_);
     return modulation_;
+}
+
+bool Spectr::set_modulation_target_mask(std::uint8_t mask) noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    modulation_.target_mask = static_cast<std::uint8_t>(mask & 0x0f);
+    publish_audio_modulation_state_();
+    host_automation_revision_.store(
+        editor_authority_.record_external_mutation(),
+        std::memory_order_release);
+    return true;
 }
 
 void Spectr::push_surface_param_(pulp::state::ParamID id, std::size_t slot,

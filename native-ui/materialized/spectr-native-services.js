@@ -56,6 +56,39 @@
         ? payload.patterns_json : null,
     };
   };
+  const parseNativeLiveState = payload => {
+    const isInteger = value => Number.isFinite(value) && Math.floor(value) === value;
+    const n = payload && Number(payload.n_visible);
+    const gainDb = payload && payload.gain_db;
+    const muted = payload && payload.muted;
+    const minHz = payload && Number(payload.min_hz);
+    const maxHz = payload && Number(payload.max_hz);
+    const revision = payload && Number(payload.revision);
+    const modeIndex = (key, labels) => {
+      const value = payload && Number(payload[key]);
+      return isInteger(value) && labels[value] ? labels[value] : null;
+    };
+    const motionMode = modeIndex('motion_mode', ['live', 'precision']);
+    const analyzerMode = modeIndex('analyzer_mode', ['peak', 'avg', 'both', 'off']);
+    const editMode = modeIndex('edit_mode', ['sculpt', 'level', 'boost', 'flare', 'glide']);
+    const visualizationMode = modeIndex('visualization_mode', ['bars', 'response', 'both']);
+    if (![32, 40, 48, 56, 64].includes(n)
+        || !Array.isArray(gainDb) || gainDb.length !== n
+        || !Array.isArray(muted) || muted.length !== n
+        || !gainDb.every(Number.isFinite)
+        || !muted.every(value => typeof value === 'boolean')
+        || !isInteger(revision) || revision < 0 || revision > 9007199254740991
+        || !Number.isFinite(minHz) || !Number.isFinite(maxHz)
+        || !motionMode || !analyzerMode || !editMode || !visualizationMode
+        || minHz <= 0 || maxHz <= minHz) return null;
+    return {
+      n, gainDb: gainDb.slice(), muted: muted.slice(),
+      gains: gainDb.map((db, index) => muted[index]
+        ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
+      minHz, maxHz, revision,
+      motionMode, analyzerMode, editMode, visualizationMode,
+    };
+  };
   const parseNativePatterns = patternsJson => {
     try {
       const envelope = JSON.parse(patternsJson);
@@ -86,7 +119,7 @@
       };
     } catch { return null; }
   };
-  const nativeState = { parse: parseNativeState };
+  const nativeState = { parse: parseNativeState, parseLive: parseNativeLiveState };
   const nativePatterns = { parse: parseNativePatterns };
   globalThis.SpectrNativeState = nativeState;
   globalThis.SpectrNativePatterns = nativePatterns;

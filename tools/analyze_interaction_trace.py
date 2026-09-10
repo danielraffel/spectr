@@ -30,7 +30,9 @@ def sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def build_query() -> str:
+def build_query(workload: str = "bands") -> str:
+    input_slice = ("spectr_host_automation_project"
+                   if workload == "automation" else "native_drag_dispatch")
     stages = (
         "layout_children",
         "paint",
@@ -40,6 +42,7 @@ def build_query() -> str:
         "gpu_acquire",
         "gpu_submit",
         "gpu_present",
+        "spectr_host_automation_project",
     )
     stage_values = ", ".join(f"({sql_string(name)})" for name in stages)
     return f"""
@@ -48,7 +51,7 @@ WITH input AS (
          ROW_NUMBER() OVER (ORDER BY dur) AS rn,
          COUNT(*) OVER () AS n
   FROM slice
-  WHERE name = 'native_drag_dispatch' AND dur >= 0
+  WHERE name = {sql_string(input_slice)} AND dur >= 0
 ), bounds AS (
   SELECT MIN(ts) AS first_ts, MAX(ts + dur) AS last_ts, COUNT(*) AS input_count
   FROM input
@@ -172,9 +175,9 @@ def resolve_processor(explicit: str) -> str | None:
     return shutil.which("trace_processor_shell") or shutil.which("trace_processor")
 
 
-def run_processor(processor: str, trace: Path) -> str:
+def run_processor(processor: str, trace: Path, workload: str = "bands") -> str:
     with tempfile.NamedTemporaryFile("w", suffix=".sql", delete=False) as handle:
-        handle.write(build_query())
+        handle.write(build_query(workload))
         query_path = Path(handle.name)
     try:
         result = subprocess.run(
@@ -217,14 +220,18 @@ def failures_for(
         failures.append(
             f"frame p99 {summary['frame_p99_ms']:.3f} ms exceeds {max_frame_p99_ms:.3f} ms")
 
-    required = ("layout_children", "paint", "dom_event_dispatch",
-                "gpu_acquire", "gpu_submit", "gpu_present")
+    required = (("paint", "gpu_acquire", "gpu_submit", "gpu_present",
+                 "spectr_host_automation_project")
+                if workload == "automation" else
+                ("layout_children", "paint", "dom_event_dispatch",
+                 "gpu_acquire", "gpu_submit", "gpu_present"))
     missing = [name for name in required if int(stages.get(name, {}).get("count", 0)) == 0]
     if missing:
         failures.append("trace is missing required stage slices: " + ", ".join(missing))
 
     inputs = max(1, int(summary["input_count"]))
-    for stage in ("layout_children", "paint"):
+    for stage in (("paint",) if workload == "automation"
+                  else ("layout_children", "paint")):
         count = int(stages.get(stage, {}).get("count", 0))
         if count / inputs > 1.10:
             failures.append(f"{stage}/input {count / inputs:.3f} exceeds 1.100")
@@ -236,7 +243,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trace", type=Path, required=True)
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--cmake-cache", type=Path, required=True)
-    parser.add_argument("--workload", choices=("bands", "minimap"), required=True)
+    parser.add_argument("--workload", choices=("bands", "minimap", "automation"),
+                        required=True)
     parser.add_argument("--spectr-sha", required=True)
     parser.add_argument("--sdk-sha", required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -266,7 +274,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("trace_processor not found; set PULP_TRACE_PROCESSOR or pass --processor")
 
     try:
-        summary, stages = parse_output(run_processor(processor, args.trace))
+        summary, stages = parse_output(run_processor(
+            processor, args.trace, args.workload))
     except (OSError, RuntimeError, ValueError) as error:
         print(f"trace analysis error: {error}", file=sys.stderr)
         return 2

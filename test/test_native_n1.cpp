@@ -558,7 +558,7 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     const auto heading = std::find_if(
         analyzer_commands.begin(), analyzer_commands.end(), [](const auto& cmd) {
             return cmd.type == CanvasCommand::Type::fill_text
-                && cmd.text == "dBFS";
+                && cmd.text == "dBFS (analyzer)";
         });
     REQUIRE(heading != analyzer_commands.end());
     const auto ruler_tick_y = [&](std::string_view label) {

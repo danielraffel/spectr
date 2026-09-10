@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 143;
+constexpr std::size_t kExpectedParamCount = 147;
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {
@@ -68,6 +68,12 @@ const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
 }
 
 } // namespace
+
+// Catch2 renders a std::uint8_t as a character, so a mask mismatch prints as
+// unreadable punctuation. Compare masks as ints and a failure names the bits.
+static constexpr int mask_int(std::uint8_t mask) noexcept {
+    return static_cast<int>(mask);
+}
 
 TEST_CASE("#34: the full static parameter surface is registered") {
     Wired w;
@@ -119,6 +125,10 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     REQUIRE(find(w.store, spectr::kParamLfoRate) != nullptr);
     REQUIRE(find(w.store, spectr::kParamLfoDepth) != nullptr);
     REQUIRE(find(w.store, spectr::kParamLfoTarget) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfo2Enabled) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfo2Shape) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfo2Rate) != nullptr);
+    REQUIRE(find(w.store, spectr::kParamLfo2Depth) != nullptr);
     CHECK(find(w.store, 4005) == nullptr);
     CHECK(find(w.store, 4031) == nullptr);
     CHECK(find(w.store, 4100) == nullptr);
@@ -220,6 +230,16 @@ TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
     CHECK(width->range.default_value == Approx(3.0f).margin(0.0001f));
     CHECK(width->range.max == Approx(3.0f).margin(0.0001f));
     CHECK(width->range.min > 0.0f);
+    REQUIRE(width->to_string);
+    REQUIRE(width->from_string);
+    CHECK(width->from_string(width->to_string(width->range.min))
+          == Approx(width->range.min).margin(0.0001f));
+    // The formatter displays octaves while the parameter stores log10 units, so
+    // "3.0 oct" is three octaves -- 3 * log10(2) -- not the numeral 3.0, which is
+    // range.max (3.0 decades, i.e. nearly ten octaves).
+    CHECK(width->from_string("3.0 oct")
+          == Approx(3.0f * spectr::kViewportMinWidthLog).margin(0.0001f));
+    CHECK(width->to_string(width->range.max) == "10.0 oct");
 
     // Band count is a stepped control over the five legal layouts.
     const auto* count = find(w.store, kBandCountId);
@@ -501,4 +521,113 @@ TEST_CASE("#34: simultaneous morph and band automation preserves the band lane")
     const auto state = w.proc->processing_state_snapshot();
     CHECK(state.field.bands[0].gain_db == Approx(0.0f));
     CHECK(state.field.bands[7].gain_db == Approx(-6.0f));
+}
+
+TEST_CASE("host target automation reclaims the modulation destination") {
+    Wired w;
+    w.proc->apply_surface_params(false);  // settle the applied-parameter cache
+
+    // The editor selects every destination. This is editor state: it has no
+    // parameter lane of its own.
+    REQUIRE(w.proc->set_modulation_target_mask(spectr::kModulationTargetMaskAll));
+    REQUIRE(mask_int(w.proc->modulation_settings().target_mask)
+            == mask_int(spectr::kModulationTargetMaskAll));
+
+    // An unrelated LFO parameter edit must not discard the selection. Before
+    // the fix, apply_surface_params() overwrote the whole settings struct with
+    // one rebuilt from parameters, silently resetting the mask.
+    w.store.set_value(spectr::kParamLfoDepth, 0.75f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->modulation_settings().depth == Approx(0.75f));
+    CHECK(mask_int(w.proc->modulation_settings().target_mask)
+          == mask_int(spectr::kModulationTargetMaskAll));
+
+    // Moving kParamLfoTarget does discard it: that lane is host-automatable
+    // and must never be silently swallowed by an earlier editor selection.
+    w.store.set_value(spectr::kParamLfoTarget,
+                      static_cast<float>(spectr::ModulationTarget::SnapshotB));
+    REQUIRE(w.proc->apply_surface_params(false));
+    const auto after = w.proc->modulation_settings();
+    CHECK(after.target == spectr::ModulationTarget::SnapshotB);
+    CHECK(mask_int(after.target_mask)
+          == mask_int(spectr::kModulationTargetMaskUnset));
+    CHECK(mask_int(spectr::resolve_modulation_target_mask(after))
+          == mask_int(spectr::modulation_target_bit(
+                 spectr::ModulationTarget::SnapshotB)));
+}
+
+// An editor edit is authoritative right up to the moment the host starts
+// writing. The store carries the edited value, so a host that begins
+// recording latches onto it rather than onto the pre-edit value -- and the
+// edit must not read back as a host mutation, because that would bump the
+// automation revision and make the editor rebuild its whole projection from
+// canonical state, discarding whatever the user was in the middle of.
+TEST_CASE("an editor edit before the host writes becomes the starting state"
+          " and does not read back as host automation") {
+    Wired w;
+    w.proc->apply_surface_params(false);
+    const auto settled = w.proc->host_automation_revision();
+
+    auto field = w.proc->field();
+    field.bands[5].gain_db = 7.5f;
+    REQUIRE(w.proc->replace_processing_state(
+        field, {200.0f, 3200.0f}, w.proc->layout()));
+
+    // What the host sees the instant Record is armed.
+    CHECK(w.store.get_value(kGainBase + 5) == Approx(7.5f));
+
+    // The editor's own write is not a host mutation.
+    CHECK_FALSE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->host_automation_revision() == settled);
+    CHECK(w.proc->field().bands[5].gain_db == Approx(7.5f));
+    CHECK(w.proc->viewport().min_hz == Approx(200.0f).epsilon(0.0001f));
+
+    // A genuine host write still adopts, and continues from the edit.
+    w.store.set_value(kGainBase + 5, 9.0f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->field().bands[5].gain_db == Approx(9.0f));
+    CHECK(w.proc->host_automation_revision() == settled + 1);
+}
+
+// When a host write burst ends, the last written value is the state that
+// stays. Idle polls after the burst must neither revert canonical state to
+// the pre-burst editor value nor manufacture further editor hydrations, and
+// every write in the burst -- the final one included -- must advance the
+// revision the editor projects from, or the editor keeps painting a value
+// the recording already moved past.
+TEST_CASE("a finished host write burst leaves the last written value in place") {
+    Wired w;
+    w.proc->apply_surface_params(false);
+
+    auto field = w.proc->field();
+    field.bands[11].gain_db = -6.0f;
+    REQUIRE(w.proc->replace_processing_state(
+        field, {100.0f, 6400.0f}, w.proc->layout()));
+    REQUIRE(w.proc->field().bands[11].gain_db == Approx(-6.0f));
+    const auto before_burst = w.proc->host_automation_revision();
+
+    const float ramp[] = {-4.0f, -2.0f, 0.0f, 3.5f};
+    for (const float value : ramp) {
+        w.store.set_value(kGainBase + 11, value);
+        REQUIRE(w.proc->apply_surface_params(false));
+        CHECK(w.proc->field().bands[11].gain_db == Approx(value));
+    }
+    const auto at_stop = w.proc->host_automation_revision();
+    CHECK(at_stop == before_burst + 4);
+
+    for (int poll = 0; poll < 4; ++poll) {
+        CHECK_FALSE(w.proc->apply_surface_params(false));
+    }
+    CHECK(w.proc->host_automation_revision() == at_stop);
+    CHECK(w.proc->field().bands[11].gain_db == Approx(3.5f));
+
+    // The editor-to-host mirror moved with the burst, so the next editor
+    // publication diffs against the recorded value and cannot push the
+    // pre-burst value back over it.
+    auto after = w.proc->field();
+    after.bands[20].gain_db = 1.0f;
+    const spectr::Viewport held = w.proc->viewport();
+    REQUIRE(w.proc->replace_processing_state(after, held, w.proc->layout()));
+    CHECK(w.store.get_value(kGainBase + 11) == Approx(3.5f));
+    CHECK(w.proc->field().bands[11].gain_db == Approx(3.5f));
 }
