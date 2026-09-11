@@ -2452,6 +2452,10 @@ function SettingsModal({ settings, setSettings, onClose }) {
      '"data-spectr-copy-build-info": true, onClick: copy, disabled: copyState === "COPYING",',
      '"data-spectr-copy-build-info": true, "data-spectr-copy-state": copyState.toLowerCase().replace(/ /g, "-"), onClick: copy, disabled: copyState === "COPYING",'),
 
+    ('copy button holds one width across every feedback state',
+     'style: { alignSelf: "flex-start", minWidth: 92, height: 26,',
+     'style: { alignSelf: "flex-start", width: 136, height: 26,'),
+
     ('copy feedback remains centered in every state',
      'React.createElement("span", { "aria-live": "polite" }, copyState)',
      'React.createElement("span", { "aria-live": "polite", style: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", lineHeight: 1 } }, copyState)'),
