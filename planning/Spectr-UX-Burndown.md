@@ -577,21 +577,82 @@ requires regenerating the SHA-bound receipts.
 
 ### 2. Cursor feedback
 
-- [ ] Crosshair over band editing.
-- [ ] Open hand over the movable viewport.
-- [ ] Grabbing hand during viewport drag.
-- [ ] Left/right resize cursor over viewport trims.
+- [x] Crosshair over band editing.
+- [x] Open hand over the movable viewport.
+- [x] Grabbing hand during viewport drag.
+- [x] Left/right resize cursor over viewport trims.
 - [ ] Standalone, AUv2, and REAPER acceptance recorded.
 
-Implementation/proof state: protected Pulp main contains the AppKit
-gesture-phase cursor refresh at `e5dc8d29c7`, and current committed Spectr source
-drives the shipping materialized runtime through crosshair, left/right
-horizontal resize, grabbing, and restored grab states. The available Release
-`Spectr-native-n1-test '[cursor]'` passed 54 assertions, but its cache records
-dirty Spectr `639acec` and development Pulp SDK `17998f…`; under this ledger's
-provenance policy it is prior evidence, not a clean-head pass. Rebuild and rerun
-on the merged immutable SDK before checking these rows or beginning host-format
-visual acceptance.
+Clean-head evidence (2026-09-11), two layers that together cover the chain
+from the runtime's `style.cursor` write to the `NSCursor` AppKit applies:
+
+- **Spectr layer, exact clean head.** `Spectr-native-n1-test '[cursor]'`
+  passed 54 assertions in 1 case, built Release from clean Spectr
+  `e74bac75e218ea77fc80ebe7c10de91a41ee6b6a` (`SPECTR_SOURCE_GIT_DIRTY=FALSE`,
+  recorded in the configure cache and embedded in the binary) against the
+  official immutable Pulp SDK `v0.843.0` (`source_git_sha 95405ca6…`, ref
+  `v0.843.0`, not dirty, `distribution_eligible`; it contains the AppKit
+  gesture-phase cursor refresh `e5dc8d29c7`). Spectr `origin/main` is one
+  commit behind that head (`30d9384`). The case drives the materialized runtime
+  through `[data-spectr-filter-surface]` and asserts `surface->cursor()` in the
+  order crosshair → horizontal-resize (left trim, right trim, on pointermove
+  with no gesture in progress) → grabbing (pointerdown on the window) →
+  grabbing (pointermove while held) → grab (pointerup) → crosshair (pointermove
+  off the minimap). The runtime's `onPointerMove` chooses `col-resize` /
+  `grab` / `grabbing` from `minimapHit` and the active gesture mode only — it
+  never reads `e.buttons` — so the trim rows are hover-driven even though the
+  test's `dispatch_minimap` sends `buttons: 1` on its pointermoves (a cosmetic
+  inaccuracy in the fixture, not in the product).
+- **Pulp host layer, screen readback.** Pulp PR #8230
+  (`fix/css-empty-background-clears-20260911`, auto-merge armed) adds
+  `test/test_mac_hover_cursor_live.mm` (ctest `pulp-test-mac-hover-cursor-live`,
+  `validation`-labelled, `RUN_SERIAL`). Its `FilterRoot` fixture is the shape of
+  the Spectr surface — ONE view whose hover handler picks crosshair (plot) /
+  open hand (viewport window) / left-right resize (trims) and whose press
+  handler closes the hand — hosted in a real `NSWindow` by the shipping
+  `PulpView`, driven through the host's real `-mouseMoved:` / `-mouseDown:` /
+  `-mouseDragged:` (+ coalesced flush) / `-mouseUp:`, and read back as the
+  applied `+[NSCursor currentCursor]` with the view's own button-event count
+  beside each reading. It asserts `crosshairCursor`, `openHandCursor`,
+  `resizeLeftRightCursor` on pure hover with 0 button events; `closedHandCursor`
+  only while a button is held (press and drag); `openHandCursor` back on release
+  without pointer motion; crosshair again on the next hover. Every assertion was
+  proven RED→GREEN with `tools/scripts/confirm_failure.sh` (observed recompile
+  each time): crosshair→arrow, resizeLeftRight→arrow, grab→arrow and
+  closedHand→openHand in `set_ns_cursor_for_style`; `simulate_hover` removed
+  from `-mouseMoved:` (the cursor would then update only after a press — the
+  reported bug); and the post-handler publish removed from `-mouseDown:`.
+
+Still open, and who can close it:
+
+- **Standalone acceptance** — the mechanism is proven above, but a
+  person-visible standalone reading has not been taken. Instrument:
+  `tools/testing/cursor-proof/hover_cursor_probe.m` (PR #8230; oracle
+  `+[NSCursor currentSystemCursor]` read from outside the process), run as
+  `hover_cursor_probe --pid $(pgrep -x Spectr) --cols 12 --rows 8 --compare-drag`
+  against an installed clean-head standalone. Not run here: it dissociates the
+  system pointer and this machine was carrying a concurrent perf measurement,
+  and the standalone was not built in this session (only the test target was).
+  Closable by any agent or human on an idle, Accessibility-trusted Mac.
+- **AUv2 (Logic) and REAPER acceptance** — not run; needs a real host session.
+  The Pulp live test's header states the DAW-hosted case is not exercised at
+  all (a different window and tracking-area situation). Human validation, or an
+  agent with Logic/REAPER on an idle machine, following the same probe recipe
+  with the host's pid.
+- **The in-app `SPECTR_CURSOR_PROBE` hover branch is dead.** `native_editor.cpp`
+  guards it on `SPECTR_HAS_HOVER_DISPATCH`, which nothing defines, and the
+  `deliver_hover_and_resolve_cursor` it would call exists in neither SDK
+  `v0.843.0` nor current Pulp `main` (only `hover_cursor_at`). Every hover probe
+  therefore reports `<no-hit>`, so `tools/cursor_invariants.py --expect` can
+  never pass for a hover point; only the `x,y>x2,y2` drag branch measures
+  anything. Closable by a Spectr change that either lands the Pulp hover
+  dispatch helper and defines the macro, or rewires the hover branch to
+  `simulate_hover` + `hover_cursor_at`.
+- One measured-not-judged Pulp host property is recorded in the live test's
+  header: AppKit's cursor pass (`-cursorUpdate:`) resolves from the hit view's
+  cursor slot without delivering a hover sample, so on a surface like this a
+  pass that runs where the pointer has not yet moved shows the slot's previous
+  value until the next `-mouseMoved:` lands.
 
 ### 3. Dropdown and modal defaults
 
@@ -628,17 +689,63 @@ product behavior.
 
 ### 5. Unified status overlay
 
-- [ ] Text is vertically centered below the graph's top ruler.
-- [ ] Drag feedback updates immediately and retains only the latest message.
-- [ ] The overlay dismisses after inactivity without an empty intermediate box.
+- [x] Text is vertically centered below the graph's top ruler.
+- [x] Drag feedback updates immediately and retains only the latest message.
+- [x] The overlay dismisses after inactivity without an empty intermediate box.
+
+Evidence: `tools/status_overlay_invariants.py`, registered as the
+`Spectr-status-overlay` ctest, drives the shipping standalone and reads the
+overlay's real geometry and lifetime rather than a source string. Place is a
+pixel property and dismissal a time property, so both are gated separately;
+the runner refuses a verdict unless its drag and probe drivers left liveness
+markers, because an overlay that was never raised is pixel-identical to one
+that dismissed correctly. Exit 3 (premise unproven) and 77 (no GPU editor)
+never read as a pass. Passed at `26a16cc` in 13.45 s.
 
 ### 6. Settings
 
 - [x] Modulation layout is stable, with fixed General/Modulation tabs and two LFO surfaces.
 - [x] Header, close control, and settings tabs remain fixed while content scrolls.
-- [ ] Close hover/press, Escape, and outside-click behavior pass.
+- [x] Close hover/press, Escape, and outside-click behavior pass.
 - [ ] Copy is centered and preserves Copied feedback.
 - [ ] Status Info is not truncated and unnecessary scrollbars are absent.
+
+Close/Escape/outside-click evidence: `test/test_native_state_parity.cpp:2006`
+asserts Escape and outside-click dismissal against the shipping runtime, with
+a negative control at `:2019`; `:2716-2725` drives `pointerenter` and
+`pointerdown` on the close control and asserts the `data-spectr-close-state`
+it publishes. That proves the behavior. The hover and press *styling* is
+authored but no test reads its painted pixels, so a silent appearance
+regression there would not be caught.
+
+Copy stays open, and the remaining half is a core Pulp defect rather than a
+Spectr one. The width half is fixed and proven: the button spanned the full
+448-pixel panel and now measures 136 with a 114-wide label box inside it
+(`docs/evidence/2026-09-11/COPY-WIDTH-{RED,GREEN}*`, captured from the
+shipping materialized artifact, detector negative-controlled with `--plant`).
+Centering is not fixed. A Label carrying text and no element children is
+built as a Yoga leaf, so the text measure function lands on the Label's own
+node and no anonymous flex item exists for `justify-content` to distribute;
+the authored `justifyContent: center` provably does nothing, measured ink
+centre 33.5 against an expected 136. Two positive controls confirm the
+diagnosis rather than the measurement: `textAlign` reads 135.5, and wrapping
+the string in a child Label also reads 135.5. `compat.json` lists
+`css/justifyContent` as supported with `center` and no caveat, so this is an
+unimplemented behavior, not a documented ceiling. A core Pulp fix is in
+flight; this line closes when the fix lands and the ink centre measures 136.
+
+Note on the contract markers: `test/test_import_fidelity.cpp:828` asserts the
+`settings-centered-copy-feedback` string survives in the shipping artifact and
+detects its removal. That gate passes today while the defect above persists,
+because it proves the CSS is authored, not that it centers anything. Do not
+read it as coverage for this line.
+
+Status Info stays open because the native lane cannot see it:
+`test/appearance_detectors.hpp:63-71,130-137` drops clipped boxes, which is
+exactly the geometry a truncation or stray-scrollbar defect produces, and
+`test/fixtures/settings-open-layout.json` is loaded by no test. Closing this
+needs either a pixel check that can see a clipped box or an explicit
+browser-only, human-verified line.
 - [x] Loading build info resolves promptly and cannot remain stuck.
 
 Exact-head browser evidence: the real-Chromium build-info harness reproduced
@@ -654,11 +761,100 @@ component transitions an unresolved request to `BUILD INFO UNAVAILABLE` after
 - [ ] All four targets compose with host automation and third-party modulation.
 - [ ] Audible behavior and automation replay pass product acceptance.
 
+Visual modulation is separately proven and is not what these three lines ask
+for. With LFO 1 and 2 enabled, the assigned controls were observed animating
+in the shipping editor under a full set of controls, which settles the
+reported concern that an assigned LFO produced no visible motion. The three
+lines above are layout stability, host-automation composition, and product
+acceptance, and none of them follows from that observation.
+
+Instrumentation trap worth recording: `SPECTR_STATE_TRACE` and
+`SPECTR_STATE_OUT` read canonical state by design, so they will never show
+LFO motion no matter how correct the modulation is. The phase only advances
+inside `Spectr::process()`. Anyone reaching for those variables to check this
+will measure a dead instrument and read it as a defect.
+
 ### 8. Remaining correctness
 
-- [ ] The right-side dBFS scale is semantically correct.
-- [ ] Minimap edge dragging cannot move the opposite trim.
+- [x] The right-side dBFS scale is semantically correct.
+- [x] Minimap edge dragging cannot move the opposite trim.
 - [ ] Fast band drawing and minimap interaction remain intact.
+
+dBFS evidence: `788e25b` anchors the ruler to the plot the curve is actually
+drawn in. `Analyzer bridge: post-DSP spectrum preserves peak-amplitude dBFS`
+passes at `26a16cc` (8 assertions), and the fix was proven RED with a control
+planted in `runtime.js` that failed 6 of 165 assertions and passed 165 on
+restore.
+
+Minimap trim evidence: `native minimap edge drag cannot move the opposite
+trim` passes at `26a16cc` (10 assertions), and `minimap edge drag cannot
+narrow past the viewport codec floor` passes alongside it (14 assertions).
+
+Band drawing and minimap interaction stay open on a reproduced regression, so
+this line is worse than unproven. Against a 17.5 ms no-drag control on the
+same build, a minimap edge drag measures p95 41.6 and 35.2 ms with 24 and 23
+inter-frame gaps at or past 25 ms. JavaScript is ruled out as the cause: the
+drag makes 177 bridge calls totalling 55 ms with a 1 ms maximum, against a
+working positive control where band drawing charges 231 ms with a 42 ms
+maximum. The cost is therefore charged natively after `processing_state_set`
+returns, in `src/ui/native_editor.cpp`.
+
+A second, independent instrument reproduces it. `tools/frame_cadence_probe.py`
+measures the gap *between* painted frames rather than the duration of frames
+that painted, which matters because `tools/analyze_interaction_trace.py` scores
+only `frame` slice durations and is structurally blind to a window in which no
+frame was painted at all — the exact shape of both stalls here. On that probe
+the minimap drag reads a sustained p95 ratio of 1.81 with 22 sustained gaps at
+or past 25 ms against a control of 3. It is load-sensitive, reaching 2.9 under
+contention on the same host, so the milliseconds recorded above are a floor and
+not a ceiling. Reproduce with:
+
+    python3 tools/frame_cadence_probe.py --app build/Spectr.app/Contents/MacOS/Spectr \
+        --mode minimap --runs 2 --json /tmp/cad.json
+
+The band stalls are single-frame events, not a smear, and the press is the
+larger of the two. Across four runs the whole cost lands on exactly frame 45
+(147.1 and 157.3 ms) and exactly frame 225 (105.5 and 108.1 ms), with both
+neighbours at one vsync. That is the signature of one expensive synchronous
+handler, and it corroborates the three-synchronous-React-commits root cause
+from a completely independent instrument. Worth stating plainly because this
+document had only ever named the release stall; the press one is worse.
+
+Three gates landed with the probe at `8f5a6d8`. `Spectr-frame-cadence-selftest`
+is the analyzer's own negative control: it plants a 220 ms gap in a synthetic
+series and requires detection, requires a clean series to stay quiet, and
+requires a press-window gap to be routed out of the sustained set; hardcoding
+`ge100_ms` to 0 in a copy exits 1. `Spectr-band-drag-cadence` gates at a 1.35
+sustained p95 ratio against an idle control captured in the same invocation,
+and measures 0.938 and 0.94, so it has real headroom. The report gate
+`Spectr-minimap-drag-cadence-report` deliberately carries **no threshold**:
+registered as a 2.40 ratchet it failed at 2.9 ten minutes after measuring
+1.81 on the same host, so a gate there would report the machine rather than
+the code. It records the
+figures and still exits 3 when its premise is unproven, which keeps it from
+rotting into decoration.
+
+The liveness gate is what makes a zero trustworthy here. Two idle captures
+differ in 0 of 2554200 pixels, so the idle render is bit-deterministic and any
+divergence proves the gesture actually moved something. Disabling the driver in
+a copy of the probe produced a healthy-looking 1.054 ratio and still exited 3
+with "the bands driver did not move anything" — without that check, a dead
+`PULP_TEST_POINTER_DRAG` would have read as the fastest run of the day.
+
+A second, separate stall is root-caused and belongs to core Pulp: `@pulp/react`
+commits synchronously per update, so each `setState` inside a pointer handler
+is its own full document commit. The band release handler's three calls
+measure `setGains=27 setHover=25 onStatus=35`, 87 ms total, and account for
+the whole of a 104-126 ms unpainted gap; no-oping the handler collapses that
+gap to 16.0 ms. Deferring to a microtask does not batch, and the bundled
+`ReactDOM` exposes no `unstable_batchedUpdates` even though the reconciler
+exports `batchedUpdates`.
+
+Instrumentation note: `tools/analyze_interaction_trace.py` scores `frame`
+slice durations and is structurally blind to a gap in which no frame was
+painted at all, which is the shape of both stalls above. Use
+`PULP_PARTIAL_RENDERING_DEBUG=1`, which emits one line per painted frame, or
+`tools/frame_cadence_probe.py`.
 
 ### 9. Landing and package
 

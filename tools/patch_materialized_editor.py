@@ -1599,8 +1599,14 @@ EDITS = [
      '      else lmax = clamp(f, lmin + 0.1, fullMax);\n'
      '      setView({ lmin, lmax });\n'
      '      return;',
-     '      if (p.edge === "left") lmin = clamp(f, fullMin, lmax - 0.1);\n'
-     '      else lmax = clamp(f, lmin + 0.1, fullMax);\n'
+     '      // One octave, matching spectr::kViewportMinWidthLog. A narrower\n'
+     '      // window survives the drag but not the parameter codec:\n'
+     '      // encode_viewport widens any sub-octave width about its CENTER,\n'
+     '      // so the trim the user never touched moves on the next\n'
+     '      // automation read-back or preset restore.\n'
+     '      const minSpan = 0.3010299956639812;\n'
+     '      if (p.edge === "left") lmin = clamp(f, fullMin, lmax - minSpan);\n'
+     '      else lmax = clamp(f, lmin + minSpan, fullMax);\n'
      '      commitLiveViewport({ lmin, lmax });\n'
      '      return;'),
 

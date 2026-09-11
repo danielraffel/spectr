@@ -581,21 +581,23 @@ void activate(NativeEditorRig& rig, std::string_view selector,
     settle(rig.clock);
 }
 
-// The settings slider paints its own track and thumb, so it answers a pointer
-// press on that track rather than an <input> value change. Press it at a
+// Spectr's sliders paint their own track and thumb, so they answer a pointer
+// press on that track rather than an <input> value change. Press one at a
 // fraction of its own measured width and let the widget derive the value the
 // way a person dragging it would, instead of asserting a value straight into
 // the handler and proving nothing about the control.
-std::string slider_press_at(double ratio) {
+std::string slider_press_at(
+    double ratio,
+    std::string_view selector = "[data-spectr-setting-slider]") {
     return std::string{
         "(() => {"
-        " const node = globalThis.__pulpFindMaterializedElement__("
-        "\"[data-spectr-setting-slider]\");"
+        " const node = globalThis.__pulpFindMaterializedElement__("}
+        + js_string(selector) + ");"
         " const box = node && node.getBoundingClientRect"
         " ? node.getBoundingClientRect() : null;"
         " if (!box || !(box.width > 0)) throw new Error("
-        "'settings slider has no layout box to press');"
-        " return { clientX: box.left + box.width * "}
+        "'slider has no layout box to press: ' + " + js_string(selector) + ");"
+        " return { clientX: box.left + box.width * "
         + std::to_string(ratio)
         + ", clientY: box.top + box.height * 0.5, pointerId: 1, button: 0 };"
           " })()";
@@ -1104,8 +1106,12 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     find_surface(*rig.root);
     REQUIRE(surface != nullptr);
     CHECK(surface->cursor() == View::CursorStyle::crosshair);
+    // `buttons` is the held-button mask the pointer event carries. A hover is
+    // buttons:0; only a move that continues a press is buttons:1. Passing 1 for
+    // a plain move asserts the drag cursor and proves nothing about hover.
     const auto dispatch_minimap = [&](std::string_view event,
-                                      std::string_view hit) {
+                                      std::string_view hit,
+                                      int buttons) {
         const auto script = std::string{R"js((() => {
           const selector = '[data-spectr-filter-surface]';
           const surface = document.querySelector(selector);
@@ -1132,7 +1138,7 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
           if (!globalThis.__pulpActivateMaterializedElement__(selector, )js"
             + js_string(event) + R"js(, {
                 clientX: point.x, clientY: point.y, pointerId: 71,
-                button: 0, buttons: 1
+                button: 0, buttons: )js" + std::to_string(buttons) + R"js(
               })) throw new Error('minimap cursor activation failed');
           if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
             globalThis.__pulpRuntimeSettle__(4);
@@ -1141,15 +1147,19 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
         settle(rig.clock, 4);
     };
 
-    dispatch_minimap("pointermove", "left");
+    // Hovering an edge with no button held must show the resize affordance.
+    dispatch_minimap("pointermove", "left", 0);
     CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
-    dispatch_minimap("pointermove", "right");
+    dispatch_minimap("pointermove", "right", 0);
     CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
-    dispatch_minimap("pointerdown", "window");
+    // Hovering the window body offers the grab affordance before any press.
+    dispatch_minimap("pointermove", "window", 0);
+    CHECK(surface->cursor() == View::CursorStyle::grab);
+    dispatch_minimap("pointerdown", "window", 1);
     CHECK(surface->cursor() == View::CursorStyle::grabbing);
-    dispatch_minimap("pointermove", "window");
+    dispatch_minimap("pointermove", "window", 1);
     CHECK(surface->cursor() == View::CursorStyle::grabbing);
-    dispatch_minimap("pointerup", "window");
+    dispatch_minimap("pointerup", "window", 0);
     CHECK(surface->cursor() == View::CursorStyle::grab);
     activate(rig, "[data-spectr-filter-surface]", "pointermove",
              R"js({clientX:660,clientY:430,pointerId:72,button:0,buttons:0})js");
@@ -2800,11 +2810,96 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     REQUIRE(rig.processor.field().bands[3].gain_db == Catch::Approx(12.0f));
     REQUIRE(rig.processor.field().bands[3].muted);
 
+    // The morph control paints its own track and its own thumb, so both the
+    // value it publishes and the size it draws are read back from the native
+    // view tree rather than from the script shim that authored them.
+    auto* morph_track = rig.bridge().widget("spectr-snapshot-morph");
+    REQUIRE(morph_track != nullptr);
+    rig.root->layout_children();
+    REQUIRE(morph_track->bounds().width == Catch::Approx(90.0f).margin(0.5f));
+    REQUIRE(morph_track->bounds().height == Catch::Approx(16.0f).margin(0.5f));
+
+    // Snapshot A holds band 3 at -6 dB and B holds it at +12 dB, so a morph
+    // value v lands the band at -6 + 18v. Every gain assertion below is that
+    // one relation read back through the processor the host owns.
+    const auto morph_gain_at = [](double value) {
+        return Catch::Approx(-6.0 + 18.0 * value).margin(0.01);
+    };
+    const auto morph_thumb_size = [&](const char* stage) {
+        rig.root->layout_children();
+        CAPTURE(stage);
+        const View* idle = find_sized_descendant(*morph_track, 14.0f, 14.0f);
+        const View* grown = find_sized_descendant(*morph_track, 18.0f, 18.0f);
+        REQUIRE_FALSE((idle == nullptr && grown == nullptr));
+        REQUIRE_FALSE((idle != nullptr && grown != nullptr));
+        return grown != nullptr ? 18.0f : 14.0f;
+    };
+
+    // Idle first: this reading is the positive control for the two that
+    // follow. A thumb the view tree never drew would report neither size and
+    // trip the require above instead of silently agreeing with every stage.
+    REQUIRE(morph_thumb_size("idle") == 14.0f);
+    activate(rig, "[data-spectr-morph]", "pointerenter",
+             slider_press_at(0.5, "[data-spectr-morph]"));
+    REQUIRE(morph_thumb_size("hovered") == 18.0f);
+
+    // A move with no preceding press is inert: the control tracks the pointer
+    // only while it holds the capture the press gave it.
+    const auto gain_before_morph = rig.processor.field().bands[3].gain_db;
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.9, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db
+            == Catch::Approx(gain_before_morph).margin(0.01));
+
     const auto revision_before_morph = rig.processor.native_editor_revision();
-    activate(rig, "[data-spectr-morph]", "input",
-             R"js({value:'0.5',target:{value:'0.5'},currentTarget:{value:'0.5'}})js");
+    // The morph control derives its value from where the pointer landed, so
+    // press it the way a person would rather than feeding a value straight to
+    // a handler.
+    activate(rig, "[data-spectr-morph]", "pointerdown",
+             slider_press_at(0.5, "[data-spectr-morph]"));
     REQUIRE(rig.processor.native_editor_revision() == revision_before_morph + 1);
-    REQUIRE(rig.processor.field().bands[3].gain_db == Catch::Approx(3.0f));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.5));
+    REQUIRE(rig.processor.field().bands[3].muted);
+
+    // The value follows the pointer in both directions across the drag, so a
+    // handler that only re-read the press point would fail here.
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.25, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.25));
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.75, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.75));
+
+    // Leaving the control mid-drag must not end the drag or shrink the thumb:
+    // the pointer is still captured, so the gesture continues off the track.
+    activate(rig, "[data-spectr-morph]", "pointerleave",
+             slider_press_at(1.4, "[data-spectr-morph]"));
+    REQUIRE(morph_thumb_size("left-while-dragging") == 18.0f);
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.9, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.9));
+
+    // Losing the capture ends the drag. Moves after it are inert again, and
+    // the next leave is finally free to restore the idle thumb.
+    activate(rig, "[data-spectr-morph]", "lostpointercapture",
+             slider_press_at(0.9, "[data-spectr-morph]"));
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.1, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.9));
+    REQUIRE(morph_thumb_size("still-hovered-after-release") == 18.0f);
+    activate(rig, "[data-spectr-morph]", "pointerleave",
+             slider_press_at(1.4, "[data-spectr-morph]"));
+    REQUIRE(morph_thumb_size("left-after-release") == 14.0f);
+
+    // Return the morph to the midpoint the rest of this case expects, and
+    // prove the ordinary release ends the drag the way losing the capture did.
+    activate(rig, "[data-spectr-morph]", "pointerdown",
+             slider_press_at(0.5, "[data-spectr-morph]"));
+    activate(rig, "[data-spectr-morph]", "pointerup",
+             slider_press_at(0.5, "[data-spectr-morph]"));
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.1, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.5));
     REQUIRE(rig.processor.field().bands[3].muted);
 
     // Native UI save and rename update the processor-owned library before the
@@ -4332,4 +4427,221 @@ TEST_CASE("preset manager arrows walk the selection and leave the default marker
         require_row(step, "ArrowUp skipped or stalled in the preset list");
     }
     storage.require_unchanged();
+}
+
+// COR-2. Dragging one minimap trim must never move the other. Every existing
+// block that says "opposite trim" drives `minimap-drag` (the window body) or a
+// wheel pan, and every block that drives `minimap-resize` (the edge handles)
+// asserts only that the span changed -- so the literal claim had no test. The
+// edge handler seeds BOTH bounds from a pointerdown snapshot and writes only
+// one of them, which is what makes the invariant hold; a regression that
+// rewrites the snapshot mid-drag, swaps the bounds, or normalises the pair in
+// the commit would still change the span and still pass every older check.
+//
+// Both edges are exercised, and the held bound is read twice: mid-gesture (the
+// live viewport, before React reconciles) and after release (the published
+// state React caught up to). A defect that only lands on release is exactly
+// the kind a mid-gesture-only assertion cannot see.
+TEST_CASE("native minimap edge drag cannot move the opposite trim",
+          "[native-n1][state-parity][minimap][cor-2]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    rig.bridge().load_script(R"js((() => {
+      const selector = '[data-spectr-filter-surface]';
+      const surface = document.querySelector(selector);
+      if (!surface) throw new Error('filter surface missing');
+      const hooks = globalThis.__spectrTestHooks;
+      const fire = (type, x, y, pointerId, buttons) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+          clientX: x, clientY: y, pointerId, button: 0, buttons
+        })) throw new Error('minimap edge activation failed: ' + type);
+      };
+      // The bound the dragged edge owns, and the bound it must leave alone.
+      const opposite = {left: 'lmax', right: 'lmin'};
+      const dragEdge = (edge, delta, pointerId) => {
+        const before = hooks.renderState();
+        const held = opposite[edge];
+        const fullMin = Math.log10(20);
+        const fullSpan = Math.log10(20000) - fullMin;
+        const innerX = 56, innerWidth = surface.clientWidth - 112;
+        const fraction = edge === 'left'
+          ? (before.view.lmin - fullMin) / fullSpan
+          : (before.view.lmax - fullMin) / fullSpan;
+        const x = innerX + fraction * innerWidth;
+        const y = Array.from({length: surface.clientHeight}, (_, c) => c)
+          .find(c => hooks.minimapHit(x, c) === edge);
+        if (!Number.isFinite(y))
+          throw new Error('minimap ' + edge + ' handle is not hittable');
+        fire('pointerdown', x, y, pointerId, 1);
+        // Two moves, not one: a handler that accumulates into the untouched
+        // bound instead of re-deriving it from the pointerdown snapshot only
+        // drifts on the SECOND move.
+        fire('pointermove', x + delta * 0.5, y, pointerId, 1);
+        fire('pointermove', x + delta, y, pointerId, 1);
+        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+          globalThis.__pulpRuntimeSettle__(2);
+        const during = hooks.renderState();
+        // Positive control on the gesture itself. Without it, an edge drag
+        // that did nothing at all would satisfy the invariance check below.
+        const moved = edge === 'left'
+          ? Math.abs(during.view.lmin - before.view.lmin)
+          : Math.abs(during.view.lmax - before.view.lmax);
+        if (!(moved > 1e-6))
+          throw new Error(edge + ' handle drag did not move its own trim');
+        if (Math.abs(during.view[held] - before.view[held]) > 1e-9)
+          throw new Error(edge + ' drag moved the opposite trim mid-gesture: '
+            + held + ' ' + before.view[held] + ' -> ' + during.view[held]);
+        fire('pointerup', x + delta, y, pointerId, 0);
+        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+          globalThis.__pulpRuntimeSettle__(4);
+        const released = hooks.renderState();
+        if (Math.abs(released.view[held] - before.view[held]) > 1e-9)
+          throw new Error(edge + ' drag moved the opposite trim on release: '
+            + held + ' ' + before.view[held] + ' -> ' + released.view[held]);
+        if (Math.abs(released.reactView[held] - before.view[held]) > 1e-9)
+          throw new Error(edge + ' release published a moved opposite trim: '
+            + held + ' ' + before.view[held] + ' -> ' + released.reactView[held]);
+      };
+      // Inward on both edges (narrowing), then outward, so a clamp that
+      // reflects rather than absorbs is covered in both directions.
+      dragEdge('left', 60, 81);
+      dragEdge('right', -60, 82);
+      dragEdge('left', -30, 83);
+      dragEdge('right', 30, 84);
+    })();)js", "spectr-native-minimap-edge-trim-invariant");
+    settle(rig.clock, 8);
+    storage.require_unchanged();
+}
+
+// COR-2, indirect path. The invariant above holds for the duration of the
+// gesture, but the viewport does not stay in the editor: it is encoded into
+// two automation parameters and decoded back on every host read, preset
+// restore, and automation pass. `encode_viewport` widens any sub-octave span
+// about the window's CENTER, so a window the user narrowed past one octave by
+// dragging ONE edge comes back with the OTHER edge moved. The editor clamp and
+// the codec floor therefore have to agree, and they did not: the edge handler
+// stopped at 0.1 decades while `kViewportMinWidthLog` is log10(2) ~= 0.30103.
+//
+// The C++ half pins the codec behaviour that makes the disagreement matter
+// (both directions, so it stays a statement about the floor and not about one
+// magic number). The JS half proves the shipping editor now refuses to hand
+// the codec a window it cannot represent.
+TEST_CASE("minimap edge drag cannot narrow past the viewport codec floor",
+          "[native-n1][state-parity][minimap][cor-2]") {
+    SECTION("a sub-octave window round-trips with the untouched trim moved") {
+        // What a left-edge drag to the old 0.1-decade clamp produced: the user
+        // moved only lmin, but lmax comes back 0.1 decades higher.
+        const spectr::Viewport narrowed{
+            std::pow(10.0f, 3.0f), std::pow(10.0f, 3.1f)};
+        const auto [center, width] = spectr::encode_viewport(narrowed);
+        const auto restored = spectr::decode_viewport(center, width);
+        REQUIRE(std::log10(restored.max_hz)
+                > std::log10(narrowed.max_hz) + 0.05f);
+        REQUIRE(std::log10(restored.min_hz)
+                < std::log10(narrowed.min_hz) - 0.05f);
+    }
+
+    SECTION("a one-octave window round-trips with both trims intact") {
+        const spectr::Viewport octave{
+            std::pow(10.0f, 3.0f),
+            std::pow(10.0f, 3.0f + spectr::kViewportMinWidthLog)};
+        const auto [center, width] = spectr::encode_viewport(octave);
+        const auto restored = spectr::decode_viewport(center, width);
+        REQUIRE(std::log10(restored.min_hz)
+                == Catch::Approx(std::log10(octave.min_hz)).margin(1e-4));
+        REQUIRE(std::log10(restored.max_hz)
+                == Catch::Approx(std::log10(octave.max_hz)).margin(1e-4));
+    }
+
+    SECTION("the shipping editor will not drag a trim past the floor") {
+        PatternStoragePoison storage;
+        NativeEditorRig rig;
+        require_home(rig);
+
+        rig.bridge().load_script(R"js((() => {
+          const selector = '[data-spectr-filter-surface]';
+          const surface = document.querySelector(selector);
+          if (!surface) throw new Error('filter surface missing');
+          const hooks = globalThis.__spectrTestHooks;
+          const fire = (type, x, y, pointerId, buttons) => {
+            if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+              clientX: x, clientY: y, pointerId, button: 0, buttons
+            })) throw new Error('minimap edge activation failed: ' + type);
+          };
+          // spectr::kViewportMinWidthLog.
+          const floor = Math.log10(2);
+          const fullMin = Math.log10(20);
+          const fullSpan = Math.log10(20000) - fullMin;
+          const innerX = 56, innerWidth = surface.clientWidth - 112;
+          const toX = (decades) =>
+            innerX + (decades - fullMin) / fullSpan * innerWidth;
+          const handleY = (edge, x) => {
+            const y = Array.from({length: surface.clientHeight}, (_, c) => c)
+              .find(c => hooks.minimapHit(x, c) === edge);
+            if (!Number.isFinite(y))
+              throw new Error('minimap ' + edge + ' handle is not hittable');
+            return y;
+          };
+          const dragEdgeTo = (edge, decades, pointerId) => {
+            const state = hooks.renderState();
+            const x = toX(edge === 'left' ? state.view.lmin : state.view.lmax);
+            const y = handleY(edge, x);
+            fire('pointerdown', x, y, pointerId, 1);
+            fire('pointermove', toX(decades), y, pointerId, 1);
+            fire('pointerup', toX(decades), y, pointerId, 0);
+          };
+          // The default window is exactly one octave wide -- already sitting on
+          // the floor -- so a squeeze from there would prove nothing. Open it
+          // to the full range through the editor's own left handle. This rig
+          // republishes the host's viewport on every settle, so the widened
+          // window is only live between gestures: do not settle here.
+          dragEdgeTo('left', fullMin - 0.5, 87);
+          const opened = hooks.renderState();
+          if (!(opened.view.lmax - opened.view.lmin > floor + 0.5))
+            throw new Error('could not open the fixture window: '
+              + opened.view.lmin + ' .. ' + opened.view.lmax);
+
+          const squeeze = (edge, pointerId) => {
+            const before = hooks.renderState();
+            const startSpan = before.view.lmax - before.view.lmin;
+            if (!(startSpan > floor + 0.05))
+              throw new Error('fixture window is already at the floor: '
+                + before.view.lmin + ' .. ' + before.view.lmax);
+            const x = toX(edge === 'left' ? before.view.lmin : before.view.lmax);
+            const y = handleY(edge, x);
+            // Aim a long way PAST the opposite trim, so the clamp -- not the
+            // pointer -- is what decides where the trim stops.
+            const target = edge === 'left'
+              ? before.view.lmax + 0.2
+              : before.view.lmin - 0.2;
+            fire('pointerdown', x, y, pointerId, 1);
+            fire('pointermove', toX(target), y, pointerId, 1);
+            const during = hooks.renderState();
+            const span = during.view.lmax - during.view.lmin;
+            // Positive control: a drag that did nothing would satisfy the
+            // floor check below for the wrong reason.
+            if (!(span < startSpan - 1e-6))
+              throw new Error(edge + ' squeeze did not narrow the window: '
+                + startSpan + ' -> ' + span);
+            // The trim the gesture does NOT own must not have moved to make
+            // room -- the clamp absorbs the overshoot on one side only.
+            const held = edge === 'left' ? 'lmax' : 'lmin';
+            if (Math.abs(during.view[held] - before.view[held]) > 1e-9)
+              throw new Error(edge + ' squeeze moved the opposite trim');
+            if (span < floor - 1e-6)
+              throw new Error(edge + ' drag narrowed past the codec floor: '
+                + span + ' < ' + floor);
+            fire('pointerup', toX(target), y, pointerId, 0);
+          };
+          squeeze('left', 91);
+          // Re-open before the second squeeze: the first one left the window
+          // sitting exactly on the floor.
+          dragEdgeTo('left', fullMin - 0.5, 93);
+          squeeze('right', 92);
+        })();)js", "spectr-native-minimap-edge-floor");
+        settle(rig.clock, 8);
+        storage.require_unchanged();
+    }
 }

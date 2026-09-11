@@ -518,6 +518,92 @@ else()
         "Spectr: no Python3 interpreter -- Spectr-resize-reachability not registered")
 endif()
 
+# Status overlay (section 5): the overlay must sit where the design puts it,
+# track a live drag, and then dismiss itself. The last of those is a TIME
+# property and the first is a PIXEL property, so this gate drives the shipping
+# standalone through a scripted band drag and reads both -- a layout receipt
+# alone cannot see a box that is painted in the wrong place, and a single
+# screenshot cannot see one that never goes away. The runner refuses a verdict
+# unless its drag and probe drivers left liveness markers, because an overlay
+# that was never raised is pixel-identical to one that dismissed correctly.
+# Exit: 0 pass, 1 an invariant is violated, 3 the premise is unproven, 77 no
+# GPU editor on this host. 3 and 77 must never read as a pass.
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-status-overlay
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_status_overlay.sh
+            $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_BINARY_DIR}/spectr-status-overlay)
+    set_tests_properties(Spectr-status-overlay PROPERTIES
+        TIMEOUT 300
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+else()
+    message(STATUS
+        "Spectr: Spectr-status-overlay not registered (needs Python3 and the standalone)")
+endif()
+
+# Painted-frame cadence during a scripted drag. The interaction gate scores the
+# duration of `frame` trace slices, so a stall that swallows whole vsyncs leaves
+# no slice behind and reads as fast; this measures the wall-clock gap between
+# painted frames instead. Timings drift with host load, so the gate is a RATIO
+# against an idle control captured in the same invocation, never an absolute
+# millisecond figure. The probe refuses a verdict unless the gesture capture
+# diverges from the idle capture, because a driver that moved nothing produces a
+# clean fast run that is indistinguishable from a pass.
+#
+# The press and release gaps are reported per run and deliberately excluded from
+# the gated figure: a single expensive transition handler and a drag that cannot
+# hold its frame rate are different defects, and one threshold cannot hold both.
+#
+# Exit: 0 pass, 1 the ratio is exceeded, 3 the premise is unproven, 77 no
+# runnable editor. 3 and 77 must never read as a pass.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-frame-cadence-selftest
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/frame_cadence_probe.py --self-test)
+    set_tests_properties(Spectr-frame-cadence-selftest PROPERTIES TIMEOUT 60)
+endif()
+
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    # Band drawing holds its cadence today (gesture p95 sits at or below the idle
+    # control), so this ratio is a real floor rather than a rubber stamp.
+    add_test(NAME Spectr-band-drag-cadence
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/frame_cadence_probe.py
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --mode bands --runs 2
+            --max-sustained-p95-ratio 1.35
+            --json ${CMAKE_CURRENT_BINARY_DIR}/spectr-cadence-bands.json)
+    set_tests_properties(Spectr-band-drag-cadence PROPERTIES
+        TIMEOUT 300
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+
+    # Minimap dragging does NOT hold its cadence -- the sustained p95 runs at
+    # roughly twice the idle control, and the cost is charged natively after the
+    # processing-state message returns rather than in the script handlers. No
+    # threshold is attached: the gesture's cost is load-sensitive in a way the
+    # idle control is not, so the ratio was observed swinging between 1.8 and 2.9
+    # on one host within ten minutes, and a gate that noisy reports the machine
+    # rather than the code. This case records the figures and still fails when the
+    # premise is unproven, which keeps the instrument honest until the native cost
+    # is fixed and a real threshold can be set.
+    add_test(NAME Spectr-minimap-drag-cadence-report
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/frame_cadence_probe.py
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --mode minimap --runs 2
+            --json ${CMAKE_CURRENT_BINARY_DIR}/spectr-cadence-minimap.json)
+    set_tests_properties(Spectr-minimap-drag-cadence-report PROPERTIES
+        TIMEOUT 300
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+else()
+    message(STATUS
+        "Spectr: frame-cadence gates not registered (needs Python3 and the standalone)")
+endif()
+
 add_executable(Spectr-editor-authority-test
     test/test_editor_authority.cpp
 )

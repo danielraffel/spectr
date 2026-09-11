@@ -9121,13 +9121,18 @@ function createWidget(type, id, parentId, props) {
   function materializedNodeTag(node) {
     return String(node && node.tagName || "").toLowerCase();
   }
-  function materializedNodeAtPath(binding, values, filterHiddenSettings = false) {
+  function materializedPathIndex(values) {
     const registrySet = new Set(values);
     const roots = values.filter((node2) => {
       const parent = node2 && (node2.parentElement || node2._parentElement);
       return !parent || !registrySet.has(parent);
     });
-    let siblings = roots;
+    return { registrySet, roots };
+  }
+  function materializedNodeAtPath(binding, values, filterHiddenSettings = false, pathIndex = null) {
+    const index = pathIndex || materializedPathIndex(values);
+    const registrySet = index.registrySet;
+    let siblings = index.roots;
     let node = null;
     for (const step of binding.path) {
       node = siblings[step.index] || null;
@@ -9656,6 +9661,7 @@ function createWidget(type, id, parentId, props) {
   }
   function applyMaterializedImportMetadata(metadata) {
     const values = materializedDomRegistryValues();
+    const pathIndex = materializedPathIndex(values);
     // These states are live, responsive UI. Their capture metadata is useful
     // as a visual oracle, but applying its fixed boxes at runtime makes the
     // header reflow and collapses the selected-preset action layout.
@@ -9663,7 +9669,7 @@ function createWidget(type, id, parentId, props) {
     const authoredManagerDetail = activeCapturedState === "pattern-manager"
       ? document.querySelector("[data-spectr-manager-detail]") : null;
     const belongsToAuthoredManagerDetail = (binding) => {
-      let node = materializedNodeAtPath(binding, values, true);
+      let node = materializedNodeAtPath(binding, values, true, pathIndex);
       while (node) {
         if (node === authoredManagerDetail) return true;
         node = node.parentElement || node._parentElement || null;
@@ -9673,7 +9679,7 @@ function createWidget(type, id, parentId, props) {
     const settingsLayoutPanel = document.querySelector(
       "[data-spectr-settings-panel]");
     const isSettingsDescendantBinding = (binding) => {
-      const node = materializedNodeAtPath(binding, values, true);
+      const node = materializedNodeAtPath(binding, values, true, pathIndex);
       const panel = settingsLayoutPanel;
       if (!node || !panel) return false;
       let current = node;
@@ -9693,7 +9699,7 @@ function createWidget(type, id, parentId, props) {
     // authored `top` and the binding are both inert against a frozen box; only
     // dropping the binding lets the authored layout apply.
     const isStatusOverlayBinding = (binding) => {
-      const node = materializedNodeAtPath(binding, values, true);
+      const node = materializedNodeAtPath(binding, values, true, pathIndex);
       const shell = statusOverlayShell;
       if (!node || !shell) return false;
       let current = node;
@@ -9727,7 +9733,7 @@ function createWidget(type, id, parentId, props) {
         // Band count is live state and now owns one non-wrapping text node.
         // Merge the old number and suffix captures into one stable line box.
         if (binding.text === "32") {
-          const node = materializedNodeAtPath(binding, values, true);
+          const node = materializedNodeAtPath(binding, values, true, pathIndex);
           const text = String(node?.textContent || "");
           if (/^(32|40|48|56|64) bands \u25BE$/.test(text)) return {
             ...binding, text, basis: { ...binding.basis, width: 73.03125 },
@@ -9783,7 +9789,7 @@ function createWidget(type, id, parentId, props) {
     if (typeof g5.setPosition === "function" && typeof g5.setFlex === "function") {
       for (const binding of activeLayoutBindings) {
         if (liveSettingsLayout) break;
-        const node = materializedNodeAtPath(binding, values, true);
+        const node = materializedNodeAtPath(binding, values, true, pathIndex);
         const id = node && (node.__pulpId || node.id);
         if (!id) {
           ++diagnostics.layout_node_miss;
@@ -9849,7 +9855,7 @@ function createWidget(type, id, parentId, props) {
     }
     for (const binding of activePaintBindings) {
       if (liveSettingsLayout) break;
-      const node = materializedNodeAtPath(binding, values, true);
+      const node = materializedNodeAtPath(binding, values, true, pathIndex);
       const id = node && (node.__pulpId || node.id);
       if (!id) {
         ++diagnostics.paint_node_miss;
@@ -9893,7 +9899,7 @@ function createWidget(type, id, parentId, props) {
     for (const binding of activeTextBindings) {
       if (liveSettingsLayout) break;
       const optional = binding.runtime_optional === true;
-      const node = materializedNodeAtPath(binding, values, true) || (optional ? materializedOptionalTextNode(binding, values) : null);
+      const node = materializedNodeAtPath(binding, values, true, pathIndex) || (optional ? materializedOptionalTextNode(binding, values) : null);
       if (!node) {
         if (optional) ++diagnostics.text_optional_miss;
         else ++diagnostics.text_node_miss;
@@ -10902,9 +10908,10 @@ function createWidget(type, id, parentId, props) {
       syncMaterializedCanvasBehaviorsAfterCommit();
     return applied;
   };
-  function materializedMatches(node, selector) {
-    if (!node || typeof selector !== "string") return false;
-    if (typeof node.matches === "function" && node.matches(selector)) return true;
+  const materializedSelectorParses = /* @__PURE__ */ new Map();
+  function materializedParseSelector(selector) {
+    const memo = materializedSelectorParses.get(selector);
+    if (memo) return memo;
     let remaining = selector.trim();
     const attributes = [];
     remaining = remaining.replace(
@@ -10915,14 +10922,27 @@ function createWidget(type, id, parentId, props) {
       }
     );
     const idMatch = remaining.match(/#([A-Za-z0-9_-]+)/);
-    const classMatches = Array.from(remaining.matchAll(/\.([A-Za-z0-9_-]+)/g));
-    const tag = remaining.replace(/#[A-Za-z0-9_-]+/g, "").replace(/\.[A-Za-z0-9_-]+/g, "").trim().toLowerCase();
+    const parsed = {
+      attributes,
+      id: idMatch ? idMatch[1] : null,
+      classes: Array.from(remaining.matchAll(/\.([A-Za-z0-9_-]+)/g)).map((match) => match[1]),
+      tag: remaining.replace(/#[A-Za-z0-9_-]+/g, "").replace(/\.[A-Za-z0-9_-]+/g, "").trim().toLowerCase()
+    };
+    materializedSelectorParses.set(selector, parsed);
+    return parsed;
+  }
+  function materializedMatches(node, selector) {
+    if (!node || typeof selector !== "string") return false;
+    if (typeof node.matches === "function" && node.matches(selector)) return true;
+    const parsed = materializedParseSelector(selector);
+    const attributes = parsed.attributes;
+    const tag = parsed.tag;
     if (tag && String(node.tagName || "").toLowerCase() !== tag) return false;
-    if (idMatch && String(node.id || node.getAttribute?.("id") || "") !== idMatch[1]) {
+    if (parsed.id && String(node.id || node.getAttribute?.("id") || "") !== parsed.id) {
       return false;
     }
     const classes = String(node.className || node.getAttribute?.("class") || "").split(/\s+/).filter(Boolean);
-    for (const match of classMatches) if (!classes.includes(match[1])) return false;
+    for (const wanted of parsed.classes) if (!classes.includes(wanted)) return false;
     for (const attribute of attributes) {
       if (typeof node.getAttribute !== "function") return false;
       const actual = node.getAttribute(attribute.name);
