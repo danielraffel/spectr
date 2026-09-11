@@ -1,0 +1,5 @@
+{"schema":"spectr-cursor-probe-v1","viewport":{"w":1320,"h":860},"probes":[
+ {"name":"P-660-60","phase":"hover","point":{"x":660,"y":60},"hit":true,"hit_id":"__behavior_pr_3","resolved_cursor":"crosshair","ns_cursor":"crosshairCursor","ancestor_cursors":[{"id":"__behavior_pr_3","cursor":"crosshair"},{"id":"__behavior_pr_68","cursor":"default"},{"id":"__pulp_materialized_behavior__","cursor":"default"},{"id":"","cursor":"default"}]},
+ {"name":"P-660-300","phase":"hover","point":{"x":660,"y":300},"hit":true,"hit_id":"__behavior_pr_3","resolved_cursor":"crosshair","ns_cursor":"crosshairCursor","ancestor_cursors":[{"id":"__behavior_pr_3","cursor":"crosshair"},{"id":"__behavior_pr_68","cursor":"default"},{"id":"__pulp_materialized_behavior__","cursor":"default"},{"id":"","cursor":"default"}]},
+ {"name":"P-660-779","phase":"hover","point":{"x":660,"y":779},"hit":true,"hit_id":"__behavior_pr_3","resolved_cursor":"crosshair","ns_cursor":"crosshairCursor","ancestor_cursors":[{"id":"__behavior_pr_3","cursor":"crosshair"},{"id":"__behavior_pr_68","cursor":"default"},{"id":"__pulp_materialized_behavior__","cursor":"default"},{"id":"","cursor":"default"}]}
+]}

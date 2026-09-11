@@ -1,0 +1,4 @@
+{"schema":"spectr-cursor-probe-v1","viewport":{"w":1320,"h":860},"probes":[
+ {"name":"D-drag","phase":"drag","point":{"x":660,"y":779},"to":{"x":700,"y":779},"hit":true,"hit_id":"__behavior_pr_3","resolved_cursor":"grabbing","ns_cursor":"closedHandCursor","ancestor_cursors":[{"id":"__behavior_pr_3","cursor":"grabbing"},{"id":"__behavior_pr_68","cursor":"default"},{"id":"__pulp_materialized_behavior__","cursor":"default"},{"id":"","cursor":"default"}]},
+ {"name":"P-660-60","phase":"hover","point":{"x":660,"y":60},"hit":true,"hit_id":"__behavior_pr_3","resolved_cursor":"grab","ns_cursor":"openHandCursor","ancestor_cursors":[{"id":"__behavior_pr_3","cursor":"grab"},{"id":"__behavior_pr_68","cursor":"default"},{"id":"__pulp_materialized_behavior__","cursor":"default"},{"id":"","cursor":"default"}]}
+]}
