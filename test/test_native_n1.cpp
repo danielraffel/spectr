@@ -581,13 +581,34 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
                 && cmd.text == "dBFS (analyzer)";
         });
     REQUIRE(heading != analyzer_commands.end());
+    // The heading does not share the tick column: it is right aligned flush to
+    // the plot's right edge while the ticks are left aligned 8px outside it.
+    // Anchor the column on "-120" instead, which the signed gain axis can never
+    // produce because it only spans +/-24, so that label names the analyzer
+    // ruler on its own.
+    const auto floor_label = std::find_if(
+        analyzer_commands.begin(), analyzer_commands.end(), [](const auto& cmd) {
+            return cmd.type == CanvasCommand::Type::fill_text
+                && cmd.text == "-120";
+        });
+    REQUIRE(floor_label != analyzer_commands.end());
+    const float column_x = floor_label->x;
+    REQUIRE(std::count_if(
+        analyzer_commands.begin(), analyzer_commands.end(), [](const auto& cmd) {
+            return cmd.type == CanvasCommand::Type::fill_text
+                && cmd.text == "-120";
+        }) == 1);
+    // Tie the heading back to the column it names, rather than assuming they
+    // share an x. The 8px is the tick inset the ruler draws with.
+    INFO("heading->x := " << heading->x << " column_x := " << column_x);
+    REQUIRE(column_x - heading->x == Catch::Approx(8.0f).margin(0.05f));
     const auto ruler_tick_y = [&](std::string_view label) {
         const auto match = std::find_if(
             analyzer_commands.begin(), analyzer_commands.end(),
             [&](const auto& cmd) {
                 return cmd.type == CanvasCommand::Type::fill_text
                     && cmd.text == label
-                    && std::abs(cmd.x - heading->x) < 0.05f;
+                    && std::abs(cmd.x - column_x) < 0.05f;
             });
         REQUIRE(match != analyzer_commands.end());
         return match->y;
