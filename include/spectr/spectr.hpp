@@ -18,6 +18,7 @@
 #include <array>
 #include <atomic>
 #include <bitset>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -65,6 +66,27 @@ struct AudioModulationState {
 };
 static_assert(std::is_trivially_copyable_v<AudioModulationState>,
               "audio modulation publication must remain allocation-free POD");
+
+/// The band field the audio owner is actually rendering this block, after the
+/// internal LFOs have been applied.
+///
+/// This exists so the editor can DRAW what the user hears. The modulated field
+/// is computed on the audio thread and consumed by the mask processor; without
+/// a publication the modulator is audible but invisible, and a control an LFO
+/// is sweeping never moves. `sequence` advances once per processed block so a
+/// UI tick can tell a fresh frame from a repeat; `active` is false whenever no
+/// modulator is running, which is the editor's cue to fall back to canonical
+/// state rather than freeze on the last modulated frame.
+///
+/// Strictly a display value. It never re-enters canonical state or a host
+/// parameter lane — see `apply_internal_modulation`.
+struct ModulatedFieldSnapshot {
+    BandField     field{};
+    std::uint64_t sequence = 0;
+    bool          active   = false;
+};
+static_assert(std::is_trivially_copyable_v<ModulatedFieldSnapshot>,
+              "modulated field publication must remain allocation-free POD");
 
 /// Declare that this build's format gives the user no way to resize the
 /// editor, so the editor must draw its own resize grip (see
@@ -345,6 +367,13 @@ public:
     const pulp::view::WaveformData& read_waveform() { return bridge_.read_waveform(); }
     const pulp::signal::MultiChannelMeterData& read_meter() { return bridge_.read_meter(); }
 
+    /// Latest post-LFO band field from the audio owner, for drawing only.
+    /// Lock-free; always a complete frame. `active == false` means no
+    /// modulator is running and the editor should draw canonical state.
+    const ModulatedFieldSnapshot& read_modulated_field() {
+        return modulated_field_publication_.read();
+    }
+
 private:
     double sample_rate_ = 48000.0;
     int    max_block_   = 512;
@@ -394,6 +423,13 @@ private:
         audio_modulation_publication_{};
     double audio_modulation_phase_ = 0.0;
     double audio_modulation_phase_2_ = 0.0;
+    // Audio owner -> UI publication of the post-LFO band field, so the editor
+    // can draw the modulation it is playing. Write-only on the audio thread,
+    // read-only through read_modulated_field().
+    pulp::runtime::TripleBuffer<ModulatedFieldSnapshot>
+        modulated_field_publication_{};
+    std::uint64_t modulated_field_sequence_ = 0;
+    bool          modulated_field_was_active_ = false;
     // The most recent EditorAuthority revision caused specifically by host
     // parameter adoption. Views use this as a coalescing publication key so
     // automation redraws immediately without echoing every editor-originated
@@ -512,6 +548,9 @@ private:
     int native_frame_subscription_ = -1;
     float native_analyzer_elapsed_ = 0.0f;
     std::uint64_t native_analyzer_sequence_ = 0;
+    // Last modulated-field sequence projected to the editor, so a UI tick
+    // that finds no new audio frame does not re-dispatch the same overlay.
+    std::uint64_t native_modulation_sequence_ = 0;
     EditorRevision native_host_automation_revision_ = 0;
 
     std::unique_ptr<pulp::view::View> create_native_editor_();

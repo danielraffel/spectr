@@ -1576,6 +1576,84 @@ TEST_CASE("an enabled LFO visibly modulates the drawn bank without moving canoni
     storage.require_unchanged();
 }
 
+// The overlay has to be smooth, not merely present. An LFO assigned to a
+// control should sweep it the way host automation playback sweeps a knob, so
+// the editor must draw EVERY audio frame it is handed rather than a decimated
+// subset: a throttled overlay reads as a stepping, juddering control even
+// though the audio underneath is continuous. One audio block per reading is
+// the finest grain the publication has, so a reading that repeats means a
+// frame was dropped between the audio owner and the paint refs.
+TEST_CASE("the modulation overlay tracks every audio frame without decimation",
+          "[native-n1][state-parity][modulation-visual]") {
+    PatternStoragePoison storage;
+    NativeEditorRig      rig;
+    require_home(rig);
+
+    for (std::size_t index = 0; index < spectr::kMaxBands; ++index) {
+        rig.store.set_value(spectr::band_gain_param_id(index), 0.0f);
+        rig.store.set_value(spectr::band_mute_param_id(index), 0.0f);
+    }
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape,
+                        static_cast<float>(spectr::LfoShape::Sine));
+    rig.store.set_value(spectr::kParamLfoRate, 0.25f);
+    rig.store.set_value(spectr::kParamLfoDepth, 1.0f);
+    rig.store.set_value(spectr::kParamLfoTarget,
+                        static_cast<float>(spectr::ModulationTarget::WholeBank));
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 4);
+
+    // One block per reading advances the phase 0.0427 of a cycle, so 24
+    // readings trace slightly more than one full sine.
+    sample_modulated_bank(rig, 24, 1);
+
+    rig.bridge().load_script(R"js((() => {
+      const samples = globalThis.__spectrLfoSamples;
+      if (!Array.isArray(samples) || samples.length !== 24)
+        throw new Error('fine-grained sampling produced ' + (samples || []).length
+          + ' readings');
+      const trace = samples.map(sample => sample.drawn[0]);
+
+      // No decimation: a 30 Hz throttle over this span would collapse the trace
+      // onto a handful of repeated values.
+      const distinct = new Set(trace.map(value => value.toFixed(6))).size;
+      if (distinct < 18)
+        throw new Error('the drawn bank repeats -- the overlay is decimated: '
+          + distinct + ' distinct of ' + trace.length + ' [' + trace.join(',') + ']');
+
+      // No jumps: a full-depth sine normalized to +/-0.5 moves at most
+      // 0.5 * 2*PI * 0.0427 ~= 0.134 per block. A larger step means readings
+      // were skipped and the control would visibly snap.
+      let worst = 0;
+      for (let index = 1; index < trace.length; ++index)
+        worst = Math.max(worst, Math.abs(trace[index] - trace[index - 1]));
+      if (!(worst < 0.20))
+        throw new Error('the drawn bank jumped ' + worst
+          + ' between adjacent frames [' + trace.join(',') + ']');
+
+      // A sine, not noise: one cycle turns twice, so allow a little slack for
+      // where the trace starts and ends but reject a jittering signal.
+      let turns = 0;
+      for (let index = 2; index < trace.length; ++index) {
+        const previous = trace[index - 1] - trace[index - 2];
+        const current  = trace[index]     - trace[index - 1];
+        if (previous !== 0 && current !== 0 && Math.sign(previous) !== Math.sign(current))
+          ++turns;
+      }
+      if (turns > 4)
+        throw new Error('the drawn bank reverses ' + turns
+          + ' times in one cycle -- not a smooth sweep [' + trace.join(',') + ']');
+
+      // And still display-only across the whole sweep.
+      for (const sample of samples)
+        for (let band = 0; band < 8; ++band)
+          if (Math.abs(sample.canonical[band]) > 1e-6)
+            throw new Error('modulation leaked into canonical state at band '
+              + band + ': ' + sample.canonical[band]);
+    })();)js", "spectr-native-lfo-visual-smoothness");
+    storage.require_unchanged();
+}
+
 TEST_CASE("native semantic popup navigation owns one visible highlight and selection",
           "[native-n1][state-parity][dropdown]") {
     PatternStoragePoison storage;

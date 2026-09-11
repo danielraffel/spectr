@@ -613,6 +613,31 @@ void Spectr::process(
                             second, wave2);
                     }
 
+                    // Hand the post-LFO field to the editor so it can draw the
+                    // modulation it is playing. Without this the modulator is
+                    // audible but invisible: a band an LFO is sweeping never
+                    // moves on screen. Display only — `audible` is a copy, and
+                    // apply_internal_modulation deliberately leaves canonical
+                    // state and the host parameter lanes untouched.
+                    const bool modulation_active =
+                        modulation_settings.enabled
+                        || modulation_settings.lfo2_enabled;
+                    // While running, every block is a new frame. On the falling
+                    // edge one last frame carries active=false, which is the
+                    // editor's cue to release the overlay and draw canonical
+                    // state instead of freezing on the final modulated value.
+                    if (modulation_active || modulated_field_was_active_) {
+                        ++modulated_field_sequence_;
+                        const auto sequence = modulated_field_sequence_;
+                        modulated_field_publication_.write_with(
+                            [&](ModulatedFieldSnapshot& slot) noexcept {
+                                slot.field    = audible;
+                                slot.sequence = sequence;
+                                slot.active   = modulation_active;
+                            });
+                    }
+                    modulated_field_was_active_ = modulation_active;
+
                     pulp::signal::SpectralBandLayout automated;
                     automated.active_bands = static_cast<std::uint32_t>(
                         visible_count(automated_layout));
