@@ -49,6 +49,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1642,6 +1643,74 @@ int main(int argc, char** argv) {
             std::printf("scrolled to copy button: scroll_y=%.1f content_y=%.1f\n",
                         copy_scroll->scroll_y(), copy_y);
             capture(rig, dir, prefix + "05-copy-button", backend, scale);
+        }
+
+        // Hover feedback is invisible to any capture taken without a pointer
+        // over the control, so an idle screenshot cannot certify a hover
+        // state either way. Drive simulate_hover -- the same path the
+        // platform host's mouse-move handler uses -- and capture one dump per
+        // point, so a hover-driven geometry change is readable off the
+        // receipts instead of inferred. Points are root-space and supplied by
+        // the caller: deriving them here would have to re-implement
+        // scroll-aware root mapping, which the layout dump already reports
+        // correctly.
+        if (const char* hover_spec = std::getenv("SPECTR_HOVER_PROBE")) {
+            if (const char* scroll_to = std::getenv("SPECTR_HOVER_SCROLL_TO")) {
+                const pulp::view::Label* anchor_label =
+                    find_label(*rig.root, scroll_to);
+                if (anchor_label == nullptr)
+                    throw std::runtime_error(
+                        std::string("no label '") + scroll_to
+                        + "' to scroll the hover probe to");
+                auto* anchor_scroll = owning_scroll_view(*anchor_label);
+                if (anchor_scroll == nullptr)
+                    throw std::runtime_error(
+                        "hover-probe anchor label is not inside any ScrollView");
+                float anchor_y = 0.0f;
+                if (!content_offset(*anchor_label, *anchor_scroll, anchor_y))
+                    throw std::runtime_error(
+                        "hover-probe anchor is not a descendant of its scroll view");
+                const float want = anchor_y - 120.0f;
+                anchor_scroll->set_scroll(0.0f, want < 0.0f ? 0.0f : want);
+                settle(rig.clock, 24);
+                std::printf("hover probe scrolled to '%s': scroll_y=%.1f content_y=%.1f\n",
+                            scroll_to, anchor_scroll->scroll_y(), anchor_y);
+            } else {
+                // With every scroll view at the top, a node's content-space
+                // rect in the dump IS its root-space rect, so a hover point
+                // can be read straight off the receipt. Any non-zero scroll
+                // silently shifts that mapping and puts the pointer somewhere
+                // else entirely.
+                std::vector<pulp::view::ScrollView*> all_scrolls;
+                collect_scroll_views(*rig.root, all_scrolls);
+                for (auto* sv : all_scrolls) sv->set_scroll(0.0f, 0.0f);
+                settle(rig.clock, 24);
+                std::printf("hover probe reset %zu scroll view(s) to the top\n",
+                            all_scrolls.size());
+            }
+            // Idle receipt FIRST. Without it a hovered dump has nothing to be
+            // compared against and any growth claim is unfalsifiable.
+            capture(rig, dir, prefix + "06-hover-idle", backend, scale);
+
+            std::string spec(hover_spec);
+            for (char& c : spec)
+                if (c == ',' || c == ';') c = ' ';
+            std::istringstream points(spec);
+            float hx = 0.0f;
+            float hy = 0.0f;
+            int index = 0;
+            while (points >> hx >> hy) {
+                ++index;
+                rig.root->simulate_hover(pulp::view::Point{hx, hy});
+                settle(rig.clock, 12);
+                std::printf("hover probe %d at root (%.1f, %.1f)\n", index, hx, hy);
+                capture(rig, dir,
+                        prefix + "06-hover-" + std::to_string(index),
+                        backend, scale);
+            }
+            if (index == 0)
+                throw std::runtime_error(
+                    "SPECTR_HOVER_PROBE set but no 'x,y' point parsed");
         }
 
         // ── The MODULATION disclosure, driven on the SHIPPING panel ───────

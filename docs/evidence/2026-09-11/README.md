@@ -59,3 +59,18 @@ which makes the layout emitter treat it as a multi-line label and report
 `intrinsic_width == 0`. It is therefore one of the runs
 `painted_vs_measured_width.py` skips, and no dump-based check can measure its
 glyph advance. Ink fit is proven by the rasters above instead.
+
+## Settings slider hover thumb growth (2026-09-11)
+
+`slider-hover-{RED,GREEN}-{idle,hover}.layout.json` are four
+`visual-layout-snapshot-v1` dumps from `Spectr-native-shot --backend=skia`
+under `SPECTR_HOVER_PROBE="878,132 753,374"`, which drives `simulate_hover`
+over the settings "Hover, mute, and drag feedback" slider.
+
+RED is the same source tree with the hover fan-out removed from
+`native-ui/materialized/runtime.js`; the thumb `__behavior_pr_1u` stays
+`14x14` in both frames. GREEN carries the fan-out and the thumb reads
+`14x14` idle -> `18x18` hovered.
+
+Read them with `tools/spectr-detectors/slider_thumb_hover_growth.py`; its
+`--plant` flag compares the idle dump against itself and must fail.
