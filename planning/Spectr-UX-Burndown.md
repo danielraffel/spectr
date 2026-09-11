@@ -577,21 +577,82 @@ requires regenerating the SHA-bound receipts.
 
 ### 2. Cursor feedback
 
-- [ ] Crosshair over band editing.
-- [ ] Open hand over the movable viewport.
-- [ ] Grabbing hand during viewport drag.
-- [ ] Left/right resize cursor over viewport trims.
+- [x] Crosshair over band editing.
+- [x] Open hand over the movable viewport.
+- [x] Grabbing hand during viewport drag.
+- [x] Left/right resize cursor over viewport trims.
 - [ ] Standalone, AUv2, and REAPER acceptance recorded.
 
-Implementation/proof state: protected Pulp main contains the AppKit
-gesture-phase cursor refresh at `e5dc8d29c7`, and current committed Spectr source
-drives the shipping materialized runtime through crosshair, left/right
-horizontal resize, grabbing, and restored grab states. The available Release
-`Spectr-native-n1-test '[cursor]'` passed 54 assertions, but its cache records
-dirty Spectr `639acec` and development Pulp SDK `17998f…`; under this ledger's
-provenance policy it is prior evidence, not a clean-head pass. Rebuild and rerun
-on the merged immutable SDK before checking these rows or beginning host-format
-visual acceptance.
+Clean-head evidence (2026-09-11), two layers that together cover the chain
+from the runtime's `style.cursor` write to the `NSCursor` AppKit applies:
+
+- **Spectr layer, exact clean head.** `Spectr-native-n1-test '[cursor]'`
+  passed 54 assertions in 1 case, built Release from clean Spectr
+  `e74bac75e218ea77fc80ebe7c10de91a41ee6b6a` (`SPECTR_SOURCE_GIT_DIRTY=FALSE`,
+  recorded in the configure cache and embedded in the binary) against the
+  official immutable Pulp SDK `v0.843.0` (`source_git_sha 95405ca6…`, ref
+  `v0.843.0`, not dirty, `distribution_eligible`; it contains the AppKit
+  gesture-phase cursor refresh `e5dc8d29c7`). Spectr `origin/main` is one
+  commit behind that head (`30d9384`). The case drives the materialized runtime
+  through `[data-spectr-filter-surface]` and asserts `surface->cursor()` in the
+  order crosshair → horizontal-resize (left trim, right trim, on pointermove
+  with no gesture in progress) → grabbing (pointerdown on the window) →
+  grabbing (pointermove while held) → grab (pointerup) → crosshair (pointermove
+  off the minimap). The runtime's `onPointerMove` chooses `col-resize` /
+  `grab` / `grabbing` from `minimapHit` and the active gesture mode only — it
+  never reads `e.buttons` — so the trim rows are hover-driven even though the
+  test's `dispatch_minimap` sends `buttons: 1` on its pointermoves (a cosmetic
+  inaccuracy in the fixture, not in the product).
+- **Pulp host layer, screen readback.** Pulp PR #8230
+  (`fix/css-empty-background-clears-20260911`, auto-merge armed) adds
+  `test/test_mac_hover_cursor_live.mm` (ctest `pulp-test-mac-hover-cursor-live`,
+  `validation`-labelled, `RUN_SERIAL`). Its `FilterRoot` fixture is the shape of
+  the Spectr surface — ONE view whose hover handler picks crosshair (plot) /
+  open hand (viewport window) / left-right resize (trims) and whose press
+  handler closes the hand — hosted in a real `NSWindow` by the shipping
+  `PulpView`, driven through the host's real `-mouseMoved:` / `-mouseDown:` /
+  `-mouseDragged:` (+ coalesced flush) / `-mouseUp:`, and read back as the
+  applied `+[NSCursor currentCursor]` with the view's own button-event count
+  beside each reading. It asserts `crosshairCursor`, `openHandCursor`,
+  `resizeLeftRightCursor` on pure hover with 0 button events; `closedHandCursor`
+  only while a button is held (press and drag); `openHandCursor` back on release
+  without pointer motion; crosshair again on the next hover. Every assertion was
+  proven RED→GREEN with `tools/scripts/confirm_failure.sh` (observed recompile
+  each time): crosshair→arrow, resizeLeftRight→arrow, grab→arrow and
+  closedHand→openHand in `set_ns_cursor_for_style`; `simulate_hover` removed
+  from `-mouseMoved:` (the cursor would then update only after a press — the
+  reported bug); and the post-handler publish removed from `-mouseDown:`.
+
+Still open, and who can close it:
+
+- **Standalone acceptance** — the mechanism is proven above, but a
+  person-visible standalone reading has not been taken. Instrument:
+  `tools/testing/cursor-proof/hover_cursor_probe.m` (PR #8230; oracle
+  `+[NSCursor currentSystemCursor]` read from outside the process), run as
+  `hover_cursor_probe --pid $(pgrep -x Spectr) --cols 12 --rows 8 --compare-drag`
+  against an installed clean-head standalone. Not run here: it dissociates the
+  system pointer and this machine was carrying a concurrent perf measurement,
+  and the standalone was not built in this session (only the test target was).
+  Closable by any agent or human on an idle, Accessibility-trusted Mac.
+- **AUv2 (Logic) and REAPER acceptance** — not run; needs a real host session.
+  The Pulp live test's header states the DAW-hosted case is not exercised at
+  all (a different window and tracking-area situation). Human validation, or an
+  agent with Logic/REAPER on an idle machine, following the same probe recipe
+  with the host's pid.
+- **The in-app `SPECTR_CURSOR_PROBE` hover branch is dead.** `native_editor.cpp`
+  guards it on `SPECTR_HAS_HOVER_DISPATCH`, which nothing defines, and the
+  `deliver_hover_and_resolve_cursor` it would call exists in neither SDK
+  `v0.843.0` nor current Pulp `main` (only `hover_cursor_at`). Every hover probe
+  therefore reports `<no-hit>`, so `tools/cursor_invariants.py --expect` can
+  never pass for a hover point; only the `x,y>x2,y2` drag branch measures
+  anything. Closable by a Spectr change that either lands the Pulp hover
+  dispatch helper and defines the macro, or rewires the hover branch to
+  `simulate_hover` + `hover_cursor_at`.
+- One measured-not-judged Pulp host property is recorded in the live test's
+  header: AppKit's cursor pass (`-cursorUpdate:`) resolves from the hit view's
+  cursor slot without delivering a hover sample, so on a surface like this a
+  pass that runs where the pointer has not yet moved shows the slot's previous
+  value until the next `-mouseMoved:` lands.
 
 ### 3. Dropdown and modal defaults
 
