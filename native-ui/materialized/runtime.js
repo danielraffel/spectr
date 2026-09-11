@@ -7389,6 +7389,35 @@
   function isHoverEvent(eventName) {
     return eventName === "mouseenter" || eventName === "mouseleave" || eventName === "pointerenter" || eventName === "pointerleave";
   }
+  function nativeHoverNameFor(eventName) {
+    if (eventName === "pointerenter") return "mouseenter";
+    if (eventName === "pointerleave") return "mouseleave";
+    return eventName;
+  }
+  function hoverAliasesFor(nativeName) {
+    if (nativeName === "mouseenter") return ["mouseenter", "pointerenter"];
+    if (nativeName === "mouseleave") return ["mouseleave", "pointerleave"];
+    return [nativeName];
+  }
+  function installHoverFanout(id, nativeName) {
+    const aliases = hoverAliasesFor(nativeName);
+    const registry = eventCallbackRegistry();
+    if (!aliases.some((alias) => registry.has(`${id}:${alias}`))) {
+      call("on", id, nativeName, () => ({ __pulpEventPropagation: 0 }));
+      return;
+    }
+    call("on", id, nativeName, (...rawArgs) => {
+      let propagation = 0;
+      for (const alias of aliases) {
+        const cb = eventCallbackRegistry().get(`${id}:${alias}`);
+        if (!cb) continue;
+        const result = cb(...rawArgs);
+        const code = result && typeof result.__pulpEventPropagation === "number" ? result.__pulpEventPropagation : 0;
+        if (code > propagation) propagation = code;
+      }
+      return { __pulpEventPropagation: propagation };
+    });
+  }
   function isPointerEvent(eventName) {
     return eventName === "pointerdown" || eventName === "pointerup" || eventName === "pointercancel" || eventName === "pointermove";
   }
@@ -7427,6 +7456,10 @@
     const eventName = eventNameFor(key);
     if (typeof value !== "function") {
       eventCallbackRegistry().delete(`${id}:${eventName}`);
+      if (isHoverEvent(eventName)) {
+        installHoverFanout(id, nativeHoverNameFor(eventName));
+        return;
+      }
       call("on", id, eventName, () => ({ __pulpEventPropagation: 0 }));
       return;
     }
@@ -7458,6 +7491,10 @@
       };
     };
     eventCallbackRegistry().set(`${id}:${eventName}`, callback);
+    if (isHoverEvent(eventName)) {
+      installHoverFanout(id, nativeHoverNameFor(eventName));
+      return;
+    }
     call("on", id, eventName, callback);
   }
   function emitSvgRectGeometry(id, props) {
