@@ -492,8 +492,18 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
         });
     REQUIRE(overflow_draw != overflow_canvas.commands().end());
     REQUIRE(overflow_draw->f[0] == Catch::Approx(10.0f).margin(0.01f));
-    // Pin the corrected optical phase in the actual paint command too.
-    REQUIRE(overflow_draw->f[1] == Catch::Approx(16.0f).margin(0.01f));
+    // Pin the corrected optical phase in the actual paint command too. A
+    // captured line box places its baseline at `top + half-leading + ascent`,
+    // and half-leading is the box's surplus over the ink it carries, so the
+    // whole expression collapses to `top + height/2 + (ascent - descent)/2`:
+    // 6 + 6.5 + 3.334961. The ascent and descent are the painted face's real
+    // Menlo-Regular ink, so the value implies ascent - descent == 6.669922 px
+    // at 10pt -- recorded here because it is the only term not already pinned
+    // above, and so a future drift is attributable to either the line box or
+    // the face rather than being indistinguishable. An earlier expectation of
+    // 16.0 came from approximating the ink as font_size * 0.85 instead of
+    // measuring the face.
+    REQUIRE(overflow_draw->f[1] == Catch::Approx(15.834961f).margin(0.01f));
 
     session->bridge()->load_script(R"js(
       const analyzer = globalThis.SpectrAnalyzer;
