@@ -3665,7 +3665,7 @@ window.PatternManager = PatternManager;`,
       'copy feedback exposes its visible state');
     replaceSpectrSource(
       "} }, React.createElement('span', { 'aria-live': 'polite' }, copyState)));",
-      "} }, React.createElement('span', { 'aria-live': 'polite', style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', lineHeight: 1.2 } }, copyState)));",
+      "} }, React.createElement('span', { 'aria-live': 'polite', style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', lineHeight: 1.2, textAlign: 'center', pointerEvents: 'none' } }, copyState)));",
       'copy feedback remains centered in every state');
 
     // Mirror imperative cursor writes into the React-owned style prop. The
