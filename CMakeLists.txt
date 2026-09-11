@@ -385,7 +385,12 @@ endif()
 if(SPECTR_SDK_HAS_WEBVIEW)
     set(SPECTR_TEST_SOURCES ${SPECTR_SOURCES})
     set(SPECTR_TEST_WEBVIEW_CASES test/test_editor_bridge.cpp)
-    set(SPECTR_TEST_ASSET_TARGET spectr_editor_assets)
+    # spectr_native_assets is an embedded-data object library, not the native
+    # editor implementation, so it links on a WebView SDK too. The materialized
+    # document/runtime.js contract cases read those blobs and nothing else; gate
+    # them on the blobs being present, never on which editor path the SDK ships,
+    # or they silently compile out on exactly the SDK the acceptance gate uses.
+    set(SPECTR_TEST_ASSET_TARGET spectr_native_assets spectr_editor_assets)
 else()
     # Browser-free SDK: use the same source list the shipping plugins use and drop
     # the one case that exercises the WebView editor directly.
@@ -427,6 +432,7 @@ target_include_directories(Spectr-test PRIVATE
 )
 target_compile_definitions(Spectr-test PRIVATE
     $<$<NOT:$<BOOL:${SPECTR_SDK_HAS_WEBVIEW}>>:SPECTR_NATIVE_EDITOR=1>
+    SPECTR_NATIVE_ASSETS=1
     SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
     SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
     SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
