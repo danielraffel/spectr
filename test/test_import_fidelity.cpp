@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "0cdb964975467a0f93ebe83bcdfe821bcd84055518e5b57233e7829e2c73172c";
 constexpr std::string_view kAdapterDigest =
-    "cf1ac61262e1cd2de154df7d5e09102d5e59fa630679f3487d9dd77f721d69db";
+    "0c8e13f445c910625806da729632f75d8f6b193c25773a95ea4688e6f56602d4";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -838,7 +838,7 @@ TEST_CASE("status overlay and settings polish contracts detect every severed fix
         ContractMarker{"settings-sticky-header", "position: \\\"sticky\\\", top: 0, zIndex: 3"},
         ContractMarker{"settings-complete-status-hint", "Hover, mute, and drag feedback"},
         ContractMarker{"settings-copy-feedback-state", "data-spectr-copy-state"},
-        ContractMarker{"settings-centered-copy-feedback", "aria-live\\\": \\\"polite\\\", style: { display: \\\"inline-flex\\\", alignItems: \\\"center\\\", justifyContent: \\\"center\\\", width: \\\"100%\\\", height: \\\"100%\\\", lineHeight: 1"},
+        ContractMarker{"settings-centered-copy-feedback", "aria-live\\\": \\\"polite\\\", style: { display: \\\"inline-flex\\\", alignItems: \\\"center\\\", justifyContent: \\\"center\\\", width: \\\"100%\\\", height: \\\"100%\\\", lineHeight: 1, textAlign: \\\"center\\\", pointerEvents: \\\"none\\\""},
     };
     const auto errors = [&](std::string_view candidate) {
         std::vector<std::string> result;

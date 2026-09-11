@@ -216,6 +216,28 @@ const pulp::view::Label* find_label_prefix(const View& view,
     return nullptr;
 }
 
+pulp::view::ScrollView* owning_scroll_view(const View& view) {
+    for (auto* node = const_cast<View*>(&view); node != nullptr;
+         node = node->parent())
+        if (auto* scroll = dynamic_cast<pulp::view::ScrollView*>(node))
+            return scroll;
+    return nullptr;
+}
+
+// Offset of `view` inside `ancestor` in UNSCROLLED content space, which is what
+// ScrollView::set_scroll takes.
+bool content_offset(const View& view, const View& ancestor, float& out_y) {
+    float y = 0.0f;
+    for (const auto* node = &view; node != nullptr; node = node->parent()) {
+        if (node == &ancestor) {
+            out_y = y;
+            return true;
+        }
+        y += node->bounds().y;
+    }
+    return false;
+}
+
 const View* find_sized_descendant(const View& view, float width, float height) {
     for (std::size_t index = 0; index < view.child_count(); ++index) {
         const auto* child = view.child_at(index);
@@ -4174,6 +4196,175 @@ TEST_CASE("the settings panel renders text that fits and does not collide",
     const auto clipped = spectr::appearance::detect_clipped_text(*rig.root);
     INFO("clipped text:\n" << spectr::appearance::join_findings(clipped));
     CHECK(clipped.empty());
+}
+
+// The ABOUT copy button, on both axes a person actually experiences: where the
+// word lands inside the button, and whether pressing the button does anything.
+//
+// The instrument matters. The visual-layout dump cannot represent text
+// alignment at all — it reports a Label's NODE origin, so a word painted flush
+// left inside a correctly sized box is indistinguishable from a centred one.
+// `Label::painted_text_extents` runs the same shaper `paint()` does and reports
+// the ink box with text-align applied to x, which is the difference.
+//
+// The two halves are one test on purpose: the button's feedback span is painted
+// over the middle of the button, so centring the word without letting the press
+// through moves the dead zone from the button's left edge to the exact point a
+// person aims at.
+TEST_CASE("the settings copy button centres its feedback and answers a press",
+          "[native-n1][appearance][settings]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+
+    const auto comma = static_cast<pulp::view::KeyCode>(',');
+#if defined(__APPLE__)
+    constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+    constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+    REQUIRE(rig.root->on_global_key({
+        .key = comma,
+        .modifiers = primary_modifier,
+        .is_down = true}));
+    settle(rig.clock, 16);
+    rig.root->layout_children();
+    settle(rig.clock, 8);
+
+    // The button is gated on `info &&`, so it does not exist until the
+    // build_info_get round trip resolves. Poll instead of assuming one settle
+    // is enough — and REQUIRE the find, because an absent label is a broken
+    // instrument, never a pass.
+    static constexpr std::array<std::string_view, 4> copy_states{
+        "COPY UNAVAILABLE", "COPYING", "COPIED", "COPY"};
+    const auto find_copy_label = [&]() -> const pulp::view::Label* {
+        for (const auto state : copy_states)
+            if (const auto* label = find_label(*rig.root, state)) return label;
+        return nullptr;
+    };
+    const pulp::view::Label* copy = nullptr;
+    for (int attempt = 0; attempt < 120 && copy == nullptr; ++attempt) {
+        copy = find_copy_label();
+        if (copy == nullptr) {
+            settle(rig.clock, 4);
+            rig.root->layout_children();
+        }
+    }
+    REQUIRE(copy != nullptr);
+
+    // The authored button box, found by its authored size rather than by a
+    // marker the native tree does not carry.
+    const auto find_button = [&](const pulp::view::Label& label) -> View* {
+        for (auto* node = const_cast<View*>(label.parent()); node != nullptr;
+             node = node->parent()) {
+            const auto box = pulp::view::ViewInspector::absolute_bounds(*node);
+            if (std::abs(box.width - 136.0f) < 0.5f
+                && std::abs(box.height - 26.0f) < 0.5f)
+                return node;
+        }
+        return nullptr;
+    };
+
+    // Measure the word against the BUTTON, not against its own label slot: the
+    // button is the box a person sees.
+    const auto require_centred = [&](const pulp::view::Label& label) {
+        auto* button = find_button(label);
+        REQUIRE(button != nullptr);
+        const auto button_box = pulp::view::ViewInspector::absolute_bounds(*button);
+        const auto label_box = spectr::appearance::text_rect(label);
+        // `spectr::appearance::ink_rect` cannot be used here: it derives its
+        // width from `intrinsic_width()`, which a Label styled `width: 100%`
+        // reports as 0 because Yoga wants the parent to drive wrapping — so it
+        // silently falls back to handing back the whole box, which is centred
+        // by construction and would pass this assertion while measuring
+        // nothing.
+        const auto extents = label.painted_text_extents(label_box.width);
+        // Positive control on the instrument: an unmeasured or box-wide span is
+        // that degenerate case wearing a different name.
+        REQUIRE(extents.measured);
+        REQUIRE(extents.ink.width > 0.0f);
+        REQUIRE(extents.ink.width < label_box.width - 1.0f);
+        const float ink_centre
+            = label_box.x + extents.ink.x + extents.ink.width * 0.5f;
+        const float button_centre = button_box.x + button_box.width * 0.5f;
+        INFO("state \"" << label.text() << "\": button ["
+                        << button_box.x << "," << button_box.y << " "
+                        << button_box.width << "x" << button_box.height
+                        << "] label [" << label_box.x << "," << label_box.y
+                        << " " << label_box.width << "x" << label_box.height
+                        << "] ink x=" << (label_box.x + extents.ink.x)
+                        << " w=" << extents.ink.width
+                        << " ink_centre=" << ink_centre
+                        << " button_centre=" << button_centre
+                        << " delta=" << (ink_centre - button_centre));
+        CHECK(button_box.width == Catch::Approx(136.0f).margin(0.5f));
+        CHECK(ink_centre == Catch::Approx(button_centre).margin(1.5f));
+    };
+
+    const std::string resting_state{copy->text()};
+    require_centred(*copy);
+
+    // Second half of the line. Scroll the button into the viewport first: the
+    // ABOUT group sits far below the settings fold, and a press outside the
+    // visible panel proves nothing about what a person can reach.
+    auto* scroll = owning_scroll_view(*copy);
+    REQUIRE(scroll != nullptr);
+    float content_y = 0.0f;
+    REQUIRE(content_offset(*copy, *scroll, content_y));
+    scroll->set_scroll(0.0f, std::max(0.0f, content_y - 120.0f));
+    settle(rig.clock, 12);
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+
+    copy = find_copy_label();
+    REQUIRE(copy != nullptr);
+    auto* button = find_button(*copy);
+    REQUIRE(button != nullptr);
+    const auto button_bounds = button->bounds();
+
+    // Dead centre of the button — where a person aims, and where the feedback
+    // span is painted.
+    const auto centre = root_point(*button, button_bounds.width * 0.5f,
+                                   button_bounds.height * 0.5f);
+    const auto* centre_hit = rig.root->hit_test(centre);
+    REQUIRE(centre_hit != nullptr);
+    rig.root->simulate_click(centre);
+    settle(rig.clock, 16);
+
+    const pulp::view::Label* after = find_copy_label();
+    REQUIRE(after != nullptr);
+    std::string after_centre{after->text()};
+
+    // Control, run only when the press appears to have done nothing: a press
+    // that changes no state is ambiguous between "the button is dead" and "the
+    // pointer never reached anything". Pressing the padding strip — inside the
+    // button, outside the feedback span — separates the two, and its result is
+    // reported rather than asserted so it cannot mask the finding above.
+    std::string control_note = "not run (the centred press already worked)";
+    if (after_centre == resting_state) {
+        const auto strip = root_point(*button, 4.0f, button_bounds.height * 0.5f);
+        rig.root->simulate_click(strip);
+        settle(rig.clock, 16);
+        const auto* control = find_copy_label();
+        control_note = std::string("press at the padding strip (")
+            + std::to_string(strip.x) + "," + std::to_string(strip.y)
+            + ") -> " + (control ? std::string(control->text()) : "<none>");
+    }
+
+    INFO("press at the button centre (" << centre.x << "," << centre.y
+         << ") hit " << (centre_hit == static_cast<const View*>(copy)
+                         ? "the feedback span" : "the button")
+         << "; state " << resting_state << " -> " << after_centre
+         << "; control: " << control_note);
+    CHECK(after_centre != resting_state);
+
+    // Centring has to survive the state change too — the feedback word is a
+    // different length from the resting one.
+    const auto* settled = find_copy_label();
+    REQUIRE(settled != nullptr);
+    require_centred(*settled);
 }
 
 // Line 711 of the UX burndown — "Status Info is not truncated and unnecessary

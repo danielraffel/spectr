@@ -494,7 +494,7 @@ for that confirmation.
 | SET-1 | Fixed header with content scrolling beneath | Done | BLOCKED, and the blocker CHANGED on official SDK v0.834.0 (source 688a709b). Before: `REQUIRE(scroll_view != nullptr)` failed at test_native_state_parity.cpp:925 — the retained ScrollView did not exist. Now it exists (Pulp lifecycle contract f9bb36025 shipped in v0.834.0) and the test reaches :933, where the body viewport measures 50.0px against an authored 529.184px; the frozen-atlas case agrees (settings_body and feedback are the SAME 466x50 rect at :2301). The topology is fixed; the sizing is not | Pending in new PKG | BLOCKED on a 50px body viewport (newly reachable, not newly caused) |
 | SET-2 | Fixed close button with hover/press feedback | Done | RERUN DONE on official SDK v0.834.0 (source 688a709b, contains the Pulp lifecycle contract f9bb36025): covered at test_native_state_parity.cpp:2348-2354 via data-spectr-close-state hover/pressed assertions, inside the frozen-atlas case which currently reds LATER at :2301 on Settings geometry — the close-state assertions themselves execute and pass | Pending in new PKG | Blocked by SET-1 geometry (same test case) |
 | SET-3 | Escape/outside click closes Settings | Done | RERUN DONE on official SDK v0.834.0 (source 688a709b, contains the Pulp lifecycle contract f9bb36025): `native settings modal dismisses by Escape and outside press` PASSES (historically the flakiest native row) | Pending in new PKG and hosts | Waiting human confirmation only |
-| SET-4 | Copy is centered and retains Copied feedback | Implemented | BROWSER-ONLY PROOF (no native/Skia coverage; the SDK build is not exercised by this suite): `Spectr-browser-ux-polish` covers COPY->COPYING->COPIED centering at every state; suite is FLAKY (3/4 serial) rather than failing | Pending in new PKG | Waiting human confirmation; flaky oracle to fix |
+| SET-4 | Copy is centered and retains Copied feedback | Done | NATIVE PROOF against the shipping materialized artifact: `test/test_native_state_parity.cpp` "the settings copy button centres its feedback and answers a press" measures painted ink centre against button centre in both COPY and COPIED (was delta -44.0 / -37.5, now 0.0), corroborated by a raster measurement off `05-copy-button.png` (was -43.75, now +0.25), and drives a real press at the button dead centre (was no state change at all, now COPIED) | Pending in new PKG | Waiting human confirmation only |
 | SET-5 | Status Info description is not truncated | Implemented | BROWSER-ONLY PROOF (no native/Skia coverage; the SDK build is not exercised by this suite): `Spectr-browser-ux-polish` asserts scrollWidth>clientWidth plus four-sided containment; suite FLAKY (3/4 serial) | Pending in new PKG | Waiting human confirmation; flaky oracle to fix |
 | SET-6 | No unnecessary scrollbar when content fits | Implemented | BLOCKED by the same defect as SET-1 on official SDK v0.834.0 (source 688a709b): the browser half (`Spectr-browser-ux-polish`, overflow at 860 vs fit at 1800) exercises DOM overflow and is flaky-not-failing, but the NATIVE scroll-track behaviour rides on the same ScrollView that is currently 50px tall | Pending in new PKG | BLOCKED with SET-1 |
 | SET-7 | Loading build info cannot remain stuck | Done | BROWSER-ONLY PROOF (no native/Skia coverage; the SDK build is not exercised by this suite): `Spectr-browser-build-info-timeout` PASSES with its planted no-timeout control | Pending in new PKG | Waiting human confirmation only |
@@ -707,7 +707,7 @@ never read as a pass. Passed at `26a16cc` in 13.45 s.
 - [x] Modulation layout is stable, with fixed General/Modulation tabs and two LFO surfaces.
 - [x] Header, close control, and settings tabs remain fixed while content scrolls.
 - [x] Close hover/press, Escape, and outside-click behavior pass.
-- [ ] Copy is centered and preserves Copied feedback.
+- [x] Copy is centered and preserves Copied feedback.
 - [ ] Status Info is not truncated and unnecessary scrollbars are absent.
 
 Close/Escape/outside-click evidence: `test/test_native_state_parity.cpp:2006`
@@ -718,27 +718,52 @@ it publishes. That proves the behavior. The hover and press *styling* is
 authored but no test reads its painted pixels, so a silent appearance
 regression there would not be caught.
 
-Copy stays open, and the remaining half is a core Pulp defect rather than a
-Spectr one. The width half is fixed and proven: the button spanned the full
-448-pixel panel and now measures 136 with a 114-wide label box inside it
-(`docs/evidence/2026-09-11/COPY-WIDTH-{RED,GREEN}*`, captured from the
-shipping materialized artifact, detector negative-controlled with `--plant`).
-Centering is not fixed. A Label carrying text and no element children is
-built as a Yoga leaf, so the text measure function lands on the Label's own
-node and no anonymous flex item exists for `justify-content` to distribute;
-the authored `justifyContent: center` provably does nothing, measured ink
-centre 33.5 against an expected 136. Two positive controls confirm the
-diagnosis rather than the measurement: `textAlign` reads 135.5, and wrapping
-the string in a child Label also reads 135.5. `compat.json` lists
-`css/justifyContent` as supported with `center` and no caveat, so this is an
-unimplemented behavior, not a documented ceiling. A core Pulp fix is in
-flight; this line closes when the fix lands and the ink centre measures 136.
+Copy is closed, on both axes and in both states. The width half was already
+fixed: the button spanned the full 448-pixel panel and now measures 136 with a
+114-wide label box inside it. The centering half was still red and is now
+fixed, and a second defect surfaced while proving it.
+
+Centering, measured by two independent instruments that agree. Native
+`Label::painted_text_extents` — which runs the same shaper `paint()` does and
+reports the ink box with text-align applied — read ink centre 451.0 against a
+button centre of 495.0 (delta -44.0) in the resting state and 457.5 (delta
+-37.5) in COPIED. The raster, measured off `Spectr-native-shot`'s
+`05-copy-button.png` with the button chrome inset out, read delta -43.75. Both
+now read 0.0 and +0.25 respectively, in both states.
+
+The root cause is a core Pulp defect, and it is not fixed here. A Label
+carrying text and no element children is built as a Yoga leaf, so the text
+measure function lands on the Label's own node and no anonymous flex item
+exists for `justify-content` to distribute; the authored `justifyContent:
+center` provably does nothing. `compat.json` lists `css/justifyContent` as
+supported with `center` and no caveat, so that remains an unimplemented
+behavior rather than a documented ceiling. Spectr closes this line by
+authoring `textAlign: "center"` instead, which is the canonical CSS for
+centering text inside its own box and is honored natively — not a workaround
+standing in for the missing property.
+
+The second defect: the button ignored a press on its own word. The feedback
+span carries its own click handler and native dispatch does not bubble to the
+button, so a press at the button's dead centre hit the span and changed no
+state — it never even reached COPYING — while a press on the padding strip at
+x+4 produced COPIED. Centering the word without fixing this would have moved
+the dead zone from the button's left edge to the exact point a person aims at,
+so both ship together: the span is authored `pointerEvents: "none"`, which
+`native-ui/dist/editor.js` maps to the SDK's `View::set_pointer_events` and
+`hit_test` honors. The press at dead centre now returns COPIED.
+
+Both properties are authored in `resources/editor.html`'s generator edit and
+transplanted into the shipping materialized artifact. The proof is
+`test/test_native_state_parity.cpp` "the settings copy button centres its
+feedback and answers a press", which measures ink centre against button centre
+in both the resting and post-press states and drives a real press at dead
+centre through the shipping runtime.
 
 Note on the contract markers: `test/test_import_fidelity.cpp:828` asserts the
 `settings-centered-copy-feedback` string survives in the shipping artifact and
-detects its removal. That gate passes today while the defect above persists,
-because it proves the CSS is authored, not that it centers anything. Do not
-read it as coverage for this line.
+detects its removal, and now covers `textAlign` and `pointerEvents` as well.
+It still proves only that the CSS is authored, not that anything centers or
+that a press lands; the behavioral proof is the native test named above.
 
 Status Info stays open because the native lane cannot see it:
 `test/appearance_detectors.hpp:63-71,130-137` drops clipped boxes, which is
