@@ -15,7 +15,15 @@ because the CHECKED-IN ARTIFACT drifted away from them and nothing compared
 the two.  This detector is that comparison, stated as the invariant rather
 than as a diff, so an equivalent rewrite still passes and a re-drift does not.
 
-Exit codes: 0 pass, 1 fail, 2 no verdict (the instrument could not measure).
+`--plant unguard` removes the drag guard from the extracted body and re-runs
+the same adjudication, which MUST then go red. This detector is the one gate
+the acceptance workflow has always run, so a silent rot in it -- a renamed
+entry point, a restructured runtime -- would have read as a clean build every
+time. The controls above catch a missing subject; the plant catches a rule that
+can no longer fire.
+
+Exit codes: 0 pass, 1 fail, 2 no verdict (the instrument could not measure),
+4 the planted regression did not surface (the detector is broken).
 """
 
 import argparse
@@ -70,6 +78,9 @@ def extract_function(payload, name):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--artifact", default=ARTIFACT)
+    ap.add_argument("--plant", choices=["unguard"],
+                    help="strip the drag guard off the setter line, so the "
+                         "detector MUST report the regression it exists for")
     args = ap.parse_args()
 
     payload = load_payload(args.artifact)
@@ -98,6 +109,16 @@ def main():
                  % ENTRY)
     print("subject   %-24s %d chars" % (ENTRY + "() body", len(body)))
 
+    if args.plant == "unguard":
+        if not any(setter + "(" in body for setter in STATE_SETTERS):
+            print("PLANT IMPOSSIBLE: the body names no React state setter, so "
+                  "there is nothing to unguard -- this check passes vacuously "
+                  "and proves nothing", file=sys.stderr)
+            return 4
+        for tok in GUARD_TOKENS:
+            body = body.replace(tok, "PLANTED_NO_GUARD")
+        print("CONTROL: stripped the drag guard from the extracted body")
+
     failures = []
     for setter in STATE_SETTERS:
         if setter + "(" not in body:
@@ -117,6 +138,10 @@ def main():
         for f in failures:
             print("FAIL:", f)
         return 1
+    if args.plant:
+        print("BROKEN: the planted regression did not surface -- a clean run "
+              "of this detector proves nothing", file=sys.stderr)
+        return 4
     print("PASS: a pointer sample during a drag writes no React state.")
     return 0
 

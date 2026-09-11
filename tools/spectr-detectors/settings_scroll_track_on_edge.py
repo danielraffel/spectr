@@ -11,6 +11,12 @@ Usage:
   settings_scroll_track_on_edge.py --shot PNG --layout LAYOUT.json
 
 Exit codes: 0 pass, 1 fail, 2 harness/instrument error.
+
+**EXIT 2 IS NOT A PASS.** It means no verdict was reached -- most often because
+the scroll track never materialised in the capture, which is a statement about
+the harness, not about the product. A run that ends in 2 has adjudicated
+nothing, so every line it printed is context, not evidence. The final line says
+so in as many words, because this detector has been read as green on a 2.
 """
 
 import argparse
@@ -42,6 +48,14 @@ MIN_TRACK_ROOT_PX = 6.0
 def capture(app, name, out_dir, extra_env):
     png = os.path.join(out_dir, name + ".png")
     dump = os.path.join(out_dir, name + ".layout.json")
+    # Remove any artifact from a previous run BEFORE launching. The out-dir
+    # default is a fixed path, and the only liveness check below is
+    # os.path.exists -- so a launch that produces nothing silently adjudicates
+    # the PREVIOUS run's capture and reports a confident verdict about code
+    # that is no longer under test.
+    for stale in (png, dump):
+        if os.path.exists(stale):
+            os.remove(stale)
     env = dict(os.environ)
     env.update({
         "PULP_HEADLESS": "1",
@@ -218,12 +232,19 @@ def main():
         if failures:
             for f in failures:
                 print("FAIL: " + f)
+            print("RESULT: FAIL")
             return 1
         print("PASS: the settings scroll track rests on the panel edge, clear of content.")
+        print("RESULT: PASS")
         return 0
 
     except Exception as exc:  # noqa: BLE001 - the harness reports, never guesses
         print("no verdict: %s" % exc)
+        print("RESULT: UNMEASURED (exit 2) -- this detector adjudicated NOTHING. "
+              "Not a pass, and not evidence that the track is correct.",
+              file=sys.stderr)
+        print("RESULT: UNMEASURED (exit 2) -- this detector adjudicated NOTHING. "
+              "Not a pass, and not evidence that the track is correct.")
         return 2
 
 

@@ -41,6 +41,14 @@ CONTRAST_FLOOR = 0.5
 def capture(app, name, out_dir, extra_env):
     png = os.path.join(out_dir, name + ".png")
     dump = os.path.join(out_dir, name + ".layout.json")
+    # Remove any artifact from a previous run BEFORE launching. The out-dir
+    # default is a fixed path, and the only liveness check below is
+    # os.path.exists -- so a launch that produces nothing silently adjudicates
+    # the PREVIOUS run's capture and reports a confident verdict about code
+    # that is no longer under test.
+    for stale in (png, dump):
+        if os.path.exists(stale):
+            os.remove(stale)
     env = dict(os.environ)
     env.update({
         "PULP_HEADLESS": "1",

@@ -13,7 +13,12 @@ import subprocess
 import sys
 import tempfile
 
-APP = "build-now/Spectr.app/Contents/MacOS/Spectr"
+# Anchored to the repo this script lives in, never to the caller's cwd. A
+# cwd-relative default silently resolves somewhere else -- or nowhere -- and
+# this detector's "app not built" branch then reports INCONCLUSIVE about a
+# checkout it never looked at.
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+APP = os.path.join(REPO, "build-now", "Spectr.app", "Contents", "MacOS", "Spectr")
 TRIGGER = '[data-spectr-menu-root="pattern"] button'
 # The item column lives inside these design-space bounds when the menu is open.
 COL_X0, COL_X1, COL_Y0, COL_Y1 = 370.0, 620.0, 470.0, 820.0
@@ -51,6 +56,7 @@ def main():
     app = sys.argv[1] if len(sys.argv) > 1 else APP
     if not os.path.exists(app):
         print("INCONCLUSIVE: app not built at %s" % app)
+        print("RESULT: UNMEASURED (exit 2) -- nothing was adjudicated. Not a pass.")
         return 2
     with tempfile.TemporaryDirectory() as tmp:
         doc = run(app, os.path.join(tmp, "menu.json"))
@@ -59,6 +65,7 @@ def main():
     print("CONTROL total layout nodes = %d" % total)
     if total < 310:
         print("INCONCLUSIVE: menu did not open (node count %d)" % total)
+        print("RESULT: UNMEASURED (exit 2) -- nothing was adjudicated. Not a pass.")
         return 2
 
     items = captions(doc)
@@ -66,6 +73,7 @@ def main():
     if len(items) < MIN_ITEMS:
         print("INCONCLUSIVE: only %d captions measured, need >= %d"
               % (len(items), MIN_ITEMS))
+        print("RESULT: UNMEASURED (exit 2) -- nothing was adjudicated. Not a pass.")
         return 2
 
     heights = {}

@@ -209,6 +209,12 @@ def report(dump, findings, stats, tol, quiet=False):
     if not findings:
         print("NO TRUNCATION/OVERSET FOUND (%d runs measured)." % stats["measured"])
         print("This is only meaningful next to a positive control: run --self-test.")
+        print("")
+        print(
+            "COVERAGE: %d of %d text runs adjudicated (%d unmeasurable), 0 finding(s)"
+            % (stats["measured"], stats["text_runs"],
+               stats["text_runs"] - stats["measured"])
+        )
         return
     print("%d FINDING(S):" % len(findings))
     for f in findings:
@@ -235,6 +241,15 @@ def report(dump, findings, stats, tol, quiet=False):
         )
         if f["below_fold"]:
             print("     NOTE below the fold in its scroll frame (%s) -- width verdict still valid" % f["scroll_frame"])
+    # Repeat the coverage at the END as well as the top. This output is
+    # routinely read through a `tail`, which drops the header -- and the header
+    # is the only place that says most of the surface was never adjudicated.
+    print("")
+    print(
+        "COVERAGE: %d of %d text runs adjudicated (%d unmeasurable), %d finding(s)"
+        % (stats["measured"], stats["text_runs"],
+           stats["text_runs"] - stats["measured"], len(findings))
+    )
 
 
 def self_test(dump_path, depths_path, out_prefix, tol, shrink):
