@@ -3323,6 +3323,7 @@ window.PatternManager = PatternManager;`,
   const [cursor, setCursor] = useState('crosshair');
   const hoverRef = useRef(null);
   const statusRefreshAtRef = useRef(0);
+  const liveStatusLabelRef = useRef('');
   const hoverBand = hover && !hover.mini ? hover.band : -1;
   // The stable component-boundary insertion owns the pointer helper closures.
   const updateLiveHoverStatus = () => {
@@ -3331,9 +3332,19 @@ window.PatternManager = PatternManager;`,
     if (!current || current.mini || !pointer
         ) return;
     const label = liveHoverLabel(current);
+    // The draw loop calls this on every frame. Re-publishing a reading the
+    // banner already carries is not free: each published message restarts the
+    // banner's dismissal hold, and republishing faster than the hold expires
+    // would pin the overlay up for as long as a pointer rests on a band. Only
+    // a changed reading is a write.
+    if (liveStatusLabelRef.current === label) return;
+    liveStatusLabelRef.current = label;
+    // The direct write is the fast path for a banner that is already up. Once
+    // the banner has dismissed itself it owns an empty text surface, and
+    // writing into it behind React's back would refill a box nobody can see.
+    const shown = document.querySelector('[data-spectr-status-banner]');
     const text = document.querySelector('[data-spectr-status-text]');
-    if (!text) return;
-    text.textContent = label;
+    if (shown && text) text.textContent = label;
     // Keep the banner alive while input is still changing without moving the
     // 60 Hz paint path back through React. The direct text update stays
     // frame-current; this low-rate publication only renews the inactivity
@@ -3528,28 +3539,39 @@ window.PatternManager = PatternManager;`,
   }, [message]);`,
       String.raw`  const shownRef = useRefChrome('');
   const generationRef = useRefChrome(0);
+  const timerRef = useRefChrome(null);
   useEffectChrome(() => {
     const generation = ++generationRef.current;
     const display = message ? message.split('|')[0].trim() : '';
-    const hide = delay => setTimeout(() => {
-      if (generation !== generationRef.current) return;
-      setVisible(false);
-      setText('');
-      shownRef.current = '';
-    }, delay);
+    // The dismissal timer belongs to a ref, not to effect cleanup. A message
+    // carries a timestamp so that a repeated reading still re-shows, which
+    // means an unchanged reading still re-runs this effect. A cleanup-owned
+    // timer would therefore be cancelled and re-armed for as long as anything
+    // kept publishing, and the banner would never reach its deadline.
+    const hide = delay => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        if (generation !== generationRef.current) return;
+        setVisible(false);
+        setText('');
+        shownRef.current = '';
+      }, delay);
+    };
     if (!display) {
-      const timer = hide(120);
-      return () => clearTimeout(timer);
+      hide(120);
+      return;
     }
-    // New truth replaces immediately. A brief clear grace prevents pointer
-    // boundary churn from flashing a blank slot, and the generation check
-    // prevents an older timer from erasing newer content.
+    // New truth replaces immediately, and the generation check prevents an
+    // older timer from erasing newer content. A repeat of the reading already
+    // on screen leaves the countdown alone: the hold is measured from the last
+    // change a viewer could see, not from the last message that arrived.
+    if (shownRef.current === display && timerRef.current !== null) return;
     setText(display);
     setVisible(true);
     shownRef.current = display;
     const holdMs = /\b(?:MUTED|UNMUTED)\b/.test(display) ? 2400 : 1800;
-    const timer = hide(holdMs);
-    return () => clearTimeout(timer);
+    hide(holdMs);
   }, [message]);`,
       'status clear is cancellable and repaints its old bounds');
     replaceSpectrSource(
@@ -3585,8 +3607,8 @@ window.PatternManager = PatternManager;`,
       "    const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;",
       'status remains readable after the latest interaction');
     replaceSpectrSource(
-      "      const timer = hide(120);",
-      "      const timer = hide(160);",
+      "      hide(120);",
+      "      hide(160);",
       'status clear grace prevents boundary flashes');
     replaceSpectrSource(
       "      position: 'absolute', top: 96, left: '50%', transform: 'translateX(-50%)',",
