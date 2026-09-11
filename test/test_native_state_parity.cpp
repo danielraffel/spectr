@@ -4615,6 +4615,28 @@ TEST_CASE("the LFO controls reach a finished layout and hold it",
     INFO("after holding:" << describe(held));
     CHECK(same(settled, held));
 
+    // Control on the comparator's RECT path. The reflow control further down
+    // compares vectors of different length, so it exits through `same()`'s size
+    // guard and never reaches the per-field clauses — delete them and every
+    // assertion in this test would still pass, leaving the stability half
+    // unprotected. Perturb each compared field in turn at EQUAL row count and
+    // require its own clause to catch it.
+    const auto differs_when = [&](const char* field, auto&& mutate) {
+        auto perturbed = held;
+        REQUIRE_FALSE(perturbed.empty());
+        mutate(perturbed.front());
+        INFO("perturbed field: " << field);
+        REQUIRE(perturbed.size() == held.size());
+        CHECK_FALSE(same(held, perturbed));
+    };
+    differs_when("label", [](ClusterRow& r) { r.label += "-CONTROL"; });
+    differs_when("row.x", [](ClusterRow& r) { r.row.x += 1.0f; });
+    differs_when("row.y", [](ClusterRow& r) { r.row.y += 1.0f; });
+    differs_when("row.width", [](ClusterRow& r) { r.row.width += 1.0f; });
+    differs_when("row.height", [](ClusterRow& r) { r.row.height += 1.0f; });
+    differs_when("label column",
+                 [](ClusterRow& r) { r.label_column_width += 1.0f; });
+
     // Turning the LFO on mounts four more rows. That reflow is intended; what
     // must still hold is that the ENLARGED cluster also finishes and then stops.
     activate(rig, "[data-spectr-settings-modulation] [data-spectr-setting-toggle]");
