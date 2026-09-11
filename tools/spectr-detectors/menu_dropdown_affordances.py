@@ -76,7 +76,7 @@ KEY_SEQUENCE_PROBE = r"""
 """
 
 
-def run(root, out_dir, name, env_extra):
+def run(root, out_dir, name, env_extra, app=APP):
     out_dir.mkdir(parents=True, exist_ok=True)
     layout = out_dir / f"{name}.layout.json"
     env = dict(os.environ)
@@ -87,7 +87,7 @@ def run(root, out_dir, name, env_extra):
         "SPECTR_LAYOUT_DUMP": str(layout),
     })
     env.update(env_extra)
-    proc = subprocess.run([str(root / APP)], env=env, cwd=str(root),
+    proc = subprocess.run([str(root / app)], env=env, cwd=str(root),
                           capture_output=True, text=True, timeout=300)
     log = proc.stdout + proc.stderr
     (out_dir / f"{name}.log").write_text(log, encoding="utf-8")
@@ -125,19 +125,88 @@ def caption_texts(layout_path):
     return texts
 
 
-def main():
+# The tree this detector measures defaults to the checkout it is part of.
+# It must never default to some other checkout: a bare run would then report a
+# verdict about code that is not the code under test, and a PASS describing an
+# unlanded tree reads exactly like a PASS describing this one.
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+# Files that exist only in a Spectr checkout. A root without them is not a tree
+# this detector can say anything about, so refuse rather than measure it.
+ROOT_MARKERS = (
+    "CMakeLists.txt",
+    "native-ui/materialized/materialized-document.runtime.json",
+)
+
+
+def self_test():
+    """Prove the default root is this checkout, not a foreign one."""
+    failures = []
+    default = pathlib.Path(
+        _parser().get_default("root")).resolve()
+    if default != REPO_ROOT:
+        failures.append(f"--root defaults to {default}, not this checkout "
+                        f"({REPO_ROOT}).")
+    if not str(REPO_ROOT / "tools" / "spectr-detectors") == str(
+            pathlib.Path(__file__).resolve().parent):
+        failures.append("REPO_ROOT is not two levels above this file.")
+    for marker in ROOT_MARKERS:
+        if not (REPO_ROOT / marker).exists():
+            failures.append(f"this checkout is missing {marker!r}, so the "
+                            "marker set cannot gate a foreign root.")
+    # Control: the marker gate must actually reject something. A gate that
+    # accepts every path would pass the checks above while guarding nothing.
+    bogus = pathlib.Path("/")
+    if all((bogus / m).exists() for m in ROOT_MARKERS):
+        failures.append("the marker set accepts '/', so it gates nothing.")
+    for line in failures:
+        print("FAIL: " + line)
+    if failures:
+        return 1
+    print(f"PASS: --root defaults to this checkout ({REPO_ROOT}).")
+    print(f"PASS: the marker set {ROOT_MARKERS} rejects a foreign root.")
+    return 0
+
+
+def _parser():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default="/Users/danielraffel/Code/spectr-ux-verify-20260907")
+    ap.add_argument("--root", default=str(REPO_ROOT),
+                    help="Spectr checkout to measure (default: this one).")
     ap.add_argument("--out", default="/tmp/uxfix/proof/d2")
-    args = ap.parse_args()
-    root = pathlib.Path(args.root)
+    # No build script produces build-now/, so the default is a convention a
+    # caller may not share. Let them name the binary rather than silently
+    # measuring nothing.
+    ap.add_argument("--app", default=APP,
+                    help=f"Spectr binary, relative to --root (default: {APP}).")
+    ap.add_argument("--self-test", action="store_true",
+                    help="check the default root, then exit.")
+    return ap
+
+
+def main():
+    args = _parser().parse_args()
+    if args.self_test:
+        return self_test()
+    root = pathlib.Path(args.root).resolve()
     out = pathlib.Path(args.out)
+
+    missing = [m for m in ROOT_MARKERS if not (root / m).exists()]
+    if missing:
+        print(f"INCONCLUSIVE: {root} is not a Spectr checkout "
+              f"(missing {missing}); refusing to report a verdict about it.")
+        return 2
+    binary = root / args.app
+    if not binary.exists():
+        print(f"INCONCLUSIVE: no Spectr binary at {binary}; build one or pass "
+              "--app. A detector that cannot launch the app proves nothing.")
+        return 2
+    print(f"measuring {root} via {args.app}")
 
     failures = []
     inconclusive = []
 
-    closed, _, _ = run(root, out, "closed", {})
-    opened, _, open_layout = run(root, out, "open", {"SPECTR_CLICK": TRIGGER})
+    closed, _, _ = run(root, out, "closed", {}, args.app)
+    opened, _, open_layout = run(root, out, "open", {"SPECTR_CLICK": TRIGGER}, args.app)
     if closed is None or opened is None:
         print("INCONCLUSIVE: the app produced no layout dump.")
         return 2
@@ -150,7 +219,7 @@ def main():
 
     # 1. Escape dismisses.
     esc_nodes, esc_log, _ = run(root, out, "escape",
-                                {"SPECTR_CLICK": TRIGGER, "SPECTR_KEY_JS": "Escape"})
+                                {"SPECTR_CLICK": TRIGGER, "SPECTR_KEY_JS": "Escape"}, args.app)
     fired = key_listeners(esc_log)
     if not fired:
         inconclusive.append("the key harness reported no keydown listeners; "
@@ -165,7 +234,7 @@ def main():
     # 2. ArrowDown x3 + Return commits the third item.
     arrow_nodes, arrow_log, arrow_layout = run(
         root, out, "arrow_enter",
-        {"SPECTR_CLICK": TRIGGER, "SPECTR_EVAL": KEY_SEQUENCE_PROBE})
+        {"SPECTR_CLICK": TRIGGER, "SPECTR_EVAL": KEY_SEQUENCE_PROBE}, args.app)
     fired, sent = seq_listeners(arrow_log)
     if sent is not None and sent != 4:
         inconclusive.append(f"the key driver sent {sent} keys, not 4.")
@@ -188,7 +257,7 @@ def main():
     # 3. Tap-outside: the open dropdown claims the native overlay and answers
     #    the dismiss the platform host fires on an outside press.
     dis_nodes, dis_log, _ = run(root, out, "dismiss",
-                                {"SPECTR_CLICK": TRIGGER, "SPECTR_EVAL": DISMISS_PROBE})
+                                {"SPECTR_CLICK": TRIGGER, "SPECTR_EVAL": DISMISS_PROBE}, args.app)
     p = probe_values(dis_log)
     total = int(p.get("CONTROL_dismiss_callbacks_total", "0"))
     if p.get("containers") in (None, "0"):

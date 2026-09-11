@@ -571,6 +571,20 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(Spectr-frame-cadence-selftest PROPERTIES TIMEOUT 60)
 endif()
 
+# The dropdown detector measures whichever checkout --root names. A default
+# pointing at another checkout makes a bare run report a verdict about code
+# that is not under test -- and a PASS describing a foreign tree is
+# indistinguishable from a PASS describing this one. This asserts the default
+# is this checkout and that the marker gate rejects a foreign root.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-menu-dropdown-detector-root-selftest
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_dropdown_affordances.py
+            --self-test)
+    set_tests_properties(Spectr-menu-dropdown-detector-root-selftest
+        PROPERTIES TIMEOUT 60)
+endif()
+
 if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
     # Band drawing holds its cadence today (gesture p95 sits at or below the idle
     # control), so this ratio is a real floor rather than a rubber stamp.
