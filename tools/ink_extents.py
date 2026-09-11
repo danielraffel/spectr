@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Adjudicate CLIP candidates against painted pixels.
 
-`appearance_invariants.py --only clip` compares a string's *measured advance*
-(`measured_text_boxes[].rect.w`) against the box it paints in. On this surface
-that comparison is not trustworthy in either direction:
+`appearance_invariants.py`'s painted-vs-measured detector compares a string's
+*measured advance* (`measured_text_boxes[].rect.w`) against the box it paints
+in. (It was spelled `--only clip` when this was written; that flag is gone and
+the detector always runs.) On this surface that comparison is not trustworthy
+in either direction:
 
   * `__behavior_pr_y` "1.08kHz   11.0 dB   BAND 19/32" -- measured 225.0px in a
     210.0px box (CLIP reports a 15px overflow), but the painted ink spans
@@ -137,11 +139,17 @@ def measurable(node: dict, include_wrapped: bool = False) -> Optional[dict]:
 
     `include_wrapped` substitutes the node's own rect width as the extent, which
     is what a wrapped label actually paints across. It is the same substitution
-    `appearance_invariants.py` already makes for OVERLAP, and it is the ONLY way
-    to adjudicate these labels at all -- CLIP skips them (a 0 can never
-    overflow) and WRAP skips them (`measured_height` is a wrap estimate that is
-    wrong on this surface). Without it, 63% of the labels on Spectr's shipping
+    `appearance_invariants.painted_box()` makes, and it is the ONLY way to
+    adjudicate these labels at all -- the painted-vs-measured detector skips
+    them (a 0 can never overflow), and the WRAP detector that also skipped them
+    no longer exists. Without it, 63% of the labels on Spectr's shipping
     surface are excused from every truncation check.
+
+    Note the CLI and the helper differ here on purpose: `painted_box()`
+    substitutes, while the flat path behind `appearance_invariants.py`'s own
+    command line counts a zero-advance run as UNMEASURABLE and says so. Neither
+    is wrong; a run counted unmeasurable there is exactly the population this
+    tool exists to adjudicate.
 
     It is opt-in so that runs recorded before it existed reproduce unchanged.
     """

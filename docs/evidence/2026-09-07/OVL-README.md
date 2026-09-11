@@ -123,9 +123,14 @@ The authored source already tries to fix this — the span carries
 effect, because the box is frozen (see OVL-2).
 
 **Why this is not closed:** no built detector expresses "vertically centred".
-`appearance_invariants.py` covers OVERLAP / CLIP / WRAP / COLLAPSE only, so the
-defect is measured here but not yet asserted by a re-runnable check, and there is
-no GREEN half.
+`appearance_invariants.py` covered OVERLAP / CLIP / WRAP / COLLAPSE when this was
+written; today it covers overlap and fit only, and WRAP / COLLAPSE have no
+successor. Either way the defect is measured here but not asserted by a
+re-runnable check, and there is no GREEN half.
+
+(`tools/centering_invariant.py` now asserts HORIZONTAL centring of a text run
+inside its owner, and is negative-controlled by `--plant`. It does not answer
+the vertical question above.)
 
 ### OVL-2 — RED, open
 
@@ -157,8 +162,11 @@ The same frozen box causes a **CLIP** the appearance detector already sees — a
 drag readout measures 225px in a 210px box:
 
 ```sh
-python3 tools/appearance_invariants.py docs/evidence/2026-09-07/OVL-3-GREEN-move4.layout.json --subtree __behavior_pr_z   # RED  CLIP
-python3 tools/appearance_invariants.py docs/evidence/2026-09-07/OVL-3-GREEN-press.layout.json --subtree __behavior_pr_z   # GREEN (shorter label fits)
+# `--subtree <node-id>` no longer exists; scope by the node's box instead.
+# __behavior_pr_z is [540,60 240x26] in both dumps. Re-checked 2026-09-11:
+# still 225.0px of glyphs in a 210.0px box on move4, still fits on press.
+python3 tools/appearance_invariants.py docs/evidence/2026-09-07/OVL-3-GREEN-move4.layout.json --region 540,60,240,26   # RED  (exit 1)
+python3 tools/appearance_invariants.py docs/evidence/2026-09-07/OVL-3-GREEN-press.layout.json --region 540,60,240,26   # GREEN (exit 0, shorter label fits)
 ```
 
 **The fix, not applied here:** runtime.js already has the idiom — `activeLayoutBindings`

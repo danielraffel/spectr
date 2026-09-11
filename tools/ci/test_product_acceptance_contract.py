@@ -24,6 +24,13 @@ editor_enabled_artifact = re.search(
     r"env CI=0 PULP_DISABLE_PLUGIN_EDITOR=0 PULP_HEADLESS=0 PULP_TEST_MODE=0[ \t]*\\\r?\n"
     r"[ \t]+ctest --test-dir[^\n]*[ \t]*\\\r?\n"
     r"[ \t]+-R '\^Pulp host loads'", workflow)
+# Command lines only: the workflow's own comments discuss `--parallel` and
+# `-j` in prose, and a check that cannot tell a comment from a command would
+# fail on the sentence explaining why the bound exists.
+workflow_commands = "\n".join(
+    line for line in workflow.splitlines()
+    if not line.lstrip().startswith("#"))
+
 config_text = (ROOT / ".shipyard/config.toml").read_text()
 config = tomllib.loads(config_text)
 pin = json.loads((ROOT / "tools/ci/pulp-sdk-release.json").read_text())
@@ -75,6 +82,22 @@ checks = {
         "python3 tools/ci/detector_selftest.py" in workflow
         and workflow.index("tools/ci/detector_selftest.py")
         < workflow.index("cmake -S ")),
+    # Every build in this workflow takes a bounded SHARE of the runner, never
+    # the whole machine. The job runs on a shared self-hosted Mac that also
+    # carries Pulp's required `macos` gate, and a bare `--parallel` (unbounded
+    # `make -j`) starves it. build_parallelism_guard.py cannot catch this --
+    # it deliberately does not scan .github/workflows/**, because `runs-on`
+    # resolves dynamically -- so the assertion has to live here.
+    #
+    # Stated over the whole file rather than over one line, so a NEW build step
+    # cannot land unbounded: every `--parallel` must be followed by a literal
+    # count, and no job count may expand to the host's core count.
+    "every build takes a bounded share": (
+        not re.search(r"--parallel(?!\s+\d)", workflow_commands)
+        and not re.search(r"-j\s*\$", workflow_commands)
+        and not re.search(
+            r"\$\(\s*(?:sysctl\s+-n\s+hw\.(?:ncpu|physicalcpu)"
+            r"|nproc|getconf\s+_NPROCESSORS_ONLN)\s*\)", workflow_commands)),
     # A SKIP is never a PASS. The native editor capture must not be allowed to
     # report "Not Run" as green for any reason, tracked blocker included.
     "native capture tolerates no skip": (

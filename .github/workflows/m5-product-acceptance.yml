@@ -136,7 +136,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build "$SPECTR_BUILD_DIR" --parallel --target \
+          # BOUNDED ON PURPOSE. This job runs on a SHARED self-hosted Mac that
+          # also carries Pulp's required `macos` gate, so a bare `--parallel`
+          # (unbounded `make -j`) claims every core it can see and starves the
+          # gate it is sharing the box with. The bound that matters on a shared
+          # host is a SHARE, and a share cannot come from the hardware.
+          #
+          # Pulp's sanctioned wrapper, tools/ci/governed-build.sh, acquires a
+          # tartci lease and releases on exit -- but it lives in the PULP repo
+          # and this job checks out only Spectr, so it is not reachable here.
+          # A derived `cores / N` bound is not a substitute either: Pulp's own
+          # governor documents its Tier-0 fallback as "NOT a saturation bound",
+          # because on a big-RAM host the memory axis never binds and it
+          # degrades to the full core count. So this is a literal share.
+          #
+          # tools/scripts/build_parallelism_guard.py deliberately does not scan
+          # .github/workflows/** -- a workflow's `runs-on` resolves dynamically
+          # and a static scan cannot tell an ephemeral runner from a shared
+          # Studio. Bounding a self-hosted leg is therefore the workflow
+          # author's job, and this is that. tools/ci/test_product_acceptance_contract.py
+          # asserts the bound so it cannot drift back.
+          cmake --build "$SPECTR_BUILD_DIR" --parallel 4 --target \
             Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP \
             Spectr-test Spectr-native-n1-test Spectr-editor-authority-test \
             Spectr-artifact-test Spectr-native-standalone-artifact-test \

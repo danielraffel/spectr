@@ -4,6 +4,31 @@ Every file here is a measurement, not a narration. The detector that produced
 the JSON verdicts is `tools/appearance_invariants.py`; re-run it against any
 `*.layout.json` in this directory to reproduce the numbers.
 
+> **The commands below were written against an earlier CLI and will not run
+> as printed.** `appearance_invariants.py` was rewritten to adjudicate painted
+> glyph geometry instead of layout boxes, and the squash that landed that
+> rewrite took the new module with the old callers. `--subtree`, `--only` and
+> `--plant <name>` are gone; the flags are now:
+>
+> | printed here | today |
+> |---|---|
+> | `--subtree <node-id>` | `--region x,y,w,h` (a box, not an id — look the node's rect up in the dump) |
+> | `--only clip` | the `painted-vs-measured` detector, which always runs |
+> | `--plant clip` | `--plant-overflow` |
+> | `--plant overlap` | `--plant-overlap` |
+> | `--only collapse`, `--only wrap` | **no successor — see below** |
+>
+> The verdicts recorded in this file still reproduce. Worked example, checked:
+> the OVL-3 CLIP at `OVL-README.md` is `--region 540,60,240,26` today and still
+> reports `225.0px in a 210.0px box` RED on `move4` and GREEN on `press`.
+>
+> **A real coverage gap, not just a rename:** the old WRAP and COLLAPSE
+> detectors have no replacement. Today's module adjudicates overlap and fit
+> only. Collapse survives only where a check names the string it wants
+> (`content_invariants.py` counts a string present only if its box has area)
+> or the control it wants (`control_invariants.py` on zero-height tracks) —
+> there is no sweep for a collapsed box anywhere on the surface.
+
 ## SET-1 / SET-2 — the Settings body laid out at zero height
 
 The whole-image content floor scored the broken frame
