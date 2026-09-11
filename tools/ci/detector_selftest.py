@@ -151,6 +151,28 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(T, "reachability_census.py"), f(E07, "SET-837-settings-unscrolled"),
       "--plant", "zero"]),
 
+    # COLLAPSE had no successor after the appearance rewrite dropped it, and a
+    # collapsed Settings body is the SET-1 defect itself. The GREEN/RED pair is
+    # the same surface captured with and without the defect, so a pass here is
+    # a DISCRIMINATION, not one fixture happening to be red.
+    ("collapsed_box", "clean shipping settings dump", 0,
+     [f(D, "collapsed_box.py"), f(E07, "SET-2-shipping-scrolled.layout.json")]),
+    ("collapsed_box", "the healthy half of the SET-1 pair", 0,
+     [f(D, "collapsed_box.py"), f(E07, "SET-1-GREEN.layout.json")]),
+    ("collapsed_box", "known-bad fixture (SET-1 collapsed settings body)", 1,
+     [f(D, "collapsed_box.py"), f(E07, "SET-1-RED.layout.json"), "--quiet"]),
+    ("collapsed_box", "plant: collapse a container holding painting strings", 1,
+     [f(D, "collapsed_box.py"), f(E07, "SET-2-shipping-scrolled.layout.json"),
+      "--plant", "container", "--quiet"]),
+    ("collapsed_box", "plant: collapse one label's own box and its clip", 1,
+     [f(D, "collapsed_box.py"), f(E07, "SET-2-shipping-scrolled.layout.json"),
+      "--plant", "self", "--quiet"]),
+    # A snapshot with no depth sidecar cannot be adjudicated at all. The
+    # detector must say so (exit 2, "Not Run" in CTest terms) rather than
+    # return the clean 0 that an ancestry guess would produce.
+    ("collapsed_box", "no depth sidecar is a no-verdict, never a pass", 2,
+     [f(D, "collapsed_box.py"), f(E07, "SET-6-shipping-midscroll.layout.json")]),
+
     # Scoped to the settings panel on purpose: text behind the settings scrim
     # is dimmed BY DESIGN, and measuring it reddens this for the wrong reason.
     ("text_contrast", "settings panel clears its contrast floor", 0,

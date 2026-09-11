@@ -211,6 +211,40 @@ jobs:
             exit 1
           fi
 
+      - name: Gate - no collapsed box on the captured native surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The captures the step above just produced are the shipping native
+          # editor. A collapsed Settings body is the SET-1/SET-2 defect, and no
+          # other check sweeps for one: the appearance detectors adjudicate
+          # only runs that DO paint, and reachability_census's population is
+          # hit-test leaves, which a collapsed container is not. A pixel diff
+          # cannot see it either -- a region that paints nothing renders as
+          # plausible background.
+          # bash 3.2 on macOS has no `mapfile`, so the dump list is built the
+          # portable way.
+          shots="$SPECTR_BUILD_DIR/spectr-native-shots"
+          dumps="$SPECTR_ACCEPTANCE_ROOT/collapsed-box-dumps.txt"
+          find "$shots" -name '*.layout.json' -print | sort > "$dumps"
+          n=$(wc -l < "$dumps" | tr -d ' ')
+          if [ "$n" -eq 0 ]; then
+            echo "no verdict: $shots holds no layout dump, so this gate would report about a surface it never measured" >&2
+            exit 1
+          fi
+          echo "sweeping $n captured surface(s) for a collapsed box"
+          rc=0
+          while IFS= read -r dump; do
+            set +e
+            python3 tools/spectr-detectors/collapsed_box.py "$dump" --quiet
+            one=$?
+            set -e
+            # 1 is a finding; 2 is UNMEASURED (no depth sidecar) and is never a
+            # pass, so both fail the gate rather than being folded into green.
+            if [ "$one" -ne 0 ]; then rc=1; fi
+          done < "$dumps"
+          exit $rc
+
       # REPORTING ONLY (continue-on-error). These four drive the built
       # standalone headlessly, so unlike the fixture lane above they need the
       # app and cost minutes, and each can legitimately return "no verdict"

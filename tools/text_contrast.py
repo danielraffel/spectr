@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Measure the contrast a text node actually PAINTS, and hold it to a floor.
 
-The appearance invariants (overlap / clip / collapse) answer "is the text in
-the right box". They say nothing about whether a human can read it. A label
+The appearance invariants (overlap / fit, plus the collapsed-box sweep) answer
+"is the text in the right box". They say nothing about whether a human can read
+it. A label
 authored at opacity 0.45 sits in a perfectly correct box and still fails.
 
 So this reads the rendered PNG, not the layout JSON's intent: for every text

@@ -16,18 +16,40 @@ the JSON verdicts is `tools/appearance_invariants.py`; re-run it against any
 > | `--only clip` | the `painted-vs-measured` detector, which always runs |
 > | `--plant clip` | `--plant-overflow` |
 > | `--plant overlap` | `--plant-overlap` |
-> | `--only collapse`, `--only wrap` | **no successor — see below** |
+> | `--only collapse` | `tools/spectr-detectors/collapsed_box.py` — see below |
+> | `--only wrap` | **still no successor — see below** |
 >
 > The verdicts recorded in this file still reproduce. Worked example, checked:
 > the OVL-3 CLIP at `OVL-README.md` is `--region 540,60,240,26` today and still
 > reports `225.0px in a 210.0px box` RED on `move4` and GREEN on `press`.
 >
-> **A real coverage gap, not just a rename:** the old WRAP and COLLAPSE
-> detectors have no replacement. Today's module adjudicates overlap and fit
-> only. Collapse survives only where a check names the string it wants
-> (`content_invariants.py` counts a string present only if its box has area)
-> or the control it wants (`control_invariants.py` on zero-height tracks) —
-> there is no sweep for a collapsed box anywhere on the surface.
+> **COLLAPSE now has a successor; WRAP still does not.**
+>
+> `tools/spectr-detectors/collapsed_box.py` closes the collapse half. It asks
+> the question the two shipping detectors structurally cannot: both adjudicate
+> only the runs that DO paint, so a run that paints nothing is counted as
+> reduced COVERAGE and discarded. On SET-1 that discarded bucket goes from 37
+> runs (GREEN) to 73 (RED) — **the discarded bucket is the finding.** The rule
+> is painted geometry throughout (`measured_text_boxes[].rect` intersected with
+> the clipping ancestry); a layout box is read only to ATTRIBUTE a run that has
+> already failed, never to decide that it failed. Over all 46 committed layout
+> fixtures exactly one fires: `SET-1-RED`, 73 strings, blamed on
+> `__behavior_pr_4p` — the settings body itself. Six cases are in
+> `tools/ci/detector_selftest.py`, and the acceptance workflow sweeps every
+> `Spectr-native-shot` capture with it.
+>
+> **WRAP is deliberately still open, and a naive successor would be worse than
+> nothing.** Today's fit detector compares WIDTH only, so a label that wraps to
+> more lines than its box is tall is invisible to it — and a wrapped label's
+> width fits by construction, so widening that comparison cannot reach the
+> case. A height comparison off this snapshot is not available either: on the
+> shipping settings surface 62 of 101 measured strings report the intrinsic
+> width-0 multi-line sentinel, whose recorded height is a single-line INTRINSIC
+> height rather than the painted wrapped height, and 12 strings already report
+> a text height exceeding their box on a surface that renders correctly. The
+> old detector said as much in its own comments before it was removed. A real
+> WRAP successor needs a painted line count or a painted glyph-run height the
+> dump does not currently carry.
 
 ## SET-1 / SET-2 — the Settings body laid out at zero height
 
