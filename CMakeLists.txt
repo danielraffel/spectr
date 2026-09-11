@@ -518,6 +518,31 @@ else()
         "Spectr: no Python3 interpreter -- Spectr-resize-reachability not registered")
 endif()
 
+# Status overlay (section 5): the overlay must sit where the design puts it,
+# track a live drag, and then dismiss itself. The last of those is a TIME
+# property and the first is a PIXEL property, so this gate drives the shipping
+# standalone through a scripted band drag and reads both -- a layout receipt
+# alone cannot see a box that is painted in the wrong place, and a single
+# screenshot cannot see one that never goes away. The runner refuses a verdict
+# unless its drag and probe drivers left liveness markers, because an overlay
+# that was never raised is pixel-identical to one that dismissed correctly.
+# Exit: 0 pass, 1 an invariant is violated, 3 the premise is unproven, 77 no
+# GPU editor on this host. 3 and 77 must never read as a pass.
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-status-overlay
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_status_overlay.sh
+            $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_BINARY_DIR}/spectr-status-overlay)
+    set_tests_properties(Spectr-status-overlay PROPERTIES
+        TIMEOUT 300
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+else()
+    message(STATUS
+        "Spectr: Spectr-status-overlay not registered (needs Python3 and the standalone)")
+endif()
+
 add_executable(Spectr-editor-authority-test
     test/test_editor_authority.cpp
 )
