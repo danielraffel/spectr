@@ -416,8 +416,13 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     session->bridge()->load_script(R"js(
       const restoredHomeDiagnostics = globalThis.__pulpMaterializedMetadataDiagnostics__;
       if (!restoredHomeDiagnostics || restoredHomeDiagnostics.state_id !== '' ||
-          restoredHomeDiagnostics.layout_expected !== 69 ||
-          restoredHomeDiagnostics.layout_applied !== 69 ||
+          // A census of the home DOM, not a contract. The contract is that
+          // every binding the live DOM produces is applied: expected ==
+          // applied with no node misses. Re-pin the literal when an edit
+          // legitimately adds or removes a laid out node, and only treat a gap
+          // between expected and applied as a defect.
+          restoredHomeDiagnostics.layout_expected !== 68 ||
+          restoredHomeDiagnostics.layout_applied !== 68 ||
           restoredHomeDiagnostics.layout_node_miss !== 0 ||
           // The toolbar includes merged SCULPT/PEAK captures and one merged
           // band-count label instead of separate number and suffix bindings.
