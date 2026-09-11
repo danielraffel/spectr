@@ -585,6 +585,40 @@ if(Python3_Interpreter_FOUND)
         PROPERTIES TIMEOUT 60)
 endif()
 
+# The dropdown affordances themselves, driven through Pulp's popup handler:
+# Escape dismisses, each ArrowDown moves exactly one row, Return closes, and an
+# outside press dismisses. Stepping is circular, so the assertion is
+# (i + 1) % count -- a raw delta of 1 would score a correct wrap as a skip.
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-menu-dropdown-affordances
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_dropdown_affordances.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-dropdown-affordances)
+    set_tests_properties(Spectr-menu-dropdown-affordances PROPERTIES
+        TIMEOUT 600
+        RESOURCE_LOCK spectr_native_materialized_editor)
+
+    # This detector spent a release reporting two FAILs against a healthy app
+    # because it dispatched keys the popup handler had no state to act on. A
+    # repaired measurement has to be shown catching the defect it claims to
+    # watch for, so this injects a second keyboard owner -- which double-steps
+    # the cursor, the user-reported symptom exactly -- and REQUIRES the arrow
+    # assertion to catch it. It fails if the measurement goes green.
+    add_test(NAME Spectr-menu-dropdown-affordances-negative-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_dropdown_affordances.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-dropdown-affordances-negctl
+            --negative-control)
+    set_tests_properties(Spectr-menu-dropdown-affordances-negative-control
+        PROPERTIES
+            TIMEOUT 600
+            RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
 # Arrow stepping in a dropdown must move exactly one row. The affordance test
 # above asserts a destination (three ArrowDowns then Return land on a named
 # caption), which a handler that steps two rows can also satisfy; this reads the
