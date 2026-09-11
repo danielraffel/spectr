@@ -908,7 +908,14 @@ window.FilterBank = FilterBank;`,
           // authored gain; it never pretends to sweep up from the floor.
           if (isMuted(rg[i]) || !Number.isFinite(rg[i])) rg[i] = 0;
           const target = Number.isFinite(tg[i]) ? tg[i] : 0;
-          rg[i] = smooth(rg[i], target, dt * k);
+          // While the LFO overlay owns the paint refs, applyModulationFrame has
+          // already written the post-LFO gain for this band. Smoothing toward
+          // the canonical target here pulls every painted sample back toward
+          // the unmodulated value on every frame, costing a rate-independent
+          // ~31% of the true excursion, so the overlay under-reports the very
+          // modulation it exists to show. Canonical smoothing resumes on the
+          // falling edge, when the overlay releases the refs.
+          if (!modulationActiveRef.current) rg[i] = smooth(rg[i], target, dt * k);
         }
         unmutePulseRef.current[i] = Math.max(0,
           unmutePulseRef.current[i] - dt * 3.5);

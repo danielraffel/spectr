@@ -408,7 +408,67 @@ TEST_CASE("host automation publication is compact and revisioned") {
     CHECK_FALSE(payload.hasObjectMember("snapshots"));
     CHECK_FALSE(payload.hasObjectMember("patterns_json"));
     CHECK_FALSE(payload.hasObjectMember("settings"));
-    CHECK_FALSE(payload.hasObjectMember("modulation"));
+    // The modulation lanes DO ride the live projection. Every one of them is
+    // an automatable host parameter, and the editor's settings panel reads
+    // them from here; when they only shipped at hydration the panel showed
+    // whatever the session opened with while the host drove the audio
+    // somewhere else. They are ten scalars, so the payload stays compact.
+    REQUIRE(payload["modulation"].isObject());
+    CHECK(payload["modulation"].size() == 10);
+}
+
+TEST_CASE("live publication carries every automatable modulation lane") {
+    // The user-visible case is a DAW automating the LFO while the editor is
+    // open: the overlay animates from the audio owner's post-LFO field, so a
+    // settings panel that cannot see these lanes contradicts the picture next
+    // to it. Every scalar here is written by a host parameter.
+    Rig r;
+    r.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    r.store.set_value(spectr::kParamLfoShape, 2.0f);
+    r.store.set_value(spectr::kParamLfoRate, 8.0f);
+    r.store.set_value(spectr::kParamLfoDepth, 0.75f);
+    r.store.set_value(spectr::kParamLfoTarget, 3.0f);
+    r.store.set_value(spectr::kParamLfo2Enabled, 1.0f);
+    r.store.set_value(spectr::kParamLfo2Shape, 1.0f);
+    r.store.set_value(spectr::kParamLfo2Rate, 2.0f);
+    r.store.set_value(spectr::kParamLfo2Depth, 0.25f);
+    REQUIRE(r.proc->apply_surface_params(true));
+
+    const auto message = spectr::make_editor_live_state_message(*r.proc, 7);
+    CHECK(message.type == "processing_state_live");
+    const auto payload = choc::json::parse(message.payload_json);
+    REQUIRE(payload.isObject());
+    REQUIRE(payload["modulation"].isObject());
+    const auto modulation = payload["modulation"];
+    CHECK(modulation["enabled"].getBool());
+    CHECK(modulation["shape"].get<int64_t>() == 2);
+    CHECK(modulation["beats_per_cycle"].get<double>() == Approx(8.0));
+    CHECK(modulation["depth"].get<double>() == Approx(0.75));
+    CHECK(modulation["target"].get<int64_t>() == 3);
+    CHECK(modulation["lfo2_enabled"].getBool());
+    CHECK(modulation["lfo2_shape"].get<int64_t>() == 1);
+    CHECK(modulation["lfo2_beats_per_cycle"].get<double>() == Approx(2.0));
+    CHECK(modulation["lfo2_depth"].get<double>() == Approx(0.25));
+
+    // The resolved selection, never the 0xFF sentinel. Target 3 is Morph, so
+    // with no explicit mask chosen the editor must be told bit 3 (value 8).
+    CHECK(modulation["target_mask"].get<int64_t>() == 8);
+
+    // An explicit editor selection outranks the enum, and the live projection
+    // has to follow it or the panel's Targets row disagrees with the audio.
+    REQUIRE(r.proc->set_modulation_target_mask(0x05));
+    const auto after = choc::json::parse(
+        spectr::make_editor_live_state_message(*r.proc, 8).payload_json);
+    CHECK(after["modulation"]["target_mask"].get<int64_t>() == 5);
+
+    // Positive control on the same instrument: the projection tracks a change
+    // rather than replaying a snapshot taken once. Without this an unchanging
+    // reading above would be indistinguishable from a frozen payload.
+    r.store.set_value(spectr::kParamLfo2Depth, 0.9f);
+    REQUIRE(r.proc->apply_surface_params(true));
+    const auto moved = choc::json::parse(
+        spectr::make_editor_live_state_message(*r.proc, 9).payload_json);
+    CHECK(moved["modulation"]["lfo2_depth"].get<double>() == Approx(0.9));
 }
 
 TEST_CASE("native editor resolution disclosure uses current product geometry") {
