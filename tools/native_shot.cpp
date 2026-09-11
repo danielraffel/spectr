@@ -1612,6 +1612,38 @@ int main(int argc, char** argv) {
                     scroll->scroll_y());
         capture(rig, dir, prefix + "03-settings-SHIPPING-scrolled", backend, scale);
 
+        // The copy build-info button sits far below the scroll viewport, so a
+        // settings capture carries its geometry but never its pixels. Scroll it
+        // into view when asked, so a width claim can be read off the raster and
+        // not only off the layout dump.
+        if (std::getenv("SPECTR_COPY_SHOT") != nullptr) {
+            const pulp::view::Label* copy_label = nullptr;
+            for (const char* candidate : {"COPY UNAVAILABLE", "COPYING", "COPIED", "COPY"}) {
+                copy_label = find_label(*rig.root, candidate);
+                if (copy_label != nullptr) {
+                    std::printf("copy build-info label state: %s\n", candidate);
+                    break;
+                }
+            }
+            if (copy_label == nullptr)
+                throw std::runtime_error(
+                    "no copy build-info label in the native tree");
+            auto* copy_scroll = owning_scroll_view(*copy_label);
+            if (copy_scroll == nullptr)
+                throw std::runtime_error(
+                    "copy build-info label is not inside any ScrollView");
+            float copy_y = 0.0f;
+            if (!content_offset(*copy_label, *copy_scroll, copy_y))
+                throw std::runtime_error(
+                    "copy build-info label is not a descendant of its scroll view");
+            const float copy_want = copy_y - 120.0f;
+            copy_scroll->set_scroll(0.0f, copy_want < 0.0f ? 0.0f : copy_want);
+            settle(rig.clock, 24);
+            std::printf("scrolled to copy button: scroll_y=%.1f content_y=%.1f\n",
+                        copy_scroll->scroll_y(), copy_y);
+            capture(rig, dir, prefix + "05-copy-button", backend, scale);
+        }
+
         // ── The MODULATION disclosure, driven on the SHIPPING panel ───────
         //
         // Target selection is progressive disclosure: the destination chips do
