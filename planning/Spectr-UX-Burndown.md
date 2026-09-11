@@ -793,11 +793,25 @@ narrow past the viewport codec floor` passes alongside it (14 assertions).
 Band drawing and minimap interaction stay open on a reproduced regression, so
 this line is worse than unproven. Against a 17.5 ms no-drag control on the
 same build, a minimap edge drag measures p95 41.6 and 35.2 ms with 24 and 23
-inter-frame gaps at or past 25 ms. JavaScript is ruled out as the cause: the
-drag makes 177 bridge calls totalling 55 ms with a 1 ms maximum, against a
-working positive control where band drawing charges 231 ms with a 42 ms
-maximum. The cost is therefore charged natively after `processing_state_set`
-returns, in `src/ui/native_editor.cpp`.
+inter-frame gaps at or past 25 ms.
+
+**Correction (2026-09-11).** An earlier revision of this line ruled JavaScript
+out as the cause and named `src/ui/native_editor.cpp`, after
+`processing_state_set` returns, as where the cost is charged. Both claims are
+experimentally refuted and must not be carried forward. The bridge-call total
+they rested on never isolated the drag: only 59 of roughly 180 pointer samples
+reach the minimap-drag branch at all, and about 118 of the 177 publishes come
+from the gain lane that `SPECTR_BANDS_PERF_FIXTURE=1` drives. The 55 ms
+attributed to the drag is therefore mostly fixture gain commits, which neither
+rules JavaScript in nor rules it out. `replace_processing_state` is cleared by
+the same measurement.
+
+What survives is the effect itself, still unattributed: a pointer sweeping the
+**minimap region** costs about 2x idle p95, while a pointer sweeping the
+**bands region** costs about 1.0x. Attributing that gap needs native per-frame
+accounting in the paint / dirty-rect path, bucketed by whether the pointer is
+inside the minimap rect. It does not need another bridge-call total -- that is
+the instrument that produced the wrong answer the first time.
 
 A second, independent instrument reproduces it. `tools/frame_cadence_probe.py`
 measures the gap *between* painted frames rather than the duration of frames
