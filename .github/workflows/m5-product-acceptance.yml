@@ -2,13 +2,27 @@ name: Spectr M5 Product Acceptance
 
 on:
   workflow_dispatch:
+  # This gate is the only automated check in the repo, so it has to run on a PR
+  # rather than only on demand. It is also a 120-minute job on a SHARED
+  # self-hosted Mac, so the trigger is narrowed twice: pure docs/planning edits
+  # are skipped outright, and a rapid push series on one PR collapses to a
+  # single run instead of stacking builds on the runner. Anything that can
+  # reach the product -- src, include, test, native-ui, resources, tools, the
+  # SDK pin, CMakeLists.txt, this workflow -- still runs, deliberately: a gate
+  # that opts out by default is not a gate.
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'planning/**'
+      - '**/*.md'
 
 permissions:
   contents: read
 
 concurrency:
   group: spectr-m5-product-acceptance-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   product-acceptance:
@@ -95,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           ctest --test-dir "$SPECTR_BUILD_DIR" --output-on-failure --no-tests=error \
-            -R '(^#34:|^#34 bridge|^native N1|^native editor|^native settings|^native semantic|^native selected|^every native dropdown|^remaining native modal|^native Flare|^native frozen|^native buttons|^editor resize|^editors default|^the AU v2|^a resize|^native: |editor authority|import fidelity|materialized|Built Spectr|Spectr editor|^Spectr-browser-)'
+            -R '(^#34:|^#34 bridge|^native N1|^native editor|^native settings|^native semantic|^native selected|^every native dropdown|^remaining native modal|^native Flare|^native frozen|^native buttons|^editor resize|^editors default|^the AU v2|^a resize|^native: |editor authority|import fidelity|materialized|^status overlay|^settings overflow|Built Spectr|Spectr editor|^Spectr-browser-)'
           env CI=0 PULP_DISABLE_PLUGIN_EDITOR=0 PULP_HEADLESS=0 PULP_TEST_MODE=0 \
             ctest --test-dir "$SPECTR_BUILD_DIR" --output-on-failure --no-tests=error \
               -R '^Pulp host loads'

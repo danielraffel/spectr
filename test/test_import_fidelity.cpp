@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "spectr_editor_assets_data.hpp"
-#ifdef SPECTR_NATIVE_EDITOR
+#ifdef SPECTR_NATIVE_ASSETS
 #include "spectr_native_assets_data.hpp"
 #endif
 
@@ -488,7 +488,7 @@ TEST_CASE("import adapter contract detects native viewport resize mutations") {
     }
 }
 
-#ifdef SPECTR_NATIVE_EDITOR
+#ifdef SPECTR_NATIVE_ASSETS
 
 // The shipping editor is native-ui/materialized/materialized-document.runtime.json.
 // tools/patch_materialized_editor.py is its idempotent compatibility recipe;
@@ -517,7 +517,10 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(count_occurrences(document,
                                 "if (!currentHover || currentHover.mini) return;")
               == 1);
-        CHECK(count_occurrences(document, "updateLiveHoverStatus();") == 1);
+        // Two publishers, deliberately: the rAF draw loop keeps the banner in
+        // step with the animation, and the pointer-move handler writes the
+        // reading straight out so a hover reads live without waiting a frame.
+        CHECK(count_occurrences(document, "updateLiveHoverStatus();") == 2);
         CHECK(count_occurrences(document, "const tw = ctx.measureText(label).width + 18;") == 0);
     }
 
@@ -529,10 +532,15 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   "const t = setTimeout(() => {\\n      setVisible(false);\\n"
                   "      setText(\\\"\\\");\\n    }, 1400);")
               == 0);
-        CHECK(document.find("if (generation !== generationRef.current) return;")
+        // The dismissal timer lives in a ref and is cancelled explicitly, so a
+        // republished message cannot keep renewing it past its deadline. This
+        // replaced an older generation-token guard that compared a captured
+        // generation against the ref; pin the mechanism, not the token.
+        CHECK(document.find("const arm = (delay) => {\\n      cancel();")
               != document.npos);
-        CHECK(document.find("const timer2 = hide(160);") != document.npos);
-        CHECK(document.find("now - statusRefreshAtRef.current >= 120")
+        CHECK(document.find("arm(160);") != document.npos);
+        // The live-status refresh is throttled off the paint cadence.
+        CHECK(document.find("now - statusRefreshAtRef.current >= 700")
               != document.npos);
         CHECK(document.find("statusRefreshAtRef.current = now;") != document.npos);
         // The remaining 150 ms interval is the low-rate zoom/readout sampler,
@@ -548,14 +556,18 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 
     SECTION("the status banner is centered, padded, and smoothly content-sized") {
+        // The width is hoisted to a const because the banner is centred by a
+        // half-width negative margin; the sizing curve itself is unchanged.
         CHECK(count_occurrences(
                   document,
-                  "width: Math.max(96, Math.min(520, text.length * 8 + 28)),")
+                  "const bannerWidth = Math.max(96, Math.min(520, text.length * 8 + 28));")
               == 1);
+        CHECK(count_occurrences(document, "marginLeft: -bannerWidth / 2,") == 1);
         CHECK(count_occurrences(document, "padding: \\\"0 14px\\\"") == 1);
         CHECK(count_occurrences(
                   document,
-                  "transition: \\\"width 0.18s ease, opacity 0.15s ease\\\"")
+                  "transition: \\\"width 0.18s ease, margin-left 0.18s ease, "
+                  "opacity 0.15s ease\\\"")
               == 1);
         CHECK(count_occurrences(document, "width: 240,") == 0);
     }
@@ -564,8 +576,8 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(count_occurrences(
                   document,
                   "style: { display: \\\"block\\\", textAlign: \\\"center\\\", "
-                  "width: \\\"100%\\\", height: \\\"100%\\\", "
-                  "lineHeight: \\\"14px\\\", paddingTop: \\\"6px\\\", "
+                  "width: \\\"100%\\\", height: \\\"14px\\\", "
+                  "lineHeight: \\\"14px\\\", "
                   "boxSizing: \\\"border-box\\\", whiteSpace: \\\"nowrap\\\" }")
               == 1);
         CHECK(count_occurrences(document, "lineHeight: \"26px\"") == 0);
@@ -613,14 +625,18 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(count_occurrences(
                   document,
                   "mm === \\\"left\\\" || mm === \\\"right\\\"\\n        ? \\\"col-resize\\\"")
-              == 1);
+              == 2);
         CHECK(document.find("for (let i = 1; i < N; i++)") != document.npos);
         CHECK(document.find("for (let i = 0; i <= N; i++)") == document.npos);
     }
 
     SECTION("remaining standalone chrome stays aligned") {
         CHECK(count_occurrences(document, "top: 104,") == 1);
-        CHECK(document.find("onDismiss: () => setOpenMenu(null)") == document.npos);
+        // The three rail menus are mutually exclusive and share one openMenu
+        // state, so each overlay dismisses through the same setter. This was
+        // once forbidden, back when the menus owned independent booleans and
+        // the shared setter closed the wrong one.
+        CHECK(count_occurrences(document, "onDismiss: () => setOpenMenu(null)") == 3);
         CHECK(count_occurrences(
                   document,
                   "height: 26,\\n        display: \\\"inline-flex\\\",\\n"
@@ -657,8 +673,12 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   "setGains(targetGainsRef.current.slice());") == 1);
         CHECK(count_occurrences(document,
                   "reactGains: Array.from(gains)") == 1);
+        // Two publishers: the rAF draw loop and the pointer-move handler that
+        // writes the reading out directly so a hover reads live without
+        // waiting a frame. Both route through the one helper, which is the
+        // property this pins.
         CHECK(count_occurrences(document,
-                  "updateLiveHoverStatus();") == 1);
+                  "updateLiveHoverStatus();") == 2);
         CHECK(count_occurrences(document,
                   "const commitLiveViewport = (next) => {") == 1);
         CHECK(count_occurrences(document,
@@ -719,22 +739,27 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"native-listbox-popup-ownership", "popupKind: \\\"listbox\\\"", 2},
         ContractMarker{"native-menu-popup-ownership", "popupKind: \\\"menu\\\"", 2},
         ContractMarker{"pointer-owned-hover", "const currentHover = hoverRef.current;"},
-        ContractMarker{"live-hover-publication", "updateLiveHoverStatus();"},
+        ContractMarker{"live-hover-publication", "updateLiveHoverStatus();", 2},
         ContractMarker{"guide-only-hover", "if (!currentHover || currentHover.mini) return;"},
         ContractMarker{"generation-safe-status", "const generationRef = useRefChrome(0);"},
-        ContractMarker{"active-status-renewal", "now - statusRefreshAtRef.current >= 120"},
-        ContractMarker{"inactivity-status-clear", "const timer2 = hide(160);"},
+        ContractMarker{"active-status-renewal", "now - statusRefreshAtRef.current >= 700"},
+        ContractMarker{"inactivity-status-clear", "arm(160);"},
         ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
-        ContractMarker{"content-sized-banner", "width: Math.max(96, Math.min(520, text.length * 8 + 28)),"},
+        ContractMarker{"content-sized-banner", "const bannerWidth = Math.max(96, Math.min(520, text.length * 8 + 28));"},
+        ContractMarker{"centered-banner-offset", "marginLeft: -bannerWidth / 2,"},
         ContractMarker{"symmetric-banner-padding", "padding: \\\"0 14px\\\""},
-        ContractMarker{"smooth-banner-resize", "transition: \\\"width 0.18s ease, opacity 0.15s ease\\\""},
+        ContractMarker{"smooth-banner-resize", "transition: \\\"width 0.18s ease, margin-left 0.18s ease, opacity 0.15s ease\\\""},
         ContractMarker{"aligned-edge-label", "ctx.font = \\\"10px JetBrains Mono, monospace\\\";\\n        ctx.textAlign = \\\"center\\\";\\n        ctx.textBaseline = \\\"middle\\\";"},
         ContractMarker{"dropdown-surface", "background: \\\"rgba(255,255,255,0.025)\\\",\\n  border: \\\"1px solid transparent\\\""},
         ContractMarker{"aligned-band-count", "width: 44,\\n        minWidth: 44,\\n        flexShrink: 0,\\n        minHeight: 26,\\n        boxSizing: \\\"border-box\\\",\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
         ContractMarker{"native-band-count-spacing", "style: { lineHeight: 1, whiteSpace: \\\"nowrap\\\" }"},
         ContractMarker{"banner-below-plot-line", "top: 104,"},
-        ContractMarker{"integer-centered-banner-text", "lineHeight: \\\"14px\\\", paddingTop: \\\"6px\\\""},
-        ContractMarker{"sticky-settings-header", "position: \\\"sticky\\\", top: 0, zIndex: 3"},
+        // A fixed-height, fixed-line-height span: the text box cannot resize when
+        // its content changes, so a status update stays off the layout path.
+        ContractMarker{"integer-centered-banner-text", "height: \\\"14px\\\", lineHeight: \\\"14px\\\""},
+        // The settings header sits outside the scrolling body now (flexShrink: 0
+        // over an opaque ground) rather than being position: sticky inside it.
+        ContractMarker{"settings-header-above-scroll", "\\\"data-spectr-settings-header\\\": true, style: { position: \\\"relative\\\", flexShrink: 0, zIndex: 3"},
         ContractMarker{"complete-status-info-hint", "Hover, mute, and drag feedback"},
         ContractMarker{"copy-state-feedback", "data-spectr-copy-state"},
         ContractMarker{"centered-rail-button", "height: 26,\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
@@ -745,7 +770,9 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"edit-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.14)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"analyzer-dropdown-surface", "background: active ? \\\"rgba(255,255,255,0.08)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"settings-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.16)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
-        ContractMarker{"minimap-edge-resize-cursor", "mm === \\\"left\\\" || mm === \\\"right\\\"\\n        ? \\\"col-resize\\\""},
+        // Two writers on purpose: the React cursor state and the direct DOM
+        // write that makes the change visible without waiting for a commit.
+        ContractMarker{"minimap-edge-resize-cursor", "mm === \\\"left\\\" || mm === \\\"right\\\"\\n        ? \\\"col-resize\\\"", 2},
         ContractMarker{"minimap-press-cursor", "wrapRef.current.style.cursor = mm === \\\"left\\\" || mm === \\\"right\\\" ? \\\"col-resize\\\" : \\\"grabbing\\\";"},
         ContractMarker{"band-crosshair-cursor", "wrapRef.current.style.cursor = \\\"crosshair\\\";"},
         ContractMarker{"status-info-toggle", "data-spectr-status-info-toggle"},
@@ -798,11 +825,13 @@ TEST_CASE("materialized build-info geometry contracts detect every severed fix")
         reinterpret_cast<const char*>(spectr_native::runtime_js),
         spectr_native::runtime_js_size};
     constexpr std::array markers{
-        ContractMarker{"build-info-feedback-slot", "g5.setFlex(String(feedbackId), \"height\", 108)"},
-        ContractMarker{"modulation-stable-slot", "g5.setTop(String(modulationId), 652)"},
-        ContractMarker{"feedback-stable-slot", "g5.setTop(String(feedbackId), 884)"},
-        ContractMarker{"build-info-stable-slot", "g5.setTop(String(aboutId), 1010)"},
-        ContractMarker{"build-info-provenance-height", "g5.setFlex(String(aboutId), \"height\", 252)"},
+        // The settings sections no longer occupy hand-authored pixel slots. Their
+        // extent is child-derived, so what has to hold is that the scroll target
+        // is the body (not the panel) and that its content size comes from the
+        // laid-out subtree rather than a constant.
+        ContractMarker{"settings-scroll-target", "if (scrollTargetId !== panelId) g5.setOverflow(scrollTargetId, \"scroll\");"},
+        ContractMarker{"settings-child-derived-extent", "g5.setScrollContentSize(scrollTargetId);"},
+        ContractMarker{"settings-measured-extent", "const measuredContentHeight = (() => {"},
         ContractMarker{"build-info-scroll-extent", "const authoredContentHeight = 1280;"},
         ContractMarker{"band-root-reserved-gap", "g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0)"},
     };
@@ -830,12 +859,12 @@ TEST_CASE("status overlay and settings polish contracts detect every severed fix
         reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
         spectr_native::materialized_document_runtime_json_size};
     constexpr std::array markers{
-        ContractMarker{"drag-status-refresh", "now - statusRefreshAtRef.current >= 120"},
-        ContractMarker{"status-clear-grace", "const timer2 = hide(160);"},
+        ContractMarker{"drag-status-refresh", "now - statusRefreshAtRef.current >= 700"},
+        ContractMarker{"status-clear-grace", "arm(160);"},
         ContractMarker{"status-readable-dwell", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
         ContractMarker{"status-below-ruler", "top: 104,"},
-        ContractMarker{"status-integer-centering", "lineHeight: \\\"14px\\\", paddingTop: \\\"6px\\\""},
-        ContractMarker{"settings-sticky-header", "position: \\\"sticky\\\", top: 0, zIndex: 3"},
+        ContractMarker{"status-integer-centering", "height: \\\"14px\\\", lineHeight: \\\"14px\\\""},
+        ContractMarker{"settings-header-above-scroll", "\\\"data-spectr-settings-header\\\": true, style: { position: \\\"relative\\\", flexShrink: 0, zIndex: 3"},
         ContractMarker{"settings-complete-status-hint", "Hover, mute, and drag feedback"},
         ContractMarker{"settings-copy-feedback-state", "data-spectr-copy-state"},
         ContractMarker{"settings-centered-copy-feedback", "aria-live\\\": \\\"polite\\\", style: { display: \\\"inline-flex\\\", alignItems: \\\"center\\\", justifyContent: \\\"center\\\", width: \\\"100%\\\", height: \\\"100%\\\", lineHeight: 1, textAlign: \\\"center\\\", pointerEvents: \\\"none\\\""},
@@ -860,12 +889,15 @@ TEST_CASE("settings overflow follows live content height") {
     const std::string runtime{
         reinterpret_cast<const char*>(spectr_native::runtime_js),
         spectr_native::runtime_js_size};
-    constexpr std::string_view marker =
-        "g5.setOverflow(panelId, panelHeight < authoredContentHeight ? \"scroll\" : \"hidden\")";
+    // The panel's scroll extent tracks the laid-out subtree: setScrollContentSize
+    // is called with no dimensions so ScrollView derives it from its children. A
+    // hard-coded extent was wrong in both directions -- too small and an expanded
+    // group's tail is unreachable, too large and the panel scrolls past itself.
+    constexpr std::string_view marker = "g5.setScrollContentSize(scrollTargetId);";
     CHECK(count_occurrences(runtime, marker) == 1);
     auto mutated = runtime;
     erase_once(mutated, marker);
     CHECK(count_occurrences(mutated, marker) == 0);
 }
 
-#endif // SPECTR_NATIVE_EDITOR
+#endif // SPECTR_NATIVE_ASSETS

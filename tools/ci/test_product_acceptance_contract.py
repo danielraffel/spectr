@@ -20,7 +20,19 @@ cmake = (ROOT / "CMakeLists.txt").read_text()
 package = (ROOT / "package.sh").read_text()
 checks = {
     "exact name": "name: Spectr M5 Product Acceptance" in workflow,
-    "manual only": "workflow_dispatch:" in workflow and not re.search(r"(?m)^  (push|pull_request|schedule):", workflow),
+    # The gate runs on demand and on a PR into main -- and on nothing else. A
+    # push or schedule trigger would put an unattended 120-minute build on a
+    # SHARED self-hosted Mac with no PR to bound it, which is what "manual
+    # only" was originally protecting against; a path-filtered pull_request is
+    # not that, and without it this repo's one automated check never fires.
+    "dispatch and PR only": ("workflow_dispatch:" in workflow
+                             and not re.search(r"(?m)^  (push|schedule):", workflow)),
+    "PR trigger targets main": bool(re.search(
+        r"(?m)^  pull_request:\n(?:.*\n)*?    branches: \[main\]", workflow)),
+    "PR trigger skips docs-only": bool(re.search(
+        r"(?m)^    paths-ignore:\n(?:      - .*\n)+", workflow)),
+    "PR pushes collapse to one run": (
+        "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow),
     "exact labels": "runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-gate-fast]" in workflow,
     "no hosted label": not re.search(r"runs-on:.*(macos-|ubuntu-|windows-)", workflow, re.I),
     "no selector input": "runner_selector" not in workflow and "runner_provider" not in workflow,
