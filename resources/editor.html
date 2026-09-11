@@ -3528,7 +3528,7 @@ window.PatternManager = PatternManager;`,
     // thing that measures the text.
     replaceSpectrSource(
       "<span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', height: '100%', lineHeight: '14px', paddingTop: '6px', boxSizing: 'border-box', whiteSpace: 'nowrap' }}>{text}</span>",
-      "<span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', lineHeight: '14px', boxSizing: 'border-box', whiteSpace: 'nowrap' }}>{text}</span>",
+      "<span data-spectr-status-text style={{ display: 'block', textAlign: 'center', width: '100%', height: '14px', lineHeight: '14px', boxSizing: 'border-box', whiteSpace: 'nowrap' }}>{text}</span>",
       'status text is centered by its flex parent rather than by padding');
     replaceSpectrSource(
       "function SpectrSettingsField({ label, hint, children }) {\n  return <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>\n    <div style={{ width: 110, flexShrink: 0 }}>",

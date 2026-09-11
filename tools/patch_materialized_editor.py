@@ -2428,7 +2428,7 @@ function SettingsModal({ settings, setSettings, onClose }) {
     # one thing that measures the text.
     ('status text is centered by its flex parent rather than by padding',
      'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "100%", lineHeight: "14px", paddingTop: "6px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)',
-     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", lineHeight: "14px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)'),
+     'React.createElement("span", { "data-spectr-status-text": "true", style: { display: "block", textAlign: "center", width: "100%", height: "14px", lineHeight: "14px", boxSizing: "border-box", whiteSpace: "nowrap" } }, text)'),
 
     ('settings hints reserve enough width to remain complete',
      'function SpectrSettingsField({ label, hint, children }) {\n'
