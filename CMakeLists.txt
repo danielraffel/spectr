@@ -556,20 +556,19 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
     set_tests_properties(Spectr-materialized-propagation PROPERTIES TIMEOUT 30)
     # The negative control. --plant-swallow reinstates the value-dropping
-    # wrappers -- the exact pre-fix code -- and this row passes only when the
-    # suite REJECTS them, so weakening the assertion turns this green->red
-    # instead of silently agreeing. Verified by hand against the real pre-fix
-    # materialized document: it exits 1 on "the click wrapper drops the
-    # propagation marker", so this oracle is known to be able to catch the
-    # defect it was written for, not merely known to be green.
+    # wrappers -- the exact pre-fix code -- and --expect-fail inverts the
+    # verdict, so this row is green only when the suite REJECTS them. The
+    # inversion lives in the script rather than in WILL_FAIL because WILL_FAIL
+    # accepts any non-zero exit: a missing module, a usage error, or a broken
+    # JSON read all satisfied it, and the control read green while proving
+    # nothing. With --expect-fail those cases exit non-zero and fail the row.
     add_test(NAME Spectr-materialized-propagation-negative-control
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_propagation.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
-            --plant-swallow)
+            --plant-swallow --expect-fail)
     set_tests_properties(Spectr-materialized-propagation-negative-control PROPERTIES
-        TIMEOUT 30
-        WILL_FAIL TRUE)
+        TIMEOUT 30)
 endif()
 
 # Appearance invariants over a dump_layout_tree() snapshot: two painted glyph
