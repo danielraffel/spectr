@@ -10,6 +10,8 @@
 #include <pulp/view/inspector.hpp>
 #include <pulp/view/view.hpp>
 #include <pulp/view/widgets.hpp>
+#include <pulp/view/virtual_grid.hpp>
+#include <pulp/view/virtual_list.hpp>
 
 #include <algorithm>
 #include <sstream>
@@ -202,6 +204,160 @@ inline std::vector<std::string> detect_clipped_text(
                 << "," << entry.box.y << ")";
         findings.push_back(message.str());
     }
+    return findings;
+}
+
+/// One Label's text against the slot layout gave it, measured the way paint
+/// measures.
+///
+/// `box` is the ABSOLUTE laid-out slot and is deliberately NOT cropped by any
+/// clipping ancestor. Whether the text fits its slot is a property of the
+/// layout, not of where the panel happens to be scrolled: a settings row parked
+/// below the fold is still truncated the moment the user scrolls to it. The
+/// collision detectors crop, and must, because two boxes can only collide where
+/// both are on screen; a fit check that crops instead measures the clip.
+struct SlotFit {
+    const pulp::view::Label* label = nullptr;
+    pulp::view::Rect box{};
+    std::string text;
+    bool measured = false;
+    float painted_width = 0.0f;
+    float painted_height = 0.0f;
+    int line_count = 0;
+};
+
+/// Every text-bearing Label in the tree, measured against its own slot.
+///
+/// Uses `painted_text_extents()`, not `intrinsic_width()`. The two answer
+/// different questions and the difference is the whole point: `intrinsic_width()`
+/// is a Yoga layout hint that returns 0 for a wrapped Label ON PURPOSE, so the
+/// parent's available width drives wrapping. Any fit check built on it reads a
+/// wrapped label as zero-width and passes it silently — agreement, not evidence.
+/// `painted_text_extents()` runs the same shaper, text-transform, break mode and
+/// line clamp that `paint()` runs, so it reports where the ink actually lands.
+inline void collect_slot_fits(const pulp::view::View& view,
+                              std::vector<SlotFit>& out) {
+    if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view)) {
+        if (!label->text().empty() && !hidden_in_tree(*label)) {
+            const auto box = text_rect(*label);
+            if (box.width > 0.0f) {
+                const auto extents = label->painted_text_extents(box.width);
+                out.push_back(SlotFit{label, box, label->text(),
+                                      extents.measured, extents.width,
+                                      extents.height, extents.line_count});
+            }
+        }
+    }
+    for (std::size_t i = 0; i < view.child_count(); ++i)
+        collect_slot_fits(*view.child_at(i), out);
+}
+
+inline std::vector<SlotFit> slot_fits(const pulp::view::View& root) {
+    std::vector<SlotFit> fits;
+    collect_slot_fits(root, fits);
+    return fits;
+}
+
+/// Labels whose extents the shaper could not report.
+///
+/// `measured == false` means unknown, which is NOT the same as "fits". Counting
+/// these is what keeps a green from this detector honest: a run of zeros because
+/// nothing could be measured looks identical to a run of zeros because
+/// everything fits.
+inline std::vector<std::string> unmeasurable_slots(
+    const pulp::view::View& root) {
+    std::vector<std::string> findings;
+    for (const auto& fit : slot_fits(root))
+        if (!fit.measured)
+            findings.push_back("extents unknown for \"" + fit.text + "\"");
+    return findings;
+}
+
+/// Detector 3 — painted ink must fit the WIDTH of the slot layout gave the Label.
+///
+/// Fires when the shaped glyphs run past the slot, which is the visible defect
+/// "this text is truncated".
+///
+/// Worth knowing where this can and cannot fire. A Label that Yoga sized FROM
+/// its own text measure has a slot equal to its measurement by construction, so
+/// the check compares a number against itself and can never fail there. It bites
+/// exactly where the parent pins the slot — a fixed `width`, a `max_width`, a
+/// `flex_shrink: 0` column — which is where truncation actually comes from.
+///
+/// Deliberately width-only. See `describe_tall_slots()` for why the height axis
+/// is reported but not gated.
+inline std::vector<std::string> detect_text_overflowing_slot(
+    const pulp::view::View& root, float slack_px = 0.5f) {
+    std::vector<std::string> findings;
+    for (const auto& fit : slot_fits(root)) {
+        if (!fit.measured) continue;
+        if (fit.painted_width <= fit.box.width + slack_px) continue;
+        std::ostringstream message;
+        message << "text is cut off horizontally: \"" << fit.text
+                << "\" paints " << fit.painted_width
+                << "px of ink in a " << fit.box.width << "px slot (overflow "
+                << (fit.painted_width - fit.box.width) << "px) at ("
+                << fit.box.x << "," << fit.box.y << ")";
+        findings.push_back(message.str());
+    }
+    return findings;
+}
+
+/// Diagnostic, NOT a gate — Labels whose ink is taller than their slot.
+///
+/// The height axis cannot be asserted the way width can. `painted_text_extents`
+/// reports the font's full line height, which includes half-leading above the
+/// ascent and below the descent, while the slot is the layout line box Yoga
+/// gave the Label. Ink height exceeding box height is therefore the ORDINARY
+/// case for a single-line label — on this surface roughly a quarter of all
+/// labels report it — and a gate on it would fire on text that is not clipped
+/// at all. What is worth a human's eye is a slot holding more than one shaped
+/// line in the room for one, so the line count is reported alongside.
+inline std::vector<std::string> describe_tall_slots(
+    const pulp::view::View& root, float slack_px = 0.5f) {
+    std::vector<std::string> notes;
+    for (const auto& fit : slot_fits(root)) {
+        if (!fit.measured) continue;
+        if (fit.painted_height <= fit.box.height + slack_px) continue;
+        std::ostringstream message;
+        message << "\"" << fit.text << "\" paints " << fit.painted_height
+                << "px over " << fit.line_count << " line(s) in a "
+                << fit.box.height << "px slot at (" << fit.box.x << ","
+                << fit.box.y << ")";
+        notes.push_back(message.str());
+    }
+    return notes;
+}
+
+/// Detector 4 — no widget in the tree may paint a scrollbar.
+///
+/// Pulp's plain `View` paints no scrollbar chrome: `overflow: scroll` is
+/// forwarded to Yoga for descendant measurement and otherwise clips like
+/// `hidden` (`pulp/view/view.hpp`, Overflow). The widgets that DO paint one are
+/// the virtualised containers, so a scrollbar can only reach this surface by one
+/// of them being in the tree. Their `scrollbar_visible()` is private, so this
+/// reports the reachable fact — the painter is present — rather than claiming to
+/// read a bar that cannot be queried from outside.
+inline std::vector<std::string> detect_scrollbar_painters(
+    const pulp::view::View& root) {
+    std::vector<std::string> findings;
+    const auto walk = [&findings](const pulp::view::View& view,
+                                  auto&& self) -> void {
+        const bool paints_scrollbar
+            = dynamic_cast<const pulp::view::VirtualList*>(&view) != nullptr
+              || dynamic_cast<const pulp::view::VirtualGrid*>(&view) != nullptr;
+        if (paints_scrollbar && !hidden_in_tree(view)) {
+            const auto bounds = pulp::view::ViewInspector::absolute_bounds(view);
+            std::ostringstream message;
+            message << "a scrollbar-painting widget is in the tree at ("
+                    << bounds.x << "," << bounds.y << " " << bounds.width << "x"
+                    << bounds.height << ")";
+            findings.push_back(message.str());
+        }
+        for (std::size_t i = 0; i < view.child_count(); ++i)
+            self(*view.child_at(i), self);
+    };
+    walk(root, walk);
     return findings;
 }
 
