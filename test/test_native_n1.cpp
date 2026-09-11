@@ -628,6 +628,89 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
               == Catch::Approx(expected_y).margin(0.05f));
     }
 
+    // The loop above interpolates between the analyzer ruler's OWN endpoints,
+    // so it proves the ticks are evenly spaced without proving where the ruler
+    // sits. The analyzer is a different axis from the EQ gain axis painted on
+    // the opposite edge, and the only thing that makes its labels mean
+    // anything is that a tick lands exactly where the spectrum curve for that
+    // dBFS reading draws. Derive the plot's own geometry from the gain ruler,
+    // which is independently anchored, and hold the analyzer column to it.
+    //
+    // "-18" and "+18" are unique to the gain column: the analyzer ruler only
+    // ever emits -120/-90/-60/-30/0/+24, so neither label can be confused for
+    // it and neither needs an x filter to disambiguate.
+    const auto gain_tick_y = [&](std::string_view label) {
+        const auto match = std::find_if(
+            analyzer_commands.begin(), analyzer_commands.end(),
+            [&](const auto& cmd) {
+                return cmd.type == CanvasCommand::Type::fill_text
+                    && cmd.text == label;
+            });
+        REQUIRE(match != analyzer_commands.end());
+        REQUIRE(std::count_if(
+            analyzer_commands.begin(), analyzer_commands.end(),
+            [&](const auto& cmd) {
+                return cmd.type == CanvasCommand::Type::fill_text
+                    && cmd.text == label;
+            }) == 1);
+        return match->y;
+    };
+    // The gain ruler paints db at zeroY - db/24*halfH, so +/-18 dB sit at
+    // +/-0.75*halfH and the plot's midline and half height fall out of them.
+    const float gain_plus_18_y = gain_tick_y("+18");
+    const float gain_minus_18_y = gain_tick_y("-18");
+    REQUIRE(gain_plus_18_y < gain_minus_18_y);
+    const float plot_zero_y = (gain_plus_18_y + gain_minus_18_y) * 0.5f;
+    const float plot_half_h = (gain_minus_18_y - gain_plus_18_y) / 1.5f;
+    REQUIRE(plot_half_h > 1.0f);
+    INFO("plot_zero_y := " << plot_zero_y << " plot_half_h := " << plot_half_h);
+
+    // This is the semantic claim: the analyzer occupies the upper 95% of the
+    // half plot, measured from the gain axis's own unity line. Its floor is
+    // the midline -- NOT the bottom of the plot, where the gain axis's -inf
+    // sits -- and its ceiling is 0.95*halfH above it. Both constants are
+    // pinned absolutely here, so a changed span or a changed anchor fails.
+    for (const auto& tick : dbfs_ticks) {
+        const float amount = (tick.db + 120.0f) / 144.0f;
+        const float expected_y = plot_zero_y - amount * plot_half_h * 0.95f;
+        INFO("tick := " << tick.label);
+        CHECK(ruler_tick_y(tick.label)
+              == Catch::Approx(expected_y).margin(0.05f));
+    }
+    // -120 dBFS lands on the gain axis's unity line, and +24 dBFS lands 95% of
+    // the way to the top. Stated separately from the loop so the two anchors
+    // that give the ruler its meaning are named, not merely implied.
+    CHECK(ruler_tick_y("-120") == Catch::Approx(plot_zero_y).margin(0.05f));
+    CHECK(ruler_tick_y("+24")
+          == Catch::Approx(plot_zero_y - plot_half_h * 0.95f).margin(0.05f));
+
+    // A tick only means something if the spectrum curve agrees with it. The
+    // curve is drawn by projecting each sampled amount through
+    // SpectrAnalyzer.project, and the ruler labels its ticks by projecting
+    // normalizeDb(db) through the same function -- so feed the plot geometry
+    // recovered from the gain ruler back into the product's own pair and
+    // require the painted labels to land where the curve would.
+    {
+        std::ostringstream probe;
+        probe.setf(std::ios::fixed);
+        probe.precision(6);
+        probe << "const zeroY = " << plot_zero_y << ";\n"
+              << "const halfH = " << plot_half_h << ";\n"
+              << "const painted = [";
+        for (const auto& tick : dbfs_ticks)
+            probe << "[" << tick.db << "," << ruler_tick_y(tick.label) << "],";
+        probe << "];\n"
+              << "for (const [db, y] of painted) {\n"
+              << "  const expected = globalThis.SpectrAnalyzer.project(\n"
+              << "    globalThis.SpectrAnalyzer.normalizeDb(db), zeroY, halfH);\n"
+              << "  if (!(Math.abs(expected - y) < 0.05))\n"
+              << "    throw new Error(`ruler label ${db} painted at ${y} but the"
+                 " curve projects it to ${expected}`);\n"
+              << "}\n";
+        session->bridge()->load_script(probe.str().c_str(),
+                                       "spectr-ruler-curve-agreement");
+    }
+
     // Malformed paint geometry must fail before touching the authoritative
     // field or revision. Exercise the same attached JS-to-C++ endpoint used by
     // @pulp/react, rather than calling the product handler directly.
