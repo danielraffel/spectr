@@ -585,6 +585,44 @@ if(Python3_Interpreter_FOUND)
         PROPERTIES TIMEOUT 60)
 endif()
 
+# Arrow stepping in a dropdown must move exactly one row. The affordance test
+# above asserts a destination (three ArrowDowns then Return land on a named
+# caption), which a handler that steps two rows can also satisfy; this reads the
+# highlight index after every press instead. The self-test needs no binary.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-menu-arrow-step-selftest
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_arrow_step_exactly_one.py
+            --self-test)
+    set_tests_properties(Spectr-menu-arrow-step-selftest PROPERTIES TIMEOUT 60)
+endif()
+
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-menu-arrow-step
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_arrow_step_exactly_one.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-arrowstep)
+    set_tests_properties(Spectr-menu-arrow-step PROPERTIES
+        TIMEOUT 300
+        RESOURCE_LOCK spectr_native_materialized_editor)
+
+    # A gate nobody has watched fail is not a gate. This injects the second
+    # keyboard owner that was deliberately removed from this app and REQUIRES
+    # the assertion above to catch it; it fails if the measurement goes green.
+    add_test(NAME Spectr-menu-arrow-step-negative-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_arrow_step_exactly_one.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-arrowstep-negctl
+            --negative-control)
+    set_tests_properties(Spectr-menu-arrow-step-negative-control PROPERTIES
+        TIMEOUT 300
+        RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
 if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
     # Band drawing holds its cadence today (gesture p95 sits at or below the idle
     # control), so this ratio is a real floor rather than a rubber stamp.
