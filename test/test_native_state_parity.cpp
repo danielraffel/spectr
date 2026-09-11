@@ -2802,14 +2802,96 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     REQUIRE(rig.processor.field().bands[3].gain_db == Catch::Approx(12.0f));
     REQUIRE(rig.processor.field().bands[3].muted);
 
+    // The morph control paints its own track and its own thumb, so both the
+    // value it publishes and the size it draws are read back from the native
+    // view tree rather than from the script shim that authored them.
+    auto* morph_track = rig.bridge().widget("spectr-snapshot-morph");
+    REQUIRE(morph_track != nullptr);
+    rig.root->layout_children();
+    REQUIRE(morph_track->bounds().width == Catch::Approx(90.0f).margin(0.5f));
+    REQUIRE(morph_track->bounds().height == Catch::Approx(16.0f).margin(0.5f));
+
+    // Snapshot A holds band 3 at -6 dB and B holds it at +12 dB, so a morph
+    // value v lands the band at -6 + 18v. Every gain assertion below is that
+    // one relation read back through the processor the host owns.
+    const auto morph_gain_at = [](double value) {
+        return Catch::Approx(-6.0 + 18.0 * value).margin(0.01);
+    };
+    const auto morph_thumb_size = [&](const char* stage) {
+        rig.root->layout_children();
+        CAPTURE(stage);
+        const View* idle = find_sized_descendant(*morph_track, 14.0f, 14.0f);
+        const View* grown = find_sized_descendant(*morph_track, 18.0f, 18.0f);
+        REQUIRE_FALSE((idle == nullptr && grown == nullptr));
+        REQUIRE_FALSE((idle != nullptr && grown != nullptr));
+        return grown != nullptr ? 18.0f : 14.0f;
+    };
+
+    // Idle first: this reading is the positive control for the two that
+    // follow. A thumb the view tree never drew would report neither size and
+    // trip the require above instead of silently agreeing with every stage.
+    REQUIRE(morph_thumb_size("idle") == 14.0f);
+    activate(rig, "[data-spectr-morph]", "pointerenter",
+             slider_press_at(0.5, "[data-spectr-morph]"));
+    REQUIRE(morph_thumb_size("hovered") == 18.0f);
+
+    // A move with no preceding press is inert: the control tracks the pointer
+    // only while it holds the capture the press gave it.
+    const auto gain_before_morph = rig.processor.field().bands[3].gain_db;
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.9, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db
+            == Catch::Approx(gain_before_morph).margin(0.01));
+
     const auto revision_before_morph = rig.processor.native_editor_revision();
-    // The morph control paints its own track: it derives the value from where
-    // the pointer landed, so press it at its midpoint the way a person would
-    // rather than feeding a value straight to a handler.
+    // The morph control derives its value from where the pointer landed, so
+    // press it the way a person would rather than feeding a value straight to
+    // a handler.
     activate(rig, "[data-spectr-morph]", "pointerdown",
              slider_press_at(0.5, "[data-spectr-morph]"));
     REQUIRE(rig.processor.native_editor_revision() == revision_before_morph + 1);
-    REQUIRE(rig.processor.field().bands[3].gain_db == Catch::Approx(3.0f));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.5));
+    REQUIRE(rig.processor.field().bands[3].muted);
+
+    // The value follows the pointer in both directions across the drag, so a
+    // handler that only re-read the press point would fail here.
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.25, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.25));
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.75, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.75));
+
+    // Leaving the control mid-drag must not end the drag or shrink the thumb:
+    // the pointer is still captured, so the gesture continues off the track.
+    activate(rig, "[data-spectr-morph]", "pointerleave",
+             slider_press_at(1.4, "[data-spectr-morph]"));
+    REQUIRE(morph_thumb_size("left-while-dragging") == 18.0f);
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.9, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.9));
+
+    // Losing the capture ends the drag. Moves after it are inert again, and
+    // the next leave is finally free to restore the idle thumb.
+    activate(rig, "[data-spectr-morph]", "lostpointercapture",
+             slider_press_at(0.9, "[data-spectr-morph]"));
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.1, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.9));
+    REQUIRE(morph_thumb_size("still-hovered-after-release") == 18.0f);
+    activate(rig, "[data-spectr-morph]", "pointerleave",
+             slider_press_at(1.4, "[data-spectr-morph]"));
+    REQUIRE(morph_thumb_size("left-after-release") == 14.0f);
+
+    // Return the morph to the midpoint the rest of this case expects, and
+    // prove the ordinary release ends the drag the way losing the capture did.
+    activate(rig, "[data-spectr-morph]", "pointerdown",
+             slider_press_at(0.5, "[data-spectr-morph]"));
+    activate(rig, "[data-spectr-morph]", "pointerup",
+             slider_press_at(0.5, "[data-spectr-morph]"));
+    activate(rig, "[data-spectr-morph]", "pointermove",
+             slider_press_at(0.1, "[data-spectr-morph]"));
+    REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.5));
     REQUIRE(rig.processor.field().bands[3].muted);
 
     // Native UI save and rename update the processor-owned library before the
