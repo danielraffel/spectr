@@ -799,6 +799,48 @@ working positive control where band drawing charges 231 ms with a 42 ms
 maximum. The cost is therefore charged natively after `processing_state_set`
 returns, in `src/ui/native_editor.cpp`.
 
+A second, independent instrument reproduces it. `tools/frame_cadence_probe.py`
+measures the gap *between* painted frames rather than the duration of frames
+that painted, which matters because `tools/analyze_interaction_trace.py` scores
+only `frame` slice durations and is structurally blind to a window in which no
+frame was painted at all — the exact shape of both stalls here. On that probe
+the minimap drag reads a sustained p95 ratio of 1.81 with 22 sustained gaps at
+or past 25 ms against a control of 3. It is load-sensitive, reaching 2.9 under
+contention on the same host, so the milliseconds recorded above are a floor and
+not a ceiling. Reproduce with:
+
+    python3 tools/frame_cadence_probe.py --app build/Spectr.app/Contents/MacOS/Spectr \
+        --mode minimap --runs 2 --json /tmp/cad.json
+
+The band stalls are single-frame events, not a smear, and the press is the
+larger of the two. Across four runs the whole cost lands on exactly frame 45
+(147.1 and 157.3 ms) and exactly frame 225 (105.5 and 108.1 ms), with both
+neighbours at one vsync. That is the signature of one expensive synchronous
+handler, and it corroborates the three-synchronous-React-commits root cause
+from a completely independent instrument. Worth stating plainly because this
+document had only ever named the release stall; the press one is worse.
+
+Three gates landed with the probe at `8f5a6d8`. `Spectr-frame-cadence-selftest`
+is the analyzer's own negative control: it plants a 220 ms gap in a synthetic
+series and requires detection, requires a clean series to stay quiet, and
+requires a press-window gap to be routed out of the sustained set; hardcoding
+`ge100_ms` to 0 in a copy exits 1. `Spectr-band-drag-cadence` gates at a 1.35
+sustained p95 ratio against an idle control captured in the same invocation,
+and measures 0.938 and 0.94, so it has real headroom. The report gate
+`Spectr-minimap-drag-cadence-report` deliberately carries **no threshold**:
+registered as a 2.40 ratchet it failed at 2.9 ten minutes after measuring
+1.81 on the same host, so a gate there would report the machine rather than
+the code. It records the
+figures and still exits 3 when its premise is unproven, which keeps it from
+rotting into decoration.
+
+The liveness gate is what makes a zero trustworthy here. Two idle captures
+differ in 0 of 2554200 pixels, so the idle render is bit-deterministic and any
+divergence proves the gesture actually moved something. Disabling the driver in
+a copy of the probe produced a healthy-looking 1.054 ratio and still exited 3
+with "the bands driver did not move anything" — without that check, a dead
+`PULP_TEST_POINTER_DRAG` would have read as the fastest run of the day.
+
 A second, separate stall is root-caused and belongs to core Pulp: `@pulp/react`
 commits synchronously per update, so each `setState` inside a pointer handler
 is its own full document commit. The band release handler's three calls
