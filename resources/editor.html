@@ -3459,8 +3459,14 @@ window.PatternManager = PatternManager;`,
       else lmax = clamp(f, lmin + 0.1, fullMax);
       setView({ lmin, lmax });
       return;`,
-      String.raw`      if (p.edge === 'left') lmin = clamp(f, fullMin, lmax - 0.1);
-      else lmax = clamp(f, lmin + 0.1, fullMax);
+      String.raw`      // One octave, matching spectr::kViewportMinWidthLog. A narrower
+      // window survives the drag but not the parameter codec:
+      // encode_viewport widens any sub-octave width about its CENTER,
+      // so the trim the user never touched moves on the next
+      // automation read-back or preset restore.
+      const minSpan = 0.3010299956639812;
+      if (p.edge === 'left') lmin = clamp(f, fullMin, lmax - minSpan);
+      else lmax = clamp(f, lmin + minSpan, fullMax);
       commitLiveViewport({ lmin, lmax });
       return;`,
       'minimap handle resize stays off the React hot path');
