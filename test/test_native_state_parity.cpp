@@ -626,6 +626,54 @@ void require_app_state(NativeEditorRig& rig, std::string_view expression,
     rig.bridge().load_script(script, "spectr-native-app-state-contract");
 }
 
+// Drive real audio blocks through the processor. The internal LFO's phase only
+// advances inside Spectr::process(), so a UI-only settle() leaves the modulator
+// frozen: the drawn bank can only move if audio is actually running underneath
+// it. Block size and sample rate match NativeEditorRig's prepare() contract.
+void feed_audio_blocks(NativeEditorRig& rig, int blocks) {
+    constexpr int kBlock = 256;
+    constexpr double kSampleRate = 48000.0;
+    constexpr double kPi = 3.14159265358979323846;
+    std::array<float, kBlock> in0{}, in1{}, out0{}, out1{};
+    const float* inputs[2]{in0.data(), in1.data()};
+    float* outputs[2]{out0.data(), out1.data()};
+    pulp::midi::MidiBuffer midi_in, midi_out;
+    pulp::format::ProcessContext context;
+    context.sample_rate = kSampleRate;
+    context.num_samples = kBlock;
+    for (int block = 0; block < blocks; ++block) {
+        for (int sample = 0; sample < kBlock; ++sample) {
+            const auto index = static_cast<double>(block * kBlock + sample);
+            const auto value = static_cast<float>(
+                0.5 * std::sin(2.0 * kPi * 1000.0 * index / kSampleRate));
+            in0[static_cast<std::size_t>(sample)] = value;
+            in1[static_cast<std::size_t>(sample)] = value;
+        }
+        pulp::audio::BufferView<const float> input(inputs, 2, kBlock);
+        pulp::audio::BufferView<float> output(outputs, 2, kBlock);
+        rig.processor.process(output, input, midi_in, midi_out, context);
+    }
+}
+
+// Sample the drawn bank and the canonical target across a span of the
+// modulator, leaving the readings in `globalThis.__spectrLfoSamples`.
+void sample_modulated_bank(NativeEditorRig& rig, int samples, int blocks_each) {
+    rig.bridge().load_script("globalThis.__spectrLfoSamples = [];",
+                             "spectr-native-lfo-visual-reset");
+    for (int index = 0; index < samples; ++index) {
+        feed_audio_blocks(rig, blocks_each);
+        settle(rig.clock, 2);
+        rig.bridge().load_script(R"js((() => {
+          const state = globalThis.__spectrTestHooks?.renderState?.();
+          if (!state) throw new Error('native render-state hook missing');
+          globalThis.__spectrLfoSamples.push({
+            drawn: Array.from(state.gains).slice(0, 8),
+            canonical: Array.from(state.targetGains).slice(0, 8),
+          });
+        })();)js", "spectr-native-lfo-visual-sample");
+    }
+}
+
 void require_runtime_contract(NativeEditorRig& rig,
                               std::string_view expression,
                               std::string_view message) {
@@ -1410,6 +1458,199 @@ TEST_CASE("native host automation compact live frame hydrates mode fields into a
         "&& s.visualizationMode === 'response' && s.settings "
         "&& s.settings.motionMode === 'precision'",
         "compact live-state did not hydrate edit/analyzer/visualization/motion mode");
+    storage.require_unchanged();
+}
+
+TEST_CASE("an enabled LFO visibly modulates the drawn bank without moving canonical state",
+          "[native-n1][state-parity][modulation-visual]") {
+    // Spectr::process() computes the modulated `audible` BandField on the
+    // audio thread and hands it to mask_processor_ alone, so the LFO is
+    // audible but invisible: the band controls it modulates never redraw.
+    // "Applying an LFO to a control animates that control" is the product
+    // contract, and the two halves of it are separable -- the drawn value has
+    // to move, and canonical state has to stay exactly where the host put it,
+    // because a derived LFO value that reached canonical state would be
+    // republished to native as a real edit.
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Positive control on the same instrument and the same target, before any
+    // modulation: a host-automation gain change MUST move the same `drawn`
+    // reading this test later asserts on. Without it a flat reading below is
+    // ambiguous between "the LFO never reaches the render refs" and "the
+    // sampler cannot see the render refs at all".
+    // Bands default to 0 dB, so this reads the resting bank; apply_surface_params
+    // returns "something changed", and re-applying an unchanged default is a
+    // legitimate false, not a failure.
+    sample_modulated_bank(rig, 1, 1);
+    for (std::size_t index = 0; index < spectr::kMaxBands; ++index)
+        rig.store.set_value(spectr::band_gain_param_id(index), -12.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 4);
+    rig.bridge().load_script(R"js((() => {
+      const state = globalThis.__spectrTestHooks?.renderState?.();
+      const before = globalThis.__spectrLfoSamples?.[0];
+      if (!state || !before) throw new Error('positive control sampling failed');
+      const moved = Math.abs(state.gains[0] - before.drawn[0]);
+      if (!(moved > 0.10))
+        throw new Error('the drawn-bank instrument cannot see a host gain change: '
+          + before.drawn[0] + ' -> ' + state.gains[0]);
+    })();)js", "spectr-native-lfo-visual-positive-control");
+
+    // Canonical: every band flat at 0 dB, none muted. A whole-bank LFO adds
+    // wave * depth * 12 dB, so a full-depth sine swings the drawn bank across
+    // +/-12 dB -- half the +/-24 dB span the render refs carry normalized.
+    for (std::size_t index = 0; index < spectr::kMaxBands; ++index) {
+        rig.store.set_value(spectr::band_gain_param_id(index), 0.0f);
+        rig.store.set_value(spectr::band_mute_param_id(index), 0.0f);
+    }
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape,
+                        static_cast<float>(spectr::LfoShape::Sine));
+    // 0.25 beats/cycle is the fastest the audio owner accepts. At 120 bpm and
+    // 48 kHz that advances the phase 0.0427 per 256-sample block, so the six
+    // blocks between samples below cover ~92 degrees: a sine starting at zero
+    // reaches nearly full excursion inside the first sample interval.
+    rig.store.set_value(spectr::kParamLfoRate, 0.25f);
+    rig.store.set_value(spectr::kParamLfoDepth, 1.0f);
+    rig.store.set_value(spectr::kParamLfoTarget,
+                        static_cast<float>(spectr::ModulationTarget::WholeBank));
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 4);
+
+    sample_modulated_bank(rig, 6, 6);
+
+    rig.bridge().load_script(R"js((() => {
+      const samples = globalThis.__spectrLfoSamples;
+      if (!Array.isArray(samples) || samples.length < 6)
+        throw new Error('modulation sampling produced no readings');
+      const spreadOf = (key, band) => {
+        const values = samples.map(sample => sample[key][band]);
+        return Math.max(...values) - Math.min(...values);
+      };
+      const drawn = spreadOf('drawn', 0);
+      // Canonical is pinned at 0 dB for every band, so the drawn bank can only
+      // move if the modulated field reached the render refs.
+      if (!(drawn > 0.10))
+        throw new Error('enabled LFO did not move the drawn bank: spread=' + drawn
+          + ' samples=' + JSON.stringify(samples.map(s => s.drawn[0])));
+      // Every band shares one whole-bank offset, so a modulation lane that only
+      // reached band 0 would be a partial fix, not the contract.
+      for (let band = 0; band < 8; ++band) {
+        if (!(spreadOf('drawn', band) > 0.10))
+          throw new Error('band ' + band + ' did not follow the whole-bank LFO: spread='
+            + spreadOf('drawn', band));
+      }
+      // The other half: derived LFO values must never become canonical, or the
+      // editor's own publication effect would write them back to native as a
+      // host edit and the modulator would ratchet its own baseline.
+      for (let band = 0; band < 8; ++band) {
+        for (const sample of samples) {
+          if (Math.abs(sample.canonical[band]) > 1e-6)
+            throw new Error('LFO leaked into canonical state at band ' + band
+              + ': ' + sample.canonical[band]);
+        }
+      }
+    })();)js", "spectr-native-lfo-visual-contract");
+
+    // Negative control on the same instrument and the same target: with the
+    // modulator off, the identical sampling cadence must read a flat bank. A
+    // spread that survives this is the sampler moving the value, not the LFO.
+    rig.store.set_value(spectr::kParamLfoEnabled, 0.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 4);
+    sample_modulated_bank(rig, 6, 6);
+    rig.bridge().load_script(R"js((() => {
+      const samples = globalThis.__spectrLfoSamples;
+      if (!Array.isArray(samples) || samples.length < 6)
+        throw new Error('control sampling produced no readings');
+      for (let band = 0; band < 8; ++band) {
+        const values = samples.map(sample => sample.drawn[band]);
+        const spread = Math.max(...values) - Math.min(...values);
+        if (!(spread < 1e-6))
+          throw new Error('disabled LFO still moved the drawn bank at band '
+            + band + ': spread=' + spread);
+      }
+    })();)js", "spectr-native-lfo-visual-control");
+    storage.require_unchanged();
+}
+
+// The overlay has to be smooth, not merely present. An LFO assigned to a
+// control should sweep it the way host automation playback sweeps a knob, so
+// the editor must draw EVERY audio frame it is handed rather than a decimated
+// subset: a throttled overlay reads as a stepping, juddering control even
+// though the audio underneath is continuous. One audio block per reading is
+// the finest grain the publication has, so a reading that repeats means a
+// frame was dropped between the audio owner and the paint refs.
+TEST_CASE("the modulation overlay tracks every audio frame without decimation",
+          "[native-n1][state-parity][modulation-visual]") {
+    PatternStoragePoison storage;
+    NativeEditorRig      rig;
+    require_home(rig);
+
+    for (std::size_t index = 0; index < spectr::kMaxBands; ++index) {
+        rig.store.set_value(spectr::band_gain_param_id(index), 0.0f);
+        rig.store.set_value(spectr::band_mute_param_id(index), 0.0f);
+    }
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape,
+                        static_cast<float>(spectr::LfoShape::Sine));
+    rig.store.set_value(spectr::kParamLfoRate, 0.25f);
+    rig.store.set_value(spectr::kParamLfoDepth, 1.0f);
+    rig.store.set_value(spectr::kParamLfoTarget,
+                        static_cast<float>(spectr::ModulationTarget::WholeBank));
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 4);
+
+    // One block per reading advances the phase 0.0427 of a cycle, so 24
+    // readings trace slightly more than one full sine.
+    sample_modulated_bank(rig, 24, 1);
+
+    rig.bridge().load_script(R"js((() => {
+      const samples = globalThis.__spectrLfoSamples;
+      if (!Array.isArray(samples) || samples.length !== 24)
+        throw new Error('fine-grained sampling produced ' + (samples || []).length
+          + ' readings');
+      const trace = samples.map(sample => sample.drawn[0]);
+
+      // No decimation: a 30 Hz throttle over this span would collapse the trace
+      // onto a handful of repeated values.
+      const distinct = new Set(trace.map(value => value.toFixed(6))).size;
+      if (distinct < 18)
+        throw new Error('the drawn bank repeats -- the overlay is decimated: '
+          + distinct + ' distinct of ' + trace.length + ' [' + trace.join(',') + ']');
+
+      // No jumps: a full-depth sine normalized to +/-0.5 moves at most
+      // 0.5 * 2*PI * 0.0427 ~= 0.134 per block. A larger step means readings
+      // were skipped and the control would visibly snap.
+      let worst = 0;
+      for (let index = 1; index < trace.length; ++index)
+        worst = Math.max(worst, Math.abs(trace[index] - trace[index - 1]));
+      if (!(worst < 0.20))
+        throw new Error('the drawn bank jumped ' + worst
+          + ' between adjacent frames [' + trace.join(',') + ']');
+
+      // A sine, not noise: one cycle turns twice, so allow a little slack for
+      // where the trace starts and ends but reject a jittering signal.
+      let turns = 0;
+      for (let index = 2; index < trace.length; ++index) {
+        const previous = trace[index - 1] - trace[index - 2];
+        const current  = trace[index]     - trace[index - 1];
+        if (previous !== 0 && current !== 0 && Math.sign(previous) !== Math.sign(current))
+          ++turns;
+      }
+      if (turns > 4)
+        throw new Error('the drawn bank reverses ' + turns
+          + ' times in one cycle -- not a smooth sweep [' + trace.join(',') + ']');
+
+      // And still display-only across the whole sweep.
+      for (const sample of samples)
+        for (let band = 0; band < 8; ++band)
+          if (Math.abs(sample.canonical[band]) > 1e-6)
+            throw new Error('modulation leaked into canonical state at band '
+              + band + ': ' + sample.canonical[band]);
+    })();)js", "spectr-native-lfo-visual-smoothness");
     storage.require_unchanged();
 }
 

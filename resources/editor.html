@@ -666,7 +666,7 @@ window.FilterBank = FilterBank;`,
       'band context consumes dismissal gestures');
     replaceSpectrSource(
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
-      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
+      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  // True while the internal LFOs are driving the drawn bank, so the falling\n  // edge can release the overlay back to canonical state exactly once.\n  const modulationActiveRef = useRef(false);\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
       'independent muted gain hydration');
     replaceSpectrSource(
       String.raw`      const next = new Array(N).fill(0);
@@ -1085,6 +1085,27 @@ function parseSpectrNativeLiveState(payload) {
   };
 }
 
+// The post-LFO band field the audio owner is playing. Display only: it carries
+// no revision and never reaches canonical state, so an inactive frame is a
+// release cue rather than an edit.
+function parseSpectrModulationFrame(payload) {
+  const n = payload && Number(payload.n_visible);
+  const gainDb = payload && payload.gain_db;
+  const muted = payload && payload.muted;
+  const active = payload && payload.active;
+  if (typeof active !== 'boolean'
+      || ![32, 40, 48, 56, 64].includes(n)
+      || !Array.isArray(gainDb) || gainDb.length !== n
+      || !Array.isArray(muted) || muted.length !== n
+      || !gainDb.every(Number.isFinite)
+      || !muted.every(value => typeof value === 'boolean')) return null;
+  return {
+    n, active, muted: muted.slice(),
+    gains: gainDb.map((db, index) => muted[index]
+      ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
+  };
+}
+
 function App() {`,
       'app owns a native compact automation parser');
     replaceSpectrSource(
@@ -1175,6 +1196,20 @@ function App() {`,
       }
       acceptNativeLiveState(state);
     });
+    const unsubscribeModulation = window.pulp.on('modulation_frame', (message) => {
+      const frame = parseSpectrModulationFrame(message && message.payload);
+      if (!frame) {
+        console.error('[Spectr] rejected malformed native modulation frame');
+        return;
+      }
+      const bank = bankRef.current;
+      // A band-count change retopologises the bank; the next full projection
+      // brings it back. Drop the mismatched overlay frame rather than
+      // resyncing, because modulation frames arrive continuously anyway.
+      if (!bank || bank.N !== frame.n
+          || typeof bank.applyModulationFrame !== 'function') return;
+      bank.applyModulationFrame(frame);
+    });
     try {
       window.pulp.postMessage('editor_ready', {}, 'spectr-editor-ready');
     } catch (error) {
@@ -1183,6 +1218,7 @@ function App() {`,
     return () => {
       if (typeof unsubscribeHydration === 'function') unsubscribeHydration();
       if (typeof unsubscribeLiveState === 'function') unsubscribeLiveState();
+      if (typeof unsubscribeModulation === 'function') unsubscribeModulation();
     };
   }, [acceptNativeState, acceptNativeLiveState]);
 
@@ -1261,6 +1297,28 @@ function App() {`,
           state.muted[index] ? 0 : clamp(value, -1.02, 1.02)).slice(0, N);
         viewRef.current.lmin = Math.log10(state.minHz);
         viewRef.current.lmax = Math.log10(state.maxHz);
+        return true;
+      },
+      // Display-only overlay for the internal LFOs. The audio owner is already
+      // playing these values; drawing them is what makes an LFO assigned to a
+      // control visibly animate that control, the same way host automation
+      // playback moves a knob. Writes the PAINT refs only -- targetGainsRef
+      // stays exactly where the host put it, so the editor's publication
+      // effect can never feed a derived LFO value back to native as a real
+      // host edit and let the modulator ratchet its own baseline.
+      applyModulationFrame: (state) => {
+        if (!state.active) {
+          if (!modulationActiveRef.current) return false;
+          modulationActiveRef.current = false;
+          // Release the overlay back to canonical state rather than freezing
+          // on the last modulated frame.
+          renderGainsRef.current = targetGainsRef.current.map((value) =>
+            isMuted(value) ? 0 : clamp(value, -1.02, 1.02)).slice(0, N);
+          return true;
+        }
+        modulationActiveRef.current = true;
+        renderGainsRef.current = state.gains.map((value, index) =>
+          state.muted[index] ? 0 : clamp(value, -1.02, 1.02)).slice(0, N);
         return true;
       },
       getGains: () => targetGainsRef.current.slice(),`,

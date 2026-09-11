@@ -1567,6 +1567,47 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 error.what());
         }
     }
+    // Modulation overlay. The audio owner publishes the post-LFO band field
+    // once per processed block (~187/s at 48 kHz and 256 samples); this reads
+    // the latest complete frame once per UI tick, so the rate is the display's
+    // and the animation is as smooth as the editor can draw.
+    //
+    // Deliberately a DISTINCT message rather than a reuse of
+    // processing_state_live: that one's handler writes the canonical target
+    // refs as well as the paint refs, and a later commit would republish those
+    // derived LFO values to native as a real host edit -- the modulator would
+    // ratchet its own baseline. modulation_frame touches paint only.
+    if (const auto& modulated = read_modulated_field();
+        modulated.sequence != native_modulation_sequence_) {
+        native_modulation_sequence_ = modulated.sequence;
+        const auto visible = visible_count(layout());
+        auto gains = choc::value::createEmptyArray();
+        auto muted = choc::value::createEmptyArray();
+        for (std::size_t band = 0; band < visible; ++band) {
+            gains.addArrayElement(
+                static_cast<double>(modulated.field.bands[band].gain_db));
+            muted.addArrayElement(modulated.field.bands[band].muted);
+        }
+        auto payload = choc::value::createObject("SpectrModulationFrame");
+        payload.addMember("active", modulated.active);
+        payload.addMember("sequence",
+                          static_cast<std::int64_t>(modulated.sequence));
+        payload.addMember("n_visible", static_cast<std::int32_t>(visible));
+        payload.addMember("gain_db", gains);
+        payload.addMember("muted", muted);
+        try {
+            native_scripted_ui_->bridge()->dispatch_native_message(
+                "__spectrPublishNativeMessage",
+                "modulation_frame",
+                payload,
+                "spectr-modulation-frame",
+                "spectr-native-modulation-frame");
+        } catch (const std::exception& error) {
+            pulp::runtime::log_error(
+                "[Spectr native] modulation frame rejected: {}", error.what());
+        }
+    }
+
     native_analyzer_elapsed_ += std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
     if (native_analyzer_elapsed_ < kPublishPeriodSeconds) return true;
     native_analyzer_elapsed_ = std::fmod(native_analyzer_elapsed_, kPublishPeriodSeconds);
