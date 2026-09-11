@@ -201,6 +201,21 @@ const pulp::view::Label* find_label(const View& view, std::string_view text) {
     return nullptr;
 }
 
+// Some menu rows paint their keyboard shortcut inside the same label as the
+// caption, so an exact match on the caption stops finding the row the moment a
+// shortcut is added to it. Match the caption the row is named for and let the
+// shortcut ride along.
+const pulp::view::Label* find_label_prefix(const View& view,
+                                           std::string_view prefix) {
+    if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+        label != nullptr && label->text().rfind(prefix, 0) == 0)
+        return label;
+    for (std::size_t index = 0; index < view.child_count(); ++index)
+        if (const auto* match = find_label_prefix(*view.child_at(index), prefix))
+            return match;
+    return nullptr;
+}
+
 const View* find_sized_descendant(const View& view, float width, float height) {
     for (std::size_t index = 0; index < view.child_count(); ++index) {
         const auto* child = view.child_at(index);
@@ -457,8 +472,8 @@ void require_no_rejected_layout_boxes(NativeEditorRig& rig) {
     }
 }
 
-void native_click_label(NativeEditorRig& rig, std::string_view text) {
-    const auto* label = find_label(*rig.root, text);
+void native_click_found_label(NativeEditorRig& rig,
+                              const pulp::view::Label* label) {
     REQUIRE(label != nullptr);
     auto* click_target = const_cast<View*>(static_cast<const View*>(label));
     while (click_target != nullptr && !click_target->on_click)
@@ -482,6 +497,16 @@ void native_click_label(NativeEditorRig& rig, std::string_view text) {
     REQUIRE(hit_click_target != nullptr);
     rig.root->simulate_click(point);
     settle(rig.clock, 12);
+}
+
+void native_click_label(NativeEditorRig& rig, std::string_view text) {
+    INFO("native_click_label text := " << text);
+    native_click_found_label(rig, find_label(*rig.root, text));
+}
+
+void native_click_label_prefix(NativeEditorRig& rig, std::string_view prefix) {
+    INFO("native_click_label_prefix prefix := " << prefix);
+    native_click_found_label(rig, find_label_prefix(*rig.root, prefix));
 }
 
 void feed_tone(NativeEditorRig& rig) {
@@ -554,6 +579,26 @@ void activate(NativeEditorRig& rig, std::string_view selector,
           "globalThis.__pulpRuntimeSettle__(8); })();";
     rig.bridge().load_script(script, "spectr-native-state-activation");
     settle(rig.clock);
+}
+
+// The settings slider paints its own track and thumb, so it answers a pointer
+// press on that track rather than an <input> value change. Press it at a
+// fraction of its own measured width and let the widget derive the value the
+// way a person dragging it would, instead of asserting a value straight into
+// the handler and proving nothing about the control.
+std::string slider_press_at(double ratio) {
+    return std::string{
+        "(() => {"
+        " const node = globalThis.__pulpFindMaterializedElement__("
+        "\"[data-spectr-setting-slider]\");"
+        " const box = node && node.getBoundingClientRect"
+        " ? node.getBoundingClientRect() : null;"
+        " if (!box || !(box.width > 0)) throw new Error("
+        "'settings slider has no layout box to press');"
+        " return { clientX: box.left + box.width * "}
+        + std::to_string(ratio)
+        + ", clientY: box.top + box.height * 0.5, pointerId: 1, button: 0 };"
+          " })()";
 }
 
 void require_state(NativeEditorRig& rig, std::string_view id) {
@@ -2338,15 +2383,43 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     REQUIRE(feedback_label != nullptr);
     REQUIRE(status_info_label != nullptr);
     REQUIRE(response_label != nullptr);
-    const auto direct_body_child = [&](const View* node) {
-        while (node != nullptr && node->parent() != settings_body)
+    // The settings groups are not necessarily direct children of the scroll
+    // body: the document wraps them, and Pulp's ScrollView adds no content view
+    // of its own, so walking up to "child of settings_body" resolves every
+    // label to the same full-height wrapper and makes any ordering comparison
+    // between two groups compare a node against itself. Resolve each group as
+    // the child of the two labels' lowest common ancestor instead, which is the
+    // pair of siblings that actually separates them at whatever nesting depth
+    // the document happens to use.
+    const auto ancestry_to_body = [&](const View* node) {
+        std::vector<const View*> chain;
+        while (node != nullptr) {
+            chain.push_back(node);
+            if (node == settings_body) break;
             node = node->parent();
-        return node;
+        }
+        std::reverse(chain.begin(), chain.end());
+        return chain;
     };
-    const auto* feedback_group = direct_body_child(feedback_label);
-    const auto* response_group = direct_body_child(response_label);
+    const auto feedback_chain = ancestry_to_body(feedback_label);
+    const auto response_chain = ancestry_to_body(response_label);
+    REQUIRE_FALSE(feedback_chain.empty());
+    REQUIRE_FALSE(response_chain.empty());
+    REQUIRE(feedback_chain.front() == settings_body);
+    REQUIRE(response_chain.front() == settings_body);
+    std::size_t branch = 0;
+    while (branch < feedback_chain.size() && branch < response_chain.size()
+           && feedback_chain[branch] == response_chain[branch])
+        ++branch;
+    // A shared prefix that runs out means one label nests inside the other's
+    // group, which would make "below" meaningless.
+    REQUIRE(branch < feedback_chain.size());
+    REQUIRE(branch < response_chain.size());
+    const auto* feedback_group = feedback_chain[branch];
+    const auto* response_group = response_chain[branch];
     REQUIRE(feedback_group != nullptr);
     REQUIRE(response_group != nullptr);
+    REQUIRE(feedback_group != response_group);
     const auto feedback_rect = root_rect(*feedback_group);
     const auto response_rect = root_rect(*response_group);
     INFO("settings_body=" << root_rect(*settings_body).left << "," << root_rect(*settings_body).top
@@ -2410,21 +2483,24 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     capture(rig, directory, "settings");
     activate(rig, "[data-spectr-setting-option=\"warm\"]");
     activate(rig, "[data-spectr-setting-toggle]");
-    activate(rig, "[data-spectr-setting-slider]", "input",
-             R"js({value:'0.75',target:{value:'0.75'},currentTarget:{value:'0.75'}})js");
+    activate(rig, "[data-spectr-setting-slider]", "pointerdown",
+             slider_press_at(0.75));
+    // The slider snaps to a 0.01 step, so a tolerance this tight still pins the
+    // press to one step and cannot be satisfied by a neighbouring one.
     require_app_state(rig,
-        "s.settings.theme === 'warm' && s.settings.bloom === 0.75",
+        "s.settings.theme === 'warm'"
+        " && Math.abs(s.settings.bloom - 0.75) < 1e-6",
         "settings controls did not update their painted state");
     // Later atlas states were captured from the same deterministic defaults as
     // home. Prove the settings are reversible, then restore those defaults
     // before continuing the single editor transaction.
     activate(rig, "[data-spectr-setting-option=\"spectral\"]");
     activate(rig, "[data-spectr-setting-toggle]");
-    activate(rig, "[data-spectr-setting-slider]", "input",
-             R"js({value:'1',target:{value:'1'},currentTarget:{value:'1'}})js");
+    activate(rig, "[data-spectr-setting-slider]", "pointerdown",
+             slider_press_at(1.0));
     require_app_state(rig,
         "s.settings.theme === 'spectral' && s.settings.showMinimap === true"
-        " && s.settings.bloom === 1",
+        " && Math.abs(s.settings.bloom - 1) < 1e-6",
         "settings controls did not restore deterministic atlas defaults");
     rig.root->simulate_click(sticky_close_point);
     settle(rig.clock, 12);
@@ -2526,7 +2602,7 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     for (int cycle = 0; cycle < 8; ++cycle) {
         INFO("native self-removing manager click cycle " << cycle);
         activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
-        native_click_label(rig, "MANAGE…");
+        native_click_label_prefix(rig, "MANAGE…");
         require_app_state(rig, "s.managerOpen === true",
                           "native pointer did not open pattern manager");
         native_click_label(rig, "×");
@@ -2534,7 +2610,7 @@ TEST_CASE("native frozen state atlas interactions and persistence",
                           "native pointer did not close pattern manager");
     }
     activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
-    native_click_label(rig, "MANAGE…");
+    native_click_label_prefix(rig, "MANAGE…");
     require_app_state(rig,
         "s.managerOpen === true && s.userPatterns.length === 1",
         "saved preset was not available in the native pattern manager");

@@ -2,7 +2,7 @@
 """Static, non-dispatching checks for Spectr's local-first acceptance lane."""
 from pathlib import Path
 import json, re, tomllib
-from validate_release_sdk import cmake_bool
+from validate_release_sdk import cmake_bool, feature_mismatches
 
 ROOT = Path(__file__).resolve().parents[2]
 workflow = (ROOT / ".github/workflows/m5-product-acceptance.yml").read_text()
@@ -61,6 +61,19 @@ checks = {
                               and "_spectr_git_root STREQUAL _spectr_source_root" in cmake),
     "package rechecks exact head": ("SPECTR_SHA_AFTER_BUILD" in package
                                     and "SPECTR_SHA_CACHED_AFTER_BUILD" in package),
+    "features: the exact contract is accepted":
+        not feature_mismatches({"audio_probes": False, "inspector": True}),
+    "features: a new disabled capability is accepted":
+        not feature_mismatches({"audio_probes": False, "inspector": True, "tracing": False}),
+    "features: a new enabled capability is rejected":
+        bool(feature_mismatches({"audio_probes": False, "inspector": True, "tracing": True})),
+    "features: an enabled audio probe is rejected":
+        bool(feature_mismatches({"audio_probes": True, "inspector": True})),
+    "features: a missing required capability is rejected":
+        bool(feature_mismatches({"inspector": True})),
+    "features: a disabled inspector is rejected":
+        bool(feature_mismatches({"audio_probes": False, "inspector": False})),
+    "features: a non-object is rejected": bool(feature_mismatches(None)),
     "CMake boolean aliases": (all(cmake_bool(value) for value in ("1", "ON", "YES", "TRUE", "Y"))
                               and not any(cmake_bool(value) for value in
                                           ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND", "x-NOTFOUND"))),

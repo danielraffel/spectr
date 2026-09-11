@@ -13,6 +13,25 @@ def cmake_bool(value):
     if normalized.endswith("-NOTFOUND"): return False
     fail(f"invalid CMake boolean value: {value!r}")
 
+REQUIRED_FEATURES = {"audio_probes": False, "inspector": True}
+
+def feature_mismatches(features):
+    """Reasons these SDK capabilities are unsafe to ship, or [] when they are safe.
+
+    Every capability the contract names must carry its exact expected value. A
+    key the contract does not name is tolerated only while it is off, so an SDK
+    that merely grows a new disabled flag still validates, while one that turns
+    an unrecognised capability on is still rejected."""
+    if not isinstance(features, dict):
+        return [f"features is {features!r}, expected an object"]
+    reasons = [f"features.{key}={features.get(key)!r}, expected {expected!r}"
+               for key, expected in sorted(REQUIRED_FEATURES.items())
+               if features.get(key) != expected]
+    reasons += [f"features.{key}={value!r}: an unrecognised capability must be disabled"
+                for key, value in sorted(features.items())
+                if key not in REQUIRED_FEATURES and value is not False]
+    return reasons
+
 def cache_values(path):
     result = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -67,10 +86,11 @@ def main():
         "sdk_version": version, "source_git_ref": pin["release_tag"],
         "source_git_sha": sha, "source_git_dirty": False,
         "platform": pin["platform"], "build_type": "Release",
-        "features": {"audio_probes": False, "inspector": True},
     }
     mismatches = {k: (provenance.get(k), v) for k, v in expected.items() if provenance.get(k) != v}
     if mismatches: fail(f"unsafe provenance contract: {mismatches}")
+    unsafe = feature_mismatches(provenance.get("features"))
+    if unsafe: fail("unsafe provenance features: " + "; ".join(unsafe))
     if (args.sdk_root / "sdk_build_type.txt").read_text().strip() != "Release": fail("SDK marker is not Release")
     if (args.sdk_root / "version.txt").read_text().strip() != version: fail("SDK version marker mismatch")
 
