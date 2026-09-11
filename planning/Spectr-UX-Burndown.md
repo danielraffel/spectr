@@ -495,7 +495,7 @@ for that confirmation.
 | SET-2 | Fixed close button with hover/press feedback | Done | RERUN DONE on official SDK v0.834.0 (source 688a709b, contains the Pulp lifecycle contract f9bb36025): covered at test_native_state_parity.cpp:2348-2354 via data-spectr-close-state hover/pressed assertions, inside the frozen-atlas case which currently reds LATER at :2301 on Settings geometry — the close-state assertions themselves execute and pass | Pending in new PKG | Blocked by SET-1 geometry (same test case) |
 | SET-3 | Escape/outside click closes Settings | Done | RERUN DONE on official SDK v0.834.0 (source 688a709b, contains the Pulp lifecycle contract f9bb36025): `native settings modal dismisses by Escape and outside press` PASSES (historically the flakiest native row) | Pending in new PKG and hosts | Waiting human confirmation only |
 | SET-4 | Copy is centered and retains Copied feedback | Done | NATIVE PROOF against the shipping materialized artifact: `test/test_native_state_parity.cpp` "the settings copy button centres its feedback and answers a press" measures painted ink centre against button centre in both COPY and COPIED (was delta -44.0 / -37.5, now 0.0), corroborated by a raster measurement off `05-copy-button.png` (was -43.75, now +0.25), and drives a real press at the button dead centre (was no state change at all, now COPIED) | Pending in new PKG | Waiting human confirmation only |
-| SET-5 | Status Info description is not truncated | Implemented | BROWSER-ONLY PROOF (no native/Skia coverage; the SDK build is not exercised by this suite): `Spectr-browser-ux-polish` asserts scrollWidth>clientWidth plus four-sided containment; suite FLAKY (3/4 serial) | Pending in new PKG | Waiting human confirmation; flaky oracle to fix |
+| SET-5 | Status Info description is not truncated | Done | NATIVE PROOF as of `645ae71`, superseding the browser-only note this row used to carry: `test/test_native_state_parity.cpp` "settings text fits the slots the layout gives it" measures painted ink against the slot layout gave it, on the UNCROPPED rect, so a row parked below the fold is measured instead of dropped. Census on the shipping surface: 99 slots, 0 unmeasurable, 37 cropped out entirely by a clipping ancestor yet still measured, and all four Status Info rows among those 37, matched by identity rather than by count (`Status info` 78.10px of ink in a 150px slot, `Hover, mute, and drag` 147.24/150, `Build info` 71.00/150, `Support and debugging` 141.20/150). A live gate, not a slack one: tightest headroom across the 26-slot pinned 150px label column is +0.086px. `Spectr-browser-ux-polish` (still flaky, 3/4 serial) is now corroboration rather than the proof | Pending in new PKG | Waiting human confirmation only |
 | SET-6 | No unnecessary scrollbar when content fits | Implemented | BLOCKED by the same defect as SET-1 on official SDK v0.834.0 (source 688a709b): the browser half (`Spectr-browser-ux-polish`, overflow at 860 vs fit at 1800) exercises DOM overflow and is flaky-not-failing, but the NATIVE scroll-track behaviour rides on the same ScrollView that is currently 50px tall | Pending in new PKG | BLOCKED with SET-1 |
 | SET-7 | Loading build info cannot remain stuck | Done | BROWSER-ONLY PROOF (no native/Skia coverage; the SDK build is not exercised by this suite): `Spectr-browser-build-info-timeout` PASSES with its planted no-timeout control | Pending in new PKG | Waiting human confirmation only |
 | AUT-1 | Recorded automation/playback is sample-accurate | Processor playback implemented | RERUN DONE on official SDK v0.834.0 (source 688a709b, contains the Pulp lifecycle contract f9bb36025): `Spectr renders scheduled band automation without control-worker latency`, `scheduled processor playback changes gain on the exact sample across partitions`, and `Spectr output automation is smoothed and block-partition invariant` all PASS | Logic test required | Waiting human/host confirmation only |
@@ -708,7 +708,7 @@ never read as a pass. Passed at `26a16cc` in 13.45 s.
 - [x] Header, close control, and settings tabs remain fixed while content scrolls.
 - [x] Close hover/press, Escape, and outside-click behavior pass.
 - [x] Copy is centered and preserves Copied feedback.
-- [ ] Status Info is not truncated and unnecessary scrollbars are absent.
+- [x] Status Info is not truncated and unnecessary scrollbars are absent.
 
 Close/Escape/outside-click evidence: `test/test_native_state_parity.cpp:2006`
 asserts Escape and outside-click dismissal against the shipping runtime, with
@@ -765,12 +765,32 @@ detects its removal, and now covers `textAlign` and `pointerEvents` as well.
 It still proves only that the CSS is authored, not that anything centers or
 that a press lands; the behavioral proof is the native test named above.
 
-Status Info stays open because the native lane cannot see it:
-`test/appearance_detectors.hpp:63-71,130-137` drops clipped boxes, which is
-exactly the geometry a truncation or stray-scrollbar defect produces, and
-`test/fixtures/settings-open-layout.json` is loaded by no test. Closing this
-needs either a pixel check that can see a clipped box or an explicit
-browser-only, human-verified line.
+Status Info is closed natively by `645ae71`, which removed the blind spot this
+paragraph used to record. `collect_slot_fits()` measures `text_rect()` — the
+UNCROPPED absolute slot — so a row parked below the fold is still measured. The
+collision detectors crop and must, because two boxes can only collide where
+both are on screen, but a fit check that crops measures the clip instead of the
+text. Census on the shipping settings surface: 99 slots, 0 unmeasurable, and 37
+cropped out entirely by a clipping ancestor yet still measured, with all four
+Status Info rows among those 37 — `Status info`, `Hover, mute, and drag`,
+`Build info`, `Support and debugging`, required by identity in the test, not by
+count, and each required to report `measured`. Tightest headroom across the
+26-slot pinned 150px label column is +0.086px, so the check bites rather than
+passing on slack.
+
+The scrollbar half is proven as far as the platform allows, and the limit is
+worth stating rather than papering over. A plain Pulp `View` paints no
+scrollbar chrome — `overflow: scroll` is forwarded to Yoga for descendant
+measurement and otherwise clips like `hidden` — so a bar can only reach this
+surface by a `VirtualList`/`VirtualGrid` being in the tree, and their
+`scrollbar_visible()` is private. "No scrollbar-painting widget reaches the
+settings surface" is therefore the strongest falsifiable native claim
+available, and it carries its own control: a `VirtualList` inserted into an
+otherwise clean tree must be named by the probe (`1 == 1`, "a
+scrollbar-painting widget is in the tree at (0,0 400x0)"), after the same probe
+reports the clean tree empty. The settings body does hold exactly one
+`overflow: scroll` container, 486x531 at (427,211.5) over a 1246px column —
+a real scroll region, not an unnecessary one.
 - [x] Loading build info resolves promptly and cannot remain stuck.
 
 Exact-head browser evidence: the real-Chromium build-info harness reproduced
@@ -782,16 +802,30 @@ component transitions an unresolved request to `BUILD INFO UNAVAILABLE` after
 
 - [x] Realtime audio ownership is proved for Bank, Snapshot A, Snapshot B, and
   Morph by commit `73c359b30735e725d5fa2da3e6071fba2e6d1be5`.
-- [ ] LFO controls have a stable finished layout.
+- [x] LFO controls have a stable finished layout.
 - [ ] All four targets compose with host automation and third-party modulation.
 - [ ] Audible behavior and automation replay pass product acceptance.
 
-Visual modulation is separately proven and is not what these three lines ask
-for. With LFO 1 and 2 enabled, the assigned controls were observed animating
-in the shipping editor under a full set of controls, which settles the
-reported concern that an assigned LFO produced no visible motion. The three
-lines above are layout stability, host-automation composition, and product
-acceptance, and none of them follows from that observation.
+Layout stability is closed by `645ae71` plus PR #71. `645ae71` added "the LFO
+controls reach a finished layout and hold it", which captures the cluster's
+live geometry, holds the surface open 240 further ticks, and requires the
+capture to be unchanged — then does it again across the reflow that enabling
+the LFO causes. Worth recording WHY that needed a second PR: its control on the
+comparator compared the settled cluster against the enabled one, which are
+different lengths, so it exited through `same()`'s leading size guard and never
+reached a single rect comparison. Stripping every per-field clause out of
+`same()` left 84 of 90 assertions passing — the stability half could not fail.
+PR #71 perturbs each compared field in turn at EQUAL row count and requires its
+own clause to catch it; with the clauses stripped, those six controls are the
+only failures. The row is trustworthy because of #71, not because of the
+original control.
+
+Visual modulation is separately proven and is not what the remaining two lines
+ask for. With LFO 1 and 2 enabled, the assigned controls were observed
+animating in the shipping editor under a full set of controls, which settles
+the reported concern that an assigned LFO produced no visible motion. The two
+lines above are host-automation composition and product acceptance, and
+neither follows from that observation.
 
 Instrumentation trap worth recording: `SPECTR_STATE_TRACE` and
 `SPECTR_STATE_OUT` read canonical state by design, so they will never show
