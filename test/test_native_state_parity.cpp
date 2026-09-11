@@ -1106,8 +1106,12 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     find_surface(*rig.root);
     REQUIRE(surface != nullptr);
     CHECK(surface->cursor() == View::CursorStyle::crosshair);
+    // `buttons` is the held-button mask the pointer event carries. A hover is
+    // buttons:0; only a move that continues a press is buttons:1. Passing 1 for
+    // a plain move asserts the drag cursor and proves nothing about hover.
     const auto dispatch_minimap = [&](std::string_view event,
-                                      std::string_view hit) {
+                                      std::string_view hit,
+                                      int buttons) {
         const auto script = std::string{R"js((() => {
           const selector = '[data-spectr-filter-surface]';
           const surface = document.querySelector(selector);
@@ -1134,7 +1138,7 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
           if (!globalThis.__pulpActivateMaterializedElement__(selector, )js"
             + js_string(event) + R"js(, {
                 clientX: point.x, clientY: point.y, pointerId: 71,
-                button: 0, buttons: 1
+                button: 0, buttons: )js" + std::to_string(buttons) + R"js(
               })) throw new Error('minimap cursor activation failed');
           if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
             globalThis.__pulpRuntimeSettle__(4);
@@ -1143,15 +1147,19 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
         settle(rig.clock, 4);
     };
 
-    dispatch_minimap("pointermove", "left");
+    // Hovering an edge with no button held must show the resize affordance.
+    dispatch_minimap("pointermove", "left", 0);
     CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
-    dispatch_minimap("pointermove", "right");
+    dispatch_minimap("pointermove", "right", 0);
     CHECK(surface->cursor() == View::CursorStyle::horizontal_resize);
-    dispatch_minimap("pointerdown", "window");
+    // Hovering the window body offers the grab affordance before any press.
+    dispatch_minimap("pointermove", "window", 0);
+    CHECK(surface->cursor() == View::CursorStyle::grab);
+    dispatch_minimap("pointerdown", "window", 1);
     CHECK(surface->cursor() == View::CursorStyle::grabbing);
-    dispatch_minimap("pointermove", "window");
+    dispatch_minimap("pointermove", "window", 1);
     CHECK(surface->cursor() == View::CursorStyle::grabbing);
-    dispatch_minimap("pointerup", "window");
+    dispatch_minimap("pointerup", "window", 0);
     CHECK(surface->cursor() == View::CursorStyle::grab);
     activate(rig, "[data-spectr-filter-surface]", "pointermove",
              R"js({clientX:660,clientY:430,pointerId:72,button:0,buttons:0})js");
