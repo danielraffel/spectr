@@ -4367,6 +4367,320 @@ TEST_CASE("the settings copy button centres its feedback and answers a press",
     require_centred(*settled);
 }
 
+// Line 711 of the UX burndown — "Status Info is not truncated and unnecessary
+// scrollbars are absent" — stayed open because the two existing detectors are
+// blind to it, not because anyone measured it. Both blind spots are real and
+// they are different:
+//
+//   * `text_boxes()` crops each Label against every clipping ancestor and drops
+//     a box that lands fully outside. The settings body is a 1246px-tall column
+//     inside a 531px clip, so the Status Info row — which sits below the fold on
+//     first paint — is dropped outright and never reaches either detector. The
+//     crop is not a bug: two runs of text can only collide where both are ON
+//     screen, so the overlap detector needs it. That is why this adds a detector
+//     rather than weakening one.
+//   * `detect_clipped_text()` measures with `Label::intrinsic_width()`, which
+//     returns 0 for a wrapped Label by design. Every wrapped label therefore
+//     satisfies `0 <= box.width` and passes silently. That is the same mechanism
+//     behind the layout dump reporting a painted width of 0.0 for 63 of its 101
+//     text-bearing Labels.
+//
+// Fit is a property of layout, not of scroll position, so the detector below
+// measures the slot the parent pinned and asks the shaper where the ink lands.
+TEST_CASE("settings text fits the slots the layout gives it",
+          "[native-n1][appearance][settings][slot-fit]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+
+    const auto comma = static_cast<pulp::view::KeyCode>(',');
+#if defined(__APPLE__)
+    constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+    constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+    REQUIRE(rig.root->on_global_key({
+        .key = comma,
+        .modifiers = primary_modifier,
+        .is_down = true}));
+    settle(rig.clock, 16);
+    rig.root->layout_children();
+    settle(rig.clock, 8);
+
+    const auto fits = spectr::appearance::slot_fits(*rig.root);
+    INFO("measured slots with settings open: " << fits.size());
+    REQUIRE(fits.size() > 40);
+
+    // The row this line is about must be IN the measurement. Naming it is the
+    // control that separates "the text fits" from "the detector never saw it" —
+    // the older detector reports an absence here for the second reason.
+    // Matched on a stable prefix, not on equality, so lengthening one of these
+    // strings to plant a truncation defect does not abort the test before the
+    // overflow check it is planted for ever runs.
+    const auto slot_for = [&fits](std::string_view prefix)
+        -> const spectr::appearance::SlotFit* {
+        for (const auto& fit : fits)
+            if (fit.text.rfind(prefix, 0) == 0) return &fit;
+        return nullptr;
+    };
+    for (const char* required : {"Status info", "Hover, mute, and drag",
+                                 "Build info", "Support and debugging"}) {
+        const auto* fit = slot_for(required);
+        INFO("required settings label: " << required);
+        REQUIRE(fit != nullptr);
+        // Unknown extents are not a pass. A run of zeros because nothing could
+        // be measured looks exactly like a run of zeros because everything fits.
+        REQUIRE(fit->measured);
+        INFO("  paints " << fit->painted_width << "px of ink over "
+                         << fit->line_count << " line(s) in a " << fit->box.width
+                         << "px slot");
+    }
+
+    const auto unmeasurable = spectr::appearance::unmeasurable_slots(*rig.root);
+    INFO("slots the shaper could not measure:\n"
+         << spectr::appearance::join_findings(unmeasurable));
+    CHECK(unmeasurable.empty());
+
+    const auto overflowing
+        = spectr::appearance::detect_text_overflowing_slot(*rig.root);
+    INFO("text wider than its slot:\n"
+         << spectr::appearance::join_findings(overflowing));
+    CHECK(overflowing.empty());
+
+    // Reported, never asserted — see describe_tall_slots() for why the height
+    // axis is noise on a single-line label.
+    const auto tall = spectr::appearance::describe_tall_slots(*rig.root);
+    INFO("ink taller than its slot (diagnostic, not a gate):\n"
+         << spectr::appearance::join_findings(tall));
+}
+
+// Line 760 of the UX burndown — "LFO controls have a stable finished layout".
+//
+// "Finished" is two claims, and they fail differently, so both are asserted:
+//
+//   * The cluster SETTLES. Its rows mount from an async hydrate
+//     (`processing_state_get`), so a layout read too early sees a different tree
+//     than the one a person ends up looking at. Capturing twice with a long
+//     settle between catches a box that is still moving after the surface is
+//     supposed to be done.
+//   * The settled geometry is the AUTHORED one. Every row shares the group's
+//     left edge and width, every label column is the authored 150px, and every
+//     inter-row gap is the authored 10px. That is what "stable finished layout"
+//     means as a checkable property: nothing is half-sized, nothing is off its
+//     column, nothing is spaced by accident.
+//
+// Deliberately expressed relative to the group rather than as frozen page
+// coordinates. The cluster is the LAST group in a scrolling settings body, so
+// absolute y would churn on every unrelated settings row anyone adds above it,
+// and a test that breaks for that reason teaches people to re-baseline it.
+TEST_CASE("the LFO controls reach a finished layout and hold it",
+          "[native-n1][appearance][settings][lfo][layout-stability]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+
+    const auto comma = static_cast<pulp::view::KeyCode>(',');
+#if defined(__APPLE__)
+    constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+    constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+    REQUIRE(rig.root->on_global_key({
+        .key = comma,
+        .modifiers = primary_modifier,
+        .is_down = true}));
+    settle(rig.clock, 16);
+    rig.root->layout_children();
+    settle(rig.clock, 8);
+
+    struct ClusterRow {
+        std::string label;
+        pulp::view::Rect row{};
+        float label_column_width = 0.0f;
+    };
+
+    const auto first_label_text = [](const View& view) {
+        std::string found;
+        const auto walk = [&found](const View& node, auto&& self) -> void {
+            if (!found.empty()) return;
+            if (const auto* label = dynamic_cast<const pulp::view::Label*>(&node))
+                if (!label->text().empty()) { found = label->text(); return; }
+            for (std::size_t i = 0; i < node.child_count(); ++i)
+                self(*node.child_at(i), self);
+        };
+        walk(view, walk);
+        return found;
+    };
+
+    // The cluster is reached through its own text, not through an id: the
+    // materialized document gives the modulation rows no stable id of their own
+    // (every id in it belongs to the preset/snapshot surface), so the label is
+    // the only durable handle.
+    const auto rows_container = [&](const View& root) -> const View* {
+        const auto* anchor_label = find_label(root, "LFO");
+        if (anchor_label == nullptr) return nullptr;
+        const auto* column = anchor_label->parent();
+        const auto* row = column ? column->parent() : nullptr;
+        return row ? row->parent() : nullptr;
+    };
+
+    const auto capture = [&](const View& root) {
+        std::vector<ClusterRow> rows;
+        const auto* container = rows_container(root);
+        if (container == nullptr) return rows;
+        for (std::size_t i = 0; i < container->child_count(); ++i) {
+            const auto& row = *container->child_at(i);
+            ClusterRow entry;
+            entry.label = first_label_text(row);
+            entry.row = pulp::view::ViewInspector::absolute_bounds(row);
+            if (row.child_count() > 0)
+                entry.label_column_width = pulp::view::ViewInspector::absolute_bounds(
+                    *row.child_at(0)).width;
+            rows.push_back(entry);
+        }
+        return rows;
+    };
+
+    const auto describe = [](const std::vector<ClusterRow>& rows) {
+        std::ostringstream out;
+        for (const auto& row : rows)
+            out << "\n  - \"" << row.label << "\" row (" << row.row.x << ","
+                << row.row.y << " " << row.row.width << "x" << row.row.height
+                << ") label column " << row.label_column_width << "px";
+        return out.str();
+    };
+
+    const auto same = [](const std::vector<ClusterRow>& a,
+                         const std::vector<ClusterRow>& b) {
+        if (a.size() != b.size()) return false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (a[i].label != b[i].label) return false;
+            if (a[i].row.x != b[i].row.x || a[i].row.y != b[i].row.y) return false;
+            if (a[i].row.width != b[i].row.width) return false;
+            if (a[i].row.height != b[i].row.height) return false;
+            if (a[i].label_column_width != b[i].label_column_width) return false;
+        }
+        return true;
+    };
+
+    // The authored numbers, from the materialized document: SpectrSettingsGroup
+    // lays its rows out in a `flexDirection: column, gap: 10` stack, and
+    // SpectrSettingsField pins its label column at `width: 150, flexShrink: 0`.
+    constexpr float kAuthoredRowGap = 10.0f;
+    constexpr float kAuthoredLabelColumn = 150.0f;
+
+    const auto check_finished = [&](const std::vector<ClusterRow>& rows,
+                                    const char* phase) {
+        INFO(phase << " cluster:" << describe(rows));
+        REQUIRE(rows.size() >= 2);
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            INFO("row " << i << " \"" << rows[i].label << "\"");
+            // A row that never finished laying out is the defect this catches
+            // most directly: a zero or negative box.
+            CHECK(rows[i].row.width > 0.0f);
+            CHECK(rows[i].row.height > 0.0f);
+            CHECK(rows[i].row.x == Catch::Approx(rows[0].row.x).margin(0.01f));
+            CHECK(rows[i].row.width == Catch::Approx(rows[0].row.width).margin(0.01f));
+            CHECK(rows[i].label_column_width
+                  == Catch::Approx(kAuthoredLabelColumn).margin(0.01f));
+            if (i > 0) {
+                const float gap = rows[i].row.y
+                                  - (rows[i - 1].row.y + rows[i - 1].row.height);
+                INFO("gap above this row: " << gap);
+                CHECK(gap == Catch::Approx(kAuthoredRowGap).margin(0.01f));
+            }
+        }
+    };
+
+    const auto settled = capture(*rig.root);
+    INFO("modulation cluster at settle:" << describe(settled));
+    REQUIRE(settled.size() >= 2);
+    // Control on the handle: the rows really are the LFO cluster and not some
+    // other column the parent walk happened to land on.
+    REQUIRE(settled.front().label == "LFO");
+    check_finished(settled, "settled");
+
+    // Hold the surface open far past the point it claims to be finished. A row
+    // that is still moving here — a late hydrate, an animation that never
+    // converges, a size derived from something transient — shows up as a
+    // different capture.
+    settle(rig.clock, 240);
+    rig.root->layout_children();
+    settle(rig.clock, 8);
+    const auto held = capture(*rig.root);
+    INFO("after holding:" << describe(held));
+    CHECK(same(settled, held));
+
+    // Turning the LFO on mounts four more rows. That reflow is intended; what
+    // must still hold is that the ENLARGED cluster also finishes and then stops.
+    activate(rig, "[data-spectr-settings-modulation] [data-spectr-setting-toggle]");
+    settle(rig.clock, 16);
+    rig.root->layout_children();
+    settle(rig.clock, 8);
+
+    const auto enabled = capture(*rig.root);
+    INFO("with the LFO enabled:" << describe(enabled));
+    REQUIRE(enabled.size() > settled.size());
+    // Control on the comparator itself. `same()` returning true across a hold is
+    // only meaningful if `same()` can return false at all, so the one reflow this
+    // surface is KNOWN to perform is asserted to be seen.
+    CHECK_FALSE(same(settled, enabled));
+    // Control: the reflow really did mount the dependent rows, so a stable
+    // comparison below is a comparison of the grown cluster.
+    REQUIRE(find_label(*rig.root, "Shape") != nullptr);
+    REQUIRE(find_label(*rig.root, "Rate") != nullptr);
+    REQUIRE(find_label(*rig.root, "Depth") != nullptr);
+    check_finished(enabled, "enabled");
+
+    settle(rig.clock, 240);
+    rig.root->layout_children();
+    settle(rig.clock, 8);
+    const auto enabled_held = capture(*rig.root);
+    INFO("enabled, after holding:" << describe(enabled_held));
+    CHECK(same(enabled, enabled_held));
+}
+
+// The second half of line 711. Pulp's plain `View` paints no scrollbar chrome:
+// `overflow: scroll` is forwarded to Yoga for descendant measurement and
+// otherwise clips like `hidden`. The settings body IS a plain `View` with
+// `overflow: scroll`, so the only way a bar can reach this surface is one of the
+// virtualised containers being in the tree. That is the falsifiable claim; the
+// control section below proves the probe can see one when it is there.
+TEST_CASE("no scrollbar-painting widget reaches the settings surface",
+          "[native-n1][appearance][settings][scrollbar]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+
+    const auto comma = static_cast<pulp::view::KeyCode>(',');
+#if defined(__APPLE__)
+    constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+    constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+    REQUIRE(rig.root->on_global_key({
+        .key = comma,
+        .modifiers = primary_modifier,
+        .is_down = true}));
+    settle(rig.clock, 16);
+    rig.root->layout_children();
+    settle(rig.clock, 8);
+
+    // Control: the surface really is built. An empty tree also reports no
+    // scrollbar.
+    REQUIRE(spectr::appearance::slot_fits(*rig.root).size() > 40);
+
+    const auto bars = spectr::appearance::detect_scrollbar_painters(*rig.root);
+    INFO("scrollbar painters:\n" << spectr::appearance::join_findings(bars));
+    CHECK(bars.empty());
+}
+
 // Negative control for the two appearance detectors. Both report an ABSENCE on
 // the real surfaces, and an absence is worthless without proof the instrument
 // can see the thing it says is not there — a detector wired to the wrong tree,
@@ -4422,6 +4736,95 @@ TEST_CASE("the appearance detectors report defects that are deliberately built",
         const auto clipped = spectr::appearance::detect_clipped_text(*root);
         INFO("clipped findings:\n" << spectr::appearance::join_findings(clipped));
         CHECK(clipped.size() == 1);
+    }
+
+    SECTION("text wider than a pinned slot is found by the slot-fit detector") {
+        auto root = std::make_unique<View>();
+        root->flex().direction = FlexDirection::row;
+
+        auto pinned = std::make_unique<Label>();
+        pinned->set_text("CONTROL SLOT TEXT FAR WIDER THAN THE COLUMN IT SITS IN");
+        pinned->set_font_size(11.0f);
+        // The shape the real defect has: a label column the parent pins, so the
+        // text cannot push it wider and has to be cut instead.
+        pinned->flex().preferred_width = 150.0f;
+        pinned->flex().max_width = 150.0f;
+        pinned->flex().flex_shrink = 0.0f;
+
+        root->add_child(std::move(pinned));
+        root->set_bounds(pulp::view::Rect{0.0f, 0.0f, 400.0f, 40.0f});
+        root->layout_children();
+
+        // Control on the control, both halves: the detector measured exactly one
+        // label, and it measured it for real rather than reporting unknown.
+        const auto fits = spectr::appearance::slot_fits(*root);
+        REQUIRE(fits.size() == 1);
+        REQUIRE(fits[0].measured);
+        REQUIRE(fits[0].box.width == Catch::Approx(150.0f).margin(0.5f));
+
+        const auto findings
+            = spectr::appearance::detect_text_overflowing_slot(*root);
+        INFO("slot-fit findings:\n" << spectr::appearance::join_findings(findings));
+        CHECK(findings.size() == 1);
+    }
+
+    SECTION("a label scrolled out of its clip is still measured") {
+        // This is the blindness line 711 was open on, built deliberately. The
+        // settings body is a tall column inside a short clip; a row below the
+        // fold is cropped to nothing by `text_boxes()` and never reaches the
+        // older detector, which then reports an absence that means "did not
+        // look". The slot-fit path must still see it.
+        auto root = std::make_unique<View>();
+        auto clip = std::make_unique<View>();
+        clip->set_overflow(View::Overflow::scroll);
+
+        auto below_the_fold = std::make_unique<Label>();
+        below_the_fold->set_text("CONTROL ROW BELOW THE FOLD WIDER THAN ITS COLUMN");
+        below_the_fold->set_font_size(11.0f);
+        below_the_fold->flex().preferred_width = 150.0f;
+        below_the_fold->flex().max_width = 150.0f;
+        below_the_fold->flex().flex_shrink = 0.0f;
+        // Push it past the bottom of the clip, the way scroll position does.
+        below_the_fold->flex().margin_top = 400.0f;
+
+        clip->add_child(std::move(below_the_fold));
+        auto* clip_ptr = clip.get();
+        root->add_child(std::move(clip));
+        root->set_bounds(pulp::view::Rect{0.0f, 0.0f, 400.0f, 120.0f});
+        clip_ptr->set_bounds(pulp::view::Rect{0.0f, 0.0f, 400.0f, 120.0f});
+        root->layout_children();
+
+        // The old instrument drops it: this REQUIRE is the proof the blind spot
+        // is real, not an assumption about it.
+        REQUIRE(spectr::appearance::text_boxes(*root).empty());
+        REQUIRE(spectr::appearance::detect_clipped_text(*root).empty());
+
+        const auto fits = spectr::appearance::slot_fits(*root);
+        REQUIRE(fits.size() == 1);
+        REQUIRE(fits[0].measured);
+
+        const auto findings
+            = spectr::appearance::detect_text_overflowing_slot(*root);
+        INFO("slot-fit findings:\n" << spectr::appearance::join_findings(findings));
+        CHECK(findings.size() == 1);
+    }
+
+    SECTION("a scrollbar-painting widget is found when one is present") {
+        auto root = std::make_unique<View>();
+        // Control: the probe reports nothing on a tree that has no painter, so a
+        // green on the real surface is not the probe being inert.
+        REQUIRE(spectr::appearance::detect_scrollbar_painters(*root).empty());
+
+        auto list = std::make_unique<VirtualList>();
+        list->set_row_count(500);
+        list->set_row_height(18.0f);
+        root->add_child(std::move(list));
+        root->set_bounds(pulp::view::Rect{0.0f, 0.0f, 400.0f, 120.0f});
+        root->layout_children();
+
+        const auto bars = spectr::appearance::detect_scrollbar_painters(*root);
+        INFO("scrollbar findings:\n" << spectr::appearance::join_findings(bars));
+        CHECK(bars.size() == 1);
     }
 }
 
