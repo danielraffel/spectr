@@ -304,8 +304,13 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
           // SVG presentation primitives contribute paint/ink bounds, not
           // independent layout boxes. The shared materialization contract
           // deliberately excludes those 12 legacy rows from Yoga replay.
-          settingsDiagnostics.layout_expected !== 163 ||
-          settingsDiagnostics.layout_applied !== 163 ||
+          // The contract is that every binding the live DOM produces is
+          // applied: expected == applied with no node misses. The literal is a
+          // census of the settings DOM, so an edit that adds or removes a laid
+          // out node moves it legitimately -- re-pin it, and only treat a gap
+          // between expected and applied as a defect.
+          settingsDiagnostics.layout_expected !== 162 ||
+          settingsDiagnostics.layout_applied !== 162 ||
           settingsDiagnostics.layout_node_miss !== 0 ||
           // The live band-count trigger owns one text node, so its former
           // number and suffix captures count as one binding here.

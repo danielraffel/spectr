@@ -2338,15 +2338,43 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     REQUIRE(feedback_label != nullptr);
     REQUIRE(status_info_label != nullptr);
     REQUIRE(response_label != nullptr);
-    const auto direct_body_child = [&](const View* node) {
-        while (node != nullptr && node->parent() != settings_body)
+    // The settings groups are not necessarily direct children of the scroll
+    // body: the document wraps them, and Pulp's ScrollView adds no content view
+    // of its own, so walking up to "child of settings_body" resolves every
+    // label to the same full-height wrapper and makes any ordering comparison
+    // between two groups compare a node against itself. Resolve each group as
+    // the child of the two labels' lowest common ancestor instead, which is the
+    // pair of siblings that actually separates them at whatever nesting depth
+    // the document happens to use.
+    const auto ancestry_to_body = [&](const View* node) {
+        std::vector<const View*> chain;
+        while (node != nullptr) {
+            chain.push_back(node);
+            if (node == settings_body) break;
             node = node->parent();
-        return node;
+        }
+        std::reverse(chain.begin(), chain.end());
+        return chain;
     };
-    const auto* feedback_group = direct_body_child(feedback_label);
-    const auto* response_group = direct_body_child(response_label);
+    const auto feedback_chain = ancestry_to_body(feedback_label);
+    const auto response_chain = ancestry_to_body(response_label);
+    REQUIRE_FALSE(feedback_chain.empty());
+    REQUIRE_FALSE(response_chain.empty());
+    REQUIRE(feedback_chain.front() == settings_body);
+    REQUIRE(response_chain.front() == settings_body);
+    std::size_t branch = 0;
+    while (branch < feedback_chain.size() && branch < response_chain.size()
+           && feedback_chain[branch] == response_chain[branch])
+        ++branch;
+    // A shared prefix that runs out means one label nests inside the other's
+    // group, which would make "below" meaningless.
+    REQUIRE(branch < feedback_chain.size());
+    REQUIRE(branch < response_chain.size());
+    const auto* feedback_group = feedback_chain[branch];
+    const auto* response_group = response_chain[branch];
     REQUIRE(feedback_group != nullptr);
     REQUIRE(response_group != nullptr);
+    REQUIRE(feedback_group != response_group);
     const auto feedback_rect = root_rect(*feedback_group);
     const auto response_rect = root_rect(*response_group);
     INFO("settings_body=" << root_rect(*settings_body).left << "," << root_rect(*settings_body).top
