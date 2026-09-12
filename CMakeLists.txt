@@ -782,6 +782,103 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-oneshot --expect-fail)
     set_tests_properties(Spectr-materialized-modulation-oneshot-control PROPERTIES
         TIMEOUT 60)
+
+    # The morph slider's precondition, made legible. Morph interpolates the
+    # band field between snapshot A and snapshot B, so with either slot empty
+    # it has no endpoints. That was always ENFORCED -- `disabled` forwards to
+    # View::setEnabled(false), the pointer handlers return early, and
+    # bank.setMorph re-checks its own mirror -- but never EXPLAINED: the
+    # control had no visible name and its disabled state was carried by
+    # opacity alone, so a user who had not captured both slots saw a dim
+    # unlabelled track that ignored them ("i can't figure out how to see the
+    # morph slider actually morph"). This suite executes the shipped
+    # MorphSlider and requires a caption naming the MISSING slot while one is
+    # empty, readable rather than sharing the control's dim, and -- the scope
+    # control -- that the gate still refuses a pointer commit when disabled
+    # and still accepts one when enabled, including after a slot is cleared on
+    # a live component. The caption is absolutely positioned inside the 90x16
+    # track on purpose: the transport row has no spare width, and an earlier
+    # attempt that added flex siblings crushed that track to 39.5px.
+    add_test(NAME Spectr-materialized-morph-affordance
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_affordance.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-morph-affordance PROPERTIES TIMEOUT 60)
+    # Negative controls, one per half of the fix. Each reinstates the exact
+    # pre-fix text and inverts the verdict, so the row is green only when the
+    # suite REJECTS it. As above the inversion lives in the script, not in
+    # WILL_FAIL, because WILL_FAIL accepts any non-zero exit -- including the
+    # ones that mean the control never ran.
+    add_test(NAME Spectr-materialized-morph-affordance-dim-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_affordance.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-wrapper-dim --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-affordance-dim-control PROPERTIES
+        TIMEOUT 60)
+    add_test(NAME Spectr-materialized-morph-affordance-hint-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_affordance.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-nohint --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-affordance-hint-control PROPERTIES
+        TIMEOUT 60)
+    # The MODULATION group must read as two LFOs plus a shared destination
+    # block, not as one flat run of ten sibling rows. `Target` used to be gated
+    # on LFO 1, which put it inside LFO 1's disclosure -- but
+    # resolve_modulation_target_mask reads it for BOTH LFOs (src/spectr.cpp
+    # copies the whole settings struct into the second pass), so that gate
+    # stated something the audio path does not do, and it is why `Target` and
+    # `Targets` read as one duplicated control.
+    #
+    # The suite RUNS the shipped component rather than grepping it: a static
+    # check cannot see a row emitted in the wrong order by a conditional, and
+    # `new Function` proves syntax without proving scope.
+    add_test(NAME Spectr-materialized-modulation-grouping
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation_grouping.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-modulation-grouping PROPERTIES TIMEOUT 60)
+    # Negative controls, one per gate. Each reinstates a real defect and inverts
+    # the verdict inside the script, so the row is green only when the suite
+    # REJECTS it. The inversion is deliberately not WILL_FAIL: WILL_FAIL accepts
+    # any non-zero exit, including the ones that mean the control never ran.
+    add_test(NAME Spectr-materialized-modulation-grouping-order-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation_grouping.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-order --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-grouping-order-control PROPERTIES
+        TIMEOUT 60)
+    # Parses clean and `node --check` exits 0 on it; only running the component
+    # surfaces it. That is the whole reason the SCOPE gate exists.
+    add_test(NAME Spectr-materialized-modulation-grouping-scope-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation_grouping.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-scope --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-grouping-scope-control PROPERTIES
+        TIMEOUT 60)
+    # THE regression control. A conditional mount is invisible in a browser --
+    # the row still appears in the right place -- but the native bridge has no
+    # insert-at-index and no move (probed: globalThis.insertChild and
+    # globalThis.moveWidget are undefined), so a row that mounts late is
+    # APPENDED and the group re-scrambles as the user flips toggles. That is
+    # the defect the user reported.
+    add_test(NAME Spectr-materialized-modulation-grouping-remount-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation_grouping.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-remount --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-grouping-remount-control PROPERTIES
+        TIMEOUT 60)
+    add_test(NAME Spectr-materialized-modulation-grouping-homograph-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation_grouping.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-homograph --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-grouping-homograph-control PROPERTIES
+        TIMEOUT 60)
 endif()
 
 # The zoom readout must be a leaf that subscribes to the viewport, never a
@@ -1115,10 +1212,11 @@ foreach(fmt VST3 AU CLAP Standalone)
 endforeach()
 endif()
 
-# Artifact-level host proof: load the built CLAP and VST3 through Pulp::host
-# and run real audio across each binary boundary. This is deliberately
-# separate from Spectr-test's in-process Processor fixtures.
+# Artifact-level host proof: load the built CLAP, VST3 and AU through
+# Pulp::host and run real audio across each binary boundary. This is
+# deliberately separate from Spectr-test's in-process Processor fixtures.
 if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} OR
+    TARGET ${SPECTR_NATIVE_AU_TARGET} OR
     TARGET SpectrWebViewReference_CLAP OR TARGET SpectrWebViewReference_VST3) AND
    TARGET Pulp::host)
     # Same browser-free selection as Spectr-test: a cutover SDK has no WebView
@@ -1155,6 +1253,23 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
             SPECTR_HAVE_TEST_VST3=1
             SPECTR_TEST_VST3_PATH="${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3")
         add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_VST3_TARGET})
+    endif()
+    if(TARGET ${SPECTR_NATIVE_AU_TARGET} AND APPLE)
+        # The AU case reaches its bundle through AudioComponentRegister rather
+        # than a path, so it needs the two frameworks that own that registry and
+        # the bundle it reads the component's declared identity from. The
+        # triplet below is the same one the acceptance gate's
+        # `auval -v aufx Spec Pulp` uses; the test asserts the built bundle's
+        # Info.plist still declares exactly this, so the two cannot drift apart.
+        target_compile_definitions(Spectr-artifact-test PRIVATE
+            SPECTR_HAVE_TEST_AU=1
+            SPECTR_TEST_AU_PATH="${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
+            SPECTR_TEST_AU_TYPE="aufx"
+            SPECTR_TEST_AU_SUBTYPE="${SPECTR_NATIVE_PLUGIN_CODE}"
+            SPECTR_TEST_AU_MANUFACTURER="Pulp")
+        target_link_libraries(Spectr-artifact-test PRIVATE
+            "-framework AudioToolbox" "-framework CoreFoundation")
+        add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_AU_TARGET})
     endif()
     if(TARGET SpectrWebViewReference_CLAP)
         target_compile_definitions(Spectr-artifact-test PRIVATE

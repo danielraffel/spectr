@@ -4573,23 +4573,56 @@ TEST_CASE("the LFO controls reach a finished layout and hold it",
     constexpr float kAuthoredRowGap = 10.0f;
     constexpr float kAuthoredLabelColumn = 150.0f;
 
+    // Every row in the group is MOUNTED at mount, including the ones whose LFO
+    // is off, because the widget bridge has no insert-at-index and no move: a
+    // row that mounts late is appended rather than placed, which is what made
+    // the group re-order itself as the user flipped toggles. A closed row is
+    // hidden with display:none instead, which the runtime maps to
+    // setVisible(id, false) -- View::visible() skips render AND layout, so the
+    // row collapses to exactly 0x0 and leaves no gap.
+    //
+    // So the cluster has two populations and each gets its own assertion. The
+    // disclosed rows must have a finished, authored layout; the closed rows
+    // must be EXACTLY 0x0. A half-laid-out row fails both, which is the case
+    // that would otherwise slip through a plain "skip the empty ones".
     const auto check_finished = [&](const std::vector<ClusterRow>& rows,
                                     const char* phase) {
         INFO(phase << " cluster:" << describe(rows));
         REQUIRE(rows.size() >= 2);
-        for (std::size_t i = 0; i < rows.size(); ++i) {
-            INFO("row " << i << " \"" << rows[i].label << "\"");
+
+        std::vector<ClusterRow> shown;
+        for (const auto& row : rows) {
+            if (row.row.width > 0.0f || row.row.height > 0.0f) {
+                shown.push_back(row);
+                continue;
+            }
+            INFO("closed row \"" << row.label << "\"");
+            // Not merely "small": a closed disclosure is no box at all.
+            CHECK(row.row.width == 0.0f);
+            CHECK(row.row.height == 0.0f);
+        }
+
+        // Both toggles are unconditional, so at least those two are always
+        // disclosed. A run that found fewer has lost the rows, not hidden them.
+        INFO("disclosed rows:" << describe(shown));
+        REQUIRE(shown.size() >= 2);
+        for (std::size_t i = 0; i < shown.size(); ++i) {
+            INFO("disclosed row " << i << " \"" << shown[i].label << "\"");
             // A row that never finished laying out is the defect this catches
             // most directly: a zero or negative box.
-            CHECK(rows[i].row.width > 0.0f);
-            CHECK(rows[i].row.height > 0.0f);
-            CHECK(rows[i].row.x == Catch::Approx(rows[0].row.x).margin(0.01f));
-            CHECK(rows[i].row.width == Catch::Approx(rows[0].row.width).margin(0.01f));
-            CHECK(rows[i].label_column_width
+            CHECK(shown[i].row.width > 0.0f);
+            CHECK(shown[i].row.height > 0.0f);
+            CHECK(shown[i].row.x == Catch::Approx(shown[0].row.x).margin(0.01f));
+            CHECK(shown[i].row.width == Catch::Approx(shown[0].row.width).margin(0.01f));
+            CHECK(shown[i].label_column_width
                   == Catch::Approx(kAuthoredLabelColumn).margin(0.01f));
             if (i > 0) {
-                const float gap = rows[i].row.y
-                                  - (rows[i - 1].row.y + rows[i - 1].row.height);
+                // Measured between DISCLOSED neighbours: a hidden row between
+                // them contributes no height and no gap, so the authored 10px
+                // must still be the whole distance. That is the assertion that
+                // proves hiding a row really does reclaim its space.
+                const float gap = shown[i].row.y
+                                  - (shown[i - 1].row.y + shown[i - 1].row.height);
                 INFO("gap above this row: " << gap);
                 CHECK(gap == Catch::Approx(kAuthoredRowGap).margin(0.01f));
             }
@@ -4637,8 +4670,18 @@ TEST_CASE("the LFO controls reach a finished layout and hold it",
     differs_when("label column",
                  [](ClusterRow& r) { r.label_column_width += 1.0f; });
 
-    // Turning the LFO on mounts four more rows. That reflow is intended; what
-    // must still hold is that the ENLARGED cluster also finishes and then stops.
+    // Turning the LFO on DISCLOSES rows that were already mounted; it does not
+    // mount them. The row count is therefore constant by design -- that
+    // constancy is exactly what keeps the group's order from depending on the
+    // order the user flips toggles -- so the growth to assert is in the number
+    // of rows that have a box, not in the size of the cluster.
+    const auto disclosed = [](const std::vector<ClusterRow>& rows) {
+        std::size_t count = 0;
+        for (const auto& row : rows)
+            if (row.row.width > 0.0f && row.row.height > 0.0f) ++count;
+        return count;
+    };
+
     activate(rig, "[data-spectr-settings-modulation] [data-spectr-setting-toggle]");
     settle(rig.clock, 16);
     rig.root->layout_children();
@@ -4646,7 +4689,11 @@ TEST_CASE("the LFO controls reach a finished layout and hold it",
 
     const auto enabled = capture(*rig.root);
     INFO("with the LFO enabled:" << describe(enabled));
-    REQUIRE(enabled.size() > settled.size());
+    // The population is fixed; only its disclosure moves.
+    REQUIRE(enabled.size() == settled.size());
+    INFO("disclosed before: " << disclosed(settled)
+         << ", after: " << disclosed(enabled));
+    REQUIRE(disclosed(enabled) > disclosed(settled));
     // Control on the comparator itself. `same()` returning true across a hold is
     // only meaningful if `same()` can return false at all, so the one reflow this
     // surface is KNOWN to perform is asserted to be seen.

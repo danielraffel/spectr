@@ -84,6 +84,39 @@ struct ModulatedFieldSnapshot {
     BandField     field{};
     std::uint64_t sequence = 0;
     bool          active   = false;
+
+    // ── Display-time reconstruction inputs ──────────────────────────────
+    //
+    // `field` alone is a zero-order hold: the audio owner samples the LFO once
+    // per processed block and the editor consumes it once per display frame.
+    // Those two clocks are unrelated, so a 60 Hz consumer reading a ~190 Hz
+    // producer advances three, four or five producer steps per painted frame
+    // and the animation moves unevenly at every waveform -- the jitter is in
+    // the resampling, not in the oscillator.
+    //
+    // Publishing the LFO's INPUTS as well lets the editor evaluate the same
+    // pure `lfo_value` / `apply_internal_modulation` at its own frame time, so
+    // the painted value is a continuous function of display time. The DSP is
+    // not duplicated: the editor calls the identical functions the audio owner
+    // does. `field` remains the audio owner's own last sample.
+    BandField          pre_field{};   ///< post-morph, pre-LFO input field
+    ModulationSettings settings{};
+    /// The bank the audio owner composed against. Carried rather than read
+    /// from `Spectr::snapshots()` on the consumer side: a capture lands in the
+    /// control-thread bank immediately but only reaches the audio owner one
+    /// publication later, and for that tick the two would disagree. Carrying
+    /// it makes "the drawn field equals the audible one" exact instead of
+    /// almost-always.
+    SnapshotBank       snapshots{};
+    float              host_morph = 0.0f;
+    double             phase = 0.0;   ///< LFO 1 phase at `published_ns`
+    double             phase_2 = 0.0; ///< LFO 2 phase at `published_ns`
+    double             phase_per_second = 0.0;
+    double             phase_2_per_second = 0.0;
+    /// steady_clock nanoseconds at which `phase`/`phase_2` were sampled. Zero
+    /// means the publication carries no usable clock and the consumer must
+    /// fall back to `field` rather than extrapolate from an unknown origin.
+    std::int64_t       published_ns = 0;
 };
 static_assert(std::is_trivially_copyable_v<ModulatedFieldSnapshot>,
               "modulated field publication must remain allocation-free POD");
@@ -551,6 +584,15 @@ private:
     // Last modulated-field sequence projected to the editor, so a UI tick
     // that finds no new audio frame does not re-dispatch the same overlay.
     std::uint64_t native_modulation_sequence_ = 0;
+    // Scratch for the display-time LFO reconstruction. A member rather than a
+    // local so a BandField is not built on the stack every frame.
+    BandField     native_modulation_drawn_{};
+    // Phases last painted, and how many consecutive ticks have seen no new
+    // publication. Together they recognise the two no-ops: nothing new to
+    // draw, and a producer that has gone quiet.
+    double        native_modulation_drawn_phase_ = -1.0;
+    double        native_modulation_drawn_phase_2_ = -1.0;
+    int           native_modulation_stale_ticks_ = 0;
     EditorRevision native_host_automation_revision_ = 0;
 
     std::unique_ptr<pulp::view::View> create_native_editor_();
@@ -558,6 +600,10 @@ private:
     void open_native_editor_(pulp::view::View& view);
     void close_native_editor_();
     bool tick_native_analyzer_(float dt);
+    /// Draw what the modulators are playing: reconstruct the post-LFO field at
+    /// this frame's time from the audio owner's published inputs and hand it
+    /// to the editor. Display only -- it never re-enters canonical state.
+    void publish_modulation_frame_();
     // Fixture-only. Writes the laid-out tree plus its depth sidecar under
     // SPECTR_DRAG_DUMP_PREFIX for one named stage of a gesture, so "during"
     // and "after" are two artifacts rather than one interpretation.
