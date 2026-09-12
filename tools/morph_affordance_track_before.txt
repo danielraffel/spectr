@@ -1,0 +1,6 @@
+style: { position: "relative", width: 90, height: 16, cursor: hasBoth ? "pointer" : "not-allowed" }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 6, width: "100%", height: 4, borderRadius: 2, pointerEvents: "none", background: "rgba(255,255,255,0.15)" } }),
+    /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 6, height: 4, borderRadius: 2, pointerEvents: "none", background: "hsl(200,80%,60%)", width: (100 * ratio) + "%" } }),
+    /* @__PURE__ */ React.createElement("div", { "data-spectr-morph-thumb": true, "data-spectr-morph-thumb-state": grown ? "hover" : "idle", style: { position: "absolute", top: grown ? -1 : 1, width: grown ? 18 : 14, height: grown ? 18 : 14, borderRadius: grown ? 9 : 7, pointerEvents: "none", background: "#fff", border: "1px solid rgba(0,0,0,0.35)", marginLeft: grown ? -9 : -7, left: (100 * ratio) + "%" } })
+  ),
