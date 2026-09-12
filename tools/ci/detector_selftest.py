@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 
@@ -61,6 +62,20 @@ CURSOR_EXPECT = [
 DETECTOR_REQUIREMENTS: dict[str, str] = {
     "text_contrast": "PIL",
 }
+
+# A case whose entry point is a .mjs runs under node, not under this
+# interpreter. Node is how the materialized-document suites execute the
+# shipping editor's own script blocks, which is the only way to measure a
+# behaviour that has no layout node to look at -- a band's painted value, or
+# whether a command reached the bridge at all.
+NODE = os.environ.get("SPECTR_NODE_EXECUTABLE") or shutil.which("node")
+
+
+def interpreter(argv: list[str]) -> list[str] | None:
+    """Command prefix for a case, or None when its interpreter is absent."""
+    if argv and argv[0].endswith(".mjs"):
+        return [NODE] if NODE else None
+    return [sys.executable]
 
 CASES: list[tuple[str, str, int, list[str]]] = [
     # --- the two that shipped dead -------------------------------------
@@ -217,6 +232,33 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(T, "text_contrast.py"), f(E07, "SET-837-settings-unscrolled.layout.json"),
       f(E07, "SET-837-settings-unscrolled.png"), "--scale", "1.5",
       "--within", "400,90.5,520,679", "--plant"]),
+
+    # A command that reports success must reach the FIELD, and a muted band
+    # must paint on its sentinel. Both were reported from the shipped AU and
+    # neither has a layout node: CLEAR's status pill said CLEARED GAINS while
+    # every band kept its shape, so a detector reading the overlay would have
+    # called it green. These cases run the shipping document's own bank block
+    # and assert on the payload that crosses the bridge and on the painted
+    # value, never on the banner.
+    ("materialized_clear_and_mute_overlay",
+     "CLEAR reaches the field and a muted band sits on its sentinel", 0,
+     [f("test", "test_materialized_clear_and_mute_overlay.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json")]),
+    ("materialized_clear_and_mute_overlay",
+     "plant: the projection re-arms the one-shot echo suppressor", 1,
+     [f("test", "test_materialized_clear_and_mute_overlay.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-latched-suppressor"]),
+    ("materialized_clear_and_mute_overlay",
+     "plant: projections flatten a muted band off its sentinel", 1,
+     [f("test", "test_materialized_clear_and_mute_overlay.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-flatten-muted"]),
+    ("materialized_clear_and_mute_overlay",
+     "plant: clearGains stops declaring its edit", 1,
+     [f("test", "test_materialized_clear_and_mute_overlay.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-undeclared-clear"]),
 ]
 
 
@@ -240,6 +282,8 @@ def main() -> int:
     for det, module in sorted(DETECTOR_REQUIREMENTS.items()):
         if any(c[0] == det for c in cases) and not importlib.util.find_spec(module):
             unavailable.append((det, module))
+    if NODE is None and any(interpreter(c[3]) is None for c in cases):
+        unavailable.append(("materialized_clear_and_mute_overlay", "node"))
     if unavailable:
         skipped = {d for d, _ in unavailable}
         cases = [c for c in cases if c[0] not in skipped]
@@ -275,7 +319,12 @@ def main() -> int:
     failures = []
     by_detector: dict[str, list[int]] = {}
     for det, label, want, argv in cases:
-        proc = subprocess.run([sys.executable] + argv, cwd=REPO,
+        prefix = interpreter(argv)
+        if prefix is None:
+            print(f"  UNAVAILABLE  {det:<30} no node interpreter"
+                  "  -- NOT run, NOT coverage")
+            continue
+        proc = subprocess.run(prefix + argv, cwd=REPO,
                               capture_output=True, text=True)
         got = proc.returncode
         ok = got == want
