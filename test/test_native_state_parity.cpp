@@ -21,6 +21,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -2847,23 +2848,76 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     const auto morph_gain_at = [](double value) {
         return Catch::Approx(-6.0 + 18.0 * value).margin(0.01);
     };
+    // The thumb is a PILL -- 22x14 idle, 26x16 hovered -- so the size it is
+    // resolved by is a width/height pair, not one number. A circle of either
+    // size matches neither, which is what makes this a shape assertion and
+    // not just a growth one.
     const auto morph_thumb_size = [&](const char* stage) {
         rig.root->layout_children();
         CAPTURE(stage);
-        const View* idle = find_sized_descendant(*morph_track, 14.0f, 14.0f);
-        const View* grown = find_sized_descendant(*morph_track, 18.0f, 18.0f);
+        const View* idle = find_sized_descendant(*morph_track, 22.0f, 14.0f);
+        const View* grown = find_sized_descendant(*morph_track, 26.0f, 16.0f);
         REQUIRE_FALSE((idle == nullptr && grown == nullptr));
         REQUIRE_FALSE((idle != nullptr && grown != nullptr));
-        return grown != nullptr ? 18.0f : 14.0f;
+        return grown != nullptr ? 26.0f : 22.0f;
+    };
+
+    // The pill must also stay INSIDE the track it is drawn on. The circle was
+    // positioned with a fixed half-width margin, so at either end of the
+    // travel it hung 7px outside -- at the minimum straight onto the flanking
+    // "A" label. This is read back from the laid-out view tree, so it is the
+    // rendered position rather than the style that asked for it.
+    const auto morph_thumb_inside_track = [&](const char* stage) {
+        rig.root->layout_children();
+        CAPTURE(stage);
+        // `bounds()` is parent-relative, so the thumb's position has to be
+        // accumulated down from the track rather than compared against it
+        // directly -- two rects in different spaces would compare as garbage
+        // and the assertion would be measuring nothing.
+        const auto track = morph_track->local_bounds();
+        float bx = 0.0f;
+        float by = 0.0f;
+        float bw = 0.0f;
+        float bh = 0.0f;
+        bool found = false;
+        const std::function<void(const View&, float, float)> walk =
+            [&](const View& view, float ox, float oy) {
+                for (std::size_t i = 0; i < view.child_count(); ++i) {
+                    const auto* child = view.child_at(i);
+                    const auto b = child->bounds();
+                    const bool pill =
+                        (std::abs(b.width - 22.0f) < 0.1f
+                         && std::abs(b.height - 14.0f) < 0.1f)
+                        || (std::abs(b.width - 26.0f) < 0.1f
+                            && std::abs(b.height - 16.0f) < 0.1f);
+                    if (pill && !found) {
+                        found = true;
+                        bx = ox + b.x;
+                        by = oy + b.y;
+                        bw = b.width;
+                        bh = b.height;
+                    }
+                    walk(*child, ox + b.x, oy + b.y);
+                }
+            };
+        walk(*morph_track, 0.0f, 0.0f);
+        REQUIRE(found);
+        CAPTURE(track.width, track.height, bx, by, bw, bh);
+        REQUIRE(bx >= -0.5f);
+        REQUIRE(bx + bw <= track.width + 0.5f);
+        REQUIRE(by >= -0.5f);
+        REQUIRE(by + bh <= track.height + 0.5f);
     };
 
     // Idle first: this reading is the positive control for the two that
     // follow. A thumb the view tree never drew would report neither size and
     // trip the require above instead of silently agreeing with every stage.
-    REQUIRE(morph_thumb_size("idle") == 14.0f);
+    REQUIRE(morph_thumb_size("idle") == 22.0f);
+    morph_thumb_inside_track("idle");
     activate(rig, "[data-spectr-morph]", "pointerenter",
              slider_press_at(0.5, "[data-spectr-morph]"));
-    REQUIRE(morph_thumb_size("hovered") == 18.0f);
+    REQUIRE(morph_thumb_size("hovered") == 26.0f);
+    morph_thumb_inside_track("hovered");
 
     // A move with no preceding press is inert: the control tracks the pointer
     // only while it holds the capture the press gave it.
@@ -2896,7 +2950,7 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     // the pointer is still captured, so the gesture continues off the track.
     activate(rig, "[data-spectr-morph]", "pointerleave",
              slider_press_at(1.4, "[data-spectr-morph]"));
-    REQUIRE(morph_thumb_size("left-while-dragging") == 18.0f);
+    REQUIRE(morph_thumb_size("left-while-dragging") == 26.0f);
     activate(rig, "[data-spectr-morph]", "pointermove",
              slider_press_at(0.9, "[data-spectr-morph]"));
     REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.9));
@@ -2908,10 +2962,17 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     activate(rig, "[data-spectr-morph]", "pointermove",
              slider_press_at(0.1, "[data-spectr-morph]"));
     REQUIRE(rig.processor.field().bands[3].gain_db == morph_gain_at(0.9));
-    REQUIRE(morph_thumb_size("still-hovered-after-release") == 18.0f);
+    REQUIRE(morph_thumb_size("still-hovered-after-release") == 26.0f);
     activate(rig, "[data-spectr-morph]", "pointerleave",
              slider_press_at(1.4, "[data-spectr-morph]"));
-    REQUIRE(morph_thumb_size("left-after-release") == 14.0f);
+    REQUIRE(morph_thumb_size("left-after-release") == 22.0f);
+    // At the far end of the travel, which is where the circle hung 7px past
+    // the track onto the "B" label.
+    activate(rig, "[data-spectr-morph]", "pointerdown",
+             slider_press_at(1.0, "[data-spectr-morph]"));
+    activate(rig, "[data-spectr-morph]", "pointerup",
+             slider_press_at(1.0, "[data-spectr-morph]"));
+    morph_thumb_inside_track("at-maximum");
 
     // Return the morph to the midpoint the rest of this case expects, and
     // prove the ordinary release ends the drag the way losing the capture did.

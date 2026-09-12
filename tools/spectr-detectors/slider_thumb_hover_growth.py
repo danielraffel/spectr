@@ -7,7 +7,19 @@ and requires the thumb rect to be strictly larger in the hover frame.
 
 The thumb is located structurally, never by generated node id: a slider track is
 a node that owns a hit region, is 14-20px tall and at least 80px wide; its thumb
-is the square node painted inside that track.
+is the largest node painted inside that track whose box is thumb-shaped.
+
+"Thumb-shaped" is deliberately looser than the shape the thumb currently has.
+Spectr's thumb is a PILL (wider than tall); it used to be a circle, and this
+detector reads dumps from both eras. Adjudicating the SHAPE here would make it
+fail on a correct historical capture, so shape is adjudicated against the
+shipping artifact by `slider_thumb_pill_shape.py` instead and this one stays
+about GROWTH. The aspect ratio is printed per frame so the shape is visible in
+the output rather than silently assumed.
+
+The box does still have to be thumb-shaped, because the loosened filter now
+runs alongside the track's own 4px-tall fill bar, which is narrow at low values
+and would otherwise be picked up as a thumb that grows whenever the value does.
 
     slider_thumb_hover_growth.py --idle IDLE.layout.json --hover HOVER.layout.json
 
@@ -34,18 +46,24 @@ def tracks(nodes):
             and n["rect"]["w"] >= 80]
 
 
+def thumb_shaped(r):
+    # A thumb is roughly square to moderately elongated along the drag axis,
+    # and never thinner than the track's 4px fill bar.
+    return 10 <= r["h"] <= 24 and r["h"] <= r["w"] <= 3 * r["h"]
+
+
 def thumb_in(nodes, track):
     tr = track["rect"]
     best = None
     for n in nodes:
         r = n["rect"]
-        if n is track or r["w"] != r["h"] or not 8 <= r["w"] <= 32:
+        if n is track or not thumb_shaped(r):
             continue
         if r["x"] < tr["x"] - 12 or r["x"] + r["w"] > tr["x"] + tr["w"] + 12:
             continue
         if r["y"] < tr["y"] - 12 or r["y"] + r["h"] > tr["y"] + tr["h"] + 12:
             continue
-        if best is None or r["w"] > best["rect"]["w"]:
+        if best is None or r["w"] * r["h"] > best["rect"]["w"] * best["rect"]["h"]:
             best = n
     return best
 
@@ -77,9 +95,14 @@ def main():
         if hover_thumb is None:
             continue
         a, b = idle_thumb["rect"], hover_thumb["rect"]
+        # BOTH axes, on purpose. A pill has two dimensions, and a growth check
+        # that only watched the long one would keep passing for a thumb that
+        # got wider while flattening.
         bigger = b["w"] > a["w"] and b["h"] > a["h"]
-        print(f"  {idle_thumb['id']}: idle {a['w']}x{a['h']} -> "
-              f"hover {b['w']}x{b['h']} {'GREW' if bigger else 'unchanged'}")
+        print(f"  {idle_thumb['id']}: idle {a['w']}x{a['h']} "
+              f"(aspect {a['w'] / a['h']:.2f}) -> "
+              f"hover {b['w']}x{b['h']} (aspect {b['w'] / b['h']:.2f}) "
+              f"{'GREW in both axes' if bigger else 'unchanged'}")
         if bigger:
             grew.append(idle_thumb["id"])
 

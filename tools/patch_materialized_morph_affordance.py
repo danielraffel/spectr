@@ -45,17 +45,42 @@ The dim moves off the wrapper and onto the track's three painted children, so
 the caption explaining a dimmed control is not itself dimmed away.  The
 flanking "A"/"B" labels keep their normal 0.5 alpha.
 
+THE THUMB IS A PILL, and this script is the only writer of that style.
+
+The design source drew this control as a native `<input type="range">`, which
+the native editor cannot host, so it was reimplemented here as a custom
+`div[role=slider]` with a hand-drawn thumb.  That reimplementation picked a
+circle, and the circle was incidental to it -- no design asked for one.  The
+thumb is 22x14 idle and 26x16 hovered, fully rounded, so it reads as a capsule
+along the axis it is dragged on.
+
+The travel changed with the shape, and that part is a correctness fix rather
+than a taste one.  The circle was positioned `left: ratio%` with a FIXED
+`marginLeft` of half its width, so at either end it hung half outside the
+track: at ratio 0 it sat at x -7..7 of a 0..90 track, straight on top of the
+flanking "A" label, and the same 7px past "B" at the other end.  The pill
+insets its own travel instead -- `marginLeft: -(width * ratio)` -- so its left
+edge runs 0 -> 90-width and the painted thumb is inside the painted track at
+every value, which is also how a real range input behaves.  Vertically it is
+inside too: 14px at top 1 and 16px at top 0 in a 16px track, where the circle
+grew to 18px at top -1 and overhung by 1px on hover.
+
 Deliberately NOT changed, because each is load-bearing for an existing test:
 `id="spectr-snapshot-morph"`, `data-spectr-morph`, `data-spectr-morph-state`,
-the 90x16 track geometry, the 14px/18px thumb sizes and
-`data-spectr-morph-thumb-state`, and the pointer protocol --
-`test/test_native_state_parity.cpp` resolves the widget by id and asserts that
-geometry, and it drives the control in its DEFAULT (no snapshots) state, so
-the thumb must keep rendering while disabled.  Enablement SEMANTICS are
-untouched: this patch changes what the user is told, never what the control
-permits, so the browser-lane tests in `test/test_editor_analyzer_browser.mjs`
-that assert `morph.disabled` against `resources/editor.html` keep measuring
-what they did.
+the 90x16 track geometry, `data-spectr-morph-thumb-state`, and the pointer
+protocol -- `test/test_native_state_parity.cpp` resolves the widget by id and
+asserts that geometry, and it drives the control in its DEFAULT (no snapshots)
+state, so the thumb must keep rendering while disabled.  Enablement SEMANTICS
+are untouched: this patch changes what the user is told and what the thumb
+looks like, never what the control permits, so the browser-lane tests in
+`test/test_editor_analyzer_browser.mjs` that assert `morph.disabled` against
+`resources/editor.html` keep measuring what they did.
+
+The settings sliders carry the SAME pill, written by
+`tools/patch_materialized_slider_pill.py`.  The split is not arbitrary: the
+morph thumb lives inside the contiguous track block this script replaces
+wholesale, so a second writer reaching into that block would break this
+script's replay.  One writer per patch point; two patch points.
 
 `resources/editor.html` is deliberately not mirrored: it is the browser
 bootstrap, not the shipping surface, and `test_import_fidelity.cpp`'s
@@ -118,21 +143,31 @@ WRAPPER_NEW = (
 # ...re-applied to the three painted children it actually describes, and the
 # reason caption appended inside the track: absolutely positioned, so it is out
 # of flex flow and costs the transport row no width at all.
-TRACK_OLD = open(os.path.join(REPO, "tools",
-                              "morph_affordance_track_before.txt"),
-                 encoding="utf-8").read()
-TRACK_NEW = open(os.path.join(REPO, "tools",
-                              "morph_affordance_track_after.txt"),
-                 encoding="utf-8").read()
+def track_text(name):
+    return open(os.path.join(REPO, "tools", name), encoding="utf-8").read()
+
+
+# The track block has THREE recognised spellings, and this script owns all of
+# them so the style stays single-writer:
+#   *_before  the pristine generated block (circle thumb, no caption)
+#   *_circle  the affordance block as first shipped (circle thumb + caption)
+#   *_after   the block this script now installs (pill thumb + caption)
+# Listing the intermediate as an alternative patch point is what lets the edit
+# stay idempotent across the shape change: a document already carrying the
+# circle spelling is upgraded in place rather than reported as unpatchable.
+TRACK_OLDS = [track_text("morph_affordance_track_before.txt"),
+              track_text("morph_affordance_track_circle.txt")]
+TRACK_NEW = track_text("morph_affordance_track_after.txt")
 
 EDITS = [
     ('morph slider receives both slots, not their conjunction',
-     CALLSITE_OLD, CALLSITE_NEW),
+     [CALLSITE_OLD], CALLSITE_NEW),
     ('hasBoth is derived, so the enablement rule is unchanged',
-     SIGNATURE_OLD, SIGNATURE_NEW),
-    ('the wrapper gives up the dim', WRAPPER_OLD, WRAPPER_NEW),
-    ('the track dims its own paint and names the slot it waits for',
-     TRACK_OLD, TRACK_NEW),
+     [SIGNATURE_OLD], SIGNATURE_NEW),
+    ('the wrapper gives up the dim', [WRAPPER_OLD], WRAPPER_NEW),
+    ('the track dims its own paint, names the slot it waits for, and '
+     'draws a pill thumb that stays inside it',
+     TRACK_OLDS, TRACK_NEW),
 ]
 
 # No reader may still expect a `hasBoth` prop from outside, and the wrapper
@@ -141,6 +176,10 @@ FORBIDDEN_AFTER = (
     'marginLeft: 6, opacity: hasBoth ? 1 : 0.35 } }',
     'function MorphSlider({ bankRef, hasBoth })',
     'MorphSlider, { bankRef, hasBoth:',
+    # The circle this control was reimplemented with, and the overhanging
+    # travel that came with it.
+    'width: grown ? 18 : 14, height: grown ? 18 : 14',
+    'marginLeft: grown ? -9 : -7',
 )
 REQUIRED_AFTER = (
     '"data-spectr-morph-hint": true',
@@ -156,7 +195,12 @@ REQUIRED_AFTER = (
     # thumb it drives in the DEFAULT (disabled) state.
     'id: "spectr-snapshot-morph"',
     'width: 90, height: 16',
-    'width: grown ? 18 : 14',
+    # The pill, and the travel that keeps it inside the 90px track: `left` is
+    # the ratio as a percentage and the negative margin is the same ratio of
+    # the thumb's own width, so the thumb's left edge runs 0 -> 90 - width
+    # instead of overhanging both ends by half its width.
+    'width: grown ? 26 : 22, height: grown ? 16 : 14',
+    'marginLeft: -((grown ? 26 : 22) * ratio)',
     '"data-spectr-morph-thumb-state": grown ? "hover" : "idle"',
 )
 
@@ -166,31 +210,39 @@ def escaped(value):
 
 
 def main():
-    for label, old, new in EDITS:
-        if old and old in new:
-            sys.exit('FAIL %s: patch point survives its own replacement' % label)
+    for label, olds, new in EDITS:
+        for old in olds:
+            if old and old in new:
+                sys.exit('FAIL %s: patch point survives its own replacement'
+                         % label)
 
     raw = open(PATH, encoding='utf-8').read()
     changed = False
-    applied = 0
-    already = 0
-    for label, old, new in EDITS:
-        old_e, new_e = escaped(old), escaped(new)
-        if raw.count(old_e) == 0 and raw.count(new_e) >= 1:
+    for label, olds, new in EDITS:
+        new_e = escaped(new)
+        if raw.count(new_e) >= 1:
             print('already applied ', label)
-            already += 1
             continue
-        count = raw.count(old_e)
-        if count != 1:
-            sys.exit('FAIL %s: patch point occurs %d times, expected 1'
-                     % (label, count))
-        raw = raw.replace(old_e, new_e)
+        # Exactly one of the recognised spellings must be present, exactly
+        # once. Two matching spellings would mean the block is duplicated and
+        # a blind replace would edit only one of them.
+        hits = [old for old in olds if raw.count(escaped(old)) == 1]
+        if len(hits) != 1:
+            counts = ', '.join(str(raw.count(escaped(old))) for old in olds)
+            sys.exit('FAIL %s: recognised patch points occur [%s] times, '
+                     'expected exactly one of them once' % (label, counts))
+        raw = raw.replace(escaped(hits[0]), new_e)
         changed = True
-        applied += 1
         print('applied         ', label)
 
-    if already and applied:
-        sys.exit('FAIL: the document is half patched; refusing to write')
+    # Stronger than the old half-patched guard, and version-agnostic: every
+    # edit must be in its FINAL state once, whether this run put it there or a
+    # previous one did.
+    for label, _olds, new in EDITS:
+        count = raw.count(escaped(new))
+        if count != 1:
+            sys.exit('FAIL %s: final text occurs %d times after patching, '
+                     'expected 1' % (label, count))
 
     for token in FORBIDDEN_AFTER:
         count = raw.count(escaped(token))
