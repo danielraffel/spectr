@@ -1115,10 +1115,11 @@ foreach(fmt VST3 AU CLAP Standalone)
 endforeach()
 endif()
 
-# Artifact-level host proof: load the built CLAP and VST3 through Pulp::host
-# and run real audio across each binary boundary. This is deliberately
-# separate from Spectr-test's in-process Processor fixtures.
+# Artifact-level host proof: load the built CLAP, VST3 and AU through
+# Pulp::host and run real audio across each binary boundary. This is
+# deliberately separate from Spectr-test's in-process Processor fixtures.
 if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} OR
+    TARGET ${SPECTR_NATIVE_AU_TARGET} OR
     TARGET SpectrWebViewReference_CLAP OR TARGET SpectrWebViewReference_VST3) AND
    TARGET Pulp::host)
     # Same browser-free selection as Spectr-test: a cutover SDK has no WebView
@@ -1155,6 +1156,23 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
             SPECTR_HAVE_TEST_VST3=1
             SPECTR_TEST_VST3_PATH="${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3")
         add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_VST3_TARGET})
+    endif()
+    if(TARGET ${SPECTR_NATIVE_AU_TARGET} AND APPLE)
+        # The AU case reaches its bundle through AudioComponentRegister rather
+        # than a path, so it needs the two frameworks that own that registry and
+        # the bundle it reads the component's declared identity from. The
+        # triplet below is the same one the acceptance gate's
+        # `auval -v aufx Spec Pulp` uses; the test asserts the built bundle's
+        # Info.plist still declares exactly this, so the two cannot drift apart.
+        target_compile_definitions(Spectr-artifact-test PRIVATE
+            SPECTR_HAVE_TEST_AU=1
+            SPECTR_TEST_AU_PATH="${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
+            SPECTR_TEST_AU_TYPE="aufx"
+            SPECTR_TEST_AU_SUBTYPE="${SPECTR_NATIVE_PLUGIN_CODE}"
+            SPECTR_TEST_AU_MANUFACTURER="Pulp")
+        target_link_libraries(Spectr-artifact-test PRIVATE
+            "-framework AudioToolbox" "-framework CoreFoundation")
+        add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_AU_TARGET})
     endif()
     if(TARGET SpectrWebViewReference_CLAP)
         target_compile_definitions(Spectr-artifact-test PRIVATE
