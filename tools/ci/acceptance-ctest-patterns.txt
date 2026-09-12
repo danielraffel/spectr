@@ -1,0 +1,39 @@
+# Test-name patterns the M5 product-acceptance focused-behavior gate runs.
+#
+# One pattern per line; blank lines and #-comments ignored. The gate combines
+# them into one alternation for `ctest -R`, AND asserts each one matches at
+# least one registered test. Three patterns in the previous inline alternation
+# matched NOTHING and nobody noticed, because a zero-match alternative inside a
+# big `(a|b|c)` is silent -- ctest still runs the other alternatives and
+# reports success. The tests behind them had therefore never run in CI:
+#
+#   ^#34:          -> catch_discover_tests registers these names WITH literal
+#   ^#34 bridge       quotes, so the name starts with '"', not '#'. 12 tests.
+#   ^native:<space> -> TEST_PREFIX is "native:" with no trailing space. 1 test.
+#
+# The quote-tolerant '^"?' prefix below survives either registration style.
+^"?#34:
+^"?#34 bridge
+^native N1
+^native editor
+^native settings
+^native semantic
+^native selected
+^every native dropdown
+^remaining native modal
+^native Flare
+^native frozen
+^native buttons
+^editor resize
+^editors default
+^the AU v2
+^a resize
+^native:
+editor authority
+import fidelity
+materialized
+^status overlay
+^settings overflow
+Built Spectr
+Spectr editor
+^Spectr-browser-

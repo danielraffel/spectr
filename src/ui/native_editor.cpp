@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <pulp/view/script_event_dispatch.hpp>
 #include <pulp/view/buttons.hpp>
+#include <pulp/view/hover_cursor.hpp>
 #include <pulp/view/input_events.hpp>
 #include <pulp/view/layout_snapshot.hpp>
 #include <pulp/view/pointer_dispatch.hpp>
@@ -980,9 +981,9 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // reopened. This reproduces the shipping resolution instead, verbatim from
     // the macOS host:
     //
-    //   mouseMoved:  deliver_hover_and_resolve_cursor(root, pt)
-    //                  -> simulate_hover, a DOM pointermove, a fresh hit test
-    //                set_ns_cursor_for_style(resolution.style);
+    //   mouseMoved:  rootView->simulate_hover(pt);
+    //                style = hover_cursor_at(root, pt);   // hit_test->cursor()
+    //                set_ns_cursor_for_style(style);
     //   mouseDown:   dragTarget = hit_test(pt); deliver_mouse_down(...);
     //                set_ns_cursor_for_style(dragTarget->cursor());
     //   mouseDragged: deliver_mouse_drag(...);
@@ -1000,6 +1001,14 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // cursor of a drag that is still notionally in progress. That is exactly
     // how the first run reported `grabbing` at every point including the plot
     // -- an instrument artefact that looked like a uniform app defect.
+    //
+    // A COMPLETED drag mutates it too, which is the subtler trap: the JS sets
+    // `cursor` on pointerup, that value persists in the View slot, and a later
+    // hover over the same view reports it rather than re-resolving -- because
+    // a buttonless move delivers no JS pointermove on this host. Measured at
+    // (660,60) on the home screen: `crosshair` when probed cold, `grab` when
+    // probed after a drag, same hit view either way. So order drag points LAST
+    // in SPECTR_CURSOR_POINTS, or treat a hover that follows one as unsound.
     if (settings_fixture_scrolled_ && !cursor_probe_done_) {
         const auto* probe_out = std::getenv("SPECTR_CURSOR_PROBE");
         const auto* probe_points = std::getenv("SPECTR_CURSOR_POINTS");
@@ -1089,26 +1098,41 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         }
                     }
                 } else {
-                    // The SAME function the macOS host's mouseMoved: calls --
-                    // not a copy of its steps. A probe that re-implements the
-                    // host is testing its own copy, and the copy is what goes
-                    // stale; that is how "cursors reach the shipping runtime"
-                    // came to stand beside "not visible in installed builds".
-#if defined(SPECTR_HAS_HOVER_DISPATCH)
-                    const auto hover =
-                        pulp::view::deliver_hover_and_resolve_cursor(root, a);
-#else
-                    // deliver_hover_and_resolve_cursor lands with the Pulp
-                    // hover-dispatch fix and does not exist in the pinned SDK.
-                    // Guarded rather than reimplemented: a probe that copies
-                    // the host's steps tests its own copy, and the copy is what
-                    // goes stale. Without the fix this probe cannot measure
-                    // what it exists to measure, so it reports a miss instead
-                    // of a cursor a viewer never sees.
+                    // The shipping macOS hover path, in the host's own order:
+                    //
+                    //   mouseMoved:  rootView->simulate_hover(pt);
+                    //                style = hover_cursor_at(root, pt);
+                    //                set_ns_cursor_for_style(style);
+                    //
+                    // `hover_cursor_at` is Pulp's own factoring of the rule
+                    // (`hit_test(p) ? target->cursor() : default_`), called BY
+                    // `window_host_mac.mm`'s `resolveHoverCursorAt:` and by
+                    // `pulp_plugin_apply_hover_cursor`. Calling the library
+                    // function rather than open-coding the hit test is what
+                    // keeps this probe from drifting away from the host.
+                    //
+                    // The order matters and is not cosmetic. `simulate_hover`
+                    // runs first because it is what flips `hovered_` and fires
+                    // `on_hover_move`, which may restyle the tree; resolving
+                    // before it would read the PREVIOUS frame's cursor. That
+                    // is the same staleness AppKit's own `-cursorUpdate:` pass
+                    // exhibits — it resolves from the hit view's slot without
+                    // delivering a hover sample, so it shows the slot's prior
+                    // value until the next `-mouseMoved:` lands.
+                    //
+                    // `hover_cursor_at` collapses "nothing under the pointer"
+                    // into `default_`, which is the one thing this probe must
+                    // NOT do: a dead probe point and "the app shows an arrow
+                    // here" have to read differently. So the hit is taken
+                    // separately, from a hit test run AFTER the hover sample,
+                    // and reported as `hit:false` when it misses.
+                    root.simulate_hover(a);
+                    pulp::view::View* hover_target = root.hit_test(a);
+                    const auto hover_style =
+                        pulp::view::hover_cursor_at(root, a);
                     struct { pulp::view::View* target;
                              pulp::view::View::CursorStyle style; }
-                        hover{nullptr, pulp::view::View::CursorStyle::default_};
-#endif
+                        hover{hover_target, hover_style};
                     if (hover.target == nullptr) {
                         hit_missing = true;
                     } else {

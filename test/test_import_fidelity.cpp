@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "0cdb964975467a0f93ebe83bcdfe821bcd84055518e5b57233e7829e2c73172c";
 constexpr std::string_view kAdapterDigest =
-    "0c8e13f445c910625806da729632f75d8f6b193c25773a95ea4688e6f56602d4";
+    "5a280e4b288986decd3ea34d20c196b836eac4e83d3a11231ad32ad470e3e5a7";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -543,9 +543,12 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(document.find("now - statusRefreshAtRef.current >= 700")
               != document.npos);
         CHECK(document.find("statusRefreshAtRef.current = now;") != document.npos);
-        // The remaining 150 ms interval is the low-rate zoom/readout sampler,
-        // not the retired status-dismiss timer.
-        CHECK(count_occurrences(document, "}, 150);") == 1);
+        // No 150 ms interval survives. The status-dismiss timer is armed
+        // from a ref, and the zoom readout is a leaf that subscribes to the
+        // viewport, so neither samples on a clock. An interval here is an
+        // app-root poll, and a root commit re-applies the whole imported
+        // document -- which is exactly the cost a drag cannot afford.
+        CHECK(count_occurrences(document, "}, 150);") == 0);
         CHECK(document.find(
                   "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;")
               != document.npos);
@@ -766,7 +769,11 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 2},
         ContractMarker{"aligned-band-binding", "\"boxes\":[{\"left\":0,\"top\":3,\"width\":13,\"height\":13,\"start\":0,\"length\":2},{\"left\":21,\"top\":3,\"width\":52.03125,\"height\":13,\"start\":3,\"length\":8}]"},
         ContractMarker{"single-band-count-text-binding", "\"text\":\"32 bands ▾\""},
-        ContractMarker{"band-dropdown-surface", "background: info.N === n ? \\\"rgba(120,180,255,0.18)\\\" : \\\"rgba(255,255,255,0.03)\\\","},
+        // The highlight reads the band-count setting directly. FilterBank
+        // derives its own N from that same setting, so a separate polled copy
+        // only ever lagged it -- and the label beside these buttons always
+        // read the setting.
+        ContractMarker{"band-dropdown-surface", "background: settings.bandCount === n ? \\\"rgba(120,180,255,0.18)\\\" : \\\"rgba(255,255,255,0.03)\\\","},
         ContractMarker{"edit-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.14)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"analyzer-dropdown-surface", "background: active ? \\\"rgba(255,255,255,0.08)\\\" : \\\"rgba(255,255,255,0.025)\\\","},
         ContractMarker{"settings-dropdown-surface", "background: active ? \\\"rgba(120,180,255,0.16)\\\" : \\\"rgba(255,255,255,0.025)\\\","},

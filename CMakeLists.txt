@@ -571,6 +571,92 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(Spectr-frame-cadence-selftest PROPERTIES TIMEOUT 60)
 endif()
 
+# The dropdown detector measures whichever checkout --root names. A default
+# pointing at another checkout makes a bare run report a verdict about code
+# that is not under test -- and a PASS describing a foreign tree is
+# indistinguishable from a PASS describing this one. This asserts the default
+# is this checkout and that the marker gate rejects a foreign root.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-menu-dropdown-detector-root-selftest
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_dropdown_affordances.py
+            --self-test)
+    set_tests_properties(Spectr-menu-dropdown-detector-root-selftest
+        PROPERTIES TIMEOUT 60)
+endif()
+
+# The dropdown affordances themselves, driven through Pulp's popup handler:
+# Escape dismisses, each ArrowDown moves exactly one row, Return closes, and an
+# outside press dismisses. Stepping is circular, so the assertion is
+# (i + 1) % count -- a raw delta of 1 would score a correct wrap as a skip.
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-menu-dropdown-affordances
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_dropdown_affordances.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-dropdown-affordances)
+    set_tests_properties(Spectr-menu-dropdown-affordances PROPERTIES
+        TIMEOUT 600
+        RESOURCE_LOCK spectr_native_materialized_editor)
+
+    # This detector spent a release reporting two FAILs against a healthy app
+    # because it dispatched keys the popup handler had no state to act on. A
+    # repaired measurement has to be shown catching the defect it claims to
+    # watch for, so this injects a second keyboard owner -- which double-steps
+    # the cursor, the user-reported symptom exactly -- and REQUIRES the arrow
+    # assertion to catch it. It fails if the measurement goes green.
+    add_test(NAME Spectr-menu-dropdown-affordances-negative-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_dropdown_affordances.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-dropdown-affordances-negctl
+            --negative-control)
+    set_tests_properties(Spectr-menu-dropdown-affordances-negative-control
+        PROPERTIES
+            TIMEOUT 600
+            RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
+# Arrow stepping in a dropdown must move exactly one row. The affordance test
+# above asserts a destination (three ArrowDowns then Return land on a named
+# caption), which a handler that steps two rows can also satisfy; this reads the
+# highlight index after every press instead. The self-test needs no binary.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-menu-arrow-step-selftest
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_arrow_step_exactly_one.py
+            --self-test)
+    set_tests_properties(Spectr-menu-arrow-step-selftest PROPERTIES TIMEOUT 60)
+endif()
+
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-menu-arrow-step
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_arrow_step_exactly_one.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-arrowstep)
+    set_tests_properties(Spectr-menu-arrow-step PROPERTIES
+        TIMEOUT 300
+        RESOURCE_LOCK spectr_native_materialized_editor)
+
+    # A gate nobody has watched fail is not a gate. This injects the second
+    # keyboard owner that was deliberately removed from this app and REQUIRES
+    # the assertion above to catch it; it fails if the measurement goes green.
+    add_test(NAME Spectr-menu-arrow-step-negative-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_arrow_step_exactly_one.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-arrowstep-negctl
+            --negative-control)
+    set_tests_properties(Spectr-menu-arrow-step-negative-control PROPERTIES
+        TIMEOUT 300
+        RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
 if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
     # Band drawing holds its cadence today (gesture p95 sits at or below the idle
     # control), so this ratio is a real floor rather than a rubber stamp.
@@ -660,6 +746,91 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --plant-swallow --expect-fail)
     set_tests_properties(Spectr-materialized-propagation-negative-control PROPERTIES
+        TIMEOUT 30)
+
+    # The modulation display, MEASURED rather than asserted. This drives the
+    # shipped rAF `draw` and `applyModulationFrame` out of the materialized
+    # document against a known producer and requires the painted peak-to-peak
+    # to match the published peak-to-peak, then mounts the real
+    # SpectrModulationSettings against a mock bridge and requires it to follow
+    # a native live-state frame. Both were user-visible: the rAF smoother was
+    # pulling every painted sample back toward the unmodulated value on every
+    # frame (a rate-independent ~29% of the true excursion lost), and the
+    # settings panel read its nine LFO scalars exactly once, at mount, so a
+    # host automating them animated the overlay while the panel stayed pinned.
+    add_test(NAME Spectr-materialized-modulation
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-modulation PROPERTIES TIMEOUT 60)
+    # Negative controls, one per contract. Each reinstates the exact pre-fix
+    # line and inverts the verdict, so the row is green only when the suite
+    # REJECTS it. As above the inversion lives in the script, not in WILL_FAIL,
+    # because WILL_FAIL accepts any non-zero exit -- including the ones that
+    # mean the control never ran.
+    add_test(NAME Spectr-materialized-modulation-smoothing-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-smoothing --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-smoothing-control PROPERTIES
+        TIMEOUT 60)
+    add_test(NAME Spectr-materialized-modulation-oneshot-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-oneshot --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-oneshot-control PROPERTIES
+        TIMEOUT 60)
+endif()
+
+# The zoom readout must be a leaf that subscribes to the viewport, never a
+# value the app root polls into root state. The app root used to hold a 150ms
+# setInterval that read the live viewport off the bank handle; a memo guard
+# kept it out of unchanged frames, which hid it, but zoom is exactly what moves
+# while the minimap is being dragged -- so the one interaction that has to stay
+# cheap committed the whole imported document every 150ms.
+#
+# Static checks alone cannot see a declaration that landed in the wrong
+# function body (that parses clean), so the suite also evaluates the readout's
+# own script block in a vm with a hook runtime and drives it: it must
+# subscribe, repaint on a zoom change, commit NOTHING across 200 pan samples
+# (a pan preserves the span, so the printed value cannot move), and release
+# its subscription on unmount.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-zoom-readout
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_zoom_readout.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-zoom-readout PROPERTIES TIMEOUT 30)
+    # The negative control. --plant-poller restores the pre-fix shape -- the
+    # root interval comes back and the readout reverts to a value handed down
+    # from root state -- and --expect-fail inverts the verdict, so this row is
+    # green only when the suite REJECTS that document. The plant asserts each
+    # of its three needles matched exactly once, so a drifted needle fails the
+    # control instead of quietly re-testing the current document. The
+    # inversion lives in the script rather than in WILL_FAIL for the same
+    # reason as the row above: WILL_FAIL accepts any non-zero exit.
+    add_test(NAME Spectr-materialized-zoom-readout-negative-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_zoom_readout.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-poller --expect-fail)
+    set_tests_properties(Spectr-materialized-zoom-readout-negative-control PROPERTIES
+        TIMEOUT 30)
+    # The second control, and the one that matters most. --plant-live-commit
+    # keeps the subscription but drops the live guard, which is the measured
+    # REGRESSION: coalescing live samples to one commit per frame is still a
+    # commit per frame, and it took minimap frame gaps >= 25ms from 16 to 29.
+    # Separate from the row above because the two fail different assertions,
+    # and a single plant that trips everything cannot show which check is
+    # load bearing.
+    add_test(NAME Spectr-materialized-zoom-readout-live-commit-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_zoom_readout.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-live-commit --expect-fail)
+    set_tests_properties(Spectr-materialized-zoom-readout-live-commit-control PROPERTIES
         TIMEOUT 30)
 endif()
 

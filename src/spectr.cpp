@@ -619,9 +619,21 @@ void Spectr::process(
                     // moves on screen. Display only — `audible` is a copy, and
                     // apply_internal_modulation deliberately leaves canonical
                     // state and the host parameter lanes untouched.
+                    // Depth is part of being active. apply_internal_modulation
+                    // returns the canonical field unchanged once depth reaches
+                    // zero, so an enabled LFO at depth 0 has nothing to show.
+                    // Reporting it as active anyway latches the editor overlay
+                    // on for the life of the session: the overlay keeps
+                    // ownership of the paint refs, the falling-edge release
+                    // below never runs, and every display frame pays for two
+                    // choc arrays plus a JSON dispatch carrying canonical
+                    // state. This guard is the one apply_internal_modulation
+                    // already applies per LFO.
                     const bool modulation_active =
-                        modulation_settings.enabled
-                        || modulation_settings.lfo2_enabled;
+                        (modulation_settings.enabled
+                         && modulation_settings.depth > 0.0f)
+                        || (modulation_settings.lfo2_enabled
+                            && modulation_settings.lfo2_depth > 0.0f);
                     // While running, every block is a new frame. On the falling
                     // edge one last frame carries active=false, which is the
                     // editor's cue to release the overlay and draw canonical

@@ -59,6 +59,26 @@ DEFAULT_PRESS_FRAME = 45
 DEFAULT_RELEASE_FRAME = 225
 DEFAULT_TRANSITION_WINDOW = 2
 
+# The minimap workload is THREE independently hit-tested gestures, not one, so
+# it presses and releases six times. Scoring it with the single-gesture
+# schedule leaves five transitions inside the "sustained" set, where a press
+# handler's cost reads as a drag that cannot hold its frame rate -- the exact
+# conflation the sustained/transition split exists to prevent. The constants
+# mirror the host's pump: a 60-sample gesture is 61 events, and each gesture is
+# followed by a settle window before the next one presses.
+MINIMAP_GESTURES = 3
+MINIMAP_GESTURE_SAMPLES = 60
+MINIMAP_SETTLE_FRAMES = 8
+
+
+def workload_transition_frames(mode: str, press: int, release: int) -> tuple[list[int], list[int]]:
+    """Press and release frame indices for one workload's scripted schedule."""
+    if mode != "minimap":
+        return [press], [release]
+    stride = MINIMAP_GESTURE_SAMPLES + 1 + MINIMAP_SETTLE_FRAMES
+    presses = [press + gesture * stride for gesture in range(MINIMAP_GESTURES)]
+    return presses, [frame + MINIMAP_GESTURE_SAMPLES for frame in presses]
+
 
 def percentile(values: list[float], q: float) -> float:
     if not values:
@@ -82,12 +102,18 @@ def summarize(gaps: list[tuple[int, float]]) -> dict:
 
 
 def split_transitions(gaps, press, release, window):
-    """Separate the press/release transition gaps from the sustained cadence."""
+    """Separate the press/release transition gaps from the sustained cadence.
+
+    `press` and `release` accept either a single frame index or a sequence of
+    them, because a workload may press more than once.
+    """
+    presses = [press] if isinstance(press, int) else list(press)
+    releases = [release] if isinstance(release, int) else list(release)
     transition, sustained = {}, []
     for frame, value in gaps:
-        if abs(frame - press) <= window:
+        if any(abs(frame - p) <= window for p in presses):
             transition.setdefault("press", []).append([frame, round(value, 3)])
-        elif abs(frame - release) <= window:
+        elif any(abs(frame - r) <= window for r in releases):
             transition.setdefault("release", []).append([frame, round(value, 3)])
         else:
             sustained.append((frame, value))
@@ -185,6 +211,31 @@ def self_test() -> int:
     if any(frame == 45 for frame, _ in sustained):
         failures.append("press-window gap leaked into the sustained set")
 
+    # A multi-gesture workload presses more than once. Both directions are
+    # checked: the later presses must be separated under the minimap schedule,
+    # and must NOT be separated under the single-gesture schedule -- otherwise
+    # the mode is being ignored and the split would quietly discard ordinary
+    # sustained gaps for every workload.
+    planted = [(114, 140.0), (174, 130.0), (243, 120.0), (150, 17.0)]
+    mini_press, mini_release = workload_transition_frames(
+        "minimap", DEFAULT_PRESS_FRAME, DEFAULT_RELEASE_FRAME)
+    if mini_press != [45, 114, 183] or mini_release != [105, 174, 243]:
+        failures.append(f"minimap schedule is wrong: {mini_press} / {mini_release}")
+    mini_transition, mini_sustained = split_transitions(
+        planted, mini_press, mini_release, DEFAULT_TRANSITION_WINDOW)
+    if len(mini_transition.get("press", [])) != 1:
+        failures.append("minimap second-gesture press was not separated")
+    if len(mini_transition.get("release", [])) != 2:
+        failures.append("minimap gesture releases were not separated")
+    if sorted(frame for frame, _ in mini_sustained) != [150]:
+        failures.append(f"minimap split kept the wrong sustained set: {mini_sustained}")
+    bands_press, bands_release = workload_transition_frames(
+        "bands", DEFAULT_PRESS_FRAME, DEFAULT_RELEASE_FRAME)
+    _, bands_sustained = split_transitions(
+        planted, bands_press, bands_release, DEFAULT_TRANSITION_WINDOW)
+    if sorted(frame for frame, _ in bands_sustained) != [114, 150, 174, 243]:
+        failures.append("single-gesture schedule wrongly separated minimap frames")
+
     for line in failures:
         print(f"self-test FAIL: {line}", file=sys.stderr)
     if failures:
@@ -232,14 +283,16 @@ def main() -> int:
         gesture_runs.append(run_once(args.app, args.mode, args.frames,
                                      os.path.join(tmp, f"{args.mode}-{index}.png")))
 
+    press_frames, release_frames = workload_transition_frames(
+        args.mode, args.press_frame, args.release_frame)
     report: dict = {"mode": args.mode, "runs": args.runs, "frames": args.frames,
-                    "press_frame": args.press_frame, "release_frame": args.release_frame,
+                    "press_frames": press_frames, "release_frames": release_frames,
                     "idle": [], "gesture": []}
 
     for label, runs in (("idle", idle_runs), ("gesture", gesture_runs)):
         for run in runs:
             transition, sustained = split_transitions(
-                run["gaps"], args.press_frame, args.release_frame, args.transition_window)
+                run["gaps"], press_frames, release_frames, args.transition_window)
             report[label].append({
                 "returncode": run["returncode"],
                 "painted_frames": run["painted_frames"],

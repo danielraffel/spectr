@@ -9,6 +9,15 @@ child to be the thumb.
 
 Zero height also means the control cannot be hit-tested by pointer, so this is a
 usability defect and not only a cosmetic one.
+
+The one shape that looks identical in the tree is a FLEX SPACER: a zero-height
+View with no children, whose whole job is to consume row space. Counting those
+as broken sliders made this detector report RED on a surface with no defect,
+which is indistinguishable from a real finding. A spacer is told apart by the
+company it keeps -- it sits in a crowded control row, while a slider track is
+essentially the only geometric content of its own row (track plus a value
+label). `--max-siblings` is that boundary, and the run prints how many nodes it
+excluded on that rule so the exclusion is visible rather than silent.
 """
 
 from __future__ import annotations
@@ -28,6 +37,9 @@ def main() -> int:
     ap.add_argument("--min-track-width", type=float, default=60.0,
                     help="ignore boxes too narrow to be a slider track")
     ap.add_argument("--max-track-width", type=float, default=400.0)
+    ap.add_argument("--max-siblings", type=int, default=3,
+                    help="a flat empty View in a row with more siblings than "
+                         "this is a flex spacer, not a slider track")
     ap.add_argument("--plant", choices=["flatten-track"],
                     help="zero a healthy track to prove the check can fail")
     args = ap.parse_args()
@@ -47,11 +59,18 @@ def main() -> int:
         if n.parent is not None:
             children[n.parent] = children.get(n.parent, 0) + 1
 
+    siblings: dict[int, int] = {}
+    for n in nodes:
+        siblings[n.parent] = siblings.get(n.parent, 0) + 1
+
     def is_track(n: ai.Node) -> bool:
         return (n.kind == "View" and n.visible
                 and args.min_track_width <= n.rect.w <= args.max_track_width)
 
-    candidates = [n for n in nodes if is_track(n)]
+    all_candidates = [n for n in nodes if is_track(n)]
+    candidates = [n for n in all_candidates
+                  if siblings.get(n.parent, 1) <= args.max_siblings]
+    spacers = len(all_candidates) - len(candidates)
     if args.plant == "flatten-track":
         healthy = [n for n in candidates if n.rect.h > 0 and children.get(n.index, 0) > 0]
         if not healthy:
@@ -71,6 +90,7 @@ def main() -> int:
 
     print(f"snapshot={os.path.basename(args.snapshot)}  "
           f"candidate_tracks={len(candidates)}  "
+          f"excluded_as_flex_spacers={spacers}  "
           f"CONTROL boxes_with_height_and_children={len(healthy)}")
     if not candidates:
         print("INCONCLUSIVE: nothing in this snapshot looks like a slider track")
