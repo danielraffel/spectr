@@ -171,6 +171,31 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(D, "slider_thumb_hover_growth.py"),
       "--idle", f(E11, "slider-hover-GREEN-idle.layout.json"),
       "--hover", f(E11, "slider-hover-GREEN-hover.layout.json"), "--plant"]),
+    # The 2026-09-11 pair above is a CIRCLE-era capture. The thumb is a pill
+    # now, and a growth check that had only ever been run against a square
+    # thumb would not have proved it still resolves one -- its finder used to
+    # require `w == h` and would have found nothing at all. This pair is the
+    # same probe re-run on the pill.
+    ("slider_thumb_hover_growth", "pill thumb grows under hover", 0,
+     [f(D, "slider_thumb_hover_growth.py"),
+      "--idle", f(E12, "slider-hover-PILL-idle.layout.json"),
+      "--hover", f(E12, "slider-hover-PILL-hover.layout.json")]),
+    ("slider_thumb_hover_growth", "plant: pill idle against itself", 1,
+     [f(D, "slider_thumb_hover_growth.py"),
+      "--idle", f(E12, "slider-hover-PILL-idle.layout.json"),
+      "--hover", f(E12, "slider-hover-PILL-hover.layout.json"), "--plant"]),
+
+    # The SHAPE of that thumb, read off the shipping artifact rather than a
+    # capture -- every state Spectr-native-shot captures has the morph slider
+    # disabled, where its thumb is `opacity: 0`, so no capture can adjudicate
+    # the morph half at all.
+    ("slider_thumb_pill_shape", "shipping artifact draws pills inside "
+     "their tracks", 0,
+     [f(D, "slider_thumb_pill_shape.py")]),
+    ("slider_thumb_pill_shape", "plant: put the circle back", 1,
+     [f(D, "slider_thumb_pill_shape.py"), "--plant", "circle"]),
+    ("slider_thumb_pill_shape", "plant: put the overhanging travel back", 1,
+     [f(D, "slider_thumb_pill_shape.py"), "--plant", "overhang"]),
 
     # the hit-target lane: a control must be reachable over the area it paints
     ("hit_target_reach", "settings toggles + sliders reach their paint", 0,
