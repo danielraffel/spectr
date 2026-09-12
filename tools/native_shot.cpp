@@ -469,6 +469,19 @@ struct Rig {
              "spectr-native-shot-census");
     }
 
+    // Non-throwing mirror of require_reachable. Every row in the modulation
+    // group is now MOUNTED at mount and hidden with display:none, so
+    // is_mounted() can no longer tell a disclosed row from a closed one --
+    // reachability is what separates them.
+    bool is_reachable(std::string_view selector) {
+        try {
+            require_reachable(selector);
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+
     void require_reachable(std::string_view selector) {
         eval("(() => { const el = document.querySelector(" + js_string(selector) + "); "
                  "if (!el) throw new Error('not mounted: " + std::string(selector) + "'); "
@@ -554,7 +567,8 @@ struct Rig {
     // are plain [data-spectr-setting-toggle] buttons, which is why the previous
     // [data-spectr-modulation-lfo] selector could never resolve -- so resolve
     // the runtime's own element id live and activate that. Index 0 is "LFO",
-    // index 1 is "LFO 2"; the destination chips are gated on LFO 2.
+    // index 1 is "LFO 2". Each toggle discloses only its OWN settings; the
+    // two shared destination rows below them are gated on either LFO.
     void activate_modulation_toggle(int index, const char* label) {
         std::string script = R"JS((() => {
   const inModulation = (n) => {
@@ -1494,22 +1508,47 @@ int main(int argc, char** argv) {
         // not mere presence, is the assertion that matters -- MOD-1 shipped
         // these same controls mounted behind a display:none ancestor, where
         // every static source-text check still passed.
-        // Target/Targets are now part of each LFO's disclosure: they do not
-        // exist while their LFO is off. That is the intended state, so probe
-        // for them instead of asserting them, and say which state we captured.
+        // Every row in the group is mounted at mount and hidden with
+        // display:none, because the widget bridge has no insert-at-index and
+        // no move -- a row that mounts late is appended, not placed. So the
+        // shared Target/Destinations rows EXIST here but are not visible while
+        // both LFOs are off. Probe rather than assert, and say which state we
+        // captured.
         // Treating "absent" as a failure would make the correct behaviour red.
-        const bool targets_mounted = rig.is_mounted(
-            "[data-spectr-modulation-target=\"bank\"]");
-        std::printf("modulation targets mounted with LFO off: %s%s\n",
-                    targets_mounted ? "yes" : "no",
-                    targets_mounted ? "  (expected: collapsed)" : "  (collapsed, as intended)");
-        if (targets_mounted) {
-        rig.require_reachable("[data-spectr-modulation-target=\"bank\"]");
-        rig.require_reachable("[data-spectr-modulation-target=\"snapshot-a\"]");
-        rig.require_reachable("[data-spectr-modulation-target=\"snapshot-b\"]");
-        rig.require_reachable("[data-spectr-modulation-target=\"morph\"]");
-        rig.require_reachable("[data-spectr-modulation-select=\"all\"]");
-        rig.require_reachable("[data-spectr-modulation-select=\"none\"]");
+        // With both LFOs off the shared destination rows must be MOUNTED (so
+        // their position is fixed before any toggle moves) and NOT REACHABLE
+        // (so the closed disclosure is real, not merely styled). Asserting
+        // both is what separates this design from the two failures it replaces:
+        // a row that is absent would be appended in the wrong place when it
+        // arrives, and a row that is merely dimmed would be a live control the
+        // user can still hit.
+        {
+            const char* destinations[] = {
+                "[data-spectr-modulation-target=\"bank\"]",
+                "[data-spectr-modulation-target=\"snapshot-a\"]",
+                "[data-spectr-modulation-target=\"snapshot-b\"]",
+                "[data-spectr-modulation-target=\"morph\"]",
+                "[data-spectr-modulation-select=\"all\"]",
+                "[data-spectr-modulation-select=\"none\"]",
+            };
+            std::string wrong;
+            for (const char* selector : destinations) {
+                const bool mounted = rig.is_mounted(selector);
+                const bool reachable = mounted && rig.is_reachable(selector);
+                std::printf("destination %-46s mounted=%-3s reachable=%-3s\n",
+                            selector, mounted ? "yes" : "no",
+                            reachable ? "yes" : "no");
+                if (!mounted || reachable) {
+                    if (!wrong.empty()) wrong += ", ";
+                    wrong += selector;
+                    wrong += mounted ? " (reachable while both LFOs are off)"
+                                     : " (not mounted)";
+                }
+            }
+            if (!wrong.empty())
+                throw std::runtime_error(
+                    "PRODUCT BUG: with both LFOs off every destination control "
+                    "must be mounted and hidden, but: " + wrong);
         }
 
         const pulp::view::Label* modulation = nullptr;
@@ -1724,8 +1763,9 @@ int main(int argc, char** argv) {
         // group, so a View* captured before the click can be stale, and the
         // node we want in view moves as the content grows. Scrolling to the
         // MODULATION heading is right while the section is short, but once
-        // LFO 2 is open its destination chips sit below the fold -- anchoring
-        // there is what made three target states capture byte-identically.
+        // LFO 2 is open the shared destination rows sit below the fold --
+        // anchoring there is what made three target states capture
+        // byte-identically.
         // Appended to every capture taken after the settings body has been
         // unwedged (see below), so a diagnostic capture can never be mistaken
         // for a capture of the shipping layout.
@@ -1857,13 +1897,14 @@ int main(int argc, char** argv) {
         show_modulation("05-MODULATION-lfo1-expanded", "MODULATION");
 
         // ── Drive LFO 2 ──────────────────────────────────────────────
-        // The destination chips are gated on LFO 2, not LFO 1: the shipping
-        // asset renders the "Targets" field inside `value.lfo2Enabled && ...`.
-        // Turning only the first toggle on can never reveal them.
+        // The shared destination rows sit BELOW both LFO blocks, so opening
+        // LFO 2 pushes them further down the scroll. They are reachable with
+        // either LFO on; this drives both so the fully expanded group is the
+        // one captured.
         rig.activate_modulation_toggle(1, "LFO 2");
         rig.report_modulation_dom("after LFO 2 on");
         rig.report_native_state("after LFO 2 on");
-        show_modulation("06-MODULATION-lfo2-expanded", "Targets");
+        show_modulation("06-MODULATION-lfo2-expanded", "Destinations");
 
         // Now an ASSERTION, not a probe. With both LFOs driven on, absent
         // destination chips are a product bug, so name every selector that
@@ -1900,23 +1941,23 @@ int main(int argc, char** argv) {
         rig.activate("[data-spectr-modulation-target=\"morph\"]");
         rig.report_modulation_dom("after MORPH click 1");
         rig.report_native_state("after MORPH click 1");
-        show_modulation("07-MODULATION-target-morph-SELECTED", "Targets");
+        show_modulation("07-MODULATION-target-morph-SELECTED", "Destinations");
 
         rig.activate("[data-spectr-modulation-target=\"morph\"]");
         rig.report_modulation_dom("after MORPH click 2");
         rig.report_native_state("after MORPH click 2");
-        show_modulation("08-MODULATION-target-morph-DISABLED", "Targets");
+        show_modulation("08-MODULATION-target-morph-DISABLED", "Destinations");
 
         // ALL / NONE drive the whole destination set at once.
         rig.activate("[data-spectr-modulation-select=\"all\"]");
         rig.report_modulation_dom("after ALL");
         rig.report_native_state("after ALL");
-        show_modulation("09-MODULATION-targets-all", "Targets");
+        show_modulation("09-MODULATION-targets-all", "Destinations");
 
         rig.activate("[data-spectr-modulation-select=\"none\"]");
         rig.report_modulation_dom("after NONE");
         rig.report_native_state("after NONE");
-        show_modulation("10-MODULATION-targets-none", "Targets");
+        show_modulation("10-MODULATION-targets-none", "Destinations");
 
         // Back to the collapsed state, proving the disclosure closes as well
         // as it opens -- a one-way drive would hide a stuck-open bug.
