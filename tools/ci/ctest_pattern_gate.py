@@ -30,16 +30,35 @@ import sys
 DEAD_PLANT = "^this-pattern-matches-no-test-by-construction$"
 
 
-def load_patterns(path: str) -> list[str]:
-    out = []
+# A pattern may name a lane this environment cannot provide -- the browser
+# oracle lane registers its tests only when BOTH node and chrome are found, and
+# CMake warns loudly when it is disabled. Such a pattern matching nothing is a
+# fact about the runner, not a rotted pattern, and the two must not be conflated
+# in either direction: it is never DEAD, and it is never silently fine either.
+# The reason is mandatory so "optional" cannot become a blanket excuse.
+OPTIONAL_RE = re.compile(r"^optional\(([^)]+)\):\s*(.+)$")
+
+
+def load_patterns(path: str) -> tuple[list[str], dict[str, str]]:
+    out: list[str] = []
+    optional: dict[str, str] = {}
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
-            if line and not line.startswith("#"):
+            if not line or line.startswith("#"):
+                continue
+            m = OPTIONAL_RE.match(line)
+            if m:
+                reason, pat = m.group(1).strip(), m.group(2).strip()
+                if not reason:
+                    raise SystemExit(f"optional pattern {pat!r} has no reason")
+                optional[pat] = reason
+                out.append(pat)
+            else:
                 out.append(line)
     if not out:
         raise SystemExit(f"no patterns in {path} -- refusing to assert nothing")
-    return out
+    return out, optional
 
 
 def count(build_dir: str, pattern: str) -> int:
@@ -64,7 +83,7 @@ def main() -> int:
                     help="add a pattern that cannot match, so the gate MUST fail")
     args = ap.parse_args()
 
-    patterns = load_patterns(args.patterns)
+    patterns, optional = load_patterns(args.patterns)
 
     if args.emit_regex:
         print("(" + "|".join(patterns) + ")")
@@ -85,17 +104,25 @@ def main() -> int:
               "zero-match pattern would prove nothing", file=sys.stderr)
         return 2
 
-    dead, matched = [], 0
+    dead, unavailable, matched = [], [], 0
     for p in patterns:
         n = count(args.build_dir, p)
         matched += n
-        flag = "  <<< MATCHES NOTHING" if n == 0 else ""
+        if n == 0 and p in optional:
+            flag = f"  <<< UNAVAILABLE ({optional[p]}) -- NOT run, NOT coverage"
+            unavailable.append(p)
+        else:
+            flag = "  <<< MATCHES NOTHING" if n == 0 else ""
+            if n == 0:
+                dead.append(p)
         print(f"  {n:>4}  {p}{flag}")
-        if n == 0:
-            dead.append(p)
 
     print(f"\n{len(patterns)} pattern(s), {matched} name match(es) "
           f"(patterns may overlap)")
+    if unavailable:
+        print(f"{len(unavailable)} pattern(s) NOT run because their lane is "
+              f"unavailable here: "
+              + ", ".join(f"{p} ({optional[p]})" for p in unavailable))
     if dead:
         print(f"DEAD: {len(dead)} pattern(s) match no registered test. The "
               f"tests they were written for do not run, and the alternation "
