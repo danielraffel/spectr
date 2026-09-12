@@ -10,6 +10,10 @@
 #include <string>
 #include <string_view>
 
+#include <chrono>
+#include <cstdlib>
+#include <thread>
+
 namespace spectr {
 
 // ── Viewport log-frequency codec ─────────────────────────────────────────
@@ -326,19 +330,38 @@ void register_surface_params(pulp::state::StateStore& store) {
 namespace spectr {
 
 void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask&) noexcept {
+    // Fixture-only. Holds this worker back so a test can prove the audio path
+    // reads the store on its own rather than by winning a race with this
+    // thread. Read once; unset in every shipping configuration, where the
+    // branch is a single relaxed load of a zero.
+    static const int stall_ms = [] {
+        const char* raw = std::getenv("SPECTR_TEST_PARAM_SYNC_STALL_MS");
+        if (raw == nullptr) return 0;
+        const int parsed = std::atoi(raw);
+        return parsed > 0 ? std::min(parsed, 5000) : 0;
+    }();
+    if (stall_ms > 0)
+        std::this_thread::sleep_for(std::chrono::milliseconds(stall_ms));
     (void)static_cast<Spectr*>(ctx)->apply_surface_params(/*apply_morph=*/true);
 }
 
-bool Spectr::surface_params_drifted_() const noexcept {
+Spectr::SurfaceDrift Spectr::sample_surface_drift_() noexcept {
+    SurfaceDrift drift;
     const auto* store = param_store_;
-    if (!store) return false;
+    if (!store) return drift;
     for (std::size_t slot = 0; slot < kSurfaceCacheSlots; ++slot) {
-        if (store->get_value(detail::surface_slot_param_id(slot))
-                != applied_param_cache_[slot].load(std::memory_order_relaxed)) {
-            return true;
-        }
+        const float value =
+            store->get_value(detail::surface_slot_param_id(slot));
+        audio_surface_scratch_[slot] = value;
+        if (value != applied_param_cache_[slot].load(std::memory_order_relaxed))
+            drift.worker = true;
+        if (value != audio_applied_surface_[slot])
+            drift.audio = true;
     }
-    return false;
+    // Nothing has been pushed yet, so the zero-initialised record describes
+    // no block and cannot be trusted to match.
+    if (!audio_applied_surface_valid_) drift.audio = true;
+    return drift;
 }
 
 ModulationSettings Spectr::modulation_from_store_() const noexcept {

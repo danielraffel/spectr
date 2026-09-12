@@ -334,6 +334,33 @@ foreach(_spectr_native_target
     endif()
 endforeach()
 
+# ── Product icon ───────────────────────────────────────────────────────
+# Spectr's own five-bar spectrum mark, on the dark ground the editor chrome
+# already uses. tools/icon/generate_icon.py rebuilds every asset from the
+# logo geometry; resources/icon/spectr-icon.svg is the vector source.
+#
+# Pulp wires an icon into the standalone .app only: its VST3/AU/CLAP
+# Info.plist templates carry no CFBundleIconFile key and nothing copies an
+# .icns into those bundles. The plugin bundles therefore stay unbranded
+# until the pinned SDK carries that support.
+#
+# The committed .icns is attached directly rather than through
+# pulp_app_icon(). That helper takes a single 1024 PNG and downscales it
+# with sips, whose Lanczos kernel overshoots on the tile edge: at 16px it
+# rings the border with bright halos and smears the five bars into one
+# blob. resources/icon/Spectr.icns instead carries a render laid out on
+# each size's own pixel grid. Both mechanisms are stock CMake bundle
+# wiring; this one just supplies the finished asset.
+if(APPLE AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET})
+    set_source_files_properties(resources/icon/Spectr.icns PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(${SPECTR_NATIVE_STANDALONE_TARGET} PRIVATE
+        resources/icon/Spectr.icns)
+    set_target_properties(${SPECTR_NATIVE_STANDALONE_TARGET} PROPERTIES
+        MACOSX_BUNDLE_ICON_FILE "Spectr.icns")
+endif()
+
+
 foreach(_forbidden_native_source
         src/ui/editor_view.cpp
         resources/editor.html)
@@ -1379,6 +1406,30 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         target_link_libraries(Spectr-artifact-test PRIVATE
             "-framework AudioToolbox" "-framework CoreFoundation")
         add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_AU_TARGET})
+
+        # A host that changes a band by WRITING the parameter instead of
+        # sending an event -- an AU generic control, a plain
+        # AudioUnitSetParameter -- used to leave the adoption entirely to
+        # Spectr's sync worker, which is a thread. That made the audible
+        # result depend on the worker being scheduled rather than on samples
+        # processed, and the AU case above lost that race roughly one run in
+        # eight, at the mute assertion or at the unmute one depending on which
+        # write the worker was late for. A flaky row is worse than a missing
+        # one: it reads as a regression in whatever PR happens to catch it.
+        #
+        # This row holds the worker back for 200 ms -- far longer than the
+        # whole render takes -- so the case can only pass if the audio path
+        # reaches the store on its own. It is the negative control made
+        # permanent: against the pre-fix processor it fails EVERY run, and it
+        # is the only form in which that can be asserted at all, since the
+        # defect is a race no ordinary run reproduces on demand.
+        add_test(NAME Spectr-au-param-write-without-sync-worker
+            COMMAND Spectr-artifact-test
+                "Pulp host loads and processes the built Spectr AU artifact")
+        set_tests_properties(Spectr-au-param-write-without-sync-worker
+            PROPERTIES
+                ENVIRONMENT "SPECTR_TEST_PARAM_SYNC_STALL_MS=200"
+                TIMEOUT 180)
     endif()
     if(TARGET SpectrWebViewReference_CLAP)
         target_compile_definitions(Spectr-artifact-test PRIVATE

@@ -6699,6 +6699,30 @@
       case "pointerEvents":
         call("setPointerEvents", id, value);
         return true;
+      // RN `hitSlop` grows ONLY the area hit_test() accepts -- never the
+      // painted box, never the Yoga layout -- so a visually small control can
+      // present a comfortable pointer target without the design moving.
+      // Accepts a number, an RN {top,right,bottom,left} object, or a
+      // CSS-shorthand string of 1-4 numbers with margin's fill rules.
+      case "hitSlop": {
+        const _hs = value;
+        let _t = 0, _r = 0, _b = 0, _l = 0;
+        if (_hs != null && typeof _hs === "object") {
+          _t = parseFloat(_hs.top) || 0;
+          _r = parseFloat(_hs.right) || 0;
+          _b = parseFloat(_hs.bottom) || 0;
+          _l = parseFloat(_hs.left) || 0;
+        } else {
+          const _p = String(_hs == null ? "" : _hs).trim().split(/\s+/)
+            .map(function (n) { return parseFloat(n) || 0; });
+          _t = _p.length > 0 ? _p[0] : 0;
+          _r = _p.length > 1 ? _p[1] : _t;
+          _b = _p.length > 2 ? _p[2] : _t;
+          _l = _p.length > 3 ? _p[3] : _r;
+        }
+        call("setHitSlop", id, _t, _r, _b, _l);
+        return true;
+      }
       case "userSelect":
         call("setUserSelect", id, value);
         return true;
