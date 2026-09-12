@@ -334,6 +334,33 @@ foreach(_spectr_native_target
     endif()
 endforeach()
 
+# ── Product icon ───────────────────────────────────────────────────────
+# Spectr's own five-bar spectrum mark, on the dark ground the editor chrome
+# already uses. tools/icon/generate_icon.py rebuilds every asset from the
+# logo geometry; resources/icon/spectr-icon.svg is the vector source.
+#
+# Pulp wires an icon into the standalone .app only: its VST3/AU/CLAP
+# Info.plist templates carry no CFBundleIconFile key and nothing copies an
+# .icns into those bundles. The plugin bundles therefore stay unbranded
+# until the pinned SDK carries that support.
+#
+# The committed .icns is attached directly rather than through
+# pulp_app_icon(). That helper takes a single 1024 PNG and downscales it
+# with sips, whose Lanczos kernel overshoots on the tile edge: at 16px it
+# rings the border with bright halos and smears the five bars into one
+# blob. resources/icon/Spectr.icns instead carries a render laid out on
+# each size's own pixel grid. Both mechanisms are stock CMake bundle
+# wiring; this one just supplies the finished asset.
+if(APPLE AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET})
+    set_source_files_properties(resources/icon/Spectr.icns PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(${SPECTR_NATIVE_STANDALONE_TARGET} PRIVATE
+        resources/icon/Spectr.icns)
+    set_target_properties(${SPECTR_NATIVE_STANDALONE_TARGET} PROPERTIES
+        MACOSX_BUNDLE_ICON_FILE "Spectr.icns")
+endif()
+
+
 foreach(_forbidden_native_source
         src/ui/editor_view.cpp
         resources/editor.html)
