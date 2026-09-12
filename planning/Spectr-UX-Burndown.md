@@ -837,7 +837,35 @@ will measure a dead instrument and read it as a defect.
 
 - [x] The right-side dBFS scale is semantically correct.
 - [x] Minimap edge dragging cannot move the opposite trim.
-- [ ] Fast band drawing and minimap interaction remain intact.
+- [x] Fast band drawing and minimap interaction remain intact.
+
+Band-drawing and minimap evidence, both Perfetto-bound and both merged.
+
+Band drawing was measured against the reference build the row was written
+against (`Spectr-ALL-FIXES-20260909.app`), interleaved with an idle control:
+drag p95 18.03 ms at a 1.00 idle ratio with 10 gaps >= 25 ms, versus the
+reference's 81.61 ms at 4.12 with 43. It was already faster than the build it
+had to match, so nothing was changed for it.
+
+Minimap was a zero-order hold, not a frame-rate problem: the audio owner
+sampled the LFO once per processed block (~190/s) while the editor repainted
+per display frame (60/s), so each painted frame consumed 3-5 producer steps.
+The fix publishes the LFO's inputs and evaluates the same pure
+`lfo_value` / `apply_internal_modulation` the audio owner calls, at frame time.
+
+Receipt on trace SDK `6aaa1954` (43 perfetto symbols; the released pin carries
+0 and can never be traced), main `8a71d6f` vs fix `8ba1fbe`: inter-frame gaps
+>= 25 ms **16 -> 3**, `js_native:__flushTimers__` sum 272.07 -> 0.26 ms. A
+second instrument agrees (cadence probe 18 -> 3). `__flushFrames__` is flat at
+437 -> 443 ms and never was elevated, so the honest claim is that the timer
+cost is removed without incurring a per-frame one.
+
+Reported as gap counts rather than medians because present mode is `Fifo`, so a
+median pins at the vsync interval and carries no information. The analyzer
+alone would have certified the pre-fix trace as clean -- it scores frame
+durations and is structurally blind to a gap in which no frame was painted, so
+the gap query is paired with it.
+
 
 dBFS evidence: `788e25b` anchors the ruler to the plot the curve is actually
 drawn in. `Analyzer bridge: post-DSP spectrum preserves peak-amplitude dBFS`
