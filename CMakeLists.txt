@@ -334,6 +334,33 @@ foreach(_spectr_native_target
     endif()
 endforeach()
 
+# ── Product icon ───────────────────────────────────────────────────────
+# Spectr's own five-bar spectrum mark, on the dark ground the editor chrome
+# already uses. tools/icon/generate_icon.py rebuilds every asset from the
+# logo geometry; resources/icon/spectr-icon.svg is the vector source.
+#
+# Pulp wires an icon into the standalone .app only: its VST3/AU/CLAP
+# Info.plist templates carry no CFBundleIconFile key and nothing copies an
+# .icns into those bundles. The plugin bundles therefore stay unbranded
+# until the pinned SDK carries that support.
+#
+# The committed .icns is attached directly rather than through
+# pulp_app_icon(). That helper takes a single 1024 PNG and downscales it
+# with sips, whose Lanczos kernel overshoots on the tile edge: at 16px it
+# rings the border with bright halos and smears the five bars into one
+# blob. resources/icon/Spectr.icns instead carries a render laid out on
+# each size's own pixel grid. Both mechanisms are stock CMake bundle
+# wiring; this one just supplies the finished asset.
+if(APPLE AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET})
+    set_source_files_properties(resources/icon/Spectr.icns PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(${SPECTR_NATIVE_STANDALONE_TARGET} PRIVATE
+        resources/icon/Spectr.icns)
+    set_target_properties(${SPECTR_NATIVE_STANDALONE_TARGET} PROPERTIES
+        MACOSX_BUNDLE_ICON_FILE "Spectr.icns")
+endif()
+
+
 foreach(_forbidden_native_source
         src/ui/editor_view.cpp
         resources/editor.html)
@@ -1045,6 +1072,46 @@ if(SPECTR_NODE_EXECUTABLE)
                 ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
                 --plant ${_axis_plant} --expect-fail)
         set_tests_properties(Spectr-materialized-axis-headers-control-${_axis_plant}
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+endif()
+
+# The response curve is plotted through band CENTRES, so at the two extremes
+# it began and ended halfway across the first and last band -- a visibly
+# half-drawn band at each end of the plot, which is what the user reported.
+#
+# Like the axis headings above, this is canvas ink with no layout node, so
+# painted_vs_measured_width / box_intersection / ink_extents are structurally
+# blind to it. This suite runs the shipping document's own bank block against
+# a recording 2D context and reads the coordinates the real painter emitted,
+# asserting them against the document's OWN bandLeftX / getGeom expressions at
+# 32 and 64 bands and two window sizes. It pins no pixel constant: band count
+# and window size are exactly what the user changes.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-curve-edge-span
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_curve_edge_span.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-curve-edge-span PROPERTIES TIMEOUT 60)
+    # Three negative controls, each restoring one pre-fix form so a failure
+    # names which assertion is load bearing. `--expect-fail` inverts the
+    # verdict inside the script rather than via WILL_FAIL, which would accept
+    # the exit 2 the harness uses when it cannot run at all -- a usage error
+    # would satisfy the control and prove nothing.
+    #
+    #   response-centres      the RESPONSE line goes back to band centres.
+    #   overlay-centres       the iir/hybrid dsp curve goes back to centres.
+    #   geometry-follows-view band columns start tracking the zoom window,
+    #                         which would make the first/last VISIBLE band
+    #                         stop being band 0 / N-1 and silently point every
+    #                         span in this suite at the wrong columns.
+    foreach(_curve_plant response-centres overlay-centres geometry-follows-view)
+        add_test(NAME Spectr-materialized-curve-edge-control-${_curve_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_curve_edge_span.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_curve_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-curve-edge-control-${_curve_plant}
             PROPERTIES TIMEOUT 60)
     endforeach()
 endif()

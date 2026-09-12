@@ -859,6 +859,137 @@ void capture(Rig& rig,
                       backend, scale, true);
 }
 
+// Address one shipping control by its authored HTML `id`. The materialized
+// runtime carries an element's authored id through as the view id, so
+// `spectr-snapshot-capture-a` reaches the real control rather than one of the
+// generated `__behavior_pr_*` nodes a structural search would have to guess at.
+pulp::view::View* find_by_id(pulp::view::View& view, std::string_view id) {
+    if (view.id() == id) return &view;
+    for (auto* child : view.sorted_children_by_z_index())
+        if (auto* hit = find_by_id(*child, id)) return hit;
+    return nullptr;
+}
+
+// Root-space origin, which is NOT the sum of `bounds()` offsets whenever a
+// ScrollView sits on the path. `ScrollView::hit_test` descends with
+// `child_point = local_point + scroll - child.bounds()`, so the inverse
+// direction has to SUBTRACT the scroll of every ScrollView ancestor. Summing
+// bounds alone reported the Settings toggles at y=912 inside an 860-tall root,
+// where `hit_test` correctly returns nothing -- and "nothing owns this point"
+// reads exactly like "a child swallowed the press", which is the very thing
+// this probe exists to tell apart.
+void root_origin(const pulp::view::View& view, float& out_x, float& out_y) {
+    float x = 0.0f;
+    float y = 0.0f;
+    for (const auto* node = &view; node != nullptr; node = node->parent()) {
+        x += node->bounds().x;
+        y += node->bounds().y;
+        if (const auto* scroll =
+                dynamic_cast<const pulp::view::ScrollView*>(node->parent())) {
+            x -= scroll->scroll_x();
+            y -= scroll->scroll_y();
+        }
+    }
+    out_x = x;
+    out_y = y;
+}
+
+// The pair of rects this probe exists to compare: what the eye sees and what a
+// pointer can reach. `hit_bounds()` is `local_bounds()` grown by `hit_slop()`,
+// so with no slop set the two are identical -- and the report says so, rather
+// than implying a target that is not there.
+struct HitReport {
+    bool found = false;
+    bool hit_testable = false;
+    pulp::view::Rect painted{};
+    pulp::view::Rect hit{};
+};
+
+HitReport measure_hit(pulp::view::View& root, std::string_view id) {
+    HitReport out;
+    auto* view = find_by_id(root, id);
+    if (view == nullptr) return out;
+    float x = 0.0f;
+    float y = 0.0f;
+    root_origin(*view, x, y);
+    const auto slop = view->hit_slop();
+    const auto box = view->bounds();
+    out.found = true;
+    out.hit_testable = view->hit_testable();
+    out.painted = {x, y, box.width, box.height};
+    out.hit = {x - slop.left, y - slop.top,
+               box.width + slop.left + slop.right,
+               box.height + slop.top + slop.bottom};
+    return out;
+}
+
+void print_hit(const char* label, const HitReport& report) {
+    if (!report.found) {
+        std::printf("[hit] %-30s NOT FOUND\n", label);
+        return;
+    }
+    std::printf("[hit] %-30s painted=(%.1f,%.1f %.1fx%.1f) "
+                "hit=(%.1f,%.1f %.1fx%.1f) grown=%+.1fx%+.1f hittable=%s\n",
+                label, report.painted.x, report.painted.y,
+                report.painted.width, report.painted.height,
+                report.hit.x, report.hit.y,
+                report.hit.width, report.hit.height,
+                report.hit.width - report.painted.width,
+                report.hit.height - report.painted.height,
+                report.hit_testable ? "yes" : "no");
+}
+
+// Which view actually owns a point. A probe that clicks a coordinate and then
+// reports the control's state cannot distinguish "the press was swallowed by a
+// child" from "the handler ran and did nothing", so resolve the target first
+// and print it. This is the discriminator for the whole lane.
+// Which handler channels a view carries. `on_click` is the one the click
+// bubble walks for (View::simulate_click and every platform host resolve the
+// nearest ancestor with it), so printing the chain turns "the press did
+// nothing" into a statement about a specific, checkable wiring.
+std::string channels(const pulp::view::View& v) {
+    std::string out;
+    if (v.on_click) out += "click ";
+    if (v.on_pointer_event) out += "pointer ";
+    if (v.on_dom_pointer_event) out += "dom-pointer ";
+    if (v.on_hover_enter) out += "hover ";
+    return out.empty() ? "(none)" : out;
+}
+
+void print_chain(pulp::view::View& root, float x, float y) {
+    auto* target = root.hit_test(pulp::view::Point{x, y});
+    if (target == nullptr) {
+        std::printf("[chain] (%.1f,%.1f) -> nothing\n", x, y);
+        return;
+    }
+    int depth = 0;
+    for (auto* node = target; node != nullptr; node = node->parent(), ++depth) {
+        std::printf("[chain]   %d %-22s %.0fx%.0f  handlers=%s\n", depth,
+                    node->id().empty() ? "(anon)" : node->id().c_str(),
+                    node->bounds().width, node->bounds().height,
+                    channels(*node).c_str());
+        if (node->on_click) break;
+        if (depth >= 6) break;
+    }
+}
+
+std::string owner_at(pulp::view::View& root, float x, float y) {
+    auto* target = root.hit_test(pulp::view::Point{x, y});
+    if (target == nullptr) return "(nothing)";
+    std::string id = target->id();
+    if (!id.empty()) return id;
+    // An anonymous node still has to be nameable, or "the knob swallowed it"
+    // and "nothing is there" read identically. Walk up to the nearest named
+    // ancestor and say how deep the unnamed target sits below it.
+    int depth = 0;
+    for (auto* node = target->parent(); node != nullptr; node = node->parent()) {
+        ++depth;
+        if (!node->id().empty())
+            return "(anon +" + std::to_string(depth) + " under " + node->id() + ")";
+    }
+    return "(anon, no named ancestor)";
+}
+
 const char* backend_name(pulp::view::ScreenshotBackend backend) {
     switch (backend) {
         case pulp::view::ScreenshotBackend::gpu: return "gpu (Dawn + Skia offscreen)";
@@ -1064,6 +1195,105 @@ int main(int argc, char** argv) {
                 std::printf("[focus] instrument unusable: the tree is too small "
                             "to say anything about focus.\n");
                 return 3;
+            }
+            return 0;
+        }
+
+        // CURVE-EDGE: the response/analyzer curve must cover the WHOLE first
+        // and last band. Plotted through band CENTRES it begins and ends
+        // halfway across those two bands, leaving a half-drawn band at each
+        // end of the plot. A canvas stroke has no layout node, so this mode
+        // exists to put the two ends of the plot on screen at the band counts
+        // and the zoom the user actually changes -- 32 and 64 bands, and a
+        // viewport that is not 1.00x.
+        //
+        // Every gesture below goes through the SHIPPING handlers
+        // (onPointerDown / onPointerMove / onPointerUp on the filter surface,
+        // and the bands menu's own buttons), so what is captured is the
+        // product's own path, not a staged canvas.
+        //
+        // Separate mode, so it cannot perturb the fixture sequence below.
+        // SPECTR_CURVE_EDGE_SHOT=<tag> names the capture set.
+        if (const char* curve_tag = std::getenv("SPECTR_CURVE_EDGE_SHOT")) {
+            const std::string tag{curve_tag};
+
+            const auto pointer = [&rig](const char* type, double x, double y) {
+                char script[640];
+                std::snprintf(script, sizeof(script),
+                    "(() => { const ok = globalThis"
+                    ".__pulpActivateMaterializedElement__("
+                    "'[data-spectr-filter-surface]', '%s', "
+                    "{ clientX: %.2f, clientY: %.2f, button: 0, buttons: 1, "
+                    "pointerId: 1, pointerType: 'mouse', shiftKey: false, "
+                    "altKey: false, metaKey: false, ctrlKey: false, "
+                    "preventDefault: () => {}, stopPropagation: () => {} }); "
+                    "if (!ok) throw new Error('%s not delivered'); "
+                    "if (typeof globalThis.__pulpRuntimeSettle__ === 'function')"
+                    " globalThis.__pulpRuntimeSettle__(4); })();",
+                    type, x, y, type);
+                rig.eval(script, "spectr-curve-edge-pointer");
+                settle(rig.clock, 4);
+            };
+
+            // The plot box, read from the document's own getGeom rather than
+            // restated here: a gesture aimed at the wrong box would sculpt
+            // nothing and the capture would be a flat line that cannot show
+            // this defect at all.
+            rig.eval("(() => { const w = document.querySelector("
+                     "'[data-spectr-filter-surface]'); "
+                     "globalThis.__curveWrap = { cw: w.clientWidth, "
+                     "ch: w.clientHeight }; "
+                     "console.log('[curve] wrap ' + "
+                     "JSON.stringify(globalThis.__curveWrap)); })();",
+                     "spectr-curve-edge-probe");
+
+            for (const char* bands : {"32", "64"}) {
+                // FIT VIEW first, or the zoom this pass applies at the end
+                // leaks into the next band count's "zoom1" capture and the
+                // filename lies about the state it shows.
+                rig.activate("[data-spectr-menu-root=\"overflow\"] "
+                             "[data-spectr-menu-trigger]");
+                rig.activate("[data-spectr-overflow-action=\"fit-view\"]");
+                settle(rig.clock, 16);
+                rig.activate("[data-spectr-menu-root=\"bands\"] "
+                             "[data-spectr-menu-trigger]");
+                rig.activate(std::string("[data-spectr-band-count=\"")
+                             + bands + "\"]");
+                settle(rig.clock, 24);
+
+                // Sculpt a shaped field across the FULL plot width, ending on
+                // the outermost bands. A flat curve's ends are
+                // indistinguishable from a dropped endpoint, so a flat field
+                // would make the capture unreadable as evidence.
+                const double x0 = 58.0, x1 = 1262.0, zero = 438.5;
+                pointer("pointerdown", x0, zero - 120.0);
+                for (int step = 0; step <= 48; ++step) {
+                    const double t = static_cast<double>(step) / 48.0;
+                    const double x = x0 + (x1 - x0) * t;
+                    const double y = zero - 200.0 * std::sin(t * 3.14159 * 2.4)
+                                     - 40.0;
+                    pointer("pointermove", x, y);
+                }
+                pointer("pointerup", x1, zero - 120.0);
+                settle(rig.clock, 24);
+                capture(rig, dir, prefix + tag + "-bands" + bands + "-zoom1",
+                        backend, scale);
+
+                // Zoom by dragging the minimap's LEFT handle inward. That is
+                // the viewport path that commits through setView; the wheel
+                // path defers its commit to a setTimeout, which never fires
+                // under a frame clock, so a wheel capture would silently stay
+                // at 1.00x and read as "tested while zoomed" when it was not.
+                const double minimap_y = 70.0 + 670.0 + 28.0 + 11.0;
+                pointer("pointerdown", 56.0, minimap_y);
+                for (int step = 1; step <= 8; ++step)
+                    pointer("pointermove", 56.0 + step * 46.0, minimap_y);
+                pointer("pointerup", 56.0 + 8 * 46.0, minimap_y);
+                settle(rig.clock, 32);
+                rig.root->layout_children();
+                settle(rig.clock, 16);
+                capture(rig, dir, prefix + tag + "-bands" + bands + "-zoomed",
+                        backend, scale);
             }
             return 0;
         }
@@ -1495,6 +1725,360 @@ int main(int argc, char** argv) {
                      "preset_text_dump");
             rig.print_layout_receipt();
             capture(rig, dir, prefix + "05-presets-SHIPPING", backend, scale);
+            return 0;
+        }
+
+        // HIT-TARGET probe. Three controls the user could not reliably hit:
+        // the Settings toggles (a press on the knob did nothing), the SNAPSHOT
+        // A/B buttons, and the Settings slider thumb. All three are the same
+        // question -- does the region a POINTER reaches match the region the
+        // EYE sees -- so all three are measured the same way: painted rect,
+        // hit rect, and, decisively, which view actually owns the point.
+        //
+        // Root space is the authored 1320x860 box; the standalone paints it
+        // into a 990x645 window, so every design number here is 0.75 of what
+        // the user's pointer sees. That factor is why controls that look
+        // adequate in a layout dump feel small in the product.
+        if (std::getenv("SPECTR_HIT_PROBE") != nullptr) {
+            auto& root = *rig.root;
+
+            auto report = [&root](const char* label, const char* id) {
+                const auto r = measure_hit(root, id);
+                print_hit(label, r);
+                return r;
+            };
+            auto centre_owner = [&root](const HitReport& r) {
+                return owner_at(root, r.painted.x + r.painted.width / 2.0f,
+                                r.painted.y + r.painted.height / 2.0f);
+            };
+
+            std::printf("--- transport row: SNAPSHOT A/B ---\n");
+            static const char* snap_ids[] = {
+                "spectr-snapshot-capture-a", "spectr-snapshot-capture-b",
+                "spectr-snapshot-recall-a", "spectr-snapshot-recall-b",
+                "spectr-snapshot-morph"};
+            std::vector<HitReport> snaps;
+            for (const char* id : snap_ids) {
+                const auto r = report(id, id);
+                snaps.push_back(r);
+                if (r.found)
+                    std::printf("[hit]   centre owner: %s\n",
+                                centre_owner(r).c_str());
+            }
+            // Neighbour gaps, so a later enlargement can be checked against the
+            // room it actually has rather than against a guess.
+            for (std::size_t i = 1; i < snaps.size(); ++i) {
+                if (!snaps[i - 1].found || !snaps[i].found) continue;
+                const float gap = snaps[i].hit.x
+                    - (snaps[i - 1].hit.x + snaps[i - 1].hit.width);
+                std::printf("[hit]   gap %s -> %s = %.2f\n",
+                            snap_ids[i - 1], snap_ids[i], gap);
+            }
+
+            // Does a press on a SNAPSHOT button reach its handler? Capture A
+            // publishes "SNAPSHOT A CAPTURED" and flips the slot's filled
+            // state, which the morph input's `disabled` attribute reports --
+            // renderState().snapshots does NOT (it reads canonical state).
+            auto snap_state = [&rig](const char* label) {
+                std::string js =
+                    "(function(){var m=document.querySelector("
+                    "'[data-spectr-morph-input]')||document.getElementById("
+                    "'spectr-snapshot-morph');"
+                    "var a=document.getElementById('spectr-snapshot-recall-a');"
+                    "var b=document.getElementById('spectr-snapshot-recall-b');"
+                    "console.log('[snapstate] ";
+                js += label;
+                js += " :: ready='+(document.querySelector("
+                      "'[data-spectr-snapshots-ready]')?'both':'no')"
+                      "+' recallA='+(a?(a.getAttribute('disabled')===null?'?':"
+                      "a.getAttribute('disabled')):'(none)')"
+                      "+' recallB='+(b?(b.getAttribute('disabled')===null?'?':"
+                      "b.getAttribute('disabled')):'(none)')"
+                      "+' status='+((document.querySelector("
+                      "'[data-spectr-status-text]')||{}).textContent||'(none)')"
+                      "+' morph='+(m?'present':'(none)'));})();";
+                rig.eval(js, "hit_probe_snapstate");
+            };
+            snap_state("before-click");
+            if (snaps[0].found) {
+                const float cx = snaps[0].painted.x + snaps[0].painted.width / 2.0f;
+                const float cy = snaps[0].painted.y + snaps[0].painted.height / 2.0f;
+                std::printf("[hit] clicking capture-a centre (%.1f,%.1f) owner=%s\n",
+                            cx, cy, owner_at(root, cx, cy).c_str());
+                root.simulate_click(pulp::view::Point{cx, cy});
+                settle(rig.clock, 24);
+            }
+            snap_state("after-centre-click");
+
+            // Is hitSlop reaching the view at all? Write it from JS directly
+            // on a control whose rect we can re-read, so "the style prop is
+            // dropped" and "the bridge function is missing" are told apart.
+            if (std::getenv("SPECTR_HIT_SLOP_DIAG") != nullptr) {
+                std::printf("[diag] setHitSlop present in bridge: %s\n",
+                            "see runtime error below if not");
+                rig.eval("(() => {"
+                         " const el = document.getElementById("
+                         "'spectr-snapshot-capture-a');"
+                         " console.log('[diag] el=' + (el ? 'yes' : 'no'));"
+                         " el.style.hitSlop = '6 3';"
+                         " el.style.zIndex = '1';"
+                         " console.log('[diag] wrote style.hitSlop, readback='"
+                         " + el.style.hitSlop);"
+                         "})();", "hit_slop_diag");
+                settle(rig.clock, 24);
+                print_hit("DIAG after style.hitSlop",
+                          measure_hit(root, "spectr-snapshot-capture-a"));
+                rig.eval("(() => {"
+                         " console.log('[diag] typeof setHitSlop=' + "
+                         "(typeof globalThis.setHitSlop));"
+                         " const el = document.getElementById("
+                         "'spectr-snapshot-capture-a');"
+                         " if (typeof globalThis.setHitSlop === 'function')"
+                         "   globalThis.setHitSlop(el.id, 6, 3, 6, 3);"
+                         "})();", "hit_slop_diag2");
+                settle(rig.clock, 24);
+                print_hit("DIAG after direct setHitSlop",
+                          measure_hit(root, "spectr-snapshot-capture-a"));
+            }
+            write_layout_snapshot(root, dir, prefix + "hit-transport",
+                                  kDesignWidth, kDesignHeight);
+            std::printf("--- settings: toggles and sliders ---\n");
+            rig.activate("[data-spectr-settings-open]");
+            rig.require_reachable("[data-spectr-settings-panel]");
+            settle(rig.clock, 24);
+
+            // Every toggle and slider the panel owns, found through the
+            // runtime's own hooks rather than a guessed id list: a guessed list
+            // cannot report a control it was never told about.
+            rig.eval(
+                "(function(){var t=document.querySelectorAll("
+                "'[data-spectr-setting-toggle]');"
+                "var s=document.querySelectorAll('[data-spectr-setting-slider]');"
+                "var o=[];for(var i=0;i<t.length;i++)"
+                "o.push((t[i].id||'(anon)')+'='+t[i].getAttribute('aria-checked'));"
+                "console.log('[toggles] n='+t.length+' :: '+o.join(' , '));"
+                "console.log('[sliders] n='+s.length);})();",
+                "hit_probe_census");
+
+            // The settings body is a single tall scroll, so a control's
+            // absolute rect can sit well below the 1320x860 root. hit_test
+            // returns nothing there -- and "nothing owns this point" reads
+            // exactly like "the knob swallowed the press". Scroll the control
+            // into the viewport FIRST, or the probe measures the wrong target
+            // and reports a defect that is really an out-of-view coordinate.
+            auto scroll_into_view = [&rig, &root](const char* id) -> bool {
+                auto* view = find_by_id(root, id);
+                if (view == nullptr) return false;
+                auto* scroll = owning_scroll_view(*view);
+                if (scroll == nullptr) return false;
+                float content_y = 0.0f;
+                if (!content_offset(*view, *scroll, content_y)) return false;
+                const float want = content_y - scroll->bounds().height / 2.0f;
+                scroll->set_scroll(0.0f, want < 0.0f ? 0.0f : want);
+                settle(rig.clock, 24);
+                return true;
+            };
+            const bool scrolled = scroll_into_view("spectr-status-info-toggle");
+            std::printf("[hit] scrolled status-info toggle into view: %s\n",
+                        scrolled ? "yes" : "NO -- readings below are void");
+
+            const auto status_toggle = report("spectr-status-info-toggle",
+                                              "spectr-status-info-toggle");
+            if (status_toggle.found) {
+                // The knob is the inner 16x16 circle. Its centre is the point
+                // the user reports as dead, so resolve who owns it.
+                const float track_cx =
+                    status_toggle.painted.x + status_toggle.painted.width / 2.0f;
+                const float cy =
+                    status_toggle.painted.y + status_toggle.painted.height / 2.0f;
+                // Knob sits at left:1 when off and left:21 when on, 16 wide, so
+                // its centre is 9 or 29 from the track's left edge. Probe both
+                // ends plus the middle -- whichever end the knob is at, the
+                // other end is bare track and is the positive control.
+                const float probes[] = {status_toggle.painted.x + 9.0f,
+                                        track_cx,
+                                        status_toggle.painted.x + 29.0f};
+                const char* names[] = {"left-end (knob when OFF)",
+                                       "track centre",
+                                       "right-end (knob when ON)"};
+                for (int i = 0; i < 3; ++i) {
+                    std::printf("[hit]   %-26s (%.1f,%.1f) owner=%s\n",
+                                names[i], probes[i], cy,
+                                owner_at(root, probes[i], cy).c_str());
+                    print_chain(root, probes[i], cy);
+                }
+
+                auto toggle_state = [&rig](const char* label) {
+                    std::string js =
+                        "(function(){var e=document.getElementById("
+                        "'spectr-status-info-toggle');console.log('[toggle] ";
+                    js += label;
+                    js += " :: aria-checked='+(e?e.getAttribute('aria-checked')"
+                          ":'(missing)')+' state='+(e?e.getAttribute("
+                          "'data-spectr-status-info-state'):'(missing)'));})();";
+                    rig.eval(js, "hit_probe_toggle_state");
+                };
+                // Two arms. The bare-track press is the POSITIVE CONTROL: if it
+                // does not flip the toggle either, the instrument is dead and
+                // the knob reading means nothing.
+                for (int i = 0; i < 3; ++i) {
+                    toggle_state("before");
+                    std::printf("[hit]   pressing %s\n", names[i]);
+                    root.simulate_click(pulp::view::Point{probes[i], cy});
+                    settle(rig.clock, 24);
+                    toggle_state("after");
+                }
+            }
+
+            // The settings slider: track versus painted thumb, idle and hover.
+            // The thumb is pointerEvents:none by construction, so the question
+            // is not who owns the point but whether the TRACK's hit rect
+            // contains the whole painted thumb -- at both ends of its travel
+            // and at both sizes.
+            {
+                // A slider track is found by its SHAPE, not by an id: the
+                // runtime assigns generated ids, and a JS-side id written after
+                // mount never reaches the view. The signature is a hit-testable
+                // node 14-20 tall that owns a square child 12-20 across -- the
+                // same structure slider_thumb_hover_growth.py keys off.
+                pulp::view::View* track = nullptr;
+                std::vector<pulp::view::View*> stack{&root};
+                std::vector<pulp::view::View*> tracks;
+                while (!stack.empty()) {
+                    auto* node = stack.back();
+                    stack.pop_back();
+                    if (node->hit_testable() && node->bounds().height >= 14.0f
+                        && node->bounds().height <= 20.0f
+                        && node->bounds().width >= 80.0f) {
+                        for (auto* child : node->sorted_children_by_z_index()) {
+                            const auto b = child->bounds();
+                            if (b.width == b.height && b.width >= 12.0f
+                                && b.width <= 20.0f) {
+                                tracks.push_back(node);
+                                break;
+                            }
+                        }
+                    }
+                    for (auto* child : node->sorted_children_by_z_index())
+                        stack.push_back(child);
+                }
+                std::printf("[hit] slider-shaped tracks found: %zu\n",
+                            tracks.size());
+                for (auto* candidate : tracks) {
+                    float ax = 0.0f;
+                    float ay = 0.0f;
+                    root_origin(*candidate, ax, ay);
+                    std::printf("[hit]   candidate %-18s root=(%.1f,%.1f) "
+                                "%.1fx%.1f\n",
+                                candidate->id().empty() ? "(anon)"
+                                                        : candidate->id().c_str(),
+                                ax, ay, candidate->bounds().width,
+                                candidate->bounds().height);
+                    if (track == nullptr && candidate->id() != "spectr-snapshot-morph"
+                        && candidate->bounds().width <= 200.0f)
+                        track = candidate;
+                }
+                if (track == nullptr) {
+                    std::printf("[hit] no settings slider track found -- this "
+                                "probe is measuring the wrong surface, not "
+                                "reporting an absence\n");
+                } else {
+                    // Bring it inside the viewport; a track at a negative root
+                    // y cannot be hovered and every reading below would be void.
+                    if (auto* scroll = owning_scroll_view(*track)) {
+                        float content_y = 0.0f;
+                        if (content_offset(*track, *scroll, content_y)) {
+                            const float want =
+                                content_y - scroll->bounds().height / 2.0f;
+                            scroll->set_scroll(0.0f, want < 0.0f ? 0.0f : want);
+                            settle(rig.clock, 24);
+                        }
+                    }
+                    auto read = [&](const char* label) {
+                        float ax = 0.0f;
+                        float ay = 0.0f;
+                        root_origin(*track, ax, ay);
+                        const auto slop = track->hit_slop();
+                        const auto tb = track->bounds();
+                        std::printf("[hit] slider %-10s track painted=(%.1f,%.1f "
+                                    "%.1fx%.1f) hit=(%.1f,%.1f %.1fx%.1f)\n",
+                                    label, ax, ay, tb.width, tb.height,
+                                    ax - slop.left, ay - slop.top,
+                                    tb.width + slop.left + slop.right,
+                                    tb.height + slop.top + slop.bottom);
+                        for (auto* child : track->sorted_children_by_z_index()) {
+                            const auto b = child->bounds();
+                            if (b.width != b.height || b.width < 8.0f) continue;
+                            float cx = 0.0f;
+                            float cy = 0.0f;
+                            root_origin(*child, cx, cy);
+                            const float hx = ax - slop.left;
+                            const float hy = ay - slop.top;
+                            const float hw = tb.width + slop.left + slop.right;
+                            const float hh = tb.height + slop.top + slop.bottom;
+                            const bool inside = cx >= hx && cy >= hy
+                                && cx + b.width <= hx + hw
+                                && cy + b.height <= hy + hh;
+                            std::printf("[hit]   thumb painted=(%.1f,%.1f "
+                                        "%.1fx%.1f) hittable=%s  overhang "
+                                        "L=%.1f R=%.1f T=%.1f B=%.1f -> hit rect "
+                                        "%s the painted thumb\n",
+                                        cx, cy, b.width, b.height,
+                                        child->hit_testable() ? "yes" : "no",
+                                        hx - cx, (cx + b.width) - (hx + hw),
+                                        hy - cy, (cy + b.height) - (hy + hh),
+                                        inside ? "CONTAINS" : "does NOT contain");
+                        }
+                        return std::pair<float, float>{ax, ay};
+                    };
+                    const auto idle = read("idle");
+                    const auto tb = track->bounds();
+                    // Hover the track so the thumb grows, then re-read. The
+                    // growth is the sibling lane's shipped behaviour; the
+                    // question here is whether the GRAB target grew with it.
+                    root.simulate_hover(pulp::view::Point{
+                        idle.first + tb.width / 2.0f,
+                        idle.second + tb.height / 2.0f});
+                    settle(rig.clock, 24);
+                    read("hovered");
+                    // A tap -- press and release with no drag -- on bare track.
+                    // "Does a plain click move the thumb?" is a different
+                    // question from "is the grab target big enough", and the
+                    // report must not conflate them.
+                    float bx = 0.0f;
+                    float by = 0.0f;
+                    root_origin(*track, bx, by);
+                    const float tap_x = bx + tb.width * 0.25f;
+                    const float tap_y = by + tb.height / 2.0f;
+                    std::printf("[hit]   tap at 25%% of track (%.1f,%.1f) "
+                                "owner=%s\n", tap_x, tap_y,
+                                owner_at(root, tap_x, tap_y).c_str());
+                    root.simulate_click(pulp::view::Point{tap_x, tap_y});
+                    settle(rig.clock, 24);
+                    read("after-tap");
+                    // And the same tap driven as a zero-distance DRAG, which is
+                    // the channel the track's onPointerDown actually listens on.
+                    root.simulate_drag(pulp::view::Point{tap_x, tap_y},
+                                       pulp::view::Point{tap_x, tap_y});
+                    settle(rig.clock, 24);
+                    read("after-drag-tap");
+                }
+            }
+            write_layout_snapshot(root, dir, prefix + "hit-settings",
+                                  kDesignWidth, kDesignHeight);
+
+            // The densest the settings panel ever gets: MODULATION's rows only
+            // exist once an LFO is on, and a non-overlap claim measured with
+            // them hidden is a claim about the easy case. Expand both, then
+            // dump again -- that dump is what the neighbour assertion reads.
+            rig.activate_modulation_toggle(0, "LFO");
+            rig.activate_modulation_toggle(1, "LFO 2");
+            settle(rig.clock, 24);
+            root.layout_children();
+            settle(rig.clock, 16);
+            write_layout_snapshot(root, dir, prefix + "hit-settings-modulation",
+                                  kDesignWidth, kDesignHeight);
+            std::printf("[hit] probe complete\n");
             return 0;
         }
 

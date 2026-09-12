@@ -249,6 +249,59 @@ jobs:
           done < "$dumps"
           exit $rc
 
+      - name: Gate - every control reaches the area it paints
+        shell: bash
+        env:
+          PULP_DISABLE_PLUGIN_EDITOR: "1"
+          PULP_HEADLESS: "1"
+          PULP_TEST_MODE: "1"
+        run: |
+          set -euo pipefail
+          # The detector self-test above proves hit_target_reach.py can both
+          # pass and fail, but it reads COMMITTED fixtures -- it says nothing
+          # about the build in this job. This runs the same rule against dumps
+          # taken from THIS binary, which is what makes it a regression gate
+          # rather than a test of the detector.
+          #
+          # SPECTR_HIT_PROBE opens Settings, expands both LFO disclosures (the
+          # densest the panel ever gets) and writes two dumps. A press on the
+          # toggle KNOB used to resolve to the knob, which carries its own click
+          # handler, so the bubble walk stopped there and 40% of every switch
+          # was dead; and a hover-grown slider thumb sat 9px outside the only
+          # rect that could be pressed.
+          shots="$SPECTR_ACCEPTANCE_ROOT/hit-target-shots"
+          mkdir -p "$shots"
+          SPECTR_HIT_PROBE=1 "$SPECTR_BUILD_DIR/Spectr-native-shot" \
+            --out="$shots" --backend=skia --scale=1 \
+            > "$SPECTR_ACCEPTANCE_ROOT/hit-target-probe.log" 2>&1 || {
+              echo "SPECTR_HIT_PROBE run failed; the surface is unmeasured" >&2
+              tail -40 "$SPECTR_ACCEPTANCE_ROOT/hit-target-probe.log" >&2
+              exit 1
+            }
+          rc=0
+          found=0
+          for dump in "$shots/hit-transport.layout.json" \
+                      "$shots/hit-settings-modulation.layout.json"; do
+            if [ ! -f "$dump" ]; then
+              echo "no verdict: $dump was not written" >&2
+              rc=1
+              continue
+            fi
+            found=$((found + 1))
+            set +e
+            python3 tools/spectr-detectors/hit_target_reach.py "$dump"
+            one=$?
+            set -e
+            # 1 is a finding; 2 and 3 are UNMEASURED and are never a pass.
+            if [ "$one" -ne 0 ]; then rc=1; fi
+          done
+          # A sweep over zero dumps is not a clean sweep.
+          if [ "$found" -eq 0 ]; then
+            echo "no verdict: the probe wrote no dump to sweep" >&2
+            exit 1
+          fi
+          exit $rc
+
       # REPORTING ONLY (continue-on-error). These four drive the built
       # standalone headlessly, so unlike the fixture lane above they need the
       # app and cost minutes, and each can legitimately return "no verdict"
