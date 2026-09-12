@@ -292,6 +292,8 @@ jobs:
           run_one hover-leave-persistence python3 tools/spectr-detectors/hover_leave_persistence.py \
             --app "$app" --out-dir "$out/hover-leave"
           run_one menu-item-caption-uniformity python3 tools/spectr-detectors/menu_item_caption_uniformity.py "$app"
+          run_one status-pill-width python3 tools/spectr-detectors/status_pill_width_invariance.py \
+            --app "$app" --out-dir "$out/status-pill"
           echo "::notice::app-driven detector verdicts: $rc_summary"
 
       - name: Gate - Spectr M5 product acceptance AUv2 validation

@@ -207,3 +207,102 @@ one as unsound. Documented at the point of use in `native_editor.cpp`.
 Detector plant modes also verified: `--plant wrong-cursor` -> exit 1,
 `--plant no-hit` -> exit 3 (INCONCLUSIVE, distinct from pass), `--plant freeze`
 -> exit 1. An unrunnable probe never reads as a pass.
+
+---
+
+# STATUS-PILL — the hover readout after CLEAR
+
+## The reported symptom
+
+> "hover text appears correct UNLESS YOU PRESS CLEAR — then after clear it's no
+> longer center aligned with some padding, it gets messed up"
+
+## It is a WIDTH defect, and the centring measurement is how that was decided
+
+The pill has two writers for the string it paints. React commits a message;
+`updateLiveHoverStatus` runs from the draw loop and writes the live reading
+straight onto the DOM node, deliberately, so a per-frame reading does not cost a
+whole-document React commit. Only the React path re-derived the width
+(`Math.max(96, Math.min(520, text.length * 8 + 28))`), and its publish is
+throttled to 700ms and skipped entirely while the reading is unchanged — so the
+pill kept the size of whatever string React last saw.
+
+CLEAR publishes `CLEARED GAINS`; clicking a band publishes `BAND n MUTED`. Both
+are 13 characters, so both size the pill to 132px. The next live reading is a
+full hover label needing 212–252px, painted into that 132px box.
+
+Measured on the shipping standalone (990x645 host, 1320x860 design space), band
+click at (400,300) driven by `SPECTR_DRAG="400,300,400,300,1"`:
+
+| | pill x | pill w | text box w | ink w | pill centre | text centre |
+|---|---|---|---|---|---|---|
+| before the short message | 538.0 | 244.0 | 214.0 | 203.0 | 660.0 | 660.0 |
+| after, pre-fix | 594.0 | **132.0** | 102.0 | **173.0** | 660.0 | 660.0 |
+| after, post-fix | 554.0 | 212.0 | 182.0 | 173.0 | 660.0 | 660.0 |
+
+The ink overhangs its content box by **71.0px** pre-fix — 35.5px past each edge
+of a pill that is 80px narrower than its text needs. **Both centres read
+exactly 660.0 in every state**, which is what rules out a centring defect: the
+box is the wrong size, not in the wrong place. This is the same distinction the
+Settings copy button needed after three centring "fixes" (COPY-WIDTH above).
+
+It is persistent, not a flash: identical geometry at +55, +158, +415, +906 and
++1600ms after the release, because the live writer only re-runs when the reading
+changes and the React publisher is throttled.
+
+## The fix
+
+`tools/patch_materialized_status_pill_width.py`. The rule that turns a string
+into a width becomes one function, `spectrStatusBannerWidth`, and the per-frame
+writer sets the width and margin alongside the text — whoever writes the string
+owns the box. No extra React commit. The fast path is NOT removed; routing every
+frame through React is the ~22ms whole-document commit the zoom-readout work
+removed.
+
+## Artifacts
+
+| file | what it shows |
+|---|---|
+| `STATUS-PILL-RED-pill.png` | pre-fix raster: `155Hz  −∞  BAND 10/32` overhanging both ends of the pill |
+| `STATUS-PILL-GREEN-pill.png` | post-fix raster: the same reading inside the pill with symmetric padding |
+| `STATUS-PILL-RED-after-short-message.layout.json` + `.depths.json` | pre-fix geometry: pill w=132, box w=102, ink w=173 |
+| `STATUS-PILL-GREEN-hover.layout.json` + `.depths.json` | healthy reference state: pill w=244, box w=214, ink w=203 |
+| `STATUS-PILL-GREEN-after-short-message.layout.json` + `.depths.json` | post-fix geometry: pill w=212, box w=182, ink w=173 |
+| `STATUS-PILL-RED-length-collision-{a,b}.layout.json` + `.depths.json` | the small version of the same defect: two 28-character readings measuring 244.0 and 252.0 |
+
+## Reproducing
+
+```sh
+env PULP_HEADLESS=1 PULP_FRAMES=100 PULP_SCREENSHOT=OUT/shot.png \
+    SPECTR_LAYOUT_DUMP=OUT/final.layout.json \
+    SPECTR_DRAG="400,300,400,300,1" SPECTR_DRAG_DUMP_PREFIX=OUT/run \
+    build/Spectr.app/Contents/MacOS/Spectr
+python3 tools/spectr-detectors/status_pill_width_invariance.py \
+    OUT/run.move1.layout.json OUT/final.layout.json
+```
+
+A press-and-release on a band is a mute, which is what publishes the 13-character
+message; `run.move1` is the healthy reading captured before it. A buttonless
+`simulate_hover` cannot be used here — neither mac host delivers a DOM
+pointermove, so it never reaches the JS hover path (see CUR-PIN846 above).
+
+`--plant shrink` forces the pill to a 13-character width and `--plant offset`
+pushes it off centre; both must go red.
+
+## What the detector cannot see
+
+Whether the pill is a *sensible* size — only whether it agrees with its own text.
+A rule that sized every pill to 40px would satisfy the width-is-a-function rule
+and fail only the ink-fit rule. A dismissed pill carries no text child and is
+skipped, so a run of only-dismissed dumps reports UNMEASURED (exit 2) rather than
+passing.
+
+## Residual, stated rather than hidden
+
+If React commits a *different* message of *identical* length while a live reading
+is on screen (mute band 10, then band 11 — both 13 characters), React's prop diff
+sees no width change and writes only the text, leaving the pill at the width the
+fast path set for the previous reading: a pill too WIDE for its text, cosmetic
+rather than broken, corrected on the next frame by the reading the mute itself
+produces. Closing it outright costs a `querySelector` pair on every frame of the
+draw loop, in the hot path the previous lane worked to shrink.
