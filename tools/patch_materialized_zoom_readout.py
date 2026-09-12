@@ -11,9 +11,32 @@ felt heavy.
 
 The fix is structural, not a throttle: the bank owns the viewport, so it
 publishes viewport changes to subscribers, and the readout is a leaf component
-that subscribes.  A zoom change now commits one span instead of the tree, a
-pan (which preserves the span, so the printed value does not change) commits
-nothing at all, and the interval is gone.
+that subscribes.  The interval is gone, and the leaf commits only when a
+gesture SETTLES.
+
+That last part is the whole fix and it was learned the expensive way.  Simply
+moving the readout onto the publication and coalescing it "to one commit per
+frame" is not an improvement -- it is a REGRESSION.  A resize gesture moves
+the second decimal place on nearly every frame, so per-frame coalescing still
+commits every frame, which roughly doubles the commit rate the 150ms poll had:
+measured on the minimap workload, frame gaps >= 25ms went 16 -> 29 by Perfetto
+and 17 -> 42 by cadence probe, with __flushFrames__ climbing 533ms -> 1265ms
+even though __flushTimers__ correctly collapsed 397ms -> 0.28ms.  Killing the
+timer is necessary and nowhere near sufficient.
+
+So the publication carries a `live` flag: the per-pointer-sample path marks
+itself live and the leaf ignores it outright, and the readout repaints when
+the gesture settles (pointer-up, the deferred wheel commit, or any ordinary
+setView).  The live number is not lost -- drawMinimap paints the same x-value
+onto the minimap canvas every frame, off the React path entirely -- so the
+React copy is redundant precisely while the drag is in flight.
+
+Why one commit is worth this much care: the cost is not the readout, it is
+what a commit triggers.  resetAfterCommit gates on a single
+materializedTreeDirty boolean that commitTextUpdate sets unconditionally, so a
+one-character text change in one leaf re-applies captured import metadata
+across the whole document -- about 22ms, which is 1.5 vsync intervals, so
+every one of them drops a frame.
 
 Applied by hand because `tools/patch_materialized_editor.py` -- the mirror that
 would normally carry an edit like this -- does not run on this checkout: it
@@ -53,7 +76,6 @@ READOUT_COMPONENT = '''function SpectrZoomReadout({ bankRef }) {
     const full = Math.log10(2e4) - Math.log10(20);
     let disposed = false;
     let frame = 0;
-    let pending = null;
     let unsubscribe = null;
     let attempts = 0;
     const apply = (view) => {
@@ -63,17 +85,17 @@ READOUT_COMPONENT = '''function SpectrZoomReadout({ bankRef }) {
       const next = (full / span).toFixed(2);
       setZoom((previous) => previous === next ? previous : next);
     };
-    // A live drag publishes per pointer sample. Coalesce to one read per
-    // frame, and let the identity guard above drop the frames where the
-    // printed value did not move -- a pan preserves the span, so panning
-    // commits nothing.
-    const schedule = (view) => {
-      pending = view;
-      if (frame || disposed) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        apply(pending);
-      });
+    // A gesture publishes per pointer sample, and a resize moves the second
+    // decimal place on nearly every one of them -- so coalescing to one
+    // commit per FRAME is still a commit per frame, and every commit
+    // re-applies the captured import metadata across the whole document.
+    // Cost nothing at all until the gesture settles. The live value is not
+    // lost: drawMinimap paints the same x-number onto the minimap canvas each
+    // frame, off the React path, so this copy is redundant exactly while a
+    // drag is in flight.
+    const onViewport = (view, live) => {
+      if (live) return;
+      apply(view);
     };
     // The bank publishes the viewport, and the bank handle is installed by an
     // effect. Sibling effect order already puts that before this one, but a
@@ -84,7 +106,7 @@ READOUT_COMPONENT = '''function SpectrZoomReadout({ bankRef }) {
       if (disposed) return;
       const bank = bankRef && bankRef.current;
       if (bank && typeof bank.subscribeViewport === "function") {
-        unsubscribe = bank.subscribeViewport(schedule);
+        unsubscribe = bank.subscribeViewport(onViewport);
         apply(bank.view);
         return;
       }
@@ -118,10 +140,10 @@ EDITS = [
      '  };\n',
      '  const viewportListenersRef = useRef(null);\n'
      '  if (!viewportListenersRef.current) viewportListenersRef.current = /* @__PURE__ */ new Set();\n'
-     '  const notifyViewportListeners = () => {\n'
+     '  const notifyViewportListeners = (live) => {\n'
      '    for (const listener of Array.from(viewportListenersRef.current)) {\n'
      '      try {\n'
-     '        listener(viewRef.current);\n'
+     '        listener(viewRef.current, live === true);\n'
      '      } catch (error) {\n'
      '        console.error("[Spectr] viewport listener failed", error);\n'
      '      }\n'
@@ -140,7 +162,13 @@ EDITS = [
      '    const resolved = typeof next === "function" ? next(viewRef.current) : next;\n'
      '    viewRef.current = { ...resolved };\n'
      '    setReactView({ ...resolved });\n'
-     '    notifyViewportListeners();\n'
+     '    notifyViewportListeners(false);\n'
+     '  };\n'
+     '  // The deferred wheel commit settles the viewport without going\n'
+     '  // through setView, so it needs the same settle publication.\n'
+     '  const settleViewport = () => {\n'
+     '    setReactView({ ...viewRef.current });\n'
+     '    notifyViewportListeners(false);\n'
      '  };\n'),
 
     ('live drag viewport commits notify subscribers',
@@ -153,7 +181,7 @@ EDITS = [
      '    viewRef.current.lmin = next.lmin;\n'
      '    viewRef.current.lmax = next.lmax;\n'
      '    queueNativeProcessingStatePublication();\n'
-     '    notifyViewportListeners();\n'
+     '    notifyViewportListeners(true);\n'
      '  };\n'),
 
     ('native state projection notifies subscribers',
@@ -162,7 +190,7 @@ EDITS = [
      '        return true;\n',
      '        viewRef.current.lmin = Math.log10(state.minHz);\n'
      '        viewRef.current.lmax = Math.log10(state.maxHz);\n'
-     '        notifyViewportListeners();\n'
+     '        notifyViewportListeners(false);\n'
      '        return true;\n'),
 
     ('bank handle exposes the viewport subscription',
@@ -175,6 +203,15 @@ EDITS = [
      '      view,\n'
      '      N\n'
      '    };\n'),
+
+    # Two sites, both the deferred wheel commit. They settle the viewport by
+    # calling setReactView directly rather than setView, so without this the
+    # readout would never repaint after a wheel gesture.
+    ('deferred wheel commits settle through the publisher',
+     # The two sites differ in indentation, so the needle starts at the
+     # statement rather than at the line.
+     'wheelCommitRef.current = setTimeout(() => setReactView({ ...viewRef.current }), 80);',
+     'wheelCommitRef.current = setTimeout(settleViewport, 80);', 2),
 
     ('zoom readout is a leaf that owns its own value',
      'function Chrome({ settings, setSettings, bankRef, info, status,',
@@ -237,7 +274,13 @@ EDITS = [
 # assert on the two properties the poller owned rather than on the identifier.
 FORBIDDEN_AFTER = ('info.zoom', 'info.N', 'setInfo((previous)')
 REQUIRED_AFTER = ('function SpectrZoomReadout(', 'subscribeViewport',
-                  'React.createElement(SpectrZoomReadout, { bankRef })')
+                  'React.createElement(SpectrZoomReadout, { bankRef })',
+                  # The live/settle split IS the fix. Without the guard the
+                  # leaf commits per frame, which measured worse than the poll
+                  # it replaced.
+                  'const onViewport = (view, live) => {',
+                  'notifyViewportListeners(true);',
+                  'setTimeout(settleViewport, 80)')
 
 
 def escaped(value):
@@ -245,7 +288,8 @@ def escaped(value):
 
 
 def main():
-    for label, old, new in EDITS:
+    for edit in EDITS:
+        label, old, new = edit[:3]
         if old and old in new:
             sys.exit('FAIL %s: patch point survives its own replacement' % label)
 
@@ -253,16 +297,19 @@ def main():
     changed = False
     applied = 0
     already = 0
-    for label, old, new in EDITS:
+    for edit in EDITS:
+        label, old, new = edit[:3]
+        expected = edit[3] if len(edit) == 4 else 1
         old_e, new_e = escaped(old), escaped(new)
-        if raw.count(old_e) == 0 and (new_e == '' or raw.count(new_e) >= 1):
+        if raw.count(old_e) == 0 and (new_e == '' or raw.count(new_e) >= expected):
             print('already applied ', label)
             already += 1
             continue
         count = raw.count(old_e)
-        if count != 1:
-            sys.exit('FAIL %s: patch point occurs %d times' % (label, count))
-        raw = raw.replace(old_e, new_e, 1)
+        if count != expected:
+            sys.exit('FAIL %s: patch point occurs %d times, expected %d'
+                     % (label, count, expected))
+        raw = raw.replace(old_e, new_e)
         changed = True
         applied += 1
         print('applied         ', label)

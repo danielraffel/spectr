@@ -13,32 +13,54 @@
 // Two halves, both checked here, because either alone reads green while the
 // defect is present:
 //
+// Killing the interval is necessary and NOT sufficient. Republishing the
+// readout on the viewport and coalescing it to one commit per FRAME measured
+// WORSE than the poll it replaced -- a resize gesture moves the second decimal
+// place nearly every frame, so per-frame coalescing is a commit per frame, and
+// minimap frame gaps >= 25ms went 16 -> 29 (Perfetto) and 17 -> 42 (cadence
+// probe). So the publication carries a `live` flag, the leaf ignores live
+// samples outright, and the readout repaints when the gesture settles. That
+// guard is the load-bearing part, and it gets its own control.
+//
 //   STATIC  the app root owns no interval that reads a viewport, the bank
-//           publishes viewport changes, and the declarations sit in the
-//           function bodies they claim to (a block-scoped declaration in the
-//           wrong body parses clean -- syntax is not scope).
+//           publishes viewport changes with a live/settle split, and the
+//           declarations sit in the function bodies they claim to (a
+//           block-scoped declaration in the wrong body parses clean -- syntax
+//           is not scope).
 //   RUNTIME the leaf is executed for real in a vm with a hook runtime, and
-//           has to subscribe, repaint on a zoom change, and commit NOTHING on
-//           a pan, which preserves the span and so cannot change the printed
-//           value.
+//           has to subscribe, repaint when a gesture settles, and commit
+//           NOTHING across a whole live gesture -- neither a resize, which
+//           moves the printed value every sample, nor a pan, which does not.
+//
+// The runtime half cannot be delegated to Spectr-native-shot. That harness
+// mounts the real document in real QuickJS and does prove mount-time scope --
+// a ReferenceError planted in the leaf's render makes it fail closed -- but it
+// never publishes a viewport, so the same error planted inside onViewport
+// leaves it green. It proves the document loads, not that the publication
+// path behaves.
 //
 // Usage:
 //   node test_materialized_zoom_readout.mjs <materialized-document.runtime.json>
-//        [--plant-poller] [--expect-fail]
+//        [--plant-poller | --plant-live-commit] [--expect-fail]
 //
 // --plant-poller restores the pre-fix shape: the root interval comes back and
-// the readout reverts to a value read from root state. --expect-fail inverts
-// the verdict, so the control is green only when this suite REJECTS that
-// document, and red when the plant silently fails to apply or anything else
-// goes wrong. The inversion lives here rather than in WILL_FAIL because
-// WILL_FAIL accepts any non-zero exit -- a usage error or an unreadable file
-// satisfied it and proved nothing.
+// the readout reverts to a value read from root state.
+// --plant-live-commit restores the measured REGRESSION instead: the leaf keeps
+// its subscription but drops the live guard, so it commits on every sample of
+// a gesture. Both are separate rows because they fail different assertions and
+// a single plant that trips everything cannot show which check is load
+// bearing. --expect-fail inverts the verdict, so a control is green only when
+// this suite REJECTS that document, and red when the plant silently fails to
+// apply or anything else goes wrong. The inversion lives here rather than in
+// WILL_FAIL because WILL_FAIL accepts any non-zero exit -- a usage error or an
+// unreadable file satisfied it and proved nothing.
 
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
 const args = process.argv.slice(2);
 const plantPoller = args.includes("--plant-poller");
+const plantLiveCommit = args.includes("--plant-live-commit");
 const expectFail = args.includes("--expect-fail");
 const documentPath = args.find((a) => !a.startsWith("--"));
 
@@ -70,7 +92,7 @@ const ROOT_POLLER = `  useAppE(() => {
 const LEAF_USE = 'React.createElement(SpectrZoomReadout, { bankRef })';
 const POLLED_SPAN = 'React.createElement("span", { className: "tnum", style: '
   + '{ whiteSpace: "nowrap", flexShrink: 0, minWidth: 84 } }, info.zoom, "\\xD7 zoom")';
-const SUBSCRIBE_CALL = "unsubscribe = bank.subscribeViewport(schedule);";
+const SUBSCRIBE_CALL = "unsubscribe = bank.subscribeViewport(onViewport);";
 
 if (plantPoller) {
   // Every plant must be observed to apply. A plant whose needle has drifted
@@ -92,6 +114,19 @@ if (plantPoller) {
     html = html.replace(from, to);
   }
   console.log("planted   the pre-fix root poller and polled readout");
+}
+
+if (plantLiveCommit) {
+  // The measured regression, exactly: subscription intact, live guard gone,
+  // so every sample of a gesture commits.
+  const from = "      if (live) return;\n";
+  if (html.split(from).length - 1 !== 1) {
+    console.error(`FAIL: plant "live guard" found ${html.split(from).length - 1}`
+      + " sites, expected exactly 1 -- the control cannot prove anything");
+    process.exit(2);
+  }
+  html = html.replace(from, "      if (live && false) return;\n");
+  console.log("planted   a readout that commits on every live sample");
 }
 
 const failures = [];
@@ -193,16 +228,39 @@ if (bankBody) {
   if (!bankBody.includes("const subscribeViewport = ")) {
     fail("FilterBank() does not declare subscribeViewport");
   }
-  const callsInBank = bankBody.split("notifyViewportListeners();").length - 1;
-  const callsInDoc = html.split("notifyViewportListeners();").length - 1;
+  // The declaration reads `const notifyViewportListeners = (live) => {`, so a
+  // name-plus-paren needle counts call sites only.
+  const callsInBank = bankBody.split("notifyViewportListeners(").length - 1;
+  const callsInDoc = html.split("notifyViewportListeners(").length - 1;
   if (callsInBank !== callsInDoc) {
     fail(`${callsInDoc - callsInBank} notifyViewportListeners() call site(s) `
       + "sit outside FilterBank(), where the declaration is not in scope");
   }
-  // The three viewport writers: setView, the live drag commit, and the native
-  // projection. Missing any one leaves a readout that silently stops moving.
-  if (callsInBank < 3) {
-    fail(`only ${callsInBank} of the 3 viewport writers notify subscribers`);
+  // Four viewport writers: setView, the settle helper the deferred wheel
+  // commit shares, the live drag commit, and the native projection. Missing
+  // any one leaves a readout that silently stops moving.
+  if (callsInBank < 4) {
+    fail(`only ${callsInBank} of the 4 viewport writers notify subscribers`);
+  }
+  // Exactly one writer may publish as live: the per-pointer-sample path. If a
+  // settle path marked itself live the readout would never repaint; if the
+  // sample path stopped marking itself live, every sample would commit, which
+  // is the regression this split exists to prevent.
+  const liveCalls = bankBody.split("notifyViewportListeners(true);").length - 1;
+  const settleCalls = bankBody.split("notifyViewportListeners(false);").length - 1;
+  if (liveCalls !== 1 || settleCalls < 3) {
+    fail(`the publisher marks ${liveCalls} call site(s) live and ${settleCalls} `
+      + "settled; expected exactly 1 live (the per-sample drag commit) and at "
+      + "least 3 settled");
+  }
+  if (!bankBody.includes("notifyViewportListeners(true);\n  };")
+      || !bankBody.includes("const commitLiveViewport = ")) {
+    fail("the live publication is not the per-pointer-sample commit path");
+  }
+  // The deferred wheel commit settles without going through setView, so it
+  // has to share the settle helper or a wheel gesture never repaints.
+  if (bankBody.split("setTimeout(settleViewport, 80)").length - 1 !== 2) {
+    fail("the deferred wheel commits do not settle through the publisher");
   }
   if (!bankBody.includes("subscribeViewport,")) {
     fail("the bank handle does not expose subscribeViewport, so nothing can "
@@ -217,6 +275,18 @@ if (chromeBody && !chromeBody.includes(LEAF_USE)) {
     + "value handed down from the app root");
 }
 if (!readoutBody) fail("the document declares no SpectrZoomReadout component");
+else if (!/const onViewport = \(view, live\) => \{\s*\n\s*if \(live\) return;/.test(readoutBody)) {
+  fail("the readout does not drop live samples outright. Coalescing them "
+    + "instead -- even to one commit per frame -- measured WORSE than the "
+    + "150ms poll this replaced, because a resize moves the printed value on "
+    + "nearly every frame");
+}
+if (readoutBody && /requestAnimationFrame/.test(
+      readoutBody.slice(readoutBody.indexOf("const onViewport"),
+                        readoutBody.indexOf("const attach")))) {
+  fail("the readout schedules a frame from the publication path; the live "
+    + "path must cost nothing at all");
+}
 if (html.includes("info.zoom")) {
   fail("info.zoom survives: some surface still reads the polled root state");
 }
@@ -298,7 +368,9 @@ if (!leafBlock) {
         },
       };
       const bankRef = { current: bank };
-      const publish = () => { for (const fn of [...listeners]) fn(view); };
+      const publish = (live) => {
+        for (const fn of [...listeners]) fn(view, live === true);
+      };
 
       let element = null;
       const render = () => {
@@ -323,34 +395,66 @@ if (!leafBlock) {
           + 'expected "1.00\xD7 zoom"');
       }
 
-      // A zoom change must repaint.
+      // A LIVE RESIZE gesture. This is the workload that regressed: the
+      // printed value moves on nearly every sample, so anything that
+      // coalesces rather than suppresses still commits per frame. Count what
+      // a whole gesture costs, and require zero.
       log.length = 0;
-      view.lmax = Math.log10(2000);
-      publish();
-      flush();
-      if (!text().startsWith("1.50")) {
-        fail(`a zoom change left the readout at ${JSON.stringify(text())}; `
-          + "the subscription is not reaching the painted value");
+      const printed = new Set();
+      const full = Math.log10(2e4) - Math.log10(20);
+      for (let i = 0; i < 200; i++) {
+        view.lmax = Math.log10(20) + (full * (1 - i / 260));
+        printed.add((full / (view.lmax - view.lmin)).toFixed(2));
+        publish(true);
+        flush();
       }
-      const commitsOnZoom = log.filter((l) => l.startsWith("commit:")).length;
-      if (commitsOnZoom !== 1) {
-        fail(`a single zoom change produced ${commitsOnZoom} commits, `
-          + "expected exactly 1");
+      // Control on the STIMULUS: if the gesture did not actually move the
+      // printed value, "0 commits" would be trivially true and would prove
+      // nothing. A resize has to sweep many distinct values.
+      if (printed.size < 20) {
+        fail(`the live-resize stimulus only produced ${printed.size} distinct `
+          + "zoom strings, so a zero-commit result proves nothing");
+      }
+      const commitsOnLiveResize = log.filter((l) => l.startsWith("commit:")).length;
+      if (commitsOnLiveResize !== 0) {
+        fail(`a live resize of 200 samples across ${printed.size} distinct `
+          + `zoom values produced ${commitsOnLiveResize} React commits; a `
+          + "gesture in flight must produce none");
       }
 
-      // A PAN preserves the span, so the printed value cannot change, so it
-      // must cost nothing at all. This is the minimap-drag steady state.
+      // A live PAN preserves the span, and must likewise cost nothing.
       log.length = 0;
       for (let i = 0; i < 200; i++) {
         view.lmin += 0.0005;
         view.lmax += 0.0005;
-        publish();
+        publish(true);
         flush();
       }
       const commitsOnPan = log.filter((l) => l.startsWith("commit:")).length;
       if (commitsOnPan !== 0) {
-        fail(`200 pan samples produced ${commitsOnPan} React commits; a pan `
-          + "preserves the span so it must produce none");
+        fail(`200 live pan samples produced ${commitsOnPan} React commits`);
+      }
+
+      // Settling repaints, exactly once, with the value the gesture reached.
+      log.length = 0;
+      publish(false);
+      flush();
+      const expected = (full / (view.lmax - view.lmin)).toFixed(2);
+      const commitsOnSettle = log.filter((l) => l.startsWith("commit:")).length;
+      if (commitsOnSettle !== 1) {
+        fail(`settling produced ${commitsOnSettle} commits, expected exactly `
+          + "1 -- the readout does not catch up when the gesture ends");
+      }
+      if (!text().startsWith(expected)) {
+        fail(`after settling the readout reads ${JSON.stringify(text())}, `
+          + `expected it to start with ${expected}`);
+      }
+      // Settling again on an unchanged viewport must be free.
+      log.length = 0;
+      publish(false);
+      flush();
+      if (log.filter((l) => l.startsWith("commit:")).length !== 0) {
+        fail("an unchanged settle still commits");
       }
 
       // Unmount releases the subscription.
@@ -361,7 +465,8 @@ if (!leafBlock) {
           + "unmounted readout alive and keep calling into it");
       }
       console.log(`runtime   subscribed=${listeners.size + unsubscribed} `
-        + `zoomCommits=${commitsOnZoom} panCommits=${commitsOnPan} `
+        + `liveResizeCommits=${commitsOnLiveResize}/${printed.size}values `
+        + `livePanCommits=${commitsOnPan} settleCommits=${commitsOnSettle} `
         + `unsubscribed=${unsubscribed} readout=${JSON.stringify(text())}`);
     }
   } catch (error) {

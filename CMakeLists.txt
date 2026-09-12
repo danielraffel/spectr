@@ -697,6 +697,20 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-poller --expect-fail)
     set_tests_properties(Spectr-materialized-zoom-readout-negative-control PROPERTIES
         TIMEOUT 30)
+    # The second control, and the one that matters most. --plant-live-commit
+    # keeps the subscription but drops the live guard, which is the measured
+    # REGRESSION: coalescing live samples to one commit per frame is still a
+    # commit per frame, and it took minimap frame gaps >= 25ms from 16 to 29.
+    # Separate from the row above because the two fail different assertions,
+    # and a single plant that trips everything cannot show which check is
+    # load bearing.
+    add_test(NAME Spectr-materialized-zoom-readout-live-commit-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_zoom_readout.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-live-commit --expect-fail)
+    set_tests_properties(Spectr-materialized-zoom-readout-live-commit-control PROPERTIES
+        TIMEOUT 30)
 endif()
 
 # Appearance invariants over a dump_layout_tree() snapshot: two painted glyph
