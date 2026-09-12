@@ -120,18 +120,6 @@ jobs:
       # every entry must match at least one registered test, and the SAME file
       # produces the regex ctest is handed, so assertion and execution cannot
       # drift.
-      - name: Gate - every acceptance test pattern matches a test
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/ci/ctest_pattern_gate.py \
-            --build-dir "$SPECTR_BUILD_DIR" \
-            --patterns tools/ci/acceptance-ctest-patterns.txt
-          regex="$(python3 tools/ci/ctest_pattern_gate.py \
-            --build-dir "$SPECTR_BUILD_DIR" \
-            --patterns tools/ci/acceptance-ctest-patterns.txt --emit-regex)"
-          echo "SPECTR_ACCEPTANCE_CTEST_REGEX=$regex" >> "$GITHUB_ENV"
-
       - name: Gate - Spectr M5 product acceptance focused native artifacts
         shell: bash
         run: |
@@ -161,6 +149,22 @@ jobs:
             Spectr-test Spectr-native-n1-test Spectr-editor-authority-test \
             Spectr-artifact-test Spectr-native-standalone-artifact-test \
             Spectr-native-shot
+
+      # MUST run after the build: catch_discover_tests registers Catch2 cases
+      # in a POST_BUILD step, so before the build the ctest list holds only the
+      # statically-registered tests and almost every pattern reports zero --
+      # which is indistinguishable from a genuinely rotted pattern.
+      - name: Gate - every acceptance test pattern matches a test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/ci/ctest_pattern_gate.py \
+            --build-dir "$SPECTR_BUILD_DIR" \
+            --patterns tools/ci/acceptance-ctest-patterns.txt
+          regex="$(python3 tools/ci/ctest_pattern_gate.py \
+            --build-dir "$SPECTR_BUILD_DIR" \
+            --patterns tools/ci/acceptance-ctest-patterns.txt --emit-regex)"
+          echo "SPECTR_ACCEPTANCE_CTEST_REGEX=$regex" >> "$GITHUB_ENV"
 
       - name: Gate - Spectr M5 product acceptance focused behavior
         shell: bash
