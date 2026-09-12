@@ -93,6 +93,33 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(D, "copy_button_width_invariance.py"), f(E11, "COPY-WIDTH-GREEN.layout.json"),
       "--plant"]),
 
+    # the hover readout pill after CLEAR: the SAME width-not-centring shape
+    # as the copy button above, in the status overlay. The pill's width came
+    # from React's copy of the message while the per-frame hover writer put a
+    # different string in the box, so a 13-character message (CLEARED GAINS /
+    # BAND n MUTED, both 132px) left the next hover reading painting 173px of
+    # ink into a 102px content box.
+    ("status_pill_width_invariance", "pill contains its ink and stays centred", 0,
+     [f(D, "status_pill_width_invariance.py"),
+      f(E11, "STATUS-PILL-GREEN-hover.layout.json"),
+      f(E11, "STATUS-PILL-GREEN-after-short-message.layout.json")]),
+    ("status_pill_width_invariance", "known-bad fixture (ink overhangs the pill)", 1,
+     [f(D, "status_pill_width_invariance.py"),
+      f(E11, "STATUS-PILL-RED-after-short-message.layout.json")]),
+    ("status_pill_width_invariance",
+     "known-bad fixture (two widths for one text length)", 1,
+     [f(D, "status_pill_width_invariance.py"),
+      f(E11, "STATUS-PILL-RED-length-collision-a.layout.json"),
+      f(E11, "STATUS-PILL-RED-length-collision-b.layout.json")]),
+    ("status_pill_width_invariance", "plant: shrink to a short message's width", 1,
+     [f(D, "status_pill_width_invariance.py"),
+      f(E11, "STATUS-PILL-GREEN-after-short-message.layout.json"),
+      "--plant", "shrink"]),
+    ("status_pill_width_invariance", "plant: push the pill off centre", 1,
+     [f(D, "status_pill_width_invariance.py"),
+      f(E11, "STATUS-PILL-GREEN-after-short-message.layout.json"),
+      "--plant", "offset"]),
+
     # issue 3: settings slider thumb grows on hover
     ("slider_thumb_hover_growth", "thumbs grow under hover", 0,
      [f(D, "slider_thumb_hover_growth.py"),

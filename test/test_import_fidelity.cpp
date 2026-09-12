@@ -559,12 +559,27 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 
     SECTION("the status banner is centered, padded, and smoothly content-sized") {
-        // The width is hoisted to a const because the banner is centred by a
-        // half-width negative margin; the sizing curve itself is unchanged.
+        // The sizing curve is unchanged; its OWNER is. It used to be written
+        // inline in StatusBanner, which made React's copy of the message the
+        // only thing that could resize the pill -- while updateLiveHoverStatus
+        // writes a different string into the same box every frame, on purpose,
+        // to keep a per-frame reading off the whole-document commit path. So a
+        // 13-character message (CLEARED GAINS from CLEAR, BAND n MUTED from a
+        // band click, both 132px) left the next hover reading painting 173px
+        // of ink into a 102px content box, overhanging 35px past each edge for
+        // the whole hold. One named rule, called by both writers, is what
+        // keeps the box the size of the string actually on screen.
         CHECK(count_occurrences(
                   document,
-                  "const bannerWidth = Math.max(96, Math.min(520, text.length * 8 + 28));")
+                  "function spectrStatusBannerWidth(text) {\\n"
+                  "  return Math.max(96, Math.min(520, (text ? text.length : 0) * 8 + 28));\\n"
+                  "}")
               == 1);
+        CHECK(count_occurrences(
+                  document, "const bannerWidth = spectrStatusBannerWidth(text);")
+              == 1);
+        // A second copy of the formula is exactly how the two owners drifted.
+        CHECK(count_occurrences(document, "Math.min(520, text.length * 8 + 28)") == 0);
         CHECK(count_occurrences(document, "marginLeft: -bannerWidth / 2,") == 1);
         CHECK(count_occurrences(document, "padding: \\\"0 14px\\\"") == 1);
         CHECK(count_occurrences(
@@ -573,6 +588,28 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   "opacity 0.15s ease\\\"")
               == 1);
         CHECK(count_occurrences(document, "width: 240,") == 0);
+    }
+
+    SECTION("the per-frame status writer sizes the box it paints into") {
+        // Whoever writes the string owns the box. This is NOT the retired
+        // `shell.style.width = Math.max(...)` sizer forbidden above: that one
+        // was a second, independent copy of the curve. These two lines call
+        // the same named rule React calls, on the element the fast path has
+        // already resolved, so there is one formula and no extra commit.
+        CHECK(count_occurrences(
+                  document, "const bannerWidth = spectrStatusBannerWidth(label);")
+              == 1);
+        CHECK(count_occurrences(
+                  document, "shown.style.width = bannerWidth + \\\"px\\\";")
+              == 1);
+        CHECK(count_occurrences(
+                  document,
+                  "shown.style.marginLeft = -bannerWidth / 2 + \\\"px\\\";")
+              == 1);
+        // The bare text-only write is what left the box behind.
+        CHECK(count_occurrences(
+                  document, "if (shown && text) text.textContent = label;")
+              == 0);
     }
 
     SECTION("live status text cannot invalidate layout when its content changes") {
@@ -748,7 +785,9 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"active-status-renewal", "now - statusRefreshAtRef.current >= 700"},
         ContractMarker{"inactivity-status-clear", "arm(160);"},
         ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
-        ContractMarker{"content-sized-banner", "const bannerWidth = Math.max(96, Math.min(520, text.length * 8 + 28));"},
+        ContractMarker{"content-sized-banner", "const bannerWidth = spectrStatusBannerWidth(text);"},
+        ContractMarker{"one-status-width-rule", "function spectrStatusBannerWidth(text) {"},
+        ContractMarker{"live-writer-sizes-its-box", "const bannerWidth = spectrStatusBannerWidth(label);"},
         ContractMarker{"centered-banner-offset", "marginLeft: -bannerWidth / 2,"},
         ContractMarker{"symmetric-banner-padding", "padding: \\\"0 14px\\\""},
         ContractMarker{"smooth-banner-resize", "transition: \\\"width 0.18s ease, margin-left 0.18s ease, opacity 0.15s ease\\\""},
