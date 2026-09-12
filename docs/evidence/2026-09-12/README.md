@@ -10,6 +10,11 @@ editor cannot host a range input, so both were reimplemented as custom
 drew a circle. Nothing chose the circle as a design; it was incidental to the
 port. The thumb is now a pill: `22x14` idle, `26x16` hovered, fully rounded.
 
+`slider-thumb-BEFORE-circle.png` and `slider-thumb-AFTER-pill.png` are the
+same 460x120 design-px region of `05-MODULATION-lfo1-expanded-UNWEDGED.png`
+(the settings Rate slider at 4.00), at 4x nearest-neighbour, from the two
+captures below.
+
 ### Measured, `Spectr-native-shot --backend=skia`, same worktree and SDK pin
 
 | surface | painted track | thumb before | thumb after |
