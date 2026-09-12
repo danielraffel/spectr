@@ -36,6 +36,7 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 E07 = os.path.join("docs", "evidence", "2026-09-07")
 E11 = os.path.join("docs", "evidence", "2026-09-11")
+E12 = os.path.join("docs", "evidence", "2026-09-12")
 
 D = os.path.join("tools", "spectr-detectors")
 T = "tools"
@@ -133,6 +134,21 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(D, "slider_thumb_hover_growth.py"),
       "--idle", f(E11, "slider-hover-GREEN-idle.layout.json"),
       "--hover", f(E11, "slider-hover-GREEN-hover.layout.json"), "--plant"]),
+
+    # the hit-target lane: a control must be reachable over the area it paints
+    ("hit_target_reach", "settings toggles + sliders reach their paint", 0,
+     [f(D, "hit_target_reach.py"),
+      f(E12, "GREEN-hit-settings-modulation.layout.json")]),
+    ("hit_target_reach", "known-bad fixture (settings, pre-fix)", 1,
+     [f(D, "hit_target_reach.py"),
+      f(E12, "RED-hit-settings-modulation.layout.json")]),
+    ("hit_target_reach", "plant: hit rects shrunk onto the paint", 1,
+     [f(D, "hit_target_reach.py"),
+      f(E12, "GREEN-hit-settings-modulation.layout.json"), "--plant"]),
+    ("hit_target_reach", "SNAPSHOT A/B reach their paint", 0,
+     [f(D, "hit_target_reach.py"), f(E12, "GREEN-hit-transport.layout.json")]),
+    ("hit_target_reach", "known-bad fixture (transport row, pre-fix)", 1,
+     [f(D, "hit_target_reach.py"), f(E12, "RED-hit-transport.layout.json")]),
 
     # issue 6: cursors really change on hover
     ("cursor_invariants", "every region resolves its cursor", 0,
