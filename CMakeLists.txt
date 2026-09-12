@@ -749,6 +749,56 @@ if(SPECTR_NODE_EXECUTABLE)
         TIMEOUT 30)
 endif()
 
+# The zoom readout must be a leaf that subscribes to the viewport, never a
+# value the app root polls into root state. The app root used to hold a 150ms
+# setInterval that read the live viewport off the bank handle; a memo guard
+# kept it out of unchanged frames, which hid it, but zoom is exactly what moves
+# while the minimap is being dragged -- so the one interaction that has to stay
+# cheap committed the whole imported document every 150ms.
+#
+# Static checks alone cannot see a declaration that landed in the wrong
+# function body (that parses clean), so the suite also evaluates the readout's
+# own script block in a vm with a hook runtime and drives it: it must
+# subscribe, repaint on a zoom change, commit NOTHING across 200 pan samples
+# (a pan preserves the span, so the printed value cannot move), and release
+# its subscription on unmount.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-zoom-readout
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_zoom_readout.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-zoom-readout PROPERTIES TIMEOUT 30)
+    # The negative control. --plant-poller restores the pre-fix shape -- the
+    # root interval comes back and the readout reverts to a value handed down
+    # from root state -- and --expect-fail inverts the verdict, so this row is
+    # green only when the suite REJECTS that document. The plant asserts each
+    # of its three needles matched exactly once, so a drifted needle fails the
+    # control instead of quietly re-testing the current document. The
+    # inversion lives in the script rather than in WILL_FAIL for the same
+    # reason as the row above: WILL_FAIL accepts any non-zero exit.
+    add_test(NAME Spectr-materialized-zoom-readout-negative-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_zoom_readout.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-poller --expect-fail)
+    set_tests_properties(Spectr-materialized-zoom-readout-negative-control PROPERTIES
+        TIMEOUT 30)
+    # The second control, and the one that matters most. --plant-live-commit
+    # keeps the subscription but drops the live guard, which is the measured
+    # REGRESSION: coalescing live samples to one commit per frame is still a
+    # commit per frame, and it took minimap frame gaps >= 25ms from 16 to 29.
+    # Separate from the row above because the two fail different assertions,
+    # and a single plant that trips everything cannot show which check is
+    # load bearing.
+    add_test(NAME Spectr-materialized-zoom-readout-live-commit-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_zoom_readout.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-live-commit --expect-fail)
+    set_tests_properties(Spectr-materialized-zoom-readout-live-commit-control PROPERTIES
+        TIMEOUT 30)
+endif()
+
 # Appearance invariants over a dump_layout_tree() snapshot: two painted glyph
 # runs must not overlap, and a run must fit the box laid out for it. Both
 # adjudicate on measured_text_boxes[].rect after intersecting with the node's
