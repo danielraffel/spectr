@@ -1075,7 +1075,7 @@ TEST_CASE("Spectr publishes LFO inputs the editor can evaluate at frame time",
         double phase = snapshot.phase + snapshot.phase_per_second * seconds;
         phase -= std::floor(phase);
         return spectr::apply_internal_modulation(
-            snapshot.pre_field, plugin->snapshots(), snapshot.host_morph,
+            snapshot.pre_field, snapshot.snapshots, snapshot.host_morph,
             snapshot.settings,
             spectr::lfo_value(snapshot.settings.shape, phase));
     };
@@ -1111,4 +1111,53 @@ TEST_CASE("Spectr publishes LFO inputs the editor can evaluate at frame time",
         CHECK(full_cycle.bands[band].gain_db
               == Catch::Approx(at_publication.bands[band].gain_db).margin(1e-4));
     }
+}
+
+TEST_CASE("Spectr releases the modulation overlay without a parameter event",
+          "[modulation][display][rt]") {
+    // The falling edge is the editor's only cue to stop drawing the overlay
+    // and go back to canonical state, and it is published from the automation
+    // branch of process(). "The block carries parameter events" and "a
+    // modulator is still enabled" are both false in the block where a host
+    // switches the LFO off by writing the parameter directly, so the branch
+    // has to stay alive one pass past the modulator or the falling edge never
+    // runs and the overlay latches on the last modulated frame for the rest
+    // of the session.
+    constexpr std::size_t block_size = 256;
+    constexpr double sample_rate = 48000.0;
+
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    host.prepare(sample_rate, block_size);
+    auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+    REQUIRE(plugin != nullptr);
+
+    pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+    const float* input_channels[] = {
+        in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> input(input_channels, 2, block_size);
+    auto output = out.view();
+
+    for (std::size_t block = 0; block < 4; ++block) {
+        pulp::state::ParameterEventQueue events;
+        REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                             static_cast<float>(
+                                 spectr::ModulationTarget::WholeBank), 0}));
+        host.process(output, input, events);
+    }
+    // Positive control: without a running modulator the release below would
+    // be trivially satisfied and prove nothing.
+    REQUIRE(plugin->read_modulated_field().active);
+
+    // The host writes the parameter and sends no events for the block, which
+    // is what a generic-UI or preset write looks like from here.
+    plugin->state().set_value(spectr::kParamLfoEnabled, 0.0f);
+    plugin->state().set_value(spectr::kParamLfoDepth, 0.0f);
+    for (std::size_t block = 0; block < 2; ++block) {
+        pulp::state::ParameterEventQueue events;
+        host.process(output, input, events);
+    }
+    CHECK_FALSE(plugin->read_modulated_field().active);
 }

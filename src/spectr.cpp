@@ -505,7 +505,14 @@ void Spectr::process(
         const bool modulation_enabled =
             state().get_value(kParamLfoEnabled) >= 0.5f
             || state().get_value(kParamLfo2Enabled) >= 0.5f;
-        if (has_events || modulation_enabled) {
+        // `modulated_field_was_active_` keeps this branch alive for exactly
+        // one more pass after the modulator stops. Without it a host that
+        // sends no parameter events in the block where the LFO is switched
+        // off skips the branch entirely, the falling-edge publication never
+        // runs, and the editor's overlay latches on the last modulated frame
+        // for the rest of the session -- the release `applyModulationFrame`
+        // exists to perform never arrives.
+        if (has_events || modulation_enabled || modulated_field_was_active_) {
             std::array<pulp::format::ParamSnapshotEntry,
                        kSurfaceCacheSlots + 2> initial{};
             initial[0] = {kMix, audio_mix_percent_};
@@ -643,14 +650,11 @@ void Spectr::process(
                     if (modulation_active || modulated_field_was_active_) {
                         ++modulated_field_sequence_;
                         const auto sequence = modulated_field_sequence_;
-                        // Same tempo/sample-rate resolution the phase advance
-                        // below uses, so the published rate and the audio
-                        // owner's own advance can never disagree.
-                        const double publish_sample_rate = ctx.sample_rate > 0.0
-                            ? ctx.sample_rate : sample_rate_;
+                        // The same tempo resolution the phase advance below
+                        // uses, so the published rate and the audio owner's
+                        // own advance can never disagree.
                         const double publish_tempo = ctx.tempo_bpm > 0.0
                             ? ctx.tempo_bpm : 120.0;
-                        (void)publish_sample_rate;
                         const double cycles_per_second = publish_tempo / 60.0;
                         const auto phase_1 = audio_modulation_phase_;
                         const auto phase_2 = audio_modulation_phase_2_;
@@ -674,6 +678,7 @@ void Spectr::process(
                                 slot.active    = modulation_active;
                                 slot.pre_field = host_field;
                                 slot.settings  = modulation_settings;
+                                slot.snapshots = audio_modulation.snapshots;
                                 slot.host_morph = host_morph;
                                 slot.phase     = phase_1;
                                 slot.phase_2   = phase_2;

@@ -101,6 +101,13 @@ struct ModulatedFieldSnapshot {
     // does. `field` remains the audio owner's own last sample.
     BandField          pre_field{};   ///< post-morph, pre-LFO input field
     ModulationSettings settings{};
+    /// The bank the audio owner composed against. Carried rather than read
+    /// from `Spectr::snapshots()` on the consumer side: a capture lands in the
+    /// control-thread bank immediately but only reaches the audio owner one
+    /// publication later, and for that tick the two would disagree. Carrying
+    /// it makes "the drawn field equals the audible one" exact instead of
+    /// almost-always.
+    SnapshotBank       snapshots{};
     float              host_morph = 0.0f;
     double             phase = 0.0;   ///< LFO 1 phase at `published_ns`
     double             phase_2 = 0.0; ///< LFO 2 phase at `published_ns`
@@ -577,10 +584,15 @@ private:
     // Last modulated-field sequence projected to the editor, so a UI tick
     // that finds no new audio frame does not re-dispatch the same overlay.
     std::uint64_t native_modulation_sequence_ = 0;
-    // Scratch for the display-time LFO reconstruction in the editor tick. A
-    // member rather than a local so a per-frame BandField copy is not built on
-    // the stack every tick.
+    // Scratch for the display-time LFO reconstruction. A member rather than a
+    // local so a BandField is not built on the stack every frame.
     BandField     native_modulation_drawn_{};
+    // Phases last painted, and how many consecutive ticks have seen no new
+    // publication. Together they recognise the two no-ops: nothing new to
+    // draw, and a producer that has gone quiet.
+    double        native_modulation_drawn_phase_ = -1.0;
+    double        native_modulation_drawn_phase_2_ = -1.0;
+    int           native_modulation_stale_ticks_ = 0;
     EditorRevision native_host_automation_revision_ = 0;
 
     std::unique_ptr<pulp::view::View> create_native_editor_();
@@ -588,6 +600,10 @@ private:
     void open_native_editor_(pulp::view::View& view);
     void close_native_editor_();
     bool tick_native_analyzer_(float dt);
+    /// Draw what the modulators are playing: reconstruct the post-LFO field at
+    /// this frame's time from the audio owner's published inputs and hand it
+    /// to the editor. Display only -- it never re-enters canonical state.
+    void publish_modulation_frame_();
     // Fixture-only. Writes the laid-out tree plus its depth sidecar under
     // SPECTR_DRAG_DUMP_PREFIX for one named stage of a gesture, so "during"
     // and "after" are two artifacts rather than one interpretation.

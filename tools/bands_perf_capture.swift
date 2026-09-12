@@ -79,7 +79,10 @@ func ownedWindow(pid: pid_t) -> CGRect? {
 }
 
 var frame: CGRect?
-for _ in 0..<120 {
+// An audio-keeping launch opens a device before its window appears, and on
+// a loaded machine that can take several seconds. A short budget here reports
+// a live app as "no window" and loses the run.
+for _ in 0..<600 {
     frame = ownedWindow(pid: process.processIdentifier)
     if frame != nil { break }
     usleep(25_000)
