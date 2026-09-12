@@ -54,7 +54,19 @@ jobs:
       # self-test correctly reports as a detector that cannot adjudicate --
       # a missing dependency must fail loudly here, never pass quietly.
       - name: Install detector self-test dependencies
-        run: python3 -m pip install --quiet --disable-pip-version-check 'pillow==11.0.0'
+        run: |
+          set -euo pipefail
+          # The runner's python3 is Homebrew's and PEP 668 externally-managed, so
+          # a plain pip install is refused. This is a SHARED Studio, so forcing
+          # packages into its system python would leak into other repos' jobs.
+          # A job-local venv on PYTHONPATH keeps the self-test's invocation
+          # identical while touching nothing outside this workspace.
+          venv="${RUNNER_TEMP:-/tmp}/spectr-selftest-venv"
+          python3 -m venv "$venv"
+          "$venv/bin/pip" install --quiet --disable-pip-version-check 'pillow==11.0.0'
+          site="$("$venv/bin/python" -c 'import site; print(site.getsitepackages()[0])')"
+          python3 -c "import sys; sys.path.insert(0, '$site'); import PIL; print('PIL', PIL.__version__)"
+          echo "PYTHONPATH=$site${PYTHONPATH:+:$PYTHONPATH}" >> "$GITHUB_ENV"
 
       - name: Gate - detector suite self-test (blocking)
         run: python3 tools/ci/detector_selftest.py
