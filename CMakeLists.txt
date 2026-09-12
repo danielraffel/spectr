@@ -822,6 +822,7 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --plant-nohint --expect-fail)
     set_tests_properties(Spectr-materialized-morph-affordance-hint-control PROPERTIES
+        TIMEOUT 60)
     # The MODULATION group must read as two LFOs plus a shared destination
     # block, not as one flat run of ten sibling rows. `Target` used to be gated
     # on LFO 1, which put it inside LFO 1's disclosure -- but
