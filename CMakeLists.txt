@@ -782,6 +782,47 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-oneshot --expect-fail)
     set_tests_properties(Spectr-materialized-modulation-oneshot-control PROPERTIES
         TIMEOUT 60)
+
+    # The morph slider's precondition, made legible. Morph interpolates the
+    # band field between snapshot A and snapshot B, so with either slot empty
+    # it has no endpoints. That was always ENFORCED -- `disabled` forwards to
+    # View::setEnabled(false), the pointer handlers return early, and
+    # bank.setMorph re-checks its own mirror -- but never EXPLAINED: the
+    # control had no visible name and its disabled state was carried by
+    # opacity alone, so a user who had not captured both slots saw a dim
+    # unlabelled track that ignored them ("i can't figure out how to see the
+    # morph slider actually morph"). This suite executes the shipped
+    # MorphSlider and requires a caption naming the MISSING slot while one is
+    # empty, readable rather than sharing the control's dim, and -- the scope
+    # control -- that the gate still refuses a pointer commit when disabled
+    # and still accepts one when enabled, including after a slot is cleared on
+    # a live component. The caption is absolutely positioned inside the 90x16
+    # track on purpose: the transport row has no spare width, and an earlier
+    # attempt that added flex siblings crushed that track to 39.5px.
+    add_test(NAME Spectr-materialized-morph-affordance
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_affordance.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-morph-affordance PROPERTIES TIMEOUT 60)
+    # Negative controls, one per half of the fix. Each reinstates the exact
+    # pre-fix text and inverts the verdict, so the row is green only when the
+    # suite REJECTS it. As above the inversion lives in the script, not in
+    # WILL_FAIL, because WILL_FAIL accepts any non-zero exit -- including the
+    # ones that mean the control never ran.
+    add_test(NAME Spectr-materialized-morph-affordance-dim-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_affordance.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-wrapper-dim --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-affordance-dim-control PROPERTIES
+        TIMEOUT 60)
+    add_test(NAME Spectr-materialized-morph-affordance-hint-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_affordance.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-nohint --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-affordance-hint-control PROPERTIES
+        TIMEOUT 60)
 endif()
 
 # The zoom readout must be a leaf that subscribes to the viewport, never a
