@@ -1339,6 +1339,30 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         target_link_libraries(Spectr-artifact-test PRIVATE
             "-framework AudioToolbox" "-framework CoreFoundation")
         add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_AU_TARGET})
+
+        # A host that changes a band by WRITING the parameter instead of
+        # sending an event -- an AU generic control, a plain
+        # AudioUnitSetParameter -- used to leave the adoption entirely to
+        # Spectr's sync worker, which is a thread. That made the audible
+        # result depend on the worker being scheduled rather than on samples
+        # processed, and the AU case above lost that race roughly one run in
+        # eight, at the mute assertion or at the unmute one depending on which
+        # write the worker was late for. A flaky row is worse than a missing
+        # one: it reads as a regression in whatever PR happens to catch it.
+        #
+        # This row holds the worker back for 200 ms -- far longer than the
+        # whole render takes -- so the case can only pass if the audio path
+        # reaches the store on its own. It is the negative control made
+        # permanent: against the pre-fix processor it fails EVERY run, and it
+        # is the only form in which that can be asserted at all, since the
+        # defect is a race no ordinary run reproduces on demand.
+        add_test(NAME Spectr-au-param-write-without-sync-worker
+            COMMAND Spectr-artifact-test
+                "Pulp host loads and processes the built Spectr AU artifact")
+        set_tests_properties(Spectr-au-param-write-without-sync-worker
+            PROPERTIES
+                ENVIRONMENT "SPECTR_TEST_PARAM_SYNC_STALL_MS=200"
+                TIMEOUT 180)
     endif()
     if(TARGET SpectrWebViewReference_CLAP)
         target_compile_definitions(Spectr-artifact-test PRIVATE

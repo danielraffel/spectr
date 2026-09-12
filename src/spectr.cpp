@@ -275,6 +275,9 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     config.mix_curve = pulp::signal::MixCurve::Linear;
     processor_prepared_ = channels_ <= static_cast<int>(kMaximumChannels)
                        && mask_processor_.prepare(config);
+    // The mask processor was just re-prepared, so nothing this thread applied
+    // before survives into it.
+    audio_applied_surface_valid_ = false;
     output_gain_.set_ramp_time(0.01f, static_cast<float>(sample_rate_));
     output_gain_.set_immediate(std::pow(
         10.0f, state().get_value(kOutputTrim) * 0.05f));
@@ -477,7 +480,9 @@ void Spectr::process(
     // adoption to the sync worker — mask-table compilation is a
     // control-thread operation and never runs here. One lock-free spawn per
     // block at most; the lane's Latest policy coalesces bursts.
-    if (processor_prepared_ && surface_params_drifted_())
+    const auto surface_drift = processor_prepared_
+        ? sample_surface_drift_() : SurfaceDrift{};
+    if (surface_drift.worker)
         param_sync_lane_.try_spawn(ParamSyncTask{});
 
     // Sync the two continuously automatable audio controls each block.
@@ -512,7 +517,19 @@ void Spectr::process(
         // runs, and the editor's overlay latches on the last modulated frame
         // for the rest of the session -- the release `applyModulationFrame`
         // exists to perform never arrives.
-        if (has_events || modulation_enabled || modulated_field_was_active_) {
+        // `surface_drift.audio` is the store-write lane. A host that changes
+        // a band by writing the parameter rather than by sending an event --
+        // an AU generic control, a plain `AudioUnitSetParameter`, a restored
+        // preset -- leaves the adoption to the sync worker spawned above,
+        // which is a THREAD. Gating the audio path on that worker makes the
+        // sound depend on it being scheduled rather than on samples
+        // processed, so a consumer that runs blocks back to back (an offline
+        // render, a test) can clear a whole settling window before the change
+        // lands, or miss it entirely. Reading the drifted store here through
+        // the cursor makes the block that OBSERVES the drift also act on it.
+        // The worker still runs: it owns canonical state for the editor.
+        if (has_events || modulation_enabled || modulated_field_was_active_
+            || surface_drift.audio) {
             std::array<pulp::format::ParamSnapshotEntry,
                        kSurfaceCacheSlots + 2> initial{};
             initial[0] = {kMix, audio_mix_percent_};
@@ -782,6 +799,10 @@ void Spectr::process(
                 bridge_.process(ptrs, static_cast<int>(nc),
                                 static_cast<int>(output.num_samples()));
             }
+            // Sampled BEFORE the block ran, so a write that lands while it is
+            // running still reads as drift on the next one.
+            audio_applied_surface_ = audio_surface_scratch_;
+            audio_applied_surface_valid_ = true;
             return;
         }
 

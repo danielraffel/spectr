@@ -443,6 +443,16 @@ private:
     static constexpr std::size_t kSurfaceCacheSlots = 145;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
+    // The audio thread's OWN record of the surface values it last pushed into
+    // the mask processor, plus the scratch it samples the store into each
+    // block. `applied_param_cache_` above is the SYNC WORKER's record: gating
+    // the audio path on it makes what the plugin sounds like depend on that
+    // worker having been scheduled. These two are touched only from the audio
+    // thread, so a store write is observed on the block that follows it no
+    // matter what any other thread is doing.
+    std::array<float, kSurfaceCacheSlots> audio_applied_surface_{};
+    std::array<float, kSurfaceCacheSlots> audio_surface_scratch_{};
+    bool audio_applied_surface_valid_ = false;
     // Audio-owner baseline used when an adapter supplies an event queue after
     // already committing its end-of-block values to StateStore. ParamCursor
     // must begin from the values audible at the end of the previous block,
@@ -501,7 +511,14 @@ private:
     bool morph_derived_ = false;
     std::bitset<kMaxBands> morph_overrides_{};
 
-    bool surface_params_drifted_() const noexcept;
+    /// What one store sweep found, against each of the two records that care.
+    struct SurfaceDrift {
+        bool worker = false;  ///< differs from the sync worker's record
+        bool audio  = false;  ///< differs from what this thread last applied
+    };
+    /// Sample every surface parameter into `audio_surface_scratch_` and report
+    /// which records disagree with it. Audio thread only.
+    SurfaceDrift sample_surface_drift_() noexcept;
     /// The modulation settings described by the current host parameter lanes.
     /// `target_mask` is left at the unset sentinel: the caller owns whatever
     /// explicit destination selection should ride along.
