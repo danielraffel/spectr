@@ -265,17 +265,31 @@ for (const c of CASES) {
     const thumb = findByProp(flatten(track), "data-spectr-morph-thumb")[0];
     check(`[gated] ${c.name} thumb still rendered`, !!thumb,
       "the native parity test drives the thumb in the DEFAULT disabled state");
-    // A disabled morph has no position to indicate, and the thumb overhangs
-    // its track by 7px -- straight onto the "A" end label, which it swallowed
-    // whole in the capture. It is hidden rather than removed so the parity
-    // test still resolves the node and its 14/18px geometry.
+    // A disabled morph has no position to indicate, and the caption that
+    // names the missing slot is centred across the same track. The thumb is
+    // hidden rather than removed so the parity test still resolves the node
+    // and its geometry.
     check(`[gated] ${c.name} thumb hidden while disabled`, thumb
       && thumb.props.style.opacity === (enabled ? 1 : 0),
       `thumb opacity=${thumb && thumb.props.style.opacity}`);
     if (thumb) {
-      check(`[gated] ${c.name} thumb keeps its geometry`,
-        thumb.props.style.width === 14 && thumb.props.style.height === 14,
-        `thumb is ${thumb.props.style.width}x${thumb.props.style.height}`);
+      // A PILL, not a circle: wider than it is tall, and fully rounded so the
+      // ends are semicircular rather than merely soft. A square thumb of any
+      // size fails the first clause, and a rounded-rect one fails the second.
+      const { width, height, borderRadius } = thumb.props.style;
+      check(`[gated] ${c.name} thumb is a pill`,
+        width === 22 && height === 14 && borderRadius === 7,
+        `thumb is ${width}x${height} r${borderRadius}`);
+      // ...and it stays INSIDE its 90px track. The circle used a fixed
+      // half-width margin, so it hung 7px past each end -- at ratio 0
+      // straight onto the flanking "A" label. This reads the margin the
+      // component actually rendered at its default value rather than
+      // restating the formula: -7 for the old circle, 0 for an inset travel.
+      check(`[gated] ${c.name} thumb does not overhang the track at min`,
+        thumb.props.style.left === "0%"
+          && Object.is(Math.abs(thumb.props.style.marginLeft), 0),
+        `at min the thumb is at left=${thumb.props.style.left} `
+        + `marginLeft=${thumb.props.style.marginLeft}`);
     }
     // Geometry the native parity test resolves by id and asserts.
     check(`[gated] ${c.name} geometry`,
