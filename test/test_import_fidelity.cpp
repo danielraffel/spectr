@@ -597,14 +597,34 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         // the same named rule React calls, on the element the fast path has
         // already resolved, so there is one formula and no extra commit.
         CHECK(count_occurrences(
-                  document, "const bannerWidth = spectrStatusBannerWidth(label);")
-              == 1);
-        CHECK(count_occurrences(
-                  document, "shown.style.width = bannerWidth + \\\"px\\\";")
-              == 1);
-        CHECK(count_occurrences(
                   document,
-                  "shown.style.marginLeft = -bannerWidth / 2 + \\\"px\\\";")
+                  "spectrPlaceStatusBanner(shown, spectrStatusBannerWidth(label));")
+              == 1);
+        // Placement, not only size. The captured import metadata replays a
+        // frozen {left:540,top:60,width:240} box over this node after a
+        // CLEAR, which parked the pill (-120,-44) from where it belongs, so
+        // the same owner writes top and left alongside width and margin.
+        CHECK(count_occurrences(
+                  document, "function spectrPlaceStatusBanner(node, bannerWidth) {")
+              == 1);
+        CHECK(count_occurrences(document, "node.style.width = bannerWidth;")
+              == 1);
+        CHECK(count_occurrences(document, "node.style.marginLeft = -bannerWidth / 2;")
+              == 1);
+        CHECK(count_occurrences(document, "node.style.top = spectrStatusBannerTop();")
+              == 1);
+        CHECK(count_occurrences(document, "node.style.left = spectrStatusBannerLeft();")
+              == 1);
+        // The two writers must read the same numbers, so the authored style
+        // object may not carry its own literals.
+        CHECK(count_occurrences(document, "top: spectrStatusBannerTop(),") == 1);
+        CHECK(count_occurrences(document, "left: spectrStatusBannerLeft(),") == 1);
+        // A re-assert with nothing watching cannot help: the commit that
+        // loses the placement is not a commit of this component.
+        CHECK(count_occurrences(document, "node.style.marginLeft = -rect.width / 2;")
+              == 1);
+        CHECK(count_occurrences(
+                  document, "Math.abs(rect.top - spectrStatusBannerTop()) > 0.5")
               == 1);
         // The bare text-only write is what left the box behind.
         CHECK(count_occurrences(
@@ -671,7 +691,13 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
     }
 
     SECTION("remaining standalone chrome stays aligned") {
-        CHECK(count_occurrences(document, "top: 104,") == 1);
+        // The status pill's top moved behind spectrStatusBannerTop(), so the
+        // literal must survive in exactly one place: that function's body.
+        CHECK(count_occurrences(document, "top: 104,") == 0);
+        CHECK(count_occurrences(
+                  document,
+                  "function spectrStatusBannerTop() {\\n  return 104;\\n}")
+              == 1);
         // The three rail menus are mutually exclusive and share one openMenu
         // state, so each overlay dismisses through the same setter. This was
         // once forbidden, back when the menus owned independent booleans and
@@ -787,15 +813,23 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
         ContractMarker{"content-sized-banner", "const bannerWidth = spectrStatusBannerWidth(text);"},
         ContractMarker{"one-status-width-rule", "function spectrStatusBannerWidth(text) {"},
-        ContractMarker{"live-writer-sizes-its-box", "const bannerWidth = spectrStatusBannerWidth(label);"},
+        ContractMarker{"live-writer-sizes-its-box",
+                       "spectrPlaceStatusBanner(shown, spectrStatusBannerWidth(label));"},
+        ContractMarker{"one-status-placement-rule",
+                       "function spectrPlaceStatusBanner(node, bannerWidth) {"},
+        ContractMarker{"placement-watch-repairs-a-replayed-box",
+                       "node.style.marginLeft = -rect.width / 2;"},
         ContractMarker{"centered-banner-offset", "marginLeft: -bannerWidth / 2,"},
+        ContractMarker{"authored-banner-top", "top: spectrStatusBannerTop(),"},
+        ContractMarker{"authored-banner-left", "left: spectrStatusBannerLeft(),"},
         ContractMarker{"symmetric-banner-padding", "padding: \\\"0 14px\\\""},
         ContractMarker{"smooth-banner-resize", "transition: \\\"width 0.18s ease, margin-left 0.18s ease, opacity 0.15s ease\\\""},
         ContractMarker{"aligned-edge-label", "ctx.font = \\\"10px JetBrains Mono, monospace\\\";\\n        ctx.textAlign = \\\"center\\\";\\n        ctx.textBaseline = \\\"middle\\\";"},
         ContractMarker{"dropdown-surface", "background: \\\"rgba(255,255,255,0.025)\\\",\\n  border: \\\"1px solid transparent\\\""},
         ContractMarker{"aligned-band-count", "width: 44,\\n        minWidth: 44,\\n        flexShrink: 0,\\n        minHeight: 26,\\n        boxSizing: \\\"border-box\\\",\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
         ContractMarker{"native-band-count-spacing", "style: { lineHeight: 1, whiteSpace: \\\"nowrap\\\" }"},
-        ContractMarker{"banner-below-plot-line", "top: 104,"},
+        ContractMarker{"banner-below-plot-line",
+                       "function spectrStatusBannerTop() {\\n  return 104;\\n}"},
         // A fixed-height, fixed-line-height span: the text box cannot resize when
         // its content changes, so a status update stays off the layout path.
         ContractMarker{"integer-centered-banner-text", "height: \\\"14px\\\", lineHeight: \\\"14px\\\""},
@@ -908,7 +942,8 @@ TEST_CASE("status overlay and settings polish contracts detect every severed fix
         ContractMarker{"drag-status-refresh", "now - statusRefreshAtRef.current >= 700"},
         ContractMarker{"status-clear-grace", "arm(160);"},
         ContractMarker{"status-readable-dwell", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
-        ContractMarker{"status-below-ruler", "top: 104,"},
+        ContractMarker{"status-below-ruler",
+                       "function spectrStatusBannerTop() {\\n  return 104;\\n}"},
         ContractMarker{"status-integer-centering", "height: \\\"14px\\\", lineHeight: \\\"14px\\\""},
         ContractMarker{"settings-header-above-scroll", "\\\"data-spectr-settings-header\\\": true, style: { position: \\\"relative\\\", flexShrink: 0, zIndex: 3"},
         ContractMarker{"settings-complete-status-hint", "Hover, mute, and drag feedback"},
