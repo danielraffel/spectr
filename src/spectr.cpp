@@ -11,7 +11,9 @@
 #include <pulp/runtime/log.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <optional>
 #include <sstream>
 #include <limits>
@@ -641,11 +643,43 @@ void Spectr::process(
                     if (modulation_active || modulated_field_was_active_) {
                         ++modulated_field_sequence_;
                         const auto sequence = modulated_field_sequence_;
+                        // Same tempo/sample-rate resolution the phase advance
+                        // below uses, so the published rate and the audio
+                        // owner's own advance can never disagree.
+                        const double publish_sample_rate = ctx.sample_rate > 0.0
+                            ? ctx.sample_rate : sample_rate_;
+                        const double publish_tempo = ctx.tempo_bpm > 0.0
+                            ? ctx.tempo_bpm : 120.0;
+                        (void)publish_sample_rate;
+                        const double cycles_per_second = publish_tempo / 60.0;
+                        const auto phase_1 = audio_modulation_phase_;
+                        const auto phase_2 = audio_modulation_phase_2_;
+                        const double rate_1 = cycles_per_second
+                            / std::max(0.0625, static_cast<double>(
+                                modulation_settings.beats_per_cycle));
+                        const double rate_2 = cycles_per_second
+                            / std::max(0.0625, static_cast<double>(
+                                modulation_settings.lfo2_beats_per_cycle));
+                        // mach_absolute_time on Apple platforms: a vDSO-style
+                        // counter read, no lock and no allocation, so it is
+                        // safe on this thread.
+                        const auto published_ns = std::chrono::duration_cast<
+                            std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now()
+                                    .time_since_epoch()).count();
                         modulated_field_publication_.write_with(
                             [&](ModulatedFieldSnapshot& slot) noexcept {
-                                slot.field    = audible;
-                                slot.sequence = sequence;
-                                slot.active   = modulation_active;
+                                slot.field     = audible;
+                                slot.sequence  = sequence;
+                                slot.active    = modulation_active;
+                                slot.pre_field = host_field;
+                                slot.settings  = modulation_settings;
+                                slot.host_morph = host_morph;
+                                slot.phase     = phase_1;
+                                slot.phase_2   = phase_2;
+                                slot.phase_per_second   = rate_1;
+                                slot.phase_2_per_second = rate_2;
+                                slot.published_ns = published_ns;
                             });
                     }
                     modulated_field_was_active_ = modulation_active;

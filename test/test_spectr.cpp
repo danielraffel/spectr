@@ -1013,3 +1013,102 @@ TEST_CASE("Spectr reports the display overlay inactive when depth is zero",
     CHECK(running_lfo2.active);
     CHECK(running_lfo2.sequence > 0);
 }
+
+TEST_CASE("Spectr publishes LFO inputs the editor can evaluate at frame time",
+          "[modulation][display][rt]") {
+    // The audio owner samples the LFO once per processed block; the editor
+    // paints once per display frame. Those clocks are unrelated, so an editor
+    // that repaints the last published sample advances an irregular number of
+    // producer steps per frame and the animation judders at every waveform --
+    // the defect is in the resampling, not in the oscillator.
+    //
+    // The fix is for the publication to carry the LFO's INPUTS (phase, rate,
+    // clock origin, pre-LFO field, settings, morph) so the editor can evaluate
+    // the same pure functions at its own frame time. This asserts the two
+    // properties that makes possible, and that a consumer relies on:
+    //
+    //   * evaluating at the published phase reproduces the published field
+    //     exactly -- so the drawn field can never drift from the audible one;
+    //   * evaluating between two producer samples resolves motion the
+    //     published field cannot express -- which is the entire point.
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    host.prepare(sample_rate, block_size);
+    auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+    REQUIRE(plugin != nullptr);
+
+    pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+    const float* input_channels[] = {
+        in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> input(input_channels, 2, block_size);
+    auto output = out.view();
+    for (std::size_t block = 0; block < 8; ++block) {
+        pulp::state::ParameterEventQueue events;
+        for (std::size_t band = 0; band < 32; ++band)
+            REQUIRE(events.push({
+                spectr::band_gain_param_id(band), 0, -12.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        // A constant-slope shape: any change over a sub-block interval is the
+        // reconstruction resolving real motion, not a waveform turning point.
+        REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                             static_cast<float>(spectr::LfoShape::Saw), 0}));
+        REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                             static_cast<float>(
+                                 spectr::ModulationTarget::WholeBank), 0}));
+        host.process(output, input, events);
+    }
+
+    const auto& snapshot = plugin->read_modulated_field();
+    REQUIRE(snapshot.active);
+    REQUIRE(snapshot.sequence > 0);
+    // Without a clock origin and a rate the consumer has nothing to
+    // extrapolate from and must fall back to the held sample.
+    CHECK(snapshot.published_ns > 0);
+    CHECK(snapshot.phase_per_second > 0.0);
+    CHECK(snapshot.settings.enabled);
+
+    const auto evaluate = [&](double seconds) {
+        double phase = snapshot.phase + snapshot.phase_per_second * seconds;
+        phase -= std::floor(phase);
+        return spectr::apply_internal_modulation(
+            snapshot.pre_field, plugin->snapshots(), snapshot.host_morph,
+            snapshot.settings,
+            spectr::lfo_value(snapshot.settings.shape, phase));
+    };
+
+    const auto at_publication = evaluate(0.0);
+    for (std::size_t band = 0; band < spectr::kMaxBands; ++band) {
+        INFO("band " << band);
+        CHECK(at_publication.bands[band].gain_db
+              == snapshot.field.bands[band].gain_db);
+        CHECK(at_publication.bands[band].muted
+              == snapshot.field.bands[band].muted);
+    }
+
+    // Half a block of elapsed time -- a position the producer never sampled
+    // and the held field therefore cannot represent at all.
+    const double half_block_seconds =
+        static_cast<double>(block_size) / sample_rate * 0.5;
+    const auto between = evaluate(half_block_seconds);
+    bool moved = false;
+    for (std::size_t band = 0; band < spectr::kMaxBands; ++band) {
+        if (between.bands[band].gain_db != at_publication.bands[band].gain_db) {
+            moved = true;
+            break;
+        }
+    }
+    CHECK(moved);
+
+    // A whole cycle returns to the same place, so the motion above is the LFO
+    // being evaluated rather than the extrapolation running away.
+    const auto full_cycle = evaluate(1.0 / snapshot.phase_per_second);
+    for (std::size_t band = 0; band < spectr::kMaxBands; ++band) {
+        INFO("band " << band);
+        CHECK(full_cycle.bands[band].gain_db
+              == Catch::Approx(at_publication.bands[band].gain_db).margin(1e-4));
+    }
+}

@@ -433,6 +433,23 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
         fixture && std::string_view{fixture} == "1") {
         state().set_value(kParamBandCount, 64.0f);
     }
+#if defined(SPECTR_ENABLE_PERF_FIXTURES)
+    // Test-only performance fixture: arm LFO 1 over every band so the
+    // modulation overlay is the workload under measurement. The audio owner
+    // advances the phase inside process(), so a capture that wants motion must
+    // also keep audio live (PULP_SCREENSHOT_KEEP_AUDIO=1).
+    if (const auto* fixture = std::getenv("SPECTR_LFO_PERF_FIXTURE");
+        fixture && std::string_view{fixture} == "1") {
+        const auto* shape = std::getenv("SPECTR_LFO_PERF_SHAPE");
+        state().set_value(kParamBandCount, 64.0f);
+        state().set_value(kParamLfoShape,
+                          shape ? static_cast<float>(std::atof(shape)) : 0.0f);
+        state().set_value(kParamLfoRate, 4.0f);
+        state().set_value(kParamLfoDepth, 1.0f);
+        state().set_value(kParamLfoTarget, 0.0f);
+        state().set_value(kParamLfoEnabled, 1.0f);
+    }
+#endif
     auto root = std::make_unique<pulp::view::View>();
     root->set_theme(pulp::view::Theme::dark());
     root->flex().direction = pulp::view::FlexDirection::column;
@@ -1601,16 +1618,84 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // refs as well as the paint refs, and a later commit would republish those
     // derived LFO values to native as a real host edit -- the modulator would
     // ratchet its own baseline. modulation_frame touches paint only.
+    // Smoothness instrumentation. Emitted once per UI tick regardless of
+    // whether a new audio-side frame arrived, so a trace records the sampling
+    // relationship between the audio owner's publication cadence and the
+    // display's consumption cadence -- a held tick (no sequence advance) and an
+    // over-long jump are both visible stutter, and neither shows up in frame
+    // timing. Compiles to nothing outside a PULP_TRACING=ON build.
     if (const auto& modulated = read_modulated_field();
-        modulated.sequence != native_modulation_sequence_) {
+        modulated.active || modulated.sequence != native_modulation_sequence_) {
+        PULP_TRACE_SCOPE_NAMED("state", "spectr_modulation_frame");
         native_modulation_sequence_ = modulated.sequence;
         const auto visible = visible_count(layout());
+        // Evaluate the LFO at THIS frame's time rather than repainting the
+        // audio owner's last block sample. The publication cadence is the
+        // audio block rate and the consumption cadence is the display's; they
+        // are unrelated clocks, so a held sample advances three, four or five
+        // producer steps per painted frame and the motion visibly judders at
+        // every waveform. Extrapolating the published phase makes the painted
+        // value a continuous function of display time.
+        //
+        // The same pure functions the audio owner uses are called here, so the
+        // drawn field cannot drift from the audible one by construction.
+        const BandField& drawn = [&]() -> const BandField& {
+            if (!modulated.active || modulated.published_ns == 0)
+                return modulated.field;
+            const auto now_ns = std::chrono::duration_cast<
+                std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            // A stalled or torn-down audio thread must freeze the overlay, not
+            // let it free-run: past this bound the published phase is no longer
+            // evidence about what is being played.
+            constexpr double kMaximumExtrapolationSeconds = 0.25;
+            const double elapsed = std::clamp(
+                static_cast<double>(now_ns - modulated.published_ns) * 1e-9,
+                0.0, kMaximumExtrapolationSeconds);
+            auto advance = [](double phase, double per_second, double seconds) {
+                double next = phase + per_second * seconds;
+                return next - std::floor(next);
+            };
+            native_modulation_drawn_ = apply_internal_modulation(
+                modulated.pre_field, snapshots(), modulated.host_morph,
+                modulated.settings,
+                lfo_value(modulated.settings.shape,
+                          advance(modulated.phase,
+                                  modulated.phase_per_second, elapsed)));
+            if (modulated.settings.lfo2_enabled) {
+                ModulationSettings second = modulated.settings;
+                second.enabled = true;
+                second.shape = modulated.settings.lfo2_shape;
+                second.beats_per_cycle =
+                    modulated.settings.lfo2_beats_per_cycle;
+                second.depth = modulated.settings.lfo2_depth;
+                native_modulation_drawn_ = apply_internal_modulation(
+                    native_modulation_drawn_, snapshots(),
+                    modulated.host_morph, second,
+                    lfo_value(second.shape,
+                              advance(modulated.phase_2,
+                                      modulated.phase_2_per_second, elapsed)));
+            }
+            return native_modulation_drawn_;
+        }();
+        PULP_TRACE_COUNTER("state", "spectr_mod_seq",
+                           static_cast<double>(modulated.sequence));
+        PULP_TRACE_COUNTER("state", "spectr_mod_active",
+                           modulated.active ? 1.0 : 0.0);
+        {
+            double sum = 0.0;
+            for (std::size_t band = 0; band < visible; ++band)
+                sum += static_cast<double>(drawn.bands[band].gain_db);
+            PULP_TRACE_COUNTER("state", "spectr_mod_mean_db",
+                               visible > 0
+                                   ? sum / static_cast<double>(visible) : 0.0);
+        }
         auto gains = choc::value::createEmptyArray();
         auto muted = choc::value::createEmptyArray();
         for (std::size_t band = 0; band < visible; ++band) {
             gains.addArrayElement(
-                static_cast<double>(modulated.field.bands[band].gain_db));
-            muted.addArrayElement(modulated.field.bands[band].muted);
+                static_cast<double>(drawn.bands[band].gain_db));
+            muted.addArrayElement(drawn.bands[band].muted);
         }
         auto payload = choc::value::createObject("SpectrModulationFrame");
         payload.addMember("active", modulated.active);
