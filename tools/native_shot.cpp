@@ -1068,6 +1068,105 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        // CURVE-EDGE: the response/analyzer curve must cover the WHOLE first
+        // and last band. Plotted through band CENTRES it begins and ends
+        // halfway across those two bands, leaving a half-drawn band at each
+        // end of the plot. A canvas stroke has no layout node, so this mode
+        // exists to put the two ends of the plot on screen at the band counts
+        // and the zoom the user actually changes -- 32 and 64 bands, and a
+        // viewport that is not 1.00x.
+        //
+        // Every gesture below goes through the SHIPPING handlers
+        // (onPointerDown / onPointerMove / onPointerUp on the filter surface,
+        // and the bands menu's own buttons), so what is captured is the
+        // product's own path, not a staged canvas.
+        //
+        // Separate mode, so it cannot perturb the fixture sequence below.
+        // SPECTR_CURVE_EDGE_SHOT=<tag> names the capture set.
+        if (const char* curve_tag = std::getenv("SPECTR_CURVE_EDGE_SHOT")) {
+            const std::string tag{curve_tag};
+
+            const auto pointer = [&rig](const char* type, double x, double y) {
+                char script[640];
+                std::snprintf(script, sizeof(script),
+                    "(() => { const ok = globalThis"
+                    ".__pulpActivateMaterializedElement__("
+                    "'[data-spectr-filter-surface]', '%s', "
+                    "{ clientX: %.2f, clientY: %.2f, button: 0, buttons: 1, "
+                    "pointerId: 1, pointerType: 'mouse', shiftKey: false, "
+                    "altKey: false, metaKey: false, ctrlKey: false, "
+                    "preventDefault: () => {}, stopPropagation: () => {} }); "
+                    "if (!ok) throw new Error('%s not delivered'); "
+                    "if (typeof globalThis.__pulpRuntimeSettle__ === 'function')"
+                    " globalThis.__pulpRuntimeSettle__(4); })();",
+                    type, x, y, type);
+                rig.eval(script, "spectr-curve-edge-pointer");
+                settle(rig.clock, 4);
+            };
+
+            // The plot box, read from the document's own getGeom rather than
+            // restated here: a gesture aimed at the wrong box would sculpt
+            // nothing and the capture would be a flat line that cannot show
+            // this defect at all.
+            rig.eval("(() => { const w = document.querySelector("
+                     "'[data-spectr-filter-surface]'); "
+                     "globalThis.__curveWrap = { cw: w.clientWidth, "
+                     "ch: w.clientHeight }; "
+                     "console.log('[curve] wrap ' + "
+                     "JSON.stringify(globalThis.__curveWrap)); })();",
+                     "spectr-curve-edge-probe");
+
+            for (const char* bands : {"32", "64"}) {
+                // FIT VIEW first, or the zoom this pass applies at the end
+                // leaks into the next band count's "zoom1" capture and the
+                // filename lies about the state it shows.
+                rig.activate("[data-spectr-menu-root=\"overflow\"] "
+                             "[data-spectr-menu-trigger]");
+                rig.activate("[data-spectr-overflow-action=\"fit-view\"]");
+                settle(rig.clock, 16);
+                rig.activate("[data-spectr-menu-root=\"bands\"] "
+                             "[data-spectr-menu-trigger]");
+                rig.activate(std::string("[data-spectr-band-count=\"")
+                             + bands + "\"]");
+                settle(rig.clock, 24);
+
+                // Sculpt a shaped field across the FULL plot width, ending on
+                // the outermost bands. A flat curve's ends are
+                // indistinguishable from a dropped endpoint, so a flat field
+                // would make the capture unreadable as evidence.
+                const double x0 = 58.0, x1 = 1262.0, zero = 438.5;
+                pointer("pointerdown", x0, zero - 120.0);
+                for (int step = 0; step <= 48; ++step) {
+                    const double t = static_cast<double>(step) / 48.0;
+                    const double x = x0 + (x1 - x0) * t;
+                    const double y = zero - 200.0 * std::sin(t * 3.14159 * 2.4)
+                                     - 40.0;
+                    pointer("pointermove", x, y);
+                }
+                pointer("pointerup", x1, zero - 120.0);
+                settle(rig.clock, 24);
+                capture(rig, dir, prefix + tag + "-bands" + bands + "-zoom1",
+                        backend, scale);
+
+                // Zoom by dragging the minimap's LEFT handle inward. That is
+                // the viewport path that commits through setView; the wheel
+                // path defers its commit to a setTimeout, which never fires
+                // under a frame clock, so a wheel capture would silently stay
+                // at 1.00x and read as "tested while zoomed" when it was not.
+                const double minimap_y = 70.0 + 670.0 + 28.0 + 11.0;
+                pointer("pointerdown", 56.0, minimap_y);
+                for (int step = 1; step <= 8; ++step)
+                    pointer("pointermove", 56.0 + step * 46.0, minimap_y);
+                pointer("pointerup", 56.0 + 8 * 46.0, minimap_y);
+                settle(rig.clock, 32);
+                rig.root->layout_children();
+                settle(rig.clock, 16);
+                capture(rig, dir, prefix + tag + "-bands" + bands + "-zoomed",
+                        backend, scale);
+            }
+            return 0;
+        }
+
         if (std::getenv("SPECTR_PROBE_TEXT") != nullptr)
             dump_label_chain(*rig.root, std::getenv("SPECTR_PROBE_TEXT"));
         rig.report_text_fit("home");
