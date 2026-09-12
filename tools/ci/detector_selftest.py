@@ -28,6 +28,7 @@ Exit codes: 0 all cases as expected, 1 at least one detector disagrees,
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import subprocess
 import sys
@@ -55,6 +56,12 @@ CURSOR_EXPECT = [
 ]
 
 # (detector, case label, expected exit, argv after `python3`)
+# Detectors that need a third-party module, and the module they import. Kept
+# beside the cases so adding a detector with a dependency cannot forget it.
+DETECTOR_REQUIREMENTS: dict[str, str] = {
+    "text_contrast": "PIL",
+}
+
 CASES: list[tuple[str, str, int, list[str]]] = [
     # --- the two that shipped dead -------------------------------------
     ("control_invariants", "healthy slider surface", 0,
@@ -196,6 +203,22 @@ def main() -> int:
     args = ap.parse_args()
 
     cases = [c for c in CASES if not args.only or args.only in c[0]]
+
+    # A detector can need a third-party module this environment cannot supply
+    # (the shared runner has no PyPI egress: pip reports 403 Forbidden). That is
+    # NOT the same as a broken detector, and it must never read as coverage
+    # either. Report it loudly, exclude it from the tally, and keep the count in
+    # the summary so a green run cannot hide a detector that never ran.
+    unavailable: list[tuple[str, str]] = []
+    for det, module in sorted(DETECTOR_REQUIREMENTS.items()):
+        if any(c[0] == det for c in cases) and not importlib.util.find_spec(module):
+            unavailable.append((det, module))
+    if unavailable:
+        skipped = {d for d, _ in unavailable}
+        cases = [c for c in cases if c[0] not in skipped]
+        for det, module in unavailable:
+            print(f"  UNAVAILABLE  {det:<30} {module!r} is not importable here"
+                  f"  -- NOT run, NOT coverage")
     if not cases:
         print(f"no verdict: --only {args.only!r} selected no case", file=sys.stderr)
         return 2
@@ -242,6 +265,9 @@ def main() -> int:
     dets = len(by_detector)
     print(f"\n{len(cases)} case(s) across {dets} detector(s); "
           f"{len(cases) - len(failures)} as expected, {len(failures)} not")
+    if unavailable:
+        print(f"{len(unavailable)} detector(s) NOT run for a missing dependency: "
+              + ", ".join(f"{d} ({m})" for d, m in unavailable))
     if failures:
         print("\nA detector whose clean case fails is broken or the product "
               "regressed; a detector whose PLANTED case passes can no longer "
