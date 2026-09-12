@@ -822,6 +822,61 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --plant-nohint --expect-fail)
     set_tests_properties(Spectr-materialized-morph-affordance-hint-control PROPERTIES
+    # The MODULATION group must read as two LFOs plus a shared destination
+    # block, not as one flat run of ten sibling rows. `Target` used to be gated
+    # on LFO 1, which put it inside LFO 1's disclosure -- but
+    # resolve_modulation_target_mask reads it for BOTH LFOs (src/spectr.cpp
+    # copies the whole settings struct into the second pass), so that gate
+    # stated something the audio path does not do, and it is why `Target` and
+    # `Targets` read as one duplicated control.
+    #
+    # The suite RUNS the shipped component rather than grepping it: a static
+    # check cannot see a row emitted in the wrong order by a conditional, and
+    # `new Function` proves syntax without proving scope.
+    add_test(NAME Spectr-materialized-modulation-grouping
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation_grouping.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-modulation-grouping PROPERTIES TIMEOUT 60)
+    # Negative controls, one per gate. Each reinstates a real defect and inverts
+    # the verdict inside the script, so the row is green only when the suite
+    # REJECTS it. The inversion is deliberately not WILL_FAIL: WILL_FAIL accepts
+    # any non-zero exit, including the ones that mean the control never ran.
+    add_test(NAME Spectr-materialized-modulation-grouping-order-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation_grouping.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-order --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-grouping-order-control PROPERTIES
+        TIMEOUT 60)
+    # Parses clean and `node --check` exits 0 on it; only running the component
+    # surfaces it. That is the whole reason the SCOPE gate exists.
+    add_test(NAME Spectr-materialized-modulation-grouping-scope-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation_grouping.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-scope --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-grouping-scope-control PROPERTIES
+        TIMEOUT 60)
+    # THE regression control. A conditional mount is invisible in a browser --
+    # the row still appears in the right place -- but the native bridge has no
+    # insert-at-index and no move (probed: globalThis.insertChild and
+    # globalThis.moveWidget are undefined), so a row that mounts late is
+    # APPENDED and the group re-scrambles as the user flips toggles. That is
+    # the defect the user reported.
+    add_test(NAME Spectr-materialized-modulation-grouping-remount-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation_grouping.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-remount --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-grouping-remount-control PROPERTIES
+        TIMEOUT 60)
+    add_test(NAME Spectr-materialized-modulation-grouping-homograph-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation_grouping.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-homograph --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-grouping-homograph-control PROPERTIES
         TIMEOUT 60)
 endif()
 

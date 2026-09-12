@@ -280,10 +280,25 @@ window.__spectrPolishStart = () => {
         const names = ['bank', 'snapshot-a', 'snapshot-b', 'morph'];
         const buttonFor = key => panel.querySelector(
           '[data-spectr-modulation-target="' + key + '"]');
-        // Each LFO owns its destinations behind its own disclosure, so the
-        // Targets row does not exist until LFO 2 is on. Drive the real control
-        // instead of reaching past it: the toggle carries no unique attribute,
-        // so find it by the field label a user reads.
+        // Every row in the group is MOUNTED at mount and closed with
+        // display:none, because the native widget bridge has no insert-at-index
+        // and no move -- a row that mounts late is appended rather than placed,
+        // which is what made the group re-order itself as toggles were flipped.
+        // So EXISTENCE no longer distinguishes a closed disclosure from an open
+        // one; a rendered box does. Everything below asks whether the user can
+        // SEE the control, which is the question the disclosure is actually
+        // making a promise about.
+        const shownButtonFor = key => {
+          const el = buttonFor(key);
+          if (!el) return null;
+          for (let node = el; node && node !== document.body; node = node.parentElement)
+            if (getComputedStyle(node).display === 'none') return null;
+          const box = el.getBoundingClientRect();
+          return box.width > 0 && box.height > 0 ? el : null;
+        };
+        // Drive the real control instead of reaching past it: the toggle
+        // carries no unique attribute, so find it by the field label a user
+        // reads.
         const toggles = Array.from(
           panel.querySelectorAll('[data-spectr-setting-toggle]'));
         // POSITIVE CONTROL for the LFO 2 lookup below. A panel that rendered no
@@ -307,11 +322,19 @@ window.__spectrPolishStart = () => {
         const lfo2 = labelled[0];
         if (lfo2.getAttribute('aria-checked') !== 'false')
           throw new Error('LFO 2 did not start off, so opening it proves nothing');
-        // NEGATIVE CONTROL for the disclosure itself: if Targets is reachable
-        // before the click, the gate below is not gating and every later
-        // assertion would pass without the disclosure ever working.
-        if (buttonFor('bank'))
-          throw new Error('Targets reachable with LFO 2 off; disclosure not gating');
+        // NEGATIVE CONTROL for the disclosure itself: if the destination chips
+        // are VISIBLE before the click, the gate below is not gating and every
+        // later assertion would pass without the disclosure ever working.
+        // They must nonetheless EXIST -- that is what fixes their position
+        // before any toggle moves -- so assert both halves. Asserting only
+        // "not visible" would also pass against a row that is simply absent,
+        // which is the arrangement this design replaces.
+        if (!buttonFor('bank'))
+          throw new Error('destination chips are not mounted with both LFOs off; '
+            + 'a row that mounts later is appended by the native bridge, not placed');
+        if (shownButtonFor('bank'))
+          throw new Error('Destinations visible with both LFOs off; '
+            + 'disclosure not gating');
 
         // The Targets row publishes target_mask, and the audio path applies that
         // one mask to BOTH LFOs, so a patch running only LFO 1 must still be
@@ -333,32 +356,38 @@ window.__spectrPolishStart = () => {
         if (lfo1.getAttribute('aria-checked') !== 'false')
           throw new Error('LFO 1 did not start off, so opening it proves nothing');
         lfo1.click();
-        const lfo1Bank = await waitFor(() => buttonFor('bank'),
-          'Targets control with LFO 1 on and LFO 2 still off');
+        const lfo1Bank = await waitFor(() => shownButtonFor('bank'),
+          'Destinations control visible with LFO 1 on and LFO 2 still off');
         if (lfo2.getAttribute('aria-checked') !== 'false')
           throw new Error('LFO 2 came on by itself; the LFO-1-only case that the '
             + 'gate defect broke was never exercised');
         const lfo1Box = lfo1Bank.getBoundingClientRect();
         if (lfo1Box.width <= 0 || lfo1Box.height <= 0)
-          throw new Error('LFO-1-only Targets control has no rendered box');
+          throw new Error('LFO-1-only Destinations control has no rendered box');
         // The hint is the only thing telling the user this one row governs both
         // LFOs, which is exactly what makes reaching it from LFO 1 legitimate.
         const hintNodes = Array.from(panel.querySelectorAll('*')).filter(
           node => node.children.length === 0
-            && node.textContent.trim() === 'Destinations both LFOs modulate');
+            && node.textContent.trim() === 'Both LFOs; overrides Target');
         if (hintNodes.length !== 1)
-          throw new Error('want one Targets hint naming both LFOs, found '
+          throw new Error('want one Destinations hint naming both LFOs, found '
             + hintNodes.length);
         // NEGATIVE CONTROL for the widened gate: turning every LFO back off must
-        // retract the row, or the gate is not gating and the assertion above
-        // would pass against an unconditional Targets row.
+        // hide the row again, or the gate is not gating and the assertion above
+        // would pass against a permanently visible Destinations row.
         lfo1.click();
-        await waitFor(() => !buttonFor('bank'),
-          'Targets control to retract once every LFO is off again');
+        await waitFor(() => !shownButtonFor('bank'),
+          'Destinations control to hide once every LFO is off again');
+        // ...while STAYING mounted. A disclosure that unmounts is the defect
+        // this design exists to prevent.
+        if (!buttonFor('bank'))
+          throw new Error('closing the disclosure unmounted the destination '
+            + 'chips; they must only be hidden, or the native bridge will '
+            + 'append them in the wrong place when they come back');
 
         lfo2.click();
-        const bank = await waitFor(() => buttonFor('bank'),
-          'bank target control after opening the LFO 2 disclosure');
+        const bank = await waitFor(() => shownButtonFor('bank'),
+          'bank target control visible after opening the LFO 2 disclosure');
 
         // REACHABILITY. Mounted is not reachable: an ancestor display:none
         // renders every static source assertion vacuous.

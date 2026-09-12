@@ -4732,14 +4732,21 @@ RUNTIME_EDITS = [
 ]
 
 
-# The Targets row publishes `target_mask`, which the audio path applies to
-# BOTH internal LFOs (include/spectr/modulation.hpp reads it once, and
-# src/spectr.cpp hands the second LFO a copy of the same settings struct).
-# Gating that row on LFO 2 alone hid the only destination control an
-# LFO-1-only patch has, so the gate must be "any LFO on".
+# The destination rows publish `target` (kParamLfoTarget, the automatable
+# lane) and `target_mask` (editor-only multi-select). The audio path applies
+# BOTH to BOTH internal LFOs: include/spectr/modulation.hpp resolves them once
+# in resolve_modulation_target_mask, and src/spectr.cpp hands the second LFO a
+# copy of the same settings struct, overriding only shape/rate/depth. So
+# neither row belongs to a single LFO's disclosure, and both carry the same
+# "any LFO on" gate.
+#
+# The ROW ORDER and the destination labels are owned by
+# tools/patch_materialized_modulation_grouping.py, which regroups the emitted
+# rows per LFO and moves both shared rows below LFO 2. This recipe only sets
+# the gates and the copy; replay that script after this one.
 TARGETS_GATE = '(value.enabled || value.lfo2Enabled)'
 TARGETS_HINT_OLD = 'label: "Targets", hint: "Select modulation destinations"'
-TARGETS_HINT_NEW = 'label: "Targets", hint: "Destinations both LFOs modulate"'
+TARGETS_HINT_NEW = 'label: "Destinations", hint: "Both LFOs; overrides Target"'
 
 
 def escaped(value):
@@ -4945,18 +4952,14 @@ def simplify_settings_single_scroll(document):
     segment = segment.replace(TARGETS_HINT_OLD, TARGETS_HINT_NEW)
     # Each LFO toggle is the disclosure control: its per-LFO options disappear
     # while that LFO is off and re-expand immediately when it is enabled.
-    # Target belongs to LFO 1's disclosure. Omitting it left the row on screen
-    # while its LFO was off, which reads as a control that does nothing and
-    # gives no hint that the toggle above is what enables it.
-    #
-    # Targets is NOT a per-LFO row. It publishes `target_mask`, which
-    # apply_internal_modulation reads once for BOTH LFOs (spectr.cpp copies the
-    # whole settings struct, mask included, into the second pass), so gating it
-    # on LFO 2 alone left an LFO-1-only patch with no way to choose what LFO 1
-    # modulates. Show it whenever ANY LFO is on; hide it only when neither is.
+    # Neither destination row is per-LFO. apply_internal_modulation reads the
+    # resolved destination once for BOTH LFOs (spectr.cpp copies the whole
+    # settings struct, target and mask included, into the second pass), so
+    # gating either on one LFO states something the audio path does not do.
+    # Show them whenever ANY LFO is on; hide them only when neither is.
     for label, state in [
             ('Shape', 'value.enabled'), ('Rate', 'value.enabled'),
-            ('Depth', 'value.enabled'), ('Target', 'value.enabled'),
+            ('Depth', 'value.enabled'), ('Target', TARGETS_GATE),
             ('LFO 2 shape', 'value.lfo2Enabled'),
             ('LFO 2 rate', 'value.lfo2Enabled'),
             ('LFO 2 depth', 'value.lfo2Enabled'),
