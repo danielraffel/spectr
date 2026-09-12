@@ -42,8 +42,30 @@ jobs:
       - name: Gate - Spectr M5 product acceptance static contract
         run: python3 tools/ci/test_product_acceptance_contract.py
 
+      # BLOCKING, and deliberately before the build: seconds, fixtures only, no
+      # SDK and no compiler. Until this landed the job ran exactly ONE of a
+      # dozen detectors, which is how two of them shipped dead -- crashing on
+      # import, never adjudicating anything -- without a single red run. This
+      # asserts each detector both PASSES a known-good fixture and FAILS a
+      # known-bad one (or its own --plant). A detector that can only pass is
+      # not coverage.
+      - name: Gate - detector suite self-test (blocking)
+        run: python3 tools/ci/detector_selftest.py
+
       - name: Gate - a drag pointer sample enqueues no React commit
-        run: python3 tools/spectr-detectors/drag_hover_no_react_commit.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/spectr-detectors/drag_hover_no_react_commit.py
+          # Negative control. This detector reads a CHECKED-IN artifact, so a
+          # rename or restructure there would make it pass vacuously forever.
+          # Stripping the drag guard must redden it.
+          if python3 tools/spectr-detectors/drag_hover_no_react_commit.py \
+               --plant unguard > /dev/null 2>&1; then
+            echo "the planted regression did not redden the detector -- it can "\
+                 "no longer fail, so its clean run above proves nothing" >&2
+            exit 1
+          fi
 
       - name: Gate - Spectr M5 product acceptance immutable released SDK
         shell: bash
@@ -90,11 +112,51 @@ jobs:
             --sdk-root "$PULP_SDK_ROOT" --build-dir "$SPECTR_BUILD_DIR" \
             --pin tools/ci/pulp-sdk-release.json --product-sha "$GITHUB_SHA"
 
+      # A `ctest -R '(a|b|c)'` alternation hides a dead alternative: if `b`
+      # matches nothing, ctest runs `a` and `c` and exits 0, and the tests
+      # behind `b` simply never run. Three patterns in the previous inline
+      # alternation were dead that way -- 12 registered `#34` host-parameter
+      # tests had never run in this gate. The pattern list now lives in a file,
+      # every entry must match at least one registered test, and the SAME file
+      # produces the regex ctest is handed, so assertion and execution cannot
+      # drift.
+      - name: Gate - every acceptance test pattern matches a test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/ci/ctest_pattern_gate.py \
+            --build-dir "$SPECTR_BUILD_DIR" \
+            --patterns tools/ci/acceptance-ctest-patterns.txt
+          regex="$(python3 tools/ci/ctest_pattern_gate.py \
+            --build-dir "$SPECTR_BUILD_DIR" \
+            --patterns tools/ci/acceptance-ctest-patterns.txt --emit-regex)"
+          echo "SPECTR_ACCEPTANCE_CTEST_REGEX=$regex" >> "$GITHUB_ENV"
+
       - name: Gate - Spectr M5 product acceptance focused native artifacts
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build "$SPECTR_BUILD_DIR" --parallel --target \
+          # BOUNDED ON PURPOSE. This job runs on a SHARED self-hosted Mac that
+          # also carries Pulp's required `macos` gate, so a bare `--parallel`
+          # (unbounded `make -j`) claims every core it can see and starves the
+          # gate it is sharing the box with. The bound that matters on a shared
+          # host is a SHARE, and a share cannot come from the hardware.
+          #
+          # Pulp's sanctioned wrapper, tools/ci/governed-build.sh, acquires a
+          # tartci lease and releases on exit -- but it lives in the PULP repo
+          # and this job checks out only Spectr, so it is not reachable here.
+          # A derived `cores / N` bound is not a substitute either: Pulp's own
+          # governor documents its Tier-0 fallback as "NOT a saturation bound",
+          # because on a big-RAM host the memory axis never binds and it
+          # degrades to the full core count. So this is a literal share.
+          #
+          # tools/scripts/build_parallelism_guard.py deliberately does not scan
+          # .github/workflows/** -- a workflow's `runs-on` resolves dynamically
+          # and a static scan cannot tell an ephemeral runner from a shared
+          # Studio. Bounding a self-hosted leg is therefore the workflow
+          # author's job, and this is that. tools/ci/test_product_acceptance_contract.py
+          # asserts the bound so it cannot drift back.
+          cmake --build "$SPECTR_BUILD_DIR" --parallel 4 --target \
             Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP \
             Spectr-test Spectr-native-n1-test Spectr-editor-authority-test \
             Spectr-artifact-test Spectr-native-standalone-artifact-test \
@@ -109,7 +171,7 @@ jobs:
         run: |
           set -euo pipefail
           ctest --test-dir "$SPECTR_BUILD_DIR" --output-on-failure --no-tests=error \
-            -R '(^#34:|^#34 bridge|^native N1|^native editor|^native settings|^native semantic|^native selected|^every native dropdown|^remaining native modal|^native Flare|^native frozen|^native buttons|^editor resize|^editors default|^the AU v2|^a resize|^native: |editor authority|import fidelity|materialized|^status overlay|^settings overflow|Built Spectr|Spectr editor|^Spectr-browser-)'
+            -R "$SPECTR_ACCEPTANCE_CTEST_REGEX"
           env CI=0 PULP_DISABLE_PLUGIN_EDITOR=0 PULP_HEADLESS=0 PULP_TEST_MODE=0 \
             ctest --test-dir "$SPECTR_BUILD_DIR" --output-on-failure --no-tests=error \
               -R '^Pulp host loads'
@@ -122,27 +184,115 @@ jobs:
           PULP_TEST_MODE: "1"
         run: |
           set -euo pipefail
-          # This host has real GPU capture, so Spectr-native-shot must
-          # actually run and capture the shipping native editor -- a SKIP
-          # here (exit 77, CTest "Not Run") on an M5 Tart VM would mean the
-          # gate stopped proving anything about that surface. This tolerates
-          # exactly ONE known, tracked, currently-open reason
-          # (tools/native_shot.cpp's exact-message #8094 SKIP -- the Settings
-          # body flex_basis regression upstream in the Pulp SDK) and fails
-          # loudly on any other SKIP reason instead of letting it read as
-          # green.
+          # This host has real GPU capture, so Spectr-native-shot must actually
+          # run and capture the shipping native editor -- a SKIP here (exit 77,
+          # CTest "Not Run") means the gate stopped proving anything about that
+          # surface, and a SKIP is never a PASS.
+          #
+          # The #8094 tolerance this step used to carry is gone. That blocker
+          # (Settings body flex_basis regression in the SDK: the MODULATION
+          # group ended up outside every ScrollView) does NOT fire on the
+          # pinned SDK -- the test captures and passes. tools/native_shot.cpp
+          # still carries the exact-message branch, so the skip remains
+          # REACHABLE if the regression comes back; but now that the surface is
+          # measurable, a skip is a regression to act on, not a state to
+          # tolerate. The message match survives only to name the cause in the
+          # failure.
           NATIVE_SHOT_LOG="$SPECTR_ACCEPTANCE_ROOT/native-shot-output.log"
           ctest --test-dir "$SPECTR_BUILD_DIR" --output-on-failure --no-tests=error \
             -R '^Spectr-native-shot$' --output-junit "$SPECTR_ACCEPTANCE_ROOT/native-shot-junit.xml" \
             --verbose | tee "$NATIVE_SHOT_LOG"
           if grep -q '<skipped' "$SPECTR_ACCEPTANCE_ROOT/native-shot-junit.xml"; then
             if grep -q 'SKIP: native MODULATION capture blocked by tracked Pulp SDK issue #8094' "$NATIVE_SHOT_LOG"; then
-              echo "::warning::Spectr-native-shot SKIPPED -- blocked on tracked, open Pulp SDK issue #8094 (Settings body flex_basis regression). Not a gate failure, but not a proof either: this artifact is unmeasured until an SDK release carrying the #8094 fix is adopted."
+              echo "Spectr-native-shot SKIPPED for Pulp SDK issue #8094 (Settings body flex_basis regression). That blocker does not fire on the pinned SDK, so this is a REGRESSION in the SDK pin or in the Settings layout -- not a tolerated state. The native editor surface is unmeasured." >&2
             else
-              echo "Spectr-native-shot SKIPPED on a host expected to have GPU capture, for a reason other than the tracked #8094 blocker -- treating as a gate failure" >&2
-              exit 1
+              echo "Spectr-native-shot SKIPPED on a host expected to have GPU capture -- the native editor surface is unmeasured, which is not a pass" >&2
             fi
+            exit 1
           fi
+
+      - name: Gate - no collapsed box on the captured native surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The captures the step above just produced are the shipping native
+          # editor. A collapsed Settings body is the SET-1/SET-2 defect, and no
+          # other check sweeps for one: the appearance detectors adjudicate
+          # only runs that DO paint, and reachability_census's population is
+          # hit-test leaves, which a collapsed container is not. A pixel diff
+          # cannot see it either -- a region that paints nothing renders as
+          # plausible background.
+          # bash 3.2 on macOS has no `mapfile`, so the dump list is built the
+          # portable way.
+          shots="$SPECTR_BUILD_DIR/spectr-native-shots"
+          dumps="$SPECTR_ACCEPTANCE_ROOT/collapsed-box-dumps.txt"
+          find "$shots" -name '*.layout.json' -print | sort > "$dumps"
+          n=$(wc -l < "$dumps" | tr -d ' ')
+          if [ "$n" -eq 0 ]; then
+            echo "no verdict: $shots holds no layout dump, so this gate would report about a surface it never measured" >&2
+            exit 1
+          fi
+          echo "sweeping $n captured surface(s) for a collapsed box"
+          rc=0
+          while IFS= read -r dump; do
+            set +e
+            python3 tools/spectr-detectors/collapsed_box.py "$dump" --quiet
+            one=$?
+            set -e
+            # 1 is a finding; 2 is UNMEASURED (no depth sidecar) and is never a
+            # pass, so both fail the gate rather than being folded into green.
+            if [ "$one" -ne 0 ]; then rc=1; fi
+          done < "$dumps"
+          exit $rc
+
+      # REPORTING ONLY (continue-on-error). These four drive the built
+      # standalone headlessly, so unlike the fixture lane above they need the
+      # app and cost minutes, and each can legitimately return "no verdict"
+      # (exit 2) when the surface it probes does not materialise in a headless
+      # capture. An exit 2 is UNMEASURED, never a pass -- which is exactly why
+      # they report here instead of blocking. Promote one to a gate only once
+      # it has produced a stable 0/1 verdict across several runs on this host.
+      - name: Report - app-driven detectors (non-blocking)
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: bash
+        env:
+          PULP_DISABLE_PLUGIN_EDITOR: "1"
+          PULP_HEADLESS: "1"
+          PULP_TEST_MODE: "1"
+        run: |
+          app="$SPECTR_BUILD_DIR/Spectr.app/Contents/MacOS/Spectr"
+          out="$SPECTR_ACCEPTANCE_ROOT/detectors"
+          mkdir -p "$out"
+          if [[ ! -x "$app" ]]; then
+            echo "no verdict: $app is not executable -- every detector below "\
+                 "would report about a build that does not exist" >&2
+            exit 1
+          fi
+          rc_summary=""
+          run_one() {
+            local name="$1"; shift
+            set +e
+            "$@" > "$out/$name.txt" 2>&1
+            local rc=$?
+            set -e
+            case "$rc" in
+              0) verdict="PASS" ;;
+              1) verdict="FAIL" ;;
+              *) verdict="UNMEASURED(exit $rc) -- not a pass" ;;
+            esac
+            echo "  $name: $verdict"
+            rc_summary="$rc_summary$name=$rc "
+            tail -5 "$out/$name.txt" | sed 's/^/      | /'
+          }
+          run_one settings-scroll-track python3 tools/spectr-detectors/settings_scroll_track_on_edge.py \
+            --app "$app" --out-dir "$out/scroll-track"
+          run_one preset-caption-single-line python3 tools/spectr-detectors/preset_caption_single_line.py \
+            --app "$app" --out-dir "$out/preset-caption"
+          run_one hover-leave-persistence python3 tools/spectr-detectors/hover_leave_persistence.py \
+            --app "$app" --out-dir "$out/hover-leave"
+          run_one menu-item-caption-uniformity python3 tools/spectr-detectors/menu_item_caption_uniformity.py "$app"
+          echo "::notice::app-driven detector verdicts: $rc_summary"
 
       - name: Gate - Spectr M5 product acceptance AUv2 validation
         shell: bash

@@ -24,14 +24,317 @@ those are counted and reported rather than silently assumed innocent.
 
 Plant flags exist so each detector can be shown failing. A check that cannot be
 made to fail proves nothing.
+
+This module is also the shared node model for the sibling invariant scripts
+(`content_invariants.py`, `control_invariants.py`): `merge_depth_sidecar`,
+`load_nodes`, `resolve_parents`, `effectively_visible`, `painted_box` and
+`on_screen_box` answer the questions that need ancestry, which the flat
+`load_dump` path deliberately does not.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from dataclasses import dataclass, field
+from typing import Optional
 
 
-def load_nodes(path):
+# ─────────────────────────────────────────────────── shared node model ──
+#
+# The flat helpers below (`load_dump`, `painted_runs`, …) answer geometry
+# questions that need no ancestry. Anything that asks whether a VIEWER can see
+# a string needs the tree, because two facts the snapshot emits do not compose
+# on their own:
+#
+#   * `visible` is the node's own `view.visible()`. A label inside a dismissed
+#     modal still reports `visible: true`.
+#   * `clipping.rect` is the clip a node imposes on its DESCENDANTS, not on
+#     itself, so a node's on-screen extent is its painted box intersected with
+#     every clipping ancestor.
+#
+# The pre-order node list carries no depth, so ancestry comes from the
+# `.depths.json` sidecar Spectr writes beside every `SPECTR_LAYOUT_DUMP`.
+# Ancestry can NOT be inferred from rect containment: a scrolled row routinely
+# escapes its parent's bounds, and the containment stack then pops past the
+# very clipper the question is about. Every function here that needs ancestry
+# therefore refuses rather than guesses when the sidecar is absent.
+
+
+@dataclass(frozen=True)
+class Rect:
+    x: float
+    y: float
+    w: float
+    h: float
+
+    @property
+    def right(self) -> float:
+        return self.x + self.w
+
+    @property
+    def bottom(self) -> float:
+        return self.y + self.h
+
+    @property
+    def area(self) -> float:
+        return max(0.0, self.w) * max(0.0, self.h)
+
+    def intersect(self, other: "Rect") -> "Rect":
+        x1 = max(self.x, other.x)
+        y1 = max(self.y, other.y)
+        x2 = min(self.right, other.right)
+        y2 = min(self.bottom, other.bottom)
+        return Rect(x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1))
+
+    def contains(self, other: "Rect", tol: float = 0.5) -> bool:
+        return (self.x - tol <= other.x
+                and self.y - tol <= other.y
+                and self.right + tol >= other.right
+                and self.bottom + tol >= other.bottom)
+
+    def __str__(self) -> str:
+        return f"[{self.x:.2f},{self.y:.2f} {self.w:.2f}x{self.h:.2f}]"
+
+
+def rect_of(obj, key: str = "rect"):
+    if not isinstance(obj, dict):
+        return None
+    raw = obj.get(key)
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return Rect(float(raw.get("x", 0.0)), float(raw.get("y", 0.0)),
+                    float(raw.get("w", 0.0)), float(raw.get("h", 0.0)))
+    except (TypeError, ValueError):
+        return None
+
+
+@dataclass
+class Node:
+    index: int
+    id: str
+    kind: str
+    rect: Rect
+    visible: bool
+    overflow: str
+    clip_for_children: Optional[Rect]
+    texts: list = field(default_factory=list)
+    depth: Optional[int] = None
+    parent: Optional[int] = None
+
+    @property
+    def label(self) -> str:
+        name = self.id or f"<{self.kind}>"
+        return f"{name}({self.kind})"
+
+    @property
+    def text(self) -> str:
+        return " / ".join(t for t, _ in self.texts)
+
+
+def merge_depth_sidecar(snapshot_path: str, doc: dict) -> None:
+    """Attach the depths written beside the snapshot, if present.
+
+    A length mismatch means the sidecar does not describe THIS snapshot, so it
+    is refused rather than applied to the wrong nodes: a silently misaligned
+    depth array corrupts every ancestor decision downstream, and the corruption
+    is invisible in the output.
+    """
+    base = snapshot_path
+    for suffix in (".layout.json", ".json"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    sidecar = base + ".depths.json"
+    if not os.path.exists(sidecar):
+        return
+    try:
+        with open(sidecar, "r", encoding="utf-8") as fh:
+            depths = json.load(fh)
+    except (OSError, ValueError):
+        return
+    nodes = doc.get("nodes")
+    if not isinstance(nodes, list) or not isinstance(depths, list):
+        return
+    if len(depths) != len(nodes):
+        print(f"warning: depth sidecar has {len(depths)} entries for "
+              f"{len(nodes)} nodes — refusing to apply it", file=sys.stderr)
+        return
+    for node, depth in zip(nodes, depths):
+        if isinstance(node, dict) and isinstance(depth, int):
+            node["depth"] = depth
+
+
+def load_nodes(doc: dict) -> list:
+    """Build the node model from an already-parsed snapshot document."""
+    raw_nodes = doc.get("nodes")
+    if not isinstance(raw_nodes, list):
+        raise SystemExit("snapshot has no `nodes` array")
+
+    nodes = []
+    for i, raw in enumerate(raw_nodes):
+        if not isinstance(raw, dict):
+            continue
+        rect = rect_of(raw)
+        if rect is None:
+            continue
+        texts = []
+        for box in raw.get("measured_text_boxes") or []:
+            if not isinstance(box, dict):
+                continue
+            text = box.get("text")
+            box_rect = rect_of(box)
+            if isinstance(text, str) and text.strip() and box_rect is not None:
+                texts.append((text, box_rect))
+        depth = raw.get("depth")
+        nodes.append(Node(
+            index=i,
+            id=str(raw.get("id") or ""),
+            kind=str(raw.get("kind") or raw.get("type") or "?"),
+            rect=rect,
+            visible=bool(raw.get("visible", True)),
+            overflow=str(raw.get("overflow") or "visible"),
+            clip_for_children=rect_of(raw.get("clipping")),
+            texts=texts,
+            depth=int(depth) if isinstance(depth, int) else None,
+        ))
+    return nodes
+
+
+def resolve_parents(nodes: list):
+    """Link each node to its parent; report whether the ancestry is EXACT.
+
+    Exact when every node carries `depth` (pre-order + depth determines the
+    tree uniquely). Without it, fall back to a containment stack and return
+    False, so a caller that needs a sound answer can refuse instead of
+    adjudicating on a guess.
+    """
+    if nodes and all(n.depth is not None for n in nodes):
+        stack = []
+        for n in nodes:
+            del stack[n.depth:]
+            n.parent = stack[-1] if stack else None
+            stack.append(n.index)
+        return True, 0
+
+    stack_n = []
+    inferred = 0
+    for n in nodes:
+        while stack_n and not stack_n[-1].rect.contains(n.rect, tol=1.0):
+            stack_n.pop()
+        n.parent = stack_n[-1].index if stack_n else None
+        inferred += 1
+        stack_n.append(n)
+    return False, inferred
+
+
+def ancestors(nodes: list, index: int):
+    by_index = {n.index: n for n in nodes}
+    cur = by_index.get(index)
+    seen = 0
+    while cur is not None and cur.parent is not None and seen < 512:
+        yield cur.parent
+        cur = by_index.get(cur.parent)
+        seen += 1
+
+
+def ancestry_is_exact(nodes: list) -> bool:
+    return bool(nodes) and all(n.depth is not None for n in nodes)
+
+
+def painted_box(node: Node, text_rect: Rect) -> Rect:
+    """The region a string actually paints into.
+
+    The snapshot records a string's INTRINSIC extent at the node origin, so a
+    label that does not fit reports a rect wider than its own box.
+
+    A MULTI-LINE label reports intrinsic width 0 on purpose —
+    `Label::intrinsic_width()` returns 0 for them so the parent's available
+    width drives wrapping rather than the single-line advance. Reading that 0
+    as "paints nothing" silently excused most of the labels on Spectr's
+    shipping surface from every check; a wrapped label paints across its whole
+    box, so that is the extent to use.
+    """
+    if text_rect.w <= 0.0:
+        w = node.rect.w  # multi-line: wraps to fill the box
+    elif node.rect.w > 0:
+        w = min(text_rect.w, node.rect.w)
+    else:
+        w = text_rect.w
+    if node.rect.h > 0 and text_rect.h > 0:
+        h = min(text_rect.h, node.rect.h)
+    else:
+        h = max(text_rect.h, 0.0)
+    return Rect(text_rect.x, text_rect.y, w, h)
+
+
+def inherited_clip(nodes: list, node: Node):
+    """The clip every clipping ancestor imposes on this node's own pixels."""
+    if not ancestry_is_exact(nodes):
+        raise RuntimeError(
+            "visibility requires exact ancestry: this snapshot has no depth "
+            "sidecar, and inferring ancestry from rect containment is wrong "
+            "for any node that escapes its parent's bounds")
+    by_index = {n.index: n for n in nodes}
+    clip = None
+    for ancestor_index in ancestors(nodes, node.index):
+        ancestor = by_index.get(ancestor_index)
+        if ancestor is None or ancestor.clip_for_children is None:
+            continue
+        if ancestor.overflow not in ("hidden", "scroll"):
+            continue
+        clip = (ancestor.clip_for_children if clip is None
+                else clip.intersect(ancestor.clip_for_children))
+    return clip
+
+
+def on_screen_box(nodes: list, node: Node, text_rect: Rect) -> Rect:
+    """What a viewer can actually see of this string."""
+    painted = painted_box(node, text_rect)
+    clip = inherited_clip(nodes, node)
+    return painted if clip is None else painted.intersect(clip)
+
+
+def effectively_visible(nodes: list, node: Node) -> bool:
+    """Visible to a viewer: this node AND every ancestor is visible.
+
+    `dump_layout_tree` emits each node's own `view.visible()` and does not
+    inherit it, so a label inside a hidden modal still reports `visible: true`.
+    Filtering per node therefore reports a dismissed panel as still on screen.
+    """
+    if not node.visible:
+        return False
+    if not ancestry_is_exact(nodes):
+        raise RuntimeError(
+            "effective visibility requires exact ancestry: this snapshot has "
+            "no depth sidecar, and a per-node visible flag does not compose")
+    by_index = {n.index: n for n in nodes}
+    for ancestor_index in ancestors(nodes, node.index):
+        ancestor = by_index.get(ancestor_index)
+        if ancestor is not None and not ancestor.visible:
+            return False
+    return True
+
+
+def text_nodes(nodes: list) -> list:
+    """Strings a viewer can actually see.
+
+    Without exact ancestry the composed answer is unavailable, so this falls
+    back to the per-node flag — which is weaker, and the caller is expected to
+    say so rather than present it as the same measurement.
+    """
+    if not ancestry_is_exact(nodes):
+        return [n for n in nodes if n.visible and n.texts]
+    return [n for n in nodes if n.texts and effectively_visible(nodes, n)]
+
+
+# ──────────────────────────────────────────────── flat painted-run model ──
+
+
+def load_dump(path):
     doc = json.load(open(path))
     return doc["nodes"], doc.get("viewport", {})
 
@@ -158,7 +461,7 @@ def main():
     ap.add_argument("--plant-overflow", action="store_true")
     args = ap.parse_args()
 
-    nodes, viewport = load_nodes(args.dump)
+    nodes, viewport = load_dump(args.dump)
     region = None
     if args.region:
         region = tuple(float(v) for v in args.region.split(","))
@@ -205,7 +508,14 @@ def main():
               "Reporting nothing.")
         return 2
 
-    print("\nRESULT:", "RED" if failed else "GREEN")
+    # The verdict line carries its own coverage on purpose. "GREEN" alone, read
+    # off a tail of this output, says nothing about how much of the surface was
+    # actually adjudicated -- and on a real Spectr dump most runs are not.
+    total = len(painted) + len(unmeasurable) + len(clipped)
+    print(f"\nCOVERAGE: adjudicated {len(painted)} of {total} text runs "
+          f"({len(unmeasurable)} unmeasurable, {len(clipped)} clipped away)")
+    print("RESULT:", "RED" if failed else "GREEN",
+          f"over {len(painted)}/{total} runs")
     return 1 if failed else 0
 
 

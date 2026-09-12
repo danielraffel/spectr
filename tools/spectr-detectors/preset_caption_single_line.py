@@ -35,6 +35,14 @@ def capture(app, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     png = os.path.join(out_dir, "preset_caption.png")
     dump = os.path.join(out_dir, "preset_caption.layout.json")
+    # Remove any artifact from a previous run BEFORE launching. The out-dir
+    # default is a fixed path, and the only liveness check below is
+    # os.path.exists -- so a launch that produces nothing silently adjudicates
+    # the PREVIOUS run's capture and reports a confident verdict about code
+    # that is no longer under test.
+    for stale in (png, dump):
+        if os.path.exists(stale):
+            os.remove(stale)
     env = dict(os.environ)
     env.update({
         "PULP_HEADLESS": "1",
