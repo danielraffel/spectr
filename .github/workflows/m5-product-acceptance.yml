@@ -353,6 +353,8 @@ jobs:
             --app "$app" --out-dir "$out/status-pill"
           run_one status-pill-position python3 tools/spectr-detectors/status_pill_position_invariance.py \
             --app "$app" --out-dir "$out/status-pill-position"
+          run_one shortcut-chip-trailing-edge python3 tools/spectr-detectors/shortcut_chip_trailing_edge.py "$app"
+          run_one edit-mode-shortcut-keys python3 tools/spectr-detectors/edit_mode_shortcut_keys.py "$app"
           echo "::notice::app-driven detector verdicts: $rc_summary"
 
       - name: Gate - Spectr M5 product acceptance AUv2 validation
