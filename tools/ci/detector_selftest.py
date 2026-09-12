@@ -322,6 +322,35 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f("test", "test_materialized_clear_and_mute_overlay.mjs"),
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-undeclared-clear"]),
+
+    # The response curve is plotted through band CENTRES, so at the two
+    # extremes it began and ended halfway across the first and last band --
+    # a visibly half-drawn band at each end of the plot. A canvas stroke has
+    # no layout node, so painted_vs_measured_width / box_intersection /
+    # ink_extents are structurally blind to it. These cases EXECUTE the
+    # shipping document's own bank block against a recording 2D context and
+    # assert the emitted first/last x against the document's OWN bandLeftX /
+    # getGeom expressions -- never a constant, so 32/64 bands and any window
+    # size stay covered.
+    ("materialized_curve_edge_span",
+     "response and dsp curves span the outer band edges", 0,
+     [f("test", "test_materialized_curve_edge_span.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json")]),
+    ("materialized_curve_edge_span",
+     "plant: the response line goes back to band centres", 1,
+     [f("test", "test_materialized_curve_edge_span.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-response-centres"]),
+    ("materialized_curve_edge_span",
+     "plant: the dsp curve goes back to band centres", 1,
+     [f("test", "test_materialized_curve_edge_span.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-overlay-centres"]),
+    ("materialized_curve_edge_span",
+     "plant: band columns start following the zoom window", 1,
+     [f("test", "test_materialized_curve_edge_span.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-geometry-follows-view"]),
 ]
 
 
