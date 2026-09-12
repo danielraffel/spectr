@@ -197,6 +197,21 @@ CASES: list[tuple[str, str, int, list[str]]] = [
     ("slider_thumb_pill_shape", "plant: put the overhanging travel back", 1,
      [f(D, "slider_thumb_pill_shape.py"), "--plant", "overhang"]),
 
+    # the hit-target lane: a control must be reachable over the area it paints
+    ("hit_target_reach", "settings toggles + sliders reach their paint", 0,
+     [f(D, "hit_target_reach.py"),
+      f(E12, "GREEN-hit-settings-modulation.layout.json")]),
+    ("hit_target_reach", "known-bad fixture (settings, pre-fix)", 1,
+     [f(D, "hit_target_reach.py"),
+      f(E12, "RED-hit-settings-modulation.layout.json")]),
+    ("hit_target_reach", "plant: hit rects shrunk onto the paint", 1,
+     [f(D, "hit_target_reach.py"),
+      f(E12, "GREEN-hit-settings-modulation.layout.json"), "--plant"]),
+    ("hit_target_reach", "SNAPSHOT A/B reach their paint", 0,
+     [f(D, "hit_target_reach.py"), f(E12, "GREEN-hit-transport.layout.json")]),
+    ("hit_target_reach", "known-bad fixture (transport row, pre-fix)", 1,
+     [f(D, "hit_target_reach.py"), f(E12, "RED-hit-transport.layout.json")]),
+
     # issue 6: cursors really change on hover
     ("cursor_invariants", "every region resolves its cursor", 0,
      [f(T, "cursor_invariants.py"), f(E07, "CUR-GREEN.cursor.json")] + CURSOR_EXPECT),
