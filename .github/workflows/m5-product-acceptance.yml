@@ -49,6 +49,13 @@ jobs:
       # asserts each detector both PASSES a known-good fixture and FAILS a
       # known-bad one (or its own --plant). A detector that can only pass is
       # not coverage.
+      # text_contrast reads the rendered PNG, so the self-test needs Pillow.
+      # Without it that detector raises ModuleNotFoundError, which the
+      # self-test correctly reports as a detector that cannot adjudicate --
+      # a missing dependency must fail loudly here, never pass quietly.
+      - name: Install detector self-test dependencies
+        run: python3 -m pip install --quiet --disable-pip-version-check 'pillow==11.0.0'
+
       - name: Gate - detector suite self-test (blocking)
         run: python3 tools/ci/detector_selftest.py
 
