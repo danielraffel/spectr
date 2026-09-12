@@ -570,27 +570,50 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     )js", "spectr-native-analyzer-contract");
 
     // The native retained command stream must preserve the calibrated dBFS
-    // ruler, not merely the browser-side source math.  Use the dBFS heading's
-    // x-coordinate to disambiguate the right-side `0` from the EQ gain-axis
-    // `0`, then prove every label uses the same linear [-120,+24] projection.
+    // ruler, not merely the browser-side source math.  Anchor the analyzer
+    // column on a label the gain axis can never emit, so the right-side `0`
+    // is never confused with the EQ gain-axis `0`, then prove every label
+    // uses the same linear [-120,+24] projection.
     using CanvasCommand = pulp::view::CanvasDrawCmd;
     const auto& analyzer_commands = canvas->commands();
-    const auto heading = std::find_if(
-        analyzer_commands.begin(), analyzer_commands.end(), [](const auto& cmd) {
-            return cmd.type == CanvasCommand::Type::fill_text
-                && cmd.text == "dBFS (analyzer)";
-        });
+    const auto find_text = [&](std::string_view label) {
+        return std::find_if(
+            analyzer_commands.begin(), analyzer_commands.end(),
+            [&](const auto& cmd) {
+                return cmd.type == CanvasCommand::Type::fill_text
+                    && cmd.text == label;
+            });
+    };
+    // `textAlign` is sticky canvas state carried by its own command, so the
+    // alignment a fill_text was painted under is the last set_text_align
+    // before it. Read it rather than assuming, and compare two labels'
+    // alignment codes against each other -- never against a hardcoded enum
+    // value, which would pin this test to a wire encoding it does not own.
+    const auto align_at = [&](auto it) {
+        int code = -1;
+        for (auto scan = analyzer_commands.begin(); scan != it; ++scan)
+            if (scan->type == CanvasCommand::Type::set_text_align)
+                code = scan->int_val;
+        return code;
+    };
+    const auto count_text = [&](std::string_view label) {
+        return std::count_if(
+            analyzer_commands.begin(), analyzer_commands.end(),
+            [&](const auto& cmd) {
+                return cmd.type == CanvasCommand::Type::fill_text
+                    && cmd.text == label;
+            });
+    };
+    // Every landmark below is addressed by its text, so a second command
+    // carrying the same string would silently hand the assertions a different
+    // label. Pin uniqueness rather than trusting first-match.
+    const auto heading = find_text("dBFS");
     REQUIRE(heading != analyzer_commands.end());
-    // The heading does not share the tick column: it is right aligned flush to
-    // the plot's right edge while the ticks are left aligned 8px outside it.
-    // Anchor the column on "-120" instead, which the signed gain axis can never
+    REQUIRE(count_text("dBFS") == 1);
+    // Anchor the column on "-120", which the signed gain axis can never
     // produce because it only spans +/-24, so that label names the analyzer
     // ruler on its own.
-    const auto floor_label = std::find_if(
-        analyzer_commands.begin(), analyzer_commands.end(), [](const auto& cmd) {
-            return cmd.type == CanvasCommand::Type::fill_text
-                && cmd.text == "-120";
-        });
+    const auto floor_label = find_text("-120");
     REQUIRE(floor_label != analyzer_commands.end());
     const float column_x = floor_label->x;
     REQUIRE(std::count_if(
@@ -598,10 +621,58 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
             return cmd.type == CanvasCommand::Type::fill_text
                 && cmd.text == "-120";
         }) == 1);
-    // Tie the heading back to the column it names, rather than assuming they
-    // share an x. The 8px is the tick inset the ruler draws with.
-    INFO("heading->x := " << heading->x << " column_x := " << column_x);
-    REQUIRE(column_x - heading->x == Catch::Approx(8.0f).margin(0.05f));
+    // The heading IS the column's header: same anchor x, same alignment, so
+    // the two share an edge. Both halves are load-bearing -- an equal x under
+    // a different alignment puts the glyphs on opposite sides of the anchor --
+    // and neither carries a literal, so the pair keeps agreeing at every
+    // window size and band count instead of drifting on the next resize.
+    INFO("dBFS heading x := " << heading->x << " column_x := " << column_x);
+    REQUIRE(heading->x == Catch::Approx(column_x).margin(0.05f));
+    REQUIRE(align_at(heading) != -1);
+    REQUIRE(align_at(heading) == align_at(floor_label));
+
+    // The same contract on the opposite edge. The gain ruler is a different
+    // axis with a different tick set, so it gets its own anchor: "+18" is
+    // unique to the gain column (the analyzer ruler only ever emits
+    // -120/-90/-60/-30/0/+24), and the heading is the bare unit, with no
+    // parenthetical, so it reads as a column header rather than a caption
+    // floating over the plot.
+    const auto gain_heading = find_text("dB");
+    REQUIRE(gain_heading != analyzer_commands.end());
+    REQUIRE(count_text("dB") == 1);
+    const auto gain_anchor = find_text("+18");
+    REQUIRE(gain_anchor != analyzer_commands.end());
+    REQUIRE(count_text("+18") == 1);
+    INFO("dB heading x := " << gain_heading->x
+         << " gain column x := " << gain_anchor->x);
+    REQUIRE(gain_heading->x == Catch::Approx(gain_anchor->x).margin(0.05f));
+    REQUIRE(align_at(gain_heading) != -1);
+    REQUIRE(align_at(gain_heading) == align_at(gain_anchor));
+    // The two rulers are opposite edges of one plot, so their headers must not
+    // be the same alignment -- that is what makes each hang off its own gutter
+    // instead of both leaning the same way over the graph.
+    REQUIRE(align_at(gain_heading) != align_at(heading));
+    // Both headings sit on one row, above the top tick rather than on it.
+    REQUIRE(gain_heading->y == Catch::Approx(heading->y).margin(0.05f));
+    // "+24" is the ONE label both rulers emit, so it must be disambiguated by
+    // its column rather than by stream order.
+    const auto gain_top = std::find_if(
+        analyzer_commands.begin(), analyzer_commands.end(), [&](const auto& cmd) {
+            return cmd.type == CanvasCommand::Type::fill_text
+                && cmd.text == "+24"
+                && std::abs(cmd.x - gain_anchor->x) < 0.05f;
+        });
+    REQUIRE(gain_top != analyzer_commands.end());
+    REQUIRE(gain_heading->y < gain_top->y);
+
+    // Nothing paints a mode caption over the plot area any more. The toolbar's
+    // DSP-mode control already names the mode; a second copy floating inside
+    // the graph was text on the graph, which is the defect this removes.
+    REQUIRE(std::none_of(
+        analyzer_commands.begin(), analyzer_commands.end(), [](const auto& cmd) {
+            return cmd.type == CanvasCommand::Type::fill_text
+                && cmd.text.find("SPECTRAL") != std::string::npos;
+        }));
     const auto ruler_tick_y = [&](std::string_view label) {
         const auto match = std::find_if(
             analyzer_commands.begin(), analyzer_commands.end(),
