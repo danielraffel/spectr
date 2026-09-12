@@ -36,4 +36,8 @@ materialized
 ^settings overflow
 Built Spectr
 Spectr editor
-^Spectr-browser-
+# The browser oracle lane registers its tests only when BOTH node and chrome
+# are found (CMakeLists.txt guards them, and CMake warns when disabled). The
+# acceptance runner has no chrome, so these are UNMEASURED there -- reported
+# every run, never silently passed.
+optional(browser oracle lane needs node+chrome): ^Spectr-browser-

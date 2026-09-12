@@ -82,6 +82,15 @@ checks = {
         "python3 tools/ci/detector_selftest.py" in workflow
         and workflow.index("tools/ci/detector_selftest.py")
         < workflow.index("cmake -S ")),
+    # The ctest pattern gate is the mirror case: it must run AFTER the build,
+    # because catch_discover_tests registers Catch2 cases in a POST_BUILD step.
+    # Run earlier, the ctest list holds only statically-registered tests and
+    # nearly every pattern reports zero matches -- indistinguishable from a
+    # genuinely rotted pattern, which is exactly what the gate exists to catch.
+    "ctest pattern gate runs after the build": (
+        "tools/ci/ctest_pattern_gate.py" in workflow
+        and workflow.index("cmake --build ")
+        < workflow.index("tools/ci/ctest_pattern_gate.py")),
     # Every build in this workflow takes a bounded SHARE of the runner, never
     # the whole machine. The job runs on a shared self-hosted Mac that also
     # carries Pulp's required `macos` gate, and a bare `--parallel` (unbounded
