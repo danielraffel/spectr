@@ -875,6 +875,55 @@ if(SPECTR_NODE_EXECUTABLE)
         TIMEOUT 30)
 endif()
 
+# The two graph axis headings must be column headers over their own rulers,
+# not captions floating inside the plot. Both were reported by the user as
+# "text on the graph": each was anchored to a plot EDGE while the ticks it
+# names are anchored 8px OUTSIDE that edge with the opposite alignment.
+#
+# The axis rulers are painted onto a canvas, so no layout detector can see
+# them -- there are no nodes, no boxes and no measured_text_boxes to read. The
+# only way to measure a canvas heading is to run the painter, so this suite
+# lifts `drawRulers` out of the shipping document, executes it against a
+# recording 2D-context stub at four window sizes, and asserts each heading
+# shares BOTH its anchor x and its textAlign with a tick unique to its own
+# column. It pins no pixel constant, which is the point: a hardcoded offset
+# would drift on the next resize or band-count change.
+#
+# It also really PARSES every script block via dynamic import, discriminating
+# on the error class -- `node --check` exits 0 on broken input and is not a
+# syntax checker -- and executing the ruler body is what catches a scope
+# defect, which parses clean by definition.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-axis-headers
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_axis_headers.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-axis-headers PROPERTIES TIMEOUT 60)
+    # Four negative controls, each restoring a different half of the pre-fix
+    # shape, so a failure names which assertion is load bearing instead of one
+    # plant tripping everything. `--expect-fail` inverts the verdict inside the
+    # script rather than via WILL_FAIL, which would accept any non-zero exit --
+    # including the exit 2 the harness uses when it cannot run at all. Each
+    # plant asserts its needle matched exactly once, so a drifted needle fails
+    # the control instead of quietly re-testing the current document.
+    #
+    #   nudge   moves the dB heading 8px and changes nothing else, so the
+    #           GEOMETRY assertion is the only thing that can fire.
+    #   align   restores the full pre-fix heading (caption text, left aligned,
+    #           anchored at the plot edge).
+    #   caption restores the SPECTRAL mode label inside the plot.
+    #   syntax  breaks the ruler body, proving the parse arm can fail.
+    foreach(_axis_plant nudge align caption syntax)
+        add_test(NAME Spectr-materialized-axis-headers-control-${_axis_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_axis_headers.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant ${_axis_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-axis-headers-control-${_axis_plant}
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+endif()
+
 # Appearance invariants over a dump_layout_tree() snapshot: two painted glyph
 # runs must not overlap, and a run must fit the box laid out for it. Both
 # adjudicate on measured_text_boxes[].rect after intersecting with the node's
