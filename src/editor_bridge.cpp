@@ -204,6 +204,34 @@ std::optional<EditorRevision> expected_revision_(
     return kMaxEditorRevision + 1;
 }
 
+/// The modulation lanes as the editor reads them. Shared by the hydration
+/// payload and the live projection: every one of these is an automatable host
+/// parameter, so an editor that only ever reads them at hydration shows the
+/// user a settings panel frozen at the value the session opened with while the
+/// host drives the audio somewhere else.
+choc::value::Value make_modulation_payload_(const Spectr& plugin) {
+    const auto modulation_state = plugin.modulation_settings();
+    auto modulation = choc::value::createObject("SpectrModulationState");
+    modulation.addMember("enabled", modulation_state.enabled);
+    modulation.addMember("shape", static_cast<std::int32_t>(modulation_state.shape));
+    modulation.addMember("beats_per_cycle", static_cast<double>(
+        modulation_state.beats_per_cycle));
+    modulation.addMember("depth", static_cast<double>(modulation_state.depth));
+    modulation.addMember("target", static_cast<std::int32_t>(
+        modulation_state.target));
+    modulation.addMember("lfo2_enabled", modulation_state.lfo2_enabled);
+    modulation.addMember("lfo2_shape", static_cast<std::int32_t>(modulation_state.lfo2_shape));
+    modulation.addMember("lfo2_beats_per_cycle", static_cast<double>(
+        modulation_state.lfo2_beats_per_cycle));
+    modulation.addMember("lfo2_depth", static_cast<double>(modulation_state.lfo2_depth));
+    // The resolved selection, never the raw sentinel: the editor draws these
+    // bits directly, so "no explicit selection" must present as the single
+    // enum destination that is actually being modulated.
+    modulation.addMember("target_mask", static_cast<std::int32_t>(
+        resolve_modulation_target_mask(modulation_state)));
+    return modulation;
+}
+
 std::string authority_response_(const Spectr& plugin,
                                 const EditorReceipt& receipt) {
     if (!receipt.accepted) return EditorBridge::err_response(receipt.error);
@@ -244,26 +272,7 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
         plugin.editor_mode_param(kParamEditMode)));
     payload.addMember("visualization_mode", static_cast<double>(
         plugin.editor_mode_param(kParamVisualization)));
-    const auto modulation_state = plugin.modulation_settings();
-    auto modulation = choc::value::createObject("SpectrModulationState");
-    modulation.addMember("enabled", modulation_state.enabled);
-    modulation.addMember("shape", static_cast<std::int32_t>(modulation_state.shape));
-    modulation.addMember("beats_per_cycle", static_cast<double>(
-        modulation_state.beats_per_cycle));
-    modulation.addMember("depth", static_cast<double>(modulation_state.depth));
-    modulation.addMember("target", static_cast<std::int32_t>(
-        modulation_state.target));
-    modulation.addMember("lfo2_enabled", modulation_state.lfo2_enabled);
-    modulation.addMember("lfo2_shape", static_cast<std::int32_t>(modulation_state.lfo2_shape));
-    modulation.addMember("lfo2_beats_per_cycle", static_cast<double>(
-        modulation_state.lfo2_beats_per_cycle));
-    modulation.addMember("lfo2_depth", static_cast<double>(modulation_state.lfo2_depth));
-    // The resolved selection, never the raw sentinel: the editor draws these
-    // bits directly, so "no explicit selection" must present as the single
-    // enum destination that is actually being modulated.
-    modulation.addMember("target_mask", static_cast<std::int32_t>(
-        resolve_modulation_target_mask(modulation_state)));
-    payload.addMember("modulation", modulation);
+    payload.addMember("modulation", make_modulation_payload_(plugin));
     payload.addMember("snapshots", snapshots);
     payload.addMember("patterns_json", plugin.patterns().export_json());
     return payload;
@@ -296,6 +305,7 @@ choc::value::Value make_editor_live_state_payload(const Spectr& plugin,
         plugin.editor_mode_param(kParamEditMode)));
     payload.addMember("visualization_mode", static_cast<double>(
         plugin.editor_mode_param(kParamVisualization)));
+    payload.addMember("modulation", make_modulation_payload_(plugin));
     return payload;
 }
 

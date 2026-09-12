@@ -916,3 +916,100 @@ TEST_CASE("Spectr state round-trip") {
     REQUIRE(host.load_state(data));
     REQUIRE(host.state().get_value(spectr::kMix) == Approx(50.0f));
 }
+
+TEST_CASE("Spectr reports the display overlay inactive when depth is zero",
+          "[modulation][display][rt]") {
+    // The editor's modulation overlay takes ownership of the paint refs on the
+    // rising edge of `active` and releases them on the falling edge. Depth is
+    // part of being active: apply_internal_modulation returns the canonical
+    // field unchanged once depth reaches zero, so an enabled LFO at depth 0
+    // publishes canonical state while claiming to be modulating. The editor
+    // then keeps the overlay latched for the life of the session -- the
+    // falling edge never arrives -- and pays two choc arrays plus a dispatch
+    // per display frame to say nothing.
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+
+    struct Publication {
+        bool          active   = false;
+        std::uint64_t sequence = 0;
+    };
+
+    const auto render = [](bool lfo1_enabled, float lfo1_depth,
+                           bool lfo2_enabled, float lfo2_depth) {
+        pulp::format::HeadlessHost host(spectr::create_spectr);
+        host.prepare(sample_rate, block_size);
+        auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+        REQUIRE(plugin != nullptr);
+
+        pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+        const float* input_channels[] = {
+            in.channel(0).data(), in.channel(1).data()};
+        pulp::audio::BufferView<const float> input(
+            input_channels, 2, block_size);
+        auto output = out.view();
+        std::uint64_t rendered = 0;
+        const auto blocks = static_cast<std::size_t>(
+            (spectr::kSpectralLatency + spectr::kSpectralFftSize)
+                / block_size + 6);
+        for (std::size_t block = 0; block < blocks; ++block) {
+            for (std::size_t sample = 0; sample < block_size; ++sample) {
+                const float value = 0.25f * std::sin(
+                    2.0 * 3.14159265358979323846 * 997.0
+                    * static_cast<double>(rendered + sample) / sample_rate);
+                in.channel(0)[sample] = value;
+                in.channel(1)[sample] = value;
+            }
+            rendered += block_size;
+            pulp::state::ParameterEventQueue events;
+            for (std::size_t band = 0; band < 32; ++band)
+                REQUIRE(events.push({
+                    spectr::band_gain_param_id(band), 0, -12.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoEnabled, 0,
+                                 lfo1_enabled ? 1.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                                 static_cast<float>(spectr::LfoShape::Square),
+                                 0}));
+            REQUIRE(events.push({spectr::kParamLfoRate, 0, 16.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoDepth, 0, lfo1_depth, 0}));
+            REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                                 static_cast<float>(
+                                     spectr::ModulationTarget::WholeBank),
+                                 0}));
+            REQUIRE(events.push({spectr::kParamLfo2Enabled, 0,
+                                 lfo2_enabled ? 1.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfo2Shape, 0,
+                                 static_cast<float>(spectr::LfoShape::Square),
+                                 0}));
+            REQUIRE(events.push({spectr::kParamLfo2Rate, 0, 16.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfo2Depth, 0, lfo2_depth, 0}));
+            host.process(output, input, events);
+        }
+        const auto& snapshot = plugin->read_modulated_field();
+        return Publication{snapshot.active, snapshot.sequence};
+    };
+
+    // Positive control on the same instrument and the same target. Without it
+    // an "inactive" reading below would be indistinguishable from a render
+    // that never reached the publication at all.
+    const auto running = render(true, 1.0f, false, 0.0f);
+    CHECK(running.active);
+    CHECK(running.sequence > 0);
+
+    // LFO 1 enabled at depth 0 is not modulating anything.
+    const auto silent_lfo1 = render(true, 0.0f, false, 0.0f);
+    CHECK_FALSE(silent_lfo1.active);
+    CHECK(silent_lfo1.sequence == 0);
+
+    // Same for LFO 2, whose depth lives on its own lane.
+    const auto silent_lfo2 = render(false, 0.0f, true, 0.0f);
+    CHECK_FALSE(silent_lfo2.active);
+    CHECK(silent_lfo2.sequence == 0);
+
+    // LFO 2 alone still drives the overlay, so the guard is per-LFO rather
+    // than a blanket "LFO 1 decides" test that a single-depth check would
+    // also pass.
+    const auto running_lfo2 = render(false, 0.0f, true, 1.0f);
+    CHECK(running_lfo2.active);
+    CHECK(running_lfo2.sequence > 0);
+}

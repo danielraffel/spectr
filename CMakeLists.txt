@@ -747,6 +747,41 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-swallow --expect-fail)
     set_tests_properties(Spectr-materialized-propagation-negative-control PROPERTIES
         TIMEOUT 30)
+
+    # The modulation display, MEASURED rather than asserted. This drives the
+    # shipped rAF `draw` and `applyModulationFrame` out of the materialized
+    # document against a known producer and requires the painted peak-to-peak
+    # to match the published peak-to-peak, then mounts the real
+    # SpectrModulationSettings against a mock bridge and requires it to follow
+    # a native live-state frame. Both were user-visible: the rAF smoother was
+    # pulling every painted sample back toward the unmodulated value on every
+    # frame (a rate-independent ~29% of the true excursion lost), and the
+    # settings panel read its nine LFO scalars exactly once, at mount, so a
+    # host automating them animated the overlay while the panel stayed pinned.
+    add_test(NAME Spectr-materialized-modulation
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-modulation PROPERTIES TIMEOUT 60)
+    # Negative controls, one per contract. Each reinstates the exact pre-fix
+    # line and inverts the verdict, so the row is green only when the suite
+    # REJECTS it. As above the inversion lives in the script, not in WILL_FAIL,
+    # because WILL_FAIL accepts any non-zero exit -- including the ones that
+    # mean the control never ran.
+    add_test(NAME Spectr-materialized-modulation-smoothing-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-smoothing --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-smoothing-control PROPERTIES
+        TIMEOUT 60)
+    add_test(NAME Spectr-materialized-modulation-oneshot-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-oneshot --expect-fail)
+    set_tests_properties(Spectr-materialized-modulation-oneshot-control PROPERTIES
+        TIMEOUT 60)
 endif()
 
 # The zoom readout must be a leaf that subscribes to the viewport, never a
