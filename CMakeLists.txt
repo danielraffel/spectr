@@ -931,6 +931,75 @@ if(SPECTR_NODE_EXECUTABLE)
         TIMEOUT 30)
 endif()
 
+# Two defects reported from the shipped AU, at the seam where native
+# publications write the editor's JS refs directly. Neither is visible from a
+# screenshot or from the standalone.
+#
+# CLEAR published its status pill and left every band standing. The band field
+# reaches C++ through one effect whose echo suppressor is a ONE-SHOT: a
+# projection arms it, the render that projection causes consumes it.
+# applyHostAutomationState armed it and fired no shot -- it writes refs only,
+# calls no state setter, so the publication effect never re-runs for it and the
+# flag stays latched until an unrelated later edit consumes it instead. CLEAR
+# was that edit, because it mutated the refs without raising the "local edit"
+# signal commitGain/commitMany use to override the suppressor. The host
+# dependence is the same fact: processing_state_live is published only when
+# host_automation_revision moves, which needs a writer OUTSIDE the plugin.
+#
+# And a muted band paints on the -Infinity sentinel, which the draw loop holds
+# by collapsing any finite value it finds on a muted band. All three
+# projections into renderGains overrode the sentinel with 0, so every
+# publication restarted an eight-frame collapse: measured on the pre-fix
+# document, one constant value across 20 idle frames and -0.36 / -0.59 / -0.74
+# repeating once projections arrive. No LFO is required -- host projections
+# alone do it in a DAW -- but an LFO makes them continuous.
+#
+# The suite mounts the shipping document's own bank block in a vm and asserts
+# on the payload that crosses the bridge and on the painted value. It asserts
+# nothing about the status message: the banner said exactly the right thing
+# while the product did the wrong thing.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-clear-and-mute-overlay
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_clear_and_mute_overlay.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-clear-and-mute-overlay PROPERTIES
+        TIMEOUT 60)
+    # Control 1: restore the pre-fix publication half -- the projection arms
+    # the suppressor again AND the local mutators stop declaring their edit.
+    # Both, because either alone keeps CLEAR working, which is exactly why the
+    # fix carries both. The runtime rows for CLEAR and for preset-apply must
+    # go red.
+    add_test(NAME Spectr-materialized-clear-suppressor-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_clear_and_mute_overlay.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-latched-suppressor --expect-fail)
+    set_tests_properties(Spectr-materialized-clear-suppressor-control PROPERTIES
+        TIMEOUT 60)
+    # Control 2: restore only the muted-band flattening. Separate row because
+    # it fails different assertions, and a single plant that trips everything
+    # cannot show which check is load bearing.
+    add_test(NAME Spectr-materialized-mute-overlay-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_clear_and_mute_overlay.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-flatten-muted --expect-fail)
+    set_tests_properties(Spectr-materialized-mute-overlay-control PROPERTIES
+        TIMEOUT 60)
+    # Control 3: drop clearGains' edit declaration only. With the suppressor
+    # no longer armed by a path that cannot consume it, this cannot fail at
+    # runtime -- so it proves the STATIC half is load bearing, which is the
+    # only way that half can be asserted at all.
+    add_test(NAME Spectr-materialized-clear-declaration-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_clear_and_mute_overlay.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-undeclared-clear --expect-fail)
+    set_tests_properties(Spectr-materialized-clear-declaration-control PROPERTIES
+        TIMEOUT 60)
+endif()
+
 # The two graph axis headings must be column headers over their own rulers,
 # not captions floating inside the plot. Both were reported by the user as
 # "text on the graph": each was anchored to a plot EDGE while the ticks it
