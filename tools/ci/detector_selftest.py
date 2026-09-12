@@ -36,6 +36,7 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 E07 = os.path.join("docs", "evidence", "2026-09-07")
 E11 = os.path.join("docs", "evidence", "2026-09-11")
+E12 = os.path.join("docs", "evidence", "2026-09-12")
 
 D = os.path.join("tools", "spectr-detectors")
 T = "tools"
@@ -119,6 +120,28 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(D, "status_pill_width_invariance.py"),
       f(E11, "STATUS-PILL-GREEN-after-short-message.layout.json"),
       "--plant", "offset"]),
+
+    # the pill does not MOVE when its content changes (the CLEAR transition
+    # the width detector's population could never reach)
+    ("status_pill_position_invariance", "pill keeps its place across CLEAR", 0,
+     [f(D, "status_pill_position_invariance.py"),
+      f(E12, "STATUS-PILL-POS-GREEN-baseline.layout.json"),
+      f(E12, "STATUS-PILL-POS-GREEN-after-clear.layout.json")]),
+    ("status_pill_position_invariance",
+     "known-bad fixture (pill jumps (-120,-44) after CLEAR)", 1,
+     [f(D, "status_pill_position_invariance.py"),
+      f(E12, "STATUS-PILL-POS-GREEN-baseline.layout.json"),
+      f(E12, "STATUS-PILL-POS-RED-after-clear.layout.json")]),
+    ("status_pill_position_invariance", "plant: shift the pill off centre", 1,
+     [f(D, "status_pill_position_invariance.py"),
+      f(E12, "STATUS-PILL-POS-GREEN-baseline.layout.json"),
+      f(E12, "STATUS-PILL-POS-GREEN-after-clear.layout.json"),
+      "--plant", "shift"]),
+    ("status_pill_position_invariance", "plant: raise the pill", 1,
+     [f(D, "status_pill_position_invariance.py"),
+      f(E12, "STATUS-PILL-POS-GREEN-baseline.layout.json"),
+      f(E12, "STATUS-PILL-POS-GREEN-after-clear.layout.json"),
+      "--plant", "raise"]),
 
     # issue 3: settings slider thumb grows on hover
     ("slider_thumb_hover_growth", "thumbs grow under hover", 0,
