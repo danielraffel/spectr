@@ -228,6 +228,21 @@ CASES: list[tuple[str, str, int, list[str]]] = [
     ("drag_hover_no_react_commit", "plant: strip the drag guard", 1,
      [f(D, "drag_hover_no_react_commit.py"), "--plant", "unguard"]),
 
+    # The Preset Manager's footer advertises DOUBLE-CLICK and Return. Both were
+    # dead: the row's `onDoubleClick` registers under the bridge event name
+    # `doubleclick`, which nothing in the runtime dispatches, and the keydown
+    # handler had no Enter branch at all. Nothing else in the suite can see
+    # that -- the footer renders identically whether its handlers fire or not.
+    # Reads the checked-in artifact, so it needs no build.
+    ("preset_commit_gestures", "shipping artifact backs every advertised gesture", 0,
+     [f(D, "preset_commit_gestures.py")]),
+    ("preset_commit_gestures", "plant: re-attach the undispatchable dbl-click prop", 1,
+     [f(D, "preset_commit_gestures.py"), "--plant", "dead-prop"]),
+    ("preset_commit_gestures", "plant: delete the Enter branch the footer advertises", 1,
+     [f(D, "preset_commit_gestures.py"), "--plant", "no-enter"]),
+    ("preset_commit_gestures", "plant: leave the user list select-only", 1,
+     [f(D, "preset_commit_gestures.py"), "--plant", "one-list"]),
+
     # --- layout truth ---------------------------------------------------
     ("appearance_invariants", "clean shipping settings dump", 0,
      [f(T, "appearance_invariants.py"), f(E07, "SET-2-shipping-scrolled.layout.json")]),
