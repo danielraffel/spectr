@@ -139,6 +139,63 @@
       "verifiable": false,
       "title": "Plugin bundles carry an app icon (Pulp SDK)",
       "reason": "The change is CMake plus Info.plist templates plus an .icns resource; nothing new reaches the executable, so a Mach-O strings check is the wrong instrument. Verify per bundle with CFBundleIconFile in Contents/Info.plist and the matching .icns in Contents/Resources."
+    },
+    {
+      "id": "dropdown-rows-authored-order",
+      "pr": 110,
+      "title": "A dropdown re-opened after a preset apply or snapshot recall keeps its authored row order",
+      "tokens": [
+        "appendsLast",
+        "authoredOrder"
+      ],
+      "note": "Spectr-side companion to the SDK's widget-bridge-child-order row, which no token can prove. This one is provable because the renderer gained real identifiers: attach() computed an insert index and dropped it on the floor when calling materialize(). Screened against BOTH pre-fix binaries (the installed 06:24 build from 769a596, and the Sep-12 22:32 build on the v0.847.0 SDK): both read 0. 'materializeUnder' was REJECTED as a candidate - it reads 4 pre-fix, because the function already existed and the fix only added its index parameter."
+    },
+    {
+      "id": "dropdown-switch-one-press",
+      "pr": 113,
+      "title": "Opening a second dropdown while one is open takes one press, not two",
+      "tokens": [
+        "_isTrigger",
+        "unmarks"
+      ],
+      "note": "Tokens from Spectr's own runtime.js, deliberately NOT the SDK's 'setOverlayTrigger': that literal reads 3 in the installed pre-fix build (which already carries the v0.850.0 SDK) and 0 only in the older v0.847.0 build, so it proves the SDK shipped the verb - not that Spectr calls it. 'aria-haspopup' was REJECTED at 9 pre-fix, 'Scoped' at 2 and 'counterpart' at 1. '_isTrigger' is the local that decides the mark; 'unmarks' is comment prose and fails closed on a reword, which is the documented bargain."
+    },
+    {
+      "id": "help-guide-learn-more",
+      "pr": 115,
+      "title": "The `?` popover offers Learn more, which opens a scrollable guide",
+      "tokens": [
+        "HelpGuideOverlay",
+        "data-spectr-help-learn-more",
+        "SPECTR_HELP_TEXT"
+      ],
+      "note": "Three tokens triangulating the three halves of the feature: the overlay component, the control that routes into it, and the global the copy is assigned to. The copy ships as its own embedded asset (native-ui/materialized/help-content.js, added to SPECTR_NATIVE_ASSET_SOURCES) rather than inlined into the document, so SPECTR_HELP_TEXT also proves that asset reached the binary. All three read 0 in both pre-fix binaries."
+    },
+    {
+      "id": "morph-reason-caption-below",
+      "pr": 116,
+      "title": "The morph's \"unavailable\" reason sits in a caption below the slider, not inside its groove",
+      "tokens": [
+        "TO MORPH"
+      ],
+      "note": "Nearly filed unprovable. A word-level diff of the document across this commit adds and removes nothing, which is true and misleading: the caption was REWORDED as it moved, 'SET B' -> 'SET B TO MORPH', and the new word is two characters long so a token scan with a sane minimum length steps straight over it. The control is the good one - the OLD wording 'SET A + B' reads 1 in both pre-fix binaries while every 'TO MORPH' variant reads 0, so the instrument demonstrably reaches that exact string region and the absence is the fix's, not the reader's. What this token proves is that the commit is compiled in; the move out of the 90x16 groove to a caption at top:20 carries no identifier of its own and rides along with the rewording, which shipped in the same change."
+    },
+    {
+      "id": "spectr-bundle-icons",
+      "pr": 112,
+      "verifiable": false,
+      "title": "All four Spectr bundles carry the product icon",
+      "reason": "CMake plus Info.plist plus an .icns resource; nothing new reaches the executable, so a Mach-O strings check is the wrong instrument. Verify per bundle with a non-empty CFBundleIconFile in Contents/Info.plist and the matching .icns in Contents/Resources. Note what this does NOT buy: CFBundleIconFile is inert on a .vst3/.component/.clap - only the .app gets a Finder icon from it. The plugin rows are for correctness and future hosts, not a visible icon today."
+    },
+    {
+      "id": "shortcut-modifier-notation",
+      "pr": 114,
+      "title": "SHORTCUTS spells every modifier the same way - CMD / SHIFT / ALT, no glyphs",
+      "tokens": [
+        "CMD+SHIFT+DRAG",
+        "CMD+DRAG"
+      ],
+      "note": "Also nearly filed unprovable, on the reasoning that a glyph-to-word substitution only REMOVES text and that the word CMD is three characters in a 44 MB Mach-O. Both halves are true and the conclusion still did not follow: the two rewritten chips are contiguous strings, CMD+DRAG and CMD+SHIFT+DRAG, and a token may contain any character except a double quote. Both read 0 in the pre-fix binaries against a DRAG control that reads 5 there, so the instrument reaches the chip strings and the absence belongs to the fix. Scope, because the row should not be read as more than it is: this is the twelve-row SHORTCUTS panel only. One glyph chip survives elsewhere on purpose - the preset dropdown's MANAGE row still reads U+21E7 U+2318 P - and it was never in this fix's scope."
     }
   ]
 }
