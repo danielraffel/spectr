@@ -1,4 +1,4 @@
-style: { position: "relative", width: 90, height: 16, flexShrink: 0, cursor: hasBoth ? "pointer" : "not-allowed" }
+style: { position: "relative", width: 90, height: 16, cursor: hasBoth ? "pointer" : "not-allowed" }
     },
     /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 6, width: "100%", height: 4, borderRadius: 2, pointerEvents: "none", opacity: hasBoth ? 1 : 0.35, background: "rgba(255,255,255,0.15)" } }),
     /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 6, height: 4, borderRadius: 2, pointerEvents: "none", opacity: hasBoth ? 1 : 0.35, background: "hsl(200,80%,60%)", width: (100 * ratio) + "%" } }),

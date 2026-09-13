@@ -42,6 +42,19 @@ Spectr editor
 # the workflow runs separately.
 ^Spectr-au-param-write-without-sync-worker
 
+# The additive-marquee suite and its three controls. `materialized` above
+# would match them, but it also matches a dozen other rows, so it can never
+# report their absence -- and they registered under the browser oracle's
+# node+chrome guard once already, where a chrome-less runner would have
+# dropped all four in silence.
+^Spectr-materialized-additive-marquee
+
+# The SHORTCUTS panel's no-wrap gates. The budget half needs no binary; the
+# rendered half opens the panel in the shipping native editor. Both are named
+# outside the `materialized` pattern above, so without this line they register
+# and never run -- which is the exact failure this file was written after.
+^Spectr-shortcut-panel
+
 # The browser oracle lane registers its tests only when BOTH node and chrome
 # are found (CMakeLists.txt guards them, and CMake warns when disabled). The
 # acceptance runner has no chrome, so these are UNMEASURED there -- reported

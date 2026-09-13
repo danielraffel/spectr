@@ -1,31 +1,54 @@
 #!/usr/bin/env node
-// The response curve must cover the WHOLE first and last band, not half of each.
+// Every audible RUN of bands gets its own response curve, spanning its own edges.
 //
-// The polyline is plotted through band CENTRES. Between bands that is right --
-// each segment spans centre-to-centre and the bands tile continuously -- but at
-// the two extremes the line begins and ends halfway across the first and last
-// band, so each end of the plot carries a visibly half-drawn band.
+// Two rules, one mechanism:
+//
+//   * A muted band carries no response, so the curve BREAKS there rather than
+//     plunging across it. Each contiguous audible run is its own subpath.
+//   * Each run is held FLAT from its own first band's left edge to its own last
+//     band's right edge, so it covers exactly the bands it represents.
+//
+// The second rule subsumes the plot-extreme case: a run beginning at band 0 or
+// ending at band N-1 reaches the outer edge of the plot, so neither end is left
+// half drawn. The polyline is plotted through band CENTRES, so without it the
+// line begins and ends halfway across the first and last band.
+//
+// The `fft` stair-step already draws exactly this and the user confirmed it
+// reads correctly, so it is the REFERENCE here, not a subject: the response
+// line was the outlier. In the default `both` visualization the two are painted
+// over each other, so a response line bridging a mute the stair-step leaves
+// empty is what reads as a line "sticking out past the edge" before dropping
+// to 0. That is asserted directly, as a drift guard between the two painters.
 //
 // There is no layout node for a canvas stroke, so `painted_vs_measured_width`,
 // `box_intersection` and `ink_extents` are structurally blind to this the same
 // way they are blind to the axis headings. This suite therefore EXECUTES the
 // shipping document's own bank block, hands the component a recording 2D
-// context, and reads the coordinates the real painter emitted.
+// context, and reads the coordinates the real painter emitted -- including
+// whether each coordinate began a new subpath, which is the only way a BREAK
+// is observable at all.
 //
-// Both edges are asserted against the document's OWN band geometry -- its
+// Every edge is asserted against the document's OWN band geometry -- its
 // `getGeom`, `bandCenterX` and `bandLeftX` source, evaluated here -- never
 // against a constant typed into this file. Band count (32/64) and window size
 // therefore cannot break the alignment, and the user changes both constantly.
 //
-// Three painters were examined. Two share the defect and are asserted here:
+// Five painters were examined:
 //
-//   * `drawMaskResponse`  -- the RESPONSE line. Asserted at N=32 and N=64.
-//   * `drawBands`'s iir/hybrid bezier overlay -- a curve through `p.cx`.
-//     Asserted at N=32 and N=64.
-//   * `drawBands`'s fft overlay already steps xL -> xR per band, and
-//     `drawSpectrum` (PEAK/AVG) is already sampled across the full inner
-//     width. Both are asserted to still reach the edges, as a control that
-//     "reaches the edge" is a property this suite can actually observe.
+//   * `drawMaskResponse`  -- the RESPONSE line. Both rules asserted.
+//   * `drawBands`'s iir/hybrid bezier STROKE -- both rules asserted.
+//   * `drawBands`'s iir FILL under it -- run break asserted.
+//   * `drawBands`'s fft stair-step -- the reference. Asserted to reach the
+//     edges and to break at the same bands, as a control that "reaches the
+//     edge" and "breaks at a mute" are properties this suite can observe.
+//   * `drawSpectrum` (PEAK/AVG) is sampled across the full inner width rather
+//     than per band, so bands are not its domain and a muted band does not
+//     describe a gap in it. Out of scope by construction.
+//
+// A SINGLE muted band breaks the curve, not only a run of two or more. The
+// stair-step already breaks on one, and in `both` mode a response line that
+// bridged a one-band notch the stair-step left empty would show the exact
+// inconsistency this exists to remove.
 //
 // Zoom: band geometry is view-independent by construction -- `getGeom` closes
 // over N alone and the bands always tile `inner.w`, while `view.lmin/lmax` only
@@ -37,7 +60,8 @@
 // Usage:
 //   node test_materialized_curve_edge_span.mjs <runtime.json>
 //        [--plant-response-centres | --plant-overlay-centres
-//         | --plant-geometry-follows-view] [--expect-fail]
+//         | --plant-geometry-follows-view | --plant-response-spans-mutes
+//         | --plant-fill-spans-mutes] [--expect-fail]
 //
 // Each plant restores one pre-fix form, so a failing control names which check
 // is load bearing. --expect-fail inverts the verdict: green only when this
@@ -51,6 +75,8 @@ const args = process.argv.slice(2);
 const plantResponse = args.includes("--plant-response-centres");
 const plantOverlay = args.includes("--plant-overlay-centres");
 const plantGeometry = args.includes("--plant-geometry-follows-view");
+const plantResponseMutes = args.includes("--plant-response-spans-mutes");
+const plantFillMutes = args.includes("--plant-fill-spans-mutes");
 const expectFail = args.includes("--expect-fail");
 const documentPath = args.find((a) => !a.startsWith("--"));
 
@@ -83,13 +109,117 @@ const plant = (label, from, to, expected = 1) => {
 };
 
 if (plantResponse) {
+  // The ORIGINAL painter: band centres only, and straight through a mute.
   plant("the response line goes back to band centres",
-    "      if (i === 0) {\n"
+    "    let inRun = false;\n"
+    + "    for (let i = 0; i < N; ++i) {\n"
+    + "      if (isMuted(tg[i])) {\n"
+    + "        inRun = false;\n"
+    + "        continue;\n"
+    + "      }\n"
+    + "      const rendered = Number.isFinite(rg[i]) ? clamp(rg[i], -1, 1) : 0;\n"
+    + "      const y = g.zeroY - rendered * g.halfH;\n"
+    + "      const x = bandCenterX(i, g);\n"
+    + "      if (!inRun) {\n"
+    + "        ctx.moveTo(bandLeftX(i, g), y);\n"
+    + "        inRun = true;\n"
+    + "      }\n"
+    + "      ctx.lineTo(x, y);\n"
+    + "      if (i === N - 1 || isMuted(tg[i + 1]))\n"
+    + "        ctx.lineTo(bandLeftX(i, g) + g.bandW, y);\n"
+    + "    }\n",
+    "    for (let i = 0; i < N; ++i) {\n"
+    + "      const rendered = Number.isFinite(rg[i]) ? clamp(rg[i], -1, 1) : 0;\n"
+    + "      const y = isMuted(tg[i]) ? g.zeroY : g.zeroY - rendered * g.halfH;\n"
+    + "      const x = bandCenterX(i, g);\n"
+    + "      if (i === 0) ctx.moveTo(x, y);\n"
+    + "      else ctx.lineTo(x, y);\n"
+    + "    }\n");
+}
+if (plantResponseMutes) {
+  // The painter as it stood after the plot-extreme fix: it reached both outer
+  // edges, but still plunged across every interior mute. This is the form the
+  // user reported, so a control that cannot reject it proves nothing.
+  plant("the response line spans muted bands again",
+    "    let inRun = false;\n"
+    + "    for (let i = 0; i < N; ++i) {\n"
+    + "      if (isMuted(tg[i])) {\n"
+    + "        inRun = false;\n"
+    + "        continue;\n"
+    + "      }\n"
+    + "      const rendered = Number.isFinite(rg[i]) ? clamp(rg[i], -1, 1) : 0;\n"
+    + "      const y = g.zeroY - rendered * g.halfH;\n"
+    + "      const x = bandCenterX(i, g);\n"
+    + "      if (!inRun) {\n"
+    + "        ctx.moveTo(bandLeftX(i, g), y);\n"
+    + "        inRun = true;\n"
+    + "      }\n"
+    + "      ctx.lineTo(x, y);\n"
+    + "      if (i === N - 1 || isMuted(tg[i + 1]))\n"
+    + "        ctx.lineTo(bandLeftX(i, g) + g.bandW, y);\n"
+    + "    }\n",
+    "    for (let i = 0; i < N; ++i) {\n"
+    + "      const rendered = Number.isFinite(rg[i]) ? clamp(rg[i], -1, 1) : 0;\n"
+    + "      const y = isMuted(tg[i]) ? g.zeroY : g.zeroY - rendered * g.halfH;\n"
+    + "      const x = bandCenterX(i, g);\n"
+    + "      if (i === 0) {\n"
     + "        ctx.moveTo(bandLeftX(0, g), y);\n"
     + "        ctx.lineTo(x, y);\n"
     + "      } else ctx.lineTo(x, y);\n"
-    + "      if (i === N - 1) ctx.lineTo(bandLeftX(i, g) + g.bandW, y);\n",
-    "      if (i === 0) ctx.moveTo(x, y);\n      else ctx.lineTo(x, y);\n");
+    + "      if (i === N - 1) ctx.lineTo(bandLeftX(i, g) + g.bandW, y);\n"
+    + "    }\n");
+}
+if (plantFillMutes) {
+  plant("the iir fill slides under muted bands again",
+    "        let filling = false;\n"
+    + "        let lastFilled = null;\n"
+    + "        const closeFill = () => {\n"
+    + "          if (filling && lastFilled) {\n"
+    + "            ctx.lineTo(lastFilled.xE, lastFilled.y);\n"
+    + "            ctx.lineTo(lastFilled.xE, zeroY);\n"
+    + "            ctx.closePath();\n"
+    + "          }\n"
+    + "          filling = false;\n"
+    + "          lastFilled = null;\n"
+    + "        };\n"
+    + "        for (let i = 0; i < N; i++) {\n"
+    + "          const p = pts[i];\n"
+    + "          if (!p) {\n"
+    + "            closeFill();\n"
+    + "            continue;\n"
+    + "          }\n"
+    + "          if (!filling) {\n"
+    + "            ctx.moveTo(p.xL, zeroY);\n"
+    + "            ctx.lineTo(p.xL, p.y);\n"
+    + "            filling = true;\n"
+    + "          }\n"
+    + "          ctx.lineTo(p.cx, p.y);\n"
+    + "          lastFilled = p;\n"
+    + "        }\n"
+    + "        closeFill();\n"
+    + "        ctx.fill();\n",
+    "        let filling = false;\n"
+    + "        for (let i = 0; i < N; i++) {\n"
+    + "          const p = pts[i];\n"
+    + "          if (!p) continue;\n"
+    + "          if (!filling) {\n"
+    + "            ctx.moveTo(p.xL, zeroY);\n"
+    + "            ctx.lineTo(p.xL, p.y);\n"
+    + "            filling = true;\n"
+    + "          }\n"
+    + "          ctx.lineTo(p.cx, p.y);\n"
+    + "        }\n"
+    + "        if (filling) {\n"
+    + "          for (let i = N - 1; i >= 0; i--) {\n"
+    + "            const p = pts[i];\n"
+    + "            if (!p) continue;\n"
+    + "            ctx.lineTo(p.xE, p.y);\n"
+    + "            ctx.lineTo(p.xE, zeroY);\n"
+    + "            break;\n"
+    + "          }\n"
+    + "          ctx.closePath();\n"
+    + "          ctx.fill();\n"
+    + "        }\n");
 }
 if (plantOverlay) {
   plant("the dsp curve goes back to band centres",
@@ -138,8 +268,10 @@ function verdict() {
   const passed = failures.length === 0;
   for (const f of failures) console.log("FAIL:", f);
   if (passed) {
-    console.log("PASS: the response line and the iir/hybrid dsp curve each span "
-      + "from the first band's left edge to the last band's right edge.");
+    console.log("PASS: the response line, the iir/hybrid dsp curve and the iir "
+      + "fill each break at every muted band and span each audible run from "
+      + "its own first band's left edge to its own last band's right edge, "
+      + "reaching the plot edges when the run does.");
   }
   if (expectFail) {
     if (passed) {
@@ -225,17 +357,20 @@ function recordingContext() {
   let current = null;
   const start = () => { current = { ops: [], stroke: null, width: null, fill: null }; };
   start();
-  const push = (x, y) => current.ops.push({ x, y });
+  // The op KIND is what makes a BREAK observable: moveTo and lineTo both
+  // land a coordinate, and a suite that recorded only coordinates could not
+  // tell a curve that skips a muted band from one that paints across it.
+  const push = (x, y, op) => current.ops.push({ x, y, op });
   const ctx = {
     strokeStyle: "", fillStyle: "", lineWidth: 1, lineJoin: "", lineCap: "",
     globalCompositeOperation: "", font: "", textAlign: "", textBaseline: "",
     globalAlpha: 1, shadowBlur: 0, shadowColor: "", filter: "",
     save() {}, restore() {}, clip() {}, closePath() {},
     beginPath() { start(); },
-    moveTo(x, y) { push(x, y); },
-    lineTo(x, y) { push(x, y); },
-    bezierCurveTo(_a, _b, _c, _d, x, y) { push(x, y); },
-    quadraticCurveTo(_a, _b, x, y) { push(x, y); },
+    moveTo(x, y) { push(x, y, "move"); },
+    lineTo(x, y) { push(x, y, "line"); },
+    bezierCurveTo(_a, _b, _c, _d, x, y) { push(x, y, "bezier"); },
+    quadraticCurveTo(_a, _b, x, y) { push(x, y, "bezier"); },
     arc() {}, rect() {}, roundRect() {}, ellipse() {},
     stroke() {
       if (current.ops.length) {
@@ -331,7 +466,8 @@ function attachRefs(node, wrap, canvases, seen = new Set()) {
   if (props.children) attachRefs(props.children, wrap, canvases, seen);
 }
 
-function paint({ N, width, height, visualizationMode, dspMode, analyzerMode }) {
+function paint({ N, width, height, visualizationMode, dspMode, analyzerMode,
+                 mutes = [] }) {
   const { state, React } = hooksFor();
   const main = recordingContext();
   const overlay = recordingContext();
@@ -441,11 +577,21 @@ function paint({ N, width, height, visualizationMode, dspMode, analyzerMode }) {
     for (const fn of due) if (fn) { try { fn(clock); } catch { /* drained */ } }
   }
   const bank = sharedState.current;
+  if (mutes.length && !(bank && typeof bank.setGains === "function")) {
+    // Silently painting an unmuted field would make every break assertion
+    // below vacuous, and "no segment crosses a muted band" is trivially true
+    // when no band is muted.
+    fail(`the bank exposes no setGains, so the ${mutes.length} requested mute(s) `
+      + "were never applied and nothing about a mute boundary was measured");
+    return null;
+  }
   if (bank && typeof bank.setGains === "function") {
     // A non-flat field: a flat line's endpoints are indistinguishable from a
     // degenerate one, so a flat stimulus could not tell a held endpoint from a
-    // dropped one.
-    bank.setGains(new Array(N).fill(0).map((_, i) => Math.sin(i * 0.7) * 0.8));
+    // dropped one. `-Infinity` is the document's own mute sentinel (`isMuted`).
+    const muted = new Set(mutes);
+    bank.setGains(new Array(N).fill(0).map((_, i) =>
+      muted.has(i) ? -Infinity : Math.sin(i * 0.7) * 0.8));
     render();
     for (let i = 0; i < 12; i++) {
       clock += 16.667;
@@ -511,6 +657,210 @@ function assertSpan(label, group, geo, N) {
   console.log(`span      %s N=%s  first=%s (want %s)  last=%s (want %s)  pts=%s`,
     label.padEnd(22), String(N).padEnd(3), first.toFixed(3), wantL.toFixed(3),
     last.toFixed(3), wantR.toFixed(3), group.ops.length);
+}
+
+// ------------------------------------------------ runs and subpaths
+
+// The audible runs a mute set implies, derived here rather than restated, so a
+// fixture change cannot leave an expectation behind.
+function runsOf(N, mutes) {
+  const muted = new Set(mutes);
+  const runs = [];
+  let start = -1;
+  for (let i = 0; i < N; i++) {
+    if (muted.has(i)) {
+      if (start >= 0) { runs.push([start, i - 1]); start = -1; }
+    } else if (start < 0) start = i;
+  }
+  if (start >= 0) runs.push([start, N - 1]);
+  return runs;
+}
+
+// A `moveTo` opens a new subpath; a `lineTo`/`bezierCurveTo` continues the one
+// in progress. Splitting on that is what turns "the painter emitted these
+// coordinates" into "the painter drew these disconnected pieces".
+function subpathsOf(group) {
+  const subs = [];
+  for (const op of group.ops) {
+    if (op.op === "move" || subs.length === 0) subs.push([]);
+    subs[subs.length - 1].push(op);
+  }
+  return subs;
+}
+
+// The user's complaint, stated as a measurement: no painted segment may pass
+// over a band that is muted. Reported per crossing so a failure names the band.
+function crossingsOverMutes(subs, geo, mutes) {
+  const found = [];
+  for (const sp of subs) {
+    for (let k = 1; k < sp.length; k++) {
+      const a = Math.min(sp[k - 1].x, sp[k].x);
+      const b = Math.max(sp[k - 1].x, sp[k].x);
+      for (const m of mutes) {
+        if (b > geo.left(m) + EPS && a < geo.right(m) - EPS)
+          found.push({ band: m, a, b });
+      }
+    }
+  }
+  return found;
+}
+
+function assertRuns(label, group, geo, N, mutes) {
+  if (!group) {
+    fail(`${label}: the painter emitted no path at all, so nothing was `
+      + "measured -- this suite must not report a verdict on it");
+    return null;
+  }
+  const runs = runsOf(N, mutes);
+  const subs = subpathsOf(group);
+  // Stimulus control. If the mutes never reached the painter there would be a
+  // single run, and every assertion below would be about the wrong picture.
+  if (runs.length < 2) {
+    fail(`${label}: the fixture implies ${runs.length} run(s), so it cannot `
+      + "demonstrate a break at all");
+    return null;
+  }
+  if (subs.length !== runs.length) {
+    fail(`${label}: ${subs.length} subpath(s) for ${runs.length} audible run(s) `
+      + `(muted bands ${mutes.join(",")}) -- the curve does not break where the `
+      + "bands do");
+    return null;
+  }
+  for (let k = 0; k < runs.length; k++) {
+    const [from, to] = runs[k];
+    const xs = subs[k].map((o) => o.x);
+    const lo = Math.min(...xs), hi = Math.max(...xs);
+    if (!near(lo, geo.left(from)))
+      fail(`${label}: run ${k} (bands ${from}..${to}) starts at `
+        + `${lo.toFixed(4)}, band ${from}'s left edge is `
+        + `${geo.left(from).toFixed(4)} (its centre is `
+        + `${geo.centre(from).toFixed(4)})`);
+    if (!near(hi, geo.right(to)))
+      fail(`${label}: run ${k} (bands ${from}..${to}) ends at `
+        + `${hi.toFixed(4)}, band ${to}'s right edge is `
+        + `${geo.right(to).toFixed(4)} (its centre is `
+        + `${geo.centre(to).toFixed(4)})`);
+  }
+  const crossings = crossingsOverMutes(subs, geo, mutes);
+  for (const c of crossings)
+    fail(`${label}: a segment ${c.a.toFixed(2)} -> ${c.b.toFixed(2)} is painted `
+      + `over muted band ${c.band} (x ${geo.left(c.band).toFixed(2)} .. `
+      + `${geo.right(c.band).toFixed(2)}) -- the curve trails past the edge of `
+      + "the audible group instead of stopping there");
+  console.log("runs      %s N=%s  subpaths=%s runs=%s  spans %s  crossings=%s",
+    label.padEnd(26), String(N).padEnd(3), subs.length, runs.length,
+    subs.map((sp) => {
+      const xs = sp.map((o) => o.x);
+      return `${Math.min(...xs).toFixed(1)}..${Math.max(...xs).toFixed(1)}`;
+    }).join(" "), crossings.length);
+  return subs;
+}
+
+// ------------------------------------------ mute boundaries (the defect)
+//
+// Three fixtures, each answering a question the others cannot:
+//
+//   interior   a run of two muted bands mid-spectrum AND a lone muted band --
+//              the user's screenshots show a run of two, and a single-band
+//              notch is the case a "only break on 2+" rule would get wrong.
+//   edges      band 0 and band N-1 muted -- proves the run rule generalises
+//              the plot-extreme hold rather than sitting beside a special case
+//              that would now paint a phantom endpoint over a muted band.
+//   single     exactly one muted band, so the decision to break on one is
+//              asserted on its own rather than riding along with a run.
+const MUTE_FIXTURES = [
+  ["interior", (N) => [Math.round(N * 0.375), Math.round(N * 0.375) + 1,
+                       Math.round(N * 0.625)]],
+  ["edges", (N) => [0, N - 1, Math.round(N / 2)]],
+  ["single", (N) => [Math.round(N * 0.4)]],
+];
+
+for (const [N, width, height] of [[32, 990, 645], [64, 990, 645]]) {
+  const geo = geometryFor(N, width, height);
+  for (const [fixture, pick] of MUTE_FIXTURES) {
+    const mutes = [...new Set(pick(N))].sort((a, b) => a - b);
+
+    // `both` is the shipping default (`useAppS("both")`) and the mode the user
+    // reported: the stair-step and the response line are painted over each
+    // other, so this is where a response line bridging a mute the stair-step
+    // leaves empty is visible.
+    const both = paint({ N, width, height, visualizationMode: "both",
+                         dspMode: "fft", analyzerMode: "off", mutes });
+    if (!both) continue;
+
+    const resp = groupsStyled(both.main, responseStyle);
+    const respSubs = assertRuns(`response/${fixture} ${width}x${height}`,
+                                resp[resp.length - 1], geo, N, mutes);
+
+    // Drift guard. The fft stair-step is the reference the user confirmed
+    // reads correctly; the two are drawn over each other, so they must break
+    // at the SAME bands or the picture contradicts itself. Its steps end one
+    // inter-band gap past the band (xR joins adjacent steps), so the right
+    // edge is asserted as a lower bound rather than an equality.
+    const step = groupsStyled(both.main, "rgba(210,225,245,0.70)");
+    const stepGroup = step[step.length - 1];
+    if (!stepGroup) {
+      fail(`fft reference/${fixture} ${width}x${height}: the stair-step painted `
+        + "nothing, so the break this suite compares against is unproven");
+    } else if (respSubs) {
+      const stepSubs = subpathsOf(stepGroup);
+      const runs = runsOf(N, mutes);
+      if (stepSubs.length !== runs.length) {
+        fail(`fft reference/${fixture} ${width}x${height}: ${stepSubs.length} `
+          + `subpath(s) for ${runs.length} run(s) -- the reference painter no `
+          + "longer breaks at mutes, so it cannot anchor this comparison");
+      } else {
+        for (let k = 0; k < runs.length; k++) {
+          const rx = respSubs[k].map((o) => o.x);
+          const sx = stepSubs[k].map((o) => o.x);
+          if (!near(Math.min(...rx), Math.min(...sx)))
+            fail(`drift/${fixture} ${width}x${height}: run ${k} starts at `
+              + `${Math.min(...rx).toFixed(4)} on the response line but `
+              + `${Math.min(...sx).toFixed(4)} on the fft stair-step`);
+          if (Math.max(...sx) < Math.max(...rx) - EPS)
+            fail(`drift/${fixture} ${width}x${height}: run ${k} ends at `
+              + `${Math.max(...rx).toFixed(4)} on the response line, past the `
+              + `stair-step's ${Math.max(...sx).toFixed(4)}`);
+        }
+        console.log(`drift     %s runs agree`,
+          `${fixture} ${width}x${height} N=${N}`.padEnd(26));
+      }
+    }
+
+    // The iir overlay: its bezier STROKE and the FILL underneath it. The fill
+    // is a separate path that used to slide under bands its own stroke skips.
+    const bars = paint({ N, width, height, visualizationMode: "bars",
+                         dspMode: "iir", analyzerMode: "off", mutes });
+    if (!bars) continue;
+    const iir = groupsStyled(bars.main, "rgba(200,230,255,0.55)");
+    assertRuns(`dsp-iir/${fixture} ${width}x${height}`, iir[iir.length - 1],
+               geo, N, mutes);
+    const fills = bars.main.groups.filter(
+      (gr) => gr.kind === "fill" && gr.style === "rgba(180,210,255,0.05)");
+    const fillGroup = fills[fills.length - 1];
+    if (!fillGroup) {
+      fail(`iir fill/${fixture} ${width}x${height}: no fill group with the iir `
+        + "fill style -- the fill was restyled and this check is now blind");
+    } else {
+      const fillSubs = subpathsOf(fillGroup);
+      const runs = runsOf(N, mutes);
+      if (fillSubs.length !== runs.length)
+        fail(`iir fill/${fixture} ${width}x${height}: ${fillSubs.length} `
+          + `polygon(s) for ${runs.length} audible run(s) -- the fill does not `
+          + "break where its own stroke does");
+      const crossings = crossingsOverMutes(fillSubs, geo, mutes)
+        // The vertical closing edges at a run's own boundary touch that
+        // boundary; only a segment with real horizontal extent over a muted
+        // band is ink the band should not carry.
+        .filter((c) => c.b - c.a > EPS);
+      for (const c of crossings)
+        fail(`iir fill/${fixture} ${width}x${height}: filled across muted band `
+          + `${c.band} (${c.a.toFixed(2)} -> ${c.b.toFixed(2)})`);
+      console.log("fill      %s polygons=%s runs=%s crossings=%s",
+        `${fixture} ${width}x${height} N=${N}`.padEnd(26), fillSubs.length,
+        runs.length, crossings.length);
+    }
+  }
 }
 
 // A plot the painter never filled would make every span above vacuous, so the

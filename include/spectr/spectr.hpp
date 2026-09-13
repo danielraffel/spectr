@@ -63,6 +63,10 @@ struct ProcessingStateSnapshot {
 struct AudioModulationState {
     ModulationSettings settings{};
     SnapshotBank snapshots{};
+    /// Whether a morph also moves the viewport. Published alongside the bank
+    /// because the audio thread derives the mask's frequency window from the
+    /// morph parameter, so it has to know the same answer the editor does.
+    bool morph_applies_viewport = true;
 };
 static_assert(std::is_trivially_copyable_v<AudioModulationState>,
               "audio modulation publication must remain allocation-free POD");
@@ -326,11 +330,28 @@ public:
     /// Marks the slot populated.
     void capture_snapshot(SnapshotBank::Slot slot) noexcept;
 
-    /// Write the morph of A and B at t into `field_`. If either slot is
-    /// unpopulated, falls back to the populated side (or leaves field_
-    /// alone if neither slot has been captured). Does NOT touch viewport
-    /// or layout — those aren't continuously morphed.
+    /// Write the morph of A and B at t into `field_`, and — when
+    /// `morph_applies_viewport()` is set — the log-space morph of their
+    /// viewports into `viewport_`. If either slot is unpopulated, falls back
+    /// to the populated side (or leaves field_ alone if neither slot has been
+    /// captured). Never touches `layout_`: band count is discrete and the
+    /// selectable counts do not share a band grid, so there is nothing to
+    /// interpolate. See snapshot.hpp for the full capture-vs-apply rule.
     void apply_morph_to_live(float t) noexcept;
+
+    /// Whether a morph moves the viewport as well as the bands.
+    ///
+    /// This is a PLAYBACK switch, deliberately not a capture switch. A
+    /// snapshot always records the viewport it was taken under, so turning
+    /// this on later just works, and turning it off never destroys anything.
+    /// Turning it off stops morph writing the viewport and leaves the user on
+    /// whatever window they are looking at.
+    ///
+    /// Defaults to enabled. Persisted in the supplemental plugin-state blob,
+    /// not exposed as a host parameter: it selects a behaviour rather than
+    /// carrying a value a host should be automating.
+    [[nodiscard]] bool morph_applies_viewport() const noexcept;
+    void set_morph_applies_viewport(bool enabled) noexcept;
 
     /// Accessor for the StateStore-level ABCompare. Lazily constructed
     /// the first time it's requested (after define_parameters has wired
@@ -500,6 +521,9 @@ private:
     struct ParamSyncTask { std::uint64_t tag = 0; };
     pulp::format::BackgroundTaskLane<ParamSyncTask, 8> param_sync_lane_;
     ModulationSettings modulation_{};
+    // Guarded by processing_state_mutex_ and published to the audio thread in
+    // AudioModulationState, so both sides of a morph agree on what moves.
+    bool morph_applies_viewport_ = true;
     // Open paint-drag epoch (UI thread only): params already begin-gestured.
     std::vector<pulp::state::ParamID> epoch_gesture_params_{};
     bool param_gesture_epoch_open_ = false;
