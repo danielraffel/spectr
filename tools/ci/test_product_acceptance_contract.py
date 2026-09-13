@@ -138,6 +138,16 @@ checks = {
                               and "_spectr_git_root STREQUAL _spectr_source_root" in cmake),
     "package rechecks exact head": ("SPECTR_SHA_AFTER_BUILD" in package
                                     and "SPECTR_SHA_CACHED_AFTER_BUILD" in package),
+    # PULP_ROOT supplies the signing and packaging recipe, and it was the one
+    # input pinned by nothing -- it defaults to a sibling checkout at whatever
+    # revision that happens to be. A recipe from before prompt-free installer
+    # signing uses `productbuild --sign`, which the signing keychain's ACL
+    # denies only after every bundle is signed.
+    "package pins the installer recipe revision":
+        ("PULP_INSTALLER_FLOOR" in package
+         and "merge-base --is-ancestor" in package),
+    "package requires an unmodified installer recipe":
+        'git -C "$PULP_ROOT" status --porcelain' in package,
     "features: the exact contract is accepted":
         not feature_mismatches({"audio_probes": False, "inspector": True}),
     "features: a new disabled capability is accepted":
