@@ -266,3 +266,61 @@ adjudicate the morph half, and a fixture would only ever record one build. Two
 independent negative controls, because it makes two independent claims:
 `--plant circle` reverts the shape on both components, `--plant overhang`
 keeps the pill and reverts only the travel.
+
+## The morph row — the track was laid out ON the "A" label
+
+> "just noticed the morph slider is overlapping the A"
+
+### `MORPH-ROW-{RED-track-on-a-label,GREEN-track-clear}.layout.json`
+
+Two real `SPECTR_LAYOUT_DUMP` captures of the shipping standalone home screen,
+before and after. The morph control is three flex items — an "A" label, a 90x16
+track, a "B" label — and in RED the first two are at the **same x**:
+
+| node | RED | GREEN |
+|---|---|---|
+| "A" label | `x=758.188 w=5.406` | `x=758.188 w=6.000` |
+| track | `x=758.188 w=90` | `x=770.188 w=90` |
+| "B" label | `x=869.594 w=5.406` | `x=866.188 w=6.000` |
+| clearance left / right | **−5.406** / 21.406 | **6.000** / 6.000 |
+
+So everything painted inside the track landed on the "A" glyph: with both slots
+captured, the 22px pill at value 0 ran `758.188..780.188` and covered the
+5.406px label outright, and the label was invisible in the render.
+
+**This is not what PR #90 did.** Rebuilding the pre-#90 circle thumb (14x14,
+fixed `marginLeft: -7`) against the same document puts it at
+`751.188..765.188` — covering the same label just as completely, and hanging
+7px outside the track as well. The pill inherited the defect; it did not create
+it.
+
+The cause is the labels, not the thumb: `A` and `B` were authored as bare
+`<span>`s, which carry no layout box on the native runtime. Each measured ~0
+main size, Yoga placed it at the row's content origin, and the glyph painted
+there while the next flex item started on top of it. `whiteSpace: "nowrap"`
+alone does **not** fix it — it makes the ink measurable (`0.0` → `6.0`) while
+the layout box stays `5.406` and the track does not move, which is a
+persuasive false fix. The element has to become a box.
+
+### Why `box_intersection.py` did not stop this
+
+It compares only nodes that carry **text**. The thumb is a text-free `div`, so
+the pair a user actually sees was structurally invisible to it and always would
+have been. The one node it could see — the disabled caption's box, which spans
+the whole track and therefore started on the label — it **did** report, as a
+5.4x12px pair. That finding was correct and was dismissed as pre-existing
+because it was identical in the before and after dumps of an unrelated change.
+
+`tools/spectr-detectors/morph_row_clearance.py` states the rule on the
+**track** instead, so it needs no text: the track must clear both flanking
+siblings, nothing inside it may escape it, and it must still be 90px wide (the
+transport row has already absorbed an addition by crushing this control to
+39.5px). Two negative controls — `--plant overlap` restores the RED geometry,
+`--plant crush` restores the 39.5px width — plus the RED fixture above, all
+wired into `tools/ci/detector_selftest.py`, and the gate runs it against the
+live `hit-transport` dump from the build under test.
+
+The live view tree carries the same rule in
+`test/test_native_state_parity.cpp`, where it can be driven at both the idle
+22px and hovered 26px thumb sizes — states no capture reaches, because the
+morph slider is disabled in every one of them.

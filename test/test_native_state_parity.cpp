@@ -2909,15 +2909,64 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         REQUIRE(by + bh <= track.height + 0.5f);
     };
 
+    // Thumb-inside-track is only HALF the containment rule, and on its own it
+    // is the half that hid a defect for the whole life of this control: the
+    // TRACK was laid out at the flanking "A" label's own x, so a thumb
+    // perfectly contained in its track still painted straight over the label
+    // at value 0, and the label was invisible. The cause was the labels
+    // themselves -- authored as bare inline spans, which carry no layout box
+    // on this runtime, so each measured ~0 wide, sat at the row's content
+    // origin, and let the next flex item start on top of it.
+    //
+    // So the track has to be measured against its SIBLINGS, in the wrapper's
+    // own space where all three rects are comparable, and it has to be
+    // measured at both thumb sizes: a clearance that holds for the 22px idle
+    // pill and not the 26px hovered one is not a clearance.
+    const auto morph_track_clears_labels = [&](const char* stage) {
+        rig.root->layout_children();
+        CAPTURE(stage);
+        const View* wrapper = morph_track->parent();
+        REQUIRE(wrapper != nullptr);
+        const auto track = morph_track->bounds();
+        REQUIRE(track.width == Catch::Approx(90.0f).margin(0.5f));
+        std::size_t flanking = 0;
+        for (std::size_t i = 0; i < wrapper->child_count(); ++i) {
+            const auto* sibling = wrapper->child_at(i);
+            if (sibling == morph_track) continue;
+            ++flanking;
+            const auto b = sibling->bounds();
+            // A label collapsed to nothing would clear the track trivially and
+            // report a healthy gap while being invisible on screen, so its
+            // width is asserted before its distance is.
+            CAPTURE(i, b.x, b.width, track.x, track.width);
+            REQUIRE(b.width > 0.0f);
+            // Which side a label is on is decided by its CENTRE, not its
+            // left edge: in the defect the two left edges were equal, and an
+            // edge test then called the "A" label a right-hand neighbour and
+            // reported a -90px gap instead of the -5.4px overlap it is.
+            const float gap = b.x + b.width * 0.5f < track.x + track.width * 0.5f
+                ? track.x - (b.x + b.width)
+                : b.x - (track.x + track.width);
+            CAPTURE(gap);
+            REQUIRE(gap >= 2.0f);
+        }
+        // Positive control. A wrapper the tree never built, or one whose
+        // labels are gone, leaves the loop with nothing compared -- which
+        // passes every assertion above by never reaching one.
+        REQUIRE(flanking == 2);
+    };
+
     // Idle first: this reading is the positive control for the two that
     // follow. A thumb the view tree never drew would report neither size and
     // trip the require above instead of silently agreeing with every stage.
     REQUIRE(morph_thumb_size("idle") == 22.0f);
     morph_thumb_inside_track("idle");
+    morph_track_clears_labels("idle");
     activate(rig, "[data-spectr-morph]", "pointerenter",
              slider_press_at(0.5, "[data-spectr-morph]"));
     REQUIRE(morph_thumb_size("hovered") == 26.0f);
     morph_thumb_inside_track("hovered");
+    morph_track_clears_labels("hovered");
 
     // A move with no preceding press is inert: the control tracks the pointer
     // only while it holds the capture the press gave it.
