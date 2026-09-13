@@ -1298,6 +1298,97 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        // MUTE-CURVE: what the response line does at a MUTED band. It used to
+        // run straight across one, so an audible group's curve trailed past
+        // its own last band before dropping to 0 at the mute -- visible in the
+        // default `both` visualization, where the fft stair-step beside it
+        // stops cleanly at that same edge and leaves the muted bands empty.
+        //
+        // Both painters are on screen here on purpose: the defect is the
+        // DISAGREEMENT between them, so a capture of either alone cannot show
+        // it. A canvas stroke has no layout node, so this is the only way the
+        // two ends of a run reach a PNG at all.
+        //
+        // Every gesture goes through the shipping handlers -- the same
+        // pointerdown/move/up on the filter surface, with shiftKey set, that
+        // drives the editor's own mute brush.
+        //
+        // SPECTR_MUTE_CURVE_SHOT=<tag> names the capture set.
+        if (const char* mute_tag = std::getenv("SPECTR_MUTE_CURVE_SHOT")) {
+            const std::string tag{mute_tag};
+
+            const auto pointer = [&rig](const char* type, double x, double y,
+                                        bool shift) {
+                char script[680];
+                std::snprintf(script, sizeof(script),
+                    "(() => { const ok = globalThis"
+                    ".__pulpActivateMaterializedElement__("
+                    "'[data-spectr-filter-surface]', '%s', "
+                    "{ clientX: %.2f, clientY: %.2f, button: 0, buttons: 1, "
+                    "pointerId: 1, pointerType: 'mouse', shiftKey: %s, "
+                    "altKey: false, metaKey: false, ctrlKey: false, "
+                    "preventDefault: () => {}, stopPropagation: () => {} }); "
+                    "if (!ok) throw new Error('%s not delivered'); "
+                    "if (typeof globalThis.__pulpRuntimeSettle__ === 'function')"
+                    " globalThis.__pulpRuntimeSettle__(4); })();",
+                    type, x, y, shift ? "true" : "false", type);
+                rig.eval(script, "spectr-mute-curve-pointer");
+                settle(rig.clock, 4);
+            };
+
+            rig.activate("[data-spectr-menu-root=\"overflow\"] "
+                         "[data-spectr-menu-trigger]");
+            rig.activate("[data-spectr-overflow-action=\"fit-view\"]");
+            settle(rig.clock, 16);
+            rig.activate("[data-spectr-menu-root=\"bands\"] "
+                         "[data-spectr-menu-trigger]");
+            rig.activate("[data-spectr-band-count=\"32\"]");
+            settle(rig.clock, 24);
+
+            // The band columns, from the document's own geometry rather than
+            // restated here -- a gesture aimed at the wrong column would mute
+            // a band the capture does not show and the PNG would prove
+            // nothing. `bandCenterX` needs only the plot box and N.
+            const double plot_l = 56.0, plot_r = 1264.0, zero = 438.5;
+            const int N = 32;
+            const double gap = 2.0;
+            const double band_w = (plot_r - plot_l - gap * (N - 1)) / N;
+            const auto centre = [&](int i) {
+                return plot_l + i * (band_w + gap) + band_w / 2.0;
+            };
+
+            // A shaped field first: a flat line's ends are indistinguishable
+            // from a dropped endpoint, so a flat capture could not show this.
+            pointer("pointerdown", centre(0), zero - 120.0, false);
+            for (int step = 0; step <= 48; ++step) {
+                const double t = static_cast<double>(step) / 48.0;
+                const double x = centre(0) + (centre(N - 1) - centre(0)) * t;
+                const double y = zero - 200.0 * std::sin(t * 3.14159 * 2.4)
+                                 - 40.0;
+                pointer("pointermove", x, y, false);
+            }
+            pointer("pointerup", centre(N - 1), zero - 120.0, false);
+            settle(rig.clock, 24);
+            capture(rig, dir, prefix + tag + "-00-unmuted", backend, scale);
+
+            // A RUN of two adjacent bands, shift-dragged: the case the user's
+            // screenshots show.
+            pointer("pointerdown", centre(12), zero, true);
+            pointer("pointermove", centre(13), zero, true);
+            pointer("pointerup", centre(13), zero, true);
+            settle(rig.clock, 32);
+            capture(rig, dir, prefix + tag + "-01-run-of-two", backend, scale);
+
+            // And a LONE muted band, which is the case a "only break on two or
+            // more" rule would get wrong. Captured separately so one PNG shows
+            // one decision.
+            pointer("pointerdown", centre(22), zero, true);
+            pointer("pointerup", centre(22), zero, true);
+            settle(rig.clock, 32);
+            capture(rig, dir, prefix + tag + "-02-plus-single", backend, scale);
+            return 0;
+        }
+
         if (std::getenv("SPECTR_PROBE_TEXT") != nullptr)
             dump_label_chain(*rig.root, std::getenv("SPECTR_PROBE_TEXT"));
         rig.report_text_fit("home");

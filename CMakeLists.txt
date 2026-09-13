@@ -1078,7 +1078,12 @@ endif()
 
 # The response curve is plotted through band CENTRES, so at the two extremes
 # it began and ended halfway across the first and last band -- a visibly
-# half-drawn band at each end of the plot, which is what the user reported.
+# half-drawn band at each end of the plot. It also ran straight across MUTED
+# bands, so an audible group's line trailed past its own edge before dropping
+# to 0 at the mute, which is what the user reported. The rule the suite pins:
+# the curve breaks at every muted band, and each audible run is held flat from
+# its own first band's left edge to its own last band's right edge -- exactly
+# what the fft stair-step already draws, and the plot extremes fall out of it.
 #
 # Like the axis headings above, this is canvas ink with no layout node, so
 # painted_vs_measured_width / box_intersection / ink_extents are structurally
@@ -1093,19 +1098,27 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_curve_edge_span.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
     set_tests_properties(Spectr-materialized-curve-edge-span PROPERTIES TIMEOUT 60)
-    # Three negative controls, each restoring one pre-fix form so a failure
+    # Five negative controls, each restoring one pre-fix form so a failure
     # names which assertion is load bearing. `--expect-fail` inverts the
     # verdict inside the script rather than via WILL_FAIL, which would accept
     # the exit 2 the harness uses when it cannot run at all -- a usage error
     # would satisfy the control and prove nothing.
     #
-    #   response-centres      the RESPONSE line goes back to band centres.
+    #   response-centres      the RESPONSE line goes back to band centres AND
+    #                         back to plunging across every mute.
+    #   response-spans-mutes  the RESPONSE line keeps both outer plot edges but
+    #                         plunges across interior mutes again. This is the
+    #                         exact form the user reported, so a suite that
+    #                         cannot reject it does not cover the defect.
+    #   fill-spans-mutes      the iir fill slides back under muted bands its
+    #                         own stroke skips.
     #   overlay-centres       the iir/hybrid dsp curve goes back to centres.
     #   geometry-follows-view band columns start tracking the zoom window,
     #                         which would make the first/last VISIBLE band
     #                         stop being band 0 / N-1 and silently point every
     #                         span in this suite at the wrong columns.
-    foreach(_curve_plant response-centres overlay-centres geometry-follows-view)
+    foreach(_curve_plant response-centres response-spans-mutes fill-spans-mutes
+                         overlay-centres geometry-follows-view)
         add_test(NAME Spectr-materialized-curve-edge-control-${_curve_plant}
             COMMAND ${SPECTR_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_curve_edge_span.mjs

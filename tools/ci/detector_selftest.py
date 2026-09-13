@@ -333,7 +333,7 @@ CASES: list[tuple[str, str, int, list[str]]] = [
     # getGeom expressions -- never a constant, so 32/64 bands and any window
     # size stay covered.
     ("materialized_curve_edge_span",
-     "response and dsp curves span the outer band edges", 0,
+     "curves break at mutes and span each run's band edges", 0,
      [f("test", "test_materialized_curve_edge_span.mjs"),
       f("native-ui", "materialized", "materialized-document.runtime.json")]),
     ("materialized_curve_edge_span",
@@ -351,6 +351,20 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f("test", "test_materialized_curve_edge_span.mjs"),
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-geometry-follows-view"]),
+    # The exact form the user reported: both outer plot edges reached, but the
+    # line still plunges across every interior mute, so an audible group's
+    # curve trails past its own edge. A suite that cannot reject this does not
+    # cover the defect it was written for.
+    ("materialized_curve_edge_span",
+     "plant: the response line spans muted bands again", 1,
+     [f("test", "test_materialized_curve_edge_span.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-response-spans-mutes"]),
+    ("materialized_curve_edge_span",
+     "plant: the iir fill slides under muted bands again", 1,
+     [f("test", "test_materialized_curve_edge_span.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-fill-spans-mutes"]),
 ]
 
 

@@ -781,13 +781,29 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(count_occurrences(document, "REDRAW UNMUTES") == 0);
     }
 
-    SECTION("a muted band still rests on the 0 dB line") {
-        // Pins danielraffel/spectr#44 in the emitted document: the response
-        // curve must project a muted band to zeroY, never to the axis floor.
+    SECTION("a muted band carries no response ink at all") {
+        // Supersedes danielraffel/spectr#44, which pinned the response curve to
+        // project a muted band onto the 0 dB line rather than onto the axis
+        // floor. The curve now BREAKS at a muted band instead of plotting it
+        // anywhere: each contiguous audible run is its own subpath, which is
+        // what the fft stair-step drawn beside it already does. A band with no
+        // response contributes no ink, so it can reach neither the floor #44
+        // was filed about nor the 0 dB line that answered it -- and in the
+        // default `both` visualization the two painters stop agreeing to
+        // disagree, which is what the user saw as a line trailing past the
+        // edge of an audible group before dropping to 0.
         CHECK(count_occurrences(
                   document,
-                  "const y = isMuted(tg[i]) ? g.zeroY : g.zeroY - rendered * g.halfH;")
+                  "if (isMuted(tg[i])) {\\n        inRun = false;\\n"
+                  "        continue;\\n      }")
               == 1);
+        // Each run is closed at its own last band's RIGHT EDGE. Without this
+        // the break alone would only shorten the trail, not remove it: the run
+        // would still stop at a band centre and leave that band half drawn.
+        CHECK(count_occurrences(document, "if (i === N - 1 || isMuted(tg[i + 1]))")
+              == 1);
+        // The original #44 defect, still pinned: nothing may project a muted
+        // band onto the axis floor.
         CHECK(count_occurrences(document, "isMuted(tg[i]) ? g.zeroY + g.halfH") == 0);
     }
 }
