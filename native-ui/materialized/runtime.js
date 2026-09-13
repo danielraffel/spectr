@@ -7299,6 +7299,25 @@
         }
         return true;
       }
+      // `aria-haspopup` is the counterpart of the two arms above: they say
+      // "this element IS a dismissable overlay", this one says "this control
+      // OPENS one".  The overlay-dismissal policy needs both.  Without the
+      // mark, a press on a second dropdown's trigger while the first is open
+      // is consumed by the dismissal and never reaches the trigger, so
+      // switching menus costs two presses instead of one.
+      //
+      // Scoped to triggers deliberately -- ordinary content stays consumed,
+      // or clicking away from a menu would also operate whatever sits under
+      // the click.  Any ARIA token other than absent/"false" marks
+      // (true|menu|listbox|tree|grid|dialog); "false" unmarks, so a control
+      // that stops offering a popup stops being a trigger.
+      case "aria-haspopup": {
+        const _popup = typeof value === "string" ? value.toLowerCase() : value;
+        const _isTrigger = _popup === true
+          || (typeof _popup === "string" && _popup !== "" && _popup !== "false");
+        call("setOverlayTrigger", id, _isTrigger);
+        return true;
+      }
       default:
         return false;
     }

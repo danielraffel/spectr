@@ -60,3 +60,11 @@ Spectr editor
 # acceptance runner has no chrome, so these are UNMEASURED there -- reported
 # every run, never silently passed.
 optional(browser oracle lane needs node+chrome): ^Spectr-browser-
+
+# One-press dropdown switching and its scoping control. Neither is matched by
+# `^every native dropdown` or `^native ...` above -- they start with the verb,
+# not with "native" -- so without these two lines they register and never run,
+# which is measurable: the acceptance alternation selected 75 tests and 0 of
+# these 2.
+^"?switching native dropdowns
+^"?dismissing a native dropdown

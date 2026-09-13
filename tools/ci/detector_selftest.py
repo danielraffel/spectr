@@ -582,6 +582,25 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      "plant: the pre-change 280px panel, which had no headroom", 1,
      [f(D, "shortcut_panel_single_line.py"), "--budget-only",
       "--plant", "narrow-panel"]),
+
+    # One-press dropdown switching. The WIRING half -- the live-tree behaviour
+    # is gated by the `switching native dropdowns costs one press` ctest. Four
+    # plants because the wiring has four independent ways to come apart: the
+    # runtime arm going inert, and any of the three markup sites (an inline
+    # trigger, the shared RailBtn, the settings gear) going quiet.
+    ("overlay_trigger_wiring", "every overlay opener is declared and wired", 0,
+     [f(D, "overlay_trigger_wiring.py")]),
+    ("overlay_trigger_wiring",
+     "plant: the arm that shipped -- declared, ignored", 1,
+     [f(D, "overlay_trigger_wiring.py"), "--plant", "inert-arm"]),
+    ("overlay_trigger_wiring", "plant: an inline trigger stops declaring", 1,
+     [f(D, "overlay_trigger_wiring.py"), "--plant", "silent-trigger"]),
+    ("overlay_trigger_wiring", "plant: RailBtn stops declaring, so four of "
+     "the six triggers go quiet at once", 1,
+     [f(D, "overlay_trigger_wiring.py"), "--plant", "silent-railbtn"]),
+    ("overlay_trigger_wiring", "plant: the settings gear back to the "
+     "odd one out", 1,
+     [f(D, "overlay_trigger_wiring.py"), "--plant", "silent-settings"]),
 ]
 
 
