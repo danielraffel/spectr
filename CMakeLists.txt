@@ -775,6 +775,62 @@ if(SPECTR_NODE_EXECUTABLE)
     set_tests_properties(Spectr-materialized-propagation-negative-control PROPERTIES
         TIMEOUT 30)
 
+    # A child's AUTHORED index must be its NATIVE index, including for a
+    # subtree that mounts late into a parent that kept its other children.
+    # Every native createX APPENDS, so the renderer has to move a non-last
+    # child into place with insertChild right after creating it. The vendored
+    # runtime.js predated Pulp #8272 and dropped attach()'s computed index at
+    # materialize(), so a re-opened dropdown remounted its rows AFTER the
+    # siblings that stayed and every caption separated from the description it
+    # labels -- the reported "dropdown gets messed up" after a preset apply or
+    # a snapshot recall re-renders the overlay subtree.
+    #
+    # This runs the artifact's OWN attach/materialize/materializeUnder against
+    # a recording bridge that appends like the native factory, and asserts the
+    # resulting native order. It deliberately does NOT grep for insertChild:
+    # the artifact already carried that identifier in insertBefore's
+    # same-parent REORDER branch, which predates #8272 and says nothing about
+    # whether the MOUNT path is wired.
+    add_test(NAME Spectr-materialized-insert-index
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_insert_index.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/runtime.js)
+    set_tests_properties(Spectr-materialized-insert-index PROPERTIES TIMEOUT 30)
+
+    # Three negative controls, because each is a DIFFERENT wrong implementation
+    # and a single plant that trips everything cannot show which check is load
+    # bearing. --plant-drop-index is the exact defect that shipped;
+    # --plant-append-only is the plausible half-fix that threads the index but
+    # never emits the call, and is the reason the assertion is on resulting
+    # native order rather than on call arity; --plant-queue-order restores
+    # queue-order draining of a deferred parent, which only the third scenario
+    # can see. --expect-fail lives in the script rather than WILL_FAIL because
+    # WILL_FAIL accepts any non-zero exit, so a usage error or a missing file
+    # would read green while proving nothing.
+    add_test(NAME Spectr-materialized-insert-index-control-drop-index
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_insert_index.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/runtime.js
+            --plant-drop-index --expect-fail)
+    set_tests_properties(Spectr-materialized-insert-index-control-drop-index
+        PROPERTIES TIMEOUT 30)
+
+    add_test(NAME Spectr-materialized-insert-index-control-append-only
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_insert_index.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/runtime.js
+            --plant-append-only --expect-fail)
+    set_tests_properties(Spectr-materialized-insert-index-control-append-only
+        PROPERTIES TIMEOUT 30)
+
+    add_test(NAME Spectr-materialized-insert-index-control-queue-order
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_insert_index.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/runtime.js
+            --plant-queue-order --expect-fail)
+    set_tests_properties(Spectr-materialized-insert-index-control-queue-order
+        PROPERTIES TIMEOUT 30)
+
     # The modulation display, MEASURED rather than asserted. This drives the
     # shipped rAF `draw` and `applyModulationFrame` out of the materialized
     # document against a known producer and requires the painted peak-to-peak
