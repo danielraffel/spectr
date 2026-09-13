@@ -151,6 +151,7 @@ const std::array kEmbeddedFiles{
     EmbeddedFile{"runtime.js", spectr_native::runtime_js, spectr_native::runtime_js_size},
     EmbeddedFile{"materialized-document.runtime.json", spectr_native::materialized_document_runtime_json, spectr_native::materialized_document_runtime_json_size},
     EmbeddedFile{"design.js", spectr_native::design_js, spectr_native::design_js_size},
+    EmbeddedFile{"help-content.js", spectr_native::help_content_js, spectr_native::help_content_js_size},
 };
 
 std::filesystem::path package_path_for(const void* instance) {
@@ -518,6 +519,26 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
         try {
             bridge->set_script_base_dir(native_package_path_);
             bridge->load_script(design, "spectr-materialized-design");
+            // The help overlay's copy. Loaded here rather than inlined into
+            // the materialized document so the text is editable without
+            // patching a checked-in one-line artifact. It assigns one string
+            // and reads nothing, so the order relative to the bind script
+            // below does not matter; the overlay reads the global when the
+            // reader opens it, which is long after both. A missing or empty
+            // asset is not fatal -- the panel says the content did not load
+            // rather than painting an empty box.
+            {
+                std::ifstream help_stream(native_package_path_ / "help-content.js",
+                                          std::ios::binary);
+                std::string help((std::istreambuf_iterator<char>(help_stream)),
+                                 std::istreambuf_iterator<char>());
+                if (!help.empty())
+                    bridge->load_script(help, "spectr-help-content");
+                else
+                    pulp::runtime::log_error(
+                        "[Spectr native] help-content.js was empty; the help "
+                        "overlay will report that its content did not load");
+            }
             bridge->load_script(
                 "if (typeof globalThis.__pulpApplyMaterializedVisualAuthority__ === 'function') "
                 "globalThis.__pulpApplyMaterializedVisualAuthority__(); "

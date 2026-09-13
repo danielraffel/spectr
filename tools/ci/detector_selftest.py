@@ -314,6 +314,62 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      "plant: let the badge shrink instead of the name", 1,
      [f(D, "preset_manager_reset_and_chrome.py"), "--plant", "badge-shrinks"]),
 
+    # Two surfaces named two different analyzer-cycle keys and only one was
+    # bound: the SHORTCUTS popover said `6`, the ANALYZER popover said "A to
+    # cycle", and `A` did nothing in any state. No screenshot and no layout
+    # assertion can see that -- both popovers render identically whether the key
+    # they name works or not. Reads the checked-in artifact, so it needs no
+    # build, no GPU and no third-party module: it registers on every runner
+    # configuration, including the chrome-less acceptance one.
+    ("analyzer_shortcut_agreement",
+     "every advertised analyzer key is bound, and every bound one advertised", 0,
+     [f(D, "analyzer_shortcut_agreement.py")]),
+    # main's behaviour restored exactly: the letter is advertised and dead.
+    ("analyzer_shortcut_agreement", "plant: advertise A, bind only 6", 1,
+     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "restore-lie"]),
+    # The other direction, and the one a reviewer would not think to look for:
+    # a shipped shortcut that no surface names.
+    ("analyzer_shortcut_agreement", "plant: stop advertising the bound digit", 1,
+     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "drop-digit-from-chip"]),
+    ("analyzer_shortcut_agreement", "plant: bind a key nothing advertises", 1,
+     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "bind-unadvertised"]),
+    ("analyzer_shortcut_agreement", "plant: the ANALYZER header drifts to Z", 1,
+     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "header-drifts"]),
+
+    # The long-form help overlay: the route into it, the copy's home, and
+    # whether the panel can move content it is a screenful too small to show.
+    # Also artifact-only and dependency-free.
+    ("help_overlay_contract",
+     "the ? popover reaches a guide that scrolls its own bundled copy", 0,
+     [f(D, "help_overlay_contract.py")]),
+    ("help_overlay_contract", "plant: no way into the guide at all", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "no-learn-more"]),
+    # The affordance is present and inert -- the exact shape "A to cycle" had,
+    # and the one a screenshot cannot tell from a working button.
+    ("help_overlay_contract", "plant: Learn more calls nothing", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "dead-button"]),
+    ("help_overlay_contract", "plant: copy inlined back into the artifact", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "inline-copy"]),
+    # Clips but cannot move: the first screenful looks perfect and the rest of
+    # the guide is unreachable.
+    ("help_overlay_contract", "plant: content offset frozen at 0", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "frozen-content"]),
+    ("help_overlay_contract", "plant: no wheel handler", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "no-wheel"]),
+    # The overlay locates the editor box by measuring the bottom rail; unname it
+    # and the panel paints at its own in-flow position, over the toolbar.
+    ("help_overlay_contract", "plant: the measured rail loses its name", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "unnamed-rail"]),
+    ("help_overlay_contract", "plant: an em dash in the copy", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "em-dash"]),
+    # README.md's figure, which is fft - 1 and describes nothing the code does.
+    ("help_overlay_contract", "plant: the superseded latency figure", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "stale-latency"]),
+    # A backtick ends the template literal early and truncates the guide with
+    # no error anywhere.
+    ("help_overlay_contract", "plant: a backtick inside the copy", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "backtick"]),
+
     ("preset_commit_gestures", "shipping artifact backs every advertised gesture", 0,
      [f(D, "preset_commit_gestures.py")]),
     ("preset_commit_gestures", "plant: re-attach the undispatchable dbl-click prop", 1,

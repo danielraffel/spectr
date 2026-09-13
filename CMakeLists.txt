@@ -230,6 +230,13 @@ set(SPECTR_NATIVE_ASSET_SOURCES
     native-ui/materialized/runtime.js
     native-ui/materialized/materialized-document.runtime.json
     native-ui/materialized/design.js
+    # The help overlay's copy, deliberately its own asset rather than text
+    # inside the materialized document. That document is a checked-in artifact
+    # neither generator on main can rebuild, so copy living there would make
+    # every wording change a surgical patch against an 800 KB single-line blob.
+    # native_editor.cpp writes this beside the others and evaluates it after
+    # design.js; it assigns one string to globalThis.SPECTR_HELP_TEXT.
+    native-ui/materialized/help-content.js
 )
 foreach(_forbidden_native_asset
         resources/editor.html
