@@ -68,6 +68,59 @@ WHY A SCRIPT AND NOT AN ARTIFACT DIFF
   `resources/editor.html` is deliberately NOT mirrored: it is dead code in
   Spectr, and test_import_fidelity.cpp pins its pre-patch shape on purpose.
 
+THIS SCRIPT ALSO OWNS TWO THINGS THAT ARE NOT GESTURES
+
+  It owns the manager's PER-OPENING RESET and the shape of `PatternRow`, so
+  two later fixes land here rather than growing a second writer for the same
+  two regions.
+
+  1. THE SEARCH OUTLIVED THE DIALOG.  `App` renders `PatternManager`
+     unconditionally and passes `open` as a PROP, so `if (!open) return null`
+     tears the DOM down while every `usePM` cell in the component survives.
+     A search therefore persisted across close and reopen with nothing on
+     screen admitting it: measured on the built app, a fresh open listed 8
+     rows; after a search, 0; after the panel's X and a reopen, still 0, with
+     the list captions reading "FACTORY \u00b7 0" / "USER \u00b7 0" beneath a
+     header still reading "\u2014 0 user \u00b7 8 factory".
+
+     The header and the list are not disagreeing by accident -- the header
+     reads `factory.length` (the inventory) and the list reads
+     `filteredFactory.length` (the view), which is correct in itself and is
+     exactly why the state was invisible.  And NO control anywhere clears the
+     search: the panel's `\u00d7` is `onClose`, and the rail's CLEAR is
+     `onClearAll`, which zeroes the band gains.
+
+     The reset is its OWN effect keyed on `[open]` ALONE, and that is the
+     whole design.  The sibling keydown effect next to it lists
+     `[open, onClose, setSelectedId]`, and `onClose` is an inline arrow at the
+     App call site -- a fresh identity on every App render.  Putting
+     `setQuery("")` in THAT effect would therefore wipe the field while the
+     user was still typing in it.  Keyed on the boolean, the reset runs on the
+     open transition and nowhere else.
+
+     `selectedId` is deliberately NOT reset: reopening on the preset you were
+     looking at is the useful behaviour, and it is not what was reported.
+
+  2. THE ROW'S TRAILING F / U CHIP IS GONE.  Each row painted a small
+     right-aligned "F" or "U" in the same bordered pill the editor uses for
+     real keyboard shortcuts (the Sculpt menu's letters, the EDIT MODE
+     chips), so it read as a keybinding.  It was not one: the element carries
+     no onClick, no ref, no data attribute, no role and no tabIndex -- it is a
+     text node in a styled box -- and the rows are already grouped under
+     FACTORY and USER headings that say the same thing.
+
+     `F` IS a live accelerator elsewhere (`modeKeys.f` -> the FLARE edit
+     mode), which is what made the chip actively misleading rather than merely
+     redundant, and that accelerator is suppressed while this dialog is up:
+     measured, `f` with the manager closed paints "EDIT \u2192 FLARE" and `f`
+     with the manager open paints no status at all.  `u` is bound to nothing
+     anywhere.  Removing the chip removes decoration and no behaviour.
+
+     The row does not lose its right edge with it.  The name's wrapper is the
+     `flex: 1` item, so it -- not the chip -- is what holds the row open; the
+     chip's 16.313px plus the 10px gap go to the name, which is the element
+     that was being ellipsised.
+
 Idempotent: a second run reports "already applied" and writes nothing.
 Exit codes: 0 applied or already applied, 1 a patch point is missing/ambiguous.
 """
@@ -223,6 +276,51 @@ EDITS = [
      '    }\n'
      '  ))'),
 
+    ('a reopened manager starts unfiltered',
+     "  }, [open, onClose, setSelectedId]);\n"
+     "  const factory = window.Spectr.FACTORY_PATTERNS;",
+     "  }, [open, onClose, setSelectedId]);\n"
+     "  // Keyed on `open` ALONE, and that is the whole design.\n"
+     "  //\n"
+     "  // This component is never unmounted: App renders it unconditionally\n"
+     "  // and `open` is a prop, so `if (!open) return null` tears the DOM\n"
+     "  // down and leaves every usePM cell standing. A search therefore\n"
+     "  // outlived the dialog -- reopening listed 0 of 8 presets under a\n"
+     "  // header still reporting the whole inventory -- and nothing clears\n"
+     "  // it: the panel\'s X is onClose, and the rail\'s CLEAR zeroes the\n"
+     "  // band gains.\n"
+     "  //\n"
+     "  // It cannot share the keydown effect above, whose deps are\n"
+     "  // `[open, onClose, setSelectedId]`: `onClose` is an inline arrow at\n"
+     "  // the App call site, so it is a fresh identity on every App render\n"
+     "  // and that effect re-runs constantly. Resetting there would empty\n"
+     "  // the field while the user was still typing in it.\n"
+     "  //\n"
+     "  // `selectedId` is deliberately left alone: reopening on the preset\n"
+     "  // you were looking at is useful, and is not what was reported.\n"
+     "  usePE(() => {\n"
+     "    if (!open) return;\n"
+     "    setQuery(\"\");\n"
+     "    setShowImport(false);\n"
+     "    setImportText(\"\");\n"
+     "  }, [open]);\n"
+     "  const factory = window.Spectr.FACTORY_PATTERNS;"),
+
+    ('the row drops the chip that reads as a keybinding',
+     '),\n    /* @__PURE__ */ React.createElement("span", { style: {\n'
+     '      fontSize: 8,\n'
+     '      letterSpacing: 1.5,\n'
+     '      opacity: 0.4,\n'
+     '      padding: "1px 4px",\n'
+     '      border: "1px solid rgba(255,255,255,0.12)",\n'
+     '      borderRadius: 2\n'
+     '    } }, pattern.source === "factory" ? "F" : "U")',
+     ')\n'
+     '    // No trailing chip. The row used to end in a small bordered "F" or\n'
+     '    // "U" pill -- the same surface the editor gives REAL keyboard\n'
+     '    // shortcuts -- which bound nothing and only repeated the FACTORY /\n'
+     '    // USER heading the row already sits under.'),
+
     ('the row drops the prop that could never fire',
      'function PatternRow({ pattern, selected, isDefault, onClick, onDblClick, N }) {',
      'function PatternRow({ pattern, selected, isDefault, onClick, N }) {'),
@@ -262,9 +360,20 @@ EDITS = [
     # it makes -- DOUBLE-CLICK -- is now true.
 ]
 
+# The two edits added after the commit-gesture work shipped. A document that
+# already carries the gestures and not these is NOT "half patched" -- it is
+# every checkout that predates them -- so the half-patch guard below has to
+# exempt exactly this set, and nothing else.
+LATER_EDITS = frozenset({
+    'a reopened manager starts unfiltered',
+    'the row drops the chip that reads as a keybinding',
+})
+
 # A surviving dead prop is exactly the shape this patch exists to remove, and a
 # surviving second copy of the commit body is how one gesture grows two owners.
 FORBIDDEN_AFTER = (
+    # The chip that read as a keybinding and bound nothing.
+    'pattern.source === "factory" ? "F" : "U"',
     'onDblClick',
     # The PROP, not the word: the comment that explains why this prop could
     # never fire deliberately names it.
@@ -273,6 +382,12 @@ FORBIDDEN_AFTER = (
     'onClick: () => setSelectedId(p.id),',
 )
 REQUIRED_AFTER = (
+    # The per-opening reset, and -- load-bearing -- its dep list. Keyed on
+    # anything that changes per App render it would clear the field mid-typing.
+    'setQuery("");',
+    'setShowImport(false);',
+    'setImportText("");',
+    '  }, [open]);',
     'const lastRowClickRef = usePR({ id: null, at: 0 });',
     'const applyTargetRef = usePR(null);',
     '    // A click from a PREVIOUS opening is not the first half of a',
@@ -299,6 +414,7 @@ def main():
     changed = False
     applied = 0
     already = 0
+    applied_labels = set()
     for label, old, new in EDITS:
         old_e, new_e = escaped(old), escaped(new)
         if raw.count(new_e) >= 1:
@@ -312,9 +428,10 @@ def main():
         raw = raw.replace(old_e, new_e)
         changed = True
         applied += 1
+        applied_labels.add(label)
         print('applied         ', label)
 
-    if already and applied:
+    if already and applied and not applied_labels <= LATER_EDITS:
         sys.exit('FAIL: the document is half patched; refusing to write')
 
     for token in FORBIDDEN_AFTER:
