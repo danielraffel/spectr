@@ -104,6 +104,41 @@
         "spectrShortcutChipStyle"
       ],
       "note": "Shipped before the current installed build, so this row reads PRESENT on an older package. That is deliberate: a manifest in which every row can only ever read ABSENT cannot distinguish a stale package from a broken instrument."
+    },
+    {
+      "id": "overlay-dismissal-unified",
+      "pr": 8277,
+      "title": "Dismissing an overlay follows one policy in every host (Pulp SDK)",
+      "tokens": [
+        "data-overlay-trigger",
+        "setOverlayTrigger"
+      ],
+      "note": "Screened against the pre-fix binaries built on the v0.847.0 SDK (which provably lacks ae0514a6b): both read 0 there. 'data-overlay' was REJECTED as a candidate - it already reads 9 pre-fix. 'setOverlayTrigger' is a register_bridge_function name literal; a control over seven pre-existing bridge names (setFaderSkin, createVirtualGrid, ...) confirmed such literals reach the Mach-O at 1-3 occurrences each."
+    },
+    {
+      "id": "popup-keyboard-cursor",
+      "pr": 8277,
+      "title": "An opening popup no longer shows a second, unasked-for keyboard cursor (Pulp SDK)",
+      "tokens": [
+        "activeVisible",
+        "seededFromSelection",
+        "landOnSeed"
+      ],
+      "note": "Identifiers from core/view/js/web-compat-document.js, which is embedded verbatim in the document; a control on neighbouring pre-existing identifiers (activeIndex=11, requestAnimationFrame=45) confirms that file reaches the binary. All three read 0 in the pre-fix binaries."
+    },
+    {
+      "id": "widget-bridge-child-order",
+      "pr": 8277,
+      "verifiable": false,
+      "title": "A remounted subtree keeps its authored child order (Pulp SDK)",
+      "reason": "No token can discriminate this one. The only new literal is 'insertChild', and the shipped React host-config ALREADY emits a feature-detected call for it: the pre-fix binaries contain a `typeof g4.insertChild === function` guard around a call2('insertChild', ...) and read insertChild=2 with no SDK implementation behind it. Adopting that token would certify the fix as shipped on a build that predates it. Verify by reopening a dropdown and seeing its rows keep their authored order."
+    },
+    {
+      "id": "plugin-bundle-icons",
+      "pr": 8277,
+      "verifiable": false,
+      "title": "Plugin bundles carry an app icon (Pulp SDK)",
+      "reason": "The change is CMake plus Info.plist templates plus an .icns resource; nothing new reaches the executable, so a Mach-O strings check is the wrong instrument. Verify per bundle with CFBundleIconFile in Contents/Info.plist and the matching .icns in Contents/Resources."
     }
   ]
 }
