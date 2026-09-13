@@ -2277,6 +2277,103 @@ int main(int argc, char** argv) {
         // the caller: deriving them here would have to re-implement
         // scroll-aware root mapping, which the layout dump already reports
         // correctly.
+        // ── The EDIT MODE dropdown, in the three states a user moves through ──
+        //
+        // A user reported two things about this menu on an installed build:
+        // a shortcut letter that did not select-and-close, and an open menu
+        // showing its selection AND a second highlight before they had
+        // touched anything. Neither is visible in a capture of the CLOSED
+        // toolbar, and the second one is a claim about what is on screen, so
+        // it needs pictures rather than a state read.
+        //
+        // Pulp's popup owner claims a menu from the POINTERDOWN branch, and
+        // the semantic activation seam sends a click without one -- so the
+        // probe issues the pointerdown itself. `claimed=` below is the control
+        // for that: an unclaimed popup paints no cursor at all, and would
+        // photograph as a clean single-indicator menu while proving nothing.
+        if (std::getenv("SPECTR_DROPDOWN_PROBE") != nullptr) {
+            const char* kTrigger =
+                "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]";
+            const char* kFlareRow = "[data-spectr-edit-mode=\"flare\"]";
+            // The semantic activation seam sends a click and refuses anything
+            // it does not model, so pointer events are dispatched directly --
+            // the same shape the standalone's own probe fixture uses.
+            const auto dispatch = [&rig](const char* selector, const char* type) {
+                std::string js =
+                    "(function(){var n=document.querySelector(";
+                js += js_string(selector);
+                js += ");if(!n)throw new Error('no node: ";
+                js += selector;
+                js += "');var e={type:'";
+                js += type;
+                js += "',bubbles:true,cancelable:true,preventDefault:function(){},"
+                      "stopPropagation:function(){},"
+                      "stopImmediatePropagation:function(){}};e.target=n;"
+                      "n.dispatchEvent(e);"
+                      "if(typeof globalThis.__pulpRuntimeSettle__==='function')"
+                      "globalThis.__pulpRuntimeSettle__(16);})();";
+                rig.eval(js, "spectr-dropdown-dispatch");
+                settle(rig.clock, 24);
+            };
+            const auto pointer_down = [&dispatch](const char* selector) {
+                dispatch(selector, "pointerdown");
+            };
+            const auto report = [&rig](const char* label) {
+                std::string js =
+                    "(function(){var r=document.querySelectorAll("
+                    "'[data-spectr-edit-mode]');var sel=[],lit=[];"
+                    "for(var i=0;i<r.length;i++){"
+                    "if(r[i].getAttribute('aria-selected')==='true')"
+                    "sel.push(r[i].getAttribute('data-spectr-edit-mode'));"
+                    "if(r[i].getAttribute('data-pulp-popup-active')==='true')"
+                    "lit.push(r[i].getAttribute('data-spectr-edit-mode'));}"
+                    "console.log('[dropdown] ";
+                js += label;
+                js += " :: rows='+r.length+' selected='+(sel.join(',')||'(none)')"
+                      "+' lit='+(lit.join(',')||'(none)')"
+                      "+' claimed='+!!globalThis.__pulpPopupDefaultState__);})();";
+                rig.eval(js, "spectr-dropdown-probe");
+            };
+            // Select LEVEL first, so "the cursor is on the selection" and "the
+            // cursor defaulted to the first row" are different pictures. With
+            // the default SCULPT selected the two are the same row and the
+            // capture cannot tell them apart.
+            rig.activate(kTrigger);
+            rig.activate("[data-spectr-edit-mode=\"level\"]");
+            settle(rig.clock, 16);
+
+            rig.activate(kTrigger);
+            pointer_down(kTrigger);
+            report("1-opened-no-input");
+            capture(rig, dir, prefix + "09-dropdown-1-opened", backend, scale);
+
+            // A pointer entering a row is exactly the event a real mouse move
+            // delivers, and it is the listener the popup owner installs on
+            // each option to reveal and move its cursor.
+            dispatch(kFlareRow, "pointerenter");
+            report("2-after-hover-flare");
+            capture(rig, dir, prefix + "09-dropdown-2-hovered", backend, scale);
+
+            // Re-open cleanly so the arrow state is not read through a cursor
+            // the hover already moved.
+            rig.activate(kTrigger);
+            settle(rig.clock, 16);
+            rig.activate(kTrigger);
+            pointer_down(kTrigger);
+            report("3a-reopened-no-input");
+            if (rig.root != nullptr) {
+                pulp::view::WidgetBridge::dispatch_key_for_root(
+                    *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+                    pulp::view::kModNone, true);
+                pulp::view::WidgetBridge::dispatch_key_for_root(
+                    *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+                    pulp::view::kModNone, false);
+            }
+            settle(rig.clock, 24);
+            report("3b-after-arrow-down");
+            capture(rig, dir, prefix + "09-dropdown-3-arrow", backend, scale);
+        }
+
         if (const char* hover_spec = std::getenv("SPECTR_HOVER_PROBE")) {
             if (const char* scroll_to = std::getenv("SPECTR_HOVER_SCROLL_TO")) {
                 const pulp::view::Label* anchor_label =
