@@ -197,6 +197,33 @@ CASES: list[tuple[str, str, int, list[str]]] = [
     ("slider_thumb_pill_shape", "plant: put the overhanging travel back", 1,
      [f(D, "slider_thumb_pill_shape.py"), "--plant", "overhang"]),
 
+    # WHERE that pill is allowed to travel. `slider_thumb_pill_shape` proves
+    # the thumb stays inside its track; this proves the TRACK stays off the
+    # flanking "A"/"B" labels, which for most of the control's life it did not
+    # -- the labels were bare spans with no layout box, so the track began at
+    # the "A" glyph's own x and the thumb covered it at value 0. The RED
+    # fixture is a real capture of exactly that.
+    #
+    # `box_intersection` could never have caught it: it compares only nodes
+    # carrying TEXT, and the thumb is a text-free div. The one node it could
+    # see -- the disabled caption's box, starting on the label -- it DID
+    # report, and that finding was waved through as pre-existing because it
+    # was identical before and after an unrelated change.
+    ("morph_row_clearance", "track clears both flanking labels", 0,
+     [f(D, "morph_row_clearance.py"),
+      f(E12, "MORPH-ROW-GREEN-track-clear.layout.json")]),
+    ("morph_row_clearance", "known-bad fixture (track laid out on the A "
+     "label)", 1,
+     [f(D, "morph_row_clearance.py"),
+      f(E12, "MORPH-ROW-RED-track-on-a-label.layout.json")]),
+    ("morph_row_clearance", "plant: put the track back on the A label", 1,
+     [f(D, "morph_row_clearance.py"),
+      f(E12, "MORPH-ROW-GREEN-track-clear.layout.json"), "--plant", "overlap"]),
+    ("morph_row_clearance", "plant: crush the track the way the row once did",
+     1,
+     [f(D, "morph_row_clearance.py"),
+      f(E12, "MORPH-ROW-GREEN-track-clear.layout.json"), "--plant", "crush"]),
+
     # the hit-target lane: a control must be reachable over the area it paints
     ("hit_target_reach", "settings toggles + sliders reach their paint", 0,
      [f(D, "hit_target_reach.py"),

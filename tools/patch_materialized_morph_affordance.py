@@ -147,16 +147,60 @@ def track_text(name):
     return open(os.path.join(REPO, "tools", name), encoding="utf-8").read()
 
 
+# THE FLANKING "A"/"B" LABELS HAVE TO BE BOXES, not bare inline spans.
+#
+# They were authored as `<span>`, and a span carries no layout box here: the
+# native runtime gives it no measured width, so Yoga lays it out at ~0 main
+# size AT THE ROW'S CONTENT ORIGIN and the glyph simply paints there,
+# overflowing a box that never grew.  The 90px track -- the next flex item --
+# therefore started at the SAME x as the "A" label instead of 6px past it, and
+# everything painted inside the track landed on top of that glyph: the 22px
+# pill at value 0 covered the "A" completely (measured: label box
+# 758.188..763.594, thumb 758.188..780.188), and the disabled caption's ink
+# started on it too.
+#
+# That second one is why this was mistaken for cosmetics.  `box_intersection`
+# only compares nodes that CARRY TEXT, so the thumb -- a text-free div -- was
+# structurally invisible to it and only the caption half of the same defect
+# ever surfaced, as a 5.4x12px "A"-vs-caption pair that looked pre-existing and
+# was waved through as such.  It was not pre-existing decoration; it was this.
+#
+# `whiteSpace: "nowrap"` alone does NOT fix it.  It makes the span's INK
+# measurable (0.0 -> 6.0px) while its layout box stays 5.406 and the track
+# stays put -- measured, and a persuasive false fix.  The element has to become
+# a box.  With that, the row flows as the style always said it did:
+# A 758.188..764.188, gap 6, track 770.188..860.188, gap 6, B 866.188..872.188.
+#
+# `flexShrink: 0` on both labels pins the fix under contention.  The transport
+# row has no spare width, and an earlier attempt to add siblings to it was
+# absorbed by CRUSHING the control -- a 90x16 track rendered at 39.5px with
+# both end labels collapsed to zero.  Labels that cannot shrink cannot collapse
+# that way again, and the track carries the same guard in its own block so the
+# control is never the give.
+def label_box(letter):
+    return ('React.createElement("span", { style: { fontSize: 9, '
+            'color: "rgba(255,255,255,0.5)" } }, "%s")' % letter,
+            'React.createElement("div", { style: { fontSize: 9, '
+            'color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap", '
+            'flexShrink: 0 } }, "%s")' % letter)
+
+
+LABEL_A_OLD, LABEL_A_NEW = label_box("A")
+LABEL_B_OLD, LABEL_B_NEW = label_box("B")
+
 # The track block has THREE recognised spellings, and this script owns all of
 # them so the style stays single-writer:
 #   *_before  the pristine generated block (circle thumb, no caption)
 #   *_circle  the affordance block as first shipped (circle thumb + caption)
-#   *_after   the block this script now installs (pill thumb + caption)
-# Listing the intermediate as an alternative patch point is what lets the edit
-# stay idempotent across the shape change: a document already carrying the
-# circle spelling is upgraded in place rather than reported as unpatchable.
+#   *_pill    the pill thumb before the track refused to be the item that
+#             shrinks when the transport row tightens
+#   *_after   the block this script now installs
+# Listing every intermediate as an alternative patch point is what lets the
+# edit stay idempotent across a shape change: a document already carrying an
+# older spelling is upgraded in place rather than reported as unpatchable.
 TRACK_OLDS = [track_text("morph_affordance_track_before.txt"),
-              track_text("morph_affordance_track_circle.txt")]
+              track_text("morph_affordance_track_circle.txt"),
+              track_text("morph_affordance_track_pill.txt")]
 TRACK_NEW = track_text("morph_affordance_track_after.txt")
 
 EDITS = [
@@ -165,6 +209,10 @@ EDITS = [
     ('hasBoth is derived, so the enablement rule is unchanged',
      [SIGNATURE_OLD], SIGNATURE_NEW),
     ('the wrapper gives up the dim', [WRAPPER_OLD], WRAPPER_NEW),
+    ('the flanking "A" label is a box, so the track starts past it',
+     [LABEL_A_OLD], LABEL_A_NEW),
+    ('the flanking "B" label is a box, so the track ends before it',
+     [LABEL_B_OLD], LABEL_B_NEW),
     ('the track dims its own paint, names the slot it waits for, and '
      'draws a pill thumb that stays inside it',
      TRACK_OLDS, TRACK_NEW),
@@ -180,6 +228,10 @@ FORBIDDEN_AFTER = (
     # travel that came with it.
     'width: grown ? 18 : 14, height: grown ? 18 : 14',
     'marginLeft: grown ? -9 : -7',
+    # The inline spans that carried no layout box, so the track began at the
+    # "A" label's own x and painted over it.
+    LABEL_A_OLD,
+    LABEL_B_OLD,
 )
 REQUIRED_AFTER = (
     '"data-spectr-morph-hint": true',
@@ -202,6 +254,13 @@ REQUIRED_AFTER = (
     'width: grown ? 26 : 22, height: grown ? 16 : 14',
     'marginLeft: -((grown ? 26 : 22) * ratio)',
     '"data-spectr-morph-thumb-state": grown ? "hover" : "idle"',
+    # The flanking labels take real width in the flex row, so the track is
+    # laid out past them instead of on top of them, and neither label can
+    # collapse to zero if the transport row tightens.
+    LABEL_A_NEW,
+    LABEL_B_NEW,
+    # ...and the control is never the item that gives when it does.
+    'width: 90, height: 16, flexShrink: 0',
 )
 
 
