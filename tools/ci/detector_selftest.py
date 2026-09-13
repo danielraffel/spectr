@@ -365,6 +365,33 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f("test", "test_materialized_curve_edge_span.mjs"),
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-fill-spans-mutes"]),
+
+    # The two defects a user hit on an installed build: a shortcut letter that
+    # highlighted without committing or closing, and an opened menu showing a
+    # selection AND a keyboard cursor on a different row. Both detectors drive
+    # the app when handed one; these cases adjudicate their committed readings
+    # so the rules are proved live here without a build.
+    ("dropdown_shortcut_dismisses_menu",
+     "a letter selects its mode and closes the menu", 0,
+     [f(D, "dropdown_shortcut_dismisses_menu.py"),
+      "--dump-open", f(E12, "DROPDOWN-KEY-open-menu.layout.json"),
+      "--dump-after-key", f(E12, "DROPDOWN-KEY-after-letter-b.layout.json"),
+      "--expect", "BOOST"]),
+    ("dropdown_shortcut_dismisses_menu",
+     "plant: the letter changes nothing and the menu stays open", 1,
+     [f(D, "dropdown_shortcut_dismisses_menu.py"),
+      "--dump-open", f(E12, "DROPDOWN-KEY-open-menu.layout.json"),
+      "--expect", "BOOST", "--plant"]),
+
+    ("dropdown_single_selection_indicator",
+     "an opened menu shows nothing but its own selection", 0,
+     [f(D, "dropdown_single_selection_indicator.py"),
+      "--log", f(E12, "DROPDOWN-INDICATOR-open-with-level-selected.probe.txt")]),
+    ("dropdown_single_selection_indicator",
+     "plant: the cursor sits on a row that is not the selection", 1,
+     [f(D, "dropdown_single_selection_indicator.py"),
+      "--log", f(E12, "DROPDOWN-INDICATOR-open-with-level-selected.probe.txt"),
+      "--plant"]),
 ]
 
 
