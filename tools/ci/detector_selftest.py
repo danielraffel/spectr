@@ -378,6 +378,71 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(D, "dropdown_single_selection_indicator.py"),
       "--log", f(E12, "DROPDOWN-INDICATOR-open-with-level-selected.probe.txt"),
       "--plant"]),
+
+    # The marquee's RESULT. A discontiguous selection has no layout node, so
+    # this runs the shipping document's own pointer handlers and asserts the
+    # selection SET -- both regions present, the gap between them absent, and
+    # the drag's answer invariant to how densely the pointer was sampled.
+    # Every plant is a defect a "the handler fired" test would have passed.
+    # No --expect-fail here: this harness owns the inversion, and passing both
+    # would double-invert and quietly assert the opposite of the intent.
+    ("materialized_additive_marquee",
+     "one drag adds a second region and another takes it back", 0,
+     [f("test", "test_materialized_additive_marquee.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json")]),
+    ("materialized_additive_marquee",
+     "plant: the second marquee wipes the first again", 1,
+     [f("test", "test_materialized_additive_marquee.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-replaces"]),
+    ("materialized_additive_marquee",
+     "plant: add-only, so the row's label over-promises", 1,
+     [f("test", "test_materialized_additive_marquee.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-add-only"]),
+    ("materialized_additive_marquee",
+     "plant: toggle against the live selection, so the drag strobes", 1,
+     [f("test", "test_materialized_additive_marquee.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-live-toggle"]),
+
+    # Two SHORTCUTS rows wrapped in the shipped build. The RED fixture is that
+    # build's own capture, so the known-bad case is evidence rather than a
+    # plant; the budget cases read the shipping artifact and need no capture
+    # at all, which is the half that catches the row nobody has written yet.
+    ("shortcut_panel_single_line", "every rendered row is one line", 0,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E12, "SHORTCUT-PANEL-GREEN-single-line.layout.json")]),
+    ("shortcut_panel_single_line",
+     "known-bad fixture (the shipped build's two wrapped rows)", 1,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E12, "SHORTCUT-PANEL-RED-wrapped.layout.json")]),
+    # The half-applied change: labels shortened, the panel's own capture left
+    # behind. Every row reports ONE line and still renders with its label
+    # floating above its key chip, because the row box is the two-line box it
+    # was captured with. Only the pitch sees it.
+    ("shortcut_panel_single_line",
+     "known-bad fixture (labels fixed, capture left stale)", 1,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E12, "SHORTCUT-PANEL-RED-stale-capture.layout.json")]),
+    ("shortcut_panel_single_line", "plant: stretch the pitch under one row", 1,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E12, "SHORTCUT-PANEL-GREEN-single-line.layout.json"),
+      "--plant", "stretched-row"]),
+    ("shortcut_panel_single_line", "plant: double one row's line box", 1,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E12, "SHORTCUT-PANEL-GREEN-single-line.layout.json"),
+      "--plant", "wrapped-row"]),
+    ("shortcut_panel_single_line", "budget alone, no capture", 0,
+     [f(D, "shortcut_panel_single_line.py"), "--budget-only"]),
+    ("shortcut_panel_single_line",
+     "plant: restore the wording that wrapped", 1,
+     [f(D, "shortcut_panel_single_line.py"), "--budget-only",
+      "--plant", "long-label"]),
+    ("shortcut_panel_single_line",
+     "plant: the pre-change 280px panel, which had no headroom", 1,
+     [f(D, "shortcut_panel_single_line.py"), "--budget-only",
+      "--plant", "narrow-panel"]),
 ]
 
 
@@ -401,8 +466,10 @@ def main() -> int:
     for det, module in sorted(DETECTOR_REQUIREMENTS.items()):
         if any(c[0] == det for c in cases) and not importlib.util.find_spec(module):
             unavailable.append((det, module))
-    if NODE is None and any(interpreter(c[3]) is None for c in cases):
-        unavailable.append(("materialized_clear_and_mute_overlay", "node"))
+    if NODE is None:
+        for det in sorted({c[0] for c in cases
+                           if interpreter(c[3]) is None}):
+            unavailable.append((det, "node"))
     if unavailable:
         skipped = {d for d, _ in unavailable}
         cases = [c for c in cases if c[0] not in skipped]

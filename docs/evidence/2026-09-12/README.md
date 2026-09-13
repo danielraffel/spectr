@@ -344,3 +344,109 @@ through `Processor::create_view()`: opened with no input (only LEVEL treated),
 after a pointer enters FLARE (FLARE takes the cursor fill, LEVEL keeps its
 bordered selection), and after ArrowDown (the cursor steps off the selection onto
 BOOST). Not committed — regenerate with the probe.
+
+---
+
+# SHORTCUTS — additive marquee selection, and a panel that cannot wrap
+
+From the same testing session on the installed build:
+
+> "it seems like ctrl+drag/click lets you select with rubberband style
+> selection — could we allow for ctrl+shift+drag so you can select a section
+> then move mouse and select another area that's not continuous?"
+>
+> "also in tips could we prevent line wrapping?"
+
+## What the modifier actually is
+
+The panel reads **⌘+DRAG**, and the handler reads
+`const meta = e.metaKey || e.ctrlKey`, so Command **and** Control have both
+always worked — "ctrl" and the panel's Command glyph are the same gesture. The
+new binding is **⌘⇧+DRAG** (Control+Shift equally), and the notation stays as
+it was. `Spectr-materialized-additive-marquee` asserts both spellings reach
+the same handler.
+
+## Selection was already a set, so this was an input change
+
+`const [selection, setSelection] = useState(() => new Set())`. A discontiguous
+selection has always been representable; the old move handler simply rebuilt
+from an empty set on every pointer sample. Had it been a start/end range this
+would have been a data-model change, and `DRAG SEL — Group move` would have
+needed rethinking over a discontiguous set; it did not, and `groupStart`
+already snapshots `new Map([...selection]...)`, which is order-independent.
+
+The gesture **toggles** against the selection frozen at press, so
+`Add/remove selection` is accurate in both directions. Frozen, not live:
+toggling against the live set flips a band again on every sample the pointer
+spends inside it, so the selection strobes and a long drag lands on parity
+rather than on a selection. `--plant-live-toggle` reproduces exactly that
+(`[2,3,4,5,6,21,24]` where `[2,3,4,5,6,20,21,22,23,24]` was wanted).
+
+## ⇧+CLICK was advertising a gesture that does not exist
+
+`shiftKey` is read in exactly **two** places in the whole document: the pointer
+handler, where it starts the **mute brush** — which the row two lines above
+already documents as `SHIFT+DRAG — Mute/unmute band range` — and a keydown
+guard that *ignores* the event when shift is held. Nothing anywhere modified
+the selection on a shift-click. The row was replaced rather than relabelled:
+a panel that describes a gesture inaccurately is worse than one that omits it.
+
+| before | after |
+|---|---|
+| `DRAG — Edit bands (mode-dependent)` | `DRAG — Edit bands` |
+| `⇧+CLICK — Add/remove from selection` *(dead)* | `⌘⇧+DRAG — Add/remove selection` |
+
+## The panel is not laid out live, so the capture had to move with the label
+
+Measured, not assumed: every captured help-panel row top reproduces in the
+shipping standalone to the exact fraction of a pixel (row 4 captured at
+`top=108.1875` renders at `y=557.42` against a panel top of `449.23`). The
+help panel's geometry comes entirely from the captured layout bindings in
+`native-ui/materialized/runtime.js`, which pin absolute position and explicit
+width/height per row.
+
+So shortening a label alone leaves its row pinned at the two-line box it was
+captured with. `SHORTCUT-PANEL-CONTROL-stale-capture.png` is that build: the
+text is correct and short, and it floats above its own key chip with a hole
+beneath it. `SHORTCUT-PANEL-RED-stale-capture.layout.json` is its dump — every
+row reports ONE line, so line height cannot see it at all. Row **pitch** can:
+23.30px throughout a healthy panel, 22.16..39.14 there.
+
+## Wrapping is prevented, not just fixed
+
+Every captured single-line row in this panel measures exactly `6.5px` per
+character, and the wrap budget is the row width minus the description's left
+offset. At the old `minWidth: 280` that was `250 - 94 = 156px`, i.e. **24
+characters**, against a longest surviving row of 22. That is not headroom, and
+a row that outgrows it wraps silently.
+
+`white-space: nowrap` would have been the wrong fix: it trades a visible wrap
+for an invisible clip. The panel is `330px` instead (budget `206px` / 31
+characters), and `tools/spectr-detectors/shortcut_panel_single_line.py` asserts
+the budget against the shipping artifact with no build at all, so the next
+entry fails at review instead of on someone's screen.
+
+## Evidence
+
+| file | what |
+|---|---|
+| `SHORTCUT-PANEL-before-after.png` | the panel at `ed71c18` and after |
+| `SHORTCUT-PANEL-RED-wrapped.layout.json` | the shipped build's own capture: two rows at `h=32.0` |
+| `SHORTCUT-PANEL-RED-stale-capture.layout.json` | labels fixed, capture left behind |
+| `SHORTCUT-PANEL-CONTROL-stale-capture.png` | what that looks like |
+| `SHORTCUT-PANEL-GREEN-single-line.layout.json` | all twelve rows `h=16.0`, pitch `23.30..23.30` |
+
+Both `RED` fixtures are captures of real builds, not plants, and both are wired
+into `tools/ci/detector_selftest.py` alongside four plants. The change itself
+is replayable: `tools/patch_materialized_selection_shortcuts.py` re-derives the
+pre-change capture from its own model and refuses to emit geometry if it
+cannot reproduce it.
+
+## Not fixed here, and pre-existing on `ed71c18`
+
+Both reproduce with `native-ui/` restored byte-identical to `origin/main`:
+
+* `the settings copy button centres its feedback and answers a press` —
+  `26.0f < 25.0f` (the known copy-button width row).
+* `native host automation projects through the compact live frame lane` —
+  `compact live-state did not draw current values directly`.
