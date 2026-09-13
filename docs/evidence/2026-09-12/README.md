@@ -344,3 +344,108 @@ through `Processor::create_view()`: opened with no input (only LEVEL treated),
 after a pointer enters FLARE (FLARE takes the cursor fill, LEVEL keeps its
 bordered selection), and after ArrowDown (the cursor steps off the selection onto
 BOOST). Not committed — regenerate with the probe.
+
+## Preset dropdown: every row caption on one column
+
+> "because you aligned the keycommand shortcut it looks like manage is aligned
+> to the left different from the other items in the preset dropdown. can we make
+> sure they all have padding"
+
+`PRESET-CAPTION-BEFORE-AFTER.png` is the bottom of the open preset dropdown,
+same 236x118 design-px region, 3x nearest-neighbour, before on the left.
+
+### Measured leading ink, `SPECTR_CLICK='[data-spectr-menu-root="pattern"] button'`
+
+| row | ink x BEFORE | ink x AFTER |
+|---|---|---|
+| `FLAT` (carries the default ★) | 407.09 | 407.09 |
+| `HARMONIC SERIES` | 394.09 | 394.09 |
+| `ALTERNATING` | 394.09 | 394.09 |
+| `COMB` | 394.09 | 394.09 |
+| `VOCAL FORMANTS` | 394.09 | 394.09 |
+| `SUB ONLY (< 160 Hz)` | 394.09 | 394.09 |
+| `DOWNWARD TILT` | 394.09 | 394.09 |
+| `AIR LIFT (4k+)` | 394.09 | 394.09 |
+| **`SAVE CURRENT…`** | **385.09** | **395.09** |
+| **`MANAGE…`** | **385.09** | **395.09** |
+
+Both bottom rows were **9.00px left** of the factory column, not one of them:
+the row the eye catches is MANAGE, because it is the last row and carries a
+chip, but `SAVE CURRENT…` sat on exactly the same wrong column.
+
+### Why, and why the earlier repair did not reach it
+
+A **bare text child** of one of these rows does not take the row's horizontal
+padding; a child **box** does. The eight factory rows already drew their caption
+in a `<span>`, so `menuItem`'s `padding: "7px 10px"` reached them. `SAVE
+CURRENT…` was `display: "block"` with a bare text child and painted at its row's
+own left edge. When the MANAGE chip landed, its caption was wrapped in a span to
+make room for the trailing chip — which moved it *onto* the padded column and
+therefore *away from* its neighbour, so the row's left padding was zeroed to put
+it back. That made the two bottom rows agree with each other on the wrong
+column.
+
+Both captions are boxes now, reading one shared `spectrMenuItemCaptionStyle()`,
+and neither row carries a compensating offset: `menuItem` is taken unmodified.
+
+`SAVE CURRENT…` also gained vertical centring it never had — as a bare text
+child it sat at the top of its 28px row (y 757.50); it now sits at y 764.50,
+the same +7 every other row uses.
+
+### The chip did not move
+
+| | chip right | row right | inset |
+|---|---|---|---|
+| EDIT MODE `S L B F G` | 405.03 | 416.03 | **11.00** |
+| preset `⇧⌘P` | 583.09 | 594.09 | **11.00** |
+
+`shortcut_chip_trailing_edge.py` reports `delta=0.00 (tol 0.75)` — the same
+number it reported when the chip landed.
+
+### The 1.00px residual, stated rather than hidden
+
+`SAVE CURRENT…` and `MANAGE…` measure 395.09 against the factory column's
+394.09. That 1.00px is **not** this row's styling: those two rows are nested one
+level deeper than the factory rows, inside the grouping div that carries the
+separator rule, and that div's own box sits 1.00px right of its siblings. It is
+**not** the div's `borderTop` — that was measured, by building with the border
+removed: the captions stayed at 395.09 and only y moved. That also matches
+`apply_border_widths` in Pulp's `yoga_layout.cpp`, where a per-side border with
+no uniform shorthand resolves the other three edges to 0. Left in place rather
+than compensated for: a hand offset here is what produced the 9px defect above.
+
+### Artifacts
+
+| file | what it shows |
+|---|---|
+| `PRESET-CAPTION-RED-flush-left.layout.json` | the shipped defect, captured: both bottom captions at 385.09 |
+| `PRESET-CAPTION-GREEN-column.layout.json` | after: 395.09, within tolerance of the 394.09 column |
+| `PRESET-CAPTION-BEFORE-AFTER.png` | the same region rendered, 3x |
+
+### Why `menu_item_caption_uniformity.py` was green through all of it
+
+Its docstring named the leading-edge rule from the day it landed — *"a caption
+... falls back to its owner's left edge, so one row sits flush-left against an
+otherwise uniform column"* — and the implementation only ever compared line-box
+**height**. `rect.x` appeared once, as a 100px-wide band filter (370..470) used
+to choose which boxes to collect. 385.09 and 394.09 both sit inside that band,
+so the fallen-back captions were collected, reported `h=14.00` like everything
+else, and the detector printed PASS. It is the detector written for this exact
+defect and it could not see it.
+
+It now compares the leading edge as well, against the column the majority of
+captions agree on, with an indent allowed only for a row that publishes a
+leading marker glyph and an outdent never allowed. It reads a committed dump as
+well as a live app, so it is wired into `tools/ci/detector_selftest.py` (63 → 67
+cases, 19 → 20 detectors) with four cases: the GREEN capture, the RED capture,
+and two plants.
+
+### Negative controls
+
+| arm | result |
+|---|---|
+| the detector on the real **pre-fix** capture | exit 1 — both bottom captions, `-9.00 px` each |
+| `--plant left-fallback` on the GREEN capture | exit 1 |
+| `--plant tall-caption` on the GREEN capture | exit 1 |
+| the detector on the GREEN capture and on the live app | exit 0 |
+| `detector_selftest.py --plant` | fails, as it must |

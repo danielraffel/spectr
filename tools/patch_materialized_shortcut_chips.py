@@ -123,13 +123,32 @@ CHIP = """function spectrShortcutChipStyle() {
 }
 """
 
+# One owner for a menu-row CAPTION, for the same reason and by the same
+# mechanism as the chip above.  A bare text child of one of these rows does NOT
+# take the row's horizontal padding while a child BOX does, so every row in the
+# preset menu has to draw its caption as a box or its ink falls back to the
+# row's own left edge and breaks the column.  The factory rows already did;
+# SAVE CURRENT... and MANAGE... now do too, reading the same style so a future
+# edit cannot move one without the other.
+CAPTION = """function spectrMenuItemCaptionStyle() {
+  return {
+    fontFamily: "var(--mono)",
+    fontSize: 10.5,
+    letterSpacing: 0.8,
+    lineHeight: "14px",
+    whiteSpace: "nowrap",
+    flexShrink: 0
+  };
+}
+"""
+
 CHROME_HEAD = ('<script type="text/javascript">const { useState: useStateChrome, '
                'useEffect: useEffectChrome, useRef: useRefChrome } = React;\n')
 
 EDITS = [
-    ('the shortcut chip has one owner',
-     CHROME_HEAD,
-     CHROME_HEAD + CHIP),
+    ('the shortcut chip and the row caption each have one owner',
+     (CHROME_HEAD, CHROME_HEAD + CHIP),
+     CHROME_HEAD + CHIP + CAPTION),
 
     ('EDIT MODE rows read the shared chip, and it is reachable by name',
      '/* @__PURE__ */ React.createElement("span", { style: {\n'
@@ -200,44 +219,110 @@ EDITS = [
      'React.createElement(Hrow, { k: "S / L / B" }, "Sculpt \\xB7 Level \\xB7 Boost"), '
      '/* @__PURE__ */ React.createElement(Hrow, { k: "F / G" }, "Flare \\xB7 Glide")'),
 
-    ('MANAGE renders its shortcut as the shared chip at the row trailing edge',
-     '      "data-spectr-pattern-manage": true,\n'
+    # SAVE CURRENT... and MANAGE... are the only two rows in this menu that
+    # were not drawing their caption as a box, and they were the only two whose
+    # ink sat 9px left of the factory column (measured: 385.09 against 394.09).
+    # Both are repaired the same way rather than one of them being offset to
+    # meet the other.
+    ('SAVE CURRENT draws its caption in a box, so the row padding reaches it',
+     '      "data-spectr-save-current": true,\n'
      '      onClick: () => {\n'
-     '        onOpenPatternManager();\n'
+     '        onSavePattern();\n'
      '        setPatternMenu(false);\n'
      '      },\n'
      '      style: { ...menuItem, color: "hsl(200,85%,70%)", display: "block", width: "100%" }\n'
      '    },\n'
-     '    "MANAGE\\u2026  \\u21e7\\u2318P"\n'
+     '    "SAVE CURRENT\\u2026"\n'
      '  )',
+     '      "data-spectr-save-current": true,\n'
+     '      onClick: () => {\n'
+     '        onSavePattern();\n'
+     '        setPatternMenu(false);\n'
+     '      },\n'
+     '      // No `display: "block"` override, and the caption is a BOX. A bare\n'
+     '      // text child of one of these rows does not take the row\'s horizontal\n'
+     '      // padding while a child box does, so `display: block` plus a bare\n'
+     '      // caption painted this row\'s ink at the row\'s own left edge --\n'
+     '      // 9px left of the column every factory row above it uses, which is\n'
+     '      // the same 9px the MANAGE row below was hand-compensating for.\n'
+     '      style: { ...menuItem, color: "hsl(200,85%,70%)", width: "100%" }\n'
+     '    },\n'
+     '    /* @__PURE__ */ React.createElement("span", '
+     '{ style: spectrMenuItemCaptionStyle() }, "SAVE CURRENT\\u2026")\n'
+     '  )'),
+
+    ('MANAGE renders its shortcut as the shared chip at the row trailing edge',
+     ('      "data-spectr-pattern-manage": true,\n'
+      '      onClick: () => {\n'
+      '        onOpenPatternManager();\n'
+      '        setPatternMenu(false);\n'
+      '      },\n'
+      '      style: { ...menuItem, color: "hsl(200,85%,70%)", display: "block", width: "100%" }\n'
+      '    },\n'
+      '    "MANAGE\\u2026  \\u21e7\\u2318P"\n'
+      '  )',
+      # The shape this row was left in when the chip first landed: the caption
+      # was wrapped in a box (correct) and the row's left padding was then
+      # zeroed to compensate (not), because SAVE CURRENT... next door was still
+      # a bare text child painting at the row's own left edge.  Both captions
+      # are boxes now, so the compensation comes back out.
+      '      "data-spectr-pattern-manage": true,\n'
+      '      onClick: () => {\n'
+      '        onOpenPatternManager();\n'
+      '        setPatternMenu(false);\n'
+      '      },\n'
+      '      // No `display: "block"` override: `menuItem` is already the flex\n'
+      '      // row every pattern item above uses, and the spacer below needs\n'
+      '      // that flex context to push the chip to the trailing edge.\n'
+      '      // padding-left 0, deliberately. A bare text child of these rows does\n'
+      '      // NOT take the row\'s horizontal padding -- SAVE CURRENT... above\n'
+      '      // paints its ink at the row\'s own left edge -- while a child BOX\n'
+      '      // does. Wrapping the caption in a span therefore indented it 10px\n'
+      '      // past its neighbour (measured: ink 579 -> 594 screen px). Dropping\n'
+      '      // the left padding puts the span back on the shipping caption column\n'
+      '      // and leaves padding-right owning the chip\'s inset.\n'
+      '      style: { ...menuItem, color: "hsl(200,85%,70%)", width: "100%",\n'
+      '               padding: "7px 10px 7px 0" }\n'
+      '    },\n'
+      '    // The caption keeps its own single-line box, and pins the three type\n'
+      '    // properties `menuItem` already sets rather than inheriting them. As a\n'
+      '    // bare text child of a flex row it reports NO intrinsic width and drops\n'
+      '    // out of the pattern-menu caption census; wrapped but unpinned it\n'
+      '    // measures a 16.1 line box against its 14.0 siblings -- a nested span\n'
+      '    // resolves line height at ~1.53x where a bare text child of the button\n'
+      '    // resolves 1.333x, so the box is pinned rather than inherited.\n'
+      '    /* @__PURE__ */ React.createElement("span", '
+      '{ style: { fontFamily: "var(--mono)", fontSize: 10.5, letterSpacing: 0.8, '
+      'lineHeight: "14px", whiteSpace: "nowrap", flexShrink: 0 } }, "MANAGE\\u2026"),\n'
+      '    /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }),\n'
+      '    /* @__PURE__ */ React.createElement("span", { "data-spectr-shortcut-chip": "manage", style: spectrShortcutChipStyle() }, "\\u21e7\\u2318P")\n'
+      '  )'),
      '      "data-spectr-pattern-manage": true,\n'
      '      onClick: () => {\n'
      '        onOpenPatternManager();\n'
      '        setPatternMenu(false);\n'
      '      },\n'
-     '      // No `display: "block"` override: `menuItem` is already the flex\n'
-     '      // row every pattern item above uses, and the spacer below needs\n'
-     '      // that flex context to push the chip to the trailing edge.\n'
-     '      // padding-left 0, deliberately. A bare text child of these rows does\n'
-     '      // NOT take the row\'s horizontal padding -- SAVE CURRENT... above\n'
-     '      // paints its ink at the row\'s own left edge -- while a child BOX\n'
-     '      // does. Wrapping the caption in a span therefore indented it 10px\n'
-     '      // past its neighbour (measured: ink 579 -> 594 screen px). Dropping\n'
-     '      // the left padding puts the span back on the shipping caption column\n'
-     '      // and leaves padding-right owning the chip\'s inset.\n'
-     '      style: { ...menuItem, color: "hsl(200,85%,70%)", width: "100%",\n'
-     '               padding: "7px 10px 7px 0" }\n'
+     '      // `menuItem` is taken unmodified: it is already the flex row every\n'
+     '      // pattern item above uses, the spacer below needs that flex context\n'
+     '      // to push the chip to the trailing edge, and its own\n'
+     '      // `padding: "7px 10px"` is what puts this caption on the same column\n'
+     '      // as the factory rows and holds the chip 10px inside the row.\n'
+     '      // The left padding is NOT zeroed. It was, to compensate for a boxed\n'
+     '      // caption sitting beside a SAVE CURRENT... that was still a bare text\n'
+     '      // child -- a bare text child does not take these rows\' horizontal\n'
+     '      // padding, a child box does, and the row those two agreed on was the\n'
+     '      // wrong one: 9px left of every factory caption. Both captions are\n'
+     '      // boxes now, so the row keeps its real inset and nothing offsets\n'
+     '      // anything.\n'
+     '      style: { ...menuItem, color: "hsl(200,85%,70%)", width: "100%" }\n'
      '    },\n'
-     '    // The caption keeps its own single-line box, and pins the three type\n'
-     '    // properties `menuItem` already sets rather than inheriting them. As a\n'
-     '    // bare text child of a flex row it reports NO intrinsic width and drops\n'
-     '    // out of the pattern-menu caption census; wrapped but unpinned it\n'
-     '    // measures a 16.1 line box against its 14.0 siblings -- a nested span\n'
-     '    // resolves line height at ~1.53x where a bare text child of the button\n'
-     '    // resolves 1.333x, so the box is pinned rather than inherited.\n'
+     '    // The caption reads the shared row-caption style. It pins the three\n'
+     '    // type properties `menuItem` already sets rather than inheriting them:\n'
+     '    // a nested span resolves line height at ~1.53x where a bare text child\n'
+     '    // of the button resolves 1.333x, so an unpinned wrapper measures a 16.1\n'
+     '    // line box against its 14.0 siblings.\n'
      '    /* @__PURE__ */ React.createElement("span", '
-     '{ style: { fontFamily: "var(--mono)", fontSize: 10.5, letterSpacing: 0.8, '
-     'lineHeight: "14px", whiteSpace: "nowrap", flexShrink: 0 } }, "MANAGE\\u2026"),\n'
+     '{ style: spectrMenuItemCaptionStyle() }, "MANAGE\\u2026"),\n'
      '    /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }),\n'
      '    /* @__PURE__ */ React.createElement("span", { "data-spectr-shortcut-chip": "manage", style: spectrShortcutChipStyle() }, "\\u21e7\\u2318P")\n'
      '  )'),
@@ -349,14 +434,19 @@ FORBIDDEN_AFTER = (
     'border: "1px solid rgba(255,255,255,0.14)",\n      borderRadius: 2\n    } }, hint)',
     'label: "Sculpt", hint: "1"',
     'label: "Glide", hint: "5"',
+    # The two compensations this row used to carry.  Either one surviving means
+    # the caption column is back to being hand-offset rather than laid out.
+    'padding: "7px 10px 7px 0"',
+    'style: { ...menuItem, color: "hsl(200,85%,70%)", display: "block", width: "100%" }',
 )
 REQUIRED_AFTER = (
     'function spectrShortcutChipStyle() {',
     '"data-spectr-shortcut-chip": m.k, style: spectrShortcutChipStyle() }, m.hint)',
     'style: spectrShortcutChipStyle() }, "\\u21e7\\u2318P")',
     '"data-spectr-shortcut-chip": "manage"',
-    'lineHeight: "14px", whiteSpace: "nowrap", flexShrink: 0 } }, "MANAGE\\u2026")',
-    'padding: "7px 10px 7px 0" }',
+    'function spectrMenuItemCaptionStyle() {',
+    '{ style: spectrMenuItemCaptionStyle() }, "MANAGE\\u2026")',
+    '{ style: spectrMenuItemCaptionStyle() }, "SAVE CURRENT\\u2026")',
     '"data-spectr-shortcut-chip": m.k',
     's: "sculpt",',
     'g: "glide",',
@@ -377,6 +467,34 @@ def escaped(value):
     return json.dumps(value)[1:-1]
 
 
+def predecessors(old):
+    """An edit's `old` is one text, or several ordered OLDEST FIRST.
+
+    This script is replayed against two different starting points: a freshly
+    generated document, and the checked-in artifact that already carries an
+    earlier revision of the same edit.  Naming both keeps one writer for a
+    patch point instead of a second script competing for the same lines.
+    """
+    return (old,) if isinstance(old, str) else tuple(old)
+
+
+def choose(old, raw):
+    """The most advanced predecessor present, or a reason there is none.
+
+    Newest first: an older predecessor is frequently still a substring of a
+    newer one (an edit that appends to a block keeps the block's head), so
+    "the first candidate that matches" would re-apply from a state the
+    document has already moved past.
+    """
+    for cand in reversed(predecessors(old)):
+        count = raw.count(escaped(cand))
+        if count == 1:
+            return cand, None
+        if count > 1:
+            return None, 'patch point occurs %d times, expected 1' % count
+    return None, 'no known predecessor text is present'
+
+
 def main():
     for label, _old, new in EDITS:
         if not new:
@@ -387,23 +505,25 @@ def main():
     applied = 0
     already = 0
     for label, old, new in EDITS:
-        old_e, new_e = escaped(old), escaped(new)
+        new_e = escaped(new)
         if raw.count(new_e) >= 1:
             print('already applied ', label)
             already += 1
             continue
-        count = raw.count(old_e)
-        if count != 1:
-            sys.exit('FAIL %s: patch point occurs %d times, expected 1'
-                     % (label, count))
-        raw = raw.replace(old_e, new_e)
+        cand, why = choose(old, raw)
+        if cand is None:
+            sys.exit('FAIL %s: %s' % (label, why))
+        raw = raw.replace(escaped(cand), new_e)
         changed = True
         applied += 1
         print('applied         ', label)
 
-    if already and applied:
-        sys.exit('FAIL: the document is half patched; refusing to write')
-
+    # A mix of "applied" and "already applied" is the NORMAL state once an edit
+    # names more than one predecessor: the document carries the settled edits
+    # and this run advances the one that moved.  The proof that the result is
+    # whole is the FORBIDDEN/REQUIRED sweep below, which adjudicates the final
+    # text rather than the bookkeeping -- a strictly stronger check than the
+    # counter comparison that used to stand here.
     for token in FORBIDDEN_AFTER:
         count = raw.count(escaped(token))
         if count:

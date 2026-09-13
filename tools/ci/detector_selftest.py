@@ -197,6 +197,30 @@ CASES: list[tuple[str, str, int, list[str]]] = [
     ("slider_thumb_pill_shape", "plant: put the overhanging travel back", 1,
      [f(D, "slider_thumb_pill_shape.py"), "--plant", "overhang"]),
 
+    # issue 2 / the preset dropdown: every row caption starts on ONE column.
+    # This detector shipped with a docstring that named the leading-edge rule
+    # and an implementation that only compared line-box HEIGHT, so it was green
+    # through the whole life of the defect below -- SAVE CURRENT... and
+    # MANAGE... painting 9px left of the eight factory rows, which a user
+    # reported by eye. The RED fixture is the real capture of that shipped
+    # state, not a synthetic one.
+    ("menu_item_caption_uniformity", "every caption on one column", 0,
+     [f(D, "menu_item_caption_uniformity.py"),
+      f(E12, "PRESET-CAPTION-GREEN-column.layout.json")]),
+    ("menu_item_caption_uniformity",
+     "known-bad fixture (SAVE CURRENT / MANAGE 9px flush left)", 1,
+     [f(D, "menu_item_caption_uniformity.py"),
+      f(E12, "PRESET-CAPTION-RED-flush-left.layout.json")]),
+    ("menu_item_caption_uniformity",
+     "plant: captions fall back to the row's own left edge", 1,
+     [f(D, "menu_item_caption_uniformity.py"),
+      f(E12, "PRESET-CAPTION-GREEN-column.layout.json"),
+      "--plant", "left-fallback"]),
+    ("menu_item_caption_uniformity", "plant: one caption's line box grows", 1,
+     [f(D, "menu_item_caption_uniformity.py"),
+      f(E12, "PRESET-CAPTION-GREEN-column.layout.json"),
+      "--plant", "tall-caption"]),
+
     # the hit-target lane: a control must be reachable over the area it paints
     ("hit_target_reach", "settings toggles + sliders reach their paint", 0,
      [f(D, "hit_target_reach.py"),
