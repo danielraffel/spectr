@@ -1,0 +1,82 @@
+{
+  "_comment": [
+    "Ledger of user-visible fixes and the tokens that prove each one is compiled",
+    "into a shipped artifact. Read by tools/ship/verify_fix_manifest.py.",
+    "",
+    "Why this exists: a package was once handed over whose fixes were absent,",
+    "because the fixes were still sitting in unmerged PRs. The build succeeded,",
+    "the installer installed, and nothing in the pipeline could tell the",
+    "difference. A fix is not shipped until a token from it is found inside the",
+    "binary that was actually installed.",
+    "",
+    "Token rules:",
+    "  - Quote-agnostic. The materialized document is embedded as JSON with",
+    "    backslash-escaped quotes, so a token containing a literal double quote",
+    "    will not match even when the code is present.",
+    "  - Discriminating. A token must not already exist on the commit BEFORE the",
+    "    fix, or it proves nothing. Check with:",
+    "      git show <base>:native-ui/materialized/materialized-document.runtime.json | grep -c <token>",
+    "  - Stable. Prefer an identifier the fix introduces over prose a later",
+    "    editorial pass may reword.",
+    "A token must discriminate INSIDE THE BINARY, not merely inside the document. The binary also contains Skia, Pulp and the C++ sources, so a word that is absent from the document can still be abundant in the artifact: 'subpath' reads 0 in the pre-fix document and 18 in the pre-fix binary, and would have reported a fix as shipped on a build that predates it. Screen every candidate against a binary built BEFORE the fix and require zero."
+  ],
+  "control_tokens": [
+    "spectrShortcutChipStyle",
+    "SPECTR"
+  ],
+  "fixes": [
+    {
+      "id": "morph-viewport",
+      "pr": 101,
+      "title": "The morph slider moves the viewport, not just the bands",
+      "tokens": [
+        "morphViewport",
+        "morph_applies_viewport",
+        "publishMorphViewport"
+      ]
+    },
+    {
+      "id": "menu-caption-column",
+      "pr": 101,
+      "title": "Every preset-dropdown row caption sits on one column",
+      "tokens": [
+        "spectrMenuItemCaptionStyle"
+      ]
+    },
+    {
+      "id": "curve-breaks-at-mutes",
+      "pr": 101,
+      "title": "The response curve breaks at a muted band instead of plunging through it",
+      "tokens": [
+        "contiguous",
+        "closeFill"
+      ]
+    },
+    {
+      "id": "additive-marquee",
+      "pr": 101,
+      "title": "Cmd-Shift drag adds to and removes from the marquee selection",
+      "tokens": [
+        "baseSelection"
+      ]
+    },
+    {
+      "id": "preset-apply-gestures",
+      "pr": 96,
+      "title": "Double-click and Return apply a preset and close the manager",
+      "tokens": [
+        "DOUBLE_CLICK_MS",
+        "lastRowClickRef"
+      ]
+    },
+    {
+      "id": "edit-mode-shortcut-letters",
+      "pr": 93,
+      "title": "EDIT MODE shortcut chips show S/L/B/F/G and the letters work",
+      "tokens": [
+        "spectrShortcutChipStyle"
+      ],
+      "note": "Shipped before the current installed build, so this row reads PRESENT on an older package. That is deliberate: a manifest in which every row can only ever read ABSENT cannot distinguish a stale package from a broken instrument."
+    }
+  ]
+}
