@@ -5426,3 +5426,254 @@ TEST_CASE("minimap edge drag cannot narrow past the viewport codec floor",
         storage.require_unchanged();
     }
 }
+
+// Switching from one open dropdown to a different one must cost ONE press.
+//
+// Pulp's overlay-dismissal policy claims every semantically modal control
+// (`role="listbox"|"menu"|"dialog"`, `aria-modal`) with consume=true, so a
+// press outside an open menu closes it WITHOUT also operating whatever sits
+// under the press. The counterpart -- `View::overlay_trigger()`, the mark that
+// says "this control OPENS an overlay" -- is what keeps that rule from taxing
+// the one press the user actually meant. An unmarked trigger is spent entirely
+// on the dismissal, and the menu the user aimed at needs a second press.
+//
+// The assertions below are written against `route_press_to_active_overlay`,
+// the shared policy verb every Pulp host calls, rather than against
+// `simulate_click`, which bypasses the policy entirely and therefore cannot
+// see this defect at all.
+namespace {
+
+int count_views(const View& view) {
+    int total = 1;
+    for (std::size_t index = 0; index < view.child_count(); ++index)
+        total += count_views(*view.child_at(index));
+    return total;
+}
+
+int count_overlay_triggers(const View& view) {
+    int total = view.overlay_trigger() ? 1 : 0;
+    for (std::size_t index = 0; index < view.child_count(); ++index)
+        total += count_overlay_triggers(*view.child_at(index));
+    return total;
+}
+
+Point trigger_centre(const View& root, std::string_view label_text) {
+    const auto* label = find_label(root, label_text);
+    REQUIRE(label != nullptr);
+    const auto* owner = nearest_click_target(label);
+    REQUIRE(owner != nullptr);
+    const auto bounds = owner->bounds();
+    REQUIRE(bounds.width > 0.0f);
+    REQUIRE(bounds.height > 0.0f);
+    return root_point(*owner, bounds.width * 0.5f, bounds.height * 0.5f);
+}
+
+// The exact order every Pulp host runs a press in (window_host_mac.mm and the
+// plug-in hosts share these verbs): consult the overlay slot first, stop when
+// the dismissal consumed the press, otherwise let the ordinary tree receive it.
+// Returns whether the press reached the tree -- i.e. whether this press could
+// possibly have opened anything.
+struct HostPressResult {
+    pulp::view::OverlayPressRouting routing =
+        pulp::view::OverlayPressRouting::no_overlay;
+    bool consumed = false;
+    bool reached_tree = false;
+};
+
+HostPressResult host_click(NativeEditorRig& rig, Point point) {
+    HostPressResult result;
+    const auto press =
+        pulp::view::route_press_to_active_overlay(*rig.root, point);
+    result.routing = press.routing;
+    result.consumed = press.consume_press;
+    if (!press.consume_press) {
+        rig.root->simulate_click(point);
+        result.reached_tree = true;
+    }
+    settle(rig.clock, 30);
+    return result;
+}
+
+// Which chrome menu roots currently hold an open popover, as the DOM sees it.
+// Asserted through the runtime rather than the view tree so the reading is
+// about the app's own state, not about which View happens to hold the slot.
+void require_open_menu(NativeEditorRig& rig, std::string_view expected) {
+    const auto script = std::string{R"js((() => {
+      const roots = Array.from(document.querySelectorAll('[data-spectr-menu-root]'));
+      if (!roots.length) throw new Error('no menu roots in the document at all');
+      const owner = (node) => {
+        for (let n = node; n; n = n.parentElement) {
+          const name = n.getAttribute && n.getAttribute('data-spectr-menu-root');
+          if (name) return name;
+        }
+        return '';
+      };
+      const open = Array.from(
+          document.querySelectorAll('[data-spectr-menu-options]'))
+        .map(owner)
+        .filter(Boolean)
+        .sort()
+        .join(',');
+      const want = )js"} + js_string(expected) + R"js(;
+      if (open !== want)
+        throw new Error('open menus are [' + open + '], expected [' + want
+          + '] over ' + roots.length + ' menu roots');
+    })();)js";
+    rig.bridge().load_script(script, "spectr-native-open-menu-contract");
+}
+
+// Settings is a modal dialog rather than a chrome menu, so it has its own
+// liveness marker; `data-spectr-settings-live` is what the runtime itself
+// gates its overlay claim on.
+void require_settings_open(NativeEditorRig& rig, bool expected) {
+    const auto script = std::string{R"js((() => {
+      const panel = document.querySelector('[data-spectr-settings-panel]');
+      const live = !!panel
+        && panel.getAttribute('data-spectr-settings-live') === 'true';
+      if (live !== )js"} + (expected ? "true" : "false") + R"js()
+        throw new Error('settings live=' + live + ' panel=' + !!panel);
+    })();)js";
+    rig.bridge().load_script(script, "spectr-native-settings-open-contract");
+}
+
+}  // namespace
+
+TEST_CASE("switching native dropdowns costs one press",
+          "[native-n1][state-parity][dropdown][overlay-trigger]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Positive control for the instrument. A tree walk that found nothing
+    // because it walked the wrong tree reads exactly like an unmarked app, so
+    // the marked count is only meaningful next to the visited count.
+    const int views = count_views(*rig.root);
+    const int marked = count_overlay_triggers(*rig.root);
+    CAPTURE(views, marked);
+    // Fatal: a walk that visited nothing would report "no triggers" exactly
+    // like an unwired app, and that reading must never stand.
+    REQUIRE(views > 100);
+    // Non-fatal on purpose. These two say WHY the behavioural assertions
+    // below fail; letting them abort the case first would hide the failure
+    // the user actually reported behind its cause.
+    CHECK(marked > 0);
+    // Two-sided, and the reason this is an invariant rather than a magic
+    // number: every control the document declares as opening a popover has to
+    // reach the native tree as a marked trigger, and nothing else may be
+    // marked. A control that quietly stops declaring `aria-haspopup`, or a
+    // runtime arm that starts marking ordinary content, both fail here.
+    CHECK_NOTHROW(require_runtime_contract(
+        rig,
+        "document.querySelectorAll('[aria-haspopup]').length === "
+            + std::to_string(marked),
+        "declared aria-haspopup triggers and marked native views disagree"));
+
+    struct Menu {
+        const char* root;
+        const char* label;
+    };
+    // One top-rail trigger and three bottom-rail ones, so the pairs below
+    // include a switch that crosses rails.
+    const std::array<Menu, 4> menus{{
+        {"bands", "32 bands ▾"},
+        {"edit", "SCULPT ▾"},
+        {"analyzer", "PEAK ▾"},
+        {"overflow", "⋯"},
+    }};
+
+    for (const auto& from : menus) {
+        for (const auto& to : menus) {
+            if (std::string_view(from.root) == to.root) continue;
+            INFO("switching from " << from.root << " to " << to.root);
+
+            require_open_menu(rig, "");
+            const auto opened = host_click(rig, trigger_centre(*rig.root, from.label));
+            REQUIRE(opened.reached_tree);
+            require_open_menu(rig, from.root);
+            // The open menu really is the consume-everywhere kind, so the
+            // one-press result below is the trigger mark doing its job and
+            // not an overlay that never consumed anything.
+            REQUIRE(rig.root->interaction().active_overlay != nullptr);
+            REQUIRE(rig.root->interaction()
+                        .active_overlay->overlay_consumes_outside_click());
+
+            const auto switched =
+                host_click(rig, trigger_centre(*rig.root, to.label));
+            REQUIRE(switched.routing
+                    == pulp::view::OverlayPressRouting::dismissed);
+            // The whole defect in one assertion: a consumed press is a press
+            // the trigger never sees, and the user pays a second one.
+            REQUIRE_FALSE(switched.consumed);
+            REQUIRE(switched.reached_tree);
+            require_open_menu(rig, to.root);
+
+            // Leave the tree closed for the next pair.
+            pulp::view::View::dismiss_active_overlay(*rig.root);
+            settle(rig.clock, 30);
+            require_open_menu(rig, "");
+        }
+    }
+
+    // Settings is the other kind of overlay opener: a modal dialog rather than
+    // a chrome menu. Its gear sits immediately beside the Help button in the
+    // bottom rail, and the two behaved differently until Settings declared the
+    // same `aria-haspopup` Help already did.
+    const pulp::view::Point settings_gear{1247.0f, 832.5f};
+    const auto* gear = rig.root->hit_test(settings_gear);
+    REQUIRE(gear != nullptr);
+    bool gear_is_trigger = false;
+    for (const View* node = gear; node != nullptr; node = node->parent())
+        gear_is_trigger = gear_is_trigger || node->overlay_trigger();
+    REQUIRE(gear_is_trigger);
+
+    require_settings_open(rig, false);
+    REQUIRE(host_click(rig, trigger_centre(*rig.root, "SCULPT \u25be"))
+                .reached_tree);
+    require_open_menu(rig, "edit");
+    const auto to_settings = host_click(rig, settings_gear);
+    REQUIRE_FALSE(to_settings.consumed);
+    REQUIRE(to_settings.reached_tree);
+    require_open_menu(rig, "");
+    require_settings_open(rig, true);
+
+    storage.require_unchanged();
+}
+
+// The negative control for the rule above, in the direction that matters: the
+// pass-through is scoped to TRIGGERS. If it ever widened to every dismissing
+// press, closing a menu would also operate whatever sits under the click --
+// a band drag, a rail button, a mode switch the user never asked for.
+TEST_CASE("dismissing a native dropdown over ordinary content still consumes",
+          "[native-n1][state-parity][dropdown][overlay-trigger]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    const std::array<pulp::view::Point, 3> ordinary{{
+        {660.0f, 430.0f},   // the filter-bank canvas
+        {1009.0f, 21.5f},   // the BOTH visualization tab, a plain button
+        {48.0f, 832.5f},    // CLEAR, a rail button that is not a trigger
+    }};
+
+    for (const auto& point : ordinary) {
+        INFO("ordinary press at " << point.x << ',' << point.y);
+        const auto* hit = rig.root->hit_test(point);
+        REQUIRE(hit != nullptr);
+        for (const View* node = hit; node != nullptr; node = node->parent())
+            CHECK_FALSE(node->overlay_trigger());
+
+        require_open_menu(rig, "");
+        REQUIRE(host_click(rig, trigger_centre(*rig.root, "SCULPT ▾"))
+                    .reached_tree);
+        require_open_menu(rig, "edit");
+
+        const auto press =
+            pulp::view::route_press_to_active_overlay(*rig.root, point);
+        CHECK(press.routing == pulp::view::OverlayPressRouting::dismissed);
+        CHECK(press.consume_press);
+        settle(rig.clock, 30);
+        require_open_menu(rig, "");
+    }
+    storage.require_unchanged();
+}
+

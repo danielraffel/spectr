@@ -68,3 +68,10 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # (Spectr_Standalone / _AU / _VST3 / _CLAP), so the gate has something to read;
 # were that to change it exits 3 rather than passing on an empty measurement.
 ^Spectr-bundle-icons
+# One-press dropdown switching and its scoping control. Neither is matched by
+# `^every native dropdown` or `^native ...` above -- they start with the verb,
+# not with "native" -- so without these two lines they register and never run,
+# which is measurable: the acceptance alternation selected 75 tests and 0 of
+# these 2.
+^"?switching native dropdowns
+^"?dismissing a native dropdown

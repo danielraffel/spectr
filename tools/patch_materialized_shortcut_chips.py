@@ -417,6 +417,37 @@ EDITS = [
      '    const onKey = (e) => {\n'
      '      const t = e.target;\n'),
 
+    # THE ANALYZER KEY, WHICH TWO SURFACES DISAGREED ABOUT
+    #
+    #   SHORTCUTS popover:  `6`  -- Cycle analyzer
+    #   ANALYZER popover:   "ANALYZER . A to cycle"
+    #
+    # Only `6` was bound. `A` did nothing, in any state, and the popover that
+    # advertised it is the one a user reads while looking at the analyzer. No
+    # screenshot can see this and no layout assertion can: both popovers render
+    # exactly the same whether the key they name works or not.
+    #
+    # `A` is BOUND rather than the claim deleted, and `6` is kept, for the same
+    # reason the edit-mode chips above kept their digits: this document already
+    # settled on a mnemonic letter per surface (S/L/B/F/G), the ANALYZER
+    # popover's header is that scheme applied to the analyzer, and deleting it
+    # would leave the one dropdown in the editor with no mnemonic while every
+    # sibling has one. `a` collides with nothing -- `modeKeys` is s/l/b/f/g plus
+    # 1..5, and the only other key comparisons anywhere in the document are
+    # Enter, Escape and ArrowDown. An additional accepted key cannot break a
+    # caller, so the shipped digit stays live.
+    ('the shortcuts popover names both keys the analyzer accepts',
+     'React.createElement(Hrow, { k: "6" }, "Cycle analyzer")',
+     'React.createElement(Hrow, { k: "A / 6" }, "Cycle analyzer")'),
+
+    ('the analyzer cycles on the letter the ANALYZER popover advertises',
+     '      if (k === "6") {\n',
+     '      // Both surfaces that name this key are now true: the ANALYZER\n'
+     '      // popover header says "A to cycle" and the SHORTCUTS row says\n'
+     '      // "A / 6". `k` is already lower-cased above, so this matches A\n'
+     '      // however the keyboard delivered it.\n'
+     '      if (k === "a" || k === "6") {\n'),
+
     ('the guard reads the predicate rather than a bare selector',
      't.isContentEditable) || document.querySelector(\'[data-spectr-overlay="true"]\')) return;',
      't.isContentEditable) || overlayBlocksShortcut()) return;'),
@@ -434,6 +465,11 @@ FORBIDDEN_AFTER = (
     'border: "1px solid rgba(255,255,255,0.14)",\n      borderRadius: 2\n    } }, hint)',
     'label: "Sculpt", hint: "1"',
     'label: "Glide", hint: "5"',
+    # The SHORTCUTS row that named a key the ANALYZER popover contradicted.
+    'React.createElement(Hrow, { k: "6" }, "Cycle analyzer")',
+    # The analyzer branch that accepted only the digit while a second surface
+    # advertised the letter.
+    '      if (k === "6") {\n        e.preventDefault();',
     # The two compensations this row used to carry.  Either one surviving means
     # the caption column is back to being hand-offset rather than laid out.
     'padding: "7px 10px 7px 0"',
@@ -460,6 +496,12 @@ REQUIRED_AFTER = (
     'function overlayBlocksShortcut() {',
     '|| overlayBlocksShortcut()) return;',
     '"data-spectr-shortcut-chip": "band", style: spectrShortcutChipStyle() }, hint)',
+    'Hrow, { k: "A / 6" }',
+    'if (k === "a" || k === "6") {',
+    # The claim the letter binding exists to make true. If a future edit drops
+    # this header, the binding is no longer serving a surface and this sweep
+    # says so rather than letting the two drift apart again.
+    'ANALYZER \\xB7 A to cycle',
 )
 
 

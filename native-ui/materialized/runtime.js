@@ -7299,6 +7299,25 @@
         }
         return true;
       }
+      // `aria-haspopup` is the counterpart of the two arms above: they say
+      // "this element IS a dismissable overlay", this one says "this control
+      // OPENS one".  The overlay-dismissal policy needs both.  Without the
+      // mark, a press on a second dropdown's trigger while the first is open
+      // is consumed by the dismissal and never reaches the trigger, so
+      // switching menus costs two presses instead of one.
+      //
+      // Scoped to triggers deliberately -- ordinary content stays consumed,
+      // or clicking away from a menu would also operate whatever sits under
+      // the click.  Any ARIA token other than absent/"false" marks
+      // (true|menu|listbox|tree|grid|dialog); "false" unmarks, so a control
+      // that stops offering a popup stops being a trigger.
+      case "aria-haspopup": {
+        const _popup = typeof value === "string" ? value.toLowerCase() : value;
+        const _isTrigger = _popup === true
+          || (typeof _popup === "string" && _popup !== "" && _popup !== "false");
+        call("setOverlayTrigger", id, _isTrigger);
+        return true;
+      }
       default:
         return false;
     }
@@ -8678,12 +8697,12 @@ function createWidget(type, id, parentId, props) {
       } else {
         if (typeof g4.removeWidget === "function") call2("removeWidget", child.id);
         child.onBridge = false;
-        if (parent.onBridge) materialize(parent, child);
+        if (parent.onBridge) materialize(parent, child, insertIdx);
       }
       return;
     }
     if (parent.onBridge) {
-      materialize(parent, child);
+      materialize(parent, child, insertIdx);
     } else {
       parent.pendingChildren.push({ child, index: insertIdx });
     }
@@ -8728,9 +8747,20 @@ function createWidget(type, id, parentId, props) {
     }
     materializeUnder(container.rootId, child);
   }
-  function materialize(parent, child) {
+  function materialize(parent, child, index) {
     child.inheritedSvgViewBox = svgViewportFor(parent);
-    materializeUnder(parent.id, child);
+    // Every createX call appends, so a child landing anywhere but last has to
+    // be moved into place right after it is created -- otherwise a subtree that
+    // mounts late (a re-opened dropdown remounting its rows) comes back in
+    // mount order rather than authored order, and captions detach from their
+    // bodies.
+    //
+    // Its authored index doubles as its native index: every earlier sibling in
+    // childIds has already reached the bridge, because attach() materializes
+    // eagerly under a live parent and materializeUnder drains a deferred
+    // parent's queue in authored order.
+    const appendsLast = index === void 0 || index >= parent.childIds.length - 1;
+    materializeUnder(parent.id, child, appendsLast ? void 0 : index);
   }
   function parseSvgViewBox(value) {
     if (Array.isArray(value) && value.length >= 2) {
@@ -8767,9 +8797,15 @@ function createWidget(type, id, parentId, props) {
     const col = typeof src.columnNumber === "number" ? src.columnNumber : 0;
     call2("setSource", child.id, src.fileName, line, col);
   }
-  function materializeUnder(parentId, child) {
+  function materializeUnder(parentId, child, index) {
     if (child.onBridge) return;
     createWidget(child.type, child.id, parentId, child.props);
+    // An older native host has no indexed insert and can only append. Ordering
+    // then degrades exactly as it did before this call existed, rather than
+    // throwing, so one renderer bundle still runs on both.
+    if (index !== void 0 && index >= 0 && typeof g4.insertChild === "function") {
+      call2("insertChild", parentId, child.id, index);
+    }
     // A loose text node wraps by default in CSS (`white-space: normal`), but a
     // native Label defaults to one line and clips mid-word instead. Synthetic
     // text targets have no author style of their own to carry the default in,
@@ -8793,6 +8829,16 @@ function createWidget(type, id, parentId, props) {
     if (child.pendingChildren.length > 0) {
       const drained = child.pendingChildren;
       child.pendingChildren = [];
+      // Replay in authored order, not queue order. A deferred subtree can be
+      // reordered (or inserted into) before its parent reaches the bridge, so
+      // the queue records the order the attaches arrived in, not the order the
+      // author wrote. Draining in childIds order makes each create an append
+      // again, which is the one thing the native factory can always do.
+      const authoredOrder = (entry) => {
+        const at = child.childIds.indexOf(entry.child.id);
+        return at < 0 ? Number.MAX_SAFE_INTEGER : at;
+      };
+      drained.sort((a, b) => authoredOrder(a) - authoredOrder(b));
       for (const { child: gc } of drained) {
         gc.inheritedSvgViewBox = svgViewportFor(child);
         materializeUnder(child.id, gc);

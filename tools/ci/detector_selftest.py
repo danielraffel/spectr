@@ -314,6 +314,62 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      "plant: let the badge shrink instead of the name", 1,
      [f(D, "preset_manager_reset_and_chrome.py"), "--plant", "badge-shrinks"]),
 
+    # Two surfaces named two different analyzer-cycle keys and only one was
+    # bound: the SHORTCUTS popover said `6`, the ANALYZER popover said "A to
+    # cycle", and `A` did nothing in any state. No screenshot and no layout
+    # assertion can see that -- both popovers render identically whether the key
+    # they name works or not. Reads the checked-in artifact, so it needs no
+    # build, no GPU and no third-party module: it registers on every runner
+    # configuration, including the chrome-less acceptance one.
+    ("analyzer_shortcut_agreement",
+     "every advertised analyzer key is bound, and every bound one advertised", 0,
+     [f(D, "analyzer_shortcut_agreement.py")]),
+    # main's behaviour restored exactly: the letter is advertised and dead.
+    ("analyzer_shortcut_agreement", "plant: advertise A, bind only 6", 1,
+     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "restore-lie"]),
+    # The other direction, and the one a reviewer would not think to look for:
+    # a shipped shortcut that no surface names.
+    ("analyzer_shortcut_agreement", "plant: stop advertising the bound digit", 1,
+     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "drop-digit-from-chip"]),
+    ("analyzer_shortcut_agreement", "plant: bind a key nothing advertises", 1,
+     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "bind-unadvertised"]),
+    ("analyzer_shortcut_agreement", "plant: the ANALYZER header drifts to Z", 1,
+     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "header-drifts"]),
+
+    # The long-form help overlay: the route into it, the copy's home, and
+    # whether the panel can move content it is a screenful too small to show.
+    # Also artifact-only and dependency-free.
+    ("help_overlay_contract",
+     "the ? popover reaches a guide that scrolls its own bundled copy", 0,
+     [f(D, "help_overlay_contract.py")]),
+    ("help_overlay_contract", "plant: no way into the guide at all", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "no-learn-more"]),
+    # The affordance is present and inert -- the exact shape "A to cycle" had,
+    # and the one a screenshot cannot tell from a working button.
+    ("help_overlay_contract", "plant: Learn more calls nothing", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "dead-button"]),
+    ("help_overlay_contract", "plant: copy inlined back into the artifact", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "inline-copy"]),
+    # Clips but cannot move: the first screenful looks perfect and the rest of
+    # the guide is unreachable.
+    ("help_overlay_contract", "plant: content offset frozen at 0", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "frozen-content"]),
+    ("help_overlay_contract", "plant: no wheel handler", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "no-wheel"]),
+    # The overlay locates the editor box by measuring the bottom rail; unname it
+    # and the panel paints at its own in-flow position, over the toolbar.
+    ("help_overlay_contract", "plant: the measured rail loses its name", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "unnamed-rail"]),
+    ("help_overlay_contract", "plant: an em dash in the copy", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "em-dash"]),
+    # README.md's figure, which is fft - 1 and describes nothing the code does.
+    ("help_overlay_contract", "plant: the superseded latency figure", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "stale-latency"]),
+    # A backtick ends the template literal early and truncates the guide with
+    # no error anywhere.
+    ("help_overlay_contract", "plant: a backtick inside the copy", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "backtick"]),
+
     ("preset_commit_gestures", "shipping artifact backs every advertised gesture", 0,
      [f(D, "preset_commit_gestures.py")]),
     ("preset_commit_gestures", "plant: re-attach the undispatchable dbl-click prop", 1,
@@ -461,6 +517,45 @@ CASES: list[tuple[str, str, int, list[str]]] = [
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-fill-spans-mutes"]),
 
+    # A child's AUTHORED index must be its NATIVE index. Every native createX
+    # APPENDS, so a child landing anywhere but last has to be moved into place
+    # with insertChild right after it is created. The vendored runtime.js
+    # predated Pulp #8272 and dropped attach()'s computed index at
+    # materialize(), so a subtree remounting into a parent that kept its other
+    # children landed LAST: a re-opened dropdown's rows came back after the
+    # siblings that stayed and every caption separated from the description it
+    # labels. These cases execute the artifact's OWN attach/materialize/
+    # materializeUnder against a recording bridge that appends like the native
+    # factory, and assert the resulting order -- never the presence of the
+    # `insertChild` token, which the artifact already carried in insertBefore's
+    # same-parent REORDER branch long before the mount path was wired.
+    ("materialized_insert_index",
+     "a remounted subtree lands at its authored index", 0,
+     [f("test", "test_materialized_insert_index.mjs"),
+      f("native-ui", "materialized", "runtime.js")]),
+    # The exact defect that shipped: the index reaches materialize and is
+    # discarded.
+    ("materialized_insert_index",
+     "plant: materialize drops its index again", 1,
+     [f("test", "test_materialized_insert_index.mjs"),
+      f("native-ui", "materialized", "runtime.js"),
+      "--plant-drop-index"]),
+    # The plausible HALF-fix -- threads the index, never emits the call. This is
+    # why the assertion is on resulting native order and not on call arity.
+    ("materialized_insert_index",
+     "plant: thread the index but never emit insertChild", 1,
+     [f("test", "test_materialized_insert_index.mjs"),
+      f("native-ui", "materialized", "runtime.js"),
+      "--plant-append-only"]),
+    # A different wrong implementation again: only the deferred-parent scenario
+    # can see it, so it proves that scenario is load bearing rather than
+    # decorative.
+    ("materialized_insert_index",
+     "plant: drain a deferred parent in queue order", 1,
+     [f("test", "test_materialized_insert_index.mjs"),
+      f("native-ui", "materialized", "runtime.js"),
+      "--plant-queue-order"]),
+
     # Morph moves the viewport. Four plants rather than one because each is a
     # DIFFERENT wrong implementation that fails a different assertion, and a
     # single plant that trips everything cannot show which check is load
@@ -582,6 +677,25 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      "plant: the pre-change 280px panel, which had no headroom", 1,
      [f(D, "shortcut_panel_single_line.py"), "--budget-only",
       "--plant", "narrow-panel"]),
+
+    # One-press dropdown switching. The WIRING half -- the live-tree behaviour
+    # is gated by the `switching native dropdowns costs one press` ctest. Four
+    # plants because the wiring has four independent ways to come apart: the
+    # runtime arm going inert, and any of the three markup sites (an inline
+    # trigger, the shared RailBtn, the settings gear) going quiet.
+    ("overlay_trigger_wiring", "every overlay opener is declared and wired", 0,
+     [f(D, "overlay_trigger_wiring.py")]),
+    ("overlay_trigger_wiring",
+     "plant: the arm that shipped -- declared, ignored", 1,
+     [f(D, "overlay_trigger_wiring.py"), "--plant", "inert-arm"]),
+    ("overlay_trigger_wiring", "plant: an inline trigger stops declaring", 1,
+     [f(D, "overlay_trigger_wiring.py"), "--plant", "silent-trigger"]),
+    ("overlay_trigger_wiring", "plant: RailBtn stops declaring, so four of "
+     "the six triggers go quiet at once", 1,
+     [f(D, "overlay_trigger_wiring.py"), "--plant", "silent-railbtn"]),
+    ("overlay_trigger_wiring", "plant: the settings gear back to the "
+     "odd one out", 1,
+     [f(D, "overlay_trigger_wiring.py"), "--plant", "silent-settings"]),
 ]
 
 
@@ -634,7 +748,7 @@ def main() -> int:
             if a.startswith("-") or "=" in a:
                 continue
             p = os.path.join(REPO, a)
-            if a.endswith((".json", ".png")) and not os.path.exists(p):
+            if a.endswith((".json", ".png", ".js")) and not os.path.exists(p):
                 missing.append(a)
     if missing:
         print("no verdict: missing fixture(s): " + ", ".join(sorted(set(missing))),
