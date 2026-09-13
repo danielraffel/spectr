@@ -120,6 +120,16 @@ void Spectr::apply_morph_to_live(float t) noexcept {
         if (!has_a) { field_ = snapshots_.b.field; }
         else if (!has_b) { field_ = snapshots_.a.field; }
         else { morph_fields(field_, snapshots_.a.field, snapshots_.b.field, t); }
+        // The viewport rides the same derivation as the bands so the window
+        // and the shape drawn inside it can never disagree. `synced_viewport_`
+        // advances in lockstep below for the same reason the band values do
+        // not push: a derived value must not become an authored host write.
+        if (morph_applies_viewport_) {
+            if (!has_a) viewport_ = snapshots_.b.viewport;
+            else if (!has_b) viewport_ = snapshots_.a.viewport;
+            else viewport_ = morph_viewports(snapshots_.a.viewport,
+                                             snapshots_.b.viewport, t);
+        }
         publish_processing_state_();
         // The morph moves the morph PARAMETER only — pushing the 64 resulting
         // band values as parameter writes would flood the host per slider
@@ -127,6 +137,7 @@ void Spectr::apply_morph_to_live(float t) noexcept {
         // lane would recompute what the band lanes replay). The synced mirror
         // still advances, so a subsequent band edit pushes only its own delta.
         synced_field_ = field_;
+        if (morph_applies_viewport_) synced_viewport_ = viewport_;
         morph_derived_ = true;
         morph_overrides_.reset();
     }
@@ -225,7 +236,7 @@ void Spectr::publish_audio_modulation_state_() noexcept {
     // All callers serialize through processing_state_mutex_. TripleBuffer
     // therefore has one logical writer and process() remains its sole reader.
     audio_modulation_publication_.write(AudioModulationState{
-        modulation_, snapshots_});
+        modulation_, snapshots_, morph_applies_viewport_});
 }
 
 void Spectr::publish_processing_state_() noexcept {
@@ -564,8 +575,10 @@ void Spectr::process(
                     const float host_morph = std::clamp(
                         cursor.value(kParamMorph), 0.0f, 1.0f);
                     BandField host_field = canonical;
-                    if (audio_modulation.snapshots.has(SnapshotBank::Slot::A)
-                        && audio_modulation.snapshots.has(SnapshotBank::Slot::B)) {
+                    const bool morph_has_both =
+                        audio_modulation.snapshots.has(SnapshotBank::Slot::A)
+                        && audio_modulation.snapshots.has(SnapshotBank::Slot::B);
+                    if (morph_has_both) {
                         morph_fields(host_field,
                                      audio_modulation.snapshots.a.field,
                                      audio_modulation.snapshots.b.field,
@@ -709,9 +722,30 @@ void Spectr::process(
                     pulp::signal::SpectralBandLayout automated;
                     automated.active_bands = static_cast<std::uint32_t>(
                         visible_count(automated_layout));
-                    const auto automated_viewport = decode_viewport(
+                    // In Spectr the viewport is a DSP input, not a camera:
+                    // it sets the band↔frequency mapping the mask is built
+                    // from. So when a morph moves the window, the audio owner
+                    // has to derive the same window the editor drew, from the
+                    // same two snapshots and the same morph value — otherwise
+                    // an automated morph would be heard through the authored
+                    // window and jump the moment automation stopped.
+                    //
+                    // This follows the MORPH PARAMETER only. The internal LFOs
+                    // below deliberately do not sweep it: their rate reaches
+                    // the strobe range, and remapping every band's frequency
+                    // span per block is a different order of cost from the
+                    // gain-only modulation they were built for.
+                    const auto authored_viewport = decode_viewport(
                         cursor.value(kParamViewportCenter),
                         cursor.value(kParamViewportWidth));
+                    const auto automated_viewport =
+                        (morph_has_both
+                         && audio_modulation.morph_applies_viewport)
+                        ? morph_viewports(
+                              audio_modulation.snapshots.a.viewport,
+                              audio_modulation.snapshots.b.viewport,
+                              host_morph)
+                        : authored_viewport;
                     automated.min_hz = automated_viewport.min_hz;
                     automated.max_hz = automated_viewport.max_hz;
                     automated.spacing =
@@ -936,6 +970,14 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     root.addMember("modulation_target_mask",
                    static_cast<int32_t>(modulation_.target_mask));
 
+    // Whether a morph also moves the viewport. A playback preference with no
+    // parameter lane, so like the destination mask it would be silently lost
+    // on reload without an entry here. Absent on a writer that predates the
+    // switch; readers treat absence as ENABLED, which is what a fresh
+    // instance does, so an old session opens behaving like a new one rather
+    // than with a feature mysteriously off.
+    root.addMember("morph_applies_viewport", morph_applies_viewport_);
+
     auto json = choc::json::toString(root, /*useLineBreaks=*/false);
     return {json.begin(), json.end()};
 }
@@ -1067,6 +1109,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             reset_supplemental_state_(snapshots_, patterns_);
             if (param_store_) modulation_ = modulation_from_store_();
             else modulation_.target_mask = kModulationTargetMaskUnset;
+            morph_applies_viewport_ = true;
             morph_derived_ = false;
             morph_overrides_.reset();
             synced_field_ = field_;
@@ -1203,6 +1246,13 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
 
     // Destination selection. Absent on a writer that predates the Targets
     // control: the unset sentinel then reproduces that writer's semantics.
+    bool new_morph_applies_viewport = true;
+    if (root.hasObjectMember("morph_applies_viewport")) {
+        const auto& flag = root["morph_applies_viewport"];
+        if (!flag.isBool()) return false;
+        new_morph_applies_viewport = flag.getBool();
+    }
+
     std::uint8_t new_target_mask = kModulationTargetMaskUnset;
     if (root.hasObjectMember("modulation_target_mask")) {
         const auto parsed_mask = read_int_(root["modulation_target_mask"]);
@@ -1217,8 +1267,8 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         const BandField param_field = new_field;
         const bool has_a = new_bank.has(SnapshotBank::Slot::A);
         const bool has_b = new_bank.has(SnapshotBank::Slot::B);
+        const float t = param_store_ ? param_store_->get_value(kParamMorph) : 0.0f;
         if (has_a && has_b) {
-            const float t = param_store_ ? param_store_->get_value(kParamMorph) : 0.0f;
             morph_fields(new_field, new_bank.a.field, new_bank.b.field, t);
         } else if (has_a || has_b) {
             new_field = has_a ? new_bank.a.field : new_bank.b.field;
@@ -1230,6 +1280,20 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             for (std::size_t i = 0; i < kMaxBands; ++i) {
                 if (new_morph_overrides.test(i))
                     new_field.bands[i] = param_field.bands[i];
+            }
+            // The derived viewport is re-derived for the same reason the
+            // derived field is: morph never writes the viewport parameters,
+            // so the store carries the last AUTHORED window, and taking it at
+            // face value would reopen the session with the morphed bands
+            // drawn inside the pre-morph window.
+            if (new_morph_applies_viewport) {
+                if (has_a && has_b)
+                    new_view = morph_viewports(new_bank.a.viewport,
+                                               new_bank.b.viewport, t);
+                else
+                    new_view = has_a ? new_bank.a.viewport
+                                     : new_bank.b.viewport;
+                if (!new_view.valid()) new_view = Viewport{};
             }
         }
     }
@@ -1243,6 +1307,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         layout_ = new_layout;
         morph_derived_ = new_morph_derived;
         morph_overrides_ = new_morph_overrides;
+        morph_applies_viewport_ = new_morph_applies_viewport;
         // Re-derive the LFO lanes from the restored parameters before the
         // mask rides along: the audio thread only honours a published mask
         // while the published target still matches the automation lane, so a
