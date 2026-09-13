@@ -958,6 +958,71 @@ if(SPECTR_NODE_EXECUTABLE)
         TIMEOUT 30)
 endif()
 
+# Morph moves the viewport, not just the bands.
+#
+# A snapshot has always captured the window it was taken under; morph ignored
+# it, so the bands blended continuously while the window they are drawn in --
+# and masked with -- snapped at t=0.5. Three properties each read green if you
+# check the wrong thing, so each gets its own control:
+#
+#   The interpolation runs in LOG space. A test that pins only t=0 and t=1
+#   passes unchanged against a snap, because a snap already gives the right
+#   answer at both ends. Only the midpoint discriminates, and it must reject
+#   BOTH a snap and a linear-Hz lerp, which is the plausible wrong version.
+#
+#   Morph is dragged AND is an LFO/automation destination, so it is exactly
+#   the value that moves every sample. It must publish the viewport with
+#   `live = deferReact` so the canvas keeps moving every rAF while React
+#   commits nothing until the gesture settles -- the same contract the zoom
+#   readout rows above exist to protect.
+#
+#   The switch is a PLAYBACK switch: capture always records the window.
+#
+# Static text can see none of that, so the suite extracts the real helper and
+# runs it in a vm.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-morph-viewport
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-morph-viewport PROPERTIES TIMEOUT 30)
+    # Four controls, one per wrong implementation, because each fails a
+    # DIFFERENT assertion and a single plant that trips everything cannot show
+    # which check is load bearing. The inversion lives in the script rather
+    # than in WILL_FAIL, which accepts any non-zero exit -- including a usage
+    # error that proves nothing. Each plant asserts its needle matched exactly
+    # once, so a drifted needle fails the control instead of quietly
+    # re-testing the current document.
+    add_test(NAME Spectr-materialized-morph-viewport-snap-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-snap --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-viewport-snap-control PROPERTIES
+        TIMEOUT 30)
+    add_test(NAME Spectr-materialized-morph-viewport-linear-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-linear --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-viewport-linear-control PROPERTIES
+        TIMEOUT 30)
+    add_test(NAME Spectr-materialized-morph-viewport-live-commit-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-live-commit --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-viewport-live-commit-control PROPERTIES
+        TIMEOUT 30)
+    add_test(NAME Spectr-materialized-morph-viewport-switch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-ignore-switch --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-viewport-switch-control PROPERTIES
+        TIMEOUT 30)
+endif()
+
 # Two defects reported from the shipped AU, at the seam where native
 # publications write the editor's JS refs directly. Neither is visible from a
 # screenshot or from the standalone.
@@ -1078,7 +1143,12 @@ endif()
 
 # The response curve is plotted through band CENTRES, so at the two extremes
 # it began and ended halfway across the first and last band -- a visibly
-# half-drawn band at each end of the plot, which is what the user reported.
+# half-drawn band at each end of the plot. It also ran straight across MUTED
+# bands, so an audible group's line trailed past its own edge before dropping
+# to 0 at the mute, which is what the user reported. The rule the suite pins:
+# the curve breaks at every muted band, and each audible run is held flat from
+# its own first band's left edge to its own last band's right edge -- exactly
+# what the fft stair-step already draws, and the plot extremes fall out of it.
 #
 # Like the axis headings above, this is canvas ink with no layout node, so
 # painted_vs_measured_width / box_intersection / ink_extents are structurally
@@ -1093,19 +1163,27 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_curve_edge_span.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
     set_tests_properties(Spectr-materialized-curve-edge-span PROPERTIES TIMEOUT 60)
-    # Three negative controls, each restoring one pre-fix form so a failure
+    # Five negative controls, each restoring one pre-fix form so a failure
     # names which assertion is load bearing. `--expect-fail` inverts the
     # verdict inside the script rather than via WILL_FAIL, which would accept
     # the exit 2 the harness uses when it cannot run at all -- a usage error
     # would satisfy the control and prove nothing.
     #
-    #   response-centres      the RESPONSE line goes back to band centres.
+    #   response-centres      the RESPONSE line goes back to band centres AND
+    #                         back to plunging across every mute.
+    #   response-spans-mutes  the RESPONSE line keeps both outer plot edges but
+    #                         plunges across interior mutes again. This is the
+    #                         exact form the user reported, so a suite that
+    #                         cannot reject it does not cover the defect.
+    #   fill-spans-mutes      the iir fill slides back under muted bands its
+    #                         own stroke skips.
     #   overlay-centres       the iir/hybrid dsp curve goes back to centres.
     #   geometry-follows-view band columns start tracking the zoom window,
     #                         which would make the first/last VISIBLE band
     #                         stop being band 0 / N-1 and silently point every
     #                         span in this suite at the wrong columns.
-    foreach(_curve_plant response-centres overlay-centres geometry-follows-view)
+    foreach(_curve_plant response-centres response-spans-mutes fill-spans-mutes
+                         overlay-centres geometry-follows-view)
         add_test(NAME Spectr-materialized-curve-edge-control-${_curve_plant}
             COMMAND ${SPECTR_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_curve_edge_span.mjs
@@ -1296,6 +1374,88 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     set_tests_properties(Spectr-browser-preset-truncation-negative-control PROPERTIES
         TIMEOUT 120
         WILL_FAIL TRUE)
+endif()
+
+# These need node only -- NOT chrome. Registered under the browser
+# oracle's node+chrome guard they would silently not exist on a runner
+# without chrome, which is exactly what the acceptance runner is, and
+# the `materialized` acceptance pattern would still match its other
+# tests and report nothing wrong.
+if(SPECTR_NODE_EXECUTABLE)
+    # The marquee's RESULT. A person asked to hold two separate frequency
+    # ranges at once, so the assertion is the selection SET -- both regions
+    # present and the gap between them absent -- rather than "a handler ran",
+    # which a handler computing the wrong set also satisfies. The suite drives
+    # the shipped pointer handlers out of the materialized document under a
+    # minimal React shim, because a discontiguous selection has no layout node
+    # to look at.
+    add_test(NAME Spectr-materialized-additive-marquee
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_additive_marquee.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-additive-marquee PROPERTIES TIMEOUT 60)
+    # Three controls, one per way this can rot. Each reinstates a real defect
+    # and inverts the verdict inside the script; WILL_FAIL is deliberately not
+    # used, because it accepts any non-zero exit including the ones that mean
+    # the control never ran.
+    add_test(NAME Spectr-materialized-additive-marquee-replaces-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_additive_marquee.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-replaces --expect-fail)
+    set_tests_properties(Spectr-materialized-additive-marquee-replaces-control
+        PROPERTIES TIMEOUT 60)
+    # Add-only passes the discontiguous assertion and fails only the remove
+    # half, which is exactly the shape of a row whose label over-promises.
+    add_test(NAME Spectr-materialized-additive-marquee-add-only-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_additive_marquee.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-add-only --expect-fail)
+    set_tests_properties(Spectr-materialized-additive-marquee-add-only-control
+        PROPERTIES TIMEOUT 60)
+    # Toggling against the live selection instead of the base frozen at press.
+    # A short drag still looks right; the selection strobes as the pointer
+    # keeps sampling inside a band it already flipped.
+    add_test(NAME Spectr-materialized-additive-marquee-live-toggle-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_additive_marquee.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-live-toggle --expect-fail)
+    set_tests_properties(Spectr-materialized-additive-marquee-live-toggle-control
+        PROPERTIES TIMEOUT 60)
+endif()
+
+# No SHORTCUTS row may wrap, and none may be ABLE to. The budget half reads
+# the shipping artifact and needs no binary, so it holds even where the
+# standalone cannot run; the rendered half opens the panel in the shipping
+# native editor and measures every row's line box.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-shortcut-panel-budget
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/shortcut_panel_single_line.py
+            --budget-only)
+    set_tests_properties(Spectr-shortcut-panel-budget PROPERTIES TIMEOUT 60)
+    # A budget nobody has watched reject a row is not a budget. --plant
+    # long-label restores the wording that wrapped in the shipped build.
+    add_test(NAME Spectr-shortcut-panel-budget-negative-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/shortcut_panel_single_line.py
+            --budget-only --plant long-label)
+    set_tests_properties(Spectr-shortcut-panel-budget-negative-control PROPERTIES
+        TIMEOUT 60
+        WILL_FAIL TRUE)
+endif()
+
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-shortcut-panel-single-line
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/shortcut_panel_single_line.py
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out-dir ${CMAKE_CURRENT_BINARY_DIR}/spectr-shortcut-panel)
+    set_tests_properties(Spectr-shortcut-panel-single-line PROPERTIES
+        TIMEOUT 300
+        RESOURCE_LOCK spectr_native_materialized_editor)
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────

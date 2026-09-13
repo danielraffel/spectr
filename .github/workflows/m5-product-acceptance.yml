@@ -322,6 +322,47 @@ jobs:
           fi
           exit $rc
 
+      - name: Gate - the morph track is laid out clear of its A/B labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The SAME transport dump the hit-target step above just captured
+          # from THIS binary, so this is a regression gate on the build rather
+          # than a test of the detector (the self-test already proves the
+          # detector can both pass and fail, from committed fixtures).
+          #
+          # The rule is about the TRACK, not the thumb, and that is the whole
+          # point: for most of this control's life the 90px track was laid out
+          # at the flanking "A" label's own x -- the labels were bare inline
+          # spans with no layout box -- so a thumb perfectly contained in its
+          # track still painted over the label at value 0. box_intersection
+          # cannot see that pair at all, because it compares only nodes that
+          # carry TEXT and the thumb is a text-free div.
+          #
+          # The morph slider is DISABLED in every state the probe reaches, so
+          # the thumb here is opacity 0 -- which does not weaken the gate: the
+          # defect is the track's x, and that is state-independent.
+          dump="$SPECTR_ACCEPTANCE_ROOT/hit-target-shots/hit-transport.layout.json"
+          if [ ! -f "$dump" ]; then
+            echo "no verdict: $dump was not written, so the morph row is unmeasured" >&2
+            exit 1
+          fi
+          set +e
+          python3 tools/spectr-detectors/morph_row_clearance.py "$dump"
+          rc=$?
+          set -e
+          # 1 is a finding; 2 is UNMEASURED (wrong surface / no sidecar) and is
+          # never folded into green.
+          if [ "$rc" -ne 0 ]; then exit 1; fi
+          # Negative control against the same live dump: a detector that cannot
+          # redden here is not guarding this build, whatever it printed above.
+          if python3 tools/spectr-detectors/morph_row_clearance.py "$dump" \
+               --plant overlap > /dev/null 2>&1; then
+            echo "the planted overlap did not redden the detector on THIS dump -- "\
+                 "its clean run above proves nothing" >&2
+            exit 1
+          fi
+
       # REPORTING ONLY (continue-on-error). These four drive the built
       # standalone headlessly, so unlike the fixture lane above they need the
       # app and cost minutes, and each can legitimately return "no verdict"

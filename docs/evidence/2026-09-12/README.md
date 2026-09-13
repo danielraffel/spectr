@@ -267,6 +267,63 @@ independent negative controls, because it makes two independent claims:
 `--plant circle` reverts the shape on both components, `--plant overhang`
 keeps the pill and reverts only the travel.
 
+## The morph row — the track was laid out ON the "A" label
+
+> "just noticed the morph slider is overlapping the A"
+
+### `MORPH-ROW-{RED-track-on-a-label,GREEN-track-clear}.layout.json`
+
+Two real `SPECTR_LAYOUT_DUMP` captures of the shipping standalone home screen,
+before and after. The morph control is three flex items — an "A" label, a 90x16
+track, a "B" label — and in RED the first two are at the **same x**:
+
+| node | RED | GREEN |
+|---|---|---|
+| "A" label | `x=758.188 w=5.406` | `x=758.188 w=6.000` |
+| track | `x=758.188 w=90` | `x=770.188 w=90` |
+| "B" label | `x=869.594 w=5.406` | `x=866.188 w=6.000` |
+| clearance left / right | **−5.406** / 21.406 | **6.000** / 6.000 |
+
+So everything painted inside the track landed on the "A" glyph: with both slots
+captured, the 22px pill at value 0 ran `758.188..780.188` and covered the
+5.406px label outright, and the label was invisible in the render.
+
+**This is not what PR #90 did.** Rebuilding the pre-#90 circle thumb (14x14,
+fixed `marginLeft: -7`) against the same document puts it at
+`751.188..765.188` — covering the same label just as completely, and hanging
+7px outside the track as well. The pill inherited the defect; it did not create
+it.
+
+The cause is the labels, not the thumb: `A` and `B` were authored as bare
+`<span>`s, which carry no layout box on the native runtime. Each measured ~0
+main size, Yoga placed it at the row's content origin, and the glyph painted
+there while the next flex item started on top of it. `whiteSpace: "nowrap"`
+alone does **not** fix it — it makes the ink measurable (`0.0` → `6.0`) while
+the layout box stays `5.406` and the track does not move, which is a
+persuasive false fix. The element has to become a box.
+
+### Why `box_intersection.py` did not stop this
+
+It compares only nodes that carry **text**. The thumb is a text-free `div`, so
+the pair a user actually sees was structurally invisible to it and always would
+have been. The one node it could see — the disabled caption's box, which spans
+the whole track and therefore started on the label — it **did** report, as a
+5.4x12px pair. That finding was correct and was dismissed as pre-existing
+because it was identical in the before and after dumps of an unrelated change.
+
+`tools/spectr-detectors/morph_row_clearance.py` states the rule on the
+**track** instead, so it needs no text: the track must clear both flanking
+siblings, nothing inside it may escape it, and it must still be 90px wide (the
+transport row has already absorbed an addition by crushing this control to
+39.5px). Two negative controls — `--plant overlap` restores the RED geometry,
+`--plant crush` restores the 39.5px width — plus the RED fixture above, all
+wired into `tools/ci/detector_selftest.py`, and the gate runs it against the
+live `hit-transport` dump from the build under test.
+
+The live view tree carries the same rule in
+`test/test_native_state_parity.cpp`, where it can be driven at both the idle
+22px and hovered 26px thumb sizes — states no capture reaches, because the
+morph slider is disabled in every one of them.
 ## Dropdown: a letter that commits, and one indicator instead of two
 
 Two defects a user hit on an installed build (`ed71c18`):
@@ -344,3 +401,213 @@ through `Processor::create_view()`: opened with no input (only LEVEL treated),
 after a pointer enters FLARE (FLARE takes the cursor fill, LEVEL keeps its
 bordered selection), and after ArrowDown (the cursor steps off the selection onto
 BOOST). Not committed — regenerate with the probe.
+
+---
+
+# SHORTCUTS — additive marquee selection, and a panel that cannot wrap
+
+From the same testing session on the installed build:
+
+> "it seems like ctrl+drag/click lets you select with rubberband style
+> selection — could we allow for ctrl+shift+drag so you can select a section
+> then move mouse and select another area that's not continuous?"
+>
+> "also in tips could we prevent line wrapping?"
+
+## What the modifier actually is
+
+The panel reads **⌘+DRAG**, and the handler reads
+`const meta = e.metaKey || e.ctrlKey`, so Command **and** Control have both
+always worked — "ctrl" and the panel's Command glyph are the same gesture. The
+new binding is **⌘⇧+DRAG** (Control+Shift equally), and the notation stays as
+it was. `Spectr-materialized-additive-marquee` asserts both spellings reach
+the same handler.
+
+## Selection was already a set, so this was an input change
+
+`const [selection, setSelection] = useState(() => new Set())`. A discontiguous
+selection has always been representable; the old move handler simply rebuilt
+from an empty set on every pointer sample. Had it been a start/end range this
+would have been a data-model change, and `DRAG SEL — Group move` would have
+needed rethinking over a discontiguous set; it did not, and `groupStart`
+already snapshots `new Map([...selection]...)`, which is order-independent.
+
+The gesture **toggles** against the selection frozen at press, so
+`Add/remove selection` is accurate in both directions. Frozen, not live:
+toggling against the live set flips a band again on every sample the pointer
+spends inside it, so the selection strobes and a long drag lands on parity
+rather than on a selection. `--plant-live-toggle` reproduces exactly that
+(`[2,3,4,5,6,21,24]` where `[2,3,4,5,6,20,21,22,23,24]` was wanted).
+
+## ⇧+CLICK was advertising a gesture that does not exist
+
+`shiftKey` is read in exactly **two** places in the whole document: the pointer
+handler, where it starts the **mute brush** — which the row two lines above
+already documents as `SHIFT+DRAG — Mute/unmute band range` — and a keydown
+guard that *ignores* the event when shift is held. Nothing anywhere modified
+the selection on a shift-click. The row was replaced rather than relabelled:
+a panel that describes a gesture inaccurately is worse than one that omits it.
+
+| before | after |
+|---|---|
+| `DRAG — Edit bands (mode-dependent)` | `DRAG — Edit bands` |
+| `⇧+CLICK — Add/remove from selection` *(dead)* | `⌘⇧+DRAG — Add/remove selection` |
+
+## The panel is not laid out live, so the capture had to move with the label
+
+Measured, not assumed: every captured help-panel row top reproduces in the
+shipping standalone to the exact fraction of a pixel (row 4 captured at
+`top=108.1875` renders at `y=557.42` against a panel top of `449.23`). The
+help panel's geometry comes entirely from the captured layout bindings in
+`native-ui/materialized/runtime.js`, which pin absolute position and explicit
+width/height per row.
+
+So shortening a label alone leaves its row pinned at the two-line box it was
+captured with. `SHORTCUT-PANEL-CONTROL-stale-capture.png` is that build: the
+text is correct and short, and it floats above its own key chip with a hole
+beneath it. `SHORTCUT-PANEL-RED-stale-capture.layout.json` is its dump — every
+row reports ONE line, so line height cannot see it at all. Row **pitch** can:
+23.30px throughout a healthy panel, 22.16..39.14 there.
+
+## Wrapping is prevented, not just fixed
+
+Every captured single-line row in this panel measures exactly `6.5px` per
+character, and the wrap budget is the row width minus the description's left
+offset. At the old `minWidth: 280` that was `250 - 94 = 156px`, i.e. **24
+characters**, against a longest surviving row of 22. That is not headroom, and
+a row that outgrows it wraps silently.
+
+`white-space: nowrap` would have been the wrong fix: it trades a visible wrap
+for an invisible clip. The panel is `330px` instead (budget `206px` / 31
+characters), and `tools/spectr-detectors/shortcut_panel_single_line.py` asserts
+the budget against the shipping artifact with no build at all, so the next
+entry fails at review instead of on someone's screen.
+
+## Evidence
+
+| file | what |
+|---|---|
+| `SHORTCUT-PANEL-before-after.png` | the panel at `ed71c18` and after |
+| `SHORTCUT-PANEL-RED-wrapped.layout.json` | the shipped build's own capture: two rows at `h=32.0` |
+| `SHORTCUT-PANEL-RED-stale-capture.layout.json` | labels fixed, capture left behind |
+| `SHORTCUT-PANEL-CONTROL-stale-capture.png` | what that looks like |
+| `SHORTCUT-PANEL-GREEN-single-line.layout.json` | all twelve rows `h=16.0`, pitch `23.30..23.30` |
+
+Both `RED` fixtures are captures of real builds, not plants, and both are wired
+into `tools/ci/detector_selftest.py` alongside four plants. The change itself
+is replayable: `tools/patch_materialized_selection_shortcuts.py` re-derives the
+pre-change capture from its own model and refuses to emit geometry if it
+cannot reproduce it.
+
+## Not fixed here, and pre-existing on `ed71c18`
+
+Both reproduce with `native-ui/` restored byte-identical to `origin/main`:
+
+* `the settings copy button centres its feedback and answers a press` —
+  `26.0f < 25.0f` (the known copy-button width row).
+* `native host automation projects through the compact live frame lane` —
+  `compact live-state did not draw current values directly`.
+## Preset dropdown: every row caption on one column
+
+> "because you aligned the keycommand shortcut it looks like manage is aligned
+> to the left different from the other items in the preset dropdown. can we make
+> sure they all have padding"
+
+`PRESET-CAPTION-BEFORE-AFTER.png` is the bottom of the open preset dropdown,
+same 236x118 design-px region, 3x nearest-neighbour, before on the left.
+
+### Measured leading ink, `SPECTR_CLICK='[data-spectr-menu-root="pattern"] button'`
+
+| row | ink x BEFORE | ink x AFTER |
+|---|---|---|
+| `FLAT` (carries the default ★) | 407.09 | 407.09 |
+| `HARMONIC SERIES` | 394.09 | 394.09 |
+| `ALTERNATING` | 394.09 | 394.09 |
+| `COMB` | 394.09 | 394.09 |
+| `VOCAL FORMANTS` | 394.09 | 394.09 |
+| `SUB ONLY (< 160 Hz)` | 394.09 | 394.09 |
+| `DOWNWARD TILT` | 394.09 | 394.09 |
+| `AIR LIFT (4k+)` | 394.09 | 394.09 |
+| **`SAVE CURRENT…`** | **385.09** | **395.09** |
+| **`MANAGE…`** | **385.09** | **395.09** |
+
+Both bottom rows were **9.00px left** of the factory column, not one of them:
+the row the eye catches is MANAGE, because it is the last row and carries a
+chip, but `SAVE CURRENT…` sat on exactly the same wrong column.
+
+### Why, and why the earlier repair did not reach it
+
+A **bare text child** of one of these rows does not take the row's horizontal
+padding; a child **box** does. The eight factory rows already drew their caption
+in a `<span>`, so `menuItem`'s `padding: "7px 10px"` reached them. `SAVE
+CURRENT…` was `display: "block"` with a bare text child and painted at its row's
+own left edge. When the MANAGE chip landed, its caption was wrapped in a span to
+make room for the trailing chip — which moved it *onto* the padded column and
+therefore *away from* its neighbour, so the row's left padding was zeroed to put
+it back. That made the two bottom rows agree with each other on the wrong
+column.
+
+Both captions are boxes now, reading one shared `spectrMenuItemCaptionStyle()`,
+and neither row carries a compensating offset: `menuItem` is taken unmodified.
+
+`SAVE CURRENT…` also gained vertical centring it never had — as a bare text
+child it sat at the top of its 28px row (y 757.50); it now sits at y 764.50,
+the same +7 every other row uses.
+
+### The chip did not move
+
+| | chip right | row right | inset |
+|---|---|---|---|
+| EDIT MODE `S L B F G` | 405.03 | 416.03 | **11.00** |
+| preset `⇧⌘P` | 583.09 | 594.09 | **11.00** |
+
+`shortcut_chip_trailing_edge.py` reports `delta=0.00 (tol 0.75)` — the same
+number it reported when the chip landed.
+
+### The 1.00px residual, stated rather than hidden
+
+`SAVE CURRENT…` and `MANAGE…` measure 395.09 against the factory column's
+394.09. That 1.00px is **not** this row's styling: those two rows are nested one
+level deeper than the factory rows, inside the grouping div that carries the
+separator rule, and that div's own box sits 1.00px right of its siblings. It is
+**not** the div's `borderTop` — that was measured, by building with the border
+removed: the captions stayed at 395.09 and only y moved. That also matches
+`apply_border_widths` in Pulp's `yoga_layout.cpp`, where a per-side border with
+no uniform shorthand resolves the other three edges to 0. Left in place rather
+than compensated for: a hand offset here is what produced the 9px defect above.
+
+### Artifacts
+
+| file | what it shows |
+|---|---|
+| `PRESET-CAPTION-RED-flush-left.layout.json` | the shipped defect, captured: both bottom captions at 385.09 |
+| `PRESET-CAPTION-GREEN-column.layout.json` | after: 395.09, within tolerance of the 394.09 column |
+| `PRESET-CAPTION-BEFORE-AFTER.png` | the same region rendered, 3x |
+
+### Why `menu_item_caption_uniformity.py` was green through all of it
+
+Its docstring named the leading-edge rule from the day it landed — *"a caption
+... falls back to its owner's left edge, so one row sits flush-left against an
+otherwise uniform column"* — and the implementation only ever compared line-box
+**height**. `rect.x` appeared once, as a 100px-wide band filter (370..470) used
+to choose which boxes to collect. 385.09 and 394.09 both sit inside that band,
+so the fallen-back captions were collected, reported `h=14.00` like everything
+else, and the detector printed PASS. It is the detector written for this exact
+defect and it could not see it.
+
+It now compares the leading edge as well, against the column the majority of
+captions agree on, with an indent allowed only for a row that publishes a
+leading marker glyph and an outdent never allowed. It reads a committed dump as
+well as a live app, so it is wired into `tools/ci/detector_selftest.py` (63 → 67
+cases, 19 → 20 detectors) with four cases: the GREEN capture, the RED capture,
+and two plants.
+
+### Negative controls
+
+| arm | result |
+|---|---|
+| the detector on the real **pre-fix** capture | exit 1 — both bottom captions, `-9.00 px` each |
+| `--plant left-fallback` on the GREEN capture | exit 1 |
+| `--plant tall-caption` on the GREEN capture | exit 1 |
+| the detector on the GREEN capture and on the live app | exit 0 |
+| `detector_selftest.py --plant` | fails, as it must |

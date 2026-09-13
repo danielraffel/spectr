@@ -197,6 +197,56 @@ CASES: list[tuple[str, str, int, list[str]]] = [
     ("slider_thumb_pill_shape", "plant: put the overhanging travel back", 1,
      [f(D, "slider_thumb_pill_shape.py"), "--plant", "overhang"]),
 
+    # WHERE that pill is allowed to travel. `slider_thumb_pill_shape` proves
+    # the thumb stays inside its track; this proves the TRACK stays off the
+    # flanking "A"/"B" labels, which for most of the control's life it did not
+    # -- the labels were bare spans with no layout box, so the track began at
+    # the "A" glyph's own x and the thumb covered it at value 0. The RED
+    # fixture is a real capture of exactly that.
+    #
+    # `box_intersection` could never have caught it: it compares only nodes
+    # carrying TEXT, and the thumb is a text-free div. The one node it could
+    # see -- the disabled caption's box, starting on the label -- it DID
+    # report, and that finding was waved through as pre-existing because it
+    # was identical before and after an unrelated change.
+    ("morph_row_clearance", "track clears both flanking labels", 0,
+     [f(D, "morph_row_clearance.py"),
+      f(E12, "MORPH-ROW-GREEN-track-clear.layout.json")]),
+    ("morph_row_clearance", "known-bad fixture (track laid out on the A "
+     "label)", 1,
+     [f(D, "morph_row_clearance.py"),
+      f(E12, "MORPH-ROW-RED-track-on-a-label.layout.json")]),
+    ("morph_row_clearance", "plant: put the track back on the A label", 1,
+     [f(D, "morph_row_clearance.py"),
+      f(E12, "MORPH-ROW-GREEN-track-clear.layout.json"), "--plant", "overlap"]),
+    ("morph_row_clearance", "plant: crush the track the way the row once did",
+     1,
+     [f(D, "morph_row_clearance.py"),
+      f(E12, "MORPH-ROW-GREEN-track-clear.layout.json"), "--plant", "crush"]),
+    # issue 2 / the preset dropdown: every row caption starts on ONE column.
+    # This detector shipped with a docstring that named the leading-edge rule
+    # and an implementation that only compared line-box HEIGHT, so it was green
+    # through the whole life of the defect below -- SAVE CURRENT... and
+    # MANAGE... painting 9px left of the eight factory rows, which a user
+    # reported by eye. The RED fixture is the real capture of that shipped
+    # state, not a synthetic one.
+    ("menu_item_caption_uniformity", "every caption on one column", 0,
+     [f(D, "menu_item_caption_uniformity.py"),
+      f(E12, "PRESET-CAPTION-GREEN-column.layout.json")]),
+    ("menu_item_caption_uniformity",
+     "known-bad fixture (SAVE CURRENT / MANAGE 9px flush left)", 1,
+     [f(D, "menu_item_caption_uniformity.py"),
+      f(E12, "PRESET-CAPTION-RED-flush-left.layout.json")]),
+    ("menu_item_caption_uniformity",
+     "plant: captions fall back to the row's own left edge", 1,
+     [f(D, "menu_item_caption_uniformity.py"),
+      f(E12, "PRESET-CAPTION-GREEN-column.layout.json"),
+      "--plant", "left-fallback"]),
+    ("menu_item_caption_uniformity", "plant: one caption's line box grows", 1,
+     [f(D, "menu_item_caption_uniformity.py"),
+      f(E12, "PRESET-CAPTION-GREEN-column.layout.json"),
+      "--plant", "tall-caption"]),
+
     # the hit-target lane: a control must be reachable over the area it paints
     ("hit_target_reach", "settings toggles + sliders reach their paint", 0,
      [f(D, "hit_target_reach.py"),
@@ -378,7 +428,7 @@ CASES: list[tuple[str, str, int, list[str]]] = [
     # getGeom expressions -- never a constant, so 32/64 bands and any window
     # size stay covered.
     ("materialized_curve_edge_span",
-     "response and dsp curves span the outer band edges", 0,
+     "curves break at mutes and span each run's band edges", 0,
      [f("test", "test_materialized_curve_edge_span.mjs"),
       f("native-ui", "materialized", "materialized-document.runtime.json")]),
     ("materialized_curve_edge_span",
@@ -396,7 +446,51 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f("test", "test_materialized_curve_edge_span.mjs"),
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-geometry-follows-view"]),
+    # The exact form the user reported: both outer plot edges reached, but the
+    # line still plunges across every interior mute, so an audible group's
+    # curve trails past its own edge. A suite that cannot reject this does not
+    # cover the defect it was written for.
+    ("materialized_curve_edge_span",
+     "plant: the response line spans muted bands again", 1,
+     [f("test", "test_materialized_curve_edge_span.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-response-spans-mutes"]),
+    ("materialized_curve_edge_span",
+     "plant: the iir fill slides under muted bands again", 1,
+     [f("test", "test_materialized_curve_edge_span.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-fill-spans-mutes"]),
 
+    # Morph moves the viewport. Four plants rather than one because each is a
+    # DIFFERENT wrong implementation that fails a different assertion, and a
+    # single plant that trips everything cannot show which check is load
+    # bearing. `--plant-snap` is the defect this shipped to fix; `--plant-linear`
+    # is the plausible wrong fix, and the only reason the midpoint assertion
+    # exists.
+    ("materialized_morph_viewport",
+     "morph interpolates the window in log space and commits nothing live", 0,
+     [f("test", "test_materialized_morph_viewport.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json")]),
+    ("materialized_morph_viewport",
+     "plant: the window snaps at the midpoint instead of interpolating", 1,
+     [f("test", "test_materialized_morph_viewport.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-snap"]),
+    ("materialized_morph_viewport",
+     "plant: the window is interpolated linearly in Hz, not in log space", 1,
+     [f("test", "test_materialized_morph_viewport.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-linear"]),
+    ("materialized_morph_viewport",
+     "plant: the morph settles the viewport on every pointer sample", 1,
+     [f("test", "test_materialized_morph_viewport.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-live-commit"]),
+    ("materialized_morph_viewport",
+     "plant: the morph ignores the viewport playback switch", 1,
+     [f("test", "test_materialized_morph_viewport.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-ignore-switch"]),
     # The two defects a user hit on an installed build: a shortcut letter that
     # highlighted without committing or closing, and an opened menu showing a
     # selection AND a keyboard cursor on a different row. Both detectors drive
@@ -423,6 +517,71 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(D, "dropdown_single_selection_indicator.py"),
       "--log", f(E12, "DROPDOWN-INDICATOR-open-with-level-selected.probe.txt"),
       "--plant"]),
+
+    # The marquee's RESULT. A discontiguous selection has no layout node, so
+    # this runs the shipping document's own pointer handlers and asserts the
+    # selection SET -- both regions present, the gap between them absent, and
+    # the drag's answer invariant to how densely the pointer was sampled.
+    # Every plant is a defect a "the handler fired" test would have passed.
+    # No --expect-fail here: this harness owns the inversion, and passing both
+    # would double-invert and quietly assert the opposite of the intent.
+    ("materialized_additive_marquee",
+     "one drag adds a second region and another takes it back", 0,
+     [f("test", "test_materialized_additive_marquee.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json")]),
+    ("materialized_additive_marquee",
+     "plant: the second marquee wipes the first again", 1,
+     [f("test", "test_materialized_additive_marquee.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-replaces"]),
+    ("materialized_additive_marquee",
+     "plant: add-only, so the row's label over-promises", 1,
+     [f("test", "test_materialized_additive_marquee.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-add-only"]),
+    ("materialized_additive_marquee",
+     "plant: toggle against the live selection, so the drag strobes", 1,
+     [f("test", "test_materialized_additive_marquee.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-live-toggle"]),
+
+    # Two SHORTCUTS rows wrapped in the shipped build. The RED fixture is that
+    # build's own capture, so the known-bad case is evidence rather than a
+    # plant; the budget cases read the shipping artifact and need no capture
+    # at all, which is the half that catches the row nobody has written yet.
+    ("shortcut_panel_single_line", "every rendered row is one line", 0,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E12, "SHORTCUT-PANEL-GREEN-single-line.layout.json")]),
+    ("shortcut_panel_single_line",
+     "known-bad fixture (the shipped build's two wrapped rows)", 1,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E12, "SHORTCUT-PANEL-RED-wrapped.layout.json")]),
+    # The half-applied change: labels shortened, the panel's own capture left
+    # behind. Every row reports ONE line and still renders with its label
+    # floating above its key chip, because the row box is the two-line box it
+    # was captured with. Only the pitch sees it.
+    ("shortcut_panel_single_line",
+     "known-bad fixture (labels fixed, capture left stale)", 1,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E12, "SHORTCUT-PANEL-RED-stale-capture.layout.json")]),
+    ("shortcut_panel_single_line", "plant: stretch the pitch under one row", 1,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E12, "SHORTCUT-PANEL-GREEN-single-line.layout.json"),
+      "--plant", "stretched-row"]),
+    ("shortcut_panel_single_line", "plant: double one row's line box", 1,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E12, "SHORTCUT-PANEL-GREEN-single-line.layout.json"),
+      "--plant", "wrapped-row"]),
+    ("shortcut_panel_single_line", "budget alone, no capture", 0,
+     [f(D, "shortcut_panel_single_line.py"), "--budget-only"]),
+    ("shortcut_panel_single_line",
+     "plant: restore the wording that wrapped", 1,
+     [f(D, "shortcut_panel_single_line.py"), "--budget-only",
+      "--plant", "long-label"]),
+    ("shortcut_panel_single_line",
+     "plant: the pre-change 280px panel, which had no headroom", 1,
+     [f(D, "shortcut_panel_single_line.py"), "--budget-only",
+      "--plant", "narrow-panel"]),
 ]
 
 
@@ -446,8 +605,10 @@ def main() -> int:
     for det, module in sorted(DETECTOR_REQUIREMENTS.items()):
         if any(c[0] == det for c in cases) and not importlib.util.find_spec(module):
             unavailable.append((det, module))
-    if NODE is None and any(interpreter(c[3]) is None for c in cases):
-        unavailable.append(("materialized_clear_and_mute_overlay", "node"))
+    if NODE is None:
+        for det in sorted({c[0] for c in cases
+                           if interpreter(c[3]) is None}):
+            unavailable.append((det, "node"))
     if unavailable:
         skipped = {d for d, _ in unavailable}
         cases = [c for c in cases if c[0] not in skipped]

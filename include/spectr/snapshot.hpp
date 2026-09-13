@@ -17,12 +17,31 @@
 //   - the selected layout (so switching layouts doesn't quietly drop
 //     bands during a morph)
 //
-// Morph interpolates per-band gain_db linearly in dB space (matches
-// the slider's mental model: at t=0.5 the gain sits halfway between
-// A and B in dB terms). Mute state is picked from whichever slot
-// dominates at the current t (A below 0.5, B at/above). Viewport and
-// layout do NOT morph continuously — they snap to whichever slot
-// dominates to avoid nonsensical fractional band counts.
+// The governing rule is: a snapshot captures EVERYTHING, and morph
+// selectively applies the dimensions it can carry continuously.
+// Capture is never the place to decide what morph does — a capture-time
+// choice discards information the user cannot get back, and leaves the
+// ambiguous case where A and B were captured under different choices.
+//
+//   - gain_db   morphs. Linear in dB space, matching the slider's mental
+//               model: at t=0.5 the gain sits halfway between A and B in
+//               dB terms.
+//   - muted     does not interpolate — it is a discrete sentinel, not a
+//               level. It is picked from whichever slot dominates at the
+//               current t (A below 0.5, B at/above).
+//   - viewport  morphs, in LOG-frequency space, and only when the caller
+//               asks for it (see `morph_viewports`). The frequency axis is
+//               logarithmic, so a linear lerp of min_hz/max_hz would crawl
+//               through the low end, which is where most of the visual and
+//               audible action is. In Spectr the viewport is sound-defining
+//               state, not camera state — it sets the band↔frequency mapping
+//               the spectral mask is built from — so morphing it changes
+//               what is heard, not merely what is drawn.
+//   - layout    does NOT morph. Band count is discrete, and the five
+//               selectable counts (32/40/48/56/64) do not nest on a common
+//               band grid, so there is no lossless representation of two
+//               different layouts to interpolate between. Morph therefore
+//               leaves the active layout exactly where it is.
 
 #include <array>
 #include <cstddef>
@@ -92,5 +111,22 @@ void morph_fields(BandField& out,
                   const BandField& a,
                   const BandField& b,
                   float t) noexcept;
+
+/// Interpolate two viewports at t ∈ [0, 1]. Values outside the range are
+/// clamped.
+///
+/// The interpolation is performed on log(min_hz) and log(max_hz), then
+/// converted back, so a sweep moves by a constant RATIO per unit t rather
+/// than by a constant number of Hz. Concretely: morphing 20 Hz → 2000 Hz
+/// passes through 200 Hz at the midpoint, not 1010 Hz. A linear lerp would
+/// spend almost the whole sweep in the top octave.
+///
+/// An invalid endpoint cannot be interpolated through, so the dominant slot
+/// (A below t=0.5, B at/above) is returned unchanged in that case; if both
+/// are invalid the default viewport is returned. The result always satisfies
+/// `Viewport::valid()`.
+Viewport morph_viewports(const Viewport& a,
+                         const Viewport& b,
+                         float t) noexcept;
 
 } // namespace spectr

@@ -126,6 +126,11 @@ choc::value::Value snapshot_projection_(const FieldSnapshot& snapshot,
     }
     result.addMember("gain_db", gains);
     result.addMember("muted", muted);
+    // The captured window. A snapshot has always stored it; projecting it is
+    // what lets the editor draw a morph that moves the viewport without
+    // asking the processor for the endpoints on every pointer sample.
+    result.addMember("min_hz", static_cast<double>(snapshot.viewport.min_hz));
+    result.addMember("max_hz", static_cast<double>(snapshot.viewport.max_hz));
     return result;
 }
 
@@ -272,7 +277,15 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
         plugin.editor_mode_param(kParamEditMode)));
     payload.addMember("visualization_mode", static_cast<double>(
         plugin.editor_mode_param(kParamVisualization)));
-    payload.addMember("modulation", make_modulation_payload_(plugin));
+    auto modulation = make_modulation_payload_(plugin);
+    // Whether a morph moves the viewport is drawn in the same Settings group
+    // as the LFO lanes, but unlike them it is not a host parameter and cannot
+    // change under automation. It therefore belongs here, in the hydration
+    // payload the panel reads once, and deliberately NOT in the live
+    // per-revision projection, which stays exactly the automatable lanes.
+    modulation.addMember("morph_applies_viewport",
+                         plugin.morph_applies_viewport());
+    payload.addMember("modulation", modulation);
     payload.addMember("snapshots", snapshots);
     payload.addMember("patterns_json", plugin.patterns().export_json());
     return payload;
@@ -646,6 +659,17 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             return plugin.set_modulation_target_mask(mask)
                 ? EditorBridge::ok_response()
                 : EditorBridge::err_response("modulation target state unavailable");
+        });
+
+    bridge.add_handler("morph_viewport_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("enabled"))
+                return EditorBridge::err_response("enabled missing");
+            const auto& flag = p["enabled"];
+            if (!flag.isBool())
+                return EditorBridge::err_response("enabled must be a boolean");
+            plugin.set_morph_applies_viewport(flag.getBool());
+            return EditorBridge::ok_response();
         });
 }
 
