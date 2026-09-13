@@ -438,3 +438,291 @@ TEST_CASE("M8 plugin-state v1 blob loads with an empty snapshot bank") {
     CHECK_FALSE(s.snapshots().has(SnapshotBank::Slot::A));
     CHECK_FALSE(s.snapshots().has(SnapshotBank::Slot::B));
 }
+
+// ── Morph moves the viewport ────────────────────────────────────────────
+//
+// A snapshot has always captured its viewport; until now morph ignored it,
+// so the bands blended while the window they are drawn in — and masked with
+// — snapped. These cover the interpolation itself, the playback switch that
+// governs whether morph applies it, and the two paths that derive it.
+//
+// The midpoint is the load-bearing assertion in every one of them: a test
+// that only pins t=0 and t=1 passes unchanged against the broken behaviour,
+// because snapping already produced the right answer at both ends.
+
+TEST_CASE("morph_viewports: ends are exact") {
+    const Viewport a{20.0f, 2000.0f};
+    const Viewport b{200.0f, 20000.0f};
+    CHECK(spectr::morph_viewports(a, b, 0.0f).min_hz == Approx(20.0f));
+    CHECK(spectr::morph_viewports(a, b, 0.0f).max_hz == Approx(2000.0f));
+    CHECK(spectr::morph_viewports(a, b, 1.0f).min_hz == Approx(200.0f));
+    CHECK(spectr::morph_viewports(a, b, 1.0f).max_hz == Approx(20000.0f));
+}
+
+TEST_CASE("morph_viewports: the midpoint is the geometric mean and not the arithmetic one") {
+    // The whole point of the feature. 20 -> 2000 Hz is two decades, so half
+    // way along the LOG axis is 200 Hz. A linear lerp would answer 1010 Hz,
+    // which is 0.7 decades from the top and 1.3 from the bottom: the sweep
+    // would cross most of the visible range in its first fifth and then crawl.
+    const Viewport a{20.0f, 200.0f};
+    const Viewport b{2000.0f, 20000.0f};
+    const auto mid = spectr::morph_viewports(a, b, 0.5f);
+
+    CHECK(mid.min_hz == Approx(200.0f).epsilon(0.0005));
+    CHECK(mid.max_hz == Approx(2000.0f).epsilon(0.0005));
+
+    // Stated as the property rather than the number, so this fails for any
+    // interpolation that is not log-linear, not just for the linear one.
+    CHECK(mid.min_hz == Approx(std::sqrt(a.min_hz * b.min_hz)).epsilon(0.0005));
+    CHECK(mid.max_hz == Approx(std::sqrt(a.max_hz * b.max_hz)).epsilon(0.0005));
+
+    // And the discriminating negative: linear would land here.
+    const float linear_min = a.min_hz + (b.min_hz - a.min_hz) * 0.5f;
+    CHECK(linear_min == Approx(1010.0f));
+    CHECK(mid.min_hz != Approx(linear_min).epsilon(0.01));
+}
+
+TEST_CASE("morph_viewports: equal ratio steps across a sweep") {
+    // Log-linear means every equal step in t multiplies the bound by the same
+    // factor. Sampling the ratio across the sweep catches an interpolation
+    // that is right at the ends and midpoint but wrong in between.
+    const Viewport a{20.0f, 200.0f};
+    const Viewport b{2000.0f, 20000.0f};
+    REQUIRE(a.valid());
+    REQUIRE(b.valid());
+    float previous = a.min_hz;
+    float first_ratio = 0.0f;
+    for (int step = 1; step <= 10; ++step) {
+        const float t = static_cast<float>(step) / 10.0f;
+        const float current = spectr::morph_viewports(a, b, t).min_hz;
+        const float ratio = current / previous;
+        if (step == 1) first_ratio = ratio;
+        else CHECK(ratio == Approx(first_ratio).epsilon(0.002));
+        previous = current;
+    }
+    CHECK(first_ratio > 1.0f);
+}
+
+TEST_CASE("morph_viewports: clamps t and always returns a usable window") {
+    const Viewport a{20.0f, 2000.0f};
+    const Viewport b{200.0f, 20000.0f};
+    CHECK(spectr::morph_viewports(a, b, -5.0f).min_hz == Approx(20.0f));
+    CHECK(spectr::morph_viewports(a, b, +5.0f).min_hz == Approx(200.0f));
+    for (int step = 0; step <= 20; ++step) {
+        const auto v = spectr::morph_viewports(
+            a, b, static_cast<float>(step) / 20.0f);
+        CHECK(v.valid());
+    }
+}
+
+TEST_CASE("morph_viewports: an invalid endpoint falls back to the dominant slot") {
+    const Viewport good{20.0f, 2000.0f};
+    Viewport bad;
+    bad.min_hz = 0.0f;      // fails Viewport::valid()
+    bad.max_hz = 100.0f;
+    REQUIRE_FALSE(bad.valid());
+
+    CHECK(spectr::morph_viewports(good, bad, 0.25f).min_hz == Approx(20.0f));
+    CHECK(spectr::morph_viewports(bad, good, 0.75f).min_hz == Approx(20.0f));
+    CHECK(spectr::morph_viewports(bad, bad, 0.5f).valid());
+}
+
+TEST_CASE("morph moves the viewport at the midpoint and not only at the ends") {
+    Spectr s;
+    pulp::state::StateStore store;
+    s.define_parameters(store);
+    s.set_state_store(&store);
+    REQUIRE(s.morph_applies_viewport());
+
+    s.viewport() = Viewport{20.0f, 200.0f};
+    s.capture_snapshot(SnapshotBank::Slot::A);
+    s.viewport() = Viewport{2000.0f, 20000.0f};
+    s.capture_snapshot(SnapshotBank::Slot::B);
+
+    s.apply_morph_to_live(0.0f);
+    CHECK(s.viewport().min_hz == Approx(20.0f).epsilon(0.001));
+    s.apply_morph_to_live(1.0f);
+    CHECK(s.viewport().min_hz == Approx(2000.0f).epsilon(0.001));
+
+    // The assertion the broken behaviour cannot satisfy: snapping answers
+    // 20 below 0.5 and 2000 at/above it, never 200.
+    s.apply_morph_to_live(0.5f);
+    CHECK(s.viewport().min_hz == Approx(200.0f).epsilon(0.001));
+    CHECK(s.viewport().max_hz == Approx(2000.0f).epsilon(0.001));
+}
+
+TEST_CASE("the viewport switch is a playback switch: capture always stores the window") {
+    Spectr s;
+    pulp::state::StateStore store;
+    s.define_parameters(store);
+    s.set_state_store(&store);
+
+    // Captured with the switch OFF — the window must still be recorded, or
+    // turning the switch on later could not work.
+    s.set_morph_applies_viewport(false);
+    s.viewport() = Viewport{20.0f, 200.0f};
+    s.capture_snapshot(SnapshotBank::Slot::A);
+    s.viewport() = Viewport{2000.0f, 20000.0f};
+    s.capture_snapshot(SnapshotBank::Slot::B);
+
+    CHECK(s.snapshots().a.viewport.min_hz == Approx(20.0f));
+    CHECK(s.snapshots().b.viewport.min_hz == Approx(2000.0f));
+
+    s.viewport() = Viewport{100.0f, 1000.0f};
+    s.apply_morph_to_live(0.5f);
+    CHECK(s.viewport().min_hz == Approx(100.0f));   // untouched
+    CHECK(s.viewport().max_hz == Approx(1000.0f));
+
+    // Re-enabling just works, from the information capture never discarded.
+    s.set_morph_applies_viewport(true);
+    s.apply_morph_to_live(0.5f);
+    CHECK(s.viewport().min_hz == Approx(200.0f).epsilon(0.001));
+}
+
+TEST_CASE("the switch off leaves the viewport untouched across a whole sweep") {
+    Spectr s;
+    pulp::state::StateStore store;
+    s.define_parameters(store);
+    s.set_state_store(&store);
+
+    s.viewport() = Viewport{20.0f, 200.0f};
+    s.capture_snapshot(SnapshotBank::Slot::A);
+    s.viewport() = Viewport{2000.0f, 20000.0f};
+    s.capture_snapshot(SnapshotBank::Slot::B);
+
+    s.set_morph_applies_viewport(false);
+    const Viewport parked{440.0f, 4400.0f};
+    s.viewport() = parked;
+
+    for (int step = 0; step <= 20; ++step) {
+        s.apply_morph_to_live(static_cast<float>(step) / 20.0f);
+        CHECK(s.viewport().min_hz == Approx(parked.min_hz));
+        CHECK(s.viewport().max_hz == Approx(parked.max_hz));
+    }
+    // The bands still morphed — "off" must disable the viewport, not morph.
+    CHECK(s.field().bands[0].gain_db == Approx(0.0f));
+}
+
+TEST_CASE("flipping the switch mid-sweep never strands the viewport") {
+    Spectr s;
+    pulp::state::StateStore store;
+    s.define_parameters(store);
+    s.set_state_store(&store);
+
+    s.viewport() = Viewport{20.0f, 200.0f};
+    s.capture_snapshot(SnapshotBank::Slot::A);
+    s.viewport() = Viewport{2000.0f, 20000.0f};
+    s.capture_snapshot(SnapshotBank::Slot::B);
+
+    s.apply_morph_to_live(0.25f);
+    const float at_quarter = s.viewport().min_hz;
+    CHECK(at_quarter > 20.0f);
+    CHECK(at_quarter < 200.0f);
+
+    // Disabling parks the user on the window they are looking at, rather than
+    // yanking them back to either endpoint.
+    s.set_morph_applies_viewport(false);
+    CHECK(s.viewport().min_hz == Approx(at_quarter));
+    s.apply_morph_to_live(0.75f);
+    CHECK(s.viewport().min_hz == Approx(at_quarter));
+
+    // Re-enabling resumes from the live morph value, not from where it left.
+    s.set_morph_applies_viewport(true);
+    s.apply_morph_to_live(0.75f);
+    CHECK(s.viewport().min_hz
+          == Approx(spectr::morph_viewports(s.snapshots().a.viewport,
+                                            s.snapshots().b.viewport,
+                                            0.75f).min_hz).epsilon(0.001));
+    CHECK(s.viewport().valid());
+}
+
+TEST_CASE("morph never changes the layout") {
+    // Band count is discrete and the five selectable counts do not share a
+    // band grid, so there is nothing to interpolate. Morph leaves the active
+    // layout alone even when the two slots were captured under different ones.
+    Spectr s;
+    pulp::state::StateStore store;
+    s.define_parameters(store);
+    s.set_state_store(&store);
+
+    s.set_layout(Layout::Bands32);
+    s.capture_snapshot(SnapshotBank::Slot::A);
+    s.set_layout(Layout::Bands64);
+    s.capture_snapshot(SnapshotBank::Slot::B);
+    s.set_layout(Layout::Bands48);
+
+    for (int step = 0; step <= 10; ++step) {
+        s.apply_morph_to_live(static_cast<float>(step) / 10.0f);
+        CHECK(s.layout() == Layout::Bands48);
+    }
+    CHECK(s.snapshots().a.layout == Layout::Bands32);
+    CHECK(s.snapshots().b.layout == Layout::Bands64);
+}
+
+TEST_CASE("a morph-derived viewport survives a plugin-state round trip") {
+    Spectr a;
+    pulp::state::StateStore store_a;
+    a.define_parameters(store_a);
+    a.set_state_store(&store_a);
+
+    a.viewport() = Viewport{20.0f, 200.0f};
+    a.capture_snapshot(SnapshotBank::Slot::A);
+    a.viewport() = Viewport{2000.0f, 20000.0f};
+    a.capture_snapshot(SnapshotBank::Slot::B);
+    a.apply_morph_to_live(0.5f);
+    const float derived = a.viewport().min_hz;
+    REQUIRE(derived == Approx(200.0f).epsilon(0.001));
+
+    const auto bytes = a.serialize_plugin_state();
+    REQUIRE_FALSE(bytes.empty());
+
+    Spectr b;
+    pulp::state::StateStore store_b;
+    b.define_parameters(store_b);
+    b.set_state_store(&store_b);
+    // The morph parameter rides the base state blob, so mirror it the way a
+    // host would before handing over the supplemental bytes.
+    store_b.set_value(spectr::kParamMorph, store_a.get_value(spectr::kParamMorph));
+    REQUIRE(b.deserialize_plugin_state(bytes));
+
+    CHECK(b.morph_applies_viewport());
+    CHECK(b.viewport().min_hz == Approx(derived).epsilon(0.001));
+}
+
+TEST_CASE("plugin state round-trips the viewport switch and absence reads as enabled") {
+    Spectr a;
+    pulp::state::StateStore store_a;
+    a.define_parameters(store_a);
+    a.set_state_store(&store_a);
+    a.set_morph_applies_viewport(false);
+
+    const auto bytes = a.serialize_plugin_state();
+    Spectr b;
+    pulp::state::StateStore store_b;
+    b.define_parameters(store_b);
+    b.set_state_store(&store_b);
+    REQUIRE(b.deserialize_plugin_state(bytes));
+    CHECK_FALSE(b.morph_applies_viewport());
+
+    // A writer that predates the switch omits the member. Reading that as
+    // DISABLED would open an old session with the feature mysteriously off.
+    const auto text = std::string(bytes.begin(), bytes.end());
+    auto root = choc::json::parse(text);
+    REQUIRE(root.hasObjectMember("morph_applies_viewport"));
+    auto stripped = choc::value::createObject("SpectrPluginState");
+    for (uint32_t i = 0; i < root.size(); ++i) {
+        const auto member = root.getObjectMemberAt(i);
+        if (std::string(member.name) == "morph_applies_viewport") continue;
+        stripped.addMember(member.name, member.value);
+    }
+    const auto legacy = choc::json::toString(stripped, false);
+    const std::vector<uint8_t> legacy_bytes(legacy.begin(), legacy.end());
+
+    Spectr c;
+    pulp::state::StateStore store_c;
+    c.define_parameters(store_c);
+    c.set_state_store(&store_c);
+    c.set_morph_applies_viewport(false);
+    REQUIRE(c.deserialize_plugin_state(legacy_bytes));
+    CHECK(c.morph_applies_viewport());
+}

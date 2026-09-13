@@ -394,6 +394,36 @@ CASES: list[tuple[str, str, int, list[str]]] = [
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-geometry-follows-view"]),
 
+    # Morph moves the viewport. Four plants rather than one because each is a
+    # DIFFERENT wrong implementation that fails a different assertion, and a
+    # single plant that trips everything cannot show which check is load
+    # bearing. `--plant-snap` is the defect this shipped to fix; `--plant-linear`
+    # is the plausible wrong fix, and the only reason the midpoint assertion
+    # exists.
+    ("materialized_morph_viewport",
+     "morph interpolates the window in log space and commits nothing live", 0,
+     [f("test", "test_materialized_morph_viewport.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json")]),
+    ("materialized_morph_viewport",
+     "plant: the window snaps at the midpoint instead of interpolating", 1,
+     [f("test", "test_materialized_morph_viewport.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-snap"]),
+    ("materialized_morph_viewport",
+     "plant: the window is interpolated linearly in Hz, not in log space", 1,
+     [f("test", "test_materialized_morph_viewport.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-linear"]),
+    ("materialized_morph_viewport",
+     "plant: the morph settles the viewport on every pointer sample", 1,
+     [f("test", "test_materialized_morph_viewport.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-live-commit"]),
+    ("materialized_morph_viewport",
+     "plant: the morph ignores the viewport playback switch", 1,
+     [f("test", "test_materialized_morph_viewport.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-ignore-switch"]),
     # The two defects a user hit on an installed build: a shortcut letter that
     # highlighted without committing or closing, and an opened menu showing a
     # selection AND a keyboard cursor on a different row. Both detectors drive

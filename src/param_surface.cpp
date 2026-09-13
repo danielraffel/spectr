@@ -412,6 +412,23 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
                 field_ = has_a ? snapshots_.a.field : snapshots_.b.field;
                 sound_changed = true;
             }
+            // The viewport follows the same derivation as the bands, so an
+            // automated morph moves the window the shape is drawn in rather
+            // than leaving the two describing different sounds.
+            if (morph_applies_viewport_ && (has_a || has_b)) {
+                if (!has_b) viewport_ = snapshots_.a.viewport;
+                else if (!has_a) viewport_ = snapshots_.b.viewport;
+                else viewport_ = morph_viewports(snapshots_.a.viewport,
+                                                 snapshots_.b.viewport, t);
+                synced_viewport_ = viewport_;
+            }
+            // The applied cache is deliberately NOT stamped here. The explicit
+            // viewport lane below diffs the store against it, so a host that
+            // automates morph AND the viewport in the same pass keeps the
+            // explicit write — the same precedence the band lanes already use,
+            // where an automated band value overrides the morph that derived
+            // it. When only morph moved, the lane sees no drift and the
+            // derived window survives.
             // The morph result is the new pushed-state baseline: unchanged
             // band parameters intentionally keep their pre-morph values.
             synced_field_ = field_;
@@ -532,6 +549,25 @@ float Spectr::editor_mode_param(pulp::state::ParamID id) const noexcept {
 ModulationSettings Spectr::modulation_settings() const noexcept {
     std::lock_guard<std::mutex> lock(processing_state_mutex_);
     return modulation_;
+}
+
+bool Spectr::morph_applies_viewport() const noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return morph_applies_viewport_;
+}
+
+void Spectr::set_morph_applies_viewport(bool enabled) noexcept {
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        if (morph_applies_viewport_ == enabled) return;
+        morph_applies_viewport_ = enabled;
+        // Publish so the audio thread's own morph derivation agrees with the
+        // editor's on the very next block. Turning the switch OFF deliberately
+        // leaves `viewport_` exactly where it is: the user keeps looking at
+        // (and hearing) the window they are on, and nothing they captured is
+        // lost — re-enabling resumes from the live morph value.
+        publish_audio_modulation_state_();
+    }
 }
 
 bool Spectr::set_modulation_target_mask(std::uint8_t mask) noexcept {
