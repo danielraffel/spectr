@@ -1,0 +1,2 @@
+[one] rows=5 selected=level lit_on_open=level claimed=true
+[one] lit_after_arrow=boost
