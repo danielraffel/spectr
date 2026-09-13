@@ -19,6 +19,37 @@ INST_ID="${INST_ID:-}"
   echo "PULP_ROOT must name a Pulp source checkout with build_combined_installer.sh" >&2
   exit 2
 }
+
+# The installer recipe is the one packaging input that carried no provenance
+# check. Every other input below is pinned to an exact SHA, but PULP_ROOT
+# defaults to whatever sibling checkout happens to sit next to this one, at
+# whatever revision it happens to be parked on.
+#
+# That matters because the recipe is not interchangeable. A checkout from
+# before prompt-free installer signing signs the product archive with
+# `productbuild --sign`, which the dedicated signing keychain's ACL denies:
+# the key authorizes productsign, not productbuild. Headless, the suppressed
+# authorization dialog comes back as CSSMERR_CSP_USER_CANCELED (-128) and
+# "Error signing data." -- naming no keychain, reading like a broken
+# certificate, and arriving only AFTER every bundle has already been signed.
+# The run dies one step from done, and nothing earlier hints at it.
+PULP_INSTALLER_FLOOR="${PULP_INSTALLER_FLOOR:-65cba47ed65af2c20cb897f5f4880b7636f48cb6}"
+git -C "$PULP_ROOT" rev-parse --git-dir >/dev/null 2>&1 || {
+  echo "PULP_ROOT must be a Git checkout so its installer recipe can be identified: $PULP_ROOT" >&2
+  exit 2
+}
+[[ -z "$(git -C "$PULP_ROOT" status --porcelain --untracked-files=no)" ]] || {
+  echo "PULP_ROOT has modified tracked files, so its installer recipe is unprovenanced: $PULP_ROOT" >&2
+  exit 2
+}
+git -C "$PULP_ROOT" merge-base --is-ancestor "$PULP_INSTALLER_FLOOR" HEAD 2>/dev/null || {
+  echo "PULP_ROOT does not contain prompt-free installer signing: $PULP_ROOT" >&2
+  echo "  at $(git -C "$PULP_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)" >&2
+  echo "  its build_combined_installer.sh signs with productbuild --sign, which the" >&2
+  echo "  signing keychain denies after every bundle is already signed." >&2
+  echo "  Point PULP_ROOT at a Pulp checkout that contains $PULP_INSTALLER_FLOOR." >&2
+  exit 2
+}
 [[ -n "$APP_ID" ]] || { echo "APP_ID must be a Developer ID Application identity hash" >&2; exit 2; }
 [[ -n "$INST_ID" ]] || { echo "INST_ID must be a Developer ID Installer identity hash" >&2; exit 2; }
 [[ -n "$PULP_DIR_EXPECTED" ]] || { echo "PULP_DIR_EXPECTED must name the exact accepted SDK CMake directory" >&2; exit 2; }
