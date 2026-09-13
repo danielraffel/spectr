@@ -324,3 +324,80 @@ The live view tree carries the same rule in
 `test/test_native_state_parity.cpp`, where it can be driven at both the idle
 22px and hovered 26px thumb sizes — states no capture reaches, because the
 morph slider is disabled in every one of them.
+## Dropdown: a letter that commits, and one indicator instead of two
+
+Two defects a user hit on an installed build (`ed71c18`):
+
+> "can you confirm we have the shortcut keys working for edit mode? i dont
+> seem to select and close if select any of them."
+
+> "when dropdown is opened the selected item AND highlight is shown by default
+> which is confusing."
+
+### `DROPDOWN-KEY-open-menu.layout.json`, `DROPDOWN-KEY-after-letter-b.layout.json`
+
+Captured from the shipping standalone with `SPECTR_CLICK` opening the EDIT MODE
+menu, and `SPECTR_KEY_JS=b` in the second. Adjudicated by
+`tools/spectr-detectors/dropdown_shortcut_dismisses_menu.py`.
+
+The open/closed verdict is the count of mode-name text boxes: six with the menu
+open (five rows plus the toolbar trigger, which renders `editMode`), one with it
+closed. So a single dump answers both "did it close" and "what did it choose".
+
+| capture | mode boxes | names |
+|---|---|---|
+| menu open, no key | 6 | SCULPT LEVEL BOOST FLARE GLIDE |
+| after `b` | 1 | BOOST |
+
+Before the fix the second read six boxes still naming all five: the letter was
+swallowed by `overlayBlocksShortcut()`, which is correctly true while any
+popover is mounted, so the global handler returned before reading the key.
+
+### `DROPDOWN-INDICATOR-open-with-level-selected.probe.txt`
+
+The reading `tools/spectr-detectors/dropdown_single_selection_indicator.py`
+takes from a menu reopened with LEVEL — deliberately not the first row — already
+selected:
+
+```
+[one] rows=5 selected=level lit_on_open=level claimed=true
+[one] lit_after_arrow=boost
+```
+
+`lit_on_open` must be a SUBSET of the selection, not equal to it: the pinned SDK
+seeds a visible cursor on open and a later one defers painting until the user
+hovers or presses an arrow, and both are acceptable. Two lit rows, or one lit
+row that is not the selection, is the defect.
+
+`claimed=` is the control for the measurement: Pulp's popup owner claims a menu
+from the pointerdown branch and `SPECTR_CLICK` sends a click without one, so the
+probe issues the pointerdown itself. An unclaimed popup paints no cursor at all
+and would read as a clean single-indicator menu while proving nothing.
+`lit_after_arrow` is the second control: an empty `lit` reading means either
+"nothing is highlighted" or "this probe cannot see a highlight", and only a
+reading that MUST be non-empty separates them.
+
+### Negative controls
+
+Both directions were driven on the real product, not asserted:
+
+| | letter `b`, menu open | cursor seed |
+|---|---|---|
+| fix in place | 1 box, BOOST — committed and dismissed | `activeIndex=1` lit=`level` |
+| fix broken | 6 boxes, SCULPT — `listeners_fired=2` | `activeIndex=0` lit=`sculpt` |
+
+The first row was broken by neutering the commit inside the popover's handler and
+rebuilding (`Encoding binary asset materialized-document.runtime.json` confirmed
+in the build log, not merely "Built target"); the key still reached listeners, so
+the failure is the action and not a dead dispatch. The second was broken by
+stripping `aria-selected` at runtime before the pointerdown, which reproduces the
+user's screenshot exactly: the trigger reads LEVEL, Spectr paints LEVEL, and the
+popup owner lights SCULPT.
+
+### `09-dropdown-{1-opened,2-hovered,3-arrow}.png`
+
+`Spectr-native-shot` with `SPECTR_DROPDOWN_PROBE=1` captures the three states
+through `Processor::create_view()`: opened with no input (only LEVEL treated),
+after a pointer enters FLARE (FLARE takes the cursor fill, LEVEL keeps its
+bordered selection), and after ArrowDown (the cursor steps off the selection onto
+BOOST). Not committed — regenerate with the probe.
