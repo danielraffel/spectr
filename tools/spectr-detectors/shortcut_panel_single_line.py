@@ -29,11 +29,23 @@ content instead, and this asserts both halves of that:
              the shipping artifact, needs no build, and fails at review time
              instead of on someone's screen.
 
+  KEY CHIP   the same two questions for the key chip, which this detector did
+             not measure at all until a row needed `CMD+SHIFT+DRAG` and the
+             chip was a fixed 84px holding eleven characters. A chip is
+             `white-space: nowrap`, so it cannot wrap and does not clip: it
+             OVERFLOWS its captured box and prints over the description beside
+             it. That is invisible to every check above -- the description
+             still measures one line, on an even pitch, inside budget -- so
+             the chip is measured against its own captured width here, and no
+             rendered ink may cross from the chip column into the description
+             column.
+
 Exit codes: 0 pass, 1 fail, 2 no verdict (the instrument could not measure).
 """
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -59,6 +71,29 @@ PITCH_TOLERANCE_PX = 1.0
 # Headroom below the panel's own budget. A row that merely fits is a row that
 # wraps the next time somebody adds a word.
 SLACK_PX = 26.0
+# The chip's own padding and border, from the Hrow style in the document.
+CHIP_PAD_X = 6.0
+CHIP_BORDER = 1.0
+# The chip renders at 9px with 0.5 letter-spacing where a description renders
+# at 10px. The glyph run quantises to a 64th of a pixel before the tracking is
+# added per glyph, which is why this is not a flat per-character width.
+CHIP_FONT_SIZE = 9.0
+CHIP_LETTER_SPACING = 0.5
+MONO_ADVANCE_RATIO = 0.6
+# Slack below the chip budget. Less than one character (5.9px), because the
+# chip column is sized to the longest key that exists rather than carrying a
+# spare column -- but enough that a key cannot land exactly on the edge.
+CHIP_SLACK_PX = 5.0
+# Hrow's flex gap between the chip and the description.
+CHIP_GAP = 10.0
+
+
+def chip_ink(text):
+    """The measured width of one key chip's text."""
+    count = len(text)
+    return (math.ceil(round(CHIP_FONT_SIZE * MONO_ADVANCE_RATIO * count * 64.0,
+                            6)) / 64.0
+            + CHIP_LETTER_SPACING * count)
 
 
 def rows_from_document(path):
@@ -108,9 +143,15 @@ def budget_from_runtime(path):
         r'\{ "tag": "div", "index": 16 \}, \{ "tag": "div", "index": 1 \}, '
         r'\{ "tag": "div", "index": 1 \}, \{ "tag": "span", "index": 1 \}\], '
         r'"box": \{ "left": ([\d.]+),', segment)
-    if not row or not desc:
+    chip = re.search(
+        r'\{ "tag": "div", "index": 16 \}, \{ "tag": "div", "index": 1 \}, '
+        r'\{ "tag": "div", "index": 1 \}, \{ "tag": "span", "index": 0 \}\], '
+        r'"box": \{ "left": [\d.-]+, "top": [\d.-]+, "width": ([\d.]+),',
+        segment)
+    if not row or not desc or not chip:
         return None
-    return float(row.group(1)) - float(desc.group(1))
+    return (float(row.group(1)) - float(desc.group(1)),
+            float(chip.group(1)))
 
 
 def capture(app, out_dir):
@@ -155,7 +196,9 @@ def main():
     ap.add_argument("--budget-only", action="store_true",
                     help="skip the rendered half (no app, no capture)")
     ap.add_argument("--plant", choices=("long-label", "wrapped-row",
-                                        "narrow-panel", "stretched-row"))
+                                        "narrow-panel", "stretched-row",
+                                        "long-chip", "narrow-chip",
+                                        "chip-overflow"))
     args = ap.parse_args()
 
     rows = rows_from_document(DOCUMENT)
@@ -163,17 +206,28 @@ def main():
         print("no verdict: no SHORTCUTS rows found in %s -- the panel was "
               "restructured and this detector cannot measure it" % DOCUMENT)
         return 2
-    budget = budget_from_runtime(RUNTIME)
-    if budget is None or budget <= 0:
+    geometry = budget_from_runtime(RUNTIME)
+    if geometry is None or geometry[0] <= 0 or geometry[1] <= 0:
         print("no verdict: could not read the help panel's captured row "
               "geometry out of %s" % RUNTIME)
         return 2
+    budget, chip_w = geometry
+    chip_budget = chip_w - 2.0 * (CHIP_PAD_X + CHIP_BORDER)
 
     if args.plant == "long-label":
         rows = list(rows)
         rows[3] = (rows[3][0], rows[3][1] + " (mode-dependent, per metaphor)")
     if args.plant == "narrow-panel":
         budget = 156.0
+    if args.plant == "long-chip":
+        rows = list(rows)
+        rows[10] = ("CMD+SHIFT+OPTION+DRAG", rows[10][1])
+    if args.plant == "narrow-chip":
+        # The chip column exactly as it was before this panel needed a
+        # three-modifier key: 84px outer, 70px of usable ink. A different
+        # wrong implementation, not a broken file -- the panel it describes
+        # shipped for months.
+        chip_budget = 84.0 - 2.0 * (CHIP_PAD_X + CHIP_BORDER)
 
     failures = []
 
@@ -195,6 +249,30 @@ def main():
                             "entry cannot wrap silently"
                             % (text, width, budget, budget - width, SLACK_PX))
         print("  %-5s %-12s %-34s %6.1fpx" % (flag, key, text, width))
+
+    # --------------------------------------------------------- KEY CHIP
+    # A chip is nowrap. It does not wrap and it does not clip -- it grows past
+    # the box the capture pinned and prints on top of the description, which
+    # every other check here reads as healthy.
+    print("chip      %.1fpx of ink inside a %.1fpx chip (%d characters)"
+          % (chip_budget, chip_w, int(chip_budget // chip_ink("M"))))
+    for key, text in rows:
+        ink = chip_ink(key)
+        flag = "OK "
+        if ink > chip_budget:
+            flag = "OVER"
+            failures.append('the key "%s" measures %.1fpx of ink in a %.1fpx '
+                            "chip, so it overflows and prints over \"%s\""
+                            % (key, ink, chip_budget, text))
+        elif ink > chip_budget - CHIP_SLACK_PX:
+            flag = "TIGHT"
+            failures.append('the key "%s" measures %.1fpx against a %.1fpx '
+                            "chip: it fits by %.1fpx, less than the %.0fpx of "
+                            "slack this panel keeps so the NEXT key cannot "
+                            "overflow silently"
+                            % (key, ink, chip_budget, chip_budget - ink,
+                               CHIP_SLACK_PX))
+        print("  %-5s %-16s %6.1fpx" % (flag, key, ink))
 
     # ---------------------------------------------------------- RENDERED
     if not args.budget_only:
@@ -268,6 +346,39 @@ def main():
                             "%.1fpx at the loosest (%s) -- a row is still "
                             "occupying a box taller than its one line of text"
                             % (min(pitch), max(pitch), ", ".join(map(str, tall))))
+
+        # No key chip may reach into the description column. This is measured
+        # by COLUMN, not by looking up the keys the document currently ships,
+        # so it still reads an archived capture whose keys have since been
+        # respelled -- the same reason the description half measures a column.
+        top = min(b["rect"]["y"] for b in measured) - 4.0
+        bottom = max(b["rect"]["y"] + b["rect"]["h"] for b in measured) + 4.0
+        # Confine to the chip column itself. Bounding only on "left of the
+        # description" swept in unrelated chrome that happens to share these
+        # rows' vertical band, and any of it reaching past the column would
+        # have read as a chip overflowing.
+        chip_left = column - (chip_w + CHIP_GAP) - 1.0
+        chips = [b for b in boxes
+                 if (b.get("text") or "")
+                 and chip_left <= b["rect"]["x"] < column - 0.5
+                 and top <= b["rect"]["y"] <= bottom]
+        if args.plant == "chip-overflow" and chips:
+            chips[0]["rect"]["w"] += 80.0
+        if len(chips) < 2:
+            print("no verdict: %d text boxes sit left of the description "
+                  "column at x=%.1f, so the chip column cannot be measured"
+                  % (len(chips), column))
+            return 2
+        reach = max(b["rect"]["x"] + b["rect"]["w"] for b in chips)
+        print("chips     %d boxes left of x=%.1f, furthest right edge %.1f"
+              % (len(chips), column, reach))
+        for box in chips:
+            right = box["rect"]["x"] + box["rect"]["w"]
+            if right > column + 0.5:
+                failures.append('the rendered key "%s" reaches x=%.1f, past '
+                                "the description column at x=%.1f -- a nowrap "
+                                "chip that outgrew its box prints over its own "
+                                "row" % (box.get("text"), right, column))
 
     if failures:
         for f in failures:

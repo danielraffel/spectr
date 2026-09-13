@@ -759,6 +759,38 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(D, "shortcut_panel_single_line.py"), "--budget-only",
       "--plant", "narrow-panel"]),
 
+    # The KEY CHIP half. A chip is nowrap, so an oversized key does not wrap
+    # and does not clip -- it prints over the description, which every check
+    # above reads as a perfectly healthy row. The narrow-chip plant is the
+    # panel as it actually shipped before this notation landed: an 84px chip,
+    # 70px of ink, against a 14-character CMD+SHIFT+DRAG.
+    ("shortcut_panel_single_line",
+     "plant: the pre-change 84px chip, too narrow for a 3-modifier key", 1,
+     [f(D, "shortcut_panel_single_line.py"), "--budget-only",
+      "--plant", "narrow-chip"]),
+    ("shortcut_panel_single_line", "plant: a key longer than the chip holds", 1,
+     [f(D, "shortcut_panel_single_line.py"), "--budget-only",
+      "--plant", "long-chip"]),
+    ("shortcut_panel_single_line",
+     "plant: chip ink reaching into the description column", 1,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E12, "SHORTCUT-PANEL-GREEN-single-line.layout.json"),
+      "--plant", "chip-overflow"]),
+    # The panel as it renders after the notation change: a 104px chip column
+    # carrying CMD+SHIFT+DRAG, captured from the built standalone. The 2026-09-12
+    # green fixture is kept alongside it deliberately -- it is an 84px-chip
+    # capture, so the pair proves the column check reads an archived capture
+    # whose keys have since been respelled rather than only today's document.
+    ("shortcut_panel_single_line",
+     "the widened chip column renders clean", 0,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E13, "SHORTCUT-PANEL-GREEN-wide-chip.layout.json")]),
+    ("shortcut_panel_single_line",
+     "plant: chip overflow in the widened column", 1,
+     [f(D, "shortcut_panel_single_line.py"),
+      "--layout", f(E13, "SHORTCUT-PANEL-GREEN-wide-chip.layout.json"),
+      "--plant", "chip-overflow"]),
+
     # One-press dropdown switching. The WIRING half -- the live-tree behaviour
     # is gated by the `switching native dropdowns costs one press` ctest. Four
     # plants because the wiring has four independent ways to come apart: the

@@ -2809,9 +2809,9 @@
         }
       ],
       "box": {
-        "left": -304,
+        "left": -324,
         "top": -340.859375,
-        "width": 330,
+        "width": 350,
         "height": 332.859375
       }
     },
@@ -2843,7 +2843,7 @@
       "box": {
         "left": 15,
         "top": 15,
-        "width": 300,
+        "width": 320,
         "height": 15.296875
       }
     },
@@ -2875,7 +2875,7 @@
       "box": {
         "left": 15,
         "top": 38.296875,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -2911,7 +2911,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -2945,7 +2945,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 143,
         "height": 17
@@ -2979,7 +2979,7 @@
       "box": {
         "left": 15,
         "top": 61.59375,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -3015,7 +3015,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -3049,7 +3049,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 84.5,
         "height": 17
@@ -3083,7 +3083,7 @@
       "box": {
         "left": 15,
         "top": 84.890625,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -3119,7 +3119,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -3153,7 +3153,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 91,
         "height": 17
@@ -3187,7 +3187,7 @@
       "box": {
         "left": 15,
         "top": 108.1875,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -3223,7 +3223,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -3257,7 +3257,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 65,
         "height": 17
@@ -3291,7 +3291,7 @@
       "box": {
         "left": 15,
         "top": 131.484375,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -3327,7 +3327,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -3361,7 +3361,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 104.03125,
         "height": 17
@@ -3395,7 +3395,7 @@
       "box": {
         "left": 15,
         "top": 154.78125,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -3431,7 +3431,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -3465,7 +3465,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 143,
         "height": 17
@@ -3499,7 +3499,7 @@
       "box": {
         "left": 15,
         "top": 178.078125,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -3535,7 +3535,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -3569,7 +3569,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 110.5,
         "height": 17
@@ -3603,7 +3603,7 @@
       "box": {
         "left": 15,
         "top": 201.375,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -3639,7 +3639,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -3673,7 +3673,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 123.5,
         "height": 17
@@ -3707,7 +3707,7 @@
       "box": {
         "left": 15,
         "top": 224.671875,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -3743,7 +3743,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -3777,7 +3777,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 78,
         "height": 17
@@ -3811,7 +3811,7 @@
       "box": {
         "left": 15,
         "top": 247.96875,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -3847,7 +3847,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -3881,7 +3881,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 91,
         "height": 17
@@ -3915,7 +3915,7 @@
       "box": {
         "left": 15,
         "top": 271.265625,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -3951,7 +3951,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -3985,7 +3985,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 130,
         "height": 17
@@ -4019,7 +4019,7 @@
       "box": {
         "left": 15,
         "top": 294.5625,
-        "width": 300,
+        "width": 320,
         "height": 23.296875
       }
     },
@@ -4055,7 +4055,7 @@
       "box": {
         "left": 0,
         "top": 2,
-        "width": 84,
+        "width": 104,
         "height": 19.296875
       }
     },
@@ -4089,7 +4089,7 @@
         }
       ],
       "box": {
-        "left": 94,
+        "left": 114,
         "top": 3.140625,
         "width": 65,
         "height": 17
@@ -5370,7 +5370,7 @@
       ],
       "text": "S / L / B",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
@@ -5390,7 +5390,7 @@
       },
       "boxes": [
         {
-          "left": 15.4375,
+          "left": 25.4375,
           "top": 3,
           "width": 53.109375,
           "height": 12,
@@ -5490,7 +5490,7 @@
       ],
       "text": "F / G",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
@@ -5510,7 +5510,7 @@
       },
       "boxes": [
         {
-          "left": 27.25,
+          "left": 37.25,
           "top": 3,
           "width": 29.5,
           "height": 12,
@@ -5608,16 +5608,16 @@
           "index": 0
         }
       ],
-      "text": "6",
+      "text": "A / 6",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
             "family_name": "JetBrains Mono",
             "post_script_name": "JetBrainsMono-Regular",
             "is_custom_font": true,
-            "glyph_count": 1
+            "glyph_count": 5
           }
         ],
         "requested": {
@@ -5630,12 +5630,12 @@
       },
       "boxes": [
         {
-          "left": 39.046875,
+          "left": 37.25,
           "top": 3,
-          "width": 5.90625,
+          "width": 29.5,
           "height": 12,
           "start": 0,
-          "length": 1
+          "length": 5
         }
       ]
     },
@@ -5730,7 +5730,7 @@
       ],
       "text": "DRAG",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
@@ -5750,7 +5750,7 @@
       },
       "boxes": [
         {
-          "left": 30.1875,
+          "left": 40.1875,
           "top": 3,
           "width": 23.609375,
           "height": 12,
@@ -5850,7 +5850,7 @@
       ],
       "text": "CLICK",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
@@ -5870,7 +5870,7 @@
       },
       "boxes": [
         {
-          "left": 27.25,
+          "left": 37.25,
           "top": 3,
           "width": 29.5,
           "height": 12,
@@ -5976,7 +5976,7 @@
       ],
       "text": "SHIFT+DRAG",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
@@ -5996,7 +5996,7 @@
       },
       "boxes": [
         {
-          "left": 12.5,
+          "left": 22.5,
           "top": 3,
           "width": 59,
           "height": 12,
@@ -6096,7 +6096,7 @@
       ],
       "text": "RIGHT-CLICK",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
@@ -6116,7 +6116,7 @@
       },
       "boxes": [
         {
-          "left": 9.546875,
+          "left": 19.546875,
           "top": 3,
           "width": 64.90625,
           "height": 12,
@@ -6216,7 +6216,7 @@
       ],
       "text": "SCROLL",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
@@ -6236,7 +6236,7 @@
       },
       "boxes": [
         {
-          "left": 24.296875,
+          "left": 34.296875,
           "top": 3,
           "width": 35.40625,
           "height": 12,
@@ -6336,7 +6336,7 @@
       ],
       "text": "ALT+DRAG",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
@@ -6356,7 +6356,7 @@
       },
       "boxes": [
         {
-          "left": 18.390625,
+          "left": 28.390625,
           "top": 3,
           "width": 47.203125,
           "height": 12,
@@ -6454,22 +6454,16 @@
           "index": 0
         }
       ],
-      "text": "⌘+DRAG",
+      "text": "CMD+DRAG",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
-          {
-            "family_name": "Menlo",
-            "post_script_name": "Menlo-Regular",
-            "is_custom_font": false,
-            "glyph_count": 1
-          },
           {
             "family_name": "JetBrains Mono",
             "post_script_name": "JetBrainsMono-Regular",
             "is_custom_font": true,
-            "glyph_count": 5
+            "glyph_count": 8
           }
         ],
         "requested": {
@@ -6482,12 +6476,12 @@
       },
       "boxes": [
         {
-          "left": 24.28125,
+          "left": 28.390625,
           "top": 3,
-          "width": 35.421875,
+          "width": 47.203125,
           "height": 12,
           "start": 0,
-          "length": 6
+          "length": 8
         }
       ]
     },
@@ -6580,22 +6574,16 @@
           "index": 0
         }
       ],
-      "text": "⌘⇧+DRAG",
+      "text": "CMD+SHIFT+DRAG",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
-          {
-            "family_name": "Menlo",
-            "post_script_name": "Menlo-Regular",
-            "is_custom_font": false,
-            "glyph_count": 7
-          },
           {
             "family_name": "JetBrains Mono",
             "post_script_name": "JetBrainsMono-Regular",
             "is_custom_font": true,
-            "glyph_count": 7
+            "glyph_count": 14
           }
         ],
         "requested": {
@@ -6608,12 +6596,12 @@
       },
       "boxes": [
         {
-          "left": 21.328125,
+          "left": 10.6875,
           "top": 3,
-          "width": 41.328125,
+          "width": 82.609375,
           "height": 12,
           "start": 0,
-          "length": 7
+          "length": 14
         }
       ]
     },
@@ -6708,7 +6696,7 @@
       ],
       "text": "DRAG SEL",
       "basis": {
-        "width": 84,
+        "width": 104,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
@@ -6728,7 +6716,7 @@
       },
       "boxes": [
         {
-          "left": 18.390625,
+          "left": 28.390625,
           "top": 3,
           "width": 47.203125,
           "height": 12,
