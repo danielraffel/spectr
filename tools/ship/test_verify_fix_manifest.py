@@ -76,7 +76,12 @@ def main() -> int:
     # something. A synthetic file containing every control token and every fix
     # token must return 0 - otherwise the verifier can only ever fail.
     doc = json.loads(MANIFEST.read_text())
-    blob = " ".join(doc["control_tokens"] + [t for f in doc["fixes"] for t in f["tokens"]])
+    # get(), not [tokens]: a 'verifiable': false row carries no tokens key, and
+    # indexing it crashed this check the moment the first such row landed --
+    # taking the inversion below down with it, so the two controls that prove
+    # the pass path is reachable stopped running at all.
+    blob = " ".join(doc["control_tokens"]
+                    + [t for f in doc["fixes"] for t in f.get("tokens", [])])
     synthetic = Path(tempfile.mkdtemp()) / "synthetic-binary"
     synthetic.write_text(blob)
     res = run([str(synthetic)])
@@ -86,7 +91,7 @@ def main() -> int:
 
     # And removing one token from that same artifact must fail, which is what
     # proves the pass above was not vacuous.
-    dropped = doc["fixes"][0]["tokens"][0]
+    dropped = next(t for f in doc["fixes"] for t in f.get("tokens", []))
     partial = Path(tempfile.mkdtemp()) / "synthetic-binary"
     partial.write_text(blob.replace(dropped, "x" * len(dropped)))
     res = run([str(partial)])
