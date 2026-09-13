@@ -1019,9 +1019,17 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // The panel remains pinned to the authored viewport. The appended
         // Feedback and exact build-information groups make the live content
         // genuinely taller, so the native ScrollView exposes that real extent.
+        //
+        // The invariant here is the AUTHORED BOX (520x679) plus a real,
+        // child-derived, scroll-reachable extent -- the numeric band on
+        // content_height is a sanity window around that extent, not a pinned
+        // value. It widened by one row's worth when MODULATION gained the
+        // Viewport switch; a row legitimately added to the panel moves this
+        // number, and the assertions either side of it are what actually hold
+        // the contract.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1400 && s.content_height < 1480"
+        " && s.content_height > 1400 && s.content_height < 1560"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",

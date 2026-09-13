@@ -958,6 +958,71 @@ if(SPECTR_NODE_EXECUTABLE)
         TIMEOUT 30)
 endif()
 
+# Morph moves the viewport, not just the bands.
+#
+# A snapshot has always captured the window it was taken under; morph ignored
+# it, so the bands blended continuously while the window they are drawn in --
+# and masked with -- snapped at t=0.5. Three properties each read green if you
+# check the wrong thing, so each gets its own control:
+#
+#   The interpolation runs in LOG space. A test that pins only t=0 and t=1
+#   passes unchanged against a snap, because a snap already gives the right
+#   answer at both ends. Only the midpoint discriminates, and it must reject
+#   BOTH a snap and a linear-Hz lerp, which is the plausible wrong version.
+#
+#   Morph is dragged AND is an LFO/automation destination, so it is exactly
+#   the value that moves every sample. It must publish the viewport with
+#   `live = deferReact` so the canvas keeps moving every rAF while React
+#   commits nothing until the gesture settles -- the same contract the zoom
+#   readout rows above exist to protect.
+#
+#   The switch is a PLAYBACK switch: capture always records the window.
+#
+# Static text can see none of that, so the suite extracts the real helper and
+# runs it in a vm.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-morph-viewport
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-morph-viewport PROPERTIES TIMEOUT 30)
+    # Four controls, one per wrong implementation, because each fails a
+    # DIFFERENT assertion and a single plant that trips everything cannot show
+    # which check is load bearing. The inversion lives in the script rather
+    # than in WILL_FAIL, which accepts any non-zero exit -- including a usage
+    # error that proves nothing. Each plant asserts its needle matched exactly
+    # once, so a drifted needle fails the control instead of quietly
+    # re-testing the current document.
+    add_test(NAME Spectr-materialized-morph-viewport-snap-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-snap --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-viewport-snap-control PROPERTIES
+        TIMEOUT 30)
+    add_test(NAME Spectr-materialized-morph-viewport-linear-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-linear --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-viewport-linear-control PROPERTIES
+        TIMEOUT 30)
+    add_test(NAME Spectr-materialized-morph-viewport-live-commit-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-live-commit --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-viewport-live-commit-control PROPERTIES
+        TIMEOUT 30)
+    add_test(NAME Spectr-materialized-morph-viewport-switch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-ignore-switch --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-viewport-switch-control PROPERTIES
+        TIMEOUT 30)
+endif()
+
 # Two defects reported from the shipped AU, at the seam where native
 # publications write the editor's JS refs directly. Neither is visible from a
 # screenshot or from the standalone.

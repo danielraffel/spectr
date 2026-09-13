@@ -233,14 +233,19 @@ function rowsOf(tree) {
 // mounted at all fails this outright, which is what catches --plant-remount.
 const ORDER = ['LFO', 'Shape', 'Rate', 'Depth',
                'LFO 2', 'LFO 2 shape', 'LFO 2 rate', 'LFO 2 depth',
-               'Target', 'Destinations'];
+               'Target', 'Destinations', 'Viewport'];
 
 // Which rows the user should SEE in each enable state. LFO 1's three follow
 // LFO 1, LFO 2's three follow LFO 2, and the two shared destination rows show
 // whenever either LFO is on -- they are shared by both (src/spectr.cpp copies
 // the whole settings struct into the second LFO's pass).
+// Viewport is the exception, and deliberately so: it is the only row in this
+// group that does not belong to an LFO. It governs whether the MORPH SLIDER
+// moves the zoom window, which works with both LFOs off, so hiding it with
+// LFO 1 would make a working control disappear. It sits last for the same
+// reason -- placed among the LFO rows it would read as an LFO setting.
 const visibleFor = (lfo1, lfo2) => (label) => {
-  if (label === 'LFO' || label === 'LFO 2') return true;
+  if (label === 'LFO' || label === 'LFO 2' || label === 'Viewport') return true;
   if (label === 'Target' || label === 'Destinations') return lfo1 || lfo2;
   return label.startsWith('LFO 2 ') ? lfo2 : lfo1;
 };
