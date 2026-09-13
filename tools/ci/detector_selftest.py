@@ -38,6 +38,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 E07 = os.path.join("docs", "evidence", "2026-09-07")
 E11 = os.path.join("docs", "evidence", "2026-09-11")
 E12 = os.path.join("docs", "evidence", "2026-09-12")
+E13 = os.path.join("docs", "evidence", "2026-09-13")
 
 D = os.path.join("tools", "spectr-detectors")
 T = "tools"
@@ -223,6 +224,86 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      1,
      [f(D, "morph_row_clearance.py"),
       f(E12, "MORPH-ROW-GREEN-track-clear.layout.json"), "--plant", "crush"]),
+
+    # WHERE that control's disabled state is explained. The morph slider is
+    # unavailable until both snapshot slots are filled and the UI says so --
+    # but it said so INSIDE the 90x16 groove, so a half-configured control
+    # read as `A ---- SET B ---- B`: guidance that renders as a rendering
+    # fault. "it seems like a bug the way it's displayed I like the intent".
+    #
+    # No pixel comparison can adjudicate this: the text rendered exactly where
+    # it was told to, so a diff against the shipped build scores it identical.
+    # And `morph_row_clearance` above says nothing about it -- its rule is
+    # about the track's HORIZONTAL neighbours. So the claims are stated on the
+    # track's descendants (none of them may paint text -- the design system's
+    # "opacity only, no instructional text on the control") and on the
+    # caption's own box and ink.
+    #
+    # The RED fixture is a real capture of the shipped defect, not a synthetic
+    # one, and the GREEN one a real capture of the fix.
+    ("morph_caption_below_track",
+     "the caption sits below the track in a box that holds its ink", 0,
+     [f(D, "morph_caption_below_track.py"),
+      f(E13, "MORPH-CAPTION-GREEN-caption-below.layout.json")]),
+    ("morph_caption_below_track",
+     "known-bad fixture (the reason painted inside the groove)", 1,
+     [f(D, "morph_caption_below_track.py"),
+      f(E13, "MORPH-CAPTION-RED-text-in-groove.layout.json")]),
+    ("morph_caption_below_track",
+     "plant: put ink back inside the control", 1,
+     [f(D, "morph_caption_below_track.py"),
+      f(E13, "MORPH-CAPTION-GREEN-caption-below.layout.json"),
+      "--plant", "text-in-groove"]),
+    ("morph_caption_below_track",
+     "plant: move the caption's box up onto the track", 1,
+     [f(D, "morph_caption_below_track.py"),
+      f(E13, "MORPH-CAPTION-GREEN-caption-below.layout.json"),
+      "--plant", "in-groove"]),
+    # The persuasive false fix: `whiteSpace: "nowrap"` has already made ink
+    # measurable on this very row while the layout box stayed its old size.
+    # Ink alone is not evidence that an element occupies anything.
+    ("morph_caption_below_track",
+     "plant: keep the ink, collapse the layout box", 1,
+     [f(D, "morph_caption_below_track.py"),
+      f(E13, "MORPH-CAPTION-GREEN-caption-below.layout.json"),
+      "--plant", "nowrap-only"]),
+    ("morph_caption_below_track",
+     "plant: slide the caption off the group's leading edge", 1,
+     [f(D, "morph_caption_below_track.py"),
+      f(E13, "MORPH-CAPTION-GREEN-caption-below.layout.json"),
+      "--plant", "drift"]),
+
+    # The same control read off the shipping ARTIFACT rather than a capture,
+    # by executing the component. A capture can only ever show the state the
+    # app booted into; this drives all four slot combinations and the pointer
+    # path. Registered here as well as in CMakeLists.txt because the
+    # acceptance job runs this file directly and had never exercised it.
+    ("materialized_morph_affordance",
+     "the morph names the missing slot, below the row, and stays gated", 0,
+     [f("test", "test_materialized_morph_affordance.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json")]),
+    ("materialized_morph_affordance",
+     "plant: the reported defect -- the sentence back inside the groove", 1,
+     [f("test", "test_materialized_morph_affordance.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-hint-in-track"]),
+    # ...and the same move with TODAY'S wording and treatment, so the row
+    # above cannot be passing on the strength of a changed string.
+    ("materialized_morph_affordance",
+     "plant: today's caption, re-parented into the groove unchanged", 1,
+     [f("test", "test_materialized_morph_affordance.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-caption-into-groove"]),
+    ("materialized_morph_affordance",
+     "plant: no caption at all -- the silent disabled control", 1,
+     [f("test", "test_materialized_morph_affordance.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-nohint"]),
+    ("materialized_morph_affordance",
+     "plant: the dim moved up so it swallows the caption too", 1,
+     [f("test", "test_materialized_morph_affordance.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-wrapper-dim"]),
     # issue 2 / the preset dropdown: every row caption starts on ONE column.
     # This detector shipped with a docstring that named the leading-edge rule
     # and an implementation that only compared line-box HEIGHT, so it was green

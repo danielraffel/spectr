@@ -15,41 +15,75 @@
 //
 // Three contracts:
 //
+// The first attempt at explaining it put the sentence INSIDE the slider's own
+// groove, so a half-configured control read as `A ---- SET B ---- B`. Reported
+// as "it seems like a bug the way it's displayed I like the intent" -- the
+// intent was right, the placement read as a rendering fault. The Pulp Design
+// System settles it: a disabled control is OPACITY ONLY with no instructional
+// text on it, and guidance goes in a mono/10px/faint caption beside it.
+//
+// Four contracts:
+//
 // 1. REASONED. While a slot is empty the control renders a caption naming the
-//    slot that is missing -- "SET A + B", "SET A", or "SET B" -- readable
-//    rather than sharing the dim of the control it explains, and absolutely
-//    positioned so it costs the transport row no width.
-// 2. STILL GATED. Explaining the precondition must not relax it. The disabled
+//    slot that is missing -- "SET A + B TO MORPH", "SET A TO MORPH", or
+//    "SET B TO MORPH" -- readable rather than sharing the dim of the control
+//    it explains, and absolutely positioned so it costs the transport row
+//    neither width nor height.
+// 2. NOT IN THE GROOVE. That caption must not be a descendant of the track.
+//    This is the defect itself, and it is the one claim a pixel comparison
+//    against the shipped build could never make: the old form rendered
+//    perfectly, it was just text in a slider.
+// 3. DIMMED, ONCE. The disabled state is carried by a single opacity on the
+//    row -- 0.42, the value the guideline names -- and by nothing else. The
+//    thumb in particular must not erase itself: "opacity only" means the
+//    control still looks like a slider while it is unavailable.
+// 4. STILL GATED. Explaining the precondition must not relax it. The disabled
 //    control must still refuse a pointer commit, the enabled one must still
 //    accept it, and a slot going empty after both were set must disable it
 //    again -- the clear-after-set case.
 //
-// Contract 3 is also the scope control: it drives the extracted component
+// Contract 4 is also the scope control: it drives the extracted component
 // through its real pointer path, so a render that parsed but did not actually
 // wire its handlers cannot pass.
 //
 // Usage:
 //   node test_materialized_morph_affordance.mjs <materialized-document.runtime.json>
-//        [--plant-wrapper-dim] [--plant-nohint] [--expect-fail]
+//        [--plant-wrapper-dim] [--plant-nohint] [--plant-hint-in-track]
+//        [--expect-fail]
 //
-// --plant-nohint removes the reason caption (the exact pre-fix track).
-// --plant-wrapper-dim restores the pre-fix wrapper dim, which renders the
-// caption at 35% along with the control it explains. --expect-fail inverts the
-// verdict, so a control row is
-// green only when the planted defect is REJECTED, and a missing file, usage
-// error, or thrown extractor still fails it.
+// Three plants, each a DIFFERENT wrong implementation:
+//   --plant-nohint        drops the caption entirely (the silent disabled
+//                         control the affordance was written to replace).
+//   --plant-hint-in-track puts the sentence back inside the 90x16 groove --
+//                         the exact reported defect, verbatim. A suite that
+//                         cannot reject this does not cover the bug.
+//   --plant-caption-into-groove
+//                         re-parents TODAY'S caption -- same wording, same
+//                         mono/10px treatment -- into the groove and changes
+//                         nothing else. It isolates the PLACEMENT rule from
+//                         the wording rule, so the row above cannot be
+//                         passing on the strength of a changed string.
+//   --plant-wrapper-dim   moves the disabled dim up onto the outer box, so
+//                         the caption is dimmed along with the control it
+//                         explains and is present but not legible.
+// --expect-fail inverts the verdict, so a control row is green only when the
+// planted defect is REJECTED, and a missing file, usage error, or thrown
+// extractor still fails it.
 
 import { readFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const plantWrapperDim = args.includes("--plant-wrapper-dim");
 const plantNoHint = args.includes("--plant-nohint");
+const plantHintInTrack = args.includes("--plant-hint-in-track");
+const plantIntoGroove = args.includes("--plant-caption-into-groove");
 const expectFail = args.includes("--expect-fail");
 const documentPath = args.find((a) => !a.startsWith("--"));
 
 if (!documentPath) {
   console.error("usage: test_materialized_morph_affordance.mjs <runtime.json> "
-    + "[--plant-wrapper-dim] [--plant-nohint] [--expect-fail]");
+    + "[--plant-wrapper-dim] [--plant-nohint] [--plant-hint-in-track] "
+    + "[--plant-caption-into-groove] [--expect-fail]");
   process.exit(2);
 }
 
@@ -70,15 +104,28 @@ function replaceExactlyOnce(source, needle, replacement, label) {
 
 // ------------------------------------------------------------------- plants
 
-const WRAPPER_SHIPPED =
-  '{ style: { display: "flex", alignItems: "center", gap: 6, '
-  + 'marginLeft: 6 } }';
-const WRAPPER_PRE_FIX =
-  '{ style: { display: "flex", alignItems: "center", gap: 6, '
-  + 'marginLeft: 6, opacity: hasBoth ? 1 : 0.35 } }';
+// The outer box, which owns the margin and anchors the caption.
+const OUTER_SHIPPED =
+  '{ style: { position: "relative", marginLeft: 6, flexShrink: 0, '
+  + 'justifyContent: "center" } }';
+const OUTER_DIMMED =
+  '{ style: { position: "relative", marginLeft: 6, flexShrink: 0, '
+  + 'justifyContent: "center", opacity: hasBoth ? 1 : 0.42 } }';
 
-// The caption, exactly as the patch script emits it.
+// The caption, exactly as the patch script emits it: below the row, mono/10px
+// at the transport bar's own faint level.
 const CAPTION =
+  'hasBoth ? null : /* @__PURE__ */ React.createElement("div", '
+  + '{ "data-spectr-morph-hint": true, style: { position: "absolute", '
+  + 'left: 0, top: 20, whiteSpace: "nowrap", pointerEvents: "none", '
+  + 'fontFamily: "var(--mono)", fontSize: 10, lineHeight: "13px", '
+  + 'opacity: 0.55 } }, '
+  + 'hasA ? "SET B TO MORPH" : (hasB ? "SET A TO MORPH" '
+  + ': "SET A + B TO MORPH"))';
+
+// The reported defect, verbatim: the same sentence painted across the inside
+// of the 90x16 groove.
+const CAPTION_IN_GROOVE =
   'hasBoth ? null : /* @__PURE__ */ React.createElement("div", '
   + '{ "data-spectr-morph-hint": true, style: { position: "absolute", '
   + 'left: 0, top: 1, width: "100%", height: 14, lineHeight: "14px", '
@@ -87,16 +134,44 @@ const CAPTION =
   + 'color: "rgba(255,255,255,0.72)" } }, '
   + 'hasA ? "SET B" : (hasB ? "SET A" : "SET A + B"))';
 
+// The caption is the outer box's SECOND child, so dropping it means dropping
+// one argument, not deleting text -- the parens have to stay balanced or the
+// component never parses and every row fails for the wrong reason.
+const TAIL_WITH_CAPTION = ', "B")), ' + CAPTION + ');';
+const TAIL_WITHOUT_CAPTION = ', "B")));';
+// Unique end of the thumb declaration, i.e. the last child of the track.
+const TRACK_LAST_CHILD =
+  'marginLeft: -((grown ? 26 : 22) * ratio), left: (100 * ratio) + "%" } })';
+
 if (plantNoHint) {
-  html = replaceExactlyOnce(html, ',\n    ' + CAPTION, "", "--plant-nohint");
-  notes.push("planted the pre-fix track (no reason caption)");
+  html = replaceExactlyOnce(html, TAIL_WITH_CAPTION, TAIL_WITHOUT_CAPTION,
+    "--plant-nohint");
+  notes.push("planted the silent disabled control (no reason caption at all)");
+}
+if (plantHintInTrack) {
+  html = replaceExactlyOnce(html, TAIL_WITH_CAPTION, TAIL_WITHOUT_CAPTION,
+    "--plant-hint-in-track (take the caption out from under the row)");
+  html = replaceExactlyOnce(html, TRACK_LAST_CHILD,
+    TRACK_LAST_CHILD + ',\n    ' + CAPTION_IN_GROOVE,
+    "--plant-hint-in-track (paint it inside the groove instead)");
+  notes.push("planted the reported defect (instructional text inside the groove)");
+}
+if (plantIntoGroove) {
+  html = replaceExactlyOnce(html, TAIL_WITH_CAPTION, TAIL_WITHOUT_CAPTION,
+    "--plant-caption-into-groove (take it out from under the row)");
+  html = replaceExactlyOnce(html, TRACK_LAST_CHILD,
+    TRACK_LAST_CHILD + ',\n    ' + CAPTION,
+    "--plant-caption-into-groove (re-parent it into the track unchanged)");
+  notes.push("planted the caption into the groove with its wording and "
+    + "treatment untouched");
 }
 if (plantWrapperDim) {
-  // The pre-fix wrapper dim, which drags the caption down with everything
-  // else -- a reason rendered at 35% is present but not legible.
-  html = replaceExactlyOnce(html, WRAPPER_SHIPPED, WRAPPER_PRE_FIX,
+  // The disabled dim moved up onto the outer box, which drags the caption
+  // down with everything else -- a reason rendered at 23% is present but not
+  // legible.
+  html = replaceExactlyOnce(html, OUTER_SHIPPED, OUTER_DIMMED,
     "--plant-wrapper-dim");
-  notes.push("planted the pre-fix wrapper dim (caption dimmed with the control)");
+  notes.push("planted the caption inside the dim (dimmed with the control)");
 }
 for (const n of notes) console.log(n);
 
@@ -204,6 +279,15 @@ function findByProp(nodes, prop) {
 function morphTrack(nodes) {
   return nodes.find((n) => n.props && n.props.id === "spectr-snapshot-morph");
 }
+// `flatten` stamps __parent on every node, so ancestry is readable without
+// re-walking. This is how the defect is stated: the caption may live anywhere
+// EXCEPT inside the control it describes.
+function isDescendantOf(node, ancestor) {
+  for (let n = node && node.__parent; n; n = n.__parent) {
+    if (n === ancestor) return true;
+  }
+  return false;
+}
 
 function check(label, condition, detail) {
   if (condition) return;
@@ -213,17 +297,20 @@ function check(label, condition, detail) {
 // ------------------------------------------------------------- measurements
 
 const CASES = [
-  { name: "neither slot", hasA: false, hasB: false, hint: "SET A + B" },
-  { name: "only A set", hasA: true, hasB: false, hint: "SET B" },
-  { name: "only B set", hasA: false, hasB: true, hint: "SET A" },
+  { name: "neither slot", hasA: false, hasB: false, hint: "SET A + B TO MORPH" },
+  { name: "only A set", hasA: true, hasB: false, hint: "SET B TO MORPH" },
+  { name: "only B set", hasA: false, hasB: true, hint: "SET A TO MORPH" },
   { name: "both set", hasA: true, hasB: true, hint: null },
 ];
+// The one value the design system fixes for a disabled control.
+const DISABLED_OPACITY = 0.42;
 
 for (const c of CASES) {
   const rig = makeRig();
   const tree = rig.render({ bankRef: { current: null }, hasA: c.hasA, hasB: c.hasB });
   const nodes = flatten(tree);
   const enabled = c.hasA && c.hasB;
+  const track = morphTrack(nodes);
 
   // 1 + 2. REASONED -- only while a slot is empty, naming that slot, and
   // readable rather than sharing the dim of the control it explains.
@@ -240,16 +327,40 @@ for (const c of CASES) {
       const eff = effectiveOpacity(hints[0]);
       check(`[reasoned] ${c.name} legible`, eff >= 0.5,
         `reason caption renders at effective opacity ${eff.toFixed(3)}`);
-      // It must cost the transport row no width: the row has none to give,
-      // and a caption in flex flow crushed the 90px track to 39.5px.
-      check(`[reasoned] ${c.name} costs no width`,
+      // It must cost the transport row no width AND no height: the row has
+      // no width to give (a caption in flex flow crushed the 90px track to
+      // 39.5px), and an in-flow caption would also grow the control's box
+      // from 20 to ~35px, riding the track off the centreline its 26px
+      // button neighbours sit on and then dropping it back the moment the
+      // second slot was captured.
+      check(`[reasoned] ${c.name} costs no width or height`,
         hints[0].props.style.position === "absolute",
         `caption position is ${hints[0].props.style.position}`);
+
+      // 2. NOT IN THE GROOVE -- the defect this change exists to fix. The old
+      // form rendered flawlessly; it was simply a sentence inside a slider,
+      // which no pixel comparison against the shipped build could ever call
+      // wrong.
+      check(`[reasoned] ${c.name} not painted inside the groove`,
+        !!track && !isDescendantOf(hints[0], track),
+        "the reason caption is a descendant of #spectr-snapshot-morph");
+      // ...and it is not shaped like the thing that lived in there: an
+      // in-groove caption spanned the track's full width and centred itself.
+      check(`[reasoned] ${c.name} is a caption, not a track overlay`,
+        hints[0].props.style.width === undefined
+          && hints[0].props.style.textAlign === undefined,
+        `caption declares width=${hints[0].props.style.width} `
+        + `textAlign=${hints[0].props.style.textAlign}`);
+      // The design system's caption treatment, in the app's own vocabulary:
+      // the transport bar's mono token at 10px, faint.
+      const st = hints[0].props.style;
+      check(`[reasoned] ${c.name} caption treatment`,
+        st.fontFamily === "var(--mono)" && st.fontSize === 10,
+        `caption is ${st.fontFamily} at ${st.fontSize}px`);
     }
   }
 
-  // 3. STILL GATED -- the rule is unchanged, only explained.
-  const track = morphTrack(nodes);
+  // 4. STILL GATED -- the rule is unchanged, only explained.
   check(`[gated] ${c.name} track present`, !!track, "no #spectr-snapshot-morph");
   if (track) {
     check(`[gated] ${c.name} disabled flag`, track.props.disabled === !enabled,
@@ -260,18 +371,39 @@ for (const c of CASES) {
     check(`[gated] ${c.name} cursor`,
       track.props.style.cursor === (enabled ? "pointer" : "not-allowed"),
       `cursor=${track.props.style.cursor}`);
-    // The paint dims; the track box itself must not, or the caption inside
-    // it dims too.
-    const thumb = findByProp(flatten(track), "data-spectr-morph-thumb")[0];
+    // 3. DIMMED, ONCE. The disabled state is one opacity on the row, at the
+    // value the guideline names, and the whole control inherits it.
+    const trackOpacity = effectiveOpacity(track);
+    check(`[dimmed] ${c.name} control`,
+      Math.abs(trackOpacity - (enabled ? 1 : DISABLED_OPACITY)) < 1e-9,
+      `control renders at effective opacity ${trackOpacity.toFixed(3)}, `
+      + `expected ${enabled ? 1 : DISABLED_OPACITY}`);
+    // Resolved out of the ALREADY-WALKED tree, not by re-flattening `track`.
+    // `flatten` stamps __parent as it descends, so `flatten(track)` would
+    // re-root the subtree and null out the thumb's path to the row -- which
+    // reads as a thumb at full opacity inside a dimmed control, and the dim
+    // assertion below would then be measuring the walk rather than the
+    // component. Measured: it reported 1.000 against a row at 0.420.
+    const thumb = findByProp(nodes, "data-spectr-morph-thumb")[0];
     check(`[gated] ${c.name} thumb still rendered`, !!thumb,
       "the native parity test drives the thumb in the DEFAULT disabled state");
-    // A disabled morph has no position to indicate, and the caption that
-    // names the missing slot is centred across the same track. The thumb is
-    // hidden rather than removed so the parity test still resolves the node
-    // and its geometry.
-    check(`[gated] ${c.name} thumb hidden while disabled`, thumb
-      && thumb.props.style.opacity === (enabled ? 1 : 0),
-      `thumb opacity=${thumb && thumb.props.style.opacity}`);
+    check(`[gated] ${c.name} thumb is inside the track`,
+      !!thumb && isDescendantOf(thumb, track),
+      "the thumb is not a descendant of #spectr-snapshot-morph");
+    // "Opacity only" means the control still LOOKS like a slider while it is
+    // unavailable. The thumb used to set `opacity: 0` on itself, because the
+    // caption was painted across the same track and the thumb would have sat
+    // on the text. With the caption out from under the row there is nothing
+    // to hide from, and a groove with nothing in it reads as unfinished
+    // rather than as disabled. So the thumb declares no opacity of its own
+    // and takes the row's.
+    check(`[dimmed] ${c.name} thumb declares no dim of its own`,
+      thumb && thumb.props.style.opacity === undefined,
+      `thumb declares opacity=${thumb && thumb.props.style.opacity}`);
+    check(`[dimmed] ${c.name} thumb shares the control dim`, thumb
+      && Math.abs(effectiveOpacity(thumb) - (enabled ? 1 : DISABLED_OPACITY)) < 1e-9,
+      `thumb renders at effective opacity `
+      + `${thumb ? effectiveOpacity(thumb).toFixed(3) : "n/a"}`);
     if (thumb) {
       // A PILL, not a circle: wider than it is tall, and fully rounded so the
       // ends are semicircular rather than merely soft. A square thumb of any
@@ -350,7 +482,7 @@ if (liveCalls.length === 1) {
     morphTrack(after).props.disabled === true, "stayed enabled after B cleared");
   const hints = findByProp(after, "data-spectr-morph-hint");
   check("[cleared] re-explains when B is cleared", hints.length === 1
-    && textOf(hints[0]) === "SET B",
+    && textOf(hints[0]) === "SET B TO MORPH",
     `reason after clear: ${hints.length ? JSON.stringify(textOf(hints[0])) : "none"}`);
 }
 

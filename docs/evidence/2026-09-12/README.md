@@ -260,9 +260,10 @@ Read them with `tools/spectr-detectors/slider_thumb_hover_growth.py`; its
 
 `tools/spectr-detectors/slider_thumb_pill_shape.py`, against the CHECKED-IN
 `materialized-document.runtime.json` rather than a capture. Every state
-`Spectr-native-shot` captures has the morph slider disabled, where its thumb is
-`opacity: 0` and the `SET A + B` caption shows instead — so no capture can
-adjudicate the morph half, and a fixture would only ever record one build. Two
+`Spectr-native-shot` captures has the morph slider disabled, so its thumb is
+only ever painted at the row's disabled dim and only ever at ratio 0 — its
+hovered size is unreachable from a capture, because `grown` is
+`hovered && hasBoth`. A fixture would also only ever record one build. Two
 independent negative controls, because it makes two independent claims:
 `--plant circle` reverts the shape on both components, `--plant overhang`
 keeps the pill and reverts only the travel.

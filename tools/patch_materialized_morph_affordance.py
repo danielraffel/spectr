@@ -18,7 +18,30 @@ snapshot was what it was waiting for.  Reported as "i can't figure out how to
 see the morph slider actually morph".
 
 So the fix is rendered content -- the control states its own precondition,
-naming the slot that is actually missing: "SET A + B", "SET A", or "SET B".
+naming the slot that is actually missing.
+
+WHERE that sentence is rendered is the second half of the fix, and the first
+attempt got it wrong.  The reason was painted INSIDE the slider's own 90x16
+groove, so a half-configured control read as `A ---- SET B ---- B`: a line of
+instructional text inside a track, which looks like a rendering fault rather
+than guidance.  Reported as "it seems like a bug the way it's displayed I like
+the intent".
+
+The Pulp Design System settles both halves and this script implements it
+without reinterpretation.  Its disabled state is `disabled . 42` -- OPACITY
+ONLY, no instructional text on the control -- and its caption treatment is
+mono / 10px / faint.  So the dim is now ONE expression on the row (dimming the
+"A" label, the groove, the fill and the thumb together, at the .42 the
+guideline names) and the sentence moved OUT of the groove to a caption below
+the row.
+
+The caption reuses the transport row's OWN dim-caption treatment rather than
+inventing one: `fontSize: 10` at `opacity: 0.55` over the bar's inherited
+`var(--mono)` / `rgba(255,255,255,0.7)` -- which is exactly what the
+"SNAPSHOT" label four items to its left already does, and which resolves to
+about #636568, within a hair of Spectr's own `--dim: #6b7380` token.  The
+design system's `--font-mono` and `--text-faint` are spelled in the app's
+vocabulary, not imported.
 
 TWO CONSTRAINTS SHAPE THE IMPLEMENTATION, both learned by getting it wrong:
 
@@ -29,21 +52,41 @@ TWO CONSTRAINTS SHAPE THE IMPLEMENTATION, both learned by getting it wrong:
     no hover-tooltip path, so a twelfth `title:` would have looked like an
     affordance in the diff and shown the user nothing.
 
-2.  THE TRANSPORT ROW HAS NO WIDTH TO GIVE.  A first attempt added a visible
-    "MORPH" caption and a reason caption as new flex siblings -- about 93px --
-    and the row absorbed it by crushing the control instead of growing: the
-    90x16 track rendered at 39.5px, both flanking "A"/"B" labels collapsed to
-    zero width, and the thumb (which overhangs its track by 7px) landed on top
-    of the new caption.  `flexShrink: 0` on the additions made it worse by
-    protecting them and sacrificing the slider.  So this patch adds NO width:
-    the caption is absolutely positioned inside the existing 90x16 track,
-    which takes it out of flex flow entirely.  The thumb sits at x -7..7 of
-    that track and the centred caption at roughly 19..71, so they do not
-    collide.
+2.  THE CAPTION IS OUT OF FLOW ON BOTH AXES, and the vertical half is not
+    belt-and-braces.  Horizontally the reason is history: a first attempt
+    added a visible "MORPH" caption and a reason caption as new flex siblings
+    -- about 93px -- and the transport row absorbed it by crushing the control
+    instead of growing, rendering the 90x16 track at 39.5px with both flanking
+    labels collapsed to zero.  Vertically it is a state-change artefact.  An
+    in-flow caption turns the control's box from 20px tall to about 35px, and
+    the transport bar centres its items, so the TRACK would ride 7.5px up --
+    off the centreline its 26px button neighbours sit on -- and then JUMP BACK
+    DOWN the moment the second slot was captured and the caption unmounted.  A
+    control that moves when it becomes usable is worse than the defect being
+    fixed.  Measured on the shipping build: the group is x=758.188 y=822.500
+    w=116.750 h=20.000 inside a 56px bar at y=804, and the buttons beside it
+    are h=26 at y=819.500.
 
-The dim moves off the wrapper and onto the track's three painted children, so
-the caption explaining a dimmed control is not itself dimmed away.  The
-flanking "A"/"B" labels keep their normal 0.5 alpha.
+    So the caption is `position: "absolute"` under the row: it costs the row
+    no width AND no height, the track keeps its exact y, and nothing moves
+    when the control becomes enabled.  Being out of flow also keeps it out of
+    the wrapper's measured size, which is what lets the group stay 116.750
+    wide while the caption's own box runs wider.
+
+    It is anchored at `left: 0` with `whiteSpace: "nowrap"` rather than
+    centred in a fixed width, so it grows RIGHTWARD into the 343px flexible
+    spacer that follows the group and can never reach back over the
+    `recall B` button to its left.
+
+THE DIM IS ONE EXPRESSION, ON THE ROW.  It was briefly three -- one per
+painted child of the track -- because the caption lived inside the track and
+would otherwise have been dimmed away by the wrapper that dimmed the control.
+With the caption a SIBLING of the row rather than a descendant of the track,
+that constraint is gone: `opacity: hasBoth ? 1 : 0.42` on the row dims the
+"A" label, the groove, the fill and the thumb uniformly, and the caption
+below is untouched.  The thumb no longer hides itself at `opacity: 0` either
+-- "opacity only" means the control still looks like a slider while it is
+unavailable, not that half of it disappears.
 
 THE THUMB IS A PILL, and this script is the only writer of that style.
 
@@ -111,8 +154,6 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.path.join(REPO, "native-ui", "materialized",
                     "materialized-document.runtime.json")
 
-DIM = 'opacity: hasBoth ? 1 : 0.35, '
-
 # The call site stops collapsing the two slots into one boolean: the reason
 # text has to name the missing slot, and `hasBoth` cannot carry that.
 CALLSITE_OLD = (
@@ -132,13 +173,75 @@ SIGNATURE_NEW = (
     '  const hasBoth = Boolean(hasA && hasB);\n'
     '  const [v, setV] = useStateChrome(0);')
 
-# The wrapper gives up the dim so the caption it now contains stays readable.
-WRAPPER_OLD = (
-    '{ style: { display: "flex", alignItems: "center", gap: 6, '
-    'marginLeft: 6, opacity: hasBoth ? 1 : 0.35 } }')
+# The control becomes a two-level group: an outer box that owns the margin and
+# anchors the caption, and the ORIGINAL flex row inside it holding "A", the
+# track and "B".  The nesting is what keeps `morph_row_clearance.py` pointed at
+# something it understands -- that detector resolves the track's parent and
+# requires EXACTLY the two flanking labels as siblings, so hanging the caption
+# off the row itself would have made it report UNMEASURED (exit 2) rather than
+# a verdict.  As a child of the outer box instead, the caption is the track's
+# uncle and the row is untouched.
+#
+# Three recognised spellings, so this converges from any prior state: the
+# pristine generated wrapper (which dimmed everything including any caption),
+# the wrapper that gave up its dim when the caption moved inside the track, and
+# the nested form below.  The trailing `}, ` is part of the anchor so the
+# replacement stops short of the "A" label, which is a separate patch point.
+WRAPPER_OLDS = [
+    ('React.createElement("div", { style: { display: "flex", '
+     'alignItems: "center", gap: 6, marginLeft: 6, '
+     'opacity: hasBoth ? 1 : 0.35 } }, '),
+    ('React.createElement("div", { style: { display: "flex", '
+     'alignItems: "center", gap: 6, marginLeft: 6 } }, '),
+    # The nested form before it centred the row inside itself.
+    ('React.createElement("div", { style: { position: "relative", '
+     'marginLeft: 6, flexShrink: 0 } }, '
+     '/* @__PURE__ */ React.createElement("div", { style: { display: "flex", '
+     'alignItems: "center", gap: 6, opacity: hasBoth ? 1 : 0.42 } }, '),
+]
+# `justifyContent: "center"` is NOT decoration. The outer box resolves to
+# 20.000px tall while the row inside it is 16.000, and a Yoga column defaults
+# to `flex-start`, so without it the row pins to the top of the outer box and
+# the 90x16 TRACK RIDES 2.000px UP -- measured 824.500 -> 822.500, off the
+# 832.500 centreline its 26px button neighbours sit on. Centring the row
+# inside the outer box puts the track back at exactly the y it shipped at, so
+# this change moves the control not at all.
 WRAPPER_NEW = (
-    '{ style: { display: "flex", alignItems: "center", gap: 6, '
-    'marginLeft: 6 } }')
+    'React.createElement("div", { style: { position: "relative", '
+    'marginLeft: 6, flexShrink: 0, justifyContent: "center" } }, '
+    '/* @__PURE__ */ React.createElement("div", { style: { display: "flex", '
+    'alignItems: "center", gap: 6, opacity: hasBoth ? 1 : 0.42 } }, ')
+
+# The caption, below the row rather than inside the groove.
+#
+# `top: 20` is the outer box's own height (measured 20.000 on the shipping
+# build), so the caption starts flush under the row and 2px under the painted
+# track, and its 13px line box ends 4.5px above the transport bar's bottom
+# edge.  Both numbers are read off a capture, not chosen: the group sits at
+# y=822.500 h=20.000 in a bar spanning y=804..860.
+#
+# The treatment is the transport bar's own faint-caption treatment, not a new
+# one -- `fontSize: 10` at `opacity: 0.55` over the bar's inherited
+# `var(--mono)` and `rgba(255,255,255,0.7)`, which is what the "SNAPSHOT"
+# label in the same row uses.  `fontFamily` and `lineHeight` are pinned rather
+# than inherited for the same reason the menu-item caption helper pins them:
+# an unpinned nested box resolves its line box against a different multiplier
+# than a bare text child and measures taller than its siblings.
+CAPTION = (
+    'hasBoth ? null : /* @__PURE__ */ React.createElement("div", '
+    '{ "data-spectr-morph-hint": true, style: { position: "absolute", '
+    'left: 0, top: 20, whiteSpace: "nowrap", pointerEvents: "none", '
+    'fontFamily: "var(--mono)", fontSize: 10, lineHeight: "13px", '
+    'opacity: 0.55 } }, '
+    'hasA ? "SET B TO MORPH" : (hasB ? "SET A TO MORPH" '
+    ': "SET A + B TO MORPH"))')
+
+# Closing the two boxes the wrapper edit opened, and hanging the caption off
+# the outer one.  Anchored on the function's own tail rather than on the "B"
+# label, because the label is a separate patch point and an anchor that spans
+# two of them cannot be replayed independently.
+CLOSE_OLD = ', "B"));\n}\n\nwindow.Chrome = Chrome;'
+CLOSE_NEW = ', "B")), ' + CAPTION + ');\n}\n\nwindow.Chrome = Chrome;'
 
 # ...re-applied to the three painted children it actually describes, and the
 # reason caption appended inside the track: absolutely positioned, so it is out
@@ -194,13 +297,17 @@ LABEL_B_OLD, LABEL_B_NEW = label_box("B")
 #   *_circle  the affordance block as first shipped (circle thumb + caption)
 #   *_pill    the pill thumb before the track refused to be the item that
 #             shrinks when the transport row tightens
-#   *_after   the block this script now installs
+#   *_hinted  the pill thumb with the reason caption still painted INSIDE the
+#             groove, and the dim split across the three painted children
+#   *_after   the block this script now installs -- no text in the track, and
+#             no per-child dim, because the row carries it
 # Listing every intermediate as an alternative patch point is what lets the
 # edit stay idempotent across a shape change: a document already carrying an
 # older spelling is upgraded in place rather than reported as unpatchable.
 TRACK_OLDS = [track_text("morph_affordance_track_before.txt"),
               track_text("morph_affordance_track_circle.txt"),
-              track_text("morph_affordance_track_pill.txt")]
+              track_text("morph_affordance_track_pill.txt"),
+              track_text("morph_affordance_track_hinted.txt")]
 TRACK_NEW = track_text("morph_affordance_track_after.txt")
 
 EDITS = [
@@ -208,14 +315,18 @@ EDITS = [
      [CALLSITE_OLD], CALLSITE_NEW),
     ('hasBoth is derived, so the enablement rule is unchanged',
      [SIGNATURE_OLD], SIGNATURE_NEW),
-    ('the wrapper gives up the dim', [WRAPPER_OLD], WRAPPER_NEW),
+    ('the control nests one level so the caption can hang below the row, '
+     'and the row carries the whole disabled dim',
+     WRAPPER_OLDS, WRAPPER_NEW),
     ('the flanking "A" label is a box, so the track starts past it',
      [LABEL_A_OLD], LABEL_A_NEW),
     ('the flanking "B" label is a box, so the track ends before it',
      [LABEL_B_OLD], LABEL_B_NEW),
-    ('the track dims its own paint, names the slot it waits for, and '
-     'draws a pill thumb that stays inside it',
+    ('the track paints a pill inside itself and nothing else -- no '
+     'instructional text in the groove, no per-child dim',
      TRACK_OLDS, TRACK_NEW),
+    ('the caption says why the control is unavailable, below the row',
+     [CLOSE_OLD], CLOSE_NEW),
 ]
 
 # No reader may still expect a `hasBoth` prop from outside, and the wrapper
@@ -232,10 +343,32 @@ FORBIDDEN_AFTER = (
     # "A" label's own x and painted over it.
     LABEL_A_OLD,
     LABEL_B_OLD,
+    # THE DEFECT THIS PATCH POINT EXISTS FOR: instructional text painted
+    # inside the slider's own groove, which reads as a rendering fault. Both
+    # the shape of that node and the wording it carried are refused, so a
+    # regression cannot creep back under a reworded string.
+    ('"data-spectr-morph-hint": true, style: { position: "absolute", '
+     'left: 0, top: 1, width: "100%", height: 14'),
+    'hasA ? "SET B" : (hasB ? "SET A" : "SET A + B")',
+    # The dim split across the track's painted children, and the .35 it used.
+    # The row carries one .42 now, which is the value the design system names.
+    'opacity: hasBoth ? 1 : 0.35',
+    # The thumb erasing itself while disabled. "Opacity only" means the
+    # control still looks like a slider, not that half of it vanishes.
+    'opacity: hasBoth ? 1 : 0, background: "#fff"',
 )
 REQUIRED_AFTER = (
     '"data-spectr-morph-hint": true',
-    'hasA ? "SET B" : (hasB ? "SET A" : "SET A + B")',
+    ('hasA ? "SET B TO MORPH" : (hasB ? "SET A TO MORPH" '
+     ': "SET A + B TO MORPH")'),
+    # ...in the design system's caption treatment, spelled in the app's own
+    # vocabulary: the transport bar's `var(--mono)` at 10px, faint.
+    ('fontFamily: "var(--mono)", fontSize: 10, lineHeight: "13px", '
+     'opacity: 0.55'),
+    # One dim, on the row, at the value the guideline names.
+    'opacity: hasBoth ? 1 : 0.42',
+    # ...and the row stays centred in the outer box, so the track keeps its y.
+    'marginLeft: 6, flexShrink: 0, justifyContent: "center"',
     'const hasBoth = Boolean(hasA && hasB);',
     # The gate itself survives verbatim -- this patch explains the rule, it
     # does not relax it.
