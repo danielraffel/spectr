@@ -234,6 +234,36 @@ CASES: list[tuple[str, str, int, list[str]]] = [
     # handler had no Enter branch at all. Nothing else in the suite can see
     # that -- the footer renders identically whether its handlers fire or not.
     # Reads the checked-in artifact, so it needs no build.
+    # The manager's own transient state, its row chrome, and the heading's
+    # measured box. Reads the checked-in artifact, so it needs no build, no
+    # GPU and no third-party module -- it registers on every runner
+    # configuration, including the chrome-less acceptance one.
+    ("preset_manager_reset_and_chrome",
+     "shipping artifact resets on open, drops the chip, boxes the name", 0,
+     [f(D, "preset_manager_reset_and_chrome.py")]),
+    # main's behaviour restored exactly: no reset at all. A suite that cannot
+    # reject this does not cover what the user reported.
+    ("preset_manager_reset_and_chrome", "plant: no reset on open at all", 1,
+     [f(D, "preset_manager_reset_and_chrome.py"), "--plant", "no-reset"]),
+    # The OTHER wrong implementation, and the one that reads as correct in a
+    # diff: keyed on a dep that changes every App render, so it clears the
+    # search field while the user is still typing in it.
+    ("preset_manager_reset_and_chrome",
+     "plant: reset keyed on a per-render identity", 1,
+     [f(D, "preset_manager_reset_and_chrome.py"), "--plant", "unstable-deps"]),
+    ("preset_manager_reset_and_chrome", "plant: put the F / U chip back", 1,
+     [f(D, "preset_manager_reset_and_chrome.py"), "--plant", "chip"]),
+    ("preset_manager_reset_and_chrome",
+     "plant: heading title back to a span", 1,
+     [f(D, "preset_manager_reset_and_chrome.py"), "--plant", "title-span"]),
+    ("preset_manager_reset_and_chrome",
+     "plant: second child beside the heading name", 1,
+     [f(D, "preset_manager_reset_and_chrome.py"), "--plant",
+      "title-two-children"]),
+    ("preset_manager_reset_and_chrome",
+     "plant: let the badge shrink instead of the name", 1,
+     [f(D, "preset_manager_reset_and_chrome.py"), "--plant", "badge-shrinks"]),
+
     ("preset_commit_gestures", "shipping artifact backs every advertised gesture", 0,
      [f(D, "preset_commit_gestures.py")]),
     ("preset_commit_gestures", "plant: re-attach the undispatchable dbl-click prop", 1,
