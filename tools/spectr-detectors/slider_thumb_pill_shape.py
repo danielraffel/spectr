@@ -10,11 +10,12 @@ This adjudicates the shape that replaced it.
 
 It reads the CHECKED-IN artifact rather than a captured fixture, deliberately.
 A fixture records one build; this records what ships.  The companion detector
-`slider_thumb_hover_growth.py` reads captures, and captures cannot say anything
-about a thumb that no captured state ever paints -- every state
-`Spectr-native-shot` captures has the morph slider DISABLED, where the thumb is
-`opacity: 0` and the "SET A + B" caption shows instead.  So the morph half of
-this contract is unreachable from a capture and is checked here.
+`slider_thumb_hover_growth.py` reads captures, and captures cannot say much
+about the morph thumb: every state `Spectr-native-shot` reaches has the morph
+slider DISABLED, so the thumb is only ever painted at the row's 0.42 dim and
+only ever at ratio 0.  Its HOVERED size in particular is unreachable, because
+`grown` is `hovered && hasBoth` and no capture can satisfy the second half.
+So the morph half of this contract is checked here instead.
 
 Two properties, per thumb, in BOTH its idle and its hovered state:
 

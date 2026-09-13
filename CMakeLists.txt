@@ -886,9 +886,25 @@ if(SPECTR_NODE_EXECUTABLE)
     # empty, readable rather than sharing the control's dim, and -- the scope
     # control -- that the gate still refuses a pointer commit when disabled
     # and still accepts one when enabled, including after a slot is cleared on
-    # a live component. The caption is absolutely positioned inside the 90x16
-    # track on purpose: the transport row has no spare width, and an earlier
-    # attempt that added flex siblings crushed that track to 39.5px.
+    # a live component.
+    #
+    # WHERE that caption goes is the second half, and the first attempt got it
+    # wrong: it was painted across the inside of the 90x16 groove, so a
+    # half-configured control read as `A ---- SET B ---- B` -- guidance that
+    # reads as a rendering fault ("it seems like a bug the way it's displayed
+    # I like the intent"). The Pulp Design System settles it: a disabled
+    # control is OPACITY ONLY with no instructional text on it, and guidance
+    # goes in a mono/10px/faint caption beside it. So the caption is now a
+    # sibling BELOW the row, and the suite requires that it is not a
+    # descendant of the track.
+    #
+    # It stays absolutely positioned, on both axes and for two different
+    # reasons. Horizontally the transport row has no spare width, and an
+    # earlier attempt that added flex siblings crushed that track to 39.5px.
+    # Vertically an in-flow caption would grow the control's box from 20 to
+    # ~35px, and the bar centres its items -- so the track would ride 7.5px
+    # off the centreline its 26px button neighbours sit on, then JUMP BACK
+    # DOWN the moment the second slot was captured and the caption unmounted.
     add_test(NAME Spectr-materialized-morph-affordance
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_affordance.mjs
@@ -912,6 +928,25 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --plant-nohint --expect-fail)
     set_tests_properties(Spectr-materialized-morph-affordance-hint-control PROPERTIES
+        TIMEOUT 60)
+    # The reported defect itself, verbatim: the sentence back inside the
+    # groove. A suite that cannot reject this does not cover the bug.
+    add_test(NAME Spectr-materialized-morph-affordance-groove-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_affordance.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-hint-in-track --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-affordance-groove-control PROPERTIES
+        TIMEOUT 60)
+    # ...and the same move with TODAY'S wording and treatment untouched, so
+    # the row above cannot be passing on the strength of a changed string:
+    # this one isolates the PLACEMENT rule.
+    add_test(NAME Spectr-materialized-morph-affordance-placement-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_morph_affordance.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-caption-into-groove --expect-fail)
+    set_tests_properties(Spectr-materialized-morph-affordance-placement-control PROPERTIES
         TIMEOUT 60)
     # The MODULATION group must read as two LFOs plus a shared destination
     # block, not as one flat run of ten sibling rows. `Target` used to be gated
