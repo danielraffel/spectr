@@ -1376,6 +1376,88 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
         WILL_FAIL TRUE)
 endif()
 
+# These need node only -- NOT chrome. Registered under the browser
+# oracle's node+chrome guard they would silently not exist on a runner
+# without chrome, which is exactly what the acceptance runner is, and
+# the `materialized` acceptance pattern would still match its other
+# tests and report nothing wrong.
+if(SPECTR_NODE_EXECUTABLE)
+    # The marquee's RESULT. A person asked to hold two separate frequency
+    # ranges at once, so the assertion is the selection SET -- both regions
+    # present and the gap between them absent -- rather than "a handler ran",
+    # which a handler computing the wrong set also satisfies. The suite drives
+    # the shipped pointer handlers out of the materialized document under a
+    # minimal React shim, because a discontiguous selection has no layout node
+    # to look at.
+    add_test(NAME Spectr-materialized-additive-marquee
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_additive_marquee.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-additive-marquee PROPERTIES TIMEOUT 60)
+    # Three controls, one per way this can rot. Each reinstates a real defect
+    # and inverts the verdict inside the script; WILL_FAIL is deliberately not
+    # used, because it accepts any non-zero exit including the ones that mean
+    # the control never ran.
+    add_test(NAME Spectr-materialized-additive-marquee-replaces-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_additive_marquee.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-replaces --expect-fail)
+    set_tests_properties(Spectr-materialized-additive-marquee-replaces-control
+        PROPERTIES TIMEOUT 60)
+    # Add-only passes the discontiguous assertion and fails only the remove
+    # half, which is exactly the shape of a row whose label over-promises.
+    add_test(NAME Spectr-materialized-additive-marquee-add-only-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_additive_marquee.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-add-only --expect-fail)
+    set_tests_properties(Spectr-materialized-additive-marquee-add-only-control
+        PROPERTIES TIMEOUT 60)
+    # Toggling against the live selection instead of the base frozen at press.
+    # A short drag still looks right; the selection strobes as the pointer
+    # keeps sampling inside a band it already flipped.
+    add_test(NAME Spectr-materialized-additive-marquee-live-toggle-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_additive_marquee.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-live-toggle --expect-fail)
+    set_tests_properties(Spectr-materialized-additive-marquee-live-toggle-control
+        PROPERTIES TIMEOUT 60)
+endif()
+
+# No SHORTCUTS row may wrap, and none may be ABLE to. The budget half reads
+# the shipping artifact and needs no binary, so it holds even where the
+# standalone cannot run; the rendered half opens the panel in the shipping
+# native editor and measures every row's line box.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-shortcut-panel-budget
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/shortcut_panel_single_line.py
+            --budget-only)
+    set_tests_properties(Spectr-shortcut-panel-budget PROPERTIES TIMEOUT 60)
+    # A budget nobody has watched reject a row is not a budget. --plant
+    # long-label restores the wording that wrapped in the shipped build.
+    add_test(NAME Spectr-shortcut-panel-budget-negative-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/shortcut_panel_single_line.py
+            --budget-only --plant long-label)
+    set_tests_properties(Spectr-shortcut-panel-budget-negative-control PROPERTIES
+        TIMEOUT 60
+        WILL_FAIL TRUE)
+endif()
+
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-shortcut-panel-single-line
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/shortcut_panel_single_line.py
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out-dir ${CMAKE_CURRENT_BINARY_DIR}/spectr-shortcut-panel)
+    set_tests_properties(Spectr-shortcut-panel-single-line PROPERTIES
+        TIMEOUT 300
+        RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
 # ── Plugin targets ─────────────────────────────────────────────────────
 
 if(SPECTR_BUILD_WEBVIEW_REFERENCE)

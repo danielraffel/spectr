@@ -2809,10 +2809,10 @@
         }
       ],
       "box": {
-        "left": -254,
-        "top": -370.265625,
-        "width": 280,
-        "height": 362.265625
+        "left": -304,
+        "top": -340.859375,
+        "width": 330,
+        "height": 332.859375
       }
     },
     {
@@ -2843,7 +2843,7 @@
       "box": {
         "left": 15,
         "top": 15,
-        "width": 250,
+        "width": 300,
         "height": 15.296875
       }
     },
@@ -2875,7 +2875,7 @@
       "box": {
         "left": 15,
         "top": 38.296875,
-        "width": 250,
+        "width": 300,
         "height": 23.296875
       }
     },
@@ -2979,7 +2979,7 @@
       "box": {
         "left": 15,
         "top": 61.59375,
-        "width": 250,
+        "width": 300,
         "height": 23.296875
       }
     },
@@ -3083,7 +3083,7 @@
       "box": {
         "left": 15,
         "top": 84.890625,
-        "width": 250,
+        "width": 300,
         "height": 23.296875
       }
     },
@@ -3187,8 +3187,8 @@
       "box": {
         "left": 15,
         "top": 108.1875,
-        "width": 250,
-        "height": 38
+        "width": 300,
+        "height": 23.296875
       }
     },
     {
@@ -3222,7 +3222,7 @@
       ],
       "box": {
         "left": 0,
-        "top": 9.34375,
+        "top": 2,
         "width": 84,
         "height": 19.296875
       }
@@ -3258,9 +3258,9 @@
       ],
       "box": {
         "left": 94,
-        "top": 2,
-        "width": 156,
-        "height": 34
+        "top": 3.140625,
+        "width": 65,
+        "height": 17
       }
     },
     {
@@ -3290,8 +3290,8 @@
       ],
       "box": {
         "left": 15,
-        "top": 146.1875,
-        "width": 250,
+        "top": 131.484375,
+        "width": 300,
         "height": 23.296875
       }
     },
@@ -3394,8 +3394,8 @@
       ],
       "box": {
         "left": 15,
-        "top": 169.484375,
-        "width": 250,
+        "top": 154.78125,
+        "width": 300,
         "height": 23.296875
       }
     },
@@ -3498,8 +3498,8 @@
       ],
       "box": {
         "left": 15,
-        "top": 192.78125,
-        "width": 250,
+        "top": 178.078125,
+        "width": 300,
         "height": 23.296875
       }
     },
@@ -3602,8 +3602,8 @@
       ],
       "box": {
         "left": 15,
-        "top": 216.078125,
-        "width": 250,
+        "top": 201.375,
+        "width": 300,
         "height": 23.296875
       }
     },
@@ -3706,8 +3706,8 @@
       ],
       "box": {
         "left": 15,
-        "top": 239.375,
-        "width": 250,
+        "top": 224.671875,
+        "width": 300,
         "height": 23.296875
       }
     },
@@ -3810,8 +3810,8 @@
       ],
       "box": {
         "left": 15,
-        "top": 262.671875,
-        "width": 250,
+        "top": 247.96875,
+        "width": 300,
         "height": 23.296875
       }
     },
@@ -3914,9 +3914,9 @@
       ],
       "box": {
         "left": 15,
-        "top": 285.96875,
-        "width": 250,
-        "height": 38
+        "top": 271.265625,
+        "width": 300,
+        "height": 23.296875
       }
     },
     {
@@ -3950,7 +3950,7 @@
       ],
       "box": {
         "left": 0,
-        "top": 9.34375,
+        "top": 2,
         "width": 84,
         "height": 19.296875
       }
@@ -3986,9 +3986,9 @@
       ],
       "box": {
         "left": 94,
-        "top": 2,
-        "width": 156,
-        "height": 34
+        "top": 3.140625,
+        "width": 130,
+        "height": 17
       }
     },
     {
@@ -4018,8 +4018,8 @@
       ],
       "box": {
         "left": 15,
-        "top": 323.96875,
-        "width": 250,
+        "top": 294.5625,
+        "width": 300,
         "height": 23.296875
       }
     },
@@ -5368,7 +5368,7 @@
           "index": 0
         }
       ],
-      "text": "1 / 2 / 3",
+      "text": "S / L / B",
       "basis": {
         "width": 84,
         "resolved_face": "JetBrainsMono-Regular",
@@ -5488,7 +5488,7 @@
           "index": 0
         }
       ],
-      "text": "4 / 5",
+      "text": "F / G",
       "basis": {
         "width": 84,
         "resolved_face": "JetBrainsMono-Regular",
@@ -5788,16 +5788,16 @@
           "index": 1
         }
       ],
-      "text": "Edit bands (mode-dependent)",
+      "text": "Edit bands",
       "basis": {
-        "width": 156,
+        "width": 65,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
             "family_name": "JetBrains Mono",
             "post_script_name": "JetBrainsMono-Regular",
             "is_custom_font": true,
-            "glyph_count": 27
+            "glyph_count": 10
           }
         ],
         "requested": {
@@ -5811,18 +5811,10 @@
       "boxes": [
         {
           "left": 0,
-          "top": 2,
-          "width": 110.5,
-          "height": 13,
-          "start": 0,
-          "length": 17
-        },
-        {
-          "left": 0,
-          "top": 19,
+          "top": 3.140625,
           "width": 65,
           "height": 13,
-          "start": 17,
+          "start": 0,
           "length": 10
         }
       ]
@@ -6588,7 +6580,7 @@
           "index": 0
         }
       ],
-      "text": "⇧+CLICK",
+      "text": "⌘⇧+DRAG",
       "basis": {
         "width": 84,
         "resolved_face": "JetBrainsMono-Regular",
@@ -6597,13 +6589,13 @@
             "family_name": "Menlo",
             "post_script_name": "Menlo-Regular",
             "is_custom_font": false,
-            "glyph_count": 1
+            "glyph_count": 7
           },
           {
             "family_name": "JetBrains Mono",
             "post_script_name": "JetBrainsMono-Regular",
             "is_custom_font": true,
-            "glyph_count": 6
+            "glyph_count": 7
           }
         ],
         "requested": {
@@ -6654,16 +6646,16 @@
           "index": 1
         }
       ],
-      "text": "Add/remove from selection",
+      "text": "Add/remove selection",
       "basis": {
-        "width": 156,
+        "width": 130,
         "resolved_face": "JetBrainsMono-Regular",
         "resolved_faces": [
           {
             "family_name": "JetBrains Mono",
             "post_script_name": "JetBrainsMono-Regular",
             "is_custom_font": true,
-            "glyph_count": 24
+            "glyph_count": 20
           }
         ],
         "requested": {
@@ -6677,19 +6669,11 @@
       "boxes": [
         {
           "left": 0,
-          "top": 2,
-          "width": 97.5,
+          "top": 3.140625,
+          "width": 130,
           "height": 13,
           "start": 0,
-          "length": 15
-        },
-        {
-          "left": 0,
-          "top": 19,
-          "width": 58.5,
-          "height": 13,
-          "start": 16,
-          "length": 9
+          "length": 20
         }
       ]
     },
