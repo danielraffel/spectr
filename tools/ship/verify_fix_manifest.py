@@ -86,7 +86,17 @@ def validate_manifest(manifest: dict) -> None:
     """
 
     tokens = list(manifest.get("control_tokens", []))
-    tokens += [t for fix in manifest.get("fixes", []) for t in fix["tokens"]]
+    tokens += [t for fix in manifest.get("fixes", []) for t in fix.get("tokens", [])]
+    for fix in manifest.get("fixes", []):
+        if fix.get("verifiable") is False and fix.get("tokens"):
+            raise ValueError(
+                f"fix {fix['id']!r} is marked unverifiable but declares tokens"
+            )
+        if fix.get("verifiable") is not False and not fix.get("tokens"):
+            raise ValueError(
+                f"fix {fix['id']!r} declares no tokens and is not marked "
+                "verifiable: false - an untokened row would silently pass"
+            )
     for token in tokens:
         if '"' in token:
             raise ValueError(
@@ -122,6 +132,13 @@ def verify(artifact: Path, manifest: dict) -> tuple[str, list[tuple[str, bool, s
     rows: list[tuple[str, bool, str]] = []
     all_present = True
     for fix in manifest["fixes"]:
+        if fix.get("verifiable") is False:
+            # Reported, never silently skipped. A fix nothing can prove is a
+            # known hole in the gate; hiding it would make the gate look
+            # more complete than it is.
+            rows.append((f"#{fix['pr']}  {fix['title']}", None,
+                         fix.get("reason", "no token can prove this")))
+            continue
         found = [t for t in fix["tokens"] if check_token(blob, t)]
         present = len(found) == len(fix["tokens"])
         all_present &= present
@@ -165,7 +182,8 @@ def main() -> int:
             continue
 
         for label, present, detail in rows:
-            mark = "PRESENT" if present else "ABSENT "
+            mark = ("NOT-PROVABLE" if present is None
+                    else "PRESENT" if present else "ABSENT ")
             print(f"  {mark}  {label}" + (f"   ({detail})" if detail else ""))
         if status == "missing":
             worst = max(worst, 1)

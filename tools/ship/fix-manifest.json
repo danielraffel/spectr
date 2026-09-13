@@ -18,13 +18,40 @@
     "      git show <base>:native-ui/materialized/materialized-document.runtime.json | grep -c <token>",
     "  - Stable. Prefer an identifier the fix introduces over prose a later",
     "    editorial pass may reword.",
-    "A token must discriminate INSIDE THE BINARY, not merely inside the document. The binary also contains Skia, Pulp and the C++ sources, so a word that is absent from the document can still be abundant in the artifact: 'subpath' reads 0 in the pre-fix document and 18 in the pre-fix binary, and would have reported a fix as shipped on a build that predates it. Screen every candidate against a binary built BEFORE the fix and require zero."
+    "A token must discriminate INSIDE THE BINARY, not merely inside the document. The binary also contains Skia, Pulp and the C++ sources, so a word that is absent from the document can still be abundant in the artifact: 'subpath' reads 0 in the pre-fix document and 18 in the pre-fix binary, and would have reported a fix as shipped on a build that predates it. Screen every candidate against a binary built BEFORE the fix and require zero.",
+    "Not every fix is binary-token-verifiable, and the manifest says so rather than inventing a token. A change made purely of style values leaves no identifier behind, and a removal leaves nothing to find at all. Those rows carry 'verifiable': false with the reason, and the tool reports them as NOT-PROVABLE so they are visible rather than silently uncovered."
   ],
   "control_tokens": [
     "spectrShortcutChipStyle",
     "SPECTR"
   ],
   "fixes": [
+    {
+      "id": "preset-search-resets-on-open",
+      "pr": 103,
+      "title": "Reopening the preset manager shows every preset again",
+      "tokens": [
+        "outlived",
+        "unmounted"
+      ],
+      "note": "Comment tokens rather than identifiers: the fix adds an effect keyed on [open] whose only code is calls that already existed, so the surrounding rationale is the sole new text. It fails closed - a reword breaks the gate loudly and the manifest gets updated."
+    },
+    {
+      "id": "preset-name-not-truncated",
+      "pr": 103,
+      "title": "The preset name in the detail pane is no longer clipped",
+      "tokens": [],
+      "verifiable": false,
+      "reason": "The fix is style values on an existing node - no new identifier and no new text reaches the binary. Verify by opening a preset whose name is long and reading it whole."
+    },
+    {
+      "id": "preset-row-chip-removed",
+      "pr": 103,
+      "title": "Preset rows no longer show a shortcut-looking F / U chip",
+      "tokens": [],
+      "verifiable": false,
+      "reason": "A removal, and it removed markup rather than any identifier, so there is nothing to find and nothing whose absence is specific. Verify by opening the preset list and seeing no chip."
+    },
     {
       "id": "morph-viewport",
       "pr": 101,
