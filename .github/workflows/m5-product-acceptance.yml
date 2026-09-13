@@ -67,6 +67,26 @@ jobs:
             exit 1
           fi
 
+      - name: Gate - the preset manager's advertised commit gestures are wired
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The manager footer advertises DOUBLE-CLICK and Return. Both were
+          # dead on the shipping build -- the row's `onDoubleClick` registers
+          # under the bridge event name `doubleclick`, which nothing in the
+          # runtime dispatches, and the keydown handler had no Enter branch.
+          # No screenshot or layout assertion can see that: the footer renders
+          # identically whether its handlers fire or not.
+          python3 tools/spectr-detectors/preset_commit_gestures.py
+          # Negative control. This reads a CHECKED-IN artifact, so a rename or
+          # restructure there would make it pass vacuously forever.
+          if python3 tools/spectr-detectors/preset_commit_gestures.py \
+               --plant dead-prop > /dev/null 2>&1; then
+            echo "the planted regression did not redden the detector -- it can "\
+                 "no longer fail, so its clean run above proves nothing" >&2
+            exit 1
+          fi
+
       - name: Gate - Spectr M5 product acceptance immutable released SDK
         shell: bash
         run: |
@@ -355,6 +375,7 @@ jobs:
             --app "$app" --out-dir "$out/status-pill-position"
           run_one shortcut-chip-trailing-edge python3 tools/spectr-detectors/shortcut_chip_trailing_edge.py "$app"
           run_one edit-mode-shortcut-keys python3 tools/spectr-detectors/edit_mode_shortcut_keys.py "$app"
+          run_one preset-commit-gestures python3 tools/spectr-detectors/preset_commit_gestures_app.py "$app"
           echo "::notice::app-driven detector verdicts: $rc_summary"
 
       - name: Gate - Spectr M5 product acceptance AUv2 validation
