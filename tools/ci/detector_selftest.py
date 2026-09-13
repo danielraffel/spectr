@@ -461,6 +461,45 @@ CASES: list[tuple[str, str, int, list[str]]] = [
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-fill-spans-mutes"]),
 
+    # A child's AUTHORED index must be its NATIVE index. Every native createX
+    # APPENDS, so a child landing anywhere but last has to be moved into place
+    # with insertChild right after it is created. The vendored runtime.js
+    # predated Pulp #8272 and dropped attach()'s computed index at
+    # materialize(), so a subtree remounting into a parent that kept its other
+    # children landed LAST: a re-opened dropdown's rows came back after the
+    # siblings that stayed and every caption separated from the description it
+    # labels. These cases execute the artifact's OWN attach/materialize/
+    # materializeUnder against a recording bridge that appends like the native
+    # factory, and assert the resulting order -- never the presence of the
+    # `insertChild` token, which the artifact already carried in insertBefore's
+    # same-parent REORDER branch long before the mount path was wired.
+    ("materialized_insert_index",
+     "a remounted subtree lands at its authored index", 0,
+     [f("test", "test_materialized_insert_index.mjs"),
+      f("native-ui", "materialized", "runtime.js")]),
+    # The exact defect that shipped: the index reaches materialize and is
+    # discarded.
+    ("materialized_insert_index",
+     "plant: materialize drops its index again", 1,
+     [f("test", "test_materialized_insert_index.mjs"),
+      f("native-ui", "materialized", "runtime.js"),
+      "--plant-drop-index"]),
+    # The plausible HALF-fix -- threads the index, never emits the call. This is
+    # why the assertion is on resulting native order and not on call arity.
+    ("materialized_insert_index",
+     "plant: thread the index but never emit insertChild", 1,
+     [f("test", "test_materialized_insert_index.mjs"),
+      f("native-ui", "materialized", "runtime.js"),
+      "--plant-append-only"]),
+    # A different wrong implementation again: only the deferred-parent scenario
+    # can see it, so it proves that scenario is load bearing rather than
+    # decorative.
+    ("materialized_insert_index",
+     "plant: drain a deferred parent in queue order", 1,
+     [f("test", "test_materialized_insert_index.mjs"),
+      f("native-ui", "materialized", "runtime.js"),
+      "--plant-queue-order"]),
+
     # Morph moves the viewport. Four plants rather than one because each is a
     # DIFFERENT wrong implementation that fails a different assertion, and a
     # single plant that trips everything cannot show which check is load
@@ -634,7 +673,7 @@ def main() -> int:
             if a.startswith("-") or "=" in a:
                 continue
             p = os.path.join(REPO, a)
-            if a.endswith((".json", ".png")) and not os.path.exists(p):
+            if a.endswith((".json", ".png", ".js")) and not os.path.exists(p):
                 missing.append(a)
     if missing:
         print("no verdict: missing fixture(s): " + ", ".join(sorted(set(missing))),
