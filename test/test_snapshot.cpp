@@ -459,7 +459,7 @@ TEST_CASE("morph_viewports: ends are exact") {
     CHECK(spectr::morph_viewports(a, b, 1.0f).max_hz == Approx(20000.0f));
 }
 
-TEST_CASE("morph_viewports: the midpoint is the geometric mean, not the arithmetic one") {
+TEST_CASE("morph_viewports: the midpoint is the geometric mean and not the arithmetic one") {
     // The whole point of the feature. 20 -> 2000 Hz is two decades, so half
     // way along the LOG axis is 200 Hz. A linear lerp would answer 1010 Hz,
     // which is 0.7 decades from the top and 1.3 from the bottom: the sweep
@@ -527,7 +527,7 @@ TEST_CASE("morph_viewports: an invalid endpoint falls back to the dominant slot"
     CHECK(spectr::morph_viewports(bad, bad, 0.5f).valid());
 }
 
-TEST_CASE("morph moves the viewport at the midpoint, not only at the ends") {
+TEST_CASE("morph moves the viewport at the midpoint and not only at the ends") {
     Spectr s;
     pulp::state::StateStore store;
     s.define_parameters(store);
@@ -689,7 +689,7 @@ TEST_CASE("a morph-derived viewport survives a plugin-state round trip") {
     CHECK(b.viewport().min_hz == Approx(derived).epsilon(0.001));
 }
 
-TEST_CASE("plugin state round-trips the viewport switch, and absence reads as enabled") {
+TEST_CASE("plugin state round-trips the viewport switch and absence reads as enabled") {
     Spectr a;
     pulp::state::StateStore store_a;
     a.define_parameters(store_a);
