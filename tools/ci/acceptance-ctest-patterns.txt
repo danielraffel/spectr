@@ -60,3 +60,11 @@ Spectr editor
 # acceptance runner has no chrome, so these are UNMEASURED there -- reported
 # every run, never silently passed.
 optional(browser oracle lane needs node+chrome): ^Spectr-browser-
+
+# The product-icon artifact gate and its two plant controls. Nothing else here
+# matches the name, so without this line all three register and never run --
+# which would make a gate written to catch a silently-missing icon itself a
+# silently-dead check. The acceptance build already produces all four bundles
+# (Spectr_Standalone / _AU / _VST3 / _CLAP), so the gate has something to read;
+# were that to change it exits 3 rather than passing on an empty measurement.
+^Spectr-bundle-icons

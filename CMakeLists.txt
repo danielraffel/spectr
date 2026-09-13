@@ -339,10 +339,25 @@ endforeach()
 # already uses. tools/icon/generate_icon.py rebuilds every asset from the
 # logo geometry; resources/icon/spectr-icon.svg is the vector source.
 #
-# Pulp wires an icon into the standalone .app only: its VST3/AU/CLAP
-# Info.plist templates carry no CFBundleIconFile key and nothing copies an
-# .icns into those bundles. The plugin bundles therefore stay unbranded
-# until the pinned SDK carries that support.
+# The icon is attached to all four macOS bundles. The plugin formats carry
+# it for artifact completeness, not for display: measured on macOS 26,
+# CFBundleIconFile is inert on a non-.app bundle. A .vst3/.component/.clap
+# that declares the key and ships the .icns still draws Finder's generic
+# bundle icon, and third-party plugins that declare it (Roland's, and
+# others in /Library/Audio/Plug-Ins) draw generic too. The only mechanism
+# that does render is a custom Finder icon -- an `Icon\r` resource fork
+# plus a com.apple.FinderInfo xattr on the bundle directory -- which
+# `codesign --strict` rejects as "resource fork, Finder information, or
+# similar detritus not allowed". Spectr ships signed and notarized, so that
+# route is deliberately not taken. Nothing here promises a visible icon;
+# it puts the asset where Apple documents it belongs.
+#
+# No DAW reads the key either -- including AVAudioUnitComponent.icon, the
+# one plausible host-side route, which returns a generic image for every
+# component that declares it. The mechanism that does put artwork in a host
+# is the VST3 Snapshots convention: a PNG under Contents/Resources/Snapshots
+# named for the processor's class UID, which Cubase and Nuendo consume.
+# Spectr ships none yet; that is the path to take if branding is wanted.
 #
 # The committed .icns is attached directly rather than through
 # pulp_app_icon(). That helper takes a single 1024 PNG and downscales it
@@ -351,13 +366,21 @@ endforeach()
 # blob. resources/icon/Spectr.icns instead carries a render laid out on
 # each size's own pixel grid. Both mechanisms are stock CMake bundle
 # wiring; this one just supplies the finished asset.
-if(APPLE AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET})
+if(APPLE)
     set_source_files_properties(resources/icon/Spectr.icns PROPERTIES
         MACOSX_PACKAGE_LOCATION Resources)
-    target_sources(${SPECTR_NATIVE_STANDALONE_TARGET} PRIVATE
-        resources/icon/Spectr.icns)
-    set_target_properties(${SPECTR_NATIVE_STANDALONE_TARGET} PROPERTIES
-        MACOSX_BUNDLE_ICON_FILE "Spectr.icns")
+    foreach(_spectr_icon_target
+            ${SPECTR_NATIVE_STANDALONE_TARGET}
+            ${SPECTR_NATIVE_VST3_TARGET}
+            ${SPECTR_NATIVE_AU_TARGET}
+            ${SPECTR_NATIVE_CLAP_TARGET})
+        if(TARGET ${_spectr_icon_target})
+            target_sources(${_spectr_icon_target} PRIVATE
+                resources/icon/Spectr.icns)
+            set_target_properties(${_spectr_icon_target} PROPERTIES
+                MACOSX_BUNDLE_ICON_FILE "Spectr.icns")
+        endif()
+    endforeach()
 endif()
 
 
@@ -496,6 +519,42 @@ spectr_configure_native_target(Spectr-native-n1-test)
 # shorter interaction case observe an event before its host-state response.
 catch_discover_tests(Spectr-native-n1-test
     PROPERTIES RESOURCE_LOCK spectr_native_materialized_editor)
+
+# The product icon must actually arrive in all four shipped bundles. The
+# CMake wiring above is not evidence: CFBundleIconFile is substituted at
+# generate time and the .icns is copied by a bundle rule, so either half can
+# silently stop happening while the source still reads correctly. This
+# inspects the built bundles.
+#
+# Exit 3 (no bundles built) is deliberately NOT a pass -- CTest fails it --
+# so the check cannot go quiet by measuring nothing. Its own negative
+# controls are registered beside it: each plants a defect and is required to
+# come back RED, which is what keeps this from passing vacuously.
+#
+# Bundles exist only on Apple, and the detector needs an interpreter; absent
+# either, the gate is not registered and the configure log says so, rather
+# than being registered as something that trivially succeeds.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(APPLE AND Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-bundle-icons
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_icon_invariants.py
+            --build-dir ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(Spectr-bundle-icons PROPERTIES TIMEOUT 60)
+
+    foreach(_spectr_icon_plant strip-key strip-icns)
+        add_test(NAME Spectr-bundle-icons-control-${_spectr_icon_plant}
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_icon_invariants.py
+                --build-dir ${CMAKE_CURRENT_BINARY_DIR}
+                --plant ${_spectr_icon_plant})
+        set_tests_properties(Spectr-bundle-icons-control-${_spectr_icon_plant}
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+else()
+    message(STATUS
+        "Spectr: Spectr-bundle-icons not registered (needs APPLE + Python3)")
+endif()
 
 # Headless capture of the SHIPPING native editor. The browser design source
 # carries no Settings > MODULATION group -- the native patch layer injects it --
