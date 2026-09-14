@@ -276,6 +276,31 @@ DESC_H_WRAPPED = 34.0
 DESC_LINE_H = 13.0
 CHAR_W = 6.5                # exact for every captured ASCII single-line row
 
+# THE POPOVER'S TAIL.
+#
+# `patch_materialized_help_overlay.py` owns the Learn more BUTTON ITSELF -- its
+# markup, its handler, its style. This file owns the popover's CAPTURE, and the
+# capture has to know the button exists or the button has no box.
+#
+# It shipped without one. Every captured child of this panel is pinned
+# absolutely, so the in-flow cursor never advances past them, and a child the
+# capture does not name lands at the CONTENT-BOX ORIGIN instead of after its
+# siblings. Measured on the built standalone: the button rendered at root
+# y=503.64 when the content box starts at 493.64 -- exactly its own `marginTop:
+# 10` from the top of the panel, 302.859375px above where it belongs, printing
+# across the first two shortcut rows with 17.90px of overlap on the first. Its
+# paint order is above theirs, so both texts occupied the same pixels.
+#
+# 302.859375 is not a coincidence: it is TITLE_H + TITLE_GAP + 12 * ROW_H,
+# i.e. the entire height the in-flow cursor failed to accumulate.
+#
+# TAIL_H is MEASURED, not derived. The button does not inherit the panel's
+# `lineHeight: 1.7` -- its line box measures 15.2, not 17.0 -- so deriving it
+# would have made the panel 1.8px too tall.
+TAIL_MARGIN = 10.0          # the button's own marginTop
+TAIL_H = 31.2               # 15.2 line box + 7px padding a side + 1px border a side
+TAIL_KEY = ('button', 13)   # child index 13, after the twelve Hrow divs
+
 OLD_PANEL_W = 280.0
 NEW_PANEL_W = 330.0
 # The chip column took 20px, so the panel takes 20px. Paying for the chips out
@@ -349,8 +374,14 @@ AFTER_ROWS[10] = ('Add/remove selection',
                   CHAR_W * len('Add/remove selection'), False)
 
 
-def layout_model(rows, panel_w, chip_w=CHIP_W, desc_left=DESC_LEFT):
-    """Every help-subtree box, keyed by path suffix, for one row list."""
+def layout_model(rows, panel_w, chip_w=CHIP_W, desc_left=DESC_LEFT, tail=False):
+    """Every help-subtree box, keyed by path suffix, for one row list.
+
+    `tail` adds the Learn more button. It is a parameter rather than always-on
+    because the older states this script still has to RECOGNISE on disk predate
+    the button, and a model carrying a box those captures never had would match
+    none of them.
+    """
     row_w = content_w(panel_w)
     boxes = {}
     top = TITLE_TOP + TITLE_H + TITLE_GAP
@@ -369,6 +400,11 @@ def layout_model(rows, panel_w, chip_w=CHIP_W, desc_left=DESC_LEFT):
             width=(content_w(panel_w) - desc_left) if wrapped else width,
             height=DESC_H_WRAPPED if wrapped else DESC_H_SINGLE)
         top += height
+    if tail:
+        top += TAIL_MARGIN
+        boxes[TAIL_KEY] = dict(left=PANEL_PAD + PANEL_BORDER, top=top,
+                               width=row_w, height=TAIL_H)
+        top += TAIL_H
     panel_h = top + PANEL_PAD + PANEL_BORDER
     boxes[()] = dict(left=PANEL_RIGHT - panel_w, top=PANEL_BOTTOM - panel_h,
                      width=panel_w, height=panel_h)
@@ -379,9 +415,14 @@ def layout_model(rows, panel_w, chip_w=CHIP_W, desc_left=DESC_LEFT):
 # script has to recognise whichever is on disk and refuse anything else.
 BEFORE = layout_model(BEFORE_ROWS, OLD_PANEL_W)
 AFTER = layout_model(AFTER_ROWS, NEW_PANEL_W)
-FINAL = layout_model(AFTER_ROWS, FINAL_PANEL_W, FINAL_CHIP_W, FINAL_DESC_LEFT)
+# The wide-chip panel as it shipped, before the tail had a box. Kept so this
+# script can still recognise -- and upgrade -- a checkout that predates it.
+WIDE_CHIP = layout_model(AFTER_ROWS, FINAL_PANEL_W, FINAL_CHIP_W,
+                         FINAL_DESC_LEFT)
+FINAL = layout_model(AFTER_ROWS, FINAL_PANEL_W, FINAL_CHIP_W, FINAL_DESC_LEFT,
+                     tail=True)
 KNOWN_STATES = (('pre-change', BEFORE), ('narrow-chip', AFTER),
-                ('final', FINAL))
+                ('wide-chip', WIDE_CHIP), ('final', FINAL))
 
 
 def path_suffix(path):
@@ -397,6 +438,12 @@ def path_suffix(path):
     if (len(rest) == 2 and rest[0]['tag'] == 'div'
             and rest[1]['tag'] == 'span'):
         return (rest[0]['index'], 'span', rest[1]['index'])
+    # The tail is a <button>, not a <div>. Sibling indices in this capture run
+    # across tags -- verified against captures holding
+    # [('button',0),('div',1)] and [...('span',8),('button',9)...] -- so the
+    # button after twelve rows and a title is index 13, not button 0.
+    if len(rest) == 1 and (rest[0]['tag'], rest[0]['index']) == TAIL_KEY:
+        return TAIL_KEY
     return None
 
 
@@ -581,6 +628,19 @@ def apply_help_state(path, chip_texts):
         key = path_suffix(binding['path'])
         if key is not None and key in FINAL:
             binding['box'] = tidy(dict(FINAL[key]))
+    # Same insertion as the runtime mirror, in the readable record: append the
+    # tail's binding if this capture predates the button having a box. Placed
+    # directly after the panel's own binding so the two files read alike.
+    if not any(path_suffix(b['path']) == TAIL_KEY
+               for b in document['layout_bindings']):
+        panel_at = next(i for i, b in enumerate(document['layout_bindings'])
+                        if path_suffix(b['path']) == ())
+        document['layout_bindings'].insert(panel_at + 1, {
+            'anchor': document['layout_bindings'][panel_at]['anchor'],
+            'path': [{'tag': tag, 'index': index}
+                     for tag, index in list(PANEL) + [TAIL_KEY]],
+            'box': tidy(dict(FINAL[TAIL_KEY])),
+        })
     by_key = {}
     for binding in document['text_bindings']:
         key = path_suffix(binding['path'])
@@ -626,7 +686,9 @@ def box_literal(box):
 
 def path_literal(key):
     steps = list(PANEL)
-    if key:
+    if key == TAIL_KEY:
+        steps.append(TAIL_KEY)
+    elif key:
         steps.append(('div', key[0]))
         if len(key) == 3:
             steps.append(('span', key[2]))
@@ -653,7 +715,24 @@ def mirror_runtime(chip_texts):
         new_site = anchor + ', "box": ' + box_literal(FINAL[key])
         if new_site in segment:
             continue
+        # The tail is the one box no earlier state HAS, so there is nothing to
+        # replace -- it is INSERTED, immediately after the panel's own binding.
+        # The panel sorts first (its key is the empty tuple), so by the time we
+        # get here the panel already carries its final, taller box and is a
+        # unique needle to insert against.
+        if key == TAIL_KEY:
+            host = (path_literal(()) + ', "box": ' + box_literal(FINAL[()])
+                    + ' }')
+            if segment.count(host) != 1:
+                sys.exit('FAIL runtime: the panel binding is not a unique '
+                         'insertion site for the tail (%d matches)'
+                         % segment.count(host))
+            segment = segment.replace(
+                host, host + ', { "anchor": "#root", ' + new_site + ' }', 1)
+            continue
         for name, model in reversed(KNOWN_STATES):
+            if key not in model:
+                continue
             old_site = anchor + ', "box": ' + box_literal(model[key])
             if segment.count(old_site) == 1:
                 segment = segment.replace(old_site, new_site, 1)

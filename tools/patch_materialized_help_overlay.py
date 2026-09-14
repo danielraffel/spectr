@@ -582,21 +582,86 @@ SETTINGS_MOUNT_NEW = ("""React.createElement(
     { onClose: () => setHelpGuideOpen(false) }
   ), """)
 
+# ---------------------------------------------------------------- reachability
+#
+# THE ANCHOR WAS PAINTABLE BUT NOT TOUCHABLE.
+#
+# The guide's anchor shipped as a 0x0 box. That is enough to PAINT correctly --
+# the scrim is `position: absolute` and carries `top: origin.y`, so it lands at
+# root (0,0) and the guide looks right -- but it is not enough to be TOUCHED.
+# `Rect::contains` is half-open, so a 0x0 rect contains no point at any
+# coordinate; the only way a press descends into this subtree is the hit-test
+# slack Pulp grants an `overflow: visible` node, which reaches about 500px
+# around the anchor's own origin. The anchor sits in flow after the bottom rail
+# at root y=804, so that slack covers roughly x 0..500, y 304..860 -- and the
+# close button measures x=893..925, y=73..105. It misses on BOTH axes, which is
+# why the only advertised way out of the overlay did nothing.
+#
+# The same miss explains two more reports. Hover and wheel never consult the
+# overlay slot at all (`pointer_move` and `handle_wheel` hit-test the tree
+# directly), so with the anchor untouchable the pointer still reaches the band
+# surface underneath: its hover readout keeps updating and painting over the
+# guide, and its editing cursor stays set. Restoring the box restores the
+# ordinary tree walk, which makes the band surface's EXISTING `onPointerLeave`
+# fire -- and that one handler already clears the readout and returns the
+# cursor to an arrow, then restores hover-driven cursors when the guide
+# unmounts. That is exactly how the Settings modal gets both behaviours, and it
+# is why this adds no cursor code of its own.
+#
+# `zIndex: 70` clears every value this document uses (3,5,6,10,20,30,40,50,60).
+# The anchor's siblings are the status banner (6) and the Settings scrim (50);
+# the 60 is the guide's own scrim, INSIDE the anchor.
+#
+# The box comes from `origin`, measured off the materialized bottom rail -- the
+# same measurement the scrim already trusts. It is deliberately NOT measured
+# from this component's own nodes: `getLayoutRect` on a runtime-created node
+# returns a DIFFERENT node's rect (pulp#8301), and doing that here reported the
+# anchor as the 44px top toolbar. `marginTop` pulls the in-flow anchor up to
+# root y=0; `position: absolute` is not available here for the reason the
+# anchor exists at all.
+ANCHOR = ('    "data-spectr-help-guide-anchor": true,\n'
+          '    style: { width: 0, height: 0, flexShrink: 0, overflow: "visible" }\n')
+ANCHOR_NEW = ('    "data-spectr-help-guide-anchor": true,\n'
+              '    style: { width: vw, height: vh, marginTop: origin ? origin.y : 0,'
+              ' flexShrink: 0, overflow: "visible", zIndex: 70 }\n')
+
+# With the anchor pulled to root (0,0) the scrim is already in root space, so
+# it must stop re-applying the offset -- otherwise it pays `origin.y` twice and
+# paints 804px above the editor.
+SCRIM_AT = ('      top: origin.y,\n      left: origin.x,\n'
+            '      width: vw,\n      height: vh,\n      zIndex: 60,\n')
+SCRIM_AT_NEW = ('      top: 0,\n      left: 0,\n'
+                '      width: vw,\n      height: vh,\n      zIndex: 60,\n')
+
+# The popover's content box is 320 (350 less its 15px border+padding a side).
+# 302 was measured against the 330px panel this popover had before the chip
+# column widened it to 350, so it has been 18px narrow ever since.
+TAIL_W = '      marginTop: 10,\n      width: 302,\n'
+TAIL_W_NEW = '      marginTop: 10,\n      width: 320,\n'
+
+
 EDITS = [
-    # `done` is the RENDERER alone, not renderer+anchor: the next edit rewrites
-    # HelpPopover's signature, so an anchor-bearing marker would stop matching on
-    # a second run and this edit would try to insert the renderer twice.
+    # `done` is a STABLE SENTINEL inside the renderer, never the renderer text
+    # itself. Two reasons, both learned the hard way. It cannot be
+    # renderer+anchor, because a later edit rewrites HelpPopover's signature and
+    # an anchor-bearing marker would stop matching on a second run. And it
+    # cannot be HELP_RENDERER either, because the reachability edits below
+    # upgrade text INSIDE the renderer -- which silently turned the whole script
+    # into a hard failure on replay. A sentinel that no edit rewrites answers
+    # the only question this marker is asking: is the renderer already here?
     ('the help renderer and its panel are declared once, before HelpPopover',
      (HELP_ANCHOR, HELP_RENDERER + HELP_ANCHOR),
-     HELP_RENDERER),
+     "function spectrHelpBlocks() {"),
 
     ('HelpPopover takes a Learn more callback',
      (POPOVER_SIG, POPOVER_SIG_NEW),
      POPOVER_SIG_NEW),
 
+    # Sentinel again, not POPOVER_TAIL_NEW: the width edit below rewrites this
+    # button's style, so the full-text marker would stop matching on replay.
     ('the shortcuts popover offers a way into the long-form help',
      (POPOVER_TAIL, POPOVER_TAIL_NEW),
-     POPOVER_TAIL_NEW),
+     '"data-spectr-help-learn-more": true,'),
 
     ("Chrome owns the guide's open state",
      (CHROME_STATE, CHROME_STATE_NEW),
@@ -613,6 +678,20 @@ EDITS = [
     ('the guide mounts at the tail of the chrome, never before it',
      (SETTINGS_MOUNT, SETTINGS_MOUNT_NEW),
      SETTINGS_MOUNT_NEW),
+
+    # These upgrade text the earlier edits already inserted, so they are listed
+    # AFTER them and are no-ops on a document that never had the base renderer.
+    ('the guide anchor is reachable, not just paintable',
+     (ANCHOR, ANCHOR_NEW),
+     ANCHOR_NEW),
+
+    ('the scrim sits in the anchor it is now measured by',
+     (SCRIM_AT, SCRIM_AT_NEW),
+     SCRIM_AT_NEW),
+
+    ('Learn more spans the popover it was measured against',
+     (TAIL_W, TAIL_W_NEW),
+     TAIL_W_NEW),
 ]
 
 
@@ -635,6 +714,9 @@ REQUIRED_AFTER = (
     "HelpGuideOverlay,",
     '"data-spectr-help-guide-anchor": true,',
     '"data-spectr-bottom-rail": true,',
+    "zIndex: 70",
+    "marginTop: origin ? origin.y : 0,",
+    "      width: 320,",
     "onLearnMore: () => { setHelpOpen(false); setHelpGuideOpen(true); }",
 )
 

@@ -90,6 +90,60 @@ HEADINGS = (
     "Live and Precision", "Good to know",
 )
 
+# -- REACHABILITY ---------------------------------------------------------
+#
+# A source-text check cannot see geometry, so this asserts the two DECLARATIONS
+# that decide whether the overlay can be touched at all: a real box, and a
+# z-index above every sibling. Both shipped wrong in the same release and a
+# screenshot could not tell -- the guide painted perfectly while its close
+# button, the band readout underneath and the cursor were all unreachable.
+ANCHOR_BOX = ('style: { width: vw, height: vh, marginTop: origin ? origin.y : 0,'
+              ' flexShrink: 0, overflow: "visible", zIndex: 70 }')
+ANCHOR_Z = "zIndex: 70"
+# With the anchor in root space the scrim must stop re-applying the offset.
+SCRIM_ROOT = '      top: 0,\n      left: 0,\n      width: vw,\n      height: vh,\n'
+
+# -- THE POPOVER'S TAIL, MEASURED FROM THE CAPTURE ------------------------
+#
+# This panel is laid out from its capture, so the Learn more button having a
+# BOX is not a style question -- it is a data question, answerable here exactly.
+# Shipped without one, it fell to the content-box origin and printed across the
+# first two shortcut rows.
+STATE = os.path.join(REPO, "native-ui", "materialized", "states",
+                     "help.materialized.json")
+PANEL_PATH = [("div", 0), ("div", 3), ("div", 16), ("div", 1)]
+TAIL_STEP = ("button", 13)
+
+
+# Plants that corrupt the CAPTURE rather than the source. They are separate
+# from PLANTS because the capture is a third file, and because these two are the
+# only way to reproduce the shipped defect exactly: the button existed, was
+# styled, was wired, and simply had no box.
+CAPTURE_PLANTS = {
+    # #115 as it shipped: the tail has no captured box at all.
+    "tailless-capture": lambda panel, tail: (panel, None),
+    # The tail has a box but the panel never grew for it, so the button
+    # overhangs the popover's own background and border.
+    "short-panel": lambda panel, tail: (dict(panel, height=332.859375), tail),
+}
+
+
+def capture_boxes(plant=None):
+    """(panel box, tail box) from the checked-in help capture."""
+    with open(STATE, encoding="utf-8") as handle:
+        bindings = json.load(handle)["layout_bindings"]
+    panel = tail = None
+    for binding in bindings:
+        key = [(step["tag"], step["index"]) for step in binding["path"]]
+        if key == PANEL_PATH:
+            panel = binding["box"]
+        elif key == PANEL_PATH + [TAIL_STEP]:
+            tail = binding["box"]
+    if plant:
+        panel, tail = CAPTURE_PLANTS[plant](panel, tail)
+    return panel, tail
+
+
 PLANTS = {
     # The affordance disappears: the popover is a keycap list again with no way
     # into the guide, which is the state this whole lane exists to leave.
@@ -118,12 +172,29 @@ PLANTS = {
     # A backtick would end the template literal early and take the rest of the
     # guide with it, silently.
     "backtick": lambda h, a: (h, a.replace("## Zooming", "## Zoo`ming")),
+    # A DIFFERENT WRONG IMPLEMENTATION of the same thing: the anchor collapses
+    # back to a point. It still paints, because the scrim is absolute -- and
+    # nothing in it can be touched, because Rect::contains is half-open so a
+    # 0x0 rect contains no point at any coordinate.
+    "collapsed-anchor": lambda h, a: (
+        h.replace(ANCHOR_BOX,
+                  'style: { width: 0, height: 0, flexShrink: 0,'
+                  ' overflow: "visible" }'), a),
+    # The anchor keeps its box but sinks under the status banner (6), so the
+    # band readout paints over the guide again.
+    "sunken-anchor": lambda h, a: (h.replace(ANCHOR_Z, "zIndex: 4"), a),
+    # The scrim pays the rail offset twice and paints a screen above the editor.
+    "double-offset": lambda h, a: (
+        h.replace(SCRIM_ROOT,
+                  '      top: origin.y,\n      left: origin.x,\n'
+                  '      width: vw,\n      height: vh,\n'), a),
 }
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--plant", choices=sorted(PLANTS))
+    ap.add_argument("--plant-capture", choices=sorted(CAPTURE_PLANTS))
     args = ap.parse_args()
 
     with open(DOC, encoding="utf-8") as handle:
@@ -167,6 +238,39 @@ def main():
         if count != 1:
             bad.append("%s appears %d times, expected 1 -- the `?` popover does "
                        "not reach the guide" % (label, count))
+
+    # -- REACH ------------------------------------------------------------
+    reach = {
+        "anchor box": html.count(ANCHOR_BOX),
+        "anchor above the banner": html.count(ANCHOR_Z),
+        "scrim in root space": html.count(SCRIM_ROOT),
+    }
+    print("  REACH  " + ", ".join("%s=%d" % kv for kv in reach.items()))
+    for label, count in reach.items():
+        if count != 1:
+            bad.append("%s appears %d times, expected 1 -- the guide paints but "
+                       "cannot be touched" % (label, count))
+
+    # -- TAIL, from the capture rather than the source --------------------
+    if args.plant_capture:
+        print("planted: %s (capture)" % args.plant_capture)
+    panel_box, tail_box = capture_boxes(args.plant_capture)
+    if panel_box is None:
+        bad.append("the help capture has no panel binding -- wrong capture")
+    elif tail_box is None:
+        bad.append("the help capture gives the Learn more button no box, so it "
+                   "falls to the panel's content-box origin and prints across "
+                   "the first shortcut rows")
+        print("  TAIL   panel h=%.6f, tail=ABSENT" % panel_box["height"])
+    else:
+        room = panel_box["height"] - (tail_box["top"] + tail_box["height"])
+        print("  TAIL   panel h=%.6f, tail top=%.6f h=%.6f, room below=%.6f"
+              % (panel_box["height"], tail_box["top"], tail_box["height"], room))
+        if room < 0:
+            bad.append("the panel is %.3fpx too short for its own tail -- the "
+                       "button overhangs the popover" % -room)
+        if tail_box["width"] <= 0 or tail_box["height"] <= 0:
+            bad.append("the tail's captured box is empty")
 
     # -- SCROLL -----------------------------------------------------------
     scroll = {
