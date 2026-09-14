@@ -196,6 +196,23 @@ TAIL_LABEL = '"aria-label": "Learn more",'
 #     BEFORE   p50 20.166 / 20.413 / 20.221 ms   (three runs)
 #     AFTER    p50  0.023 /  0.025 /  0.024 ms
 #
+# Corroborated by Perfetto, on a trace SDK built from the EXACT pinned Pulp sha
+# (3563c835, v0.850.0 -- 43 perfetto symbols; the released pin of the same sha
+# links 0 and can never be traced, so this needs a local build). Native spans
+# only, because api_registry wrapping makes JS-opened durations and parentage
+# untrustworthy:
+#
+#                              BEFORE     AFTER
+#     dom_event_dispatch          48         48   <- the control: same work driven
+#     avg per sample          20,251 us      27 us
+#     js_native (bridge calls) 31,584         96
+#         ... per sample             658          2   <- the two style writes
+#     layout_children             290          2
+#     yoga_calculate            81 ms       0 ms
+#
+# 658 bridge calls per wheel sample is the captured atlas being re-applied:
+# ~123 active bindings at five writes plus two getLayoutBoxMetrics reads each.
+#
 # and the SCROLL ITSELF IS UNCHANGED, which is the half that matters: in both
 # arms the mid-burst frame differs from the top by 15.25% of the viewport, the
 # end frame differs by 0.00% (the burst is symmetric), 0 of 56,000 pixels
