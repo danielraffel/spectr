@@ -105,7 +105,14 @@ def probe_app(app, menu, tmp):
     env.update(PULP_HEADLESS="1", PULP_FRAMES="200",
                PULP_SCREENSHOT=os.path.join(tmp, (menu or "nomenu") + ".png"),
                SPECTR_EVAL=EVAL.replace("__OPEN__", open_js))
-    out = subprocess.run([app], env=env, capture_output=True, timeout=600)
+    # An app that hangs or crashes has told us nothing about the rule. Letting
+    # either escape as an exception would surface as exit 1 -- indistinguishable
+    # from "the dropdown was shadowed" -- and send the next reader to debug the
+    # resolver over a wedged binary. Both are INCONCLUSIVE.
+    try:
+        out = subprocess.run([app], env=env, capture_output=True, timeout=600)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
     blob = (out.stdout or b"") + (out.stderr or b"")
     line = None
     for raw in blob.decode("utf-8", "replace").splitlines():
@@ -114,13 +121,20 @@ def probe_app(app, menu, tmp):
     if line is None:
         return None
     fields = dict(part.split("=", 1) for part in line.split()[1:] if "=" in part)
+
+    def number(key):
+        try:
+            return int(fields.get(key, -1))
+        except (TypeError, ValueError):
+            return -1
+
     return {
         "menu": menu,
         "snapshots_ready": fields.get("ready") == "true",
         "state_id": fields.get("state", ""),
-        "layout_applied": int(fields.get("applied", -1)),
-        "layout_expected": int(fields.get("expected", -1)),
-        "layout_node_miss": int(fields.get("miss", -1)),
+        "layout_applied": number("applied"),
+        "layout_expected": number("expected"),
+        "layout_node_miss": number("miss"),
     }
 
 
@@ -192,8 +206,9 @@ def main():
             for menu in list(MENUS) + [""]:
                 case = probe_app(args.app, menu, tmp)
                 if case is None:
-                    print("INCONCLUSIVE: the app printed no [captured-state] line "
-                          "for %s; the probe never ran" % (menu or "no-menu"))
+                    print("INCONCLUSIVE: the app produced no [captured-state] reading "
+                          "for %s (no output, crash, or timeout); nothing was measured"
+                          % (menu or "no-menu"))
                     return 2
                 cases.append(case)
         if args.write_receipt:
