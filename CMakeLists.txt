@@ -1677,6 +1677,29 @@ if(Python3_Interpreter_FOUND)
         WILL_FAIL TRUE)
 endif()
 
+# The About guide's route in, its scroll, and the two properties of its tail
+# that only this file asserts: the caption is nested markup rather than the
+# button's own text, and the body is memoised. Both are invisible to every
+# other gate here -- a flat caption renders a label that is merely 7.1px high
+# in its box, and an unmemoised body renders pixel for pixel the same and only
+# costs more. Artifact-only, so it holds wherever Python does.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-materialized-help-overlay-contract
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/help_overlay_contract.py)
+    set_tests_properties(Spectr-materialized-help-overlay-contract PROPERTIES
+        TIMEOUT 60)
+    # A contract nobody has watched reject the shipped defect is not a
+    # contract. --plant flat-caption rebuilds the flat markup that put the
+    # caption at the top of its own box.
+    add_test(NAME Spectr-materialized-help-overlay-contract-negative-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/help_overlay_contract.py
+            --plant flat-caption)
+    set_tests_properties(Spectr-materialized-help-overlay-contract-negative-control
+        PROPERTIES TIMEOUT 60 WILL_FAIL TRUE)
+endif()
+
 # A dropdown must keep its OWN captured state after both snapshot slots fill.
 # `snapshots-morph` matches a LEVEL -- [data-spectr-snapshots-ready="true"] is
 # true from the second capture until relaunch -- and array order is the whole

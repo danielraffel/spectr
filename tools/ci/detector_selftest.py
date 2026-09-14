@@ -475,6 +475,37 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(D, "help_overlay_contract.py"), "--plant-capture", "tailless-capture"]),
     ("help_overlay_contract", "plant: the panel never grew for its tail", 1,
      [f(D, "help_overlay_contract.py"), "--plant-capture", "short-panel"]),
+    # THE TAIL'S CAPTION. Having a captured box is what makes the button
+    # reachable, and it is also what breaks its text: a captured-box button has
+    # its caption stretched over the whole box by fillCapturedCaption2, and a
+    # Label paints from the TOP of the box it is given. Measured on the built
+    # standalone: ink at 769.800..777.800 against a box centre of 780.900, so
+    # 7.100px high with 1.500px of clear above and 15.700px below. Adding
+    # `alignItems: "center"` to the button moved it by zero. Nesting the caption
+    # so it stops being the button's own text moved it to 776.800..784.800 --
+    # centre 780.800, 8.500 above and 8.700 below -- while 0 of 387,840 pixels
+    # changed across the thirteen shortcut rows.
+    #
+    # The plant reconstructs the shipped flat markup rather than deleting a
+    # marker, so what it exercises is the wrong IMPLEMENTATION, not an absence.
+    ("help_overlay_contract", "plant: the caption goes back on the button", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "flat-caption"]),
+    # Nesting the caption takes away the button's own text, and
+    # setAccessibilityLabel only fires `if (text)`. Centred and unnamed.
+    ("help_overlay_contract", "plant: the nested tail names itself to nobody", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "unnamed-tail"]),
+    # THE BODY. Invisible by construction: an unmemoised guide renders pixel
+    # for pixel the same and only costs more, so nothing else here would see it
+    # being undone. One wheel sample is one full re-render of ~90 spans.
+    ("help_overlay_contract", "plant: the body is rebuilt per wheel sample", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "unmemoised-body"]),
+    ("help_overlay_contract", "plant: the help asset is re-parsed per sample", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "unmemoised-blocks"]),
+    # The over-fix in the other direction: memoised on `[]` instead of on the
+    # asset, so a one-frame load race freezes "The help content asset did not
+    # load." forever with every marker still in place.
+    ("help_overlay_contract", "plant: the blocks memo can never retry", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "frozen-blocks-memo"]),
     # THE COPY AFFORDANCE. A copy button is the control most able to look
     # correct and do nothing -- the press lands, the label never moves, and a
     # still frame cannot tell that from success.

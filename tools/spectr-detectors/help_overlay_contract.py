@@ -150,6 +150,48 @@ def capture_boxes(plant=None):
     return panel, tail
 
 
+# -- THE TAIL'S CAPTION, AND THE ONE CONSTRUCTION THAT CENTRES IT ---------
+#
+# A lowercase `<button>` is already built as a Row with `align_items: center`
+# and its caption in flow, so button text is centred by construction -- until
+# the button carries a CAPTURED BOX. Then `fillCapturedCaption2` re-pins the
+# caption `position: absolute` with all four insets 0 to hold it at the width
+# its line layout was measured against, the caption fills the whole box, and a
+# Label defaults to `TextVerticalAlign::top`.
+#
+# This button carries a captured box (it must -- see TAIL above), so its text
+# rode 7.100px high in a 31.2px box: ink 769.800..777.800 against a box centre
+# of 780.900, with 1.500px of clear above and 15.700px below. Adding
+# `alignItems` changed the ink by zero, measured.
+#
+# The fix is NESTED MARKUP: with no `asText(props.children)` the stub caption
+# becomes a zero-contribution overlay and the authored span is a real flex
+# child of a Row that was already centring. Measured after: ink
+# 776.800..784.800, centre 780.800 against 780.900 -- 8.500 clear above,
+# 8.700 below, and 0 of 387,840 pixels changed across the thirteen shortcut
+# rows above it.
+#
+# `aria-label` is part of the same rule, not a separate nicety: the runtime
+# calls `setAccessibilityLabel` only `if (text)`, and nesting the caption takes
+# the button's own text away. Without it the control goes unnamed, which no
+# screenshot and no centring measurement can see.
+TAIL_CAPTION = '"data-spectr-help-learn-more-label": true,'
+TAIL_LABEL = '"aria-label": "Learn more",'
+
+# -- THE BODY IS BUILT ONCE, NOT ONCE PER WHEEL SAMPLE --------------------
+#
+# The panel scrolls itself, so a wheel sample is a `setScrollTop` and a full
+# re-render. Unmemoised, that re-parses the help asset and re-creates ~90 spans
+# per sample for the reconciler to diff against unchanged twins. The memo makes
+# the elements reference-identical so React bails out of them instead.
+#
+# Checked here because it is invisible: an unmemoised guide renders pixel for
+# pixel the same and only costs more, so nothing else in this repository would
+# notice it being undone.
+BODY_MEMO = "var body = React.useMemo(function () {"
+BLOCKS_MEMO = "var blocks = React.useMemo(spectrHelpBlocks, [helpText]);"
+MEMO_DEPS = "}, [blocks, textW]);"
+
 # -- THE COPY AFFORDANCE --------------------------------------------------
 #
 # Structural, deliberately. "Does not interfere with the x" is proved by WHERE
@@ -224,7 +266,49 @@ PLANTS = {
         h.replace(SCRIM_ROOT,
                   '      top: origin.y,\n      left: origin.x,\n'
                   '      width: vw,\n      height: vh,\n'), a),
+    # A DIFFERENT WRONG IMPLEMENTATION of the centring, and the one that
+    # shipped: the caption goes back to being the button's own text. Nothing is
+    # deleted and nothing looks broken -- the label is still there, still
+    # horizontally centred, still the right colour and size, and still 7.1px
+    # too high. Reconstructed from the nested form rather than pasted, so it
+    # cannot drift away from the text it is supposed to invert.
+    "flat-caption": lambda h, a: (flatten_caption(h), a),
+    # Nested markup WITHOUT the label the nesting took away. Centred, pretty,
+    # and unnamed to assistive technology.
+    "unnamed-tail": lambda h, a: (h.replace(TAIL_LABEL, ""), a),
+    # The body is rebuilt on every wheel sample again. Pixel-identical.
+    "unmemoised-body": lambda h, a: (
+        h.replace(BODY_MEMO, "var body = (function () {"), a),
+    "unmemoised-blocks": lambda h, a: (
+        h.replace(BLOCKS_MEMO, "var blocks = spectrHelpBlocks();"), a),
+    # The memo that can never retry: a one-frame asset race becomes a permanent
+    # "The help content asset did not load." with every marker still in place.
+    "frozen-blocks-memo": lambda h, a: (
+        h.replace(BLOCKS_MEMO, "var blocks = React.useMemo(spectrHelpBlocks, []);"), a),
 }
+
+
+CAPTION_NEST_AT = ('  }, /* @__PURE__ */ React.createElement("span", {\n'
+                   '    "data-spectr-help-learn-more-label": true,')
+CAPTION_NEST_END = '"Learn more \\u2192")));'
+CAPTION_FLAT = '  }, "Learn more \\u2192"));'
+
+
+def flatten_caption(html):
+    """Undo the nesting: hand the caption back to the button as its own text.
+
+    Rebuilt from the shipping text instead of carrying a second copy of it, so
+    a later wording or style change cannot leave this plant silently matching
+    nothing -- which would turn a plant that proves the rule into one that
+    proves the rule is unreachable.
+    """
+    start = html.find(CAPTION_NEST_AT)
+    if start < 0:
+        return html
+    end = html.find(CAPTION_NEST_END, start)
+    if end < 0:
+        return html
+    return html[:start] + CAPTION_FLAT + html[end + len(CAPTION_NEST_END):]
 
 
 def main():
@@ -307,6 +391,30 @@ def main():
                        "button overhangs the popover" % -room)
         if tail_box["width"] <= 0 or tail_box["height"] <= 0:
             bad.append("the tail's captured box is empty")
+
+    # -- CAPTION ----------------------------------------------------------
+    caption = {
+        "caption is nested markup": html.count(TAIL_CAPTION),
+        "button names itself": html.count(TAIL_LABEL),
+    }
+    print("  CAPTION " + ", ".join("%s=%d" % kv for kv in caption.items()))
+    for label, count in caption.items():
+        if count != 1:
+            bad.append("%s appears %d times, expected 1 -- a captured-box "
+                       "button's own text is stretched over the whole box and "
+                       "painted from its top edge" % (label, count))
+
+    # -- BODY -------------------------------------------------------------
+    body = {
+        "body memoised": html.count(BODY_MEMO),
+        "blocks memoised": html.count(BLOCKS_MEMO),
+        "memo closes over blocks and width": html.count(MEMO_DEPS),
+    }
+    print("  BODY   " + ", ".join("%s=%d" % kv for kv in body.items()))
+    for label, count in body.items():
+        if count != 1:
+            bad.append("%s appears %d times, expected 1 -- the guide rebuilds "
+                       "its whole body on every wheel sample" % (label, count))
 
     # -- AFFORD -----------------------------------------------------------
     afford = {
