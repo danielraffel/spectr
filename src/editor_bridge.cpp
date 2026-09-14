@@ -348,8 +348,34 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             return EditorBridge::ok_response(build_info_projection_(plugin));
         });
 
+    // The generic clipboard verb. `build_info_copy` cannot serve it: that
+    // handler ignores its payload entirely and copies the build report. Nor is
+    // there a browser fallback -- `navigator` is undefined in this runtime, so
+    // the captured web app's `navigator.clipboard` paths are dead code here.
+    //
+    // Both handlers capture the writer BY COPY. The obvious alternative --
+    // leaving `build_info_copy` to `std::move` it, and registering everything
+    // that needs it first -- makes correctness depend on registration ORDER
+    // against a moved-from `std::function`, whose state is unspecified. It
+    // happens to stay callable on this toolchain, which is worse than if it did
+    // not: the hazard is invisible here and would surface as a copy button that
+    // reports success and writes nothing, on some other standard library. A
+    // copy costs one refcount at construction.
+    bridge.add_handler("clipboard_write",
+        [clipboard_writer](const choc::value::ValueView& p) {
+            if (!p.isObject() || !p.hasObjectMember("text")
+                || !p["text"].isString())
+                return EditorBridge::err_response("text must be a string");
+            const std::string text{p["text"].getString()};
+            if (text.empty())
+                return EditorBridge::err_response("text must not be empty");
+            if (!clipboard_writer(text))
+                return EditorBridge::err_response("clipboard unavailable");
+            return EditorBridge::ok_response();
+        });
+
     bridge.add_handler("build_info_copy",
-        [&plugin, clipboard_writer = std::move(clipboard_writer)](
+        [&plugin, clipboard_writer](
             const choc::value::ValueView&) {
             const auto text = build_info_copy_text_(plugin);
             if (!clipboard_writer(text))

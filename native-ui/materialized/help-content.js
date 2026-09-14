@@ -26,7 +26,7 @@
 // kSpectralFftSize + kSpectralAnalysisHop = 8192 + 2048 = 10240 samples, which
 // is 213.33 ms at 48 kHz. README.md's "8,191 samples / 170.65 ms" is fft - 1
 // and does not describe anything the code reports.
-globalThis.SPECTR_HELP_TEXT = `# What Spectr does
+globalThis.SPECTR_HELP_TEXT = `# About Spectr
 
 Spectr splits your sound into a row of frequency bands and lets you draw what happens to each one. Pull a band down to cut that frequency. Push it up to boost it. Mute it to remove it entirely.
 

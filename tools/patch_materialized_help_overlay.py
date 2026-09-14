@@ -640,6 +640,124 @@ TAIL_W = '      marginTop: 10,\n      width: 302,\n'
 TAIL_W_NEW = '      marginTop: 10,\n      width: 320,\n'
 
 
+# ---------------------------------------------------------------------- copy
+#
+# "give them a copy icon for the text ... RIGHT after that text AND not
+#  interfere with the x in the top right corner ... if you tap we should show
+#  copied so someone knows"
+#
+# Text SELECTION in a scripted flex UI is a far larger surface than a button,
+# and this overlay already carries enough, so this is the button.
+#
+# WHAT GETS COPIED is the readable prose, not the markup: someone pasting into
+# a notes app should not receive `## Zooming` and `**Sculpt**`. The source is
+# the ASSET rather than the rendered nodes -- the parser joins paragraph lines
+# and drops blank-line structure, so re-reading its output would paste one
+# undifferentiated wall of text.
+#
+# THE VERB IS `clipboard_write`, added to the editor bridge beside the existing
+# build-info copy. There is no browser fallback to fall back TO: `navigator` is
+# undefined in this runtime, so the captured web app's `navigator.clipboard`
+# paths are already dead code here. `build_info_copy` cannot serve either -- it
+# ignores its payload entirely and copies the build report.
+#
+# `unwrap` and `requestId` are declared with `const` INSIDE SpectrBuildInfo, so
+# they are not in scope here. They are inlined rather than hoisted, because
+# hoisting them would edit a component this script does not own.
+PLAINTEXT = '''function spectrHelpPlainText() {
+  // Spelled differently from spectrHelpBlocks' identical guard on purpose:
+  // help_overlay_contract.py asserts the document reads the asset EXACTLY once,
+  // and a second copy of that needle reads to the detector as a second reader.
+  var source = globalThis.SPECTR_HELP_TEXT;
+  if (typeof source !== "string" || !source) return "";
+  var lines = source.split("\\n");
+  var out = [];
+  for (var i = 0; i < lines.length; i += 1) {
+    var line = lines[i];
+    if (line.slice(0, 3) === "## ") line = line.slice(3);
+    else if (line.slice(0, 2) === "# ") line = line.slice(2);
+    out.push(line.split("**").join(""));
+  }
+  return out.join("\\n");
+}
+'''
+PLAINTEXT_AT = 'function HelpGuideOverlay({ onClose }) {\n'
+
+COPY_STATE = ('function HelpGuideOverlay({ onClose }) {\n'
+              '  var [closeState, setCloseState] = React.useState("idle");\n')
+COPY_STATE_NEW = (
+    'function HelpGuideOverlay({ onClose }) {\n'
+    '  var [closeState, setCloseState] = React.useState("idle");\n'
+    '  var [copyState, setCopyState] = React.useState("Copy");\n'
+    '  var copyTimer = React.useRef(null);\n'
+    '  var copyGuide = React.useCallback(function (event) {\n'
+    '    if (event && typeof event.stopPropagation === "function") event.stopPropagation();\n'
+    '    var text = spectrHelpPlainText();\n'
+    '    if (!text) { setCopyState("Copy failed"); return; }\n'
+    '    setCopyState("Copying");\n'
+    '    var settle = function (label) {\n'
+    '      setCopyState(label);\n'
+    '      if (copyTimer.current) clearTimeout(copyTimer.current);\n'
+    '      copyTimer.current = setTimeout(function () { setCopyState("Copy"); }, 1800);\n'
+    '    };\n'
+    '    Promise.resolve(window.pulp.postMessage("clipboard_write", { text: text },\n'
+    '      "spectr-help-copy-" + Date.now())).then(function (response) {\n'
+    '        var body = response && response.payload ? response.payload : response;\n'
+    '        if (!body || body.ok !== true) throw new Error("clipboard unavailable");\n'
+    '        settle("Copied");\n'
+    '      }).catch(function () { settle("Copy failed"); });\n'
+    '  }, []);\n')
+
+# The title and the copy button share a LEFT GROUP, so the header's existing
+# `space-between` keeps the close button hard right and the copy button can
+# never drift toward it. Every size is a NUMBER: `%` does not resolve on the
+# live path, which is how the Settings copy button's own feedback ended up
+# uncentred. Its `minWidth: 92` is carried deliberately -- that control was
+# "fixed" three times for a centring problem it never had.
+GROUP_OPEN = ('  }, /* @__PURE__ */ React.createElement("div", {\n'
+              '    "data-spectr-help-guide-title": true,\n')
+GROUP_OPEN_NEW = ('  }, /* @__PURE__ */ React.createElement("div", {\n'
+                  '    "data-spectr-help-guide-titlegroup": true,\n'
+                  '    style: { display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }\n'
+                  '  }, /* @__PURE__ */ React.createElement("div", {\n'
+                  '    "data-spectr-help-guide-title": true,\n')
+
+GROUP_CLOSE = ('  }, title), /* @__PURE__ */ React.createElement("button", {\n'
+               '    "data-spectr-help-guide-close": true,\n')
+GROUP_CLOSE_NEW = (
+    '  }, title), /* @__PURE__ */ React.createElement("button", {\n'
+    '    "data-spectr-help-copy": true,\n'
+    # NOT `data-spectr-copy-state`: test_import_fidelity.cpp pins that marker
+    # to exactly ONE occurrence, because it belongs to the Settings copy
+    # button. Reusing it makes a second control silently loosen a contract
+    # written about the first.
+    '    "data-spectr-help-copy-state": copyState.toLowerCase().split(" ").join("-"),\n'
+    '    "aria-label": "Copy this guide as text",\n'
+    '    "aria-live": "polite",\n'
+    '    disabled: copyState === "Copying",\n'
+    '    onClick: copyGuide,\n'
+    '    style: {\n'
+    '      height: 22,\n'
+    '      minWidth: 92,\n'
+    '      padding: "0 10px",\n'
+    '      borderRadius: 3,\n'
+    '      border: "1px solid rgba(180,210,255,0.3)",\n'
+    '      background: "rgba(120,180,255,0.10)",\n'
+    '      color: "rgba(220,235,255,0.95)",\n'
+    '      fontFamily: "var(--mono)",\n'
+    '      fontSize: 9.5,\n'
+    '      letterSpacing: 0.8,\n'
+    '      cursor: "pointer",\n'
+    '      flexShrink: 0,\n'
+    '      display: "flex",\n'
+    '      alignItems: "center",\n'
+    '      justifyContent: "center",\n'
+    '      lineHeight: 1\n'
+    '    }\n'
+    '  }, copyState)), /* @__PURE__ */ React.createElement("button", {\n'
+    '    "data-spectr-help-guide-close": true,\n')
+
+
 EDITS = [
     # `done` is a STABLE SENTINEL inside the renderer, never the renderer text
     # itself. Two reasons, both learned the hard way. It cannot be
@@ -692,6 +810,22 @@ EDITS = [
     ('Learn more spans the popover it was measured against',
      (TAIL_W, TAIL_W_NEW),
      TAIL_W_NEW),
+
+    ('the guide can be copied as prose, not markup',
+     (PLAINTEXT_AT, PLAINTEXT + PLAINTEXT_AT),
+     "function spectrHelpPlainText() {"),
+
+    ('the guide owns a copy state that confirms itself',
+     (COPY_STATE, COPY_STATE_NEW),
+     'var [copyState, setCopyState] = React.useState("Copy");'),
+
+    ('the title and its copy button share a left group',
+     (GROUP_OPEN, GROUP_OPEN_NEW),
+     '"data-spectr-help-guide-titlegroup": true,'),
+
+    ('the copy button sits beside the title, never beside the close',
+     (GROUP_CLOSE, GROUP_CLOSE_NEW),
+     '"data-spectr-help-copy": true,'),
 ]
 
 
@@ -717,6 +851,10 @@ REQUIRED_AFTER = (
     "zIndex: 70",
     "marginTop: origin ? origin.y : 0,",
     "      width: 320,",
+    "function spectrHelpPlainText() {",
+    '"data-spectr-help-copy": true,',
+    '"data-spectr-help-guide-titlegroup": true,',
+    'postMessage("clipboard_write"',
     "onLearnMore: () => { setHelpOpen(false); setHelpGuideOpen(true); }",
 )
 
