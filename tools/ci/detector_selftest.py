@@ -809,6 +809,34 @@ CASES: list[tuple[str, str, int, list[str]]] = [
     ("overlay_trigger_wiring", "plant: the settings gear back to the "
      "odd one out", 1,
      [f(D, "overlay_trigger_wiring.py"), "--plant", "silent-settings"]),
+
+    # A dropdown keeps its own captured state after both snapshots are filled.
+    # `snapshots-morph` matches a LEVEL -- `[data-spectr-snapshots-ready=
+    # "true"]` stays true from the second capture until relaunch -- and sat
+    # above `edit`/`analyzer`/`pattern` in an array whose order IS the
+    # precedence rule, so it shadowed all three for the rest of the session and
+    # their option rows lost the bindings that stack them. The RED receipt is a
+    # real reading off the pre-fix binary, not a hand-written one. Two plants
+    # because there are two ways to get this wrong: the level state shadowing an
+    # open menu, and a "fix" that stops it matching at all.
+    ("captured_state_survives_snapshots",
+     "every dropdown keeps its own state with both snapshots filled", 0,
+     [f(D, "captured_state_survives_snapshots.py"),
+      f(E13, "CAPTURED-STATE-GREEN-menus-survive-snapshots.json")]),
+    ("captured_state_survives_snapshots",
+     "known-bad receipt (pre-fix binary: all three menus shadowed)", 1,
+     [f(D, "captured_state_survives_snapshots.py"),
+      f(E13, "CAPTURED-STATE-RED-shadowed-by-snapshots.json")]),
+    ("captured_state_survives_snapshots",
+     "plant: the level state shadows every open menu", 1,
+     [f(D, "captured_state_survives_snapshots.py"),
+      f(E13, "CAPTURED-STATE-GREEN-menus-survive-snapshots.json"),
+      "--plant", "shadowed"]),
+    ("captured_state_survives_snapshots",
+     "plant: the over-fix -- snapshots-morph stops matching at all", 1,
+     [f(D, "captured_state_survives_snapshots.py"),
+      f(E13, "CAPTURED-STATE-GREEN-menus-survive-snapshots.json"),
+      "--plant", "level-lost"]),
 ]
 
 

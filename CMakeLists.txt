@@ -1604,6 +1604,52 @@ if(Python3_Interpreter_FOUND)
         WILL_FAIL TRUE)
 endif()
 
+# A dropdown must keep its OWN captured state after both snapshot slots fill.
+# `snapshots-morph` matches a LEVEL -- [data-spectr-snapshots-ready="true"] is
+# true from the second capture until relaunch -- and array order is the whole
+# precedence rule in resolveCapturedStateFromAtlas(), so sitting above
+# edit/analyzer/pattern it shadowed all three for the rest of the session.
+# Their option rows then lost the bindings that stack label over description
+# and re-laid out side-by-side. The receipt half adjudicates a committed
+# reading and needs no binary; the live half drives the shipping standalone.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-materialized-captured-state-survives-snapshots-receipt
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/captured_state_survives_snapshots.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/2026-09-13/CAPTURED-STATE-GREEN-menus-survive-snapshots.json)
+    set_tests_properties(Spectr-materialized-captured-state-survives-snapshots-receipt
+        PROPERTIES TIMEOUT 60)
+    # A rule nobody has watched reject the defect is not a rule. --plant
+    # shadowed restores exactly what the pre-fix binary reported.
+    add_test(NAME Spectr-materialized-captured-state-survives-snapshots-negative-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/captured_state_survives_snapshots.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/2026-09-13/CAPTURED-STATE-GREEN-menus-survive-snapshots.json
+            --plant shadowed)
+    set_tests_properties(Spectr-materialized-captured-state-survives-snapshots-negative-control
+        PROPERTIES TIMEOUT 60 WILL_FAIL TRUE)
+    # The opposite over-fix: silencing snapshots-morph entirely would pass
+    # every menu case above while deleting the morph surface's own layout.
+    add_test(NAME Spectr-materialized-captured-state-level-still-resolves-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/captured_state_survives_snapshots.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/2026-09-13/CAPTURED-STATE-GREEN-menus-survive-snapshots.json
+            --plant level-lost)
+    set_tests_properties(Spectr-materialized-captured-state-level-still-resolves-control
+        PROPERTIES TIMEOUT 60 WILL_FAIL TRUE)
+endif()
+
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-materialized-captured-state-survives-snapshots-live
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/captured_state_survives_snapshots.py
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>)
+    set_tests_properties(Spectr-materialized-captured-state-survives-snapshots-live
+        PROPERTIES
+        TIMEOUT 900
+        RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
 if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
     add_test(NAME Spectr-shortcut-panel-single-line
         COMMAND ${Python3_EXECUTABLE}

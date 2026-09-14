@@ -1,0 +1,37 @@
+{
+ "schema": "spectr-captured-state-receipt-v1",
+ "cases": [
+  {
+   "menu": "edit",
+   "snapshots_ready": true,
+   "state_id": "snapshots-morph",
+   "layout_applied": 68,
+   "layout_expected": 68,
+   "layout_node_miss": 0
+  },
+  {
+   "menu": "analyzer",
+   "snapshots_ready": true,
+   "state_id": "snapshots-morph",
+   "layout_applied": 68,
+   "layout_expected": 68,
+   "layout_node_miss": 0
+  },
+  {
+   "menu": "pattern",
+   "snapshots_ready": true,
+   "state_id": "snapshots-morph",
+   "layout_applied": 68,
+   "layout_expected": 68,
+   "layout_node_miss": 0
+  },
+  {
+   "menu": "",
+   "snapshots_ready": true,
+   "state_id": "snapshots-morph",
+   "layout_applied": 68,
+   "layout_expected": 68,
+   "layout_node_miss": 0
+  }
+ ]
+}

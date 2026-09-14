@@ -11573,7 +11573,20 @@ function createWidget(type, id, parentId, props) {
     requestAnimationFrame(driveRequestedCapturedState);
   }
   if (requestedCapturedState) requestAnimationFrame(driveRequestedCapturedState);
+  // States whose match selector describes a LEVEL that persists for the rest
+  // of the session, not a surface that is currently open. `snapshots-morph`
+  // matches [data-spectr-snapshots-ready="true"], which rides the permanent
+  // transport label and is true from the second capture until relaunch.
+  // Resolution is "last match in array order wins", so without this a level
+  // state placed above a transient one shadows it forever: with both snapshots
+  // filled, opening EDIT MODE / ANALYZER / PRESET could no longer resolve to
+  // its own captured state, its option rows lost the bindings that stack them,
+  // and each row re-laid out side-by-side. A level state is a FALLBACK -- the
+  // answer when nothing more specific is open -- never a winner over an open
+  // surface.
+  const __spectrLevelCapturedStates = new Set(["snapshots-morph"]);
   function resolveCapturedStateFromAtlas() {
+    let levelFallback = "";
     for (let index = capturedStates.length - 1; index >= 0; --index) {
       const state = capturedStates[index];
       if (state.match) {
@@ -11590,11 +11603,15 @@ function createWidget(type, id, parentId, props) {
             || liveMatch?.style?.display === "none";
           if (liveMatch && owner && !hidden && marker === "true") return state.id;
         } else if (match) {
+          if (__spectrLevelCapturedStates.has(state.id)) {
+            if (levelFallback === "") levelFallback = state.id;
+            continue;
+          }
           return state.id;
         }
       }
     }
-    return "";
+    return levelFallback;
   }
   g5.__pulpRefreshMaterializedState__ = function() {
     let next = resolveCapturedStateFromAtlas();
