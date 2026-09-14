@@ -39,6 +39,7 @@ E07 = os.path.join("docs", "evidence", "2026-09-07")
 E11 = os.path.join("docs", "evidence", "2026-09-11")
 E12 = os.path.join("docs", "evidence", "2026-09-12")
 E13 = os.path.join("docs", "evidence", "2026-09-13")
+E14 = os.path.join("docs", "evidence", "2026-09-14")
 
 D = os.path.join("tools", "spectr-detectors")
 T = "tools"
@@ -342,6 +343,21 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(D, "hit_target_reach.py"), f(E12, "GREEN-hit-transport.layout.json")]),
     ("hit_target_reach", "known-bad fixture (transport row, pre-fix)", 1,
      [f(D, "hit_target_reach.py"), f(E12, "RED-hit-transport.layout.json")]),
+
+    # the press-reach lane: a named control must be REACHED by a real hit test
+    # at the rect it paints, which is the ancestor defect hit_target_reach.py
+    # cannot see -- a 0x0 wrapper seals off a perfectly sized button, and every
+    # self-vs-self rect comparison stays green.
+    ("press_target_reach", "help guide close X is reached at its paint", 0,
+     [f(D, "press_target_reach.py"), f(E14, "GREEN-required.press-reach.json")]),
+    ("press_target_reach", "known-bad fixture (guide anchor collapsed to 0x0)", 1,
+     [f(D, "press_target_reach.py"),
+      f(E14, "RED-required-0x0-anchor.press-reach.json")]),
+    ("press_target_reach", "plant: every required reach forced red", 1,
+     [f(D, "press_target_reach.py"), f(E14, "GREEN-required.press-reach.json"),
+      "--plant"]),
+    ("press_target_reach", "empty population is not a pass", 3,
+     [f(D, "press_target_reach.py"), f(E14, "EMPTY-required.press-reach.json")]),
 
     # issue 6: cursors really change on hover
     ("cursor_invariants", "every region resolves its cursor", 0,

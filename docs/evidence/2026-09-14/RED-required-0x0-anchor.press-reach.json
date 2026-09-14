@@ -1,0 +1,7 @@
+{
+  "schema": "spectr-press-reach-v1",
+  "surface": "required",
+  "required": [
+    {"selector": "[data-spectr-help-guide-close]", "element_id": "__behavior_pr_dt", "resolved": true, "painted": [893, 877, 32, 32], "probe": [909, 89], "reached": "(nothing)", "ok": false, "note": "planted: a press at the rect it paints does not land in it"}
+  ]
+}
