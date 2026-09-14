@@ -1647,6 +1647,32 @@ int main(int argc, char** argv) {
             // inside the range; the no-op count is printed anyway, because a
             // burst that silently stopped doing work is the one reading that
             // would look like the fix landing.
+            // DOES A RE-RENDER SNAP THE CONTENT BACK? With the offset held in
+            // a ref instead of state, React's remembered `marginTop` and the
+            // node's real one diverge the moment the wheel writes. A render the
+            // panel DOES take then has to re-place the content at the scrolled
+            // offset rather than at whatever React last committed. Scroll, force
+            // renders by resizing the host away and back, and require the frame
+            // to be unchanged.
+            if (std::getenv("SPECTR_HELP_RESIZE") != nullptr) {
+                pulp::view::WheelHost host_hooks;
+                for (int i = 0; i < 12; ++i) {
+                    pulp::view::deliver_mouse_wheel(*rig.root, {wx, wy},
+                                                    0.0f, 40.0f, host_hooks);
+                    rig.clock.tick(1.0f / 60.0f);
+                }
+                rig.root->layout_children();
+                settle(rig.clock, 16);
+                capture(rig, dir, prefix + "help-guide-prerender", backend, scale);
+                rig.resize(1100.0f, 716.0f);
+                rig.resize(kDesignWidth, kDesignHeight);
+                rig.root->layout_children();
+                settle(rig.clock, 24);
+                capture(rig, dir, prefix + "help-guide-postrender", backend, scale);
+                std::printf("[help] scrolled, resized away and back\n");
+                return g_failures == 0 ? 0 : 1;
+            }
+
             // THE KEY PATH SHARES scrollBy, so it has to be shown moving the
             // same content. It is not a formality: keys and wheel used to go
             // through one `setScrollTop` and now go through one imperative
