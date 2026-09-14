@@ -97,3 +97,21 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # registering a name wrapped in literal quotes.
 ^Spectr-materialized-clear-snapshot
 ^"?snapshot clear:
+
+# An LFO must not move a mute the user authored: the four Catch2 cases behind
+# the muted-band jiggle. Nothing above matches them -- they start with the
+# invariant, not with "native" or "materialized" -- so without this line they
+# register and never run, which is the exact failure this file exists to catch.
+# Two of the four are CONTROLS that stay green on the broken revision too (an
+# un-muted band is still modulated; a user-dragged morph still moves mute), so
+# the pattern has to select all four or the pair that reddens is unguarded.
+^"?authored mute:
+
+# The same invariant proved end to end through `Spectr::process`, which is the
+# only place the two halves meet: the audio path re-derives the morph per block
+# while the control worker applies it only on change, and the published field
+# it hands the editor IS the field the DSP renders. The unit cases above cannot
+# see that gap -- they call `apply_internal_modulation` directly, and it passed
+# them while a muted band still measured -6 dB and linear gain 0.50 in a real
+# render. Nothing else here matches the name.
+^"?a band muted after both snapshots

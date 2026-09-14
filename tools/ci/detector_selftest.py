@@ -709,6 +709,55 @@ CASES: list[tuple[str, str, int, list[str]]] = [
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-unbound"]),
 
+    # An LFO must modulate LEVELS, never a mute the user authored.
+    #
+    # Reported as "if muted these jiggle/kinda glitch when LFO modulating
+    # morph". The editor draws the mute badge from the AUTHORED field and the
+    # bar height from the MODULATED one, so a frame that drops a mute paints a
+    # badge over a moving bar -- which reads as cosmetic and is not, because
+    # `Spectr::process` hands that same BandField to the DSP and
+    # `linear_gain()` gates on `Band::muted`. The muted band measured at 0.84
+    # .. 1.19 linear gain instead of 0: it was HEARD.
+    #
+    # Every destination reaches its field through `morph_fields`, which picks
+    # mute wholesale from whichever endpoint dominates at t. Morph's two
+    # endpoints are the snapshots, so the authored field is not an input at
+    # all and the mute was lost at EVERY depth; the snapshot destinations lost
+    # it from depth 0.5, where the unipolar amount first reaches the flip.
+    #
+    # No capture can adjudicate this either -- the defect is a REPEATING
+    # ANIMATION, and its audible half has no pixels at all. So this compiles a
+    # probe against the real headers and runs the arithmetic over 12
+    # destination x depth rows.
+    #
+    # `no-preservation` is the plant that matters: its probe output is
+    # BYTE-IDENTICAL to the shipped revision's, so it is not an approximation
+    # of the defect, it is the defect. `dead-modulation` guards the other
+    # direction -- holding every mute still is trivially satisfied by a
+    # modulator that does nothing, and that would leave the rule green.
+    ("modulation_preserves_authored_mute",
+     "an LFO modulates levels and never an authored mute", 0,
+     [f(D, "modulation_preserves_authored_mute.py")]),
+    ("modulation_preserves_authored_mute",
+     "plant: the shipped defect -- the guard is gone entirely", 1,
+     [f(D, "modulation_preserves_authored_mute.py"),
+      "--plant", "no-preservation"]),
+    ("modulation_preserves_authored_mute",
+     "plant: only the reported destination is fixed", 1,
+     [f(D, "modulation_preserves_authored_mute.py"),
+      "--plant", "morph-only"]),
+    ("modulation_preserves_authored_mute",
+     "plant: the mute is re-flagged but the modulated gain survives", 1,
+     [f(D, "modulation_preserves_authored_mute.py"),
+      "--plant", "flag-only"]),
+    ("modulation_preserves_authored_mute",
+     "plant: modulation may still mute an un-muted band", 1,
+     [f(D, "modulation_preserves_authored_mute.py"), "--plant", "strobe"]),
+    ("modulation_preserves_authored_mute",
+     "plant: the rule is satisfied by a modulator that does nothing", 1,
+     [f(D, "modulation_preserves_authored_mute.py"),
+      "--plant", "dead-modulation"]),
+
     # The unmute flourish is a ~285ms brighten-and-thicken on a band's spectral
     # edge, fired on a muted -> unmuted transition. It answers a TAP. A morph
     # sweep or a slot recall carries dozens of bands back across the mute

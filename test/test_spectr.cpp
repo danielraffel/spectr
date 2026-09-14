@@ -1161,3 +1161,59 @@ TEST_CASE("Spectr releases the modulation overlay without a parameter event",
     }
     CHECK_FALSE(plugin->read_modulated_field().active);
 }
+
+TEST_CASE("a band muted after both snapshots were captured stays silent under "
+          "an LFO on morph", "[modulation][mute][rt]") {
+    // The user's report, end to end: "if muted these jiggle/kinda glitch when
+    // LFO modulating morph". Both snapshots hold the band UN-muted, the user
+    // mutes it afterwards, and an LFO sweeps the Morph destination.
+    //
+    // This reads the published modulated field, which is the SAME BandField
+    // the DSP renders (`slot.field = audible`), so one assertion covers both
+    // the paint and the audio.
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    host.prepare(sample_rate, block_size);
+    auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+    REQUIRE(plugin != nullptr);
+
+    pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+    const float* input_channels[] = {
+        in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> input(input_channels, 2, block_size);
+    auto output = out.view();
+
+    // Capture two populated slots, both with band 5 un-muted.
+    for (std::size_t band = 0; band < spectr::kMaxBands; ++band)
+        plugin->field().bands[band].gain_db = -6.0f;
+    plugin->capture_snapshot(spectr::SnapshotBank::Slot::A);
+    for (std::size_t band = 0; band < spectr::kMaxBands; ++band)
+        plugin->field().bands[band].gain_db = +6.0f;
+    plugin->capture_snapshot(spectr::SnapshotBank::Slot::B);
+    REQUIRE(plugin->snapshots().has(spectr::SnapshotBank::Slot::A));
+    REQUIRE(plugin->snapshots().has(spectr::SnapshotBank::Slot::B));
+
+    // The user now mutes band 5, through the parameter the editor writes.
+    for (std::size_t block = 0; block < 8; ++block) {
+        pulp::state::ParameterEventQueue events;
+        REQUIRE(events.push({spectr::band_mute_param_id(5), 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                             static_cast<float>(spectr::LfoShape::Saw), 0}));
+        REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                             static_cast<float>(
+                                 spectr::ModulationTarget::Morph), 0}));
+        host.process(output, input, events);
+    }
+
+    const auto& snapshot = plugin->read_modulated_field();
+    REQUIRE(snapshot.active);
+    INFO("band 5 gain_db in the audible field: "
+         << snapshot.field.bands[5].gain_db);
+    CHECK(snapshot.field.bands[5].muted);
+    CHECK(snapshot.field.linear_gain(5) == 0.0f);
+}

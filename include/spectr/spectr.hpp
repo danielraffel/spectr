@@ -67,6 +67,30 @@ struct AudioModulationState {
     /// because the audio thread derives the mask's frequency window from the
     /// morph parameter, so it has to know the same answer the editor does.
     bool morph_applies_viewport = true;
+    /// Whether the field currently in force was DERIVED from the snapshot
+    /// bank by a morph — `morph_derived_`, the control worker's own answer.
+    ///
+    /// The audio thread re-derives the morph per block, but the control worker
+    /// applies it only when the morph parameter CHANGES. Without this flag the
+    /// two disagree from the moment both slots are populated: the audio thread
+    /// rebuilds `host_field` from A and B on every block, at a default morph
+    /// of 0.0, so the authored field is replaced by snapshot A wholesale and
+    /// every later band edit is inert. Measured end to end — a band muted
+    /// after both captures came back at snapshot A's -6 dB, linear gain 0.50,
+    /// and was heard.
+    bool morph_derived = false;
+    /// Bands written explicitly since the morph derived the field, as a bit
+    /// per canonical slot — `morph_overrides_`, published for the same reason
+    /// the bank is: the audio thread re-derives the morph per block and must
+    /// reach the same precedence the control worker already applies, namely
+    /// that "an automated band value overrides the morph that derived it".
+    ///
+    /// Without it the two disagree, and the audio thread wins: it rebuilds
+    /// `host_field` from the two snapshots on EVERY block and hands that to
+    /// both the DSP and the editor's modulation frame, so a band the user
+    /// muted after capturing A and B is silently un-muted and heard. Measured
+    /// at every morph value, not just at the dominance flip.
+    std::uint64_t morph_overrides = 0;
 };
 static_assert(std::is_trivially_copyable_v<AudioModulationState>,
               "audio modulation publication must remain allocation-free POD");

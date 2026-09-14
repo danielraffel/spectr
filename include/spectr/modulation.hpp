@@ -66,7 +66,51 @@ inline float lfo_value(LfoShape shape, double phase) noexcept {
     }
 }
 
+/// Re-impose the authored mute topology on a modulated field.
+///
+/// An LFO modulates LEVELS. It must never toggle a mute, in either direction.
+/// Mute is a discrete act the user performed on the live field — `Band::muted`
+/// is an explicit flag, "never `gain == -inf`" — and every destination here
+/// reaches its field through `morph_fields`, which does not interpolate mute
+/// but PICKS it wholesale from whichever slot dominates at the current t. Two
+/// distinct defects follow from letting that pick survive into a modulated
+/// frame:
+///
+///   - The Morph destination overwrites `out` entirely from the two
+///     snapshots, so a band the user muted AFTER capturing them comes back
+///     un-muted. It is then audible — `linear_gain()` gates on this flag —
+///     and its painted height sweeps with the LFO while the editor keeps
+///     drawing the mute badge, which is read from the authored field. That is
+///     the muted-band jiggle, and its audible half is the serious one: a band
+///     the user silenced is heard.
+///   - The dominance rule flips at t = 0.5. Under a user-dragged morph the
+///     user controls that crossing; under an LFO it is crossed twice per
+///     cycle, so any band whose mute differs between the two endpoints
+///     strobes at LFO rate. A discrete pop is exactly the glitch this guard
+///     exists to prevent, so the rule is applied in both directions.
+///
+/// A muted band is excluded from modulation ENTIRELY rather than merely
+/// re-flagged: it keeps its authored gain as well as its mute. While muted the
+/// two are indistinguishable (0 linear gain, painted at the mute sentinel),
+/// but they differ the instant the user unmutes — restoring the authored level
+/// is deterministic, whereas keeping the modulated one would reveal whatever
+/// phase the LFO happened to be at.
+///
+/// This is deliberately scoped to internal modulation. A user-dragged morph
+/// still moves mute by the dominance rule; that is a direct manipulation the
+/// user is driving and watching, not a modulator running behind their back.
+inline void preserve_authored_mutes(BandField& out,
+                                    const BandField& canonical) noexcept {
+    for (std::size_t i = 0; i < kMaxBands; ++i) {
+        if (canonical.bands[i].muted) out.bands[i] = canonical.bands[i];
+        else                          out.bands[i].muted = false;
+    }
+}
+
 /// Apply one LFO sample to a single destination.
+///
+/// The authored mute topology of @p canonical always survives — see
+/// `preserve_authored_mutes`. Only levels are modulated.
 inline BandField apply_modulation_to_target(const BandField& canonical,
                                             const SnapshotBank& snapshots,
                                             float host_morph,
@@ -82,6 +126,7 @@ inline BandField apply_modulation_to_target(const BandField& canonical,
         for (auto& band : out.bands)
             band.gain_db = std::clamp(band.gain_db + delta,
                                       kBandGainMinDb, kBandGainMaxDb);
+        preserve_authored_mutes(out, canonical);
         return out;
     }
 
@@ -92,6 +137,7 @@ inline BandField apply_modulation_to_target(const BandField& canonical,
                                        0.0f, 1.0f);
             morph_fields(out, snapshots.a.field, snapshots.b.field, t);
         }
+        preserve_authored_mutes(out, canonical);
         return out;
     }
 
@@ -103,6 +149,7 @@ inline BandField apply_modulation_to_target(const BandField& canonical,
         const float amount = (wave + 1.0f) * 0.5f * depth;
         morph_fields(out, canonical, snapshots.get(slot).field, amount);
     }
+    preserve_authored_mutes(out, canonical);
     return out;
 }
 
