@@ -322,6 +322,55 @@ jobs:
           fi
           exit $rc
 
+      - name: Gate - a named control is REACHED by a press at the rect it paints
+        shell: bash
+        env:
+          PULP_DISABLE_PLUGIN_EDITOR: "1"
+          PULP_HEADLESS: "1"
+          PULP_TEST_MODE: "1"
+        run: |
+          set -euo pipefail
+          # The gate above compares a control's own hit rect against its own
+          # painted rect, which can only see a defect a control commits against
+          # ITSELF. This one runs the real View::hit_test at the painted centre
+          # and asks what came back, which is the only way to see the defect an
+          # ANCESTOR commits: the help guide's close X shipped as a correctly
+          # sized, correctly wired 32x32 button inside a wrapper whose box had
+          # collapsed to 0x0, and every gate in this repo was green. Rect
+          # containment is half-open, so that wrapper admitted no point at all;
+          # the guide was dismissable only through hit_test's ~500px overflow
+          # slack, measured from an in-flow position on the other side of the
+          # window.
+          shots="$SPECTR_ACCEPTANCE_ROOT/press-reach-shots"
+          mkdir -p "$shots"
+          SPECTR_PRESS_REACH=1 "$SPECTR_BUILD_DIR/Spectr-native-shot" \
+            --out="$shots" --backend=skia --scale=1 \
+            > "$SPECTR_ACCEPTANCE_ROOT/press-reach-probe.log" 2>&1 || {
+              echo "SPECTR_PRESS_REACH run failed; press reach is unmeasured" >&2
+              tail -40 "$SPECTR_ACCEPTANCE_ROOT/press-reach-probe.log" >&2
+              exit 1
+            }
+          # The probe's own trial of the close X, which is a press and a
+          # negative press rather than a rect comparison. A missing VERDICT
+          # line means the trial never ran, which is not a pass.
+          if ! grep -q "VERDICT close-X-by-press: PASS" \
+                 "$SPECTR_ACCEPTANCE_ROOT/press-reach-probe.log"; then
+            echo "no verdict: the close-X press trial did not report PASS" >&2
+            grep -E "^\[guide\]" "$SPECTR_ACCEPTANCE_ROOT/press-reach-probe.log" >&2 || true
+            exit 1
+          fi
+          dump="$shots/required.press-reach.json"
+          if [ ! -f "$dump" ]; then
+            echo "no verdict: $dump was not written" >&2
+            exit 1
+          fi
+          set +e
+          python3 tools/spectr-detectors/press_target_reach.py "$dump"
+          rc=$?
+          set -e
+          # 1 is a finding; 2 and 3 are UNMEASURED and are never a pass.
+          exit $rc
+
       - name: Gate - the morph track is laid out clear of its A/B labels
         shell: bash
         run: |

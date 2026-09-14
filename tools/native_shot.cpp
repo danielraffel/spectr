@@ -29,6 +29,7 @@
 #include <pulp/state/store.hpp>
 #include <pulp/view/frame_clock.hpp>
 #include <pulp/view/layout_snapshot.hpp>
+#include <pulp/view/overlay_dismissal.hpp>
 #include <pulp/view/screenshot.hpp>
 #include <pulp/view/screenshot_compare.hpp>
 #include <pulp/view/scripted_ui.hpp>
@@ -973,6 +974,21 @@ void print_chain(pulp::view::View& root, float x, float y) {
     }
 }
 
+// Name a view for a report. An anonymous node still has to be nameable, or
+// "a child swallowed it" and "nothing is there" read identically.
+std::string owner_name(const pulp::view::View* target) {
+    if (target == nullptr) return "(nothing)";
+    std::string id = target->id();
+    if (!id.empty()) return id;
+    int depth = 0;
+    for (const auto* node = target->parent(); node != nullptr; node = node->parent()) {
+        ++depth;
+        if (!node->id().empty())
+            return "(anon +" + std::to_string(depth) + " under " + node->id() + ")";
+    }
+    return "(anon, no named ancestor)";
+}
+
 std::string owner_at(pulp::view::View& root, float x, float y) {
     auto* target = root.hit_test(pulp::view::Point{x, y});
     if (target == nullptr) return "(nothing)";
@@ -988,6 +1004,285 @@ std::string owner_at(pulp::view::View& root, float x, float y) {
             return "(anon +" + std::to_string(depth) + " under " + node->id() + ")";
     }
     return "(anon, no named ancestor)";
+}
+
+// ── Press reachability ──────────────────────────────────────────────────
+//
+// Does a press at the rect a control PAINTS actually reach that control?
+//
+// Deliberately not rect arithmetic. `hit_target_reach.py` compares a control's
+// own hit rect against its own painted rect, which can only see a defect a
+// control commits against ITSELF. The expensive defect is the one an ANCESTOR
+// commits: a wrapper whose box collapses to zero seals off a subtree of
+// correctly sized, correctly wired controls, and every one of them still
+// passes a self-vs-self comparison. The help guide's close button shipped
+// exactly that way -- a 32x32 button inside a 0x0 anchor -- and every gate in
+// this repo was green.
+//
+// `Rect::contains` is half-open, so a zero-area box admits no point at all.
+// The only thing that ever lets a press through such a wrapper is the
+// symmetric ~500px slack `View::hit_test` grants an `overflow: visible` child,
+// measured from the wrapper's in-flow position rather than from where the
+// control paints. So the only honest question is the end-to-end one: run the
+// real `hit_test` at the painted centre and report what came back.
+
+enum class PressChannel { click, context_menu };
+
+const char* channel_name(PressChannel c) {
+    return c == PressChannel::click ? "click" : "context-menu";
+}
+
+bool carries(const pulp::view::View& v, PressChannel c) {
+    return c == PressChannel::click ? static_cast<bool>(v.on_click)
+                                    : static_cast<bool>(v.on_context_menu);
+}
+
+bool is_self_or_descendant(const pulp::view::View* needle,
+                           const pulp::view::View* ancestor) {
+    for (const auto* v = needle; v != nullptr; v = v->parent())
+        if (v == ancestor) return true;
+    return false;
+}
+
+// The nearest listener from the hit view up to the root. Both channels bubble
+// in the shipping dispatch, so anything else here would describe a press that
+// does not happen.
+const pulp::view::View* resolve_handler(pulp::view::View& root,
+                                        pulp::view::View* hit, PressChannel c) {
+    for (auto* v = hit; v != nullptr; v = v->parent()) {
+        if (carries(*v, c)) return v;
+        if (v == &root) break;
+    }
+    return nullptr;
+}
+
+struct PressFinding {
+    std::string id;
+    PressChannel channel = PressChannel::click;
+    pulp::view::Rect painted{};
+    float probe_x = 0.0f;
+    float probe_y = 0.0f;
+    std::string reached;
+    std::string reason;
+};
+
+struct PressReachResult {
+    int examined = 0;
+    int click_targets = 0;
+    int context_menu_targets = 0;
+    int skipped_offscreen = 0;
+    int skipped_not_interactive = 0;
+    std::vector<PressFinding> findings;
+};
+
+bool press_interactive(const pulp::view::View& v) {
+    return v.visible() && v.enabled() && v.hit_testable() &&
+           v.pointer_events() != pulp::view::View::PointerEvents::none;
+}
+
+bool press_ancestors_admit(const pulp::view::View& v, const pulp::view::View& root) {
+    for (const auto* n = v.parent(); n != nullptr; n = n->parent()) {
+        if (!n->visible()) return false;
+        if (n->pointer_events() == pulp::view::View::PointerEvents::none) return false;
+        if (n == &root) break;
+    }
+    return true;
+}
+
+void press_probe_one(pulp::view::View& view, pulp::view::View& root,
+                     PressChannel channel, PressReachResult& out) {
+    if (!carries(view, channel)) return;
+    if (channel == PressChannel::click) ++out.click_targets;
+    else ++out.context_menu_targets;
+
+    if (!press_interactive(view) || !press_ancestors_admit(view, root)) {
+        ++out.skipped_not_interactive;
+        return;
+    }
+
+    float x = 0.0f;
+    float y = 0.0f;
+    root_origin(view, x, y);
+    const auto box = view.bounds();
+    const pulp::view::Rect painted{x, y, box.width, box.height};
+
+    PressFinding finding;
+    finding.id = owner_name(&view);
+    finding.channel = channel;
+    finding.painted = painted;
+
+    // Zero area is a finding on its own terms, and has to be judged BEFORE
+    // pressing: there is no honest centre of a box that contains no point, and
+    // whatever `hit_test` answers at that coordinate belongs to another view.
+    if (painted.width <= 0.0f || painted.height <= 0.0f) {
+        ++out.examined;
+        finding.probe_x = painted.x;
+        finding.probe_y = painted.y;
+        finding.reached = "(not probed)";
+        finding.reason = "paints a zero-area box, and Rect::contains is "
+                         "half-open, so no press can land in it";
+        out.findings.push_back(std::move(finding));
+        return;
+    }
+
+    const float cx = painted.x + painted.width / 2.0f;
+    const float cy = painted.y + painted.height / 2.0f;
+    const auto root_box = root.local_bounds();
+    if (!root_box.contains(pulp::view::Point{cx, cy})) {
+        // Scrolled away or positioned off the surface: unreachable by layout
+        // rather than by wiring, and reporting it would drown the wiring
+        // defects. Counted, never silently dropped.
+        ++out.skipped_offscreen;
+        return;
+    }
+
+    ++out.examined;
+    finding.probe_x = cx;
+    finding.probe_y = cy;
+    auto* hit = root.hit_test(pulp::view::Point{cx, cy});
+    finding.reached = owner_name(hit);
+
+    if (!is_self_or_descendant(hit, &view)) {
+        finding.reason = "a press at the centre of the rect it paints resolves "
+                         "outside its own subtree";
+        out.findings.push_back(std::move(finding));
+        return;
+    }
+    if (resolve_handler(root, hit, channel) == nullptr) {
+        finding.reason = std::string("the press lands inside its subtree but no ")
+                         + channel_name(channel) + " handler resolves there";
+        out.findings.push_back(std::move(finding));
+    }
+}
+
+void press_walk(pulp::view::View& view, pulp::view::View& root,
+                PressReachResult& out) {
+    press_probe_one(view, root, PressChannel::click, out);
+    press_probe_one(view, root, PressChannel::context_menu, out);
+    for (std::size_t i = 0; i < view.child_count(); ++i)
+        if (auto* child = view.child_at(i)) press_walk(*child, root, out);
+}
+
+PressReachResult press_reach_sweep(pulp::view::View& root) {
+    PressReachResult out;
+    press_walk(root, root, out);
+    return out;
+}
+
+void write_press_reach(const PressReachResult& result,
+                       const std::filesystem::path& dir,
+                       const std::string& surface) {
+    std::filesystem::create_directories(dir);
+    const auto path = dir / (surface + ".press-reach.json");
+    std::ofstream out(path);
+    out << "{\n  \"schema\": \"spectr-press-reach-v1\",\n";
+    out << "  \"surface\": \"" << surface << "\",\n";
+    out << "  \"census\": {\n";
+    out << "    \"examined\": " << result.examined << ",\n";
+    out << "    \"click_targets\": " << result.click_targets << ",\n";
+    out << "    \"context_menu_targets\": " << result.context_menu_targets << ",\n";
+    out << "    \"skipped_offscreen\": " << result.skipped_offscreen << ",\n";
+    out << "    \"skipped_not_interactive\": " << result.skipped_not_interactive << "\n";
+    out << "  },\n  \"findings\": [";
+    for (std::size_t i = 0; i < result.findings.size(); ++i) {
+        const auto& f = result.findings[i];
+        out << (i ? ",\n    " : "\n    ") << "{\"id\": \"" << f.id
+            << "\", \"channel\": \"" << channel_name(f.channel)
+            << "\", \"painted\": [" << f.painted.x << ", " << f.painted.y << ", "
+            << f.painted.width << ", " << f.painted.height << "]"
+            << ", \"probe\": [" << f.probe_x << ", " << f.probe_y << "]"
+            << ", \"reached\": \"" << f.reached << "\""
+            << ", \"reason\": \"" << f.reason << "\"}";
+    }
+    out << (result.findings.empty() ? "" : "\n  ") << "]\n}\n";
+    std::printf("[press-reach] wrote %s\n", path.string().c_str());
+}
+
+// One control that MUST stay pressable, named by the authored attribute a
+// reader can grep for. This is the gated population: the whole-tree sweep is
+// a diagnostic, but a materialized React tree carries full-window layers and
+// scrims whose "unreachable" verdicts are correct behaviour, so a blocking
+// gate names what it protects.
+struct RequiredControl {
+    const char* selector;
+    const char* why;
+};
+
+struct RequiredResult {
+    std::string selector;
+    std::string element_id;
+    bool resolved = false;
+    pulp::view::Rect painted{};
+    float probe_x = 0.0f;
+    float probe_y = 0.0f;
+    std::string reached;
+    bool ok = false;
+    std::string note;
+};
+
+void write_required(const std::vector<RequiredResult>& rows,
+                    const std::filesystem::path& dir,
+                    const std::string& surface) {
+    std::filesystem::create_directories(dir);
+    const auto path = dir / (surface + ".press-reach.json");
+    std::ofstream out(path);
+    out << "{\n  \"schema\": \"spectr-press-reach-v1\",\n";
+    out << "  \"surface\": \"" << surface << "\",\n";
+    out << "  \"required\": [";
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const auto& r = rows[i];
+        out << (i ? ",\n    " : "\n    ") << "{\"selector\": \"" << r.selector
+            << "\", \"element_id\": \"" << r.element_id
+            << "\", \"resolved\": " << (r.resolved ? "true" : "false")
+            << ", \"painted\": [" << r.painted.x << ", " << r.painted.y << ", "
+            << r.painted.width << ", " << r.painted.height << "]"
+            << ", \"probe\": [" << r.probe_x << ", " << r.probe_y << "]"
+            << ", \"reached\": \"" << r.reached << "\""
+            << ", \"ok\": " << (r.ok ? "true" : "false")
+            << ", \"note\": \"" << r.note << "\"}";
+    }
+    out << (rows.empty() ? "" : "\n  ") << "]\n}\n";
+    std::printf("[required] wrote %s\n", path.string().c_str());
+}
+
+void print_press_reach(const char* surface, const PressReachResult& r) {
+    for (const auto& f : r.findings)
+        std::printf("[press-reach] UNREACHABLE %-13s %s paints (%.1f,%.1f "
+                    "%.1fx%.1f), press at (%.1f,%.1f) reached %s; %s\n",
+                    channel_name(f.channel), f.id.c_str(), f.painted.x,
+                    f.painted.y, f.painted.width, f.painted.height, f.probe_x,
+                    f.probe_y, f.reached.c_str(), f.reason.c_str());
+    // Always printed. "0 unreachable" over 0 examined is a blind sweep, and a
+    // reader who sees only the finding list cannot tell the two apart.
+    std::printf("[press-reach] census %s: examined=%d (click=%d, "
+                "context-menu=%d) skipped_offscreen=%d skipped_inert=%d "
+                "findings=%zu\n",
+                surface, r.examined, r.click_targets, r.context_menu_targets,
+                r.skipped_offscreen, r.skipped_not_interactive,
+                r.findings.size());
+}
+
+const char* cursor_name(pulp::view::View::CursorStyle c) {
+    using C = pulp::view::View::CursorStyle;
+    switch (c) {
+        case C::default_: return "default";
+        case C::pointer: return "pointer";
+        case C::crosshair: return "crosshair";
+        case C::text: return "text";
+        case C::grab: return "grab";
+        case C::grabbing: return "grabbing";
+        case C::not_allowed: return "not-allowed";
+        case C::invisible: return "invisible";
+        default: return "other";
+    }
+}
+
+// The cursor a real pointer would show at a point: the platform host applies
+// the hit view's own `cursor()`, so reading it here is reading what the user
+// would see rather than what the JS believes.
+std::string cursor_at(pulp::view::View& root, float x, float y) {
+    auto* hit = root.hit_test(pulp::view::Point{x, y});
+    return hit == nullptr ? std::string("(nothing)") : cursor_name(hit->cursor());
 }
 
 const char* backend_name(pulp::view::ScreenshotBackend backend) {
@@ -1830,6 +2125,297 @@ int main(int argc, char** argv) {
         // into a 990x645 window, so every design number here is 0.75 of what
         // the user's pointer sees. That factor is why controls that look
         // adequate in a layout dump feel small in the product.
+        if (std::getenv("SPECTR_PRESS_REACH") != nullptr) {
+            auto& root = *rig.root;
+
+            // 1. The default surface, swept whole.
+            {
+                const auto sweep = press_reach_sweep(root);
+                print_press_reach("default", sweep);
+                write_press_reach(sweep, dir, prefix + "default");
+            }
+
+            // 2. The help guide. Its close button shipped inside a 0x0 anchor,
+            // reachable only through hit_test's ~500px overflow slack measured
+            // from an in-flow position on the other side of the window. That
+            // defect is invisible to every rect-vs-rect check in this repo, so
+            // this is the surface the sweep most needs to see.
+            std::printf("--- help guide: open, sweep, then press the close X ---\n");
+            rig.activate("[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+            rig.activate("[data-spectr-help-learn-more]");
+            settle(rig.clock, 24);
+
+            const bool guide_open = rig.is_mounted("[data-spectr-help-guide-panel]");
+            std::printf("[guide] opened: %s\n", guide_open ? "yes" : "NO");
+            if (!guide_open) {
+                std::printf("[guide] CONTROL FAILED: the guide did not open, so "
+                            "nothing below is a statement about the close "
+                            "button. Report nothing from it.\n");
+            } else {
+                const auto sweep = press_reach_sweep(root);
+                print_press_reach("help-guide", sweep);
+                write_press_reach(sweep, dir, prefix + "help-guide");
+
+                // The shipping asset gives the close X no authored id -- only
+                // a `data-spectr-help-guide-close` attribute, which never
+                // becomes a view id -- so a guessed id resolves nothing and
+                // reads exactly like "the button is missing". Ask the runtime
+                // for its OWN element id instead, the way the modulation
+                // toggles are resolved. The bridge has no eval-with-result, so
+                // the value returns through the one channel that carries a
+                // string: the exception the runtime raises.
+                std::string close_id;
+                try {
+                    rig.eval("(() => { const el = document.querySelector("
+                             "'[data-spectr-help-guide-close]');"
+                             " throw new Error('PULPVALUE:' + (el ? (el.id || "
+                             "el.__pulpId || '(no id)') : '(absent)')); })();",
+                             "spectr-native-shot-close-id");
+                } catch (const std::exception& e) {
+                    const std::string msg = e.what();
+                    const auto at = msg.find("PULPVALUE:");
+                    if (at != std::string::npos) {
+                        close_id = msg.substr(at + 10);
+                        const auto end = close_id.find_first_of(" \n\"'");
+                        if (end != std::string::npos)
+                            close_id = close_id.substr(0, end);
+                    }
+                }
+                std::printf("[guide] close X element id: %s\n",
+                            close_id.empty() ? "(unresolved)" : close_id.c_str());
+                const auto close = measure_hit(root, close_id);
+                print_hit("help guide close X", close);
+
+                // The trial. A press at the rect the X paints must dismiss the
+                // guide; a press well away from it must not. Both halves are
+                // required: a "dismiss" verb that fires on every press would
+                // pass the first half alone.
+                if (!close.found) {
+                    std::printf("[guide] CONTROL FAILED: the close X has no "
+                                "addressable view, so the press trial below "
+                                "cannot run.\n");
+                } else {
+                    const float cx = close.painted.x + close.painted.width / 2.0f;
+                    const float cy = close.painted.y + close.painted.height / 2.0f;
+                    std::printf("[guide] press-target owner at the painted "
+                                "centre (%.1f,%.1f): %s\n", cx, cy,
+                                owner_at(root, cx, cy).c_str());
+
+                    // NEGATIVE half first, on the open guide: a press far from
+                    // the X must leave the guide standing.
+                    root.simulate_click(pulp::view::Point{cx - 400.0f, cy + 300.0f});
+                    settle(rig.clock, 16);
+                    const bool survived =
+                        rig.is_mounted("[data-spectr-help-guide-panel]");
+                    std::printf("[guide] press away from the X: guide %s "
+                                "(expect: still open)\n",
+                                survived ? "still open" : "DISMISSED");
+
+                    // POSITIVE half: a press at the X's own painted rect.
+                    root.simulate_click(pulp::view::Point{cx, cy});
+                    settle(rig.clock, 16);
+                    const bool dismissed =
+                        !rig.is_mounted("[data-spectr-help-guide-panel]");
+                    std::printf("[guide] press at the X: guide %s "
+                                "(expect: dismissed)\n",
+                                dismissed ? "dismissed" : "STILL OPEN");
+                    std::printf("[guide] VERDICT close-X-by-press: %s\n",
+                                (survived && dismissed) ? "PASS" : "FAIL");
+                }
+            }
+
+            // 3. The gated population: named controls that must stay
+            // pressable at the rect they paint, re-opened for the trial the
+            // close press above consumed.
+            std::printf("--- required press targets ---\n");
+            rig.activate("[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+            rig.activate("[data-spectr-help-learn-more]");
+            settle(rig.clock, 24);
+
+            static const RequiredControl kRequired[] = {
+                {"[data-spectr-help-guide-close]",
+                 "shipped inside a 0x0 anchor; reachable only through "
+                 "hit_test's overflow slack, and dismissable by nothing else "
+                 "but Escape"},
+            };
+            std::vector<RequiredResult> required_results;
+            for (const auto& want : kRequired) {
+                RequiredResult r;
+                r.selector = want.selector;
+                std::string id;
+                try {
+                    rig.eval(std::string("(() => { const el = document.querySelector(")
+                                 + js_string(want.selector) + ");"
+                                 " throw new Error('PULPVALUE:' + (el ? (el.id || "
+                                 "el.__pulpId || '(no id)') : '(absent)')); })();",
+                             "spectr-native-shot-required-id");
+                } catch (const std::exception& e) {
+                    const std::string msg = e.what();
+                    const auto at = msg.find("PULPVALUE:");
+                    if (at != std::string::npos) {
+                        id = msg.substr(at + 10);
+                        const auto end = id.find_first_of(" \n\"'");
+                        if (end != std::string::npos) id = id.substr(0, end);
+                    }
+                }
+                r.element_id = id;
+                const auto hit = measure_hit(root, id);
+                if (!hit.found) {
+                    r.note = "no addressable view for this selector";
+                    required_results.push_back(std::move(r));
+                    continue;
+                }
+                r.resolved = true;
+                r.painted = hit.painted;
+                r.probe_x = hit.painted.x + hit.painted.width / 2.0f;
+                r.probe_y = hit.painted.y + hit.painted.height / 2.0f;
+                auto* landed = root.hit_test(pulp::view::Point{r.probe_x, r.probe_y});
+                r.reached = owner_name(landed);
+                r.ok = hit.painted.width > 0.0f && hit.painted.height > 0.0f &&
+                       is_self_or_descendant(landed, find_by_id(root, id));
+                if (!r.ok && r.note.empty())
+                    r.note = "a press at the rect it paints does not land in it";
+                std::printf("[required] %-40s id=%-18s painted=(%.1f,%.1f "
+                            "%.1fx%.1f) press->%s %s\n", r.selector.c_str(),
+                            r.element_id.c_str(), r.painted.x, r.painted.y,
+                            r.painted.width, r.painted.height,
+                            r.reached.c_str(), r.ok ? "OK" : "UNREACHABLE");
+                required_results.push_back(std::move(r));
+            }
+
+            // Prove the gate can fail, on the shipping tree, by rebuilding the
+            // exact defect #119 fixed: collapse the guide anchor to the 0x0
+            // box it shipped with, at the in-flow y it shipped at. A gate only
+            // ever observed passing is the thing this whole probe exists to
+            // stop, so this is planted natively rather than through JS -- a JS
+            // style write can be reverted by the next React commit, and a gate
+            // that went green because its plant was undone is worse than no
+            // plant at all.
+            if (std::getenv("SPECTR_PRESS_REACH_PLANT") != nullptr) {
+                std::string anchor_id;
+                try {
+                    rig.eval("(() => { const el = document.querySelector("
+                             "'[data-spectr-help-guide-anchor]');"
+                             " throw new Error('PULPVALUE:' + (el ? (el.id || "
+                             "el.__pulpId || '(no id)') : '(absent)')); })();",
+                             "spectr-native-shot-anchor-id");
+                } catch (const std::exception& e) {
+                    const std::string msg = e.what();
+                    const auto at = msg.find("PULPVALUE:");
+                    if (at != std::string::npos) {
+                        anchor_id = msg.substr(at + 10);
+                        const auto end = anchor_id.find_first_of(" \n\"'");
+                        if (end != std::string::npos)
+                            anchor_id = anchor_id.substr(0, end);
+                    }
+                }
+                auto* anchor_view = find_by_id(root, anchor_id);
+                if (anchor_view == nullptr) {
+                    std::printf("[plant] CONTROL FAILED: the guide anchor "
+                                "(%s) could not be resolved, so nothing was "
+                                "planted and the RED run below proves "
+                                "nothing.\n", anchor_id.c_str());
+                } else {
+                    const auto before = anchor_view->bounds();
+                    anchor_view->set_bounds({before.x, 804.0f, 0.0f, 0.0f});
+                    settle(rig.clock, 8);
+                    std::printf("[plant] guide anchor %s: (%.1f,%.1f %.1fx%.1f)"
+                                " -> (%.1f,804.0 0.0x0.0)\n", anchor_id.c_str(),
+                                before.x, before.y, before.width, before.height,
+                                before.x);
+                    for (auto& r : required_results) {
+                        const auto hit = measure_hit(root, r.element_id);
+                        auto* landed =
+                            hit.found ? root.hit_test(pulp::view::Point{
+                                            hit.painted.x + hit.painted.width / 2.0f,
+                                            hit.painted.y + hit.painted.height / 2.0f})
+                                      : nullptr;
+                        const bool ok =
+                            hit.found && hit.painted.width > 0.0f &&
+                            hit.painted.height > 0.0f &&
+                            is_self_or_descendant(landed,
+                                                  find_by_id(root, r.element_id));
+                        r.ok = ok;
+                        r.painted = hit.painted;
+                        r.reached = owner_name(landed);
+                        if (!ok)
+                            r.note = "planted: a press at the rect it paints "
+                                     "does not land in it";
+                        std::printf("[plant] %-40s press->%s %s\n",
+                                    r.selector.c_str(), r.reached.c_str(),
+                                    ok ? "OK (the plant did not bite)"
+                                       : "UNREACHABLE");
+                    }
+                }
+            }
+
+            // The cursor trial. A dismissal that leaves the pointer arrowed
+            // over the band surface passes every screenshot test and is still
+            // a regression, so read the cursor a real pointer would show
+            // before, during, and after -- and require the third to match the
+            // first.
+            const float band_x = 378.0f;
+            const float band_y = 400.0f;
+            const std::string cursor_open = cursor_at(root, band_x, band_y);
+            {
+                const auto close_again = measure_hit(root, required_results.empty()
+                                                         ? std::string()
+                                                         : required_results[0].element_id);
+                if (close_again.found) {
+                    root.simulate_click(pulp::view::Point{
+                        close_again.painted.x + close_again.painted.width / 2.0f,
+                        close_again.painted.y + close_again.painted.height / 2.0f});
+                    settle(rig.clock, 16);
+                }
+            }
+            const std::string cursor_after = cursor_at(root, band_x, band_y);
+            std::printf("[cursor] over the band surface (%.0f,%.0f): "
+                        "guide-open=%s after-dismiss=%s -> %s\n", band_x, band_y,
+                        cursor_open.c_str(), cursor_after.c_str(),
+                        cursor_after == cursor_open && cursor_open == "(nothing)"
+                            ? "INCONCLUSIVE (nothing owns that point)"
+                            : (cursor_after != cursor_open ? "RESTORED" : "UNCHANGED"));
+
+            // Negative control for the whole instrument, on this very tree: a
+            // press target that does not exist must resolve to nothing, and a
+            // press far outside the surface must reach nothing. If either of
+            // these answers a target, every finding above is noise.
+            std::printf("[control] absent selector resolves to: %s\n",
+                        measure_hit(root, "spectr-no-such-control-exists").found
+                            ? "A VIEW (instrument is broken)"
+                            : "nothing (as it must)");
+            std::printf("[control] press far outside the surface reaches: %s\n",
+                        owner_at(root, -500.0f, -500.0f).c_str());
+
+            write_required(required_results, dir, prefix + "required");
+
+            // 4. The right-button channel. A census first, because "the menu
+            // did not open" and "nothing in this tree ever asked for a menu"
+            // are different diagnoses and only one of them is a Spectr bug.
+            std::printf("--- right-button channel ---\n");
+            {
+                const auto sweep = press_reach_sweep(root);
+                std::printf("[context] views carrying on_context_menu: %d\n",
+                            sweep.context_menu_targets);
+                if (sweep.context_menu_targets == 0) {
+                    std::printf("[context] nothing in the shipping tree carries "
+                                "a context-menu handler under this SDK, so the "
+                                "right-click feature is inert here regardless of "
+                                "geometry.\n");
+                }
+            }
+            for (float y : {260.0f, 400.0f, 560.0f}) {
+                const float x = 378.0f;
+                const auto res = pulp::view::route_context_press(
+                    root, pulp::view::Point{x, y});
+                std::printf("[context] right-press (%.0f,%.0f) -> owner=%s "
+                            "handled=%s overlay_dismissed=%s\n", x, y,
+                            owner_at(root, x, y).c_str(),
+                            res.handled ? "yes" : "no",
+                            res.overlay_dismissed ? "yes" : "no");
+            }
+        }
+
         if (std::getenv("SPECTR_HIT_PROBE") != nullptr) {
             auto& root = *rig.root;
 
