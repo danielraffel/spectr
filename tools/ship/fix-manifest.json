@@ -196,6 +196,64 @@
         "CMD+DRAG"
       ],
       "note": "Also nearly filed unprovable, on the reasoning that a glyph-to-word substitution only REMOVES text and that the word CMD is three characters in a 44 MB Mach-O. Both halves are true and the conclusion still did not follow: the two rewritten chips are contiguous strings, CMD+DRAG and CMD+SHIFT+DRAG, and a token may contain any character except a double quote. Both read 0 in the pre-fix binaries against a DRAG control that reads 5 there, so the instrument reaches the chip strings and the absence belongs to the fix. Scope, because the row should not be read as more than it is: this is the twelve-row SHORTCUTS panel only. One glyph chip survives elsewhere on purpose - the preset dropdown's MANAGE row still reads U+21E7 U+2318 P - and it was never in this fix's scope."
+    },
+    {
+      "id": "captured-state-level-fallback",
+      "pr": 118,
+      "title": "SCULPT / PEAK / PRESET and OVERFLOW keep their own layout once snapshots A and B are both captured",
+      "tokens": [
+        "__spectrLevelCapturedStates",
+        "levelFallback"
+      ],
+      "note": "Both identifiers are new in native-ui/materialized/runtime.js, which CMakeLists embeds via SPECTR_NATIVE_ASSET_SOURCES alongside the document - so runtime.js-only tokens do reach the Mach-O. Screened against both pre-fix binaries (the installed 12:43 build and the Sep-12 22:32 build): 0 and 0. The control is the state this fix demotes, 'snapshots-morph', which reads 1 in both, so the reader demonstrably reaches the captured-state atlas and the absence belongs to the fix. What the tokens prove is that the level-fallback resolution shipped: a state whose selector describes a session-long LEVEL is now a fallback rather than a winner over an open surface. Before it, the permanent data-spectr-snapshots-ready marker shadowed every dropdown's own captured state from the second capture until relaunch, and the option rows lost the bindings that stack them."
+    },
+    {
+      "id": "help-guide-anchor-reachable",
+      "pr": 119,
+      "title": "The guide's close button sits inside a box a press can actually land in",
+      "tokens": [
+        "zIndex: 70",
+        "marginTop: origin ? origin.y : 0"
+      ],
+      "note": "The anchor shipped as a 0x0 box, which paints correctly and cannot be touched: Rect::contains is half-open, so a 0x0 rect contains no point at any coordinate. Both tokens read 0 in both pre-fix binaries against a 'zIndex: 60' control - the guide's own scrim, inside this anchor - that reads 1 in the 12:43 build. READ THIS ROW NARROWLY. It proves the anchor now has a real box at zIndex 70 whose rect covers the close button; it does NOT prove a press lands on it, because no instrument in this repo can deliver a native press. SPECTR_CLICK dispatches a synthetic DOM click and bypasses hit-testing entirely, which is the same blindness that let the 0x0 anchor ship green. Verify by hand: open the guide and click the x."
+    },
+    {
+      "id": "help-guide-pointer-restores",
+      "pr": 119,
+      "verifiable": false,
+      "title": "The band readout stops painting over the guide, and the cursor arrows while it is open and restores on dismiss",
+      "reason": "No token exists because the fix adds no code. Both behaviours are consequences of the anchor regaining a real box: hover and wheel hit-test the tree directly rather than consulting the overlay slot, so an untouchable anchor let the pointer reach the band surface underneath, which kept updating its readout and holding its editing cursor. Restoring the box restores the ordinary tree walk, which makes the band surface's EXISTING onPointerLeave fire - and that one handler already clears the readout and returns the cursor to an arrow, then restores hover-driven cursors when the guide unmounts. A row whose entire implementation is 'the pre-existing handler is now reachable' has nothing new to find. It ships with help-guide-anchor-reachable above and stands or falls with it. Verify by hand: open the guide, move the pointer across it, and confirm the readout does not paint through and the cursor is an arrow; dismiss it and confirm hover cursors come back."
+    },
+    {
+      "id": "help-learn-more-below-rows",
+      "pr": 119,
+      "title": "Learn more sits below the twelve shortcut rows instead of printing across the first two",
+      "tokens": [
+        "327.859375",
+        "374.059375"
+      ],
+      "note": "Layout numbers rather than identifiers, because that is honestly all this fix is: the popover's capture never named the button, and every captured child of that panel is pinned absolutely, so a child the capture does not name lands at the CONTENT-BOX ORIGIN instead of after its siblings - 302.859375px too high, printing across the first two rows with 17.90px of overlap on the first. 327.859375 is the tail button's new top; 374.059375 is the panel height that grew to hold it. The control is the good one and it is a matched pair: the panel's OLD height 332.859375 reads 1 in both pre-fix binaries and 0 in the post-fix source, while both new numbers read 0 in both pre-fix binaries - and the tail binding is written into runtime.js immediately after the panel's own binding, so the reader provably reaches those exact bytes. Fails closed on any relayout of this popover, which is the documented bargain."
+    },
+    {
+      "id": "help-guide-titled-about",
+      "pr": 120,
+      "title": "The guide is titled About Spectr",
+      "tokens": [
+        "# About Spectr"
+      ],
+      "note": "The token carries its markdown hash on purpose. Bare 'About Spectr' was REJECTED at 2 pre-fix in the 12:43 build, and the two occurrences say exactly why: they are the overlay's FALLBACK title and its aria-label, both shipped in #115. Adopting it would certify this rename against a build that predates it while actually proving the previous PR. The heading is the one place the rename happened - help-content.js, embedded as its own asset - and '# About Spectr' reads 0 in both pre-fix binaries. The control is the old heading, '# What Spectr does', which reads 1 in the 12:43 build and 0 in the post-fix source, so the reader reaches that exact string region."
+    },
+    {
+      "id": "help-guide-copy-affordance",
+      "pr": 120,
+      "title": "The guide offers a copy control that confirms with Copied",
+      "tokens": [
+        "spectrHelpPlainText",
+        "data-spectr-help-copy",
+        "clipboard_write",
+        "Copied"
+      ],
+      "note": "Four tokens for the four halves that have to all be present for the button to work: the plain-text extractor (so a paste receives prose, not '## Zooming' and '**Sculpt**'), the button's own marker, the native bridge verb, and the label the user actually sees. All four read 0 in both pre-fix binaries. 'clipboard_write' is new in BOTH the document and src/editor_bridge.cpp and is Spectr's own verb, not the SDK's - the trap this manifest already records under dropdown-switch-one-press. Two candidates were REJECTED and both are instructive. 'Copy failed' reads 2 pre-fix, and neither is ours: they are Dawn's 'Copy failed, draw pass dropped!' and 'Copy failed to generate mipmaps' - the exact shape of the 'subpath' trap, a string absent from the document and abundant in the binary. 'setCopyState' reads 4 pre-fix because the Settings build-info button already owns one. 'Copied' survives only because that older button spells its labels in caps (COPY / COPYING) while the guide's are title case; a later pass that unifies the casing will break this row loudly, which is the intended failure."
     }
   ]
 }
