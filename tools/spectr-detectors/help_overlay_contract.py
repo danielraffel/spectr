@@ -144,6 +144,21 @@ def capture_boxes(plant=None):
     return panel, tail
 
 
+# -- THE COPY AFFORDANCE --------------------------------------------------
+#
+# Structural, deliberately. "Does not interfere with the x" is proved by WHERE
+# the button sits in the tree -- inside the title's left group, with the close
+# button still the header's last child under `space-between` -- rather than by
+# a pixel gap, which would need re-measuring on every font change. Measured on
+# the built standalone when this landed: title right edge 532, copy 542..634,
+# close 893 -- 302px of clearance.
+COPY_BUTTON = '"data-spectr-help-copy": true,'
+COPY_GROUP = '"data-spectr-help-guide-titlegroup": true,'
+COPY_VERB = 'postMessage("clipboard_write"'
+COPY_PLAIN = "function spectrHelpPlainText() {"
+COPY_CONFIRM = 'settle("Copied");'
+TITLE_IS_ABOUT = "# About Spectr"
+
 PLANTS = {
     # The affordance disappears: the popover is a keycap list again with no way
     # into the guide, which is the state this whole lane exists to leave.
@@ -184,6 +199,21 @@ PLANTS = {
     # band readout paints over the guide again.
     "sunken-anchor": lambda h, a: (h.replace(ANCHOR_Z, "zIndex: 4"), a),
     # The scrim pays the rail offset twice and paints a screen above the editor.
+    # The affordance vanishes and the guide is read-only again.
+    "no-copy": lambda h, a: (h.replace(COPY_BUTTON, ""), a),
+    # Wired to a verb no handler answers: it sits on "Copying" forever and
+    # never confirms -- indistinguishable from working in a screenshot.
+    "dead-copy": lambda h, a: (
+        h.replace(COPY_VERB, 'postMessage("clipboard_nowhere"'), a),
+    # It copies, and never tells anyone it did.
+    "silent-copy": lambda h, a: (h.replace(COPY_CONFIRM, 'settle("Copy");'), a),
+    # The button leaves the title group, so `space-between` drives it across
+    # the header and against the close button -- what the report asked to avoid.
+    "copy-in-the-corner": lambda h, a: (h.replace(COPY_GROUP, '"data-x": true,'), a),
+    # Raw markup on the clipboard: `## Zooming` and `**Sculpt**` in a notes app.
+    "markup-leaks": lambda h, a: (
+        h.replace(COPY_PLAIN, "function spectrHelpPlainTextUnused() {"), a),
+    "stale-title": lambda h, a: (h, a.replace(TITLE_IS_ABOUT, "# What Spectr does")),
     "double-offset": lambda h, a: (
         h.replace(SCRIM_ROOT,
                   '      top: origin.y,\n      left: origin.x,\n'
@@ -271,6 +301,28 @@ def main():
                        "button overhangs the popover" % -room)
         if tail_box["width"] <= 0 or tail_box["height"] <= 0:
             bad.append("the tail's captured box is empty")
+
+    # -- AFFORD -----------------------------------------------------------
+    afford = {
+        "copy button": html.count(COPY_BUTTON),
+        "in the title group": html.count(COPY_GROUP),
+        "calls the clipboard verb": html.count(COPY_VERB),
+        "copies prose": html.count(COPY_PLAIN),
+        "confirms": html.count(COPY_CONFIRM),
+    }
+    print("  AFFORD " + ", ".join("%s=%d" % kv for kv in afford.items()))
+    for label, count in afford.items():
+        if count != 1:
+            bad.append("%s appears %d times, expected 1 -- the guide cannot be "
+                       "copied, or copies without saying so" % (label, count))
+    # Declaration ORDER is the "does not interfere with the x" guarantee.
+    at_copy = html.find(COPY_BUTTON)
+    at_close = html.find('"data-spectr-help-guide-close"')
+    if at_copy >= 0 and at_close >= 0 and at_copy > at_close:
+        bad.append("the copy button is declared after the close button, so "
+                   "`space-between` puts it against the x")
+    if TITLE_IS_ABOUT not in asset:
+        bad.append("the guide is not titled %r" % TITLE_IS_ABOUT)
 
     # -- SCROLL -----------------------------------------------------------
     scroll = {

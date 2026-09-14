@@ -44,6 +44,7 @@
 //                             effect: return authoritative editor projection
 //  type="build_info_get"   — payload: {}
 //                             effect: return product + exact SDK provenance
+//  type="clipboard_write"  — payload: { text: string }
 //  type="build_info_copy"  — payload: {}
 //                             effect: copy canonical diagnostic text; report
 //                                     native clipboard success honestly

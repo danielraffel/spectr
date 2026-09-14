@@ -187,6 +187,62 @@ TEST_CASE("native editor bridge exposes truthful build information and copy feed
     CHECK(copied_text == response["copy_text"].get<std::string>());
 }
 
+TEST_CASE("native editor bridge copies arbitrary text for the help guide") {
+    std::string copied_text;
+    bool copied = false;
+    Rig r([&](std::string_view text) {
+        copied = true;
+        copied_text = std::string{text};
+        return true;
+    });
+
+    const auto response = r.dispatch(
+        R"({"type":"clipboard_write","payload":{"text":"About Spectr\n\nprose"}})");
+    REQUIRE(response_ok(response));
+    CHECK(copied);
+    CHECK(copied_text == "About Spectr\n\nprose");
+
+    // Both copy verbs stay live alongside each other. This does NOT prove the
+    // moved-from-std::function hazard that an order-dependent registration
+    // would carry: that was tried, and the test still passed with the handlers
+    // deliberately mis-ordered, because libc++ leaves a moved-from function
+    // callable. The hazard is removed in the source instead -- both handlers
+    // capture the writer by copy -- rather than guarded by a test that cannot
+    // observe it.
+    copied = false;
+    REQUIRE(response_ok(r.dispatch(R"({"type":"build_info_copy","payload":{}})")));
+    copied = false;
+    REQUIRE(response_ok(r.dispatch(
+        R"({"type":"clipboard_write","payload":{"text":"still wired"}})")));
+    CHECK(copied);
+    CHECK(copied_text == "still wired");
+}
+
+TEST_CASE("native editor bridge refuses malformed clipboard writes") {
+    bool copied = false;
+    Rig r([&](std::string_view) { copied = true; return true; });
+
+    CHECK(response_has_error(
+        r.dispatch(R"({"type":"clipboard_write","payload":{}})"),
+        "text must be a string"));
+    CHECK(response_has_error(
+        r.dispatch(R"({"type":"clipboard_write","payload":{"text":7}})"),
+        "text must be a string"));
+    CHECK(response_has_error(
+        r.dispatch(R"({"type":"clipboard_write","payload":{"text":""}})"),
+        "text must not be empty"));
+    // A refusal must never reach the pasteboard: a rejected write that still
+    // wrote would replace whatever the user had copied with nothing.
+    CHECK_FALSE(copied);
+}
+
+TEST_CASE("native editor bridge reports a failed help-guide copy") {
+    Rig r([](std::string_view) { return false; });
+    CHECK(response_has_error(
+        r.dispatch(R"({"type":"clipboard_write","payload":{"text":"x"}})"),
+        "clipboard unavailable"));
+}
+
 TEST_CASE("native editor bridge reports clipboard refusal") {
     Rig r([](std::string_view) { return false; });
     const auto response = r.dispatch(

@@ -459,6 +459,21 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(D, "help_overlay_contract.py"), "--plant-capture", "tailless-capture"]),
     ("help_overlay_contract", "plant: the panel never grew for its tail", 1,
      [f(D, "help_overlay_contract.py"), "--plant-capture", "short-panel"]),
+    # THE COPY AFFORDANCE. A copy button is the control most able to look
+    # correct and do nothing -- the press lands, the label never moves, and a
+    # still frame cannot tell that from success.
+    ("help_overlay_contract", "plant: the guide cannot be copied at all", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "no-copy"]),
+    ("help_overlay_contract", "plant: copy calls a verb nothing answers", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "dead-copy"]),
+    ("help_overlay_contract", "plant: it copies and never says so", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "silent-copy"]),
+    ("help_overlay_contract", "plant: copy drifts across the header onto the close button", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "copy-in-the-corner"]),
+    ("help_overlay_contract", "plant: raw markup on the clipboard instead of prose", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "markup-leaks"]),
+    ("help_overlay_contract", "plant: the guide keeps its old title", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "stale-title"]),
     ("help_overlay_contract", "plant: an em dash in the copy", 1,
      [f(D, "help_overlay_contract.py"), "--plant", "em-dash"]),
     # README.md's figure, which is fft - 1 and describes nothing the code does.
