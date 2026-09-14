@@ -286,6 +286,22 @@
         "onClear: act"
       ],
       "note": "The handler is the substance and it earns its place without any gesture: RESET ALL advertised `gains . view . snapshots` and cleared two of the three, because the editor dropped its mirror while the processor kept both slots populated and the next projection re-lit the dots. `CLEARED` and `nativeOwnsSnapshots` are NOT tokens - they read 3 and 4 in the pre-fix binary."
+    },
+    {
+      "id": "muted-band-silent-under-morph-lfo",
+      "pr": 129,
+      "title": "A muted band stays silent and still while an LFO modulates morph",
+      "tokens": [],
+      "verifiable": false,
+      "reason": "NO TOKEN CAN PROVE THIS, and the absence was measured rather than assumed. The fix is pure control flow in C++ - three gates and a loop in Spectr::process plus an inline guard in modulation.hpp - and it introduces no string literal at all: the only quoted text anywhere in the diff sits inside comments, which never reach a binary. The shipped Mach-O is also stripped of C++ symbols, so identifiers cannot stand in for literals: 'preserve_authored_mutes', 'apply_modulation_to_target' and 'AudioModulationState' each read 0 in BOTH the pre-fix and the post-fix binary, and 'morph_derived' / 'morph_overrides' read 1 in BOTH because they are pre-existing state-serialisation keys - adopting either would certify the fix as shipped on the build that predates it. A full string-set diff of the two Spectr.app executables (1c86c3b vs d6f0b86) leaves exactly one meaningful new string, the baked source SHA, which dates the build rather than proving the fix and would go stale on the next commit. PROVEN INSTEAD BY BEHAVIOUR, which is stronger than a string match: tools/spectr-detectors/modulation_preserves_authored_mute.py compiles a probe against the real headers and passes 12 destination x depth rows, while all five planted wrong implementations (no-preservation, morph-only, flag-only, strobe, dead-modulation) are rejected, so the suite demonstrably can fail. The Catch2 cases named in tools/ci/acceptance-ctest-patterns.txt prove the same invariant end to end through Spectr::process. VERIFY BY HAND: capture snapshots A and B, mute a band, assign an LFO to morph and let it run - the muted band must neither sound nor move, and its mute badge must stay over a flat bar."
+    },
+    {
+      "id": "band-edits-survive-a-populated-snapshot-bank",
+      "pr": 129,
+      "title": "A band edited after both snapshots are captured keeps the edit instead of snapping back to snapshot A",
+      "tokens": [],
+      "verifiable": false,
+      "reason": "NO TOKEN CAN PROVE THIS, and the absence was measured rather than assumed. The fix is pure control flow in C++ - three gates and a loop in Spectr::process plus an inline guard in modulation.hpp - and it introduces no string literal at all: the only quoted text anywhere in the diff sits inside comments, which never reach a binary. The shipped Mach-O is also stripped of C++ symbols, so identifiers cannot stand in for literals: 'preserve_authored_mutes', 'apply_modulation_to_target' and 'AudioModulationState' each read 0 in BOTH the pre-fix and the post-fix binary, and 'morph_derived' / 'morph_overrides' read 1 in BOTH because they are pre-existing state-serialisation keys - adopting either would certify the fix as shipped on the build that predates it. A full string-set diff of the two Spectr.app executables (1c86c3b vs d6f0b86) leaves exactly one meaningful new string, the baked source SHA, which dates the build rather than proving the fix and would go stale on the next commit. PROVEN INSTEAD BY BEHAVIOUR, which is stronger than a string match: tools/spectr-detectors/modulation_preserves_authored_mute.py compiles a probe against the real headers and passes 12 destination x depth rows, while all five planted wrong implementations (no-preservation, morph-only, flag-only, strobe, dead-modulation) are rejected, so the suite demonstrably can fail. The Catch2 cases named in tools/ci/acceptance-ctest-patterns.txt prove the same invariant end to end through Spectr::process. This row is the same merge's other user-visible half: the audio path derived the field from the bank whenever both slots were populated, while morph defaults to 0.0, so capturing the second snapshot silently replaced the authored field with snapshot A and every later band edit was discarded on the next block. VERIFY BY HAND: capture A and B, then drag any band - the new level must persist instead of reverting."
     }
   ]
 }
