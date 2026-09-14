@@ -2810,9 +2810,40 @@
       ],
       "box": {
         "left": -324,
-        "top": -340.859375,
+        "top": -382.059375,
         "width": 350,
-        "height": 332.859375
+        "height": 374.059375
+      }
+    },
+    {
+      "anchor": "#root",
+      "path": [
+        {
+          "tag": "div",
+          "index": 0
+        },
+        {
+          "tag": "div",
+          "index": 3
+        },
+        {
+          "tag": "div",
+          "index": 16
+        },
+        {
+          "tag": "div",
+          "index": 1
+        },
+        {
+          "tag": "button",
+          "index": 13
+        }
+      ],
+      "box": {
+        "left": 15,
+        "top": 327.859375,
+        "width": 320,
+        "height": 31.2
       }
     },
     {

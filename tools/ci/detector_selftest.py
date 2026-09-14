@@ -441,6 +441,24 @@ CASES: list[tuple[str, str, int, list[str]]] = [
     # and the panel paints at its own in-flow position, over the toolbar.
     ("help_overlay_contract", "plant: the measured rail loses its name", 1,
      [f(D, "help_overlay_contract.py"), "--plant", "unnamed-rail"]),
+    # REACHABILITY. The overlay painted perfectly for a whole release while
+    # being almost entirely untouchable: the close button did nothing, the band
+    # readout underneath kept painting over it, and the editing cursor stayed
+    # set. No screenshot can tell that from a working modal, which is exactly
+    # why these are declaration checks rather than pixel ones.
+    ("help_overlay_contract", "plant: the anchor collapses to a point again", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "collapsed-anchor"]),
+    ("help_overlay_contract", "plant: the anchor sinks under the status banner", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "sunken-anchor"]),
+    ("help_overlay_contract", "plant: the scrim pays the rail offset twice", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "double-offset"]),
+    # THE TAIL, checked against the CAPTURE. This panel is laid out from its
+    # capture, so "does the button have a box" is a data question with an exact
+    # answer -- and the shipped defect was exactly this: styled, wired, boxless.
+    ("help_overlay_contract", "plant: the capture gives the tail no box", 1,
+     [f(D, "help_overlay_contract.py"), "--plant-capture", "tailless-capture"]),
+    ("help_overlay_contract", "plant: the panel never grew for its tail", 1,
+     [f(D, "help_overlay_contract.py"), "--plant-capture", "short-panel"]),
     ("help_overlay_contract", "plant: an em dash in the copy", 1,
      [f(D, "help_overlay_contract.py"), "--plant", "em-dash"]),
     # README.md's figure, which is fft - 1 and describes nothing the code does.
