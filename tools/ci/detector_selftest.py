@@ -604,6 +604,41 @@ CASES: list[tuple[str, str, int, list[str]]] = [
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-undeclared-clear"]),
 
+    # Group mute on `m`. The context menu's `onMuteSel` is an UNCONDITIONAL
+    # mute and there is no group unmute anywhere in the document, so the
+    # toggle is a capability the product did not have by any route -- which is
+    # why both directions are asserted rather than only the mute.
+    #
+    # The plant that matters is `stale-closure`. `selection` is React state in
+    # FilterBank while the keydown handler lives in App, and the bank object's
+    # effect does NOT depend on selection -- so a method closing over it reads
+    # the empty Set from mount, forever. The shortcut then does nothing,
+    # silently, in exactly the case it exists for, and looks correct in review.
+    ("materialized_mute_selection",
+     "`m` mutes or unmutes the whole selection", 0,
+     [f("test", "test_materialized_mute_selection.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json")]),
+    ("materialized_mute_selection",
+     "plant: the bank reads `selection` instead of its ref mirror", 1,
+     [f("test", "test_materialized_mute_selection.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-stale-closure"]),
+    ("materialized_mute_selection",
+     "plant: the group action mutes one way, like onMuteSel", 1,
+     [f("test", "test_materialized_mute_selection.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-unconditional-mute"]),
+    ("materialized_mute_selection",
+     "plant: unmute flattens to 0 dB instead of restoring", 1,
+     [f("test", "test_materialized_mute_selection.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-flatten-unmute"]),
+    ("materialized_mute_selection",
+     "plant: the key the panel advertises reaches nothing", 1,
+     [f("test", "test_materialized_mute_selection.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-unbound"]),
+
     # The unmute flourish is a ~285ms brighten-and-thicken on a band's spectral
     # edge, fired on a muted -> unmuted transition. It answers a TAP. A morph
     # sweep or a slot recall carries dozens of bands back across the mute

@@ -1276,6 +1276,29 @@ if(SPECTR_NODE_EXECUTABLE)
         set_tests_properties(Spectr-materialized-unmute-pulse-control-${_pulse_plant}
             PROPERTIES TIMEOUT 60)
     endforeach()
+
+    # Group mute on `m`, and the keys it must not have taken. The context
+    # menu's group action is a one-way mute, so the toggle this adds is a
+    # capability the product had by no route -- both directions are asserted.
+    add_test(NAME Spectr-materialized-mute-selection
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_mute_selection.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-mute-selection PROPERTIES
+        TIMEOUT 60)
+    # Four controls, separate rows so it is visible which check is load
+    # bearing. `stale-closure` is the one that matters: the bank effect does
+    # not depend on `selection`, so a method closing over it reads the empty
+    # Set from mount and the shortcut silently does nothing.
+    foreach(_mutesel_plant stale-closure unconditional-mute flatten-unmute unbound)
+        add_test(NAME Spectr-materialized-mute-selection-control-${_mutesel_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_mute_selection.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_mutesel_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-mute-selection-control-${_mutesel_plant}
+            PROPERTIES TIMEOUT 60)
+    endforeach()
 endif()
 
 # The two graph axis headings must be column headers over their own rulers,
