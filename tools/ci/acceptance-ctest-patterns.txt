@@ -75,3 +75,10 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # these 2.
 ^"?switching native dropdowns
 ^"?dismissing a native dropdown
+
+# The unmute-flourish source gate and its four plant controls. `materialized`
+# above would match them, but it also matches a dozen other rows, so it can
+# never report their absence -- and a suite that adjudicates a REPEATING
+# ANIMATION has no capture-based backstop anywhere else in this gate, so if
+# these register and never run nothing measures the rule at all.
+^Spectr-materialized-unmute-pulse
