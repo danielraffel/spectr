@@ -124,3 +124,10 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # -6/+6 the midpoint is 0 dB, which is what an underived field already reads,
 # so the first version of it could not fail either.
 ^"?a derived morph still reaches
+
+# The same defect reached by dragging morph FIRST. Once the field is derived
+# the gate is open and the audio thread rebuilds it from the bank every block,
+# so an edit made after the drag is reverted unless the sparse overrides are
+# replayed. The ungated case above cannot see this path -- with the replay
+# removed it stays green while the band returns at 0.48 linear gain.
+^"?a band muted after a derived morph

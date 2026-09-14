@@ -1284,3 +1284,66 @@ TEST_CASE("a derived morph still reaches the audible field",
     INFO("band 3 gain_db: " << snapshot.pre_field.bands[3].gain_db);
     CHECK(snapshot.pre_field.bands[3].gain_db == Approx(-8.0f).margin(0.01f));
 }
+
+TEST_CASE("a band muted after a derived morph outranks the re-derivation",
+          "[modulation][mute][rt]") {
+    // The other half of the audio path's morph ownership. Once the morph HAS
+    // derived the field, the gate is open and the audio thread rebuilds it
+    // from the bank on every block — so an edit made after that drag is
+    // reverted on the next block unless the sparse overrides the control
+    // worker records are replayed. That is the same defect as the ungated
+    // case, reached by dragging morph first, and it is the path the
+    // `morph_overrides` replay exists for.
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    host.prepare(sample_rate, block_size);
+    auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+    REQUIRE(plugin != nullptr);
+
+    pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+    const float* input_channels[] = {
+        in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> input(input_channels, 2, block_size);
+    auto output = out.view();
+
+    for (std::size_t band = 0; band < spectr::kMaxBands; ++band)
+        plugin->field().bands[band].gain_db = -12.0f;
+    plugin->capture_snapshot(spectr::SnapshotBank::Slot::A);
+    for (std::size_t band = 0; band < spectr::kMaxBands; ++band)
+        plugin->field().bands[band].gain_db = -4.0f;
+    plugin->capture_snapshot(spectr::SnapshotBank::Slot::B);
+
+    // Drag morph: the field is now derived, and the gate is open.
+    plugin->apply_morph_to_live(0.5f);
+
+    // NOW mute band 5, and let the control worker reconcile it — which is
+    // what records the override.
+    host.state().set_value(spectr::band_mute_param_id(5), 1.0f);
+    plugin->apply_surface_params(/*apply_morph=*/true);
+
+    for (std::size_t block = 0; block < 8; ++block) {
+        pulp::state::ParameterEventQueue events;
+        REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                             static_cast<float>(spectr::LfoShape::Sine), 0}));
+        REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoDepth, 0, 0.5f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                             static_cast<float>(
+                                 spectr::ModulationTarget::Morph), 0}));
+        REQUIRE(events.push({spectr::kParamMorph, 0, 0.5f, 0}));
+        host.process(output, input, events);
+    }
+
+    const auto& snapshot = plugin->read_modulated_field();
+    REQUIRE(snapshot.active);
+    CHECK(snapshot.field.bands[5].muted);
+    CHECK(snapshot.field.linear_gain(5) == 0.0f);
+    // Positive control on the same frame: a band that was NOT overridden is
+    // still carrying the derived morph, so the assertion above is not passing
+    // because the derivation stopped happening.
+    INFO("band 3 gain_db: " << snapshot.pre_field.bands[3].gain_db);
+    CHECK(snapshot.pre_field.bands[3].gain_db == Approx(-8.0f).margin(0.01f));
+}
