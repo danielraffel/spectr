@@ -112,7 +112,11 @@ SCRIM_ROOT = '      top: 0,\n      left: 0,\n      width: vw,\n      height: vh,
 STATE = os.path.join(REPO, "native-ui", "materialized", "states",
                      "help.materialized.json")
 PANEL_PATH = [("div", 0), ("div", 3), ("div", 16), ("div", 1)]
-TAIL_STEP = ("button", 13)
+# Matched on the TAG, not on a sibling index. The button's index is a function
+# of how many shortcut rows precede it -- twelve rows put it at 13, thirteen at
+# 14 -- so a pinned index turns "the panel gained a row" into "the tail has no
+# box", which is this detector's headline finding and would be a false one.
+TAIL_TAG = "button"
 
 
 # Plants that corrupt the CAPTURE rather than the source. They are separate
@@ -137,7 +141,9 @@ def capture_boxes(plant=None):
         key = [(step["tag"], step["index"]) for step in binding["path"]]
         if key == PANEL_PATH:
             panel = binding["box"]
-        elif key == PANEL_PATH + [TAIL_STEP]:
+        elif (len(key) == len(PANEL_PATH) + 1
+              and key[:len(PANEL_PATH)] == PANEL_PATH
+              and key[-1][0] == TAIL_TAG):
             tail = binding["box"]
     if plant:
         panel, tail = CAPTURE_PLANTS[plant](panel, tail)

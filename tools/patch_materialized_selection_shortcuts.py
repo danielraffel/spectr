@@ -79,6 +79,7 @@ here -- their help panel still advertises `DBL-CLICK` for a row the shipping
 document calls `CLICK`. Editing them would add merge surface across the live
 lanes and change nothing that ships.
 """
+import copy
 import json
 import math
 import os
@@ -233,6 +234,24 @@ DOCUMENT_EDITS = [
      'fontSize: 9,\n    minWidth: 104,\n    textAlign: "center",',
      'fontSize: 9,\n    minWidth: 104,\n    textAlign: "center",'),
 
+    # The row that advertises group mute on `m`. It goes LAST so every
+    # existing row keeps the top it was captured at (see MUTE_SEL_ROW below),
+    # and it lands immediately before the Learn more button, which is the
+    # panel's tail.
+    #
+    # The chip is one character, so the 104px column absorbs it with room to
+    # spare; the description is 21 characters = 136.5px against a 206px
+    # budget. Both are re-checked by shortcut_panel_single_line.py, whose
+    # --budget-only half needs no binary and protects exactly the row nobody
+    # has written yet.
+    ('the panel advertises group mute on `m`',
+     'React.createElement(Hrow, { k: "DRAG SEL" }, "Group move"), '
+     '/* @__PURE__ */ React.createElement("button", {',
+     'React.createElement(Hrow, { k: "DRAG SEL" }, "Group move"), '
+     '/* @__PURE__ */ React.createElement(Hrow, { k: "M" }, '
+     '"Mute/unmute selection"), '
+     '/* @__PURE__ */ React.createElement("button", {',
+     'React.createElement(Hrow, { k: "M" }, "Mute/unmute selection")'),
 ]
 
 # ------------------------------------------------------- captured help panel
@@ -299,7 +318,18 @@ CHAR_W = 6.5                # exact for every captured ASCII single-line row
 # would have made the panel 1.8px too tall.
 TAIL_MARGIN = 10.0          # the button's own marginTop
 TAIL_H = 31.2               # 15.2 line box + 7px padding a side + 1px border a side
-TAIL_KEY = ('button', 13)   # child index 13, after the twelve Hrow divs
+# The tail is keyed CANONICALLY rather than by its sibling index, because that
+# index is a function of how many rows precede it: twelve rows put the button
+# at 13, thirteen put it at 14. Keying it by position meant a capture written
+# for one row count became unreadable the moment the count changed -- the
+# binding resolved to None, was skipped by every rewrite, and survived with a
+# stale box AND a stale path. `tail_index` is the one place that lives now.
+TAIL_KEY = ('tail',)
+
+
+def tail_index(rows):
+    """The button's sibling index: the title, then one div per row."""
+    return len(rows) + 1
 
 OLD_PANEL_W = 280.0
 NEW_PANEL_W = 330.0
@@ -421,8 +451,34 @@ WIDE_CHIP = layout_model(AFTER_ROWS, FINAL_PANEL_W, FINAL_CHIP_W,
                          FINAL_DESC_LEFT)
 FINAL = layout_model(AFTER_ROWS, FINAL_PANEL_W, FINAL_CHIP_W, FINAL_DESC_LEFT,
                      tail=True)
+
+# THE THIRTEENTH ROW: group mute on `m`.
+#
+# It goes LAST, and that is not a cosmetic choice. Rows stack top-down from a
+# fixed title, so appending is the only insertion that leaves all twelve
+# existing boxes at exactly the tops they were captured at -- any other
+# position rewrites the geometry of every row below it, and the capture is the
+# one artifact here that cannot be re-derived from the product. Last also
+# groups it with the three selection rows that already end the panel.
+#
+# The description's width uses the plain ASCII model (CHAR_W per character),
+# which is exact for every captured single-line ASCII row; the only rows that
+# defeat it are the two carrying non-ASCII glyphs, and this is not one.
+MUTE_SEL_ROW = ('Mute/unmute selection',
+                CHAR_W * len('Mute/unmute selection'), False)
+MUTE_SEL_ROWS = AFTER_ROWS + [MUTE_SEL_ROW]
+MUTE_SEL = layout_model(MUTE_SEL_ROWS, FINAL_PANEL_W, FINAL_CHIP_W,
+                        FINAL_DESC_LEFT, tail=True)
+
 KNOWN_STATES = (('pre-change', BEFORE), ('narrow-chip', AFTER),
-                ('wide-chip', WIDE_CHIP), ('final', FINAL))
+                ('wide-chip', WIDE_CHIP), ('final', FINAL),
+                ('mute-selection', MUTE_SEL))
+
+# What this run converges the capture ON. Everything below writes TARGET
+# rather than naming a state, so the row list and the geometry cannot drift.
+TARGET = MUTE_SEL
+TARGET_ROWS = MUTE_SEL_ROWS
+TARGET_TAIL_INDEX = tail_index(TARGET_ROWS)
 
 
 def path_suffix(path):
@@ -442,7 +498,10 @@ def path_suffix(path):
     # across tags -- verified against captures holding
     # [('button',0),('div',1)] and [...('span',8),('button',9)...] -- so the
     # button after twelve rows and a title is index 13, not button 0.
-    if len(rest) == 1 and (rest[0]['tag'], rest[0]['index']) == TAIL_KEY:
+    # Matched on the TAG rather than the index, so a capture written for a
+    # different row count still resolves here and gets re-pathed instead of
+    # silently surviving with a stale box.
+    if len(rest) == 1 and rest[0]['tag'] == 'button':
         return TAIL_KEY
     return None
 
@@ -482,6 +541,10 @@ def classify(bindings, where):
 TEXT_EDITS = [
     (4, 1, 'Edit bands (mode-dependent)', 'Edit bands'),
     (11, 1, 'Add/remove from selection', 'Add/remove selection'),
+    # Row 13 arrives as a clone of row 12, so it is relabelled through the
+    # same path every other description takes -- which is also what
+    # re-measures its glyph count, basis width and ink box.
+    (13, 1, 'Group move', 'Mute/unmute selection'),
 ]
 
 # Every KEY CHIP in the panel is re-measured, not only the two this change
@@ -495,7 +558,7 @@ TEXT_EDITS = [
 # the two Command rows and re-measures the rest wherever they happen to read,
 # so a sibling lane that relabels a chip (`6` -> `A / 6` when the analyzer got
 # a second key) gets its capture corrected here instead of fought over.
-CHIP_COUNT = 12
+CHIP_COUNT = len(TARGET_ROWS)
 CHIP_ROW_RE = re.compile(
     r'React\.createElement\(Hrow, \{ k: "((?:[^"\\]|\\.)*)" \}')
 
@@ -539,7 +602,14 @@ def verify_chip_model(by_key, where):
     than none -- so too few checks is a failure, not a pass.
     """
     checked = 0
-    for index in range(1, CHIP_COUNT + 1):
+    # However many rows the capture on disk holds -- one FEWER than the target
+    # on the run that adds a row. A control that demanded the new row be
+    # present before it was written could never pass.
+    present = sorted(key[0] for key in by_key
+                     if len(key) == 3 and key[1] == 'span' and key[2] == 0)
+    if not present:
+        sys.exit('FAIL chip: %s holds no captured chip at all' % where)
+    for index in present:
         binding = by_key.get((index, 'span', 0))
         if binding is None:
             sys.exit('FAIL chip: no captured chip at row %d in %s'
@@ -561,7 +631,7 @@ def verify_chip_model(by_key, where):
     if checked < 8:
         sys.exit('FAIL chip model: only %d of %d chips were measurable in %s, '
                  'so the control cannot discriminate a wrong model from a '
-                 'right one' % (checked, CHIP_COUNT, where))
+                 'right one' % (checked, len(present), where))
     return checked
 
 
@@ -618,16 +688,81 @@ def tidy(value):
     return value
 
 
+def repath(binding, key):
+    """Point one binding's path at `key`, keeping the panel prefix."""
+    steps = list(PANEL)
+    if key == TAIL_KEY:
+        steps.append(('button', TARGET_TAIL_INDEX))
+    elif key:
+        steps.append(('div', key[0]))
+        if len(key) == 3:
+            steps.append(('span', key[2]))
+    binding['path'] = [{'tag': tag, 'index': index} for tag, index in steps]
+
+
+def grow_capture(document, row):
+    """Add the three bindings for a row the capture on disk predates.
+
+    CLONED from the row above rather than synthesised. A row binding carries a
+    font basis, a resolved-face list and a `requested` block describing the
+    shaping the capture tool observed -- none of which this script models, and
+    inventing them would describe a shaping that never happened. Everything
+    this script DOES model (the box, the text, the glyph count, the ink boxes)
+    is rewritten immediately afterwards by the same helpers every other row
+    goes through, so the clone supplies structure and nothing else.
+
+    The clone drops the capture tool's own `index` field rather than
+    duplicating it -- the tail binding this script already inserts carries
+    none either, and nothing here resolves a binding by it.
+    """
+    source = row - 1
+    # A span carries a binding in BOTH arrays -- a layout box and a text
+    # record -- and cloning only the text record leaves the new row's chip and
+    # description with no box at all. That failure is silent in the geometry
+    # pass (an absent key is simply never written) and only surfaced here
+    # because `classify` re-derives the capture on the NEXT run and found two
+    # keys missing. Which is the whole reason that control exists.
+    for store, keys in (('layout_bindings', [(source,),
+                                             (source, 'span', 0),
+                                             (source, 'span', 1)]),
+                        ('text_bindings', [(source, 'span', 0),
+                                           (source, 'span', 1)])):
+        for key in keys:
+            target = (row,) if len(key) == 1 else (row, 'span', key[2])
+            if any(path_suffix(b['path']) == target
+                   for b in document[store]):
+                continue
+            at = next((i for i, b in enumerate(document[store])
+                       if path_suffix(b['path']) == key), None)
+            if at is None:
+                sys.exit('FAIL grow: row %d has no %s to clone from'
+                         % (source, store))
+            clone = copy.deepcopy(document[store][at])
+            clone.pop('index', None)
+            repath(clone, target)
+            document[store].insert(at + 1, clone)
+
+
 def apply_help_state(path, chip_texts):
     """Rewrite the captured help metadata in the pretty-printed state record."""
     raw = open(path, encoding='utf-8').read()
     document = json.loads(raw)
     state = classify([b for b in document['layout_bindings']
                       if path_suffix(b['path']) is not None], path)
+    # The capture has to hold every row the panel now declares BEFORE the
+    # geometry pass, or the new row's boxes have nothing to be written onto and
+    # it renders at the content-box origin -- printing over the first rows,
+    # which is exactly the defect the tail's own missing box once caused.
+    for row in range(2, len(TARGET_ROWS) + 1):
+        grow_capture(document, row)
     for binding in document['layout_bindings']:
         key = path_suffix(binding['path'])
-        if key is not None and key in FINAL:
-            binding['box'] = tidy(dict(FINAL[key]))
+        if key is not None and key in TARGET:
+            binding['box'] = tidy(dict(TARGET[key]))
+            # The tail's sibling index moves with the row count, so a capture
+            # written for twelve rows carries a path this panel no longer has.
+            if key == TAIL_KEY:
+                repath(binding, TAIL_KEY)
     # Same insertion as the runtime mirror, in the readable record: append the
     # tail's binding if this capture predates the button having a box. Placed
     # directly after the panel's own binding so the two files read alike.
@@ -638,8 +773,9 @@ def apply_help_state(path, chip_texts):
         document['layout_bindings'].insert(panel_at + 1, {
             'anchor': document['layout_bindings'][panel_at]['anchor'],
             'path': [{'tag': tag, 'index': index}
-                     for tag, index in list(PANEL) + [TAIL_KEY]],
-            'box': tidy(dict(FINAL[TAIL_KEY])),
+                     for tag, index in
+                     list(PANEL) + [('button', TARGET_TAIL_INDEX)]],
+            'box': tidy(dict(TARGET[TAIL_KEY])),
         })
     by_key = {}
     for binding in document['text_bindings']:
@@ -647,8 +783,8 @@ def apply_help_state(path, chip_texts):
         if key is not None:
             by_key[key] = binding
     checked = verify_chip_model(by_key, path)
-    print('control          %s capture, chip model reproduces %d/%d chips (%s)'
-          % (state, checked, CHIP_COUNT, os.path.basename(path)))
+    print('control          %s capture, chip model reproduces %d chips (%s)'
+          % (state, checked, os.path.basename(path)))
     for index, text in enumerate(chip_texts, start=1):
         retext_chip(by_key[(index, 'span', 0)], text)
     for row, span, old, new in TEXT_EDITS:
@@ -684,16 +820,124 @@ def box_literal(box):
                number(box['width']), number(box['height'])))
 
 
-def path_literal(key):
+def path_literal(key, tail_at=None):
     steps = list(PANEL)
     if key == TAIL_KEY:
-        steps.append(TAIL_KEY)
+        steps.append(('button',
+                      TARGET_TAIL_INDEX if tail_at is None else tail_at))
     elif key:
         steps.append(('div', key[0]))
         if len(key) == 3:
             steps.append(('span', key[2]))
     return '"path": [%s]' % ', '.join(
         '{ "tag": "%s", "index": %d }' % (tag, index) for tag, index in steps)
+
+
+def scan_object(segment, at):
+    """(start, stop) of the `{ ... }` binding containing offset `at`.
+
+    Brace-counted rather than regexed, and quote-aware in BOTH quote styles:
+    `requested.font_family` is a JS single-quoted string containing a double
+    quote, so a scanner that only knew `"` would lose its place inside it and
+    return a span ending in the middle of the next binding.
+    """
+    start = segment.rindex('{ "anchor"', 0, at)
+    depth = 0
+    quote = None
+    i = start
+    while i < len(segment):
+        c = segment[i]
+        if quote:
+            if c == '\\':
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in '"\'':
+            quote = c
+        elif c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                return start, i + 1
+        i += 1
+    sys.exit('FAIL runtime: a binding near offset %d is unbalanced' % at)
+
+
+def binding_sites(segment, path_lit):
+    """Every (field, start, stop) binding carrying this path.
+
+    A ROW resolves to one binding, its layout box. A SPAN resolves to TWO --
+    a layout box and a text record -- and they live in different arrays, which
+    is why each is located separately and why a clone is inserted immediately
+    after its OWN source rather than all of them after the last.
+    """
+    sites = []
+    for field in ('box', 'text'):
+        needle = path_lit + ', "' + field + '": '
+        count = segment.count(needle)
+        if count == 0:
+            continue
+        if count != 1:
+            sys.exit('FAIL runtime: %s occurs %d times with a %r field'
+                     % (path_lit, count, field))
+        at = segment.index(needle)
+        start, stop = scan_object(segment, at)
+        sites.append((field, start, stop))
+    return sites
+
+
+def clone_runtime_row(segment, row):
+    """Duplicate one row's bindings for a row the shipping bundle predates.
+
+    runtime.js is the copy that SHIPS, so a row present in the document and
+    absent here renders with no captured box -- and every captured child of
+    this panel is pinned absolutely, so a child the capture does not name
+    lands at the CONTENT-BOX ORIGIN and prints across the first rows. That is
+    not hypothetical: it is exactly what the Learn more button did before it
+    was given a box.
+
+    Cloned rather than synthesised because a binding carries a basis, a
+    resolved-face list and a `requested` block describing shaping this script
+    does not model. Layout boxes are written to their final value here; the
+    text records are re-measured by the passes in mirror_runtime.
+    """
+    source = row - 1
+    for key in ((source,), (source, 'span', 0), (source, 'span', 1)):
+        target = (row,) if len(key) == 1 else (row, 'span', key[2])
+        if path_literal(target) in segment:
+            continue
+        src_lit, dst_lit = path_literal(key), path_literal(target)
+        sites = binding_sites(segment, src_lit)
+        if not sites:
+            sys.exit('FAIL runtime: row %d has no %s binding to clone from'
+                     % (source, key))
+        # Reverse order so each insertion leaves the earlier offsets valid.
+        for field, start, stop in reversed(sites):
+            clone = segment[start:stop].replace(src_lit, dst_lit, 1)
+            if field == 'box':
+                clone = clone.replace(box_literal(TARGET[key]),
+                                      box_literal(TARGET[target]), 1)
+            segment = segment[:stop] + ', ' + clone + segment[stop:]
+    return segment
+
+
+def text_site(segment, key):
+    """(start, stop) of one binding's `"text": "..."` literal, found by PATH.
+
+    By path and by OFFSET, never by a global replace of the literal: a row
+    cloned from its neighbour carries the neighbour's text until this pass
+    rewrites it, so `segment.replace(literal, new, 1)` would rewrite the
+    NEIGHBOUR -- the first occurrence -- and leave the clone alone.
+    """
+    needle = path_literal(key) + ', "text": '
+    if segment.count(needle) != 1:
+        sys.exit('FAIL runtime: %s has %d text records, expected 1'
+                 % (key, segment.count(needle)))
+    at = segment.index(needle) + len(path_literal(key)) + 2
+    stop = segment.index(', "basis"', at)
+    return at, stop
 
 
 def mirror_runtime(chip_texts):
@@ -710,18 +954,40 @@ def mirror_runtime(chip_texts):
     segment = raw[start:end]
     original = segment
 
-    for key in sorted(FINAL, key=lambda k: (len(k), k)):
+    # Grow first: every pass below resolves a binding by its path, so a row
+    # the bundle does not hold yet has nothing for them to find.
+    for row in range(2, len(TARGET_ROWS) + 1):
+        segment = clone_runtime_row(segment, row)
+
+    for key in sorted(TARGET, key=lambda k: (len(k), tuple(str(x) for x in k))):
         anchor = path_literal(key)
-        new_site = anchor + ', "box": ' + box_literal(FINAL[key])
+        new_site = anchor + ', "box": ' + box_literal(TARGET[key])
         if new_site in segment:
             continue
-        # The tail is the one box no earlier state HAS, so there is nothing to
-        # replace -- it is INSERTED, immediately after the panel's own binding.
-        # The panel sorts first (its key is the empty tuple), so by the time we
-        # get here the panel already carries its final, taller box and is a
-        # unique needle to insert against.
         if key == TAIL_KEY:
-            host = (path_literal(()) + ', "box": ' + box_literal(FINAL[()])
+            # The tail's sibling index is a function of the row count, so an
+            # existing tail is looked for at every index a known state would
+            # have put it at -- and only INSERTED if there is none, which is
+            # the case for a bundle predating the button having a box at all.
+            moved = False
+            for rows in (AFTER_ROWS, MUTE_SEL_ROWS):
+                for _name, model in reversed(KNOWN_STATES):
+                    if TAIL_KEY not in model:
+                        continue
+                    old_site = (path_literal(TAIL_KEY, tail_index(rows))
+                                + ', "box": ' + box_literal(model[TAIL_KEY]))
+                    if segment.count(old_site) == 1:
+                        segment = segment.replace(old_site, new_site, 1)
+                        moved = True
+                        break
+                if moved:
+                    break
+            if moved:
+                continue
+            # Nothing to replace -- insert after the panel's own binding. The
+            # panel sorts first (its key is the empty tuple), so by now it
+            # already carries its final, taller box and is a unique needle.
+            host = (path_literal(()) + ', "box": ' + box_literal(TARGET[()])
                     + ' }')
             if segment.count(host) != 1:
                 sys.exit('FAIL runtime: the panel binding is not a unique '
@@ -741,26 +1007,28 @@ def mirror_runtime(chip_texts):
             sys.exit('FAIL runtime: help box %s matches no known state, so '
                      'this script cannot tell what it is replacing' % (key,))
 
-    # Every chip, because the column width moved all twelve. The text comes
+    # Every chip, because the column width moved all of them. The text comes
     # from the document, so a chip another lane relabelled is re-measured at
     # its new spelling rather than reverted to one this script remembers.
     for index, final in enumerate(chip_texts, start=1):
         final_literal = '"text": "%s"' % js_escape(final)
-        if segment.count(final_literal) != 1:
-            current, literal = chip_site(segment, index)
-            segment = segment.replace(literal, final_literal, 1)
-        segment = respace_chip_runtime(segment, final_literal, final)
+        at, stop = text_site(segment, (index, 'span', 0))
+        if segment[at:stop] != final_literal:
+            segment = segment[:at] + final_literal + segment[stop:]
+        segment = respace_chip_runtime(segment, index, final)
 
     for row, span, old, new in TEXT_EDITS:
         old_literal = '"text": "%s"' % js_escape(old)
         new_literal = '"text": "%s"' % js_escape(new)
-        if new_literal in segment:
+        at, stop = text_site(segment, (row, 'span', span))
+        current = segment[at:stop]
+        if current == new_literal:
             continue
-        if segment.count(old_literal) != 1:
-            sys.exit('FAIL runtime: text %r occurs %d times in the help state'
-                     % (old, segment.count(old_literal)))
-        segment = segment.replace(old_literal, new_literal, 1)
-        segment = retext_runtime(segment, new_literal, new, span)
+        if current != old_literal:
+            sys.exit('FAIL runtime: row %d span %d reads %s, expected %s '
+                     'or %s' % (row, span, current, old_literal, new_literal))
+        segment = segment[:at] + new_literal + segment[stop:]
+        segment = retext_runtime(segment, (row, 'span', span), new, span)
 
     if segment == original:
         print('already applied  captured help metadata (runtime.js)')
@@ -770,29 +1038,10 @@ def mirror_runtime(chip_texts):
     print('applied          captured help metadata (runtime.js)')
 
 
-def chip_site(segment, index):
-    """The chip binding for one row, found by its position in the help state.
-
-    Identified by ORDER rather than by text: the text is what is about to
-    change, and a spelling this script remembers is exactly the thing a
-    sibling lane is entitled to have moved on from.
-    """
-    sites = [m.start() for m in re.finditer(
-        r'\{ "tag": "div", "index": %d \}, \{ "tag": "span", "index": 0 \}\], '
-        r'"text": ' % index, segment)]
-    if len(sites) != 1:
-        sys.exit('FAIL runtime: row %d chip binding occurs %d times in the '
-                 'help state' % (index, len(sites)))
-    at = segment.index('"text": ', sites[0])
-    stop = segment.index(', "basis"', at)
-    literal = segment[at:stop]
-    return literal, literal
-
-
-def respace_chip_runtime(segment, anchor, text):
+def respace_chip_runtime(segment, index, text):
     """Re-measure one chip for the final chip column. Idempotent."""
-    at = segment.index(anchor) + len(anchor)
-    tail = segment[at:]
+    _at, stop = text_site(segment, (index, 'span', 0))
+    tail = segment[stop:]
     tail = splice(tail, '"width": ', ', "resolved_face"', number(FINAL_CHIP_W))
     tail = splice(tail, '"resolved_faces": ', ', "requested"',
                   '[{ "family_name": "%s", "post_script_name": "%s", '
@@ -804,13 +1053,13 @@ def respace_chip_runtime(segment, anchor, text):
                   % (number(chip_text_left(text, FINAL_CHIP_W)),
                      number(CHIP_TEXT_TOP), number(chip_ink(text)),
                      number(CHIP_TEXT_H), len(text)))
-    return segment[:at] + tail
+    return segment[:stop] + tail
 
 
-def retext_runtime(segment, anchor, new, span):
+def retext_runtime(segment, key, new, span):
     """Re-measure one description binding's glyph count and boxes."""
-    at = segment.index(anchor) + len(anchor)
-    tail = segment[at:]
+    _at, stop = text_site(segment, key)
+    tail = segment[stop:]
     tail = splice(tail, '"glyph_count": ', ' }', str(len(new)))
     if span == 1:
         width = CHAR_W * len(new)
@@ -820,7 +1069,7 @@ def retext_runtime(segment, anchor, new, span):
                       '"start": 0, "length": %d }]'
                       % (number(DESC_TOP_SINGLE), number(width),
                          number(DESC_LINE_H), len(new)))
-    return segment[:at] + tail
+    return segment[:stop] + tail
 
 
 def splice(tail, prefix, suffix, value):

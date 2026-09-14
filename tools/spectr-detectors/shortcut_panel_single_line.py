@@ -295,12 +295,31 @@ def main():
         measured = [b for b in boxes
                     if abs(b["rect"]["x"] - column) < 0.5
                     and (b.get("text") or "")]
-        if len(measured) != len(rows):
+        # Deliberately NOT a check that every box in the column is a string
+        # the document currently ships. The comment above says why: an archived
+        # capture carrying the wording that WRAPPED would then go unfound and
+        # read as clean, which is the one thing these fixtures exist to catch.
+        # The column pick is already anchored by >= 4 known rows at a shared
+        # left edge, which is the revision-independent half of "right column".
+        #
+        # The COUNT is revision-dependent, and only one of the two inputs
+        # moves. A capture this run produced must hold every row the document
+        # declares -- a missing one is the defect. An ARCHIVED capture is by
+        # construction a picture of an older panel, so it may hold FEWER; every
+        # committed RED/GREEN fixture here is a twelve-row capture, and reading
+        # them against a thirteen-row document as "no verdict" would silently
+        # retire six negative controls the moment a row was added.
+        if len(measured) > len(rows) or (not args.layout
+                                         and len(measured) != len(rows)):
             print("no verdict: the description column at x=%.1f holds %d text "
                   "boxes and the panel declares %d rows -- this is not "
                   "measuring the panel it thinks it is"
                   % (column, len(measured), len(rows)))
             return 2
+        if len(measured) != len(rows):
+            print("archive   %d of %d declared rows present -- this capture "
+                  "predates %d row(s) the document now declares"
+                  % (len(measured), len(rows), len(rows) - len(measured)))
         measured.sort(key=lambda b: b["rect"]["y"])
         if args.plant == "wrapped-row":
             measured[0]["rect"]["h"] *= 2

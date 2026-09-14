@@ -82,3 +82,9 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # ANIMATION has no capture-based backstop anywhere else in this gate, so if
 # these register and never run nothing measures the rule at all.
 ^Spectr-materialized-unmute-pulse
+
+# Group mute on `m` and its four plant controls. `materialized` above matches
+# them, but it also matches a dozen other rows, so it can never report their
+# absence -- and the defect the stale-closure control guards is SILENT (the
+# key does nothing at all), which no capture or layout check can see.
+^Spectr-materialized-mute-selection
