@@ -394,6 +394,13 @@ int mask_render_latency_samples(MaskRenderMode mode,
                                 const MaskRendererConfig& config) noexcept {
     switch (mode) {
     case MaskRenderMode::linear_phase:
+        // This restates the frame engine's own causal bound, because the
+        // answer has to be available BEFORE anything is prepared — that is
+        // the whole point of the function. The restatement is not left to
+        // drift: "Mask renderer latency depends on the mode and nothing else"
+        // compares it against a prepared renderer's reported value, so if the
+        // engine ever reclaims the hop term this fails loudly here rather
+        // than silently mis-reporting to a host.
         return config.design_grid_size + config.analysis_hop;
     case MaskRenderMode::zero_latency:
         return kRenderBlock;

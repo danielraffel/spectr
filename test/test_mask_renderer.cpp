@@ -577,3 +577,75 @@ TEST_CASE("A staged redesign reaches the audio path and is reported",
     settle(*renderer, first + 1);
     REQUIRE(renderer->active_generation() > first);
 }
+
+TEST_CASE("A live mask change does not click",
+          "[mask-renderer][audio]") {
+    // The animation path in miniature. Spectr's automation sweep stages a new
+    // layout from the audio thread on every block, so an impulse response is
+    // being replaced underneath a running signal constantly. A hard cut
+    // between two responses is audible as a click; the renderer opts into the
+    // convolver's parallel crossfade so it is not.
+    auto renderer = spectr::make_mask_renderer(MaskRenderMode::zero_latency);
+    REQUIRE(renderer->prepare(zero_latency_config()));
+    REQUIRE(renderer->publish_layout(zoom_layout()));
+    settle(*renderer, 1);
+    renderer->reset();
+
+    const auto stimulus = tone(48000, 440.0);
+
+    auto worst_step = [](const std::vector<float>& x, std::size_t from,
+                         std::size_t to) {
+        double worst = 0.0;
+        for (std::size_t i = from + 1; i < to; ++i)
+            worst = std::max(worst, static_cast<double>(
+                std::abs(x[i] - x[i - 1])));
+        return worst;
+    };
+
+    // Steady reference: no mask change at all.
+    const auto steady = render(*renderer, stimulus, 256);
+    const double steady_step = worst_step(steady.left, 8000, 40000);
+    REQUIRE(steady_step > 0.0);   // control: the signal is actually moving
+
+    // Now swap the mask mid-stream, the way the automation sweep does.
+    auto swapping = spectr::make_mask_renderer(MaskRenderMode::zero_latency);
+    REQUIRE(swapping->prepare(zero_latency_config()));
+    REQUIRE(swapping->publish_layout(zoom_layout()));
+    settle(*swapping, 1);
+    swapping->reset();
+
+    std::vector<float> out_l(stimulus.size(), 0.0f);
+    std::vector<float> out_r(stimulus.size(), 0.0f);
+    std::vector<float> in_l, in_r, blk_l, blk_r;
+    const auto before = swapping->active_generation();
+    for (std::size_t pos = 0; pos < stimulus.size(); pos += 256) {
+        const int n = static_cast<int>(
+            std::min<std::size_t>(256, stimulus.size() - pos));
+        if (pos == 24064) REQUIRE(swapping->set_layout_rt(zoom_layout(10)));
+        in_l.assign(stimulus.begin() + static_cast<std::ptrdiff_t>(pos),
+                    stimulus.begin() + static_cast<std::ptrdiff_t>(pos + n));
+        in_r = in_l;
+        blk_l.assign(static_cast<std::size_t>(n), 0.0f);
+        blk_r.assign(static_cast<std::size_t>(n), 0.0f);
+        const float* in[2] = {in_l.data(), in_r.data()};
+        float* out[2] = {blk_l.data(), blk_r.data()};
+        REQUIRE(swapping->process(in, out, n));
+        std::copy(blk_l.begin(), blk_l.end(),
+                  out_l.begin() + static_cast<std::ptrdiff_t>(pos));
+        std::copy(blk_r.begin(), blk_r.end(),
+                  out_r.begin() + static_cast<std::ptrdiff_t>(pos));
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    // Control: the swap actually reached the audio path. Without this a
+    // renderer that dropped the staged layout would score a perfect zero
+    // click.
+    INFO("generation before " << before << ", after " << swapping->active_generation());
+    REQUIRE(swapping->active_generation() > before);
+
+    const double swap_step = worst_step(out_l, 24064, 40000);
+    INFO("worst sample-to-sample step: steady " << steady_step
+         << ", across the swap " << swap_step);
+    // A hard cut between two 8192-tap responses shows up as a step several
+    // times the signal's own slew. The crossfade keeps it within it.
+    REQUIRE(swap_step < steady_step * 1.5);
+}
