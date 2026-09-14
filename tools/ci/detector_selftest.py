@@ -604,6 +604,45 @@ CASES: list[tuple[str, str, int, list[str]]] = [
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-undeclared-clear"]),
 
+    # The unmute flourish is a ~285ms brighten-and-thicken on a band's spectral
+    # edge, fired on a muted -> unmuted transition. It answers a TAP. A morph
+    # sweep or a slot recall carries dozens of bands back across the mute
+    # threshold at once, and on a loop repeatedly -- every one of them a real
+    # transition by the commit functions' own rules, with nothing telling them
+    # the change arrived from a replay rather than from a hand.
+    #
+    # No capture can adjudicate this: the defect is a REPEATING ANIMATION, so a
+    # screenshot taken at any instant is a valid picture of both the healthy
+    # and the broken build. These cases EXECUTE the shipping document's own
+    # commitGain / commitMany / setMorph / recallSnap and assert on the ref
+    # being WRITTEN, per source -- and assert in the same breath that a
+    # replayed band still drops to zero, because withholding the rise as well
+    # would be fixing the wrong half of the report.
+    ("materialized_unmute_pulse_source",
+     "the flourish answers a gesture and not a replay", 0,
+     [f("test", "test_materialized_unmute_pulse_source.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json")]),
+    ("materialized_unmute_pulse_source",
+     "plant: a replayed single-band unmute fires the flourish again", 1,
+     [f("test", "test_materialized_unmute_pulse_source.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-ungate-gain"]),
+    ("materialized_unmute_pulse_source",
+     "plant: a replayed batch unmute fires the flourish again", 1,
+     [f("test", "test_materialized_unmute_pulse_source.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-ungate-many"]),
+    ("materialized_unmute_pulse_source",
+     "plant: a morph sweep stops declaring itself a replay", 1,
+     [f("test", "test_materialized_unmute_pulse_source.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-unmarked-morph"]),
+    ("materialized_unmute_pulse_source",
+     "plant: a slot recall stops declaring itself a replay", 1,
+     [f("test", "test_materialized_unmute_pulse_source.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-unmarked-recall"]),
+
     # The response curve is plotted through band CENTRES, so at the two
     # extremes it began and ended halfway across the first and last band --
     # a visibly half-drawn band at each end of the plot. A canvas stroke has

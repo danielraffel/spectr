@@ -1247,6 +1247,35 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-undeclared-clear --expect-fail)
     set_tests_properties(Spectr-materialized-clear-declaration-control PROPERTIES
         TIMEOUT 60)
+
+    # The unmute flourish answers a TAP. A morph sweep or a slot recall carries
+    # dozens of bands back across the mute threshold at once -- each a real
+    # transition by the commit functions' own rules -- so on a loop the flair
+    # repeats and reads as noise. This suite EXECUTES the shipping commit
+    # functions and the two replay entry points and asserts on the pulse ref
+    # being written PER SOURCE; a capture cannot adjudicate a repeating
+    # animation, since a screenshot at any instant is a valid picture of both
+    # builds.
+    add_test(NAME Spectr-materialized-unmute-pulse-source
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_unmute_pulse_source.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-unmute-pulse-source PROPERTIES
+        TIMEOUT 60)
+    # Four controls, one per pre-fix spelling, as separate rows: a single plant
+    # that trips everything cannot show which check is load bearing. The first
+    # two restore the ungated pulse in each commit function; the second two
+    # stop a replay entry point declaring itself, which is the half no
+    # assertion inside the commit functions can reach.
+    foreach(_pulse_plant ungate-gain ungate-many unmarked-morph unmarked-recall)
+        add_test(NAME Spectr-materialized-unmute-pulse-control-${_pulse_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_unmute_pulse_source.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_pulse_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-unmute-pulse-control-${_pulse_plant}
+            PROPERTIES TIMEOUT 60)
+    endforeach()
 endif()
 
 # The two graph axis headings must be column headers over their own rulers,
