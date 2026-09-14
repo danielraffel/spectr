@@ -88,3 +88,12 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # absence -- and the defect the stale-closure control guards is SILENT (the
 # key does nothing at all), which no capture or layout check can see.
 ^Spectr-materialized-mute-selection
+
+# Emptying a snapshot slot: the JS lane and its four plant controls, plus the
+# seven Catch2 cases behind them. `materialized` matches the JS rows but also
+# a dozen others, so it can never report their absence; nothing at all matched
+# the Catch2 names, which is why they carry a shared `snapshot clear:` prefix
+# and a pattern of their own. The `^"?` survives catch_discover_tests
+# registering a name wrapped in literal quotes.
+^Spectr-materialized-clear-snapshot
+^"?snapshot clear:

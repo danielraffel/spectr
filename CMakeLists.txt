@@ -1299,6 +1299,27 @@ if(SPECTR_NODE_EXECUTABLE)
         set_tests_properties(Spectr-materialized-mute-selection-control-${_mutesel_plant}
             PROPERTIES TIMEOUT 60)
     endforeach()
+
+    # Emptying a snapshot slot, and RESET ALL finally meaning what it says.
+    add_test(NAME Spectr-materialized-clear-snapshot
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_clear_snapshot.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-clear-snapshot PROPERTIES
+        TIMEOUT 60)
+    # Four controls, separate rows so it is visible which check is load
+    # bearing. `reset-keeps-bank` is the one that matters: it is invisible to
+    # a screenshot taken before the next projection lands, and reads as a
+    # working reset right up until it undoes itself.
+    foreach(_clearsnap_plant no-native-clear reset-keeps-bank anything-clearable status-sticks)
+        add_test(NAME Spectr-materialized-clear-snapshot-control-${_clearsnap_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_clear_snapshot.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_clearsnap_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-clear-snapshot-control-${_clearsnap_plant}
+            PROPERTIES TIMEOUT 60)
+    endforeach()
 endif()
 
 # The two graph axis headings must be column headers over their own rulers,

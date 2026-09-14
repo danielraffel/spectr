@@ -163,6 +163,14 @@ EditorReceipt EditorAuthority::capture_snapshot(
     return accept_mutation_();
 }
 
+EditorReceipt EditorAuthority::clear_snapshot(
+    SnapshotBank::Slot slot,
+    std::optional<EditorRevision> expected) noexcept {
+    if (!matches_(expected)) return reject_("stale editor revision");
+    processor_.clear_snapshot(slot);
+    return accept_mutation_();
+}
+
 EditorReceipt EditorAuthority::recall_snapshot(
     SnapshotBank::Slot slot,
     std::optional<EditorRevision> expected) noexcept {
