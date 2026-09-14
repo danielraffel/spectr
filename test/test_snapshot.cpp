@@ -17,6 +17,7 @@
 
 #include <choc/text/choc_JSON.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -835,4 +836,153 @@ TEST_CASE("snapshot clear: a cleared slot round-trips plugin state as empty") {
     CHECK_FALSE(reader.snapshots().has(SnapshotBank::Slot::A));
     CHECK(reader.snapshots().has(SnapshotBank::Slot::B));
     CHECK(reader.snapshots().b.field.bands[0].gain_db == Approx(-5.0f));
+}
+
+// An LFO modulates LEVELS. It must never move a mute the user authored.
+//
+// Reported as "if muted these jiggle/kinda glitch when LFO modulating morph":
+// bands carrying mute badges, painted at different heights, moving with the
+// LFO. The badge comes from the authored field and the height from the
+// modulated one, so a modulated frame that drops a mute paints a badge over a
+// moving bar — and because `Spectr::process` publishes that same BandField to
+// the DSP (`slot.field = audible`) and `linear_gain()` gates on `Band::muted`,
+// the band is also HEARD. The paint was the visible half of an audible bug.
+//
+// Every destination reaches its field through `morph_fields`, which picks mute
+// wholesale from whichever endpoint dominates at t. Measured on the revision
+// before this one: Morph lost the mute at every depth (its two endpoints are
+// the snapshots, so the authored field is not even an input), and the snapshot
+// destinations lost it from depth 0.5, where the unipolar amount first reaches
+// the dominance flip.
+namespace {
+
+struct MuteProbe {
+    spectr::BandField canonical;
+    spectr::SnapshotBank bank;
+};
+
+/// Snapshots captured with band 5 UN-muted; the user mutes it afterwards.
+/// Band 9 is the reverse: un-muted live, muted in snapshot A.
+MuteProbe make_mute_probe() {
+    MuteProbe p;
+    spectr::BandField a, b;
+    a.reset();
+    b.reset();
+    for (std::size_t i = 0; i < spectr::kMaxBands; ++i) {
+        a.bands[i].gain_db = -6.0f;
+        b.bands[i].gain_db = +6.0f;
+    }
+    a.bands[9].muted = true;
+    p.bank.capture_into(spectr::SnapshotBank::Slot::A, a, {}, spectr::Layout::Bands32);
+    p.bank.capture_into(spectr::SnapshotBank::Slot::B, b, {}, spectr::Layout::Bands32);
+    p.canonical.reset();
+    p.canonical.bands[5].gain_db = -3.0f;
+    p.canonical.bands[5].muted = true;
+    return p;
+}
+
+} // namespace
+
+TEST_CASE("authored mute: no destination un-mutes a band the user muted") {
+    const auto p = make_mute_probe();
+    const spectr::ModulationTarget targets[] = {
+        spectr::ModulationTarget::WholeBank, spectr::ModulationTarget::SnapshotA,
+        spectr::ModulationTarget::SnapshotB, spectr::ModulationTarget::Morph};
+
+    for (auto target : targets) {
+        for (float depth : {0.25f, 0.5f, 1.0f}) {
+            spectr::ModulationSettings s;
+            s.enabled = true;
+            s.depth = depth;
+            s.target = target;
+            for (int step = 0; step < 64; ++step) {
+                const float wave =
+                    spectr::lfo_value(spectr::LfoShape::Sine, step / 64.0);
+                const auto out = spectr::apply_internal_modulation(
+                    p.canonical, p.bank, 0.5f, s, wave);
+                // The paint half: the editor draws this band at the mute
+                // sentinel only while the frame still reports it muted.
+                REQUIRE(out.bands[5].muted);
+                // The audible half, and the serious one.
+                REQUIRE(out.linear_gain(5) == 0.0f);
+                // A muted band is excluded from modulation entirely, so
+                // unmuting mid-sweep reveals the authored level rather than
+                // whatever phase the LFO happened to be at.
+                REQUIRE(out.bands[5].gain_db == Approx(-3.0f));
+            }
+        }
+    }
+}
+
+TEST_CASE("authored mute: an LFO never strobes a mute at the dominance flip") {
+    const auto p = make_mute_probe();
+    // Band 9 is muted in snapshot A and un-muted live. `morph_fields` flips
+    // its pick at t = 0.5; a user dragging the morph slider controls that
+    // crossing, but an LFO crosses it twice per cycle, so the band would pop
+    // in and out of silence at LFO rate.
+    const spectr::ModulationTarget targets[] = {
+        spectr::ModulationTarget::SnapshotA, spectr::ModulationTarget::Morph};
+
+    for (auto target : targets) {
+        spectr::ModulationSettings s;
+        s.enabled = true;
+        s.depth = 1.0f;
+        s.target = target;
+        for (int step = 0; step < 256; ++step) {
+            const float wave =
+                spectr::lfo_value(spectr::LfoShape::Sine, step / 256.0);
+            const auto out = spectr::apply_internal_modulation(
+                p.canonical, p.bank, 0.5f, s, wave);
+            REQUIRE_FALSE(out.bands[9].muted);
+        }
+    }
+}
+
+TEST_CASE("authored mute: un-muted bands are still modulated") {
+    // POSITIVE CONTROL for the two cases above. Holding every mute still is
+    // trivially satisfied by a modulator that does nothing, and that failure
+    // would leave both of those tests green.
+    const auto p = make_mute_probe();
+    struct Expect { spectr::ModulationTarget target; float swing_db; };
+    const Expect expected[] = {
+        {spectr::ModulationTarget::WholeBank, 24.0f},
+        {spectr::ModulationTarget::SnapshotA, 6.0f},
+        {spectr::ModulationTarget::SnapshotB, 6.0f},
+        {spectr::ModulationTarget::Morph, 12.0f},
+    };
+
+    for (const auto& e : expected) {
+        spectr::ModulationSettings s;
+        s.enabled = true;
+        s.depth = 1.0f;
+        s.target = e.target;
+        float lo = 1e9f, hi = -1e9f;
+        for (int step = 0; step < 256; ++step) {
+            const float wave =
+                spectr::lfo_value(spectr::LfoShape::Sine, step / 256.0);
+            const auto out = spectr::apply_internal_modulation(
+                p.canonical, p.bank, 0.5f, s, wave);
+            lo = std::min(lo, out.bands[3].gain_db);
+            hi = std::max(hi, out.bands[3].gain_db);
+        }
+        CHECK((hi - lo) == Approx(e.swing_db));
+    }
+}
+
+TEST_CASE("authored mute: a user-dragged morph still moves mute") {
+    // The guard is scoped to internal modulation. `morph_fields` is also the
+    // engine behind the MORPH parameter, which the user drags and watches, and
+    // its dominance rule there is deliberate — mute is captured state, and a
+    // morph that could not reach it would not be a morph. Narrowing the fix to
+    // the modulator is the whole point, so it is asserted rather than assumed.
+    spectr::BandField a, b, out;
+    a.reset();
+    b.reset();
+    a.bands[0].muted = true;
+    spectr::morph_fields(out, a, b, 0.0f);
+    CHECK(out.bands[0].muted);
+    spectr::morph_fields(out, a, b, 0.49f);
+    CHECK(out.bands[0].muted);
+    spectr::morph_fields(out, a, b, 0.5f);
+    CHECK_FALSE(out.bands[0].muted);
 }

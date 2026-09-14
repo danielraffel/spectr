@@ -139,7 +139,6 @@ void Spectr::apply_morph_to_live(float t) noexcept {
             else viewport_ = morph_viewports(snapshots_.a.viewport,
                                              snapshots_.b.viewport, t);
         }
-        publish_processing_state_();
         // The morph moves the morph PARAMETER only — pushing the 64 resulting
         // band values as parameter writes would flood the host per slider
         // move and double-drive the field on automation playback (the morph
@@ -149,6 +148,12 @@ void Spectr::apply_morph_to_live(float t) noexcept {
         if (morph_applies_viewport_) synced_viewport_ = viewport_;
         morph_derived_ = true;
         morph_overrides_.reset();
+        // Published LAST, so the snapshot the audio thread reads carries the
+        // derived-ness of the field it is being handed. Publishing before
+        // these two flags ships a state that says the field was NOT derived
+        // while shipping the derived field itself — harmless while nothing
+        // read the flag, and a silently un-morphed DSP once something did.
+        publish_processing_state_();
     }
     push_surface_param_(detail::surface_slot_param_id(detail::kSlotMorph),
                         detail::kSlotMorph, t);
@@ -245,7 +250,8 @@ void Spectr::publish_audio_modulation_state_() noexcept {
     // All callers serialize through processing_state_mutex_. TripleBuffer
     // therefore has one logical writer and process() remains its sole reader.
     audio_modulation_publication_.write(AudioModulationState{
-        modulation_, snapshots_, morph_applies_viewport_});
+        modulation_, snapshots_, morph_applies_viewport_, morph_derived_,
+        morph_derived_ ? morph_overrides_.to_ullong() : 0ull});
 }
 
 void Spectr::publish_processing_state_() noexcept {
@@ -587,11 +593,35 @@ void Spectr::process(
                     const bool morph_has_both =
                         audio_modulation.snapshots.has(SnapshotBank::Slot::A)
                         && audio_modulation.snapshots.has(SnapshotBank::Slot::B);
-                    if (morph_has_both) {
+                    // Deriving the field from the bank is gated on the control
+                    // worker having actually done so. Populating both slots is
+                    // not consent to be morphed: the morph parameter defaults
+                    // to 0.0, so an ungated derivation replaces the authored
+                    // field with snapshot A the instant the second slot is
+                    // captured, and every band edit after that is silently
+                    // discarded — which is how a muted band came back audible.
+                    if (morph_has_both && audio_modulation.morph_derived) {
                         morph_fields(host_field,
                                      audio_modulation.snapshots.a.field,
                                      audio_modulation.snapshots.b.field,
                                      host_morph);
+                        // An explicit band write outranks the morph that
+                        // derived it — the precedence the control worker
+                        // already applies via `morph_overrides_`. The audio
+                        // thread re-derives the morph every block, so without
+                        // replaying those overrides here it silently reverts
+                        // them: a band muted after A and B were captured comes
+                        // back un-muted, is HEARD, and (because this same field
+                        // feeds the editor's modulation frame) is painted at a
+                        // moving height under its own mute badge.
+                        const std::uint64_t overrides =
+                            audio_modulation.morph_overrides;
+                        if (overrides != 0) {
+                            for (std::size_t band = 0; band < kMaxBands; ++band)
+                                if ((overrides >> band) & 1ull)
+                                    host_field.bands[band] =
+                                        canonical.bands[band];
+                        }
                     }
                     ModulationSettings modulation_settings;
                     modulation_settings.enabled =
@@ -747,8 +777,14 @@ void Spectr::process(
                     const auto authored_viewport = decode_viewport(
                         cursor.value(kParamViewportCenter),
                         cursor.value(kParamViewportWidth));
+                    // Gated on `morph_derived` for the same reason the bands
+                    // are, and it has to be the SAME gate: the window and the
+                    // shape drawn inside it must come from one derivation, or
+                    // the mask is built for a window the bands were never
+                    // mapped to.
                     const auto automated_viewport =
                         (morph_has_both
+                         && audio_modulation.morph_derived
                          && audio_modulation.morph_applies_viewport)
                         ? morph_viewports(
                               audio_modulation.snapshots.a.viewport,
