@@ -227,12 +227,12 @@
     {
       "id": "help-learn-more-below-rows",
       "pr": 119,
-      "title": "Learn more sits below the twelve shortcut rows instead of printing across the first two",
+      "title": "Learn more sits below the thirteen shortcut rows instead of printing across the first two",
       "tokens": [
-        "327.859375",
-        "374.059375"
+        "351.15625",
+        "397.35625"
       ],
-      "note": "Layout numbers rather than identifiers, because that is honestly all this fix is: the popover's capture never named the button, and every captured child of that panel is pinned absolutely, so a child the capture does not name lands at the CONTENT-BOX ORIGIN instead of after its siblings - 302.859375px too high, printing across the first two rows with 17.90px of overlap on the first. 327.859375 is the tail button's new top; 374.059375 is the panel height that grew to hold it. The control is the good one and it is a matched pair: the panel's OLD height 332.859375 reads 1 in both pre-fix binaries and 0 in the post-fix source, while both new numbers read 0 in both pre-fix binaries - and the tail binding is written into runtime.js immediately after the panel's own binding, so the reader provably reaches those exact bytes. Fails closed on any relayout of this popover, which is the documented bargain."
+      "note": "These tokens are CAPTURE GEOMETRY and are coupled to the shortcut row count, so adding a row moves them and this row reads ABSENT on a build that still carries the fix. That is what happened here: #125 appended a thirteenth row, and the Learn more button moved from button index 13 top 327.859375 to index 14 top 351.15625 while the panel grew from height 374.059375 to 397.35625 -- both by 23.296875, one row pitch, which is the measured pitch #125 reports. The old pair still reads 1 each in the pre-fix binary and the new pair reads 0 there, so the row discriminates in both directions. When the next row lands, re-measure rather than assuming a regression: the control is that the button entry still exists at all."
     },
     {
       "id": "help-guide-titled-about",
@@ -254,6 +254,38 @@
         "Copied"
       ],
       "note": "Four tokens for the four halves that have to all be present for the button to work: the plain-text extractor (so a paste receives prose, not '## Zooming' and '**Sculpt**'), the button's own marker, the native bridge verb, and the label the user actually sees. All four read 0 in both pre-fix binaries. 'clipboard_write' is new in BOTH the document and src/editor_bridge.cpp and is Spectr's own verb, not the SDK's - the trap this manifest already records under dropdown-switch-one-press. Two candidates were REJECTED and both are instructive. 'Copy failed' reads 2 pre-fix, and neither is ours: they are Dawn's 'Copy failed, draw pass dropped!' and 'Copy failed to generate mipmaps' - the exact shape of the 'subpath' trap, a string absent from the document and abundant in the binary. 'setCopyState' reads 4 pre-fix because the Settings build-info button already owns one. 'Copied' survives only because that older button spells its labels in caps (COPY / COPYING) while the guide's are title case; a later pass that unifies the casing will break this row loudly, which is the intended failure."
+    },
+    {
+      "id": "unmute-flourish-not-replayed",
+      "pr": 123,
+      "title": "A recall or sweep no longer flashes every band it carries back across the mute threshold",
+      "tokens": [
+        "replay = false",
+        "if (!replay) unmutePulseRef.current[k] = 1",
+        "commitMany(map, false, true)"
+      ],
+      "note": "The flourish is now gated on its source: commitGain/commitMany take a `replay` flag and only an operator gesture lights the pulse. `unmutePulseRef` alone is NOT a token - it reads 8 in the pre-fix binary, because the ref already existed and only its guard is new."
+    },
+    {
+      "id": "mute-selection-shortcut",
+      "pr": 125,
+      "title": "Mute or unmute a whole band selection with `m`",
+      "tokens": [
+        "toggleMuteSelection",
+        "selectionRef.current = selection"
+      ],
+      "note": "The ref mirror is part of the fix, not incidental: the bank object is rebuilt on [N, snapshots, view, onNativeState] and NOT on selection, so a bank method closing over `selection` reads the empty mount-time Set forever. `mutedGainDbRef` is NOT a token - it reads 18 in the pre-fix binary."
+    },
+    {
+      "id": "clear-snapshot-slot",
+      "pr": 126,
+      "title": "Clear a snapshot slot, and RESET ALL now clears all three things it advertises",
+      "tokens": [
+        "clearSnap",
+        "clear_snapshot",
+        "onClear: act"
+      ],
+      "note": "The handler is the substance and it earns its place without any gesture: RESET ALL advertised `gains . view . snapshots` and cleared two of the three, because the editor dropped its mirror while the processor kept both slots populated and the next projection re-lit the dots. `CLEARED` and `nativeOwnsSnapshots` are NOT tokens - they read 3 and 4 in the pre-fix binary."
     }
   ]
 }
