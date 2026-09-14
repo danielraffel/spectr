@@ -1547,6 +1547,76 @@ int main(int argc, char** argv) {
             };
             read_offset();
 
+            // FEASIBILITY, for the fix this panel actually needs. If the
+            // offset can be written straight to the node, the wheel never
+            // reaches React -- no commit, so no captured-atlas re-apply and no
+            // layout flush behind it. Whether the write lands at all, and
+            // whether the viewport still CLIPS what it moves, are both pixel
+            // questions, so this writes the offset and captures.
+            if (const char* mode = std::getenv("SPECTR_HELP_IMPERATIVE")) {
+                rig.eval(std::string("(() => { globalThis.__spectrImperativeMode__ = ")
+                             + js_string(mode) + "; })();",
+                         "spectr-help-imperative-mode");
+                rig.eval(
+                    "(() => {"
+                    "  const el = document.querySelector("
+                    "    '[data-spectr-help-scroll-content]');"
+                    "  if (!el || !el.style) {"
+                    "    console.log('[help] IMPERATIVE CONTROL FAILED: no node');"
+                    "    return;"
+                    "  }"
+                    "  const how = globalThis.__spectrImperativeMode__;"
+                    "  if (how === 'transform') {"
+                    "    const id = el.__pulpId || el.id;"
+                    "    if (typeof g5 !== 'undefined' && g5 && typeof g5.setTransform === 'function') {"
+                    "      g5.setTransform(String(id), 1, 0, 0, 1, 0, -260);"
+                    "      console.log('[help] IMPERATIVE setTransform dy=-260 id=' + id);"
+                    "    } else if (el.style) {"
+                    "      el.style.transform = 'translateY(-260px)';"
+                    "      console.log('[help] IMPERATIVE style.transform dy=-260');"
+                    "    } else {"
+                    "      console.log('[help] IMPERATIVE CONTROL FAILED: no transform route');"
+                    "    }"
+                    "    return;"
+                    "  }"
+                    "  el.style.marginTop = -260;"
+                    "  console.log('[help] IMPERATIVE wrote marginTop=-260');"
+                    "})();",
+                    "spectr-help-imperative");
+                settle(rig.clock, 24);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+                capture(rig, dir, prefix + "help-guide-imperative", backend, scale);
+            }
+
+            // ATTRIBUTION, and it is a MEASUREMENT ONLY -- nothing here is a
+            // candidate fix. Every commit that dirties the materialized tree
+            // re-applies the whole captured atlas, and each binding costs two
+            // `getLayoutBoxMetrics` reads plus five bridge writes before the
+            // layout pass that follows. To find out what share of a wheel
+            // sample that is, replace the hook `resetAfterCommit` reads with a
+            // counting no-op and run the identical burst.
+            //
+            // The swap CANNOT be assumed to have taken: the replacement counts
+            // its own calls and prints the total, so a burst that reports a
+            // speed-up while the counter reads 0 is an instrument failure, not
+            // a finding.
+            if (std::getenv("SPECTR_HELP_PROBE_NOMETA") != nullptr) {
+                rig.eval(
+                    "(() => {"
+                    "  globalThis.__spectrMetaCalls__ = 0;"
+                    "  const prior = globalThis.__pulpApplyMaterializedImportMetadata__;"
+                    "  if (typeof prior !== 'function') {"
+                    "    console.log('[help] NOMETA CONTROL FAILED: no hook');"
+                    "    return;"
+                    "  }"
+                    "  globalThis.__pulpApplyMaterializedImportMetadata__ ="
+                    "    function () { globalThis.__spectrMetaCalls__ += 1; return 0; };"
+                    "  console.log('[help] NOMETA armed');"
+                    "})();",
+                    "spectr-help-nometa");
+            }
+
             // Perfetto, when the SDK carries it. A RELEASED SDK links zero
             // Perfetto symbols, so `Tracing::start` there is a no-op that
             // returns false -- and a probe that wrote an empty .pftrace and
@@ -1577,6 +1647,28 @@ int main(int argc, char** argv) {
             // inside the range; the no-op count is printed anyway, because a
             // burst that silently stopped doing work is the one reading that
             // would look like the fix landing.
+            // THE KEY PATH SHARES scrollBy, so it has to be shown moving the
+            // same content. It is not a formality: keys and wheel used to go
+            // through one `setScrollTop` and now go through one imperative
+            // writer, and a writer that only the wheel reaches would leave
+            // ArrowDown looking wired and doing nothing.
+            if (std::getenv("SPECTR_HELP_KEYS") != nullptr) {
+                for (int i = 0; i < 12; ++i) {
+                    pulp::view::WidgetBridge::dispatch_key_for_root(
+                        *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+                        pulp::view::kModNone, true);
+                    pulp::view::WidgetBridge::dispatch_key_for_root(
+                        *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+                        pulp::view::kModNone, false);
+                    rig.clock.tick(1.0f / 60.0f);
+                }
+                rig.root->layout_children();
+                settle(rig.clock, 16);
+                capture(rig, dir, prefix + "help-guide-keys", backend, scale);
+                std::printf("[help] 12 ArrowDown delivered through the bridge\n");
+                return g_failures == 0 ? 0 : 1;
+            }
+
             const int samples = 48;
             const float delta = 40.0f;
             pulp::view::WheelHost wheel_host;
@@ -1592,6 +1684,17 @@ int main(int argc, char** argv) {
                 const auto t1 = std::chrono::steady_clock::now();
                 per_sample_ms.push_back(
                     std::chrono::duration<double, std::milli>(t1 - t0).count());
+                // MID-BURST, and it is the only capture that can prove the
+                // wheel moved anything. The burst is symmetric so it ENDS back
+                // at the top: comparing the last frame against the first shows
+                // zero pixels changed whether the scroll works perfectly or not
+                // at all, in either implementation. The pair is the control --
+                // mid must differ from top, end must match it.
+                if (i == samples / 2 - 1) {
+                    rig.root->layout_children();
+                    settle(rig.clock, 8);
+                    capture(rig, dir, prefix + "help-guide-mid", backend, scale);
+                }
             }
             const auto burst_end = std::chrono::steady_clock::now();
             if (tracing) {
@@ -1604,12 +1707,14 @@ int main(int argc, char** argv) {
             read_offset();
             capture(rig, dir, prefix + "help-guide-scrolled", backend, scale);
 
-            // A sample that cost under a millisecond did not re-render
-            // anything; counting it as a scroll sample is how a clamped burst
-            // reports itself as fast.
-            std::vector<double> working;
-            for (double value : per_sample_ms)
-                if (value >= 1.0) working.push_back(value);
+            // EVERY sample is reported. An earlier version of this kept only
+            // samples costing >= 1 ms, to drop the free ones a clamped burst
+            // produces -- but that threshold encoded the OLD cost model, and
+            // once the wheel stopped going through React it classified every
+            // genuine sample as a no-op and reported "working=0". The clamp is
+            // handled by reversing the burst instead, and the mid-burst capture
+            // above is what proves work happened.
+            std::vector<double> working = per_sample_ms;
             auto sorted = working;
             std::sort(sorted.begin(), sorted.end());
             const auto pick = [&sorted](double q) {
@@ -1619,14 +1724,18 @@ int main(int argc, char** argv) {
             };
             double total = 0.0;
             for (double value : working) total += value;
-            std::printf("[help] wheel samples=%d delta=%.0f working=%zu "
-                        "no-op=%zu\n", samples, delta, working.size(),
-                        per_sample_ms.size() - working.size());
-            std::printf("[help] wheel per-sample ms (working only): min=%.3f "
+            std::printf("[help] wheel samples=%d delta=%.0f\n",
+                        samples, delta);
+            std::printf("[help] wheel per-sample ms: min=%.3f "
                         "p50=%.3f p95=%.3f max=%.3f mean=%.3f\n",
                         pick(0.0), pick(0.50), pick(0.95), pick(1.0),
                         working.empty() ? 0.0
                                         : total / static_cast<double>(working.size()));
+            if (std::getenv("SPECTR_HELP_PROBE_NOMETA") != nullptr) {
+                rig.eval("(() => { console.log('[help] NOMETA suppressed calls: '"
+                         " + globalThis.__spectrMetaCalls__); })();",
+                         "spectr-help-nometa-count");
+            }
             std::printf("[help] wheel burst wall ms: %.3f\n",
                         std::chrono::duration<double, std::milli>(
                             burst_end - burst_start).count());

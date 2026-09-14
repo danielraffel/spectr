@@ -719,6 +719,90 @@ TAIL_ARIA_NEW = ('    "data-spectr-help-learn-more": true,\n'
 # each one costs two `getLayoutBoxMetrics` reads plus five bridge writes. The
 # panel needs a real `pulp::view::ScrollView`, which translates its children at
 # paint time and takes no commit at all.
+# -- THE WHEEL MUST NOT GO THROUGH REACT ----------------------------------
+#
+# Every wheel sample was one `setScrollTop`, and every React commit that
+# dirties the materialized tree re-applies the WHOLE captured atlas before the
+# layout pass behind it -- `applyMaterializedImportMetadata` walks each binding
+# and spends two `getLayoutBoxMetrics` reads plus five bridge writes on it.
+#
+# Measured on the built standalone, 48 samples through the host's own
+# `deliver_mouse_wheel`, with the atlas hook replaced by a counting no-op for
+# the second arm (the counter read 48 of 48, so the swap provably took):
+#
+#     with the atlas re-apply     p50 42.167 ms   per wheel sample
+#     without it                  p50 13.011 ms
+#
+# So roughly 69% of a wheel sample was the atlas, and the panel was never going
+# to hold a 16.667 ms frame while the offset was React state.
+#
+# It does not need to be. The offset moves ONE node's margin and ONE thumb's
+# top, neither of which any captured binding describes, so it is written
+# straight to the nodes and React is never told. That is measured too, and
+# specifically INCLUDING the thing that could have made it unshippable: a
+# clipping viewport whose content moves behind its back could paint past the
+# clip. It does not -- with the offset written directly, 0 of 56,000 pixels
+# differ anywhere below the viewport's bottom edge, the same as the React path.
+# (An earlier rect that started ON the edge instead of below it read 874
+# differing pixels and looked exactly like a leak; it was the anti-aliased
+# boundary row.)
+#
+# `offset` still renders `marginTop: -offset`, and that is not vestigial: it is
+# what places the content on a render the panel does take (an origin change, a
+# host resize), and it is why the ref rather than the DOM is the source of
+# truth.
+IMPERATIVE_STATE = ('  var [scrollTop, setScrollTop] = React.useState(0);\n'
+                    '  var maxScrollRef = React.useRef(0);\n'
+                    '  var pageRef = React.useRef(400);\n'
+                    '  var scrollBy = React.useCallback(function (delta) {\n'
+                    '    setScrollTop(function (current) {\n'
+                    '      var next = current + delta;\n'
+                    '      if (next < 0) next = 0;\n'
+                    '      if (next > maxScrollRef.current) next = maxScrollRef.current;\n'
+                    '      return next;\n'
+                    '    });\n'
+                    '  }, []);\n')
+IMPERATIVE_STATE_NEW = (
+    '  var offsetRef = React.useRef(0);\n'
+    '  var contentRef = React.useRef(null);\n'
+    '  var thumbRef = React.useRef(null);\n'
+    '  var maxScrollRef = React.useRef(0);\n'
+    '  var contentHRef = React.useRef(1);\n'
+    '  var viewportHRef = React.useRef(1);\n'
+    '  var pageRef = React.useRef(400);\n'
+    '  var scrollBy = React.useCallback(function (delta) {\n'
+    '    var next = offsetRef.current + delta;\n'
+    '    if (next < 0) next = 0;\n'
+    '    if (next > maxScrollRef.current) next = maxScrollRef.current;\n'
+    '    if (next === offsetRef.current) return;\n'
+    '    offsetRef.current = next;\n'
+    '    var content = contentRef.current;\n'
+    '    if (content && content.style) content.style.marginTop = -next;\n'
+    '    var thumb = thumbRef.current;\n'
+    '    if (thumb && thumb.style) {\n'
+    '      thumb.style.top = Math.round(\n'
+    '        next / (contentHRef.current || 1) * viewportHRef.current);\n'
+    '    }\n'
+    '  }, []);\n')
+
+IMPERATIVE_CLAMP = ('  maxScrollRef.current = maxScroll;\n'
+                    '  pageRef.current = Math.max(120, viewportH - 40);\n'
+                    '  var offset = scrollTop > maxScroll ? maxScroll : scrollTop;\n')
+IMPERATIVE_CLAMP_NEW = (
+    '  maxScrollRef.current = maxScroll;\n'
+    '  contentHRef.current = contentH;\n'
+    '  viewportHRef.current = viewportH;\n'
+    '  pageRef.current = Math.max(120, viewportH - 40);\n'
+    '  if (offsetRef.current > maxScroll) offsetRef.current = maxScroll;\n'
+    '  var offset = offsetRef.current;\n')
+
+IMPERATIVE_CONTENT = '    "data-spectr-help-scroll-content": true,\n'
+IMPERATIVE_CONTENT_NEW = ('    "data-spectr-help-scroll-content": true,\n'
+                          '    ref: contentRef,\n')
+IMPERATIVE_THUMB = '    "data-spectr-help-scrollbar-thumb": true,\n'
+IMPERATIVE_THUMB_NEW = ('    "data-spectr-help-scrollbar-thumb": true,\n'
+                        '    ref: thumbRef,\n')
+
 BODY_MEMO_BLOCKS = ('  var blocks = spectrHelpBlocks();\n'
                     '  var contentH = blocks ? '
                     'spectrHelpContentHeight(blocks, textW) : viewportH;\n')
@@ -929,6 +1013,22 @@ EDITS = [
      (TAIL_ARIA, TAIL_ARIA_NEW),
      '"aria-label": "Learn more",'),
 
+    ('the wheel writes the offset to the node instead of to React',
+     (IMPERATIVE_STATE, IMPERATIVE_STATE_NEW),
+     "if (content && content.style) content.style.marginTop = -next;"),
+
+    ('the render still places the content it no longer moves',
+     (IMPERATIVE_CLAMP, IMPERATIVE_CLAMP_NEW),
+     "  var offset = offsetRef.current;"),
+
+    ('the moving content is reachable without a query',
+     (IMPERATIVE_CONTENT, IMPERATIVE_CONTENT_NEW),
+     "ref: contentRef,"),
+
+    ('the scrollbar thumb moves with it',
+     (IMPERATIVE_THUMB, IMPERATIVE_THUMB_NEW),
+     "ref: thumbRef,"),
+
     ('the guide body is built once, not once per wheel sample',
      (BODY_MEMO_BLOCKS, BODY_MEMO_BLOCKS_NEW),
      BODY_MEMO_BLOCKS_NEW),
@@ -989,6 +1089,10 @@ REQUIRED_AFTER = (
     '"data-spectr-help-learn-more-label": true,',
     '"aria-label": "Learn more",',
     "var blocks = React.useMemo(spectrHelpBlocks, [helpText]);",
+    "if (content && content.style) content.style.marginTop = -next;",
+    "var offset = offsetRef.current;",
+    "ref: contentRef,",
+    "ref: thumbRef,",
     "var body = React.useMemo(function () {",
     "}, [blocks, textW]);",
 )

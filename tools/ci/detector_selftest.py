@@ -506,6 +506,22 @@ CASES: list[tuple[str, str, int, list[str]]] = [
     # load." forever with every marker still in place.
     ("help_overlay_contract", "plant: the blocks memo can never retry", 1,
      [f(D, "help_overlay_contract.py"), "--plant", "frozen-blocks-memo"]),
+    # THE OFFSET. While it was React state every wheel sample was a commit, and
+    # every commit re-applied the whole captured atlas: p50 20.166 ms per
+    # sample against a 16.667 ms frame. Written straight to the node it is
+    # 0.023 ms, with the scroll itself unchanged -- same 15.25% of the viewport
+    # moved mid-burst, same 0.00% below the clip, same 201,367 pixels for
+    # twelve ArrowDown presses.
+    #
+    # Each plant fails in its own silent way: the first is correct and 840x
+    # slower, the second moves nothing at all while every other marker stands,
+    # and the third moves the content while the scrollbar sits frozen.
+    ("help_overlay_contract", "plant: the offset goes back through React state", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "react-state-offset"]),
+    ("help_overlay_contract", "plant: the writer cannot reach the content", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "unreffed-content"]),
+    ("help_overlay_contract", "plant: the scrollbar thumb stops following", 1,
+     [f(D, "help_overlay_contract.py"), "--plant", "unreffed-thumb"]),
     # THE COPY AFFORDANCE. A copy button is the control most able to look
     # correct and do nothing -- the press lands, the label never moves, and a
     # still frame cannot tell that from success.

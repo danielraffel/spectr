@@ -178,6 +178,42 @@ def capture_boxes(plant=None):
 TAIL_CAPTION = '"data-spectr-help-learn-more-label": true,'
 TAIL_LABEL = '"aria-label": "Learn more",'
 
+# -- THE WHEEL DOES NOT GO THROUGH REACT ---------------------------------
+#
+# The panel scrolls itself, and while the offset was React state every wheel
+# sample was a commit -- and any commit that dirties the materialized tree
+# re-applies the WHOLE captured atlas before the layout pass behind it.
+# Measured on the built standalone, 48 samples through the host's own
+# `deliver_mouse_wheel`, with the atlas hook swapped for a counting no-op in
+# the second arm (it counted 48 of 48, so the swap provably took):
+#
+#     with the atlas re-apply     p50 42.167 ms per sample
+#     without it                  p50 13.011 ms
+#
+# The offset moves one node's margin and one thumb's top, neither of which any
+# captured binding describes, so it is written straight to the nodes:
+#
+#     BEFORE   p50 20.166 / 20.413 / 20.221 ms   (three runs)
+#     AFTER    p50  0.023 /  0.025 /  0.024 ms
+#
+# and the SCROLL ITSELF IS UNCHANGED, which is the half that matters: in both
+# arms the mid-burst frame differs from the top by 15.25% of the viewport, the
+# end frame differs by 0.00% (the burst is symmetric), 0 of 56,000 pixels
+# differ below the viewport's bottom edge, and twelve ArrowDown presses move
+# 201,367 pixels -- the same number to the pixel.
+#
+# All three markers are checked because each failure is silent in a different
+# way. Without the writer the wheel goes back to a commit per sample and only
+# costs more. Without the content ref the writer can never find its node, so
+# the wheel does NOTHING while every other marker is still in place. Without
+# the thumb ref the content moves and the scrollbar sits frozen at the top,
+# which a still frame cannot tell from a correct one.
+IMPERATIVE_WRITE = ("if (content && content.style) "
+                    "content.style.marginTop = -next;")
+CONTENT_REF = "ref: contentRef,"
+THUMB_REF = "ref: thumbRef,"
+REACT_OFFSET = "setScrollTop"
+
 # -- THE BODY IS BUILT ONCE, NOT ONCE PER WHEEL SAMPLE --------------------
 #
 # The panel scrolls itself, so a wheel sample is a `setScrollTop` and a full
@@ -279,6 +315,20 @@ PLANTS = {
     # The body is rebuilt on every wheel sample again. Pixel-identical.
     "unmemoised-body": lambda h, a: (
         h.replace(BODY_MEMO, "var body = (function () {"), a),
+    # A DIFFERENT WRONG IMPLEMENTATION: correct, and 840x slower. The offset
+    # goes back through React state, so every wheel sample commits and every
+    # commit re-applies the captured atlas. Nothing looks wrong in a frame.
+    "react-state-offset": lambda h, a: (
+        h.replace(IMPERATIVE_WRITE,
+                  "setScrollTop(next);").replace(
+                      "var offsetRef = React.useRef(0);",
+                      "var [scrollTop, setScrollTop] = React.useState(0);"), a),
+    # The writer survives and can never reach its node: the wheel moves
+    # nothing at all, cheaply.
+    "unreffed-content": lambda h, a: (h.replace(CONTENT_REF, ""), a),
+    # The content moves and the scrollbar does not, which no still frame and no
+    # timing measurement can see.
+    "unreffed-thumb": lambda h, a: (h.replace(THUMB_REF, ""), a),
     "unmemoised-blocks": lambda h, a: (
         h.replace(BLOCKS_MEMO, "var blocks = spectrHelpBlocks();"), a),
     # The memo that can never retry: a one-frame asset race becomes a permanent
@@ -403,6 +453,25 @@ def main():
             bad.append("%s appears %d times, expected 1 -- a captured-box "
                        "button's own text is stretched over the whole box and "
                        "painted from its top edge" % (label, count))
+
+    # -- OFFSET -----------------------------------------------------------
+    offset_rules = {
+        "writes the offset to the node": html.count(IMPERATIVE_WRITE),
+        "content is reffed": html.count(CONTENT_REF),
+        "thumb is reffed": html.count(THUMB_REF),
+    }
+    print("  OFFSET " + ", ".join("%s=%d" % kv for kv in offset_rules.items()))
+    for label, count in offset_rules.items():
+        if count != 1:
+            bad.append("%s appears %d times, expected 1 -- the wheel is back to "
+                       "a React commit per sample, or its writer cannot reach "
+                       "what it moves" % (label, count))
+    react_offset = html.count(REACT_OFFSET)
+    print("  OFFSET react state for the offset: %d (expected 0)" % react_offset)
+    if react_offset != 0:
+        bad.append("the scroll offset is React state again (%d occurrence(s)): "
+                   "every wheel sample commits, and every commit re-applies the "
+                   "whole captured atlas" % react_offset)
 
     # -- BODY -------------------------------------------------------------
     body = {
