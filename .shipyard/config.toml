@@ -23,5 +23,27 @@ repository = "danielraffel/spectr"
 [merge]
 require_platforms = ["macos"]
 
+# What must arrive before this repository's PRs are allowed to merge, and which
+# workflow produces it. Shipyard's landability preflight reads branch
+# protection first and falls back to these; `main` is NOT protected today
+# (`GET /branches/main/protection/required_status_checks` -> 404 "Branch not
+# protected"), so without this table the preflight has nothing to check and
+# says so -- which is not the same as nothing being wrong.
+#
+# The larger hole this names: with nothing required on GitHub's side, a
+# `mergeStateStatus: CLEAN` with an EMPTY check rollup is GitHub being literal,
+# and auto-merge armed on such a PR would merge it untested. Protecting `main`
+# is the real fix and is deliberately NOT done here, because a required check
+# whose workflow is skipped by a path filter stays *Pending forever* and blocks
+# the PR -- and `m5-product-acceptance.yml` carries a `paths-ignore`. Adding
+# protection therefore has to land together with a companion workflow posting
+# the same check name under the negated filter, or every docs-only PR becomes
+# the mirror image of the 2026-09-14 incident.
+[governance]
+required_status_checks = ["Spectr M5 product-acceptance gate"]
+
+[landability]
+workflows = [".github/workflows/m5-product-acceptance.yml"]
+
 [ship]
 base_branch = "main"
