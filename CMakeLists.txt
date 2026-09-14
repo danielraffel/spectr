@@ -174,6 +174,7 @@ endif()
 
 set(SPECTR_SOURCES
     src/spectr.cpp
+    src/mask_renderer.cpp
     src/param_surface.cpp
     src/edit_engine.cpp
     src/editor_authority.cpp
@@ -186,6 +187,7 @@ set(SPECTR_SOURCES
 
 set(SPECTR_HEADERS
     include/spectr/spectr.hpp
+    include/spectr/mask_renderer.hpp
     include/spectr/param_surface.hpp
     include/spectr/band_state.hpp
     include/spectr/viewport.hpp
@@ -206,6 +208,7 @@ set(SPECTR_HEADERS
 # root rather than silently selecting AutoUi or the WebView baseline.
 set(SPECTR_NATIVE_SOURCES
     src/spectr.cpp
+    src/mask_renderer.cpp
     src/param_surface.cpp
     src/edit_engine.cpp
     src/editor_authority.cpp
@@ -477,6 +480,7 @@ add_executable(Spectr-test
     test/test_snapshot.cpp
     test/test_param_surface.cpp
     test/test_mode_bridge.cpp
+    test/test_mask_renderer.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
@@ -1912,3 +1916,16 @@ if(TARGET SpectrWebViewReference_Standalone AND TARGET Pulp::platform AND TARGET
     add_dependencies(Spectr-standalone-artifact-test SpectrWebViewReference_Standalone)
     catch_discover_tests(Spectr-standalone-artifact-test)
 endif()
+
+# The zero-latency render path must read no clock. A schedule expressed in
+# samples is correct at any render speed by construction; one that consults
+# wall-clock time is correct only while the host paces at real time, and two of
+# Spectr's three formats never learn that it has stopped doing so. The scanner
+# carries its own positive control and exits 2 (NO VERDICT, which CTest reports
+# as a failure, never a pass) if that control does not fire — so a clean result
+# from it is a reading of the source and not of a broken instrument.
+add_test(NAME Spectr-render-path-clock
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mask_renderer.cpp)
+set_tests_properties(Spectr-render-path-clock PROPERTIES TIMEOUT 60)
