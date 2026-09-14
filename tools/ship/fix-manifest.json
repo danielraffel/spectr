@@ -254,6 +254,38 @@
         "Copied"
       ],
       "note": "Four tokens for the four halves that have to all be present for the button to work: the plain-text extractor (so a paste receives prose, not '## Zooming' and '**Sculpt**'), the button's own marker, the native bridge verb, and the label the user actually sees. All four read 0 in both pre-fix binaries. 'clipboard_write' is new in BOTH the document and src/editor_bridge.cpp and is Spectr's own verb, not the SDK's - the trap this manifest already records under dropdown-switch-one-press. Two candidates were REJECTED and both are instructive. 'Copy failed' reads 2 pre-fix, and neither is ours: they are Dawn's 'Copy failed, draw pass dropped!' and 'Copy failed to generate mipmaps' - the exact shape of the 'subpath' trap, a string absent from the document and abundant in the binary. 'setCopyState' reads 4 pre-fix because the Settings build-info button already owns one. 'Copied' survives only because that older button spells its labels in caps (COPY / COPYING) while the guide's are title case; a later pass that unifies the casing will break this row loudly, which is the intended failure."
+    },
+    {
+      "id": "unmute-flourish-not-replayed",
+      "pr": 123,
+      "title": "A recall or sweep no longer flashes every band it carries back across the mute threshold",
+      "tokens": [
+        "replay = false",
+        "if (!replay) unmutePulseRef.current[k] = 1",
+        "commitMany(map, false, true)"
+      ],
+      "note": "The flourish is now gated on its source: commitGain/commitMany take a `replay` flag and only an operator gesture lights the pulse. `unmutePulseRef` alone is NOT a token - it reads 8 in the pre-fix binary, because the ref already existed and only its guard is new."
+    },
+    {
+      "id": "mute-selection-shortcut",
+      "pr": 125,
+      "title": "Mute or unmute a whole band selection with `m`",
+      "tokens": [
+        "toggleMuteSelection",
+        "selectionRef.current = selection"
+      ],
+      "note": "The ref mirror is part of the fix, not incidental: the bank object is rebuilt on [N, snapshots, view, onNativeState] and NOT on selection, so a bank method closing over `selection` reads the empty mount-time Set forever. `mutedGainDbRef` is NOT a token - it reads 18 in the pre-fix binary."
+    },
+    {
+      "id": "clear-snapshot-slot",
+      "pr": 126,
+      "title": "Clear a snapshot slot, and RESET ALL now clears all three things it advertises",
+      "tokens": [
+        "clearSnap",
+        "clear_snapshot",
+        "onClear: act"
+      ],
+      "note": "The handler is the substance and it earns its place without any gesture: RESET ALL advertised `gains . view . snapshots` and cleared two of the three, because the editor dropped its mirror while the processor kept both slots populated and the next projection re-lit the dots. `CLEARED` and `nativeOwnsSnapshots` are NOT tokens - they read 3 and 4 in the pre-fix binary."
     }
   ]
 }
