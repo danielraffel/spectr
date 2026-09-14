@@ -535,6 +535,14 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 *slot, expected_revision_(p)));
         });
 
+    bridge.add_handler("clear_snapshot",
+        [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
+            const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));
+            if (!slot) return EditorBridge::err_response("slot must be 'A' or 'B'");
+            return authority_response_(plugin, authority.clear_snapshot(
+                *slot, expected_revision_(p)));
+        });
+
     bridge.add_handler("recall_snapshot",
         [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));

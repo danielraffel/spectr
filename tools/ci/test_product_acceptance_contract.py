@@ -3,8 +3,10 @@
 from pathlib import Path
 import json, re, tomllib
 from validate_release_sdk import cmake_bool, feature_mismatches
+from cmake_parse_check import scan as cmake_scan, PLANTS as CMAKE_PLANTS
 
 ROOT = Path(__file__).resolve().parents[2]
+CMAKE_LISTS_TEXT = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 workflow = (ROOT / ".github/workflows/m5-product-acceptance.yml").read_text()
 # The focused-behavior step no longer carries its patterns inline. A
 # `ctest -R '(a|b|c)'` alternation hides a dead alternative -- ctest runs the
@@ -164,6 +166,34 @@ checks = {
     "CMake boolean aliases": (all(cmake_bool(value) for value in ("1", "ON", "YES", "TRUE", "Y"))
                               and not any(cmake_bool(value) for value in
                                           ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND", "x-NOTFOUND"))),
+
+    # CMakeLists.txt PARSES. This runs here, in the workflow's first blocking
+    # step, because it is the only gate that executes before the SDK download
+    # and the configure -- and an unparseable CMakeLists is otherwise found by
+    # the configure itself, tens of minutes in.
+    #
+    # Twice in one day the same construct broke the same way, both times a
+    # conflict resolution. This repository's CMakeLists conflicts cluster on
+    # multi-line `set_tests_properties(...)` calls inside a `foreach`, because
+    # the lanes that collide all append test registrations to the same block,
+    # so the conflict boundary lands INSIDE a call. Resolving such a hunk
+    # mechanically splits the construct: the call never closes, the
+    # `endforeach()` is swallowed, and the file still LOOKS like CMake. A warm
+    # build directory does not re-parse it either, so "it configures locally"
+    # can be true of a tree that cannot configure at all.
+    "CMakeLists.txt parses": not cmake_scan(CMAKE_LISTS_TEXT)[0],
+    # ...and the checker can still fail. Both plants reproduce a real observed
+    # break: a call left open, and a block left unclosed. A parse check that
+    # cannot redden is indistinguishable from a file that parses.
+    "the CMake parse check reports an unclosed call":
+        bool(cmake_scan(CMAKE_PLANTS["unclosed-call"](CMAKE_LISTS_TEXT))[0]),
+    "the CMake parse check reports an unclosed block":
+        bool(cmake_scan(CMAKE_PLANTS["dropped-endforeach"](CMAKE_LISTS_TEXT))[0]),
+    # A plant that rewrites nothing proves nothing, so the plants are required
+    # to bite on THIS checkout rather than on the file they were written for.
+    "the CMake parse plants still apply to this CMakeLists":
+        all(CMAKE_PLANTS[name](CMAKE_LISTS_TEXT) != CMAKE_LISTS_TEXT
+            for name in ("unclosed-call", "dropped-endforeach")),
 }
 failed = [name for name, passed in checks.items() if not passed]
 if failed: raise SystemExit("product-acceptance contract failures: " + ", ".join(failed))

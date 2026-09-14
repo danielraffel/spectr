@@ -110,6 +110,15 @@ void Spectr::capture_snapshot(SnapshotBank::Slot slot) noexcept {
     publish_audio_modulation_state_();
 }
 
+void Spectr::clear_snapshot(SnapshotBank::Slot slot) noexcept {
+    // Same lock as capture, for the same reason: the sync worker reads the
+    // bank when a host-side morph write lands, so emptying a slot has to
+    // serialize against every other field_/bank access.
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    snapshots_.clear(slot);
+    publish_audio_modulation_state_();
+}
+
 void Spectr::apply_morph_to_live(float t) noexcept {
     t = std::clamp(t, 0.0f, 1.0f);
     {

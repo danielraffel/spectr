@@ -330,6 +330,14 @@ public:
     /// Marks the slot populated.
     void capture_snapshot(SnapshotBank::Slot slot) noexcept;
 
+    /// Empty the named slot, so morph and recall stop seeing it.
+    ///
+    /// Until this existed a filled slot could only be OVERWRITTEN, never
+    /// emptied -- which is also why RESET ALL could not do what its name
+    /// says: it cleared the editor's mirror of the bank while the processor
+    /// kept both slots, and the next full projection lit them again.
+    void clear_snapshot(SnapshotBank::Slot slot) noexcept;
+
     /// Write the morph of A and B at t into `field_`, and — when
     /// `morph_applies_viewport()` is set — the log-space morph of their
     /// viewports into `viewport_`. If either slot is unpopulated, falls back

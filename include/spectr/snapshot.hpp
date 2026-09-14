@@ -95,6 +95,16 @@ struct SnapshotBank {
         get(dst) = get(src);
     }
 
+    /// Empty the named slot.
+    ///
+    /// The whole slot goes back to its default, not just the flag: a cleared
+    /// slot and a slot that was never captured are the same thing to every
+    /// reader, and leaving a stale field behind one would mean a later
+    /// `populated = true` resurrected data the user believed gone. Clearing
+    /// an already-empty slot is a no-op rather than an error, so a caller
+    /// that clears both slots need not ask which were filled.
+    void clear(Slot s) noexcept { get(s) = FieldSnapshot{}; }
+
     /// Swap A and B in place.
     void swap() noexcept { std::swap(a, b); }
 

@@ -62,6 +62,12 @@ public:
     [[nodiscard]] EditorReceipt recall_snapshot(
         SnapshotBank::Slot slot,
         std::optional<EditorRevision> expected = std::nullopt) noexcept;
+    /// Empty a slot. Unlike `recall_snapshot` this does NOT reject an empty
+    /// slot: clearing is idempotent, so a caller clearing both slots does not
+    /// have to ask first which of them were filled.
+    [[nodiscard]] EditorReceipt clear_snapshot(
+        SnapshotBank::Slot slot,
+        std::optional<EditorRevision> expected = std::nullopt) noexcept;
     [[nodiscard]] EditorReceipt apply_morph(
         float amount,
         std::optional<EditorRevision> expected = std::nullopt) noexcept;

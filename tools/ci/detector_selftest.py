@@ -604,6 +604,76 @@ CASES: list[tuple[str, str, int, list[str]]] = [
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-undeclared-clear"]),
 
+    # Emptying a snapshot slot. The capability was ABSENT, not unexposed:
+    # `clear_snapshot` measured 0 C++ files and 0 document occurrences against
+    # `capture_snapshot` at 6 and 1 on the same instruments. Which is also why
+    # RESET ALL advertised "gains . view . snapshots" and cleared two of the
+    # three -- it dropped the editor's mirror while the processor kept both
+    # slots, and the next full projection re-lit the dots from `populated`.
+    #
+    # That re-lighting is the plant that matters (`reset-keeps-bank`): it is
+    # invisible to a screenshot taken before the projection lands, and reads
+    # as a working reset right up until it undoes itself.
+    ("materialized_clear_snapshot",
+     "a slot can be emptied and RESET ALL empties both", 0,
+     [f("test", "test_materialized_clear_snapshot.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json")]),
+    ("materialized_clear_snapshot",
+     "plant: the clear reaches the mirror but not the processor", 1,
+     [f("test", "test_materialized_clear_snapshot.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-no-native-clear"]),
+    ("materialized_clear_snapshot",
+     "plant: RESET ALL leaves the processor's bank populated", 1,
+     [f("test", "test_materialized_clear_snapshot.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-reset-keeps-bank"]),
+    ("materialized_clear_snapshot",
+     "plant: the gesture is offered on an empty slot and on capture", 1,
+     [f("test", "test_materialized_clear_snapshot.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-anything-clearable"]),
+    ("materialized_clear_snapshot",
+     "plant: a cleared slot keeps its lit indicator", 1,
+     [f("test", "test_materialized_clear_snapshot.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-status-sticks"]),
+
+    # CMakeLists.txt parses. Registered here as well as in the static
+    # contract, because this self-test is the repository's standing answer to
+    # "was this check ever exercised in both directions" -- and a parse check
+    # that cannot redden is indistinguishable from a file that parses.
+    #
+    # Both plants reproduce a real observed break, twice in one day and both
+    # times a conflict resolution: a multi-line `set_tests_properties(...)`
+    # call left open by a conflict boundary landing inside it, and a block
+    # left without its `endforeach()`.
+    ("cmake_parse_check", "the repository's CMakeLists.txt parses", 0,
+     [f(T, "ci", "cmake_parse_check.py")]),
+    ("cmake_parse_check", "plant: a multi-line call is never closed", 1,
+     [f(T, "ci", "cmake_parse_check.py"), "--plant", "unclosed-call"]),
+    ("cmake_parse_check", "plant: a foreach loses its endforeach", 1,
+     [f(T, "ci", "cmake_parse_check.py"), "--plant", "dropped-endforeach"]),
+
+    # Counting a token in the shipping editor document. The helper exists
+    # because a raw `grep` against that file manufactures ABSENCE -- three
+    # distinct false zeros in one day (no `-a` on a one-line 800KB file,
+    # shell-eaten quotes, and the JSON escaping that stores `\"` where the
+    # source has `"`), and in two of them the control failed identically and
+    # concealed it.
+    #
+    # So the case that matters is the DEAD CONTROL one: the helper must report
+    # "no verdict" rather than a count, because a tool that cannot tell a
+    # broken instrument from an absent token is the thing being replaced.
+    ("query_materialized", "a token in the document is counted", 0,
+     [f(T, "query_materialized.py"), "commitMany"]),
+    ("query_materialized",
+     "plant: a dead control is a NO VERDICT, never a zero count", 2,
+     [f(T, "query_materialized.py"), "--plant", "dead-control", "commitMany"]),
+    ("query_materialized",
+     "an --absent claim on a token that is present is rejected", 1,
+     [f(T, "query_materialized.py"), "--absent", "commitMany"]),
+
     # Group mute on `m`. The context menu's `onMuteSel` is an UNCONDITIONAL
     # mute and there is no group unmute anywhere in the document, so the
     # toggle is a capability the product did not have by any route -- which is

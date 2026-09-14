@@ -726,3 +726,113 @@ TEST_CASE("plugin state round-trips the viewport switch and absence reads as ena
     REQUIRE(c.deserialize_plugin_state(legacy_bytes));
     CHECK(c.morph_applies_viewport());
 }
+
+// ── Clearing a slot ────────────────────────────────────────────────────
+//
+// Until `clear_snapshot` existed a filled slot could only be OVERWRITTEN,
+// never emptied, by any route. Measured on the revision that added it:
+// `clear_snapshot` read 0 C++ files and 0 occurrences in the shipping editor
+// document, against `capture_snapshot` at 6 files and 1 occurrence on the
+// same instruments. RESET ALL could not clear a slot either, because there
+// was no handler for it to call.
+
+TEST_CASE("snapshot clear: empties the whole slot, not just its flag") {
+    SnapshotBank bank;
+    bank.capture_into(SnapshotBank::Slot::A, ramp_field(-12.0f, 0.5f),
+                      Viewport{}, Layout::Bands64);
+    REQUIRE(bank.has(SnapshotBank::Slot::A));
+
+    bank.clear(SnapshotBank::Slot::A);
+    CHECK_FALSE(bank.has(SnapshotBank::Slot::A));
+    // A cleared slot and a slot never captured must be the same thing to
+    // every reader. Leaving the field behind the cleared flag would mean a
+    // later `populated = true` resurrected data the user believed gone.
+    const SnapshotBank fresh;
+    CHECK(bank.a.field.bands[0].gain_db
+          == Approx(fresh.a.field.bands[0].gain_db));
+    CHECK(mask_int(static_cast<std::uint8_t>(bank.a.layout))
+          == mask_int(static_cast<std::uint8_t>(fresh.a.layout)));
+}
+
+TEST_CASE("snapshot clear: touches only the named slot") {
+    SnapshotBank bank;
+    bank.capture_into(SnapshotBank::Slot::A, make_field(-6.0f), Viewport{},
+                      Layout::Bands32);
+    bank.capture_into(SnapshotBank::Slot::B, make_field(+6.0f), Viewport{},
+                      Layout::Bands32);
+
+    bank.clear(SnapshotBank::Slot::A);
+    CHECK_FALSE(bank.has(SnapshotBank::Slot::A));
+    REQUIRE(bank.has(SnapshotBank::Slot::B));
+    CHECK(bank.b.field.bands[0].gain_db == Approx(+6.0f));
+}
+
+TEST_CASE("snapshot clear: an empty slot is a no-op, so a caller need not ask first") {
+    SnapshotBank bank;
+    CHECK_FALSE(bank.has(SnapshotBank::Slot::B));
+    bank.clear(SnapshotBank::Slot::B);
+    CHECK_FALSE(bank.has(SnapshotBank::Slot::B));
+}
+
+TEST_CASE("snapshot clear: Spectr::clear_snapshot empties a captured slot") {
+    Spectr s;
+    s.field() = make_field(-8.0f);
+    s.capture_snapshot(SnapshotBank::Slot::A);
+    REQUIRE(s.snapshots().has(SnapshotBank::Slot::A));
+
+    s.clear_snapshot(SnapshotBank::Slot::A);
+    CHECK_FALSE(s.snapshots().has(SnapshotBank::Slot::A));
+}
+
+TEST_CASE("snapshot clear: a cleared slot stops being a morph endpoint") {
+    Spectr s;
+    s.field() = make_field(-10.0f);
+    s.capture_snapshot(SnapshotBank::Slot::A);
+    s.field() = make_field(+10.0f);
+    s.capture_snapshot(SnapshotBank::Slot::B);
+
+    // Control: with both slots filled, t=0 resolves to A.
+    s.field().reset();
+    s.apply_morph_to_live(0.0f);
+    REQUIRE(s.field().bands[0].gain_db == Approx(-10.0f));
+
+    // With A cleared, the populated side wins at every t -- which is the
+    // same rule an empty slot has always had, now reachable by clearing.
+    s.clear_snapshot(SnapshotBank::Slot::A);
+    s.field().reset();
+    s.apply_morph_to_live(0.0f);
+    CHECK(s.field().bands[0].gain_db == Approx(+10.0f));
+}
+
+TEST_CASE("snapshot clear: both slots cleared leaves morph nothing to apply") {
+    Spectr s;
+    s.field() = make_field(-10.0f);
+    s.capture_snapshot(SnapshotBank::Slot::A);
+    s.field() = make_field(+10.0f);
+    s.capture_snapshot(SnapshotBank::Slot::B);
+
+    s.clear_snapshot(SnapshotBank::Slot::A);
+    s.clear_snapshot(SnapshotBank::Slot::B);
+
+    s.field() = make_field(-4.0f);
+    s.apply_morph_to_live(0.5f);
+    // Same contract as a processor that never captured anything: morph leaves
+    // the live field alone rather than guessing.
+    CHECK(s.field().bands[0].gain_db == Approx(-4.0f));
+}
+
+TEST_CASE("snapshot clear: a cleared slot round-trips plugin state as empty") {
+    Spectr writer;
+    writer.field() = make_field(-5.0f);
+    writer.capture_snapshot(SnapshotBank::Slot::A);
+    writer.capture_snapshot(SnapshotBank::Slot::B);
+    writer.clear_snapshot(SnapshotBank::Slot::A);
+
+    const auto blob = writer.serialize_plugin_state();
+
+    Spectr reader;
+    REQUIRE(reader.deserialize_plugin_state(blob));
+    CHECK_FALSE(reader.snapshots().has(SnapshotBank::Slot::A));
+    CHECK(reader.snapshots().has(SnapshotBank::Slot::B));
+    CHECK(reader.snapshots().b.field.bands[0].gain_db == Approx(-5.0f));
+}
