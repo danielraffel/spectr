@@ -139,7 +139,6 @@ void Spectr::apply_morph_to_live(float t) noexcept {
             else viewport_ = morph_viewports(snapshots_.a.viewport,
                                              snapshots_.b.viewport, t);
         }
-        publish_processing_state_();
         // The morph moves the morph PARAMETER only — pushing the 64 resulting
         // band values as parameter writes would flood the host per slider
         // move and double-drive the field on automation playback (the morph
@@ -149,6 +148,12 @@ void Spectr::apply_morph_to_live(float t) noexcept {
         if (morph_applies_viewport_) synced_viewport_ = viewport_;
         morph_derived_ = true;
         morph_overrides_.reset();
+        // Published LAST, so the snapshot the audio thread reads carries the
+        // derived-ness of the field it is being handed. Publishing before
+        // these two flags ships a state that says the field was NOT derived
+        // while shipping the derived field itself — harmless while nothing
+        // read the flag, and a silently un-morphed DSP once something did.
+        publish_processing_state_();
     }
     push_surface_param_(detail::surface_slot_param_id(detail::kSlotMorph),
                         detail::kSlotMorph, t);

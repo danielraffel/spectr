@@ -115,3 +115,12 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # them while a muted band still measured -6 dB and linear gain 0.50 in a real
 # render. Nothing else here matches the name.
 ^"?a band muted after both snapshots
+
+# The POSITIVE CONTROL for that gate, and it earned its own line twice over.
+# Refusing to derive the field until the control worker says it did is
+# trivially satisfied by never deriving it, which the muted-band case above
+# cannot see -- a plant that disabled the derivation outright left it green.
+# The control also has to pick values a default field cannot imitate: at
+# -6/+6 the midpoint is 0 dB, which is what an underived field already reads,
+# so the first version of it could not fail either.
+^"?a derived morph still reaches

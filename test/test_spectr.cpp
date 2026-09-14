@@ -1217,3 +1217,70 @@ TEST_CASE("a band muted after both snapshots were captured stays silent under "
     CHECK(snapshot.field.bands[5].muted);
     CHECK(snapshot.field.linear_gain(5) == 0.0f);
 }
+
+TEST_CASE("a derived morph still reaches the audible field",
+          "[modulation][mute][rt]") {
+    // POSITIVE CONTROL for the gate above. Refusing to derive the field from
+    // the bank until the control worker says it did is trivially satisfied by
+    // never deriving it at all, and that failure would leave the muted-band
+    // case green while quietly removing the morph feature from the DSP.
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    host.prepare(sample_rate, block_size);
+    auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+    REQUIRE(plugin != nullptr);
+
+    pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+    const float* input_channels[] = {
+        in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> input(input_channels, 2, block_size);
+    auto output = out.view();
+
+    // Both endpoints NEGATIVE, and deliberately not symmetric about 0 dB.
+    // The obvious choice of -6 / +6 makes the midpoint 0 dB, which is exactly
+    // what an un-derived field reads from the untouched band parameters -- so
+    // the assertion below passed whether or not the morph ran, and a plant
+    // that disabled the derivation outright did not redden it. The margin
+    // between the two answers is the whole control.
+    for (std::size_t band = 0; band < spectr::kMaxBands; ++band)
+        plugin->field().bands[band].gain_db = -12.0f;
+    plugin->capture_snapshot(spectr::SnapshotBank::Slot::A);
+    for (std::size_t band = 0; band < spectr::kMaxBands; ++band)
+        plugin->field().bands[band].gain_db = -4.0f;
+    plugin->capture_snapshot(spectr::SnapshotBank::Slot::B);
+
+    // The user drags morph to the midpoint. This is what marks the field
+    // derived, which is what opens the gate.
+    plugin->apply_morph_to_live(0.5f);
+
+    for (std::size_t block = 0; block < 8; ++block) {
+        pulp::state::ParameterEventQueue events;
+        REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                             static_cast<float>(spectr::LfoShape::Sine), 0}));
+        REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
+        // Depth must be NON-ZERO or nothing is published at all: the
+        // publication is gated on modulation being active, so a depth of 0
+        // leaves `read_modulated_field()` returning a default-constructed
+        // snapshot whose every gain reads 0 dB — which looks exactly like an
+        // un-derived field and made this control fail for the wrong reason.
+        // `pre_field` is the PRE-LFO field by construction, so the modulator
+        // being alive does not contaminate what is measured below.
+        REQUIRE(events.push({spectr::kParamLfoDepth, 0, 0.5f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                             static_cast<float>(
+                                 spectr::ModulationTarget::WholeBank), 0}));
+        REQUIRE(events.push({spectr::kParamMorph, 0, 0.5f, 0}));
+        host.process(output, input, events);
+    }
+
+    // Halfway between the two captured fields, in dB, on the audio thread:
+    // -8 dB. An un-derived field reads 0 dB here (the band parameters were
+    // never written), so the two answers are 8 dB apart.
+    const auto& snapshot = plugin->read_modulated_field();
+    REQUIRE(snapshot.active);
+    INFO("band 3 gain_db: " << snapshot.pre_field.bands[3].gain_db);
+    CHECK(snapshot.pre_field.bands[3].gain_db == Approx(-8.0f).margin(0.01f));
+}
