@@ -55,6 +55,39 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 DOC = os.path.join(REPO, "native-ui", "materialized",
                    "materialized-document.runtime.json")
 ASSET = os.path.join(REPO, "native-ui", "materialized", "help-content.js")
+CMAKELISTS = os.path.join(REPO, "CMakeLists.txt")
+MASK_RENDERER = os.path.join(REPO, "src", "mask_renderer.cpp")
+
+
+def _derive_latency_figures():
+    """The two figures the guide must state, computed from the source of truth.
+
+    Typing them here would reproduce the defect this check exists to catch: a
+    number that was right when someone wrote it and silently wrong afterwards.
+    Mixing is kSpectralFftSize + kSpectralAnalysisHop; Tracking is the
+    zero-latency renderer's fixed render block. Both are read out of the files
+    that define them.
+
+    Returns (mixing_text, tracking_text) or raises, because a figure this
+    cannot derive must stop the run rather than quietly skip the assertion.
+    """
+    with open(CMAKELISTS, encoding="utf-8") as handle:
+        cmake = handle.read()
+    fft = re.search(r'set\(SPECTR_FFT_SIZE\s+"?(\d+)', cmake)
+    hop = re.search(r'set\(SPECTR_ANALYSIS_HOP\s+"?(\d+)', cmake)
+    with open(MASK_RENDERER, encoding="utf-8") as handle:
+        renderer = handle.read()
+    block = re.search(r'constexpr int kRenderBlock\s*=\s*(\d+)', renderer)
+    if not (fft and hop and block):
+        raise RuntimeError(
+            "cannot derive the latency figures from source "
+            "(SPECTR_FFT_SIZE / SPECTR_ANALYSIS_HOP / kRenderBlock)")
+    mixing_ms = (int(fft.group(1)) + int(hop.group(1))) * 1000.0 / 48000.0
+    tracking_ms = int(block.group(1)) * 1000.0 / 48000.0
+    # Match how the copy writes them: whole ms once past 10, one decimal below.
+    def fmt(ms):
+        return ("%d ms" % round(ms)) if ms >= 10 else ("%.1f ms" % ms)
+    return fmt(mixing_ms), fmt(tracking_ms)
 
 LEARN_MORE = '"data-spectr-help-learn-more": true,'
 LEARN_CALLBACK = "onLearnMore && onLearnMore()"
@@ -82,12 +115,19 @@ COPY_MARKERS = (
     "spaced more like how we hear pitch",
     "move toward that snapshot and back again",
     "shows them together so you can see the difference",
-    "Good to know",
+    "Neither one is an upgrade on the other",
+    # The one case where the lower-latency mode is the BETTER answer rather
+    # than a compromise, and a user has no way to discover it themselves: a
+    # narrow low-band cut on percussive material is exactly where Mixing's
+    # pre-ring becomes audible and where its depth advantage is smallest.
+    # Pinned because it is the most easily lost sentence in the section -- it
+    # reads like a caveat and would be the first thing an editorial pass cut.
+    "percussive material when you are cutting a narrow low band",
 )
 HEADINGS = (
     "How the bands work", "Zooming", "Drawing", "The analyzer",
     "Snapshots and morph", "Movement", "Automation", "Presets",
-    "Live and Precision", "Good to know",
+    "Live and Precision", "Latency",
 )
 
 # -- REACHABILITY ---------------------------------------------------------
@@ -288,8 +328,29 @@ PLANTS = {
     # bottom toolbar.
     "unnamed-rail": lambda h, a: (h.replace(RAIL_NAMED, ""), a),
     # The copy's own rules, and the figure the code reports.
-    "em-dash": lambda h, a: (h, a.replace("Good to know", "Good to know — really")),
+    "em-dash": lambda h, a: (h, a.replace("## Latency", "## Latency — really")),
+    # One plant per figure. A single plant cannot show that BOTH assertions
+    # are load bearing: staling only one would leave the other's check
+    # unexercised and free to be wrong.
     "stale-latency": lambda h, a: (h, a.replace("213 ms", "170.65 ms")),
+    "stale-latency-tracking": lambda h, a: (h, a.replace("1.3 ms", "0 ms")),
+    # The design ruling forbids this phrase because it is false.
+    # Adds the forbidden phrase while LEAVING both figures intact, so this
+    # plant can only be caught by the phrase rule. A plant that also removed a
+    # figure would be caught by the figure rule instead, and the phrase rule
+    # would stay unexercised.
+    "zero-latency-claim": lambda h, a: (
+        h, a.replace("responds in about 1.3 ms",
+                     "has zero latency and responds in about 1.3 ms")),
+    "seamless-claim": lambda h, a: (
+        h, a.replace("Switching rebuilds the processor",
+                     "Switching is seamless and rebuilds the processor")),
+    # Drops the percussive guidance while leaving every figure and both
+    # forbidden-phrase rules satisfied, so only the approved-copy rule can
+    # catch it.
+    "lost-percussive-guidance": lambda h, a: (
+        h, a.replace("percussive material when you are cutting a narrow low band",
+                     "material of any kind")),
     # A backtick would end the template literal early and take the rest of the
     # guide with it, silently.
     "backtick": lambda h, a: (h, a.replace("## Zooming", "## Zoo`ming")),
@@ -585,10 +646,27 @@ def main():
     if "${" in text:
         bad.append("the copy contains `${`, which the template literal would "
                    "interpolate rather than print")
-    if "213 ms" not in text:
-        bad.append("the copy does not state the latency the code reports: "
-                   "kSpectralFftSize + kSpectralAnalysisHop = 8192 + 2048 = "
-                   "10240 samples, 213 ms at 48 kHz")
+    mixing_text, tracking_text = _derive_latency_figures()
+    # BOTH modes. The guide used to state one number because there was one
+    # mode; with two, stating only one is how the other silently goes stale.
+    if mixing_text not in text:
+        bad.append("the copy does not state the Mixing latency the code "
+                   "reports (" + mixing_text + " at 48 kHz, from "
+                   "kSpectralFftSize + kSpectralAnalysisHop)")
+    if tracking_text not in text:
+        bad.append("the copy does not state the Tracking latency the code "
+                   "reports (" + tracking_text + " at 48 kHz, from the "
+                   "zero-latency renderer's kRenderBlock)")
+    # Two phrases the design ruling forbids in user-facing copy: the mode is
+    # 64 samples, not zero, and a switch that moves delay compensation by
+    # thousands of samples is not seamless however it is faded.
+    lowered = text.lower()
+    if "zero latency" in lowered or "zero-latency" in lowered:
+        bad.append("the copy says \"zero latency\", which is false: the "
+                   "Tracking mode costs 64 samples")
+    if "seamless" in lowered:
+        bad.append("the copy calls the switch seamless; it is a re-prepare "
+                   "that moves the host's delay compensation")
 
     if bad:
         for line in bad:

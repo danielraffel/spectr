@@ -285,6 +285,36 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     // per-revision projection, which stays exactly the automatable lanes.
     modulation.addMember("morph_applies_viewport",
                          plugin.morph_applies_viewport());
+    // The Latency control. Not a host parameter and not automatable, so like
+    // "Morph moves the view" it rides the hydration payload the panel reads
+    // once and deliberately never appears in the live per-revision projection,
+    // which stays exactly the automatable lanes.
+    //
+    // Every option ships its own label, its guidance line and its measured
+    // cost, all derived here rather than written into the panel. A figure the
+    // UI typed would be wrong at 96 kHz and wrong again the day a mode's
+    // geometry moves; a label the UI typed would drift from the one the About
+    // guide and the detector agree on.
+    auto latency = choc::value::createObject("Latency");
+    latency.addMember("control_label", std::string(kRenderModeControlLabel));
+    latency.addMember("mode", std::string(render_mode_token(plugin.render_mode())));
+    latency.addMember("samples", static_cast<double>(
+        plugin.render_mode_latency_samples(plugin.render_mode())));
+    latency.addMember("ms", plugin.render_mode_latency_ms(plugin.render_mode()));
+    auto options = choc::value::createEmptyArray();
+    for (const auto mode : kRenderModes) {
+        auto option = choc::value::createObject("LatencyOption");
+        option.addMember("mode", std::string(render_mode_token(mode)));
+        option.addMember("label", std::string(render_mode_label(mode)));
+        option.addMember("description", std::string(render_mode_description(mode)));
+        option.addMember("samples", static_cast<double>(
+            plugin.render_mode_latency_samples(mode)));
+        option.addMember("ms", plugin.render_mode_latency_ms(mode));
+        options.addArrayElement(option);
+    }
+    latency.addMember("options", options);
+    payload.addMember("latency", latency);
+
     payload.addMember("modulation", modulation);
     payload.addMember("snapshots", snapshots);
     payload.addMember("patterns_json", plugin.patterns().export_json());
@@ -704,6 +734,35 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 return EditorBridge::err_response("enabled must be a boolean");
             plugin.set_morph_applies_viewport(flag.getBool());
             return EditorBridge::ok_response();
+        });
+
+    // Changing the Latency control. Deliberately shaped like
+    // morph_viewport_set rather than like mode_set: mode_set writes a host
+    // parameter, and this is not one.
+    //
+    // The mode is sent as its stable token, never as an index. An index would
+    // make the panel's option order part of the wire contract, so reordering
+    // the list in the UI would silently change what the control does.
+    bridge.add_handler("render_mode_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("mode"))
+                return EditorBridge::err_response("mode missing");
+            const auto& value = p["mode"];
+            if (!value.isString())
+                return EditorBridge::err_response("mode must be a string");
+            MaskRenderMode mode{};
+            if (!render_mode_from_token(std::string(value.getString()), mode))
+                return EditorBridge::err_response("unknown render mode");
+            // A switch that cannot be prepared leaves the running mode live,
+            // so report the failure rather than an ok the panel would draw as
+            // a completed change.
+            if (!plugin.set_render_mode(mode))
+                return EditorBridge::err_response("could not prepare that mode");
+            // Return the rehydrated panel state: the switch moves the reported
+            // latency, and the caller needs the new figures without a second
+            // round trip.
+            return EditorBridge::ok_response(
+                make_editor_state_payload(plugin, plugin.editor_authority().revision()));
         });
 }
 

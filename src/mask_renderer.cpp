@@ -88,6 +88,9 @@ public:
     [[nodiscard]] int maximum_tail_samples() const noexcept override {
         return processor_.maximum_tail_samples();
     }
+    [[nodiscard]] int design_grid_size() const noexcept override {
+        return config_.design_grid_size;
+    }
     [[nodiscard]] bool publish_layout(const Layout& layout) override {
         if (!processor_.publish_layout(layout)) return false;
         generation_.fetch_add(1, std::memory_order_release);
@@ -217,6 +220,9 @@ public:
     [[nodiscard]] int maximum_tail_samples() const noexcept override {
         // One render block of input buffering plus the whole designed impulse.
         return prepared_ ? kRenderBlock + config_.design_grid_size : 0;
+    }
+    [[nodiscard]] int design_grid_size() const noexcept override {
+        return config_.design_grid_size;
     }
 
     [[nodiscard]] bool publish_layout(const Layout& layout) override {
