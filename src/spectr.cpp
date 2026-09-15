@@ -11,7 +11,9 @@
 #include <pulp/runtime/log.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -21,6 +23,34 @@
 #include <string_view>
 
 namespace spectr {
+
+namespace {
+
+/// Are these two layouts the same mask?
+///
+/// Bitwise on purpose: the question is whether re-staging would produce an
+/// identical impulse response, and anything short of exact equality can. Only
+/// the bands the layout declares active are compared; the array's tail is not
+/// part of the mask.
+[[nodiscard]] bool same_mask_layout_(
+    const pulp::signal::SpectralBandLayout& a,
+    const pulp::signal::SpectralBandLayout& b) noexcept {
+    if (a.active_bands != b.active_bands) return false;
+    if (a.min_hz != b.min_hz || a.max_hz != b.max_hz) return false;
+    if (a.spacing != b.spacing) return false;
+    if (a.edge_policy != b.edge_policy) return false;
+    if (a.boundary_kernel != b.boundary_kernel) return false;
+    if (a.transition_fraction != b.transition_fraction) return false;
+    if (a.transition_frames != b.transition_frames) return false;
+    for (std::uint32_t i = 0; i < a.active_bands; ++i) {
+        if (a.bands[i].gain_db != b.bands[i].gain_db) return false;
+        if (a.bands[i].muted   != b.bands[i].muted)   return false;
+    }
+    return true;
+}
+
+} // namespace
+
 
 Spectr::Spectr() : editor_authority_(*this) {
 #if defined(SPECTR_NATIVE_EDITOR)
@@ -259,15 +289,29 @@ void Spectr::publish_processing_state_() noexcept {
     auto mask_layout = make_mask_layout_();
 
     if (!processor_prepared_) return;
-    if (!mask_processor_.publish_layout(mask_layout)) {
+    if (!renderer_) return;
+    // Republishing a mask the renderer is already realising is not free: it
+    // queues a redesign that is crossfaded in at whichever block the worker
+    // finishes on, and crossfading an impulse response with an identical copy
+    // of itself is not a bit-exact identity. The sync worker observes drift
+    // often and most of it resolves to the same mask, so without this gate an
+    // offline bounce is not reproducible run to run.
+    if (last_published_layout_valid_
+        && same_mask_layout_(last_published_layout_, mask_layout))
+        return;
+    if (!renderer_->publish_layout(mask_layout)) {
+        last_published_layout_valid_ = false;
         // Invalid control state fails closed; never leave a stale audible
         // table active after a rejected geometry update.
         for (auto& band : mask_layout.bands) band.muted = true;
         mask_layout.min_hz = 20.0f;
         mask_layout.max_hz = std::min(20000.0f,
                                      static_cast<float>(sample_rate_ * 0.5));
-        (void)mask_processor_.publish_layout(mask_layout);
+        (void)renderer_->publish_layout(mask_layout);
+        return;
     }
+    last_published_layout_ = mask_layout;
+    last_published_layout_valid_ = true;
 }
 
 pulp::view::ABCompare* Spectr::ab_compare() noexcept {
@@ -277,11 +321,149 @@ pulp::view::ABCompare* Spectr::ab_compare() noexcept {
     return ab_.get();
 }
 
+MaskRendererConfig Spectr::renderer_config_() const noexcept {
+    MaskRendererConfig config;
+    // The design grid and hop are the product's fixed spectral geometry, not
+    // anything the host chose. Latency therefore stays a function of the mode
+    // alone, which is what lets a project recall with the same delay
+    // compensation on a different machine and a different buffer size.
+    config.design_grid_size = kSpectralFftSize;
+    config.analysis_hop     = kSpectralAnalysisHop;
+    config.channels         = channels_;
+    config.max_block        = std::max(max_block_, 1);
+    config.sample_rate      = sample_rate_;
+    config.initial_mix      = std::clamp(state().get_value(kMix) / 100.0f, 0.0f, 1.0f);
+    config.mix_ramp_samples = 64;
+    return config;
+}
+
+std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
+    auto renderer = make_mask_renderer(mode);
+    if (!renderer) return nullptr;
+    if (!renderer->prepare(renderer_config_())) return nullptr;
+    // Hand the new renderer the magnitude that is already drawn, so a switch
+    // does not pass through a neutral field on its way to the right one.
+    //
+    // make_mask_layout_ reads field_/viewport_/layout_ and does NOT lock
+    // itself -- every other caller holds processing_state_mutex_ around it,
+    // and this one must too: a switch runs on the control thread while the
+    // editor may be writing a band. Copy the layout out under the lock and
+    // publish outside it, so the renderer is never built from a half-written
+    // field and the lock is not held across the design work publish_layout
+    // does.
+    pulp::signal::SpectralBandLayout layout;
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        layout = make_mask_layout_();
+    }
+    if (!renderer->publish_layout(layout)) return nullptr;
+    // Record what the renderer is now realising, so neither the control nor
+    // the audio path restages this same mask and pays a crossfade for it.
+    last_published_layout_ = layout;
+    last_published_layout_valid_ = true;
+    renderer->set_mix(std::clamp(state().get_value(kMix) / 100.0f, 0.0f, 1.0f));
+
+    // Publishing a layout only STAGES it; a renderer adopts at its own block
+    // boundary, which it reaches by processing. So a renderer handed to the
+    // audio thread the instant after publish_layout would render its first
+    // block through whatever it was initialised with, not through the mask the
+    // user is looking at. Pump silence here, on the control thread, until it
+    // reports the staged design adopted -- then reset, which the contract
+    // defines as clearing streaming state while KEEPING the adopted magnitude.
+    // The renderer therefore arrives live already realising the right mask and
+    // with no primed samples of its own.
+    //
+    // Bounded, and a failure to settle is not fatal: a renderer that never
+    // advances its generation still renders, just through its initial mask for
+    // one block, which is strictly better than refusing the switch.
+    if (renderer->active_generation() == 0) {
+        const int block = std::max(1, std::min(max_block_, 512));
+        const auto channels = static_cast<std::size_t>(std::max(1, channels_));
+        std::vector<float> silence(static_cast<std::size_t>(block), 0.0f);
+        // One scratch buffer PER channel. Every channel sharing one would be
+        // an aliasing write, and although the output is discarded here, a
+        // renderer is entitled to assume its output channels are distinct.
+        std::vector<std::vector<float>> scratch(
+            channels, std::vector<float>(static_cast<std::size_t>(block), 0.0f));
+        std::vector<const float*> in(channels, silence.data());
+        std::vector<float*> out(channels, nullptr);
+        for (std::size_t ch = 0; ch < channels; ++ch) out[ch] = scratch[ch].data();
+        for (int attempt = 0; attempt < 64; ++attempt) {
+            if (renderer->active_generation() > 0) break;
+            if (!renderer->process(in.data(), out.data(), block)) break;
+        }
+    }
+    renderer->reset();
+    return renderer;
+}
+
+void Spectr::drain_retired_renderers_() noexcept {
+    // Called only from the control thread, and only where the audio thread is
+    // known to be outside process(): either it has never run, or the epoch
+    // below proved it left. Freeing one of these from process() would be an
+    // allocation on the audio thread.
+    retired_renderers_.clear();
+}
+
+bool Spectr::set_render_mode(MaskRenderMode mode) {
+    if (mode == render_mode_) return true;
+
+    // Nothing is prepared yet (a host restoring a project before audio starts,
+    // or a test). Record the mode; prepare() builds the matching renderer.
+    if (!processor_prepared_) {
+        render_mode_ = mode;
+        return true;
+    }
+
+    // Build the replacement to completion BEFORE retiring the live one. A
+    // switch that cannot be prepared must leave the running mode untouched
+    // rather than drop the instance into silence.
+    auto replacement = build_renderer_(mode);
+    if (!replacement) return false;
+
+    MaskRenderer* incoming = replacement.get();
+    std::unique_ptr<MaskRenderer> outgoing = std::move(renderer_);
+    renderer_ = std::move(replacement);
+    render_mode_ = mode;
+
+    // Publish to the audio thread. From here process() renders through the new
+    // mode; the old object is still alive and still valid for any call already
+    // inside it.
+    active_renderer_.store(incoming, std::memory_order_release);
+
+    // Retire the old renderer only once the audio thread cannot still be
+    // inside it. An even epoch means it is outside process() right now and
+    // will re-read active_renderer_ on its next entry; a changed epoch means
+    // the call that may have held the old pointer has returned. Either proves
+    // the pointer is unreachable. If neither is observed in the budget below
+    // the object is parked instead of freed -- late is fine, freeing it under
+    // a live reader is not.
+    const std::uint64_t seen = render_epoch_.load(std::memory_order_acquire);
+    bool safe_to_free = (seen % 2 == 0);
+    for (int spin = 0; !safe_to_free && spin < 2000; ++spin) {
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+        const std::uint64_t now = render_epoch_.load(std::memory_order_acquire);
+        safe_to_free = (now != seen) || (now % 2 == 0);
+    }
+    if (safe_to_free) {
+        outgoing.reset();
+        drain_retired_renderers_();
+    } else {
+        retired_renderers_.push_back(std::move(outgoing));
+    }
+
+    // The host's delay compensation is now wrong by the difference between the
+    // two modes. This is the whole reason the switch is observable to a host.
+    flag_latency_changed();
+    flag_tail_changed();
+    return true;
+}
+
 void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // Re-prepare may overlap a parameter-sync task launched by the previous
-    // process cycle. Join it before rebuilding mask_processor_: the worker can
+    // process cycle. Join it before rebuilding the renderer: the worker can
     // publish a compiled layout, and publish_layout() must never race
-    // mask_processor_.prepare(). The lane is restarted after the new engine
+    // MaskRenderer::prepare(). The lane is restarted after the new engine
     // and its initial publication are ready.
     param_sync_lane_.stop();
 
@@ -289,18 +471,21 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     max_block_   = ctx.max_buffer_size;
     channels_    = std::max(1, ctx.output_channels);
 
-    pulp::signal::SpectralMaskProcessorConfig config;
-    config.frame.fft_size = kSpectralFftSize;
-    config.frame.analysis_hop = kSpectralAnalysisHop;
-    config.frame.channels = channels_;
-    config.frame.max_block = std::max(max_block_, 1);
-    config.frame.window = pulp::signal::WindowFunction::Type::hann;
-    config.sample_rate = static_cast<float>(sample_rate_);
-    config.initial_mix = std::clamp(state().get_value(kMix) / 100.0f, 0.0f, 1.0f);
-    config.mix_ramp_samples = 64;
-    config.mix_curve = pulp::signal::MixCurve::Linear;
-    processor_prepared_ = channels_ <= static_cast<int>(kMaximumChannels)
-                       && mask_processor_.prepare(config);
+    // No audio thread can be running across a prepare, so the previous
+    // renderer and anything a mode switch parked are free to go now.
+    active_renderer_.store(nullptr, std::memory_order_release);
+    renderer_.reset();
+    drain_retired_renderers_();
+
+    if (channels_ <= static_cast<int>(kMaximumChannels))
+        renderer_ = build_renderer_(render_mode_);
+    // The renderer arrives realising the layout build_renderer_ published, so
+    // seed the audio thread's cache with it rather than leaving it empty --
+    // an empty cache makes the first block restage a mask that is already live.
+    last_staged_layout_ = last_published_layout_;
+    last_staged_layout_valid_ = last_published_layout_valid_;
+    processor_prepared_ = renderer_ != nullptr;
+    active_renderer_.store(renderer_.get(), std::memory_order_release);
     // The mask processor was just re-prepared, so nothing this thread applied
     // before survives into it.
     audio_applied_surface_valid_ = false;
@@ -472,17 +657,22 @@ void Spectr::release() {
     // Join the sync worker BEFORE touching the mask processor: an in-flight
     // apply publishes into it.
     param_sync_lane_.stop();
-    mask_processor_ = {};
+    active_renderer_.store(nullptr, std::memory_order_release);
+    renderer_.reset();
+    drain_retired_renderers_();
     processor_prepared_ = false;
     bridge_.reset();
 }
 
 int Spectr::latency_samples() const {
-    // Each Release build has one measured, fixed-latency WOLA geometry.
-    // Return the prepared engine's exact value when available and the same
-    // deterministic contract before prepare so adapters can query early.
-    return processor_prepared_ ? mask_processor_.latency_samples()
-                               : kSpectralLatency;
+    // Latency is a function of the render mode and the product's fixed
+    // spectral geometry -- never of the host block size or the machine. Report
+    // the prepared renderer's own value when there is one, and the mode's
+    // declared value before prepare so an adapter can answer a host that asks
+    // early. Both paths are the same number for the same mode, which is what
+    // makes a project recall with the same delay compensation everywhere.
+    if (processor_prepared_ && renderer_) return renderer_->latency_samples();
+    return mask_render_latency_samples(render_mode_, renderer_config_());
 }
 
 void Spectr::set_layout(Layout L) {
@@ -494,6 +684,29 @@ void Spectr::set_layout(Layout L) {
     sync_params_from_field();
 }
 
+namespace {
+
+/// Publishes "the audio thread is inside process()" as an even/odd counter.
+///
+/// A mode switch replaces the renderer object underneath a possibly-running
+/// audio thread. The switching thread needs to know when the old pointer can
+/// no longer be held, and the audio thread must not pay a lock to tell it.
+/// Odd means inside, even means outside; a control thread that observes the
+/// counter change, or observes it even, knows any pointer read before that
+/// point has been released. Incrementing on every exit path is what makes the
+/// parity meaningful, hence the destructor.
+struct RenderEpochScope {
+    std::atomic<std::uint64_t>& epoch;
+    explicit RenderEpochScope(std::atomic<std::uint64_t>& e) noexcept : epoch(e) {
+        epoch.fetch_add(1, std::memory_order_acq_rel);
+    }
+    ~RenderEpochScope() noexcept { epoch.fetch_add(1, std::memory_order_release); }
+    RenderEpochScope(const RenderEpochScope&) = delete;
+    RenderEpochScope& operator=(const RenderEpochScope&) = delete;
+};
+
+} // namespace
+
 void Spectr::process(
     pulp::audio::BufferView<float>& output,
     const pulp::audio::BufferView<const float>& input,
@@ -501,6 +714,32 @@ void Spectr::process(
     pulp::midi::MidiBuffer& /*midi_out*/,
     const pulp::format::ProcessContext& ctx)
 {
+    // SPECTR-RENDER-PATH BEGIN
+    //
+    // Everything from here to the END marker runs on the audio thread and is
+    // scanned by tools/ci/check_render_path_clock.py for clocks, sleeps,
+    // threads and locks. The mode-adoption code below is inside it
+    // deliberately: adopting a renderer is the newest thing on this path and
+    // the easiest place to reach for a timestamp or a lock while retiring the
+    // old object. It does neither -- the handshake is an atomic pointer and a
+    // counter, and the waiting happens on the control thread in
+    // set_render_mode().
+    //
+    // The region ENDS before the modulated-field publication further down,
+    // which reads steady_clock on purpose. That read stamps a snapshot for the
+    // UI to draw; nothing derived from it reaches a sample. Excluding it is
+    // therefore a statement about what the marker covers, not a gap: no audio
+    // this function emits depends on that value, and moving the END marker
+    // past it would make the scan assert something false rather than
+    // something stronger.
+
+    // Mark the block, and take the live renderer exactly once. A mode switch
+    // can land between blocks but never within one: the whole block renders
+    // through a single realisation, so no output sample is half of one mode
+    // and half of the other.
+    const RenderEpochScope epoch_scope{render_epoch_};
+    MaskRenderer* const renderer = active_renderer_.load(std::memory_order_acquire);
+
     // spectr#34: host-side parameter writes (automation playback, generic
     // controls) land in the store between blocks. On any drift, hand the
     // adoption to the sync worker — mask-table compilation is a
@@ -521,12 +760,14 @@ void Spectr::process(
     // host cycle wrap so looping does not emit a fresh startup gap.
     const bool should_reset_stream_history = ctx.should_reset_stream_history();
     if (should_reset_stream_history) {
-        if (processor_prepared_)
-            mask_processor_.reset();
+        if (processor_prepared_ && renderer)
+            renderer->reset();
         output_gain_.set_immediate(target_output_gain);
     }
 
-    if (processor_prepared_
+    // Gate on the pointer this block actually dereferences, not on a separate
+    // bool that could in principle disagree with it.
+    if (processor_prepared_ && renderer != nullptr
         && output.num_channels() == static_cast<std::size_t>(channels_)
         && input.num_channels() == static_cast<std::size_t>(channels_)
         && output.num_samples() == input.num_samples()) {
@@ -733,9 +974,13 @@ void Spectr::process(
                         const double rate_2 = cycles_per_second
                             / std::max(0.0625, static_cast<double>(
                                 modulation_settings.lfo2_beats_per_cycle));
+                        // SPECTR-RENDER-PATH END
+                        //
                         // mach_absolute_time on Apple platforms: a vDSO-style
                         // counter read, no lock and no allocation, so it is
-                        // safe on this thread.
+                        // safe on this thread. It timestamps a snapshot the UI
+                        // draws from; no audio sample is a function of it,
+                        // which is why the scanned region stops here.
                         const auto published_ns = std::chrono::duration_cast<
                             std::chrono::nanoseconds>(
                                 std::chrono::steady_clock::now()
@@ -808,8 +1053,21 @@ void Spectr::process(
                         automated.bands[band].muted =
                             audible.bands[band].muted;
                     }
-                    (void)mask_processor_.set_layout_rt(automated);
-                    mask_processor_.set_mix(std::clamp(
+                    // Stage only a mask that is not already live. An
+                    // unchanged restage is not a no-op inside the renderer:
+                    // it queues a redesign that is crossfaded in at whichever
+                    // block the worker finishes on, and a crossfade between
+                    // an impulse response and an identical copy of itself
+                    // does not reproduce it bit-for-bit. Without this gate two
+                    // identical offline renders differed, which would break a
+                    // null test and any bit-exact ratchet.
+                    if (!last_staged_layout_valid_
+                        || !same_mask_layout_(last_staged_layout_, automated)) {
+                        (void)renderer->set_layout_rt(automated);
+                        last_staged_layout_ = automated;
+                        last_staged_layout_valid_ = true;
+                    }
+                    renderer->set_mix(std::clamp(
                         cursor.value(kMix) / 100.0f, 0.0f, 1.0f));
 
                     for (std::size_t channel = 0;
@@ -819,7 +1077,7 @@ void Spectr::process(
                         output_channels_[channel] =
                             out_slice.channel(channel).data();
                     }
-                    const bool processed = mask_processor_.process(
+                    const bool processed = renderer->process(
                         input_channels_.data(), output_channels_.data(),
                         static_cast<int>(out_slice.num_samples()));
                     if (!processed) {
@@ -889,10 +1147,10 @@ void Spectr::process(
             input_channels_[channel] = input.channel(channel).data();
             output_channels_[channel] = output.channel(channel).data();
         }
-        mask_processor_.set_mix(std::clamp(mix, 0.0f, 1.0f));
+        renderer->set_mix(std::clamp(mix, 0.0f, 1.0f));
         audio_mix_percent_ = mix * 100.0f;
         audio_output_trim_db_ = out_trim_db;
-        const bool processed = mask_processor_.process(
+        const bool processed = renderer->process(
             input_channels_.data(), output_channels_.data(),
             static_cast<int>(output.num_samples()));
 
@@ -1023,11 +1281,48 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // than with a feature mysteriously off.
     root.addMember("morph_applies_viewport", morph_applies_viewport_);
 
+    // Which realisation of the drawn magnitude this project was authored
+    // through. Always written, by every writer, from the moment the mode
+    // existed -- that is what makes its ABSENCE meaningful rather than
+    // ambiguous. A blob without this member can only have come from a build
+    // that had one renderer, so a reader knows it was authored linear-phase
+    // without having to guess or consult a default. See the reader.
+    //
+    // Deliberately a token and not an integer: an integer written by a future
+    // build that adds a third mode would land inside this build's enum range
+    // and silently read as an existing mode. An unrecognised token cannot.
+    //
+    // Emitted unconditionally, INCLUDING when it equals the default. The
+    // tempting economy -- omit when default, infer on read -- is exactly what
+    // would make a future change of default silently rewrite the meaning of
+    // every project already saved. The blob says what it is.
+    root.addMember("render_mode",
+                   std::string(render_mode_token(render_mode_)));
+
+
     auto json = choc::json::toString(root, /*useLineBreaks=*/false);
     return {json.begin(), json.end()};
 }
 
 namespace {
+
+/// Test seam for the recall rule's negative control.
+///
+/// The rule below -- a project with no stored mode reopens linear phase --
+/// is the whole reason this feature is safe to ship, and a rule nobody has
+/// watched reject the defect it forbids is not a rule. This lets one ctest row
+/// reinstate exactly that defect (absence adopting some other mode instead of
+/// the authored one) so the contract can be seen going red. Read once per
+/// process; unset in every shipping run, and deliberately not a compile-time
+/// flag so the shipping binary is the one the control is proven against.
+bool migration_plant_adopts_other_mode_() {
+    static const bool planted = [] {
+        const char* value = std::getenv("SPECTR_RENDER_MODE_PLANT");
+        return value != nullptr
+            && std::string_view(value) == "migration-adopts-other-mode";
+    }();
+    return planted;
+}
 
 void reset_supplemental_state_(SnapshotBank& bank, PatternLibrary& patterns) {
     bank = SnapshotBank{};
@@ -1157,6 +1452,12 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             morph_applies_viewport_ = true;
             morph_derived_ = false;
             morph_overrides_.reset();
+            // An empty payload is the host saying "reset to defaults", and it
+            // is the ONE path here that means a fresh instance rather than a
+            // restored project. It therefore takes the new-instance default,
+            // not the pre-mode migration rule -- there is no project being
+            // migrated. Applied below, outside this lock.
+            render_mode_unknown_on_load_ = false;
             synced_field_ = field_;
             synced_viewport_ = viewport_;
             synced_layout_ = layout_;
@@ -1167,6 +1468,8 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
                 param_store_->get_value(detail::surface_slot_param_id(slot)),
                 std::memory_order_relaxed);
         }
+        // Outside the lock, for the same reason as the main path below.
+        (void)set_render_mode(kDefaultRenderMode);
         return true;
     }
 
@@ -1291,6 +1594,39 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
 
     // Destination selection. Absent on a writer that predates the Targets
     // control: the unset sentinel then reproduces that writer's semantics.
+    // ── Render mode ────────────────────────────────────────────────────
+    //
+    // The recall rule, and it is a hard one: a project authored before this
+    // mode existed reopens as linear_phase, ALWAYS, whatever a new instance
+    // happens to default to. Absence here is not "no preference, use the
+    // default" -- it is positive evidence about how the project was authored,
+    // because linear phase was the only renderer that could have produced it.
+    // Treating absence as the default would change both how an existing
+    // session sounds and the latency it reports to its host, on reopen, with
+    // no user action. That is the failure this rule exists to prevent, and it
+    // is why kDefaultRenderMode is not consulted anywhere in this function.
+    MaskRenderMode new_render_mode = MaskRenderMode::linear_phase;
+    if (migration_plant_adopts_other_mode_())
+        new_render_mode = MaskRenderMode::zero_latency;  // the forbidden defect
+    if (root.hasObjectMember("render_mode")) {
+        const auto& value = root["render_mode"];
+        if (!value.isString()) return false;
+        // An unrecognised mode is refused, not substituted. A project written
+        // by a build with a third mode names a realisation this one does not
+        // have; rendering it through a different one would change how it
+        // sounds and what latency it reports, with nothing said. Failing
+        // closed leaves the live state untouched and tells the caller.
+        if (!render_mode_from_token(std::string(value.getString()),
+                                    new_render_mode))
+            return false;
+    } else if (version >= 4) {
+        // A v4 writer always emits the field, so its absence here is not an
+        // old project -- it is a damaged one. Refusing it is what keeps the
+        // absent case unambiguous for every version below: at v3 and under,
+        // silence can only mean "written before more than one mode existed".
+        return false;
+    }
+
     bool new_morph_applies_viewport = true;
     if (root.hasObjectMember("morph_applies_viewport")) {
         const auto& flag = root["morph_applies_viewport"];
@@ -1372,6 +1708,19 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             synced_layout_ = layout_;
         }
     }
+    // Adopt the restored mode OUTSIDE the state lock: switching builds a
+    // renderer, which publishes a layout and therefore takes that same lock.
+    // If the instance is already running this rebuilds the renderer and tells
+    // the host its delay compensation moved; if it is not, it records the mode
+    // for the prepare that follows. A restore that cannot build the requested
+    // renderer keeps the one it has rather than failing the whole project --
+    // the bands are right either way, and a silent mode substitution is
+    // reported through render_mode_unknown_on_load().
+    if (!set_render_mode(new_render_mode)) {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        render_mode_unknown_on_load_ = true;
+    }
+
     if (version < 3) {
         // Migrate legacy supplemental live state into the new parameter-owned
         // representation. Future saves then emit only v3 supplemental data.
