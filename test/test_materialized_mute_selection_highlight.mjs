@@ -173,7 +173,13 @@ const controls = {
   // read zero on the planted document and abort with NO VERDICT before the
   // check the plant exists to exercise ever ran.
   "selection branch": html.split("if (G.isSel").length - 1,
-  "mute sentinel": html.split("rg[i] = smooth(rg[i], -1.02, dt * 26)").length - 1,
+  // Matched WITHOUT the ramp's target value. This control keyed on
+  // `smooth(rg[i], -1.02, ...)` and went blind the day that target changed:
+  // a muting band now collapses toward 0 rather than travelling to the -1.02
+  // tripwire, and a control carrying the old number reads zero and takes the
+  // whole suite down with it as NO VERDICT. What this control is actually
+  // asking is "does the draw loop still ramp a muting band at all".
+  "mute sentinel": html.split("rg[i] = smooth(rg[i], ").length - 1,
   "marquee press": html.split('mode: "marquee",').length - 1,
   "selection readback": html.split(
     "selection: Array.from(selection).sort((a, b) => a - b)").length - 1,

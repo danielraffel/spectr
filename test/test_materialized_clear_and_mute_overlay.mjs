@@ -139,7 +139,13 @@ const controls = {
     "if (nativeProjectionRef.current && !nativeEditPendingRef.current)").length - 1,
   "host-automation projection": html.split("applyHostAutomationState: (state)").length - 1,
   "modulation overlay": html.split("applyModulationFrame: (state)").length - 1,
-  "muted paint sentinel": html.split("rg[i] = smooth(rg[i], -1.02, dt * 26)").length - 1,
+  // Matched WITHOUT the ramp's target value. This control keyed on
+  // `smooth(rg[i], -1.02, ...)` and went blind the day that target changed:
+  // a muting band now collapses toward 0 rather than travelling to the -1.02
+  // tripwire, and a control carrying the old number reads zero and takes the
+  // whole suite down with it as NO VERDICT. What this control is actually
+  // asking is "does the draw loop still ramp a muting band at all".
+  "muted paint sentinel": html.split("rg[i] = smooth(rg[i], ").length - 1,
 };
 for (const [label, count] of Object.entries(controls))
   console.log("control   %s %s", label.padEnd(28), count);
@@ -187,6 +193,42 @@ for (const header of ["      clearGains: () => {", "      resetAll: () => {",
       + "the publication effect cannot tell it from a native echo and a "
       + "latched suppressor will swallow it");
   }
+}
+
+// S2. Every projection into the paint refs must encode a muted band as the
+// `-Infinity` SENTINEL, never as 0.
+//
+// This used to be provable from the runtime arm alone: a projection that wrote
+// 0 knocked the band off its sentinel, the draw loop re-ran its collapse, and
+// the band painted a sawtooth of distinct values instead of one. That
+// measurement no longer sees it, and the reason is a deliberate change
+// elsewhere rather than a gap here -- the mute collapse now ramps toward 0 and
+// trips the sentinel at |rg| < 0.004, so a band flattened to EXACTLY 0 is back
+// on its sentinel on the very next frame and never paints a second value.
+//
+// The defect is not gone, only its downstream symptom: a projection writing 0
+// is still writing the wrong thing, and the next change to the collapse could
+// make it visible again. So the contract is asserted where it lives -- at the
+// projection -- which is also more direct than measuring a consequence three
+// steps away.
+const projections = {
+  "native state projections encode a muted band as the sentinel": [
+    "state.muted[index] ? -Infinity : clamp(value, -1.02, 1.02)", 3],
+  "the modulation release encodes a muted band as the sentinel": [
+    "isMuted(value) ? -Infinity : clamp(value, -1.02, 1.02)", 1],
+};
+for (const [label, [token, expected]] of Object.entries(projections)) {
+  const found = html.split(token).length - 1;
+  console.log("static    %s %d (want %d)", label.padEnd(58), found, expected);
+  if (found !== expected)
+    fail(`${label}: ${found} site(s), expected ${expected} -- a projection that `
+      + "writes 0 for a muted band takes it off the sentinel the draw loop "
+      + "holds it on");
+}
+for (const flattened of ["state.muted[index] ? 0 : clamp(value, -1.02, 1.02)",
+                         "isMuted(value) ? 0 : clamp(value, -1.02, 1.02)"]) {
+  if (html.includes(flattened))
+    fail(`a projection still flattens a muted band to 0: ${flattened}`);
 }
 
 // ------------------------------------------------------------ runtime half
