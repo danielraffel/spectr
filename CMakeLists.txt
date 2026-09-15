@@ -1052,7 +1052,8 @@ if(SPECTR_NODE_EXECUTABLE)
     # rather than in WILL_FAIL because WILL_FAIL accepts any non-zero exit, so
     # a usage error or a missing document would read green while proving
     # nothing.
-    foreach(_latency_plant index post-index no-notify truthiness typed-label)
+    foreach(_latency_plant index post-index no-notify uneven-hint
+            truthiness typed-label)
         add_test(NAME Spectr-materialized-latency-mode-control-${_latency_plant}
             COMMAND ${SPECTR_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_latency_mode.mjs

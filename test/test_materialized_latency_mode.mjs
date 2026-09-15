@@ -44,6 +44,7 @@ const plantTruthiness = args.includes("--plant-truthiness");
 const plantTypedLabel = args.includes("--plant-typed-label");
 const plantPostIndex = args.includes("--plant-post-index");
 const plantNoNotify = args.includes("--plant-no-notify");
+const plantUnevenHint = args.includes("--plant-uneven-hint");
 const expectFail = args.includes("--expect-fail");
 const documentPath = args.find((a) => !a.startsWith("--"));
 
@@ -103,6 +104,14 @@ if (plantNoNotify) {
   plant("hydration that stores the payload without waking the control",
     "        (latencyStore.listeners || []).forEach(function (fn) {",
     "        ([]).forEach(function (fn) {");
+}
+if (plantUnevenHint) {
+  // The defect the reserve exists for: without a floor the row is as tall as
+  // whichever description happens to be selected, so every group below it
+  // jumps on each switch. Planting a zero reserve reinstates exactly that.
+  plant("a description with no reserved height, so the row resizes per option",
+    "      style: { minHeight: 52 } },",
+    "      style: { minHeight: 0 } },");
 }
 if (plantTypedLabel) {
   plant("a panel that types the option labels instead of reading them",
@@ -252,7 +261,13 @@ let chips = null;
   }
   const field = out.created.filter((n) => n.type === "SpectrSettingsField")[0];
   if (field) {
-    const hint = String(field.props.hint || "");
+    // The hint is an element carrying the height reserve, so read the text it
+    // wraps rather than stringifying the element (which yields [object Object]
+    // and would make both assertions below vacuously fail -- or, with a looser
+    // comparison, vacuously pass).
+    const hintNode = field.props.hint;
+    const hint = String(
+      hintNode && hintNode.children ? hintNode.children.join("") : (hintNode || ""));
     // 213 from the payload's ms, not typed: the payload carries 213.3333...,
     // so a panel that printed a typed "213 ms" would still pass -- but one
     // that printed the RAW number, or the wrong mode's number, would not.
@@ -343,6 +358,34 @@ let chips = null;
   hydrate({ latency: PAYLOAD, snapshots: {} }, globals, console);
   check("a payload arriving after mount wakes the control", woke === 1,
     `listener fired ${woke} time(s)`);
+}
+
+// ---- 7. Switching must not change the row's height ----------------------
+// The owner's report: selecting one option after the other pushed every group
+// below LATENCY up or down. The two descriptions wrap to different line counts
+// (four against three), so the row was as tall as whatever was selected.
+{
+  const heightFor = (mode) => {
+    const globals = {};
+    const payload = JSON.parse(JSON.stringify(PAYLOAD));
+    payload.mode = mode;
+    const out = run(globals, { latency: payload, snapshots: {} });
+    const field = out.created.filter((n) => n.type === "SpectrSettingsField")[0];
+    const hint = field && field.props && field.props.hint;
+    // The hint is an element carrying the reserve, not a bare string.
+    const style = hint && hint.props && hint.props.style;
+    return style ? style.minHeight : null;
+  };
+  const mixing = heightFor("linear_phase");
+  const tracking = heightFor("zero_latency");
+  check("both options reserve the same description height",
+    mixing !== null && tracking !== null && mixing === tracking,
+    `mixing=${mixing} tracking=${tracking}`);
+  // Control: the reserve is a real height, not zero. A zero reserve would be
+  // "equal" in both selections and reserve nothing at all, which is the
+  // defect wearing the assertion's clothes.
+  check("the reserved height is non-zero",
+    typeof mixing === "number" && mixing > 0, String(mixing));
 }
 
 console.log("");
