@@ -556,6 +556,11 @@ TEST_CASE("The design grid is a renderer parameter and fails closed above its ca
     auto renderer = spectr::make_mask_renderer(MaskRenderMode::zero_latency);
     REQUIRE_FALSE(renderer->prepare(config));
     REQUIRE_FALSE(renderer->prepared());
+    // A refused prepare leaves nothing half-applied: the renderer must also
+    // refuse the work that a prepared one would accept, rather than taking a
+    // layout it will never realise.
+    REQUIRE_FALSE(renderer->publish_layout(zoom_layout()));
+    REQUIRE_FALSE(renderer->set_layout_rt(zoom_layout()));
 
     // Control: the same renderer object prepares fine at a grid that does fit,
     // so the refusal above is the cap and not a renderer that never prepares.

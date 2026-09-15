@@ -145,6 +145,11 @@ public:
             > pulp::signal::kMaximumMinimumPhaseFirSize)
             return false;
 
+        // Past this point the previous prepared state is gone, so every
+        // remaining failure leaves the renderer UNPREPARED rather than
+        // half-applied — which is what the contract promises and what
+        // `prepared()` then reports.
+        prepared_ = false;
         config_ = config;
         channels_ = config.channels;
 
@@ -187,14 +192,20 @@ public:
             convolvers_[static_cast<std::size_t>(ch)].set_crossfade(kIrCrossfadeSamples);
         }
 
-        prepared_ = true;
         pending_generation_.store(0, std::memory_order_release);
         active_generation_.store(0, std::memory_order_release);
         next_generation_ = 1;
         rt_layout_pending_.store(false, std::memory_order_relaxed);
 
-        return lane_.start(&ZeroLatencyMaskRenderer::handle_design_, this,
-                           pulp::format::BackgroundTaskPolicy::Latest);
+        // Last, and only once everything it depends on exists. A renderer
+        // that reported itself prepared without a design worker would accept
+        // a staged layout from the audio thread and silently never realise
+        // it, which is worse than refusing to prepare at all.
+        if (!lane_.start(&ZeroLatencyMaskRenderer::handle_design_, this,
+                         pulp::format::BackgroundTaskPolicy::Latest))
+            return false;
+        prepared_ = true;
+        return true;
     }
 
     [[nodiscard]] bool prepared() const noexcept override { return prepared_; }
