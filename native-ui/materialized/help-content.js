@@ -113,7 +113,11 @@ Spectr can realise the shape you draw in two ways, and they trade against each o
 
 **Mixing** looks at a large slice of audio at once, and cuts far deeper for it. A muted band lands roughly 150 dB lower than the same band in Tracking across the full range, and 5 to 10 dB lower in a zoomed view. It costs about 213 ms of latency at 48 kHz, which your DAW lines up automatically so playback stays in sync.
 
-Neither one is an upgrade on the other. If you are playing or recording through Spectr, the delay decides it. If you are shaping a part that is already recorded and latency costs you nothing, the depth decides it.
+Looking at that much audio at once has a second cost, and it is the reason Tracking is not just a lesser option. Mixing spreads a little of every sharp sound backwards in time, so a faint trace of a drum hit can arrive about a seventh of a second before the hit itself. That is not a fault waiting to be fixed. It is the price of the even, symmetrical way Mixing works, which is the same thing that makes it deep. Tracking spreads nothing backwards at all.
+
+Most of the time you will never hear it. It only becomes audible when you cut a narrow low band on percussive material, and that happens to be the case where Mixing's extra depth buys you the least.
+
+Neither one is an upgrade on the other. Use **Tracking** for drums and other percussive material when you are cutting a narrow low band, and whenever you are playing or recording through Spectr. Use **Mixing** everywhere else: it is dramatically deeper on mutes, and on most material that backward spread sits far too quiet to notice.
 
 New instances start in Mixing. You can change it in Settings, under Latency.
 

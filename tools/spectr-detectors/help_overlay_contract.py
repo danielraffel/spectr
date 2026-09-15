@@ -116,6 +116,13 @@ COPY_MARKERS = (
     "move toward that snapshot and back again",
     "shows them together so you can see the difference",
     "Neither one is an upgrade on the other",
+    # The one case where the lower-latency mode is the BETTER answer rather
+    # than a compromise, and a user has no way to discover it themselves: a
+    # narrow low-band cut on percussive material is exactly where Mixing's
+    # pre-ring becomes audible and where its depth advantage is smallest.
+    # Pinned because it is the most easily lost sentence in the section -- it
+    # reads like a caveat and would be the first thing an editorial pass cut.
+    "percussive material when you are cutting a narrow low band",
 )
 HEADINGS = (
     "How the bands work", "Zooming", "Drawing", "The analyzer",
@@ -338,6 +345,12 @@ PLANTS = {
     "seamless-claim": lambda h, a: (
         h, a.replace("Switching rebuilds the processor",
                      "Switching is seamless and rebuilds the processor")),
+    # Drops the percussive guidance while leaving every figure and both
+    # forbidden-phrase rules satisfied, so only the approved-copy rule can
+    # catch it.
+    "lost-percussive-guidance": lambda h, a: (
+        h, a.replace("percussive material when you are cutting a narrow low band",
+                     "material of any kind")),
     # A backtick would end the template literal early and take the rest of the
     # guide with it, silently.
     "backtick": lambda h, a: (h, a.replace("## Zooming", "## Zoo`ming")),

@@ -1846,7 +1846,8 @@ if(Python3_Interpreter_FOUND)
     # below was verified by hand to fail on ITS OWN rule and no other.
     foreach(_help_plant
             stale-latency stale-latency-tracking
-            zero-latency-claim seamless-claim)
+            zero-latency-claim seamless-claim
+            lost-percussive-guidance)
         add_test(NAME Spectr-materialized-help-overlay-control-${_help_plant}
             COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/help_overlay_contract.py
