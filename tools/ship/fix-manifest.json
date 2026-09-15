@@ -393,6 +393,66 @@
         "__spectrLatency"
       ],
       "note": "Screened in both directions against BINARIES, not the document: both read 0 in the pre-change Spectr build at d2759a6 and non-zero after (1 and 2), with SpectrSettingsGroup reading 2 in both arms as the control. Both identifiers are introduced by this change, so they discriminate rather than keying on a pre-existing string. Deliberately NOT render_mode: it reads 2 in BOTH arms (it occurs in Pulp/Skia text the binary already carried), which is exactly the 'absent from the document, abundant in the artifact' trap this manifest's own header warns about."
+    },
+    {
+      "id": "preset-delete-actually-deletes",
+      "pr": 143,
+      "title": "DELETE removes a preset instead of doing nothing",
+      "tokens": [
+        "setPendingDelete",
+        "PatternDeleteDialog",
+        "data-spectr-delete-dialog"
+      ],
+      "note": "The handler's only statement called `confirm` -- a browser dialog this runtime does not define -- so it threw before deleting anything, on every press by every route. The button was REACHABLE the whole time, which is why this looked like the action-row layout defect and is not. Tokens name the replacement confirmation, which is new text; the removed `confirm(` call leaves nothing to find."
+    },
+    {
+      "id": "preset-search-no-match-not-empty",
+      "pr": 143,
+      "title": "A preset search that matches nothing no longer claims the library is empty",
+      "tokens": [
+        "data-spectr-user-empty",
+        "no user preset matches"
+      ],
+      "note": "`filteredUser.length === 0` is equally true for an empty library and for a query matching none of a full one, and both printed 'no user patterns -- click SAVE CURRENT below'. The data attribute is also what the gate reads, so the token and the assertion are the same text."
+    },
+    {
+      "id": "preset-export-file-tells-the-truth",
+      "pr": 143,
+      "title": "EXPORT (FILE) no longer reports success without writing anything",
+      "tokens": [
+        "canDownloadFile",
+        "EXPORTED TO CLIPBOARD"
+      ],
+      "note": "Blob, URL and document.createElement all exist in this runtime, so the browser export body ran clean to its last line and announced EXPORTED while delivering nowhere. FileReader is the same capability class and is undefined here, which is the discriminator; where it is absent the export goes to the clipboard, which the native probe proved works."
+    },
+    {
+      "id": "preset-duplicate-reaches-the-library",
+      "pr": 143,
+      "title": "DUPLICATE survives the next preset command instead of vanishing",
+      "tokens": [
+        "onDuplicatePattern",
+        "duplicate_pattern"
+      ],
+      "note": "DUPLICATE wrote React state and sent nothing native; every pattern command's response replaces that state wholesale from the library. Invisible to a row count -- the copy dying and a save landing cancel out -- so the gate compares preset ids. PatternLibrary::duplicate already existed and was unit-tested with no production caller."
+    },
+    {
+      "id": "preset-default-reaches-the-library",
+      "pr": 143,
+      "title": "SET AS DEFAULT survives the next preset command",
+      "tokens": [
+        "onSetDefaultPattern",
+        "set_default_pattern"
+      ],
+      "note": "Same erasure as DUPLICATE and harder to see: the COUNT of starred rows is one before and after whatever happens, because a factory preset is default at rest. PatternLibrary::set_default likewise existed, was tested, and had no caller."
+    },
+    {
+      "id": "preset-search-value-guarded",
+      "pr": 143,
+      "title": "The preset search reads its value the way every other field in the panel does",
+      "tokens": [
+        "setQuery(String(spectrInputValue"
+      ],
+      "note": "The search input was the only one of four in this panel reading `e.target.value` raw. A value that does not survive that read makes `query` undefined, and the next line of the render is `query.toLowerCase()` inside `userPatterns.filter`, so the panel throws out of render. Reproduced through the activation seam; no user-reachable path was established, so this is hardening to match its siblings rather than a fix for a reported defect."
     }
   ]
 }
