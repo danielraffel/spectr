@@ -806,6 +806,40 @@ set_tests_properties(Spectr-band-menu-unmute-restores-negative-control
         SKIP_RETURN_CODE 77
         RESOURCE_LOCK spectr_native_materialized_editor)
 
+# PRESET OPERATIONS. Every action the preset manager offers, driven in the real
+# native editor and judged by a count or an identity taken before and after.
+#
+# Exit codes: 0 pass, 1 a finding, 3 the premise is unproven (the manager never
+# opened, no action resolved, the row counter cannot move). 3 must never read as
+# a pass.
+add_test(NAME Spectr-preset-operations
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_PRESET_OPS=1
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-preset-operations
+        --backend=skia)
+set_tests_properties(Spectr-preset-operations PROPERTIES
+    TIMEOUT 300
+    SKIP_RETURN_CODE 77
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Its RED arm. Collapses the delete confirmation's own DELETE to the 0x0 box an
+# unreachable control paints -- NATIVELY, because a JS style write is reverted
+# by the next React commit and a gate that went green because its plant was
+# undone is worse than no plant -- and requires the gate to notice. The
+# inversion lives in the binary rather than in WILL_FAIL, which accepts any
+# non-zero exit: the exit-3 "premise unproven" path would satisfy it while
+# measuring nothing.
+add_test(NAME Spectr-preset-operations-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_PRESET_OPS=1
+        SPECTR_PRESET_OPS_PLANT=1
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-preset-operations-negctl
+        --backend=skia)
+set_tests_properties(Spectr-preset-operations-negative-control PROPERTIES
+    TIMEOUT 300
+    SKIP_RETURN_CODE 77
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
 # Status overlay (section 5): the overlay must sit where the design puts it,
 # track a live drag, and then dismiss itself. The last of those is a TIME
 # property and the first is a PIXEL property, so this gate drives the shipping
@@ -1622,6 +1656,35 @@ endif()
 # syntax checker -- and executing the ruler body is what catches a scope
 # defect, which parses clean by definition.
 if(SPECTR_NODE_EXECUTABLE)
+    # Preset-manager operations, asserted against the shipping document: the
+    # delete path must not call a browser global this runtime does not define,
+    # the USER empty state must distinguish an empty library from a query that
+    # matched nothing, EXPORT must check for a file sink before claiming a
+    # file, DUPLICATE and SET AS DEFAULT must reach the pattern library, and
+    # the search field must read its value the guarded way its siblings do.
+    add_test(NAME Spectr-materialized-preset-operations
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_preset_operations.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-preset-operations PROPERTIES
+        TIMEOUT 60)
+    # One plant per rule, and each plant restores EXACTLY the pre-fix shape of
+    # its own rule. The harness requires a planted run to redden that rule AND
+    # NO OTHER -- a stricter contract than --expect-fail alone, which a plant
+    # tripping four rules at once satisfies while proving nothing about any of
+    # them. An UNPLANTED run under --expect-fail exits non-zero, so the
+    # inversion is not a free pass.
+    foreach(_preset_plant delete-confirm empty-state export-file-sink
+                          duplicate-library set-default-library search-value)
+        add_test(NAME Spectr-materialized-preset-operations-control-${_preset_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_preset_operations.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant ${_preset_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-preset-operations-control-${_preset_plant}
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+
     add_test(NAME Spectr-materialized-axis-headers
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_axis_headers.mjs

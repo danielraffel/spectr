@@ -627,6 +627,38 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             return EditorBridge::ok_response(pattern_library_projection_(library));
         });
 
+    // Both of these route to PatternLibrary methods that already existed and
+    // were already unit-tested, and had ZERO production callers: the editor
+    // did each of them by writing React state alone. That state is replaced
+    // wholesale from this library by the next command's response, so a
+    // duplicate or a default survived only until the user's next save --
+    // silently, and invisibly to a row count, because a copy being dropped
+    // and a save landing cancel out in the total.
+    bridge.add_handler("duplicate_pattern",
+        [&library](const choc::value::ValueView& p) -> std::string {
+            const auto id = EditorBridge::get_string(p, "id");
+            if (id.empty()) return EditorBridge::err_response("pattern id missing");
+            const auto copy = library.duplicate(id);
+            if (!copy)
+                return EditorBridge::err_response("unknown pattern id");
+            auto payload = pattern_library_projection_(library);
+            payload.addMember("id", copy->id);
+            payload.addMember("name", copy->name);
+            return EditorBridge::ok_response(payload);
+        });
+
+    // Factory ids are accepted deliberately: FLAT is the library's own resting
+    // default, so refusing them would make the default unresettable from the
+    // editor. set_default validates the id against factory + user itself.
+    bridge.add_handler("set_default_pattern",
+        [&library](const choc::value::ValueView& p) -> std::string {
+            const auto id = EditorBridge::get_string(p, "id");
+            if (id.empty()) return EditorBridge::err_response("pattern id missing");
+            if (!library.set_default(id))
+                return EditorBridge::err_response("unknown pattern id");
+            return EditorBridge::ok_response(pattern_library_projection_(library));
+        });
+
     bridge.add_handler("delete_pattern",
         [&library](const choc::value::ValueView& p) -> std::string {
             const auto id = EditorBridge::get_string(p, "id");
