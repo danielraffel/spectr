@@ -540,6 +540,33 @@ private:
     // from process().
     std::vector<std::unique_ptr<MaskRenderer>> retired_renderers_{};
 
+    // The last layout the audio thread staged into the renderer, and whether
+    // it holds one. Owned by process() alone -- never read or written by any
+    // other thread -- so comparing against it needs no synchronisation.
+    //
+    // It exists to stop the audio thread re-staging a mask that is already
+    // live. Re-staging one is not free: it spawns a redesign whose result is
+    // swapped in with a crossfade at whatever block the worker happens to
+    // finish on, and crossfading an impulse response with an identical copy
+    // of itself is not an exact identity in floating point. That made two
+    // renders of the same input differ by about one ULP at a position that
+    // moved with thread scheduling -- measured before this gate, and zero
+    // after it.
+    pulp::signal::SpectralBandLayout       last_staged_layout_{};
+    bool                                   last_staged_layout_valid_ = false;
+
+    // The last layout handed to the renderer from a CONTROL thread, guarded by
+    // processing_state_mutex_ like every other control-side field here.
+    //
+    // The parameter-sync worker republishes on every drift it observes, and
+    // most of those carry a mask the renderer is already realising. Each one
+    // still queues a redesign and a crossfade, landing at whichever block that
+    // worker finishes on -- which is why two identical offline renders
+    // differed. Skipping a republication that changes nothing is what makes an
+    // offline bounce reproducible.
+    pulp::signal::SpectralBandLayout       last_published_layout_{};
+    bool                                   last_published_layout_valid_ = false;
+
     /// Build and fully prepare a renderer for `mode` against the current
     /// geometry, including its initial layout and mix. Returns null when the
     /// mode cannot be prepared; the caller keeps whatever was already live.

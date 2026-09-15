@@ -24,6 +24,34 @@
 
 namespace spectr {
 
+namespace {
+
+/// Are these two layouts the same mask?
+///
+/// Bitwise on purpose: the question is whether re-staging would produce an
+/// identical impulse response, and anything short of exact equality can. Only
+/// the bands the layout declares active are compared; the array's tail is not
+/// part of the mask.
+[[nodiscard]] bool same_mask_layout_(
+    const pulp::signal::SpectralBandLayout& a,
+    const pulp::signal::SpectralBandLayout& b) noexcept {
+    if (a.active_bands != b.active_bands) return false;
+    if (a.min_hz != b.min_hz || a.max_hz != b.max_hz) return false;
+    if (a.spacing != b.spacing) return false;
+    if (a.edge_policy != b.edge_policy) return false;
+    if (a.boundary_kernel != b.boundary_kernel) return false;
+    if (a.transition_fraction != b.transition_fraction) return false;
+    if (a.transition_frames != b.transition_frames) return false;
+    for (std::uint32_t i = 0; i < a.active_bands; ++i) {
+        if (a.bands[i].gain_db != b.bands[i].gain_db) return false;
+        if (a.bands[i].muted   != b.bands[i].muted)   return false;
+    }
+    return true;
+}
+
+} // namespace
+
+
 Spectr::Spectr() : editor_authority_(*this) {
 #if defined(SPECTR_NATIVE_EDITOR)
     pulp::view::CommandInfo settings;
@@ -262,7 +290,17 @@ void Spectr::publish_processing_state_() noexcept {
 
     if (!processor_prepared_) return;
     if (!renderer_) return;
+    // Republishing a mask the renderer is already realising is not free: it
+    // queues a redesign that is crossfaded in at whichever block the worker
+    // finishes on, and crossfading an impulse response with an identical copy
+    // of itself is not a bit-exact identity. The sync worker observes drift
+    // often and most of it resolves to the same mask, so without this gate an
+    // offline bounce is not reproducible run to run.
+    if (last_published_layout_valid_
+        && same_mask_layout_(last_published_layout_, mask_layout))
+        return;
     if (!renderer_->publish_layout(mask_layout)) {
+        last_published_layout_valid_ = false;
         // Invalid control state fails closed; never leave a stale audible
         // table active after a rejected geometry update.
         for (auto& band : mask_layout.bands) band.muted = true;
@@ -270,7 +308,10 @@ void Spectr::publish_processing_state_() noexcept {
         mask_layout.max_hz = std::min(20000.0f,
                                      static_cast<float>(sample_rate_ * 0.5));
         (void)renderer_->publish_layout(mask_layout);
+        return;
     }
+    last_published_layout_ = mask_layout;
+    last_published_layout_valid_ = true;
 }
 
 pulp::view::ABCompare* Spectr::ab_compare() noexcept {
@@ -316,6 +357,10 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
         layout = make_mask_layout_();
     }
     if (!renderer->publish_layout(layout)) return nullptr;
+    // Record what the renderer is now realising, so neither the control nor
+    // the audio path restages this same mask and pays a crossfade for it.
+    last_published_layout_ = layout;
+    last_published_layout_valid_ = true;
     renderer->set_mix(std::clamp(state().get_value(kMix) / 100.0f, 0.0f, 1.0f));
 
     // Publishing a layout only STAGES it; a renderer adopts at its own block
@@ -434,6 +479,11 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
 
     if (channels_ <= static_cast<int>(kMaximumChannels))
         renderer_ = build_renderer_(render_mode_);
+    // The renderer arrives realising the layout build_renderer_ published, so
+    // seed the audio thread's cache with it rather than leaving it empty --
+    // an empty cache makes the first block restage a mask that is already live.
+    last_staged_layout_ = last_published_layout_;
+    last_staged_layout_valid_ = last_published_layout_valid_;
     processor_prepared_ = renderer_ != nullptr;
     active_renderer_.store(renderer_.get(), std::memory_order_release);
     // The mask processor was just re-prepared, so nothing this thread applied
@@ -1003,7 +1053,20 @@ void Spectr::process(
                         automated.bands[band].muted =
                             audible.bands[band].muted;
                     }
-                    (void)renderer->set_layout_rt(automated);
+                    // Stage only a mask that is not already live. An
+                    // unchanged restage is not a no-op inside the renderer:
+                    // it queues a redesign that is crossfaded in at whichever
+                    // block the worker finishes on, and a crossfade between
+                    // an impulse response and an identical copy of itself
+                    // does not reproduce it bit-for-bit. Without this gate two
+                    // identical offline renders differed, which would break a
+                    // null test and any bit-exact ratchet.
+                    if (!last_staged_layout_valid_
+                        || !same_mask_layout_(last_staged_layout_, automated)) {
+                        (void)renderer->set_layout_rt(automated);
+                        last_staged_layout_ = automated;
+                        last_staged_layout_valid_ = true;
+                    }
                     renderer->set_mix(std::clamp(
                         cursor.value(kMix) / 100.0f, 0.0f, 1.0f));
 

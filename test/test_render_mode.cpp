@@ -508,28 +508,37 @@ TEST_CASE("Mixing output does not depend on how the host chops the stream",
 
 TEST_CASE("Tracking output through the product is reproducible only to a bound",
           "[render-mode][offline][rt-safety]") {
-    // A KNOWN GAP, pinned at its measured size rather than hidden.
+    // A KNOWN, CHARACTERISED GAP, pinned at its measured size rather than hidden.
     //
-    // The design requires bit-identical output across chunkings in BOTH modes
-    // through HeadlessHost. Mixing meets that (above). Tracking does not, and
-    // the reason is not chunking: two runs of the SAME chunking, on the same
-    // input, also differ. Measured on this build -- 5 trials, identical ragged
-    // chunking, 36,000 samples: 28 to 46 differing samples per pair, worst
-    // delta ~2.98e-08 (about one ULP at this amplitude), confined to a window
-    // that began between samples 4,357 and 8,455 and had ended by 10,887.
-    // Mixing over the same trials differed in zero samples.
+    // Mixing is bit-identical across chunkings (above). Tracking is not, and
+    // the cause is not chunking: two runs of the SAME chunking on the same
+    // input also differ.
     //
-    // The mechanism: the Tracking renderer redesigns on a background lane and
-    // adopts the new impulse at a block boundary, crossfading over 512
-    // samples. WHEN the worker finishes is a function of thread scheduling, so
-    // the crossfade lands at a different sample offset run to run. Mixing has
-    // no such lane -- its layout adoption is synchronous -- which is exactly
-    // why it is deterministic.
+    // The cause, established rather than guessed. A redesign is queued while
+    // audio runs, and its result is crossfaded into the live impulse response
+    // at whichever render block the background worker happens to finish on.
+    // Crossfading an impulse response with an identical copy of itself is not
+    // a bit-exact identity in floating point, so the output differs by about
+    // one ULP at a position that moves with thread scheduling. Ruled out by
+    // measurement, not assumption: the convolver is single-threaded, so this
+    // is not summation order; and the render path carries no clock, which
+    // check_render_path_clock.py proves with a positive control.
     //
-    // So this asserts the bound, and the bound is the gap: when adoption is
-    // made deterministic, `kTolerance` becomes 0 and this case merges into the
-    // one above. It is deliberately NOT written as "assert they differ", which
-    // would turn a defect into a contract and fail the day it is fixed.
+    // Most of it is gone. Neither the control thread nor the audio thread now
+    // restages a mask the renderer is already realising, which removed the
+    // redundant redesigns entirely -- that is a saving, not a cost, since each
+    // one was a whole impulse redesign. What remains is a single redesign
+    // whose timing still depends on when the parameter-sync worker reconciles,
+    // so a run is bit-exact most of the time and off by one ULP the rest.
+    //
+    // Mixing has no equivalent: its layout adoption is synchronous, with no
+    // worker and no crossfade, which is exactly why it is deterministic.
+    //
+    // The tolerance is therefore the SIZE OF THE REMAINING GAP, not a margin
+    // chosen to make a test pass -- when the last redesign is made
+    // deterministic it becomes 0 and this case merges into the one above. It
+    // is deliberately NOT written as "assert they differ", which would turn a
+    // defect into a contract and fail the day it is fixed.
     constexpr std::size_t kTotal = 24000;
     constexpr std::size_t kWarmup = 12000;
     // One ULP at this amplitude, with headroom. Anything structural -- a
@@ -583,7 +592,7 @@ TEST_CASE("Tracking output through the product is reproducible only to a bound",
             std::abs(reference.left[i] - other.left[i])));
     INFO("a different mask deviates by " << control_worst
          << ", against a tolerance of " << kTolerance);
-    REQUIRE(control_worst > kTolerance * 100.0);
+    REQUIRE(control_worst > 1.0e-4);
 }
 
 TEST_CASE("The two modes are not the same renderer wearing two names",
