@@ -364,6 +364,25 @@
       "tokens": [],
       "verifiable": false,
       "reason": "Ships no application code -- it adds tools/native_shot.cpp, a detector and a workflow gate, none compiled into the shipped bundles. Its value is that it verifies OTHER fixes: it is the instrument behind the context-menu census."
+    },
+    {
+      "id": "band-menu-unmute-restores-level",
+      "pr": 135,
+      "title": "The band menu's unmute gives back the level it took away",
+      "tokens": [
+        "restoreMutedGain"
+      ],
+      "note": "Screened in both directions against the materialized document: 0 at c2f35eb (the merge before #135) and 3 at 05be32b, with spectrShortcutChipStyle reading 4 as the control in both arms. The identifier is the one the fix introduces to stash and restore the pre-mute gain, so it discriminates rather than keying on a pre-existing string."
+    },
+    {
+      "id": "band-menu-selection-commands",
+      "pr": 135,
+      "title": "The band menu offers Select all, Select none and Mute / Unmute selection",
+      "tokens": [
+        "onSelectAll",
+        "onSelectNone"
+      ],
+      "note": "Same two-arm screen: both read 0 at c2f35eb and 3 at 05be32b against a control of 4."
     }
   ]
 }
