@@ -27,7 +27,8 @@
 //               deliberately unusual values and require them to appear.
 //
 // usage: test_materialized_latency_mode.mjs <runtime.json>
-//        [--plant-index | --plant-post-index | --plant-truthiness
+//        [--plant-index | --plant-post-index | --plant-no-notify
+//         | --plant-truthiness
 //         | --plant-typed-label]
 //        [--expect-fail]
 //
@@ -42,6 +43,7 @@ const plantIndex = args.includes("--plant-index");
 const plantTruthiness = args.includes("--plant-truthiness");
 const plantTypedLabel = args.includes("--plant-typed-label");
 const plantPostIndex = args.includes("--plant-post-index");
+const plantNoNotify = args.includes("--plant-no-notify");
 const expectFail = args.includes("--expect-fail");
 const documentPath = args.find((a) => !a.startsWith("--"));
 
@@ -93,6 +95,15 @@ if (plantPostIndex) {
     "    Promise.resolve(window.pulp.postMessage(\"render_mode_set\","
     + " { mode: 1 }, \"spectr-render-mode\"))");
 }
+if (plantNoNotify) {
+  // The ORIGINAL defect: hydration stores the payload but wakes nobody, so a
+  // control mounted before the processor answered stays invisible forever.
+  // Nothing else in this suite can catch it -- every other assertion hydrates
+  // before mounting, which is the one ordering the shipping editor never uses.
+  plant("hydration that stores the payload without waking the control",
+    "        (latencyStore.listeners || []).forEach(function (fn) {",
+    "        ([]).forEach(function (fn) {");
+}
 if (plantTypedLabel) {
   plant("a panel that types the option labels instead of reading them",
     "      return [option.mode, option.label];",
@@ -121,7 +132,7 @@ const componentSource = html.slice(componentStart, componentEnd);
 // shipped code rather than restated here.
 const hydrateStart = html.indexOf("    if (payload && payload.latency");
 const hydrateAlt = html.indexOf("    if (true)\n");   // the truthiness plant
-const hydrateEnd = html.indexOf("    const projections = payload.snapshots");
+const hydrateEnd = html.indexOf("    const n = payload && Number(payload.n_visible);");
 const hydrateFrom = hydrateStart >= 0 ? hydrateStart : hydrateAlt;
 if (hydrateFrom < 0 || hydrateEnd <= hydrateFrom) {
   console.error("FAIL: the document carries no latency hydration site");
@@ -132,6 +143,7 @@ const hydrateSource = html.slice(hydrateFrom, hydrateEnd);
 const posted = [];
 const makeSandbox = () => {
   const created = [];
+  const effects = [];
   const React = {
     createElement: (type, props, ...children) => {
       const node = { type, props: props || {}, children: children.flat() };
@@ -140,10 +152,14 @@ const makeSandbox = () => {
     },
     useState: (initial) => {
       let v = initial;
-      return [v, (next) => { v = next; }];
+      return [v, (next) => { v = typeof next === "function" ? next(v) : next; }];
     },
+    // Run effects immediately. A stub that swallowed them would leave the
+    // subscription untested, which is exactly the hole that shipped a control
+    // nobody could see.
+    useEffect: (fn) => { const cleanup = fn(); effects.push(cleanup); },
   };
-  return { React, created };
+  return { React, created, effects };
 };
 
 // Deliberately unusual values: a label or a figure the panel typed rather than
@@ -186,7 +202,7 @@ const run = (globals, hydratePayload) => {
     "React", "window", "globalThis",
     "SpectrSettingsGroup", "SpectrSettingsField", "SpectrSettingsChips",
     "__created",
-    body.replace(/const projections[\s\S]*$/m, "") + "");
+    body);
   return fn(React, sandboxWindow, globals,
             SpectrSettingsGroup, SpectrSettingsField, SpectrSettingsChips,
             created);
@@ -290,6 +306,43 @@ let chips = null;
   check("a frame without the latency block leaves the mode alone",
     before === "linear_phase" && after === "linear_phase",
     `before=${before} after=${after}`);
+}
+
+// ---- 6. THE ORDERING THE SHIPPING EDITOR ACTUALLY USES -------------------
+// The editor mounts before the processor answers, so the payload arrives
+// AFTER first paint. The first version of this control read the global once at
+// mount and never asked again, so it stayed invisible forever -- and every
+// assertion above passed, because they all hydrate before mounting.
+{
+  const globals = {};
+  const { React, created, effects } = makeSandbox();
+  const sandboxWindow = { pulp: { postMessage: () => Promise.resolve() } };
+  const mount = new Function(
+    "React", "window", "globalThis",
+    "SpectrSettingsGroup", "SpectrSettingsField", "SpectrSettingsChips",
+    componentSource + "\n return SpectrLatencySettings();");
+  const first = mount(React, sandboxWindow, globals,
+    "SpectrSettingsGroup", "SpectrSettingsField", "SpectrSettingsChips");
+  check("before any payload the control renders nothing", first === null,
+    first === null ? "null" : "an element");
+  check("mounting registers a hydration listener",
+    !!(globals.__spectrLatency && Array.isArray(globals.__spectrLatency.listeners)
+       && globals.__spectrLatency.listeners.length === 1),
+    JSON.stringify(globals.__spectrLatency && globals.__spectrLatency.listeners
+      && globals.__spectrLatency.listeners.length));
+
+  // Now deliver the payload, exactly as the processor does, and require the
+  // mounted control to be woken.
+  let woke = 0;
+  if (globals.__spectrLatency && globals.__spectrLatency.listeners) {
+    globals.__spectrLatency.listeners.length = 0;
+    globals.__spectrLatency.listeners.push(() => { woke += 1; });
+  }
+  const hydrate = new Function("payload", "globalThis", "console",
+    hydrateSource + "\n return true;");
+  hydrate({ latency: PAYLOAD, snapshots: {} }, globals, console);
+  check("a payload arriving after mount wakes the control", woke === 1,
+    `listener fired ${woke} time(s)`);
 }
 
 console.log("");

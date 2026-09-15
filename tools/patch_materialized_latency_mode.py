@@ -43,8 +43,15 @@ PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 # Presence of this marker means the document is already patched.
 MARKER = "__spectrLatency"
 
-_HYDRATE_OLD = "    const projections = payload.snapshots || {};"
+# Anchored at the TOP of parseNativeState, deliberately ahead of its band
+# validation. That validation returns early on any payload whose band arrays do
+# not match, and the latency block has nothing to do with band data -- sitting
+# below it meant a payload the processor really sends could set every other
+# field and silently skip this one. Measured: the harness delivered a payload,
+# the parse ran, and latency came back undefined.
+_HYDRATE_OLD = "  const parseNativeState = payload => {\n"
 _HYDRATE_NEW = (
+    "  const parseNativeState = payload => {\n"
     "    // The Latency control is not a host parameter and rides the\n"
     "    // hydration payload only, so a live automation frame omits it.\n"
     "    // Update on PRESENCE, never on truthiness: reading an absent block\n"
@@ -52,16 +59,44 @@ _HYDRATE_NEW = (
     "    // which is the same defect morph_applies_viewport guards against.\n"
     "    if (payload && payload.latency\n"
     "        && typeof payload.latency.mode === 'string')\n"
-    "      (globalThis.__spectrLatency || (globalThis.__spectrLatency = {}))\n"
-    "        .state = payload.latency;\n"
-    "    const projections = payload.snapshots || {};")
+    "      {\n"
+    "        const latencyStore = globalThis.__spectrLatency\n"
+    "          || (globalThis.__spectrLatency = {});\n"
+    "        latencyStore.state = payload.latency;\n"
+    "        // Wake any mounted control. The editor mounts before the\n"
+    "        // processor answers, so this payload normally arrives\n"
+    "        // AFTER first paint; without a notification the control\n"
+    "        // reads the global once, finds nothing, and stays invisible\n"
+    "        // forever rather than appearing late.\n"
+    "        (latencyStore.listeners || []).forEach(function (fn) {\n"
+    "          try { fn(); } catch (error) {\n"
+    "            console.error(\"[Spectr] latency listener failed\", error);\n"
+    "          }\n"
+    "        });\n"
+    "      }\n")
 
 _COMPONENT = (
     "function SpectrLatencySettings() {\n"
     "  const store = globalThis.__spectrLatency\n"
     "    || (globalThis.__spectrLatency = {});\n"
-    "  const hydrated = store.state;\n"
     "  const [pending, setPending] = React.useState(null);\n"
+    "  const [, setRevision] = React.useState(0);\n"
+    "  // Re-render when the hydration payload lands. Reading the global\n"
+    "  // once at mount is what made the first version of this control\n"
+    "  // invisible: the editor mounts before the processor answers, so\n"
+    "  // the payload arrives afterwards and nothing ever asked again.\n"
+    "  React.useEffect(function () {\n"
+    "    const listeners = store.listeners || (store.listeners = []);\n"
+    "    const onHydrate = function () {\n"
+    "      setRevision(function (n) { return n + 1; });\n"
+    "    };\n"
+    "    listeners.push(onHydrate);\n"
+    "    return function () {\n"
+    "      const at = listeners.indexOf(onHydrate);\n"
+    "      if (at >= 0) listeners.splice(at, 1);\n"
+    "    };\n"
+    "  }, []);\n"
+    "  const hydrated = store.state;\n"
     "  // Render nothing rather than a broken control when the payload has not\n"
     "  // arrived or carries no options. An empty chip row reads as a bug; an\n"
     "  // absent group reads as a panel that has not finished loading, which is\n"
@@ -134,13 +169,74 @@ PATCHES = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# The SAME hydration, in the two places that also define parseNativeState.
+#
+# THE BUG THIS EXISTS FOR: three copies of parseNativeState ship, and the
+# global is assigned UNCONDITIONALLY by each, so load order alone decides which
+# one answers. runtime.js wins. Patching only the materialized document -- the
+# obvious place, and the one every other patch script here touches -- produced
+# a control whose hydration code was present in the binary and never ran. The
+# tell was a COUNT: parseNativeState reads 3 in the binary against 2 in the
+# document. A presence check hid it; comparing the counts found it.
+#
+# runtime.js is a checked-in BUILT artifact and spectr-native-services.js is
+# its source. Both are patched: fixing only the artifact means the next
+# legitimate regeneration silently reverts this, and that failure would look
+# exactly like the one above. Fixing only the source changes nothing today,
+# because the source is not embedded at all.
+_RUNTIME = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "native-ui", "materialized", "runtime.js")
+_SERVICES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "native-ui", "materialized", "spectr-native-services.js")
+
+def _indent(text, pad):
+    out = []
+    for line in text.split("\n"):
+        out.append((pad + line) if line.strip() else line)
+    return "\n".join(out)
+
+_BLOCK = '    // The Latency control is not a host parameter and rides the hydration\n    // payload only, so a live automation frame omits it. Update on PRESENCE,\n    // never on truthiness: reading an absent block as "no mode" would reset\n    // the control on the next automation write.\n    if (payload && payload.latency\n        && typeof payload.latency.mode === \'string\') {\n      const latencyStore = globalThis.__spectrLatency\n        || (globalThis.__spectrLatency = {});\n      latencyStore.state = payload.latency;\n      globalThis.__spectrLatencyReached = true;\n      // Wake any mounted control. The editor mounts before the processor\n      // answers, so this payload normally arrives AFTER first paint; without\n      // a notification the control reads the global once, finds nothing, and\n      // stays invisible forever rather than appearing late.\n      (latencyStore.listeners || []).forEach(function (fn) {\n        try { fn(); } catch (error) {\n          console.error("[Spectr] latency listener failed", error);\n        }\n      });\n    }\n'
+
+_SIDECARS = [
+    (_RUNTIME, "      const parseNativeState = (payload) => {\n",
+     "      const parseNativeState = (payload) => {\n" + _indent(_BLOCK, "    ")),
+    (_SERVICES, "  const parseNativeState = payload => {\n",
+     "  const parseNativeState = payload => {\n" + _BLOCK),
+]
+
+
+def _patch_sidecar(path, old, new):
+    """Patch one plain-JS file. Same all-or-nothing discipline as the document."""
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    if MARKER in text:
+        return 0, "already applied"
+    if text.count(old) != 1:
+        return 1, "patch point occurs %d times" % text.count(old)
+    text = text.replace(old, new, 1)
+    if MARKER not in text:
+        return 1, "marker missing after patch"
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    return 0, "applied"
+
+
 def main():
     with open(PATH, encoding="utf-8") as handle:
         document = json.load(handle)
     html = document["html"]
 
     if MARKER in html:
-        print("patch_materialized_latency_mode: already applied")
+        print("patch_materialized_latency_mode: document already applied")
+        for path, old, new in _SIDECARS:
+            code, detail = _patch_sidecar(path, old, new)
+            label = os.path.basename(path)
+            if code != 0:
+                print("patch_materialized_latency_mode: %s: %s" % (label, detail),
+                      file=sys.stderr)
+                return 1
+            print("patch_materialized_latency_mode: %s: %s" % (label, detail))
         return 0
 
     # Every patch point must be unambiguous BEFORE anything is written.
@@ -179,6 +275,15 @@ def main():
     with open(PATH, "w", encoding="utf-8") as handle:
         json.dump(document, handle, ensure_ascii=False, separators=(",", ":"))
     print("patch_materialized_latency_mode: applied %d patches" % len(PATCHES))
+
+    for path, old, new in _SIDECARS:
+        code, detail = _patch_sidecar(path, old, new)
+        label = os.path.basename(path)
+        if code != 0:
+            print("patch_materialized_latency_mode: %s: %s" % (label, detail),
+                  file=sys.stderr)
+            return 1
+        print("patch_materialized_latency_mode: %s: %s" % (label, detail))
     return 0
 
 

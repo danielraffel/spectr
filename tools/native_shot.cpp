@@ -40,6 +40,8 @@
 #include <pulp/view/ui_components.hpp>
 #include <pulp/view/view.hpp>
 #include <pulp/view/widget_bridge.hpp>
+#include <choc/text/choc_JSON.h>
+#include "spectr/editor_bridge.hpp"
 #include <pulp/view/widgets.hpp>
 
 #include <algorithm>
@@ -252,6 +254,46 @@ struct Rig {
             throw std::runtime_error(
                 "no scripted UI session - the materialized editor failed closed");
         settle(clock, 24);
+        hydrate_editor_state();
+    }
+
+    // Deliver the state payload a processor sends its editor after mount.
+    //
+    // Without this the rig renders an editor that never learned anything about
+    // the plugin, and every hydration-gated control is simply absent. That is
+    // not a hypothetical: the Latency group renders correctly in a host and
+    // read as MISSING here, because this rig emitted no payload at all and the
+    // group is (correctly) not drawn until it knows what the modes are called.
+    // A screenshot from an unhydrated rig cannot distinguish "the control is
+    // broken" from "the rig never told it anything", so it is not evidence.
+    //
+    // This drives the document's OWN parse entry point with the payload the
+    // C++ actually produces, rather than a hand-written fixture, so what the
+    // capture shows is what a host would show.
+    void hydrate_editor_state() {
+        const auto payload = spectr::make_editor_state_payload(
+            processor, processor.editor_authority().revision());
+        eval("(() => { try {"
+             "  const parse = globalThis.SpectrNativeState"
+             "    && globalThis.SpectrNativeState.parse;"
+             "  if (typeof parse !== 'function') {"
+             "    console.log('[hydrate] NO PARSE ENTRY POINT'); return; }"
+             "  const PAYLOAD = " + choc::json::toString(payload, false) + ";"
+             "  const PAYLOAD_PROBE = PAYLOAD.latency;"
+             "  parse(PAYLOAD);"
+             // One line of evidence, kept rather than removed: a capture from
+             // an unhydrated rig cannot distinguish a broken control from a
+             // rig that told it nothing, so the log has to say which happened.
+             "  console.log('[hydrate] delivered; latency='"
+             "    + JSON.stringify(globalThis.__spectrLatency"
+             "        && globalThis.__spectrLatency.state"
+             "        && globalThis.__spectrLatency.state.mode)"
+             "    + ' reached=' + JSON.stringify(globalThis.__spectrLatencyReached));"
+             "} catch (error) { console.log('[hydrate] FAILED ' + error); } })();",
+             "spectr-native-shot-hydrate");
+        settle(clock, 24);
+        if (root) root->layout_children();
+        settle(clock, 8);
     }
 
     ~Rig() {

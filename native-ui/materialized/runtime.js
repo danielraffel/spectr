@@ -11213,6 +11213,26 @@ function createWidget(type, id, parentId, props) {
       if (typeof window !== "undefined")
         window.__spectrTestHooks = globalThis2.__spectrTestHooks;
       const parseNativeState = (payload) => {
+        // The Latency control is not a host parameter and rides the hydration
+        // payload only, so a live automation frame omits it. Update on PRESENCE,
+        // never on truthiness: reading an absent block as "no mode" would reset
+        // the control on the next automation write.
+        if (payload && payload.latency
+            && typeof payload.latency.mode === 'string') {
+          const latencyStore = globalThis.__spectrLatency
+            || (globalThis.__spectrLatency = {});
+          latencyStore.state = payload.latency;
+          globalThis.__spectrLatencyReached = true;
+          // Wake any mounted control. The editor mounts before the processor
+          // answers, so this payload normally arrives AFTER first paint; without
+          // a notification the control reads the global once, finds nothing, and
+          // stays invisible forever rather than appearing late.
+          (latencyStore.listeners || []).forEach(function (fn) {
+            try { fn(); } catch (error) {
+              console.error("[Spectr] latency listener failed", error);
+            }
+          });
+        }
         const n = payload && Number(payload.n_visible);
         const gainDb = payload && payload.gain_db;
         const muted = payload && payload.muted;
