@@ -5,6 +5,7 @@
 #include <pulp/signal/convolver_messages.hpp>
 #include <pulp/signal/dry_wet_mixer.hpp>
 #include <pulp/signal/fir_design.hpp>
+#include <pulp/runtime/trace.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
 
 #include <algorithm>
@@ -364,6 +365,7 @@ public:
         // Control thread: design inline. Allocation and a few FFTs are
         // allowed here, and doing the work now means a state restore or a
         // prepare leaves a correct impulse staged before audio starts.
+        PULP_TRACE_SCOPE_NAMED("state", "redesign filter bank (UI thread)");
         std::lock_guard<std::mutex> guard(design_mutex_);
         return design_and_stage_(layout);
     }
@@ -476,10 +478,15 @@ private:
     /// stage it for the audio thread to adopt at its next block boundary.
     [[nodiscard]] bool design_and_stage_(const Layout& layout) {
         pulp::signal::SpectralMaskTable table;
-        if (!pulp::signal::build_spectral_mask(
-                layout, config_.design_grid_size,
-                static_cast<float>(config_.sample_rate), table))
-            return false;
+        {
+            PULP_TRACE_SCOPE_NAMED("state", "compile band mask table");
+            if (!pulp::signal::build_spectral_mask(
+                    layout, config_.design_grid_size,
+                    static_cast<float>(config_.sample_rate), table))
+                return false;
+        }
+        PULP_TRACE_COUNTER("state", "active bands",
+                           static_cast<int64_t>(table.active_bands));
 
         const auto bins = static_cast<std::size_t>(table.num_bins);
         if (bins != design_magnitudes_.size()) return false;
@@ -490,16 +497,24 @@ private:
         // realisation's own step: the table, the layout and every other mode
         // are untouched by it, so the linear-phase path keeps realising the
         // drawn magnitude exactly as authored.
-        (void)shape_tracking_transitions(
-            design_magnitudes_,
-            std::span<const float>(
-                table.band_edges_hz.data(),
-                static_cast<std::size_t>(table.active_bands) + 1u),
-            config_.sample_rate / static_cast<double>(config_.design_grid_size),
-            kTrackingTransitionHalfWidthBins,
-            kDesignMagnitudeFloor);
+        {
+            PULP_TRACE_SCOPE_NAMED("state", "shape band-edge transitions");
+            (void)shape_tracking_transitions(
+                design_magnitudes_,
+                std::span<const float>(
+                    table.band_edges_hz.data(),
+                    static_cast<std::size_t>(table.active_bands) + 1u),
+                config_.sample_rate
+                    / static_cast<double>(config_.design_grid_size),
+                kTrackingTransitionHalfWidthBins,
+                kDesignMagnitudeFloor);
+        }
 
-        if (!design_into_taps_()) return false;
+        {
+            PULP_TRACE_SCOPE_NAMED("state",
+                                   "design minimum-phase impulse (FFT)");
+            if (!design_into_taps_()) return false;
+        }
 
         // Publish the generation BEFORE the impulse it describes becomes
         // visible, so the audio thread can never adopt an impulse whose
@@ -510,7 +525,11 @@ private:
         bool staged_any = false;
         for (int ch = 0; ch < channels_; ++ch) {
             auto& swapper = *swappers_[static_cast<std::size_t>(ch)];
-            swapper.drain_old();
+            {
+                PULP_TRACE_SCOPE_NAMED("state", "free retired impulse");
+                swapper.drain_old();
+            }
+            PULP_TRACE_SCOPE_NAMED("state", "stage impulse for audio thread");
             if (swapper.stage_ir(design_taps_.data(), design_taps_.size(),
                                  static_cast<std::size_t>(kRenderBlock)))
                 staged_any = true;
@@ -519,6 +538,8 @@ private:
     }
 
     static void handle_design_(void* context, const Layout& layout) {
+        PULP_TRACE_SCOPE_NAMED("state",
+                               "redesign filter bank (worker, audio-driven)");
         auto* self = static_cast<ZeroLatencyMaskRenderer*>(context);
         std::lock_guard<std::mutex> guard(self->design_mutex_);
         (void)self->design_and_stage_(layout);
