@@ -321,6 +321,49 @@
         "data-spectr-help-learn-more-label"
       ],
       "note": "The token is the nested caption span's own marker, and the NESTING is the mechanism -- not a label attached beside it. This panel is laid out from its capture, and fillCapturedCaption2 re-pins any captured-box node's caption position:absolute with all four insets 0; a Label defaults to TextVerticalAlign::top, so the text sat at the top of a 31.2px box whose own ink is 15.2px tall. Adding alignItems:center to the button changed nothing and this was measured, not assumed: the ink stayed at 769.800..777.800 to the pixel. Making the caption nested markup is what fixes it -- asText(props.children) becomes undefined, the stub caption becomes a zero-contribution overlay, and the authored span is a real flex child of a Row that was already centring its children. So this marker is present exactly when the fix is. NOT KEYED ON THE CAPTION TEXT: the button was renamed from 'Learn more' to 'About Spectr' in the same package, so a row keyed on that string would have gone absent on a build that carries the fix -- the failure mode this ledger exists to catch, not to fall into. SCREENED IN BOTH DIRECTIONS against the shipping document: 0 at d6f0b86 (the merge before #130), 1 at e66d901, and still 1 after the rename, with data-spectr-help-guide-panel and data-spectr-help-scroll-content at 1 in all three as the control. 'data-spectr-help-learn-more' is NOT the token -- it is the BUTTON's marker, shipped by #115, and reads 1 in the pre-fix binary too, so adopting it would certify this fix as present on a build that predates it. Single-line printable ASCII, so it survives `strings -a` over the embedded document."
+    },
+    {
+      "id": "contextmenu-right-click-reaches-handler",
+      "pr": 8307,
+      "title": "A right-click reaches its onContextMenu handler, with the press coordinates",
+      "tokens": [
+        "offsetX:x,offsetY:y,button:2,buttons:2,",
+        "clientX:(r&&typeof r.left==="
+      ],
+      "note": "Pulp SDK fix reached by the SDK repin. Tokens are the emitted-JS literals the bridge builds for registerContextMenu; both read 0 in the pre-repin binary while registerContextMenu itself reads 1, so the region is present and the tokens discriminate. Behaviourally confirmed: the context-menu census in Spectr-native-shot goes from 0 views carrying on_context_menu under the old SDK to 5 under this one, and route_context_press reports handled=yes."
+    },
+    {
+      "id": "contextmenu-keyboard-edge-nav",
+      "pr": 8307,
+      "title": "Home and End move the context-menu cursor to the first and last selectable row",
+      "tokens": [],
+      "verifiable": false,
+      "reason": "A C++ member function (ContextMenu::move_hover_to_edge), and C++ method names do not survive into this binary's strings: the pre-existing fire_close, move_hover and on_key_event all read 0 while the class names ContextMenu and ComboBox read 8 and 7. A token here would read ABSENT on a build that carries the fix. Verify by opening a context menu and pressing Home and End."
+    },
+    {
+      "id": "aria-haspopup-overlay-trigger",
+      "pr": 8300,
+      "title": "A control marked aria-haspopup counts as an overlay trigger, so switching menus takes one press",
+      "tokens": [
+        "ariaPopup"
+      ],
+      "note": "Pulp SDK fix reached by the repin. aria-haspopup, _reevaluateOverlay and __replayAriaAttributes__ all read NON-zero pre-fix (11, 8, 12) and prove nothing; ariaPopup is the identifier the fix introduces and reads 0 pre-fix."
+    },
+    {
+      "id": "clap-bundle-pkginfo",
+      "pr": 8297,
+      "title": "The CLAP plug-in bundle declares itself as a package by shipping PkgInfo",
+      "tokens": [],
+      "verifiable": false,
+      "reason": "Adds a file to the bundle rather than code to the binary, so no token can exist. Verify with: test -f <Spectr.clap>/Contents/PkgInfo"
+    },
+    {
+      "id": "press-reach-gate",
+      "pr": 124,
+      "title": "A gate that presses a control at the rect it paints and fails when nothing lands there",
+      "tokens": [],
+      "verifiable": false,
+      "reason": "Ships no application code -- it adds tools/native_shot.cpp, a detector and a workflow gate, none compiled into the shipped bundles. Its value is that it verifies OTHER fixes: it is the instrument behind the context-menu census."
     }
   ]
 }
