@@ -1027,9 +1027,21 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // Viewport switch; a row legitimately added to the panel moves this
         // number, and the assertions either side of it are what actually hold
         // the contract.
+        //
+        // THE NUMBER TRACKS THE SETTINGS GROUP COUNT. It moved 1500.98 ->
+        // 1660.98 when the LATENCY group was added -- exactly one group's
+        // 160px, with the authored box, scroll reachability and skin all
+        // unchanged. If you add a group and this fails, that is the window
+        // doing its job, not a bug to route around.
+        //
+        // Re-CENTRE it on the new extent rather than raising the ceiling. A
+        // window whose top is pushed up every time the panel grows passes
+        // forever and catches nothing; keeping the same +/-80 margin either
+        // side is what leaves it able to fail in BOTH directions, which is the
+        // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1400 && s.content_height < 1560"
+        " && s.content_height > 1580 && s.content_height < 1740"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",

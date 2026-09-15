@@ -995,6 +995,38 @@ if(SPECTR_NODE_EXECUTABLE)
     set_tests_properties(Spectr-materialized-propagation-negative-control PROPERTIES
         TIMEOUT 30)
 
+    # The Latency control: does it exist, does it mount, and does changing it
+    # say the right thing on the wire. The mode was saved, recalled and
+    # migrated three PRs before anything could set it, so the risk here is
+    # reachability rather than correctness of the mode itself.
+    add_test(NAME Spectr-materialized-latency-mode
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_latency_mode.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-latency-mode PROPERTIES TIMEOUT 30)
+
+    # Four plants, because each is a DIFFERENT wrong implementation and one
+    # plant that trips everything cannot show which check is load bearing.
+    # --plant-index and --plant-post-index look redundant and are not: the
+    # first breaks the chip labels and fails the label assertion before ever
+    # reaching the wire check, so only the second can prove that the control
+    # sends a TOKEN rather than a position. --plant-truthiness is the one that
+    # matters most in practice: hydrating on truthiness instead of presence
+    # makes the control reset itself on the next automation frame, which no
+    # single-frame test would ever see. --expect-fail lives in the script
+    # rather than in WILL_FAIL because WILL_FAIL accepts any non-zero exit, so
+    # a usage error or a missing document would read green while proving
+    # nothing.
+    foreach(_latency_plant index post-index no-notify truthiness typed-label)
+        add_test(NAME Spectr-materialized-latency-mode-control-${_latency_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_latency_mode.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_latency_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-latency-mode-control-${_latency_plant}
+            PROPERTIES TIMEOUT 30)
+    endforeach()
+
     # A child's AUTHORED index must be its NATIVE index, including for a
     # subtree that mounts late into a parent that kept its other children.
     # Every native createX APPENDS, so the renderer has to move a non-last
