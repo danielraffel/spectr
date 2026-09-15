@@ -152,3 +152,23 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 ^"?No band is left worse than
 ^"?A band with no room for a transition
 ^"?Transition shaping leaves an ordinary EQ
+
+# Preset-manager operations. The materialized document rules are already
+# selected by the ^Spectr-materialized pattern above; these three are not, and
+# without them they would register and never run in this gate.
+#
+# The native row is the only one that presses the controls: it drives DELETE at
+# the rect it paints, confirms, and requires exactly one preset to disappear --
+# the defect it guards left DELETE reachable and inert, because its handler
+# called `confirm`, a browser dialog this runtime does not define, and threw
+# before deleting anything. Its plant collapses the confirmation's own DELETE
+# and requires the gate to notice.
+^Spectr-preset-operations
+
+# The two bridge verbs behind DUPLICATE and SET AS DEFAULT. Both call
+# PatternLibrary methods that were already unit-tested and had no production
+# caller, because the editor did each of them by writing React state the next
+# command's response overwrote. The loss is invisible to a row count, so both
+# cases assert on pattern ids.
+^"?native duplicate_pattern puts the copy
+^"?native set_default_pattern survives
