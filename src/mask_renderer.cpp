@@ -112,8 +112,45 @@ constexpr int kTrackingTransitionHalfWidthBins = 8;
 /// change. It is a real cost and it is bounded: because the delay line is
 /// carried, the incoming impulse's output is correct from its first sample, so
 /// a big change lands as one step rather than as 93 ms of wrong output. A step
-/// once per discrete action is the cheaper of the two, and a drag -- where the
-/// consecutive designs differ by a fraction of a dB -- has no step to make.
+/// once per discrete action is the cheaper of the two.
+///
+/// A DRAG IS NOT FREE, THOUGH. The tempting inference -- consecutive designs
+/// differ by a fraction of a dB, so there is no step to make -- does not hold.
+/// Each swap steps the output by the change in the complex response, and
+/// because the reconstruction is minimum phase a gain change carries a phase
+/// change with it, so even a sub-dB redesign steps.
+/// Broadband splatter above 5 kHz on a 704 Hz tone through a 40 dB band move,
+/// republished every 8 ms, relative to the same gesture in the other mode:
+///
+///     gesture     20     40     80    160    320   dB/s
+///     vs Mixing  237x   404x   594x   935x  2479x
+///
+/// It is linear in dB/s -- the rate the band is moved, not the swap cadence --
+/// so a slow drag hides it and a quick one does not. A ZOOM is the worse case:
+/// it rewrites min_hz/max_hz, so every band edge moves at once, and at the same
+/// speed it measures 41x a single-band drag. The artifact is uniform across a
+/// gesture relative to the LOCAL signal level (0.92-1.00 first-60ms vs
+/// last-60ms); a downward drag only sounds front-loaded because the band it is
+/// attenuating is loudest at the start.
+///
+/// Coalescing or rate-limiting the redesign is NOT the mitigation it looks
+/// like: at a fixed 160 dB/s, dropping from 95 swaps to 5 makes it 18x WORSE,
+/// because the per-swap step grows faster than the count falls.
+///
+/// The cure is a crossfade, and it is blocked on the convolver rather than on
+/// this constant. It becomes available once a swap can fade from the SAME
+/// retained input history instead of installing the incoming impulse cold.
+/// Measured end to end against that convolver, a 128-sample (2.7 ms) fade puts
+/// a band drag back on the arithmetic floor and 192 samples (4 ms) does the
+/// same for a zoom -- an 896x and 1656x reduction, with the delivered magnitude
+/// unchanged at -39.67 dB. Both sit inside the 384-sample gap between redesigns
+/// at a 120 Hz pointer, which matters because the convolver refuses a swap
+/// while a fade is in flight: a 512-sample fade drops 33 swaps to 26.
+///
+/// Until that lands in a cut SDK this must stay 0. Against the CURRENT one a
+/// non-zero value reinstates the cold start measured above -- a 64-sample fade
+/// scores 0.1095 non-tonal residual where the instantaneous path scores 0.0017,
+/// 66x worse -- so the fade and the SDK repin are one change, never two.
 constexpr std::size_t kIrCrossfadeSamples = 0;
 
 /// Test seam for this rule's negative control.
