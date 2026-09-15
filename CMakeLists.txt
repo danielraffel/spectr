@@ -481,6 +481,7 @@ add_executable(Spectr-test
     test/test_param_surface.cpp
     test/test_mode_bridge.cpp
     test/test_mask_renderer.cpp
+    test/test_render_mode.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
@@ -516,6 +517,40 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
+
+# The recall rule's negative controls.
+#
+# "A project saved before the mode existed reopens in Mixing" is the contract
+# that makes this feature safe to ship, and a contract nobody has watched
+# reject the defect it forbids is not a contract. SPECTR_RENDER_MODE_PLANT
+# reinstates exactly that defect in the product -- absence resolving to some
+# other mode instead of the authored one -- and the two cases below invert
+# their own verdict when they see the plant, so each row is green only when
+# the contract OBSERVES the defect.
+#
+# The inversion lives inside the binary rather than in WILL_FAIL because
+# WILL_FAIL accepts any non-zero exit: a usage error, a missing symbol, or a
+# filter that matches nothing would all have satisfied it while proving
+# nothing. Verified by hand before registering: unplanted the case exits 0
+# with 9 assertions, planted it exits 0 with 3 (the inverted branch), and a
+# filter matching no case exits 2 rather than 0 -- so a renamed test fails
+# this row instead of silently passing it.
+add_test(NAME Spectr-render-mode-migration-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_RENDER_MODE_PLANT=migration-adopts-other-mode
+        $<TARGET_FILE:Spectr-test>
+        "A project authored before the render mode existed reopens Mixing")
+set_tests_properties(Spectr-render-mode-migration-negative-control PROPERTIES
+    TIMEOUT 120)
+
+# The same plant against the unplanted contract, so the pair proves the rule
+# holds AND can be broken. Without this row the one above could be green
+# because the contract is inert rather than because the plant was caught.
+add_test(NAME Spectr-render-mode-migration-holds
+    COMMAND $<TARGET_FILE:Spectr-test>
+        "A project authored before the render mode existed reopens Mixing")
+set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
+    TIMEOUT 120)
 
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
@@ -2052,3 +2087,16 @@ add_test(NAME Spectr-render-path-clock
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
         ${CMAKE_CURRENT_SOURCE_DIR}/src/mask_renderer.cpp)
 set_tests_properties(Spectr-render-path-clock PROPERTIES TIMEOUT 60)
+
+# The same scan over the product's own audio callback, which is where the
+# renderer a mode switch installs is actually adopted. Retiring a renderer
+# underneath a running audio thread is the kind of handshake that invites a
+# lock or a timestamp, so the adoption code is inside the scanned region and
+# this row is what keeps it there. The region deliberately stops before the
+# modulated-field publication, whose steady_clock read stamps a UI snapshot no
+# audio sample depends on.
+add_test(NAME Spectr-render-path-clock-product
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/spectr.cpp)
+set_tests_properties(Spectr-render-path-clock-product PROPERTIES TIMEOUT 60)

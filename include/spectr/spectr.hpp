@@ -38,6 +38,7 @@
 #include "spectr/edit_modes.hpp"
 #include "spectr/editor_authority.hpp"
 #include "spectr/param_surface.hpp"
+#include "spectr/render_mode.hpp"
 #include "spectr/pattern.hpp"
 #include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
@@ -259,6 +260,36 @@ public:
     int latency_samples() const override;
     pulp::format::ViewSize view_size() const override;
 
+    // ── Render mode ────────────────────────────────────────────────────
+    //
+    // Which realisation of the drawn magnitude is live. A genuine trade, not
+    // a quality setting: linear phase cuts far deeper, zero latency costs a
+    // fraction of the delay and puts no smear before a transient. See
+    // spectr/render_mode.hpp for the names and the new-instance default.
+
+    /// The mode this instance is currently rendering through.
+    [[nodiscard]] MaskRenderMode render_mode() const noexcept { return render_mode_; }
+
+    /// Switch modes on a live instance.
+    ///
+    /// Control thread only — it builds a whole new renderer, which allocates.
+    /// The running renderer keeps rendering until the replacement is prepared,
+    /// so a failed switch is a no-op rather than a gap: on failure the previous
+    /// mode is still live and this returns false. On success the host is told
+    /// its delay compensation is stale via `flag_latency_changed()`.
+    bool set_render_mode(MaskRenderMode mode);
+
+    /// True when the last restore could not build the renderer the project
+    /// asked for, so the instance is still running the mode it had. A project
+    /// that merely NAMES an unknown mode is rejected outright rather than
+    /// substituted (see `deserialize_plugin_state`); this covers the narrower
+    /// case where a known mode failed to prepare. It is how a caller finds out
+    /// instead of inferring it from audio that does not sound as it was
+    /// saved.
+    [[nodiscard]] bool render_mode_unknown_on_load() const noexcept {
+        return render_mode_unknown_on_load_;
+    }
+
     void process(
         pulp::audio::BufferView<float>& output,
         const pulp::audio::BufferView<const float>& input,
@@ -282,7 +313,20 @@ public:
     /// v2 (M8) extends v1 with an optional `snapshots` object holding the
     /// A/B snapshot bank. Absent `snapshots` is legal — reading a v1 blob
     /// is always a reset-to-default for the bank.
-    static constexpr int kPluginStateVersion = 3;
+    ///
+    /// v4 adds `render_mode`, and is the one bump whose POINT is the rejection
+    /// it enables. A v4 writer always emits the field, so a v4 blob without it
+    /// is corruption and is refused; a blob at v3 or below cannot have been
+    /// written by a build that had more than one mode, so its silence means
+    /// linear phase and can never mean anything else. Those two rules together
+    /// are what make the mode a project was authored in knowable forever
+    /// without inferring it from a default that may since have changed.
+    ///
+    /// The cost, accepted deliberately: an older Spectr refuses a v4 blob
+    /// outright. That is correct — it cannot realise a mode it does not have,
+    /// and loading the sound in the wrong mode with the wrong delay
+    /// compensation, silently, is worse than a clear error.
+    static constexpr int kPluginStateVersion = 4;
 
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
@@ -470,7 +514,41 @@ private:
     BandField                              field_{};
     Viewport                               viewport_{};
     Layout                                 layout_ = Layout::Bands32;
-    pulp::signal::SpectralMaskProcessor    mask_processor_{};
+    // The mask renderer behind the mode. Owned through the seam rather than
+    // held concretely, so which realisation is live is a value this class
+    // stores instead of a type it is compiled against.
+    std::unique_ptr<MaskRenderer>          renderer_{};
+    // The mode `renderer_` was built for. Authoritative for what this instance
+    // sounds like and what latency it reports; written by the control thread
+    // only, read by process() to notice a pending rebuild.
+    MaskRenderMode                         render_mode_ = kDefaultRenderMode;
+    // Set when a restore could not build the renderer the project asked for.
+    // The instance keeps the mode it has and says so rather than pretending
+    // the project opened cleanly.
+    bool                                   render_mode_unknown_on_load_ = false;
+    // What process() actually renders through. Separate from `renderer_`
+    // because a mode switch replaces the object underneath a possibly-running
+    // audio thread, and the audio thread must never chase a freed pointer.
+    std::atomic<MaskRenderer*>             active_renderer_{nullptr};
+    // Even outside process(), odd inside it. A control thread that sees this
+    // change, or sees it even, knows the audio thread is not holding a
+    // renderer pointer it read earlier. Cheaper than a lock and never blocks
+    // the audio thread, which is the point.
+    std::atomic<std::uint64_t>             render_epoch_{0};
+    // Renderers replaced by a mode switch, held until the audio thread has
+    // demonstrably let go of them. Drained on the control thread; never freed
+    // from process().
+    std::vector<std::unique_ptr<MaskRenderer>> retired_renderers_{};
+
+    /// Build and fully prepare a renderer for `mode` against the current
+    /// geometry, including its initial layout and mix. Returns null when the
+    /// mode cannot be prepared; the caller keeps whatever was already live.
+    std::unique_ptr<MaskRenderer> build_renderer_(MaskRenderMode mode);
+    /// Free retired renderers the audio thread can no longer reach. Control
+    /// thread only.
+    void drain_retired_renderers_() noexcept;
+    /// The geometry any renderer for this instance is prepared against.
+    MaskRendererConfig renderer_config_() const noexcept;
     pulp::signal::SmoothedValue<float>     output_gain_{1.0f};
     bool                                   processor_prepared_ = false;
     std::array<const float*, kMaximumChannels> input_channels_{};
