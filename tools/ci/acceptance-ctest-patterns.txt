@@ -131,3 +131,12 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # replayed. The ungated case above cannot see this path -- with the replay
 # removed it stays green while the band returns at 0.48 linear gain.
 ^"?a band muted after a derived morph
+
+# The band context menu's unmute, and its negative control. This one needs its
+# own pattern because it is the only gate in the suite that reads a LEVEL
+# rather than a flag or a pixel: the defect it guards toggled the muted flag
+# correctly the whole time and destroyed the band's dB, so every capture-based
+# and state-flag row in this gate stays green while the user's work is lost.
+# It reports 77 (CTest "Not Run") when the pinned SDK carries no context-menu
+# handler, so a pin that cannot reach the menu is visible rather than silent.
+^Spectr-band-menu-unmute-restores

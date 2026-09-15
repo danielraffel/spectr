@@ -617,6 +617,47 @@ else()
         "Spectr: no Python3 interpreter -- Spectr-resize-reachability not registered")
 endif()
 
+# The band context menu's UNMUTE must give the band back the level it carried
+# at mute time. Muting stashes that level; the click path, the SHIFT+DRAG mute
+# brush and the `m` group toggle all read it back, and the menu flattened to
+# 0 dB instead -- so the same gesture kept or destroyed the user's level
+# depending only on which surface issued it.
+#
+# The assertion is on the LEVEL, in dB, read off the band field the DSP
+# consumes -- NOT on the muted flag, which toggled correctly throughout and
+# would have passed while the bug was fully present.
+#
+# Exit: 0 restored, 1 the level was lost, 3 the premise is unproven (the level
+# never reached the band, or the menu never opened), 77 no view carries a
+# context-menu handler under the pinned SDK, so the menu cannot be opened at
+# all. 3 and 77 must never read as a pass; CTest reports 77 as "Not Run".
+add_test(NAME Spectr-band-menu-unmute-restores
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_BAND_MENU_UNMUTE=1
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-band-menu-unmute
+        --backend=skia)
+set_tests_properties(Spectr-band-menu-unmute-restores PROPERTIES
+    TIMEOUT 300
+    SKIP_RETURN_CODE 77
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Its negative control. Unmutes through the real menu, then overwrites the
+# restored level with the 0 dB the defect produced, and REQUIRES the drift
+# comparison to catch it. The inversion lives inside the binary rather than in
+# WILL_FAIL, because WILL_FAIL accepts any non-zero exit -- a usage error or an
+# unproven premise would satisfy it while measuring nothing.
+add_test(NAME Spectr-band-menu-unmute-restores-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_BAND_MENU_UNMUTE=1
+        SPECTR_BAND_MENU_UNMUTE_PLANT=1
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-band-menu-unmute-negctl
+        --backend=skia)
+set_tests_properties(Spectr-band-menu-unmute-restores-negative-control
+    PROPERTIES
+        TIMEOUT 300
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+
 # Status overlay (section 5): the overlay must sit where the design puts it,
 # track a live drag, and then dismiss itself. The last of those is a TIME
 # property and the first is a PIXEL property, so this gate drives the shipping

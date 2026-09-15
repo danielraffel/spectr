@@ -21,6 +21,7 @@
 // dimmed editor behind the modal alone. Read the per-capture statistics this
 // prints, and look at the image.
 
+#include "spectr/param_surface.hpp"
 #include "spectr/spectr.hpp"
 
 #include <pulp/audio/buffer.hpp>
@@ -2477,6 +2478,193 @@ int main(int argc, char** argv) {
         // into a 990x645 window, so every design number here is 0.75 of what
         // the user's pointer sees. That factor is why controls that look
         // adequate in a layout dump feel small in the product.
+        // The band context menu's UNMUTE must restore the level the band
+        // carried at mute time, not flatten it to 0 dB.
+        //
+        // Reported as "mute in context menu works but unmute doesn't return to
+        // prior state while clicking the mute speaker does". Muting stashes the
+        // level; three unmute paths read it back and the menu's did not. So the
+        // assertion here is on the LEVEL, in dB, read off the band field the
+        // DSP actually consumes -- NOT on the muted flag, which toggled
+        // correctly the whole time and would have passed while the bug was
+        // fully present.
+        //
+        // Exit: 0 restored, 1 the level was lost, 3 the premise is unproven,
+        // 77 the menu is inert under this SDK (see the reachability gate
+        // below) -- CTest reports 77 as "Not Run", never as a pass.
+        if (std::getenv("SPECTR_BAND_MENU_UNMUTE") != nullptr) {
+            auto& root = *rig.root;
+            constexpr std::size_t kBand = 8;
+            // Distinctive on purpose: not 0 (the value a flattening unmute
+            // lands on, which would make the bug invisible) and not the
+            // neutral default (which would not prove the level was carried).
+            constexpr float kAuthoredDb = -13.5f;
+            const bool plant = std::getenv("SPECTR_BAND_MENU_UNMUTE_PLANT") != nullptr;
+
+            auto settle_round = [&rig]() {
+                rig.feed_tone(6);
+                settle(rig.clock, 20);
+            };
+            auto band_now = [&rig]() {
+                return rig.processor.field().bands[kBand];
+            };
+            auto report = [&](const char* label) {
+                const auto b = band_now();
+                std::printf("[unmute] %-22s gain_db=%8.3f muted=%s\n",
+                            label, b.gain_db, b.muted ? "yes" : "no");
+                return b;
+            };
+
+            // PREMISE 1 -- the menu has to exist in this tree at all. Under an
+            // SDK whose right-click fix is not an ancestor, NOTHING carries
+            // on_context_menu and every later step would be measuring an
+            // absent menu. That is a SKIP, not a pass and not a failure.
+            const auto sweep = press_reach_sweep(root);
+            std::printf("[unmute] views carrying on_context_menu: %d\n",
+                        sweep.context_menu_targets);
+            if (sweep.context_menu_targets == 0) {
+                std::fprintf(stderr,
+                             "SKIP: no view in the shipping tree carries a "
+                             "context-menu handler under this SDK, so the band "
+                             "menu cannot be opened and its unmute cannot be "
+                             "measured. Pulp's right-click fix must be in the "
+                             "pinned SDK (tools/ci/pulp-sdk-release.json) for "
+                             "this gate to mean anything.\n");
+                return 77;
+            }
+
+            // Set the band through the HOST PARAMETER -- a real, user-reachable
+            // path (automation or a host write), and the same one the
+            // automation probe uses.
+            // Warm up FIRST. The editor hydrates and publishes its own
+            // starting field; a host write issued before that lands is
+            // overwritten by the projection, and the band reads 0 dB with
+            // nothing in the log to say why.
+            settle_round();
+            settle_round();
+            report("before authoring");
+            rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
+            settle_round();
+            settle_round();
+            const auto authored = report("authored");
+
+            // PREMISE 2 -- the level actually took. Without this, a band that
+            // silently stayed at 0 would make "unmuted to 0" look like a
+            // faithful restore.
+            if (std::abs(authored.gain_db - kAuthoredDb) > 0.5f
+                || authored.muted) {
+                std::fprintf(stderr,
+                             "PREMISE UNPROVEN: the authored level did not "
+                             "reach the band (wanted %.2f dB unmuted, got "
+                             "%.2f dB muted=%d)\n", kAuthoredDb,
+                             authored.gain_db, authored.muted ? 1 : 0);
+                return 3;
+            }
+
+            auto open_menu = [&](const char* what) {
+                const auto res = pulp::view::route_context_press(
+                    root, pulp::view::Point{378.0f, 400.0f});
+                std::printf("[unmute] open menu %-10s handled=%s\n", what,
+                            res.handled ? "yes" : "no");
+                settle(rig.clock, 24);
+                return res.handled;
+            };
+
+            // The row carries `data-spectr-band-action="mute-band"`, which is
+            // why it is addressable at all. `rig.activate` drives the runtime's
+            // own activation seam and then drains the Promise jobs and React
+            // commits a platform host would service; a raw pointer dispatch
+            // reaches the widget but not the commit.
+            auto hit_mute_row = [&]() {
+                rig.activate("[data-spectr-band-action=\"mute-band\"]");
+            };
+
+            if (!open_menu("to-mute")) {
+                std::fprintf(stderr, "PREMISE UNPROVEN: the right-press did "
+                                     "not open a menu\n");
+                return 3;
+            }
+            capture(rig, dir, prefix + "unmute-1-menu-open", backend, scale);
+            hit_mute_row();
+            settle_round();
+            const auto muted = report("after menu MUTE");
+
+            // PREMISE 3 -- the mute half worked. If it did not, the unmute
+            // assertion below is measuring nothing.
+            if (!muted.muted) {
+                std::fprintf(stderr, "PREMISE UNPROVEN: the menu's mute did "
+                                     "not mute the band\n");
+                return 3;
+            }
+
+            if (!open_menu("to-unmute")) {
+                std::fprintf(stderr, "PREMISE UNPROVEN: the menu did not "
+                                     "reopen for the unmute half\n");
+                return 3;
+            }
+            hit_mute_row();
+            settle_round();
+            if (plant) {
+                // NEGATIVE CONTROL. The band is now legitimately UNMUTED by the
+                // menu; overwrite its level with the 0 dB the defect produced.
+                // This is deliberately applied AFTER the real unmute so the
+                // DRIFT check is the one that fires -- an earlier version
+                // flattened while still muted, went red on "still muted", and
+                // so never exercised the comparison it exists to guard. A
+                // control that trips a different assertion than the one under
+                // test proves nothing about that assertion.
+                std::printf("[unmute] PLANT: overwriting the restored level "
+                            "with the 0 dB a flattening unmute produced\n");
+                rig.store.set_value(spectr::band_gain_param_id(kBand), 0.0f);
+                settle_round();
+                settle_round();
+            }
+            const auto restored = report("after menu UNMUTE");
+            capture(rig, dir, prefix + "unmute-2-restored", backend, scale);
+
+            if (restored.muted) {
+                std::fprintf(stderr, "FAIL: the band is still muted after the "
+                                     "menu's unmute\n");
+                return 1;
+            }
+            const float drift = std::abs(restored.gain_db - kAuthoredDb);
+            std::printf("[unmute] authored=%.3f dB restored=%.3f dB "
+                        "drift=%.3f dB\n", kAuthoredDb, restored.gain_db, drift);
+            // The floor: the band field carries dB as a float and the editor
+            // round-trips it through a normalised -1..1 gain (x24), so exact
+            // equality is not available. 0.5 dB is far below the 13.5 dB the
+            // defect loses, so a flatten-to-0 cannot hide inside it.
+            // The inversion lives HERE rather than in CTest's WILL_FAIL,
+            // because WILL_FAIL accepts ANY non-zero exit -- including a usage
+            // error, a missing binary or an unproven premise -- so a control
+            // registered that way passes while measuring nothing.
+            if (drift > 0.5f) {
+                if (plant) {
+                    std::printf("[unmute] NEGATIVE CONTROL: the planted "
+                                "flatten-to-0 was caught (drift %.2f dB)\n",
+                                drift);
+                    return 0;
+                }
+                std::fprintf(stderr,
+                             "FAIL: the menu's unmute did not restore the "
+                             "band's level -- authored %.2f dB, came back "
+                             "%.2f dB (drift %.2f dB). A flattening unmute "
+                             "returns 0.00 dB.\n",
+                             kAuthoredDb, restored.gain_db, drift);
+                return 1;
+            }
+            if (plant) {
+                std::fprintf(stderr,
+                             "FAIL: the planted flatten-to-0 was NOT caught. "
+                             "The comparison cannot fail, so its clean run in "
+                             "the real arm proves nothing.\n");
+                return 1;
+            }
+            std::printf("[unmute] the menu's unmute restored the band's "
+                        "level\n");
+            return 0;
+        }
+
         if (std::getenv("SPECTR_PRESS_REACH") != nullptr) {
             auto& root = *rig.root;
 

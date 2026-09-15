@@ -215,10 +215,16 @@ REQUIRED_AFTER = (
     # The keys this one must not collide with, still bound to what they were.
     "if (modeKeys[k]) {",
     "if (k === \"a\" || k === \"6\") {",
-    # CLICK still toggles the band under the pointer, selection or not.
-    "commitGain(b, isMuted(cur) ? 0 : -Infinity);",
-    # ...and the menu's one-way group mute is untouched.
-    "for (const i of selection) map.set(i, -Infinity);",
+    # CLICK still toggles the band under the pointer, selection or not. This
+    # is the `p.band` spelling -- the pointer-release path. An earlier version
+    # of this list named the `b` spelling instead and called it the click path;
+    # that was the band context MENU's handler, which is a different surface.
+    "commitGain(p.band, isMuted(cur) ? restored : -Infinity);",
+    # The menu's group mute is no longer a one-way trip and no longer a third
+    # writer of band state: it defers to `toggleMuteSelection`, the owner this
+    # script installed. What must stay true is that the owner still exists and
+    # still restores rather than flattening.
+    "owner.toggleMuteSelection()",
 )
 
 
