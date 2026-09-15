@@ -43,20 +43,30 @@ constexpr double kDesignMagnitudeFloor = 1.0e-6;
 /// each of its two edges -- and the same reach OUTWARD into each neighbour,
 /// which is what the width ultimately costs.
 ///
-/// 8 is the knee on three axes at once, measured through the renderer on a
-/// muted band 20 of the default field. Depth arrives here: -118.3 dB, within
-/// 1.2 dB of the best any width reaches, against -34.8 dB unshaped. Coverage
-/// has already saturated by 4 bins and stays at 100 %, so it cannot pick a
-/// width on its own. What breaks the tie is the cost outside the band, and it
-/// turns sharply right here -- worst out-of-band deviation, measured over a
+/// 8 is the knee, measured through the renderer on a muted band 20 of the
+/// default field. Coverage saturates by 4 bins and stays at 100 %, so it cannot
+/// pick a width on its own. Depth and out-of-band cost both climb with width,
+/// and the tie is broken by which one is audible -- depth as the worst point
+/// over the band's middle half, leak as the worst deviation outside it over a
 /// region held FIXED so every width is judged on the same ground:
 ///
-///     K       4      6      8     12     16     24
-///     leak  0.02   0.02   0.14   9.96  19.82  31.95   dB
+///     K          4      6      8     12     16     24
+///     depth  -73.3  -95.2 -109.7 -118.7 -119.7 -109.9   dB
+///     leak    0.06   0.03   0.06   8.52  18.38  30.82   dB
 ///
-/// One step past 8 buys 1.1 dB of depth for seventy times the leak, because
-/// the transition starts reaching past the neighbouring edge. 8 is the widest
-/// transition that still keeps its cost inside the band it belongs to.
+/// against -34.8 dB unshaped. One step past 8 buys 9 dB of depth for a hundred
+/// and forty times the leak, because the transition starts reaching past the
+/// neighbouring edge -- and 8.5 dB of error OUTSIDE a band is plainly audible
+/// where the difference between -110 and -119 dB inside a muted one is not. 8
+/// is the widest transition that still keeps its cost inside the band it
+/// belongs to.
+///
+/// Sub-bin edge placement costs about 9 dB of that depth: whole-bin placement
+/// measures -118.3 dB here, and the only difference is that a fractional
+/// transition's shoulders fall BETWEEN bins rather than on them. It is paid
+/// deliberately. Whole-bin placement is what made a viewport drag a staircase
+/// in phase rather than a glide, which is audible as pitch wobble at tens of
+/// cents, and -110 dB inside a muted band is not audible at all.
 constexpr int kTrackingTransitionHalfWidthBins = 8;
 
 /// Crossfade requested of the convolver when a redesigned impulse response
@@ -571,16 +581,33 @@ TrackingTransitionGeometry shape_tracking_transitions(
         || !(magnitude_floor > 0.0))
         return geometry;
 
-    // Edge frequencies onto the design grid, clamped into the array. A
-    // non-finite or out-of-range edge lands on a valid bin rather than
-    // indexing out of bounds; a degenerate layout then simply shapes nothing,
-    // because every clamp below collapses to zero width.
-    std::array<std::ptrdiff_t, static_cast<std::size_t>(kMaximumEdges)> edge_bin{};
+    // Edge frequencies onto the design grid, clamped into the array, and kept
+    // FRACTIONAL. A non-finite or out-of-range edge lands on a valid position
+    // rather than indexing out of bounds; a degenerate layout then simply
+    // shapes nothing, because every clamp below collapses to zero width.
+    //
+    // Sub-bin placement is load-bearing, and it is the only thing separating
+    // this from a staircase. Rounding an edge to a whole bin makes the shaped
+    // magnitude a step function OF THE VIEWPORT: a drag that moves an edge by
+    // less than 5.86 Hz changes nothing at all, then changes by a whole bin at
+    // once. Magnitude alone would forgive that -- one bin either way is
+    // inaudible. The minimum-phase reconstruction does not: it derives phase
+    // from the whole log-magnitude curve, so a one-bin magnitude step moves
+    // phase ACROSS THE SPECTRUM, and a continuous drag therefore emits a
+    // sequence of global phase jumps. Measured on the factory comb over a 6->5
+    // octave drag at a quarter-octave per second, rounding costs 7.9 Hz of peak
+    // frequency excursion -- 27 cents, plainly audible as pitch wobble -- where
+    // carrying the fraction costs 0.8 Hz, and it drops the phase trajectory's
+    // peak-to-mean step from 34x to 2.5x, which is a glide rather than a
+    // staircase. Carrying the fraction costs nothing else: the same edge loop,
+    // the same smoothstep, the same clamps, no extra transform, and no
+    // measurable change in redesign time.
+    std::array<double, static_cast<std::size_t>(kMaximumEdges)> edge_bin{};
     for (std::ptrdiff_t e = 0; e < num_edges; ++e) {
         const double hz = static_cast<double>(band_edges_hz[static_cast<std::size_t>(e)]);
-        const double bin = std::isfinite(hz) ? std::round(hz / bin_width_hz) : 0.0;
-        edge_bin[static_cast<std::size_t>(e)] = static_cast<std::ptrdiff_t>(
-            std::clamp(bin, 0.0, static_cast<double>(num_bins - 1)));
+        const double bin = std::isfinite(hz) ? hz / bin_width_hz : 0.0;
+        edge_bin[static_cast<std::size_t>(e)] =
+            std::clamp(bin, 0.0, static_cast<double>(num_bins - 1));
     }
 
     // Two passes. The plateau either side of an edge is sampled from the
@@ -588,36 +615,53 @@ TrackingTransitionGeometry shape_tracking_transitions(
     // result cannot depend on the order edges are visited even where two
     // transitions meet exactly at a midpoint.
     struct Shaping {
-        std::ptrdiff_t centre = 0;
-        std::ptrdiff_t half   = 0;
-        double         low    = 0.0;   ///< log magnitude entering the edge
-        double         high   = 0.0;   ///< log magnitude leaving it
+        double centre = 0.0;
+        double half   = 0.0;
+        double low    = 0.0;   ///< log magnitude entering the edge
+        double high   = 0.0;   ///< log magnitude leaving it
     };
     std::array<Shaping, static_cast<std::size_t>(kMaximumEdges)> shaping{};
     std::ptrdiff_t shaped = 0;
 
+    // The plateau either side of an edge is read from the bin NEAREST the
+    // fractional shoulder. The shoulder sits at least half a band's width from
+    // the neighbouring edge -- that is what the clamp below guarantees -- so it
+    // is inside the neighbour's plateau, where the drawn magnitude is constant
+    // and which bin is read cannot matter. Rounding here therefore reads a
+    // stable value while the CENTRE keeps its fraction, which is the whole
+    // point.
+    const auto at_log = [&](double bin) {
+        const auto index = std::clamp<std::ptrdiff_t>(
+            static_cast<std::ptrdiff_t>(std::llround(bin)), 0, num_bins - 1);
+        return std::log(std::max(magnitudes[static_cast<std::size_t>(index)],
+                                 magnitude_floor));
+    };
+
     for (std::ptrdiff_t e = 0; e < num_edges; ++e) {
         const auto centre = edge_bin[static_cast<std::size_t>(e)];
-        auto half = static_cast<std::ptrdiff_t>(half_width_bins);
+        auto half = static_cast<double>(half_width_bins);
         // Half the distance to each neighbouring edge: two transitions may
         // touch at the midpoint between their edges, never overlap.
         if (e > 0)
             half = std::min(half,
-                            (centre - edge_bin[static_cast<std::size_t>(e - 1)]) / 2);
+                            (centre - edge_bin[static_cast<std::size_t>(e - 1)]) / 2.0);
         if (e + 1 < num_edges)
             half = std::min(half,
-                            (edge_bin[static_cast<std::size_t>(e + 1)] - centre) / 2);
+                            (edge_bin[static_cast<std::size_t>(e + 1)] - centre) / 2.0);
         // And the ends of the array.
         half = std::min(half, centre);
-        half = std::min(half, num_bins - 1 - centre);
+        half = std::min(half, static_cast<double>(num_bins - 1) - centre);
 
         ++geometry.edges_considered;
-        if (half <= 0) continue;   // no room: this edge stays the drawn step
+        // A transition needs a whole bin either side of its centre to be a
+        // transition at all: below that it rewrites one bin, which is a step in
+        // a new place rather than a ramp. The integer grid used to supply this
+        // floor as a side effect of truncation, and it is load-bearing —
+        // without it the lowest band of the default field (0.8 bins wide) gets
+        // a transition it has no room to hold and comes back 5.9 dB shallower.
+        // Stated outright now that the centre no longer rounds.
+        if (!(half >= 1.0)) continue;   // no room: this edge stays the drawn step
 
-        const auto at_log = [&](std::ptrdiff_t bin) {
-            return std::log(std::max(magnitudes[static_cast<std::size_t>(bin)],
-                                     magnitude_floor));
-        };
         auto& s = shaping[static_cast<std::size_t>(shaped++)];
         s.centre = centre;
         s.half   = half;
@@ -625,19 +669,31 @@ TrackingTransitionGeometry shape_tracking_transitions(
         s.high   = at_log(centre + half);
 
         ++geometry.edges_shaped;
-        geometry.widest_half_width =
-            std::max(geometry.widest_half_width, static_cast<int>(half));
+        geometry.widest_half_width = std::max(geometry.widest_half_width, half);
         geometry.narrowest_half_width =
             geometry.edges_shaped == 1
-                ? static_cast<int>(half)
-                : std::min(geometry.narrowest_half_width, static_cast<int>(half));
+                ? half
+                : std::min(geometry.narrowest_half_width, half);
     }
 
     for (std::ptrdiff_t i = 0; i < shaped; ++i) {
         const auto& s = shaping[static_cast<std::size_t>(i)];
-        const auto span = static_cast<double>(2 * s.half);
-        for (std::ptrdiff_t bin = s.centre - s.half; bin <= s.centre + s.half; ++bin) {
-            const double x = static_cast<double>(bin - (s.centre - s.half)) / span;
+        const double span = 2.0 * s.half;
+        const double start = s.centre - s.half;
+        const auto lowest  = std::max<std::ptrdiff_t>(
+            0, static_cast<std::ptrdiff_t>(std::ceil(start)));
+        const auto highest = std::min<std::ptrdiff_t>(
+            num_bins - 1, static_cast<std::ptrdiff_t>(std::floor(s.centre + s.half)));
+        for (std::ptrdiff_t bin = lowest; bin <= highest; ++bin) {
+            // Clamped because the fractional shoulders fall BETWEEN bins: the
+            // first and last bin inside the transition sit just inside it, so
+            // x is near 0 and near 1 rather than exactly at them. That is
+            // precisely what makes the shape glide -- as the centre slides by a
+            // fraction of a bin, every written value moves by a fraction of a
+            // step, and a bin entering or leaving the span does so at the
+            // plateau value it already held.
+            const double x =
+                std::clamp((static_cast<double>(bin) - start) / span, 0.0, 1.0);
             // Cubic smoothstep: continuous in value AND slope at both ends, so
             // the shaping does not put a fresh first-derivative break where it
             // just removed a step. The choice is deliberately not load-bearing

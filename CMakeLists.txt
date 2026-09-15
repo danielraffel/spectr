@@ -553,7 +553,7 @@ add_test(NAME Spectr-render-mode-migration-holds
 set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
     TIMEOUT 120)
 
-# ── Tracking transition shaping: four gates, each with its inversion ───────
+# ── Tracking transition shaping: five gates, each with its inversion ───────
 #
 # Each plant substitutes a DEFECT into the subject of one gate and requires the
 # gate to reject it. The inversion lives inside the binary rather than in
@@ -566,7 +566,7 @@ set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
 # misspelled -- `planted()` returns false, the ORDINARY path runs, and the row
 # exits 0 having proved nothing. With it, the test refuses to pass unless its
 # plant actually arrived. Verified: stripping or mistyping the plant on any of
-# the four rows exits 42 rather than 0.
+# the five rows exits 42 rather than 0, and a filter matching no case exits 2.
 #
 # Verified in BOTH directions before registering. With its defect removed each
 # row exits 42 with exactly one failed assertion, so none of them is an
@@ -590,6 +590,12 @@ set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
 #   eq-drift           adds 1 dB to the drawn reference, proving the ordinary-EQ
 #                      gate observes a drift rather than agreeing with whatever
 #                      it measured.
+#   whole-bin-edges    rounds every band edge onto a whole design bin before
+#                      shaping -- the placement this design replaced -- proving
+#                      the drag gate can see the staircase it exists to reject.
+#                      It reads 7.08 Hz of peak frequency modulation against
+#                      0.79 Hz for sub-bin placement, so the gate is not merely
+#                      passing on a number it cannot move.
 add_test(NAME Spectr-tracking-transition-depth-negative-control
     COMMAND ${CMAKE_COMMAND} -E env
         SPECTR_TRANSITION_PLANT=brick-wall
@@ -624,6 +630,15 @@ add_test(NAME Spectr-tracking-transition-eq-negative-control
         $<TARGET_FILE:Spectr-test>
         "Transition shaping leaves an ordinary EQ curve where it was drawn")
 set_tests_properties(Spectr-tracking-transition-eq-negative-control
+    PROPERTIES TIMEOUT 300)
+
+add_test(NAME Spectr-tracking-drag-glide-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_TRANSITION_PLANT=whole-bin-edges
+        SPECTR_TRANSITION_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "A viewport drag moves Tracking's phase as a glide rather than a staircase")
+set_tests_properties(Spectr-tracking-drag-glide-negative-control
     PROPERTIES TIMEOUT 300)
 
 # The swap-handoff rules' negative controls.
