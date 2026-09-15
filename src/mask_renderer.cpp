@@ -8,6 +8,7 @@
 #include <pulp/signal/spectral_mask_processor.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -33,6 +34,28 @@ constexpr int kRenderBlock = 64;
 /// reconstruction takes. A muted band therefore realises at -120 dB rather
 /// than at an exact zero whose logarithm has no bound.
 constexpr double kDesignMagnitudeFloor = 1.0e-6;
+
+/// Half-width, in design bins, of the transition shaped into each drawn band
+/// edge before the minimum-phase reconstruction. At the shipping 8192-point
+/// grid and 48 kHz this is 8 x 5.86 Hz = 46.9 Hz of reach into the band from
+/// each of its two edges -- and the same reach OUTWARD into each neighbour,
+/// which is what the width ultimately costs.
+///
+/// 8 is the knee on three axes at once, measured through the renderer on a
+/// muted band 20 of the default field. Depth arrives here: -118.3 dB, within
+/// 1.2 dB of the best any width reaches, against -34.8 dB unshaped. Coverage
+/// has already saturated by 4 bins and stays at 100 %, so it cannot pick a
+/// width on its own. What breaks the tie is the cost outside the band, and it
+/// turns sharply right here -- worst out-of-band deviation, measured over a
+/// region held FIXED so every width is judged on the same ground:
+///
+///     K       4      6      8     12     16     24
+///     leak  0.02   0.02   0.14   9.96  19.82  31.95   dB
+///
+/// One step past 8 buys 1.1 dB of depth for seventy times the leak, because
+/// the transition starts reaching past the neighbouring edge. 8 is the widest
+/// transition that still keeps its cost inside the band it belongs to.
+constexpr int kTrackingTransitionHalfWidthBins = 8;
 
 /// Crossfade applied when a redesigned impulse response replaces the live one,
 /// so a mask edit is audibly continuous rather than a hard cut.
@@ -352,6 +375,19 @@ private:
         for (std::size_t i = 0; i < bins; ++i)
             design_magnitudes_[i] = static_cast<double>(table.gain_linear[i]);
 
+        // Shape the drawn edges before reconstructing. This is the zero-latency
+        // realisation's own step: the table, the layout and every other mode
+        // are untouched by it, so the linear-phase path keeps realising the
+        // drawn magnitude exactly as authored.
+        (void)shape_tracking_transitions(
+            design_magnitudes_,
+            std::span<const float>(
+                table.band_edges_hz.data(),
+                static_cast<std::size_t>(table.active_bands) + 1u),
+            config_.sample_rate / static_cast<double>(config_.design_grid_size),
+            kTrackingTransitionHalfWidthBins,
+            kDesignMagnitudeFloor);
+
         if (!design_into_taps_()) return false;
 
         // Publish the generation BEFORE the impulse it describes becomes
@@ -406,6 +442,106 @@ private:
 };
 
 } // namespace
+
+TrackingTransitionGeometry shape_tracking_transitions(
+    std::span<double> magnitudes,
+    std::span<const float> band_edges_hz,
+    double bin_width_hz,
+    int half_width_bins,
+    double magnitude_floor) noexcept {
+    TrackingTransitionGeometry geometry{};
+
+    const auto num_bins  = static_cast<std::ptrdiff_t>(magnitudes.size());
+    const auto num_edges = static_cast<std::ptrdiff_t>(band_edges_hz.size());
+    constexpr std::ptrdiff_t kMaximumEdges =
+        static_cast<std::ptrdiff_t>(pulp::signal::kSpectralBandMaskMaximumBands) + 1;
+    if (num_bins < 2 || num_edges < 2 || num_edges > kMaximumEdges
+        || !(bin_width_hz > 0.0) || half_width_bins <= 0
+        || !(magnitude_floor > 0.0))
+        return geometry;
+
+    // Edge frequencies onto the design grid, clamped into the array. A
+    // non-finite or out-of-range edge lands on a valid bin rather than
+    // indexing out of bounds; a degenerate layout then simply shapes nothing,
+    // because every clamp below collapses to zero width.
+    std::array<std::ptrdiff_t, static_cast<std::size_t>(kMaximumEdges)> edge_bin{};
+    for (std::ptrdiff_t e = 0; e < num_edges; ++e) {
+        const double hz = static_cast<double>(band_edges_hz[static_cast<std::size_t>(e)]);
+        const double bin = std::isfinite(hz) ? std::round(hz / bin_width_hz) : 0.0;
+        edge_bin[static_cast<std::size_t>(e)] = static_cast<std::ptrdiff_t>(
+            std::clamp(bin, 0.0, static_cast<double>(num_bins - 1)));
+    }
+
+    // Two passes. The plateau either side of an edge is sampled from the
+    // UNSHAPED magnitude for every edge before anything is written, so the
+    // result cannot depend on the order edges are visited even where two
+    // transitions meet exactly at a midpoint.
+    struct Shaping {
+        std::ptrdiff_t centre = 0;
+        std::ptrdiff_t half   = 0;
+        double         low    = 0.0;   ///< log magnitude entering the edge
+        double         high   = 0.0;   ///< log magnitude leaving it
+    };
+    std::array<Shaping, static_cast<std::size_t>(kMaximumEdges)> shaping{};
+    std::ptrdiff_t shaped = 0;
+
+    for (std::ptrdiff_t e = 0; e < num_edges; ++e) {
+        const auto centre = edge_bin[static_cast<std::size_t>(e)];
+        auto half = static_cast<std::ptrdiff_t>(half_width_bins);
+        // Half the distance to each neighbouring edge: two transitions may
+        // touch at the midpoint between their edges, never overlap.
+        if (e > 0)
+            half = std::min(half,
+                            (centre - edge_bin[static_cast<std::size_t>(e - 1)]) / 2);
+        if (e + 1 < num_edges)
+            half = std::min(half,
+                            (edge_bin[static_cast<std::size_t>(e + 1)] - centre) / 2);
+        // And the ends of the array.
+        half = std::min(half, centre);
+        half = std::min(half, num_bins - 1 - centre);
+
+        ++geometry.edges_considered;
+        if (half <= 0) continue;   // no room: this edge stays the drawn step
+
+        const auto at_log = [&](std::ptrdiff_t bin) {
+            return std::log(std::max(magnitudes[static_cast<std::size_t>(bin)],
+                                     magnitude_floor));
+        };
+        auto& s = shaping[static_cast<std::size_t>(shaped++)];
+        s.centre = centre;
+        s.half   = half;
+        s.low    = at_log(centre - half);
+        s.high   = at_log(centre + half);
+
+        ++geometry.edges_shaped;
+        geometry.widest_half_width =
+            std::max(geometry.widest_half_width, static_cast<int>(half));
+        geometry.narrowest_half_width =
+            geometry.edges_shaped == 1
+                ? static_cast<int>(half)
+                : std::min(geometry.narrowest_half_width, static_cast<int>(half));
+    }
+
+    for (std::ptrdiff_t i = 0; i < shaped; ++i) {
+        const auto& s = shaping[static_cast<std::size_t>(i)];
+        const auto span = static_cast<double>(2 * s.half);
+        for (std::ptrdiff_t bin = s.centre - s.half; bin <= s.centre + s.half; ++bin) {
+            const double x = static_cast<double>(bin - (s.centre - s.half)) / span;
+            // Cubic smoothstep: continuous in value AND slope at both ends, so
+            // the shaping does not put a fresh first-derivative break where it
+            // just removed a step. The choice is deliberately not load-bearing
+            // — across linear through 7th-order smoothstep the realised depth
+            // moves by about 3 dB, against the tens of dB the WIDTH is worth —
+            // so this is the simplest curve with that continuity, not a tuned
+            // one.
+            const double shape = x * x * (3.0 - 2.0 * x);
+            magnitudes[static_cast<std::size_t>(bin)] =
+                std::exp(s.low + (s.high - s.low) * shape);
+        }
+    }
+
+    return geometry;
+}
 
 int mask_render_latency_samples(MaskRenderMode mode,
                                 const MaskRendererConfig& config) noexcept {

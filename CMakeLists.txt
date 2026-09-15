@@ -481,6 +481,7 @@ add_executable(Spectr-test
     test/test_param_surface.cpp
     test/test_mode_bridge.cpp
     test/test_mask_renderer.cpp
+    test/test_tracking_transition.cpp
     test/test_render_mode.cpp
     ${SPECTR_TEST_SOURCES}
 )
@@ -551,6 +552,79 @@ add_test(NAME Spectr-render-mode-migration-holds
         "A project authored before the render mode existed reopens Mixing")
 set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
     TIMEOUT 120)
+
+# ── Tracking transition shaping: four gates, each with its inversion ───────
+#
+# Each plant substitutes a DEFECT into the subject of one gate and requires the
+# gate to reject it. The inversion lives inside the binary rather than in
+# WILL_FAIL, which accepts any non-zero exit: a usage error, a missing symbol,
+# or a filter matching nothing would all satisfy WILL_FAIL while measuring
+# nothing.
+#
+# SPECTR_TRANSITION_PLANT_REQUIRED closes the mirror of that hole. Without it a
+# plant row is vacuously green the moment its plant variable is stripped or
+# misspelled -- `planted()` returns false, the ORDINARY path runs, and the row
+# exits 0 having proved nothing. With it, the test refuses to pass unless its
+# plant actually arrived. Verified: stripping or mistyping the plant on any of
+# the four rows exits 42 rather than 0.
+#
+# Verified in BOTH directions before registering. With its defect removed each
+# row exits 42 with exactly one failed assertion, so none of them is an
+# inversion that cannot fail; a filter matching no case exits 2 rather than 0,
+# so a renamed test reddens these rows instead of silently passing them.
+#
+# The plants, and what each would let through if it were absent:
+#   brick-wall         the design that shipped before this change, as its own
+#                      committed measured numbers. Its three rules are asserted
+#                      SEPARATELY, because one REQUIRE_FALSE over the
+#                      conjunction is a single assertion that whichever rule
+#                      happened to trip would satisfy, leaving the other two
+#                      undemonstrated.
+#   narrow-regression  a real 5 dB regression injected into band 6 -- the
+#                      clamped regime, where shaping can change a band without
+#                      room to deepen it, and the only place this change is
+#                      known to cost anything.
+#   roomy-band         swaps the field for one whose bands have room, proving
+#                      the "left exactly as drawn" comparison can observe a
+#                      difference at all.
+#   eq-drift           adds 1 dB to the drawn reference, proving the ordinary-EQ
+#                      gate observes a drift rather than agreeing with whatever
+#                      it measured.
+add_test(NAME Spectr-tracking-transition-depth-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_TRANSITION_PLANT=brick-wall
+        SPECTR_TRANSITION_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "Tracking realises a drawn null at the design floor")
+set_tests_properties(Spectr-tracking-transition-depth-negative-control
+    PROPERTIES TIMEOUT 300)
+
+add_test(NAME Spectr-tracking-transition-regression-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_TRANSITION_PLANT=narrow-regression
+        SPECTR_TRANSITION_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "No band is left worse than the unshaped design it replaced")
+set_tests_properties(Spectr-tracking-transition-regression-negative-control
+    PROPERTIES TIMEOUT 300)
+
+add_test(NAME Spectr-tracking-transition-narrow-band-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_TRANSITION_PLANT=roomy-band
+        SPECTR_TRANSITION_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "A band with no room for a transition is left exactly as drawn")
+set_tests_properties(Spectr-tracking-transition-narrow-band-negative-control
+    PROPERTIES TIMEOUT 300)
+
+add_test(NAME Spectr-tracking-transition-eq-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_TRANSITION_PLANT=eq-drift
+        SPECTR_TRANSITION_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "Transition shaping leaves an ordinary EQ curve where it was drawn")
+set_tests_properties(Spectr-tracking-transition-eq-negative-control
+    PROPERTIES TIMEOUT 300)
 
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp

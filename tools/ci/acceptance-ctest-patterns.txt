@@ -140,3 +140,15 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # It reports 77 (CTest "Not Run") when the pinned SDK carries no context-menu
 # handler, so a pin that cannot reach the menu is visible rather than silent.
 ^Spectr-band-menu-unmute-restores
+
+# Tracking transition shaping: the three gates and their three plants. Nothing
+# above matches them -- they start with the behaviour, not with "native" or
+# "materialized" -- so without these lines they register and never run. The
+# depth gate is the one that needs its plant selected alongside it: it reads a
+# -118 dB null, and a gate that passed because the measurement could not
+# resolve the failure is worse than no gate at all.
+^Spectr-tracking-transition
+^"?Tracking realises a drawn null
+^"?No band is left worse than
+^"?A band with no room for a transition
+^"?Transition shaping leaves an ordinary EQ

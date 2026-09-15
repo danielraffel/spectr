@@ -22,6 +22,7 @@
 #include <pulp/signal/spectral_band_mask.hpp>
 
 #include <memory>
+#include <span>
 
 namespace spectr {
 
@@ -112,6 +113,58 @@ public:
     /// adoption boundary early while a burst of layouts is in flight.
     [[nodiscard]] virtual unsigned long long active_generation() const noexcept = 0;
 };
+
+/// Summary of the transition geometry one shaping pass actually realised.
+///
+/// The requested half-width is a ceiling, never a promise: an edge whose
+/// neighbour is close, or which sits near DC or Nyquist, gets less. Reporting
+/// what was realised is what makes "did this band get a transition at all?"
+/// answerable without re-deriving the clamp rule at the call site.
+struct TrackingTransitionGeometry {
+    int edges_considered    = 0;  ///< Edges examined.
+    int edges_shaped        = 0;  ///< Edges given a non-zero transition.
+    int narrowest_half_width = 0; ///< Smallest realised half-width, in bins.
+    int widest_half_width    = 0; ///< Largest realised half-width, in bins.
+};
+
+/// Shape a transition into every drawn band edge of a compiled magnitude.
+///
+/// The zero-latency realisation reconstructs a causal impulse by taking the
+/// LOG of this magnitude and returning through a transform of the design
+/// grid's own size. A drawn band edge is a step, and the cepstrum of a step
+/// decays too slowly to fit in that many points: the part that does not fit
+/// wraps, and the reconstructed magnitude comes back with the null partly
+/// filled in. It is an aliasing error, not a truncation one -- the full
+/// impulse is retained -- so raising the tap count does not fix it, and
+/// measurement puts it at about 11 dB against the tens of dB below.
+///
+/// Interpolating across the step in the log domain -- the domain the
+/// reconstruction actually reads -- is what makes the cepstrum decay fast
+/// enough to fit, at an unchanged tap count, an unchanged latency and an
+/// unchanged render cost.
+///
+/// `half_width_bins` is a CEILING. Each edge's transition is clamped to half
+/// the distance to its neighbouring edges and to the distance to the ends of
+/// the array, so transitions can touch but never overlap, and an edge with no
+/// room is left exactly as it was. A band too narrow to hold a transition
+/// therefore degrades continuously back to the unshaped step rather than
+/// trading its depth for a smear.
+///
+/// Shaping happens in the log domain against `magnitude_floor`, which must be
+/// the same floor the reconstruction is given: a transition that ran to a
+/// different floor than the one the reconstruction applies would put a second
+/// step back exactly where this removed one.
+///
+/// Pure, allocation-free and independent of any renderer state, so the shaped
+/// magnitude can be measured directly instead of only inferred from audio.
+/// Design-side only; it is not part of the `MaskRenderer` contract and says
+/// nothing about how a realisation applies the result.
+TrackingTransitionGeometry shape_tracking_transitions(
+    std::span<double> magnitudes,
+    std::span<const float> band_edges_hz,
+    double bin_width_hz,
+    int half_width_bins,
+    double magnitude_floor) noexcept;
 
 /// Latency of a mode, before anything is prepared.
 ///
