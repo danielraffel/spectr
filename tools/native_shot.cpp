@@ -21,6 +21,7 @@
 // dimmed editor behind the modal alone. Read the per-capture statistics this
 // prints, and look at the image.
 
+#include "spectr/param_surface.hpp"
 #include "spectr/spectr.hpp"
 
 #include <pulp/audio/buffer.hpp>
@@ -2477,6 +2478,324 @@ int main(int argc, char** argv) {
         // into a 990x645 window, so every design number here is 0.75 of what
         // the user's pointer sees. That factor is why controls that look
         // adequate in a layout dump feel small in the product.
+        // Band context-menu RELAYOUT diagnosis. Records what happens to the
+        // menu's row geometry when its item set changes, so "the rows
+        // interleave" is a claim about measured rects rather than about a
+        // screenshot. Reports; asserts nothing and fixes nothing -- the
+        // mechanics belong with exposing pulp::view::ContextMenu through the
+        // widget bridge, and this exists so that prediction is falsifiable.
+        if (std::getenv("SPECTR_BAND_MENU_RELAYOUT") != nullptr) {
+            auto& root = *rig.root;
+            auto open_menu = [&](const char* what) {
+                const auto res = pulp::view::route_context_press(
+                    root, pulp::view::Point{378.0f, 400.0f});
+                std::printf("[relayout] right-press %-12s handled=%s "
+                            "overlay_dismissed=%s\n", what,
+                            res.handled ? "yes" : "no",
+                            res.overlay_dismissed ? "yes" : "no");
+                settle(rig.clock, 24);
+            };
+            // How many rows the runtime says the menu holds, and which group
+            // headers it carries. The header list is the discriminator: the
+            // SELECTION group only exists when a selection is live, so it is
+            // how "the item set changed" is established rather than assumed.
+            auto menu_shape = [&rig](const char* label) {
+                std::string js =
+                    "(function(){var m=document.querySelector("
+                    "'[data-spectr-band-context-menu]');"
+                    "if(!m){console.log('[relayout-js] ";
+                js += label;
+                js += " :: MENU ABSENT');return;}"
+                    "var b=m.querySelectorAll('button');"
+                    "var d=m.querySelectorAll('div');var h=[];"
+                    "for(var i=0;i<d.length;i++){var x=(d[i].textContent||'')"
+                    ".trim();if(x&&d[i].children.length===0)h.push(x);}"
+                    "console.log('[relayout-js] ";
+                js += label;
+                js += " :: rows='+b.length+' headers='+h.join(' / '));})();";
+                rig.eval(js, "spectr-band-menu-shape");
+            };
+
+            const auto sweep = press_reach_sweep(root);
+            if (sweep.context_menu_targets == 0) {
+                std::fprintf(stderr,
+                             "SKIP: no context-menu handler under this SDK; "
+                             "the menu cannot be opened, so its relayout "
+                             "cannot be observed.\n");
+                return 77;
+            }
+
+            rig.feed_tone(6); settle(rig.clock, 20);
+
+            open_menu("open#1");
+            menu_shape("open#1 (no selection)");
+            capture(rig, dir, prefix + "relayout-1-nosel", backend, scale);
+
+            // Change the item set FROM the menu, through the row's own action
+            // id. `Item`'s onClick calls onClose() after the handler, so this
+            // is a genuine activate-then-close, not an in-place re-render.
+            rig.activate("[data-spectr-band-action=\"select-all\"]");
+            rig.feed_tone(6); settle(rig.clock, 20);
+            menu_shape("after Select all");
+            capture(rig, dir, prefix + "relayout-2-after-selectall", backend,
+                    scale);
+
+            open_menu("open#2");
+            menu_shape("open#2 (selection live)");
+            capture(rig, dir, prefix + "relayout-3-reopen-withsel", backend,
+                    scale);
+
+            return 0;
+        }
+
+        // The band context menu's UNMUTE must restore the level the band
+        // carried at mute time, not flatten it to 0 dB.
+        //
+        // Reported as "mute in context menu works but unmute doesn't return to
+        // prior state while clicking the mute speaker does". Muting stashes the
+        // level; three unmute paths read it back and the menu's did not. So the
+        // assertion here is on the LEVEL, in dB, read off the band field the
+        // DSP actually consumes -- NOT on the muted flag, which toggled
+        // correctly the whole time and would have passed while the bug was
+        // fully present.
+        //
+        // Exit: 0 restored, 1 the level was lost, 3 the premise is unproven,
+        // 77 the menu is inert under this SDK (see the reachability gate
+        // below) -- CTest reports 77 as "Not Run", never as a pass.
+        if (std::getenv("SPECTR_BAND_MENU_UNMUTE") != nullptr) {
+            auto& root = *rig.root;
+            constexpr std::size_t kBand = 8;
+            // Distinctive on purpose: not 0 (the value a flattening unmute
+            // lands on, which would make the bug invisible) and not the
+            // neutral default (which would not prove the level was carried).
+            constexpr float kAuthoredDb = -13.5f;
+            const bool plant = std::getenv("SPECTR_BAND_MENU_UNMUTE_PLANT") != nullptr;
+
+            auto settle_round = [&rig]() {
+                rig.feed_tone(6);
+                settle(rig.clock, 20);
+            };
+            auto band_now = [&rig]() {
+                return rig.processor.field().bands[kBand];
+            };
+            auto report = [&](const char* label) {
+                const auto b = band_now();
+                std::printf("[unmute] %-22s gain_db=%8.3f muted=%s\n",
+                            label, b.gain_db, b.muted ? "yes" : "no");
+                return b;
+            };
+
+            // PREMISE 1 -- the menu has to exist in this tree at all. Under an
+            // SDK whose right-click fix is not an ancestor, NOTHING carries
+            // on_context_menu and every later step would be measuring an
+            // absent menu. That is a SKIP, not a pass and not a failure.
+            const auto sweep = press_reach_sweep(root);
+            std::printf("[unmute] views carrying on_context_menu: %d\n",
+                        sweep.context_menu_targets);
+            if (sweep.context_menu_targets == 0) {
+                std::fprintf(stderr,
+                             "SKIP: no view in the shipping tree carries a "
+                             "context-menu handler under this SDK, so the band "
+                             "menu cannot be opened and its unmute cannot be "
+                             "measured. Pulp's right-click fix must be in the "
+                             "pinned SDK (tools/ci/pulp-sdk-release.json) for "
+                             "this gate to mean anything.\n");
+                return 77;
+            }
+
+            // Set the band through the HOST PARAMETER -- a real, user-reachable
+            // path (automation or a host write), and the same one the
+            // automation probe uses.
+            // Warm up FIRST. The editor hydrates and publishes its own
+            // starting field; a host write issued before that lands is
+            // overwritten by the projection, and the band reads 0 dB with
+            // nothing in the log to say why.
+            settle_round();
+            settle_round();
+            report("before authoring");
+            rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
+            settle_round();
+            settle_round();
+            const auto authored = report("authored");
+
+            // PREMISE 2 -- the level actually took. Without this, a band that
+            // silently stayed at 0 would make "unmuted to 0" look like a
+            // faithful restore.
+            if (std::abs(authored.gain_db - kAuthoredDb) > 0.5f
+                || authored.muted) {
+                std::fprintf(stderr,
+                             "PREMISE UNPROVEN: the authored level did not "
+                             "reach the band (wanted %.2f dB unmuted, got "
+                             "%.2f dB muted=%d)\n", kAuthoredDb,
+                             authored.gain_db, authored.muted ? 1 : 0);
+                return 3;
+            }
+
+            auto open_menu = [&](const char* what) {
+                const auto res = pulp::view::route_context_press(
+                    root, pulp::view::Point{378.0f, 400.0f});
+                std::printf("[unmute] open menu %-10s handled=%s\n", what,
+                            res.handled ? "yes" : "no");
+                settle(rig.clock, 24);
+                return res.handled;
+            };
+
+            // The row carries `data-spectr-band-action="mute-band"`, which is
+            // why it is addressable at all. `rig.activate` drives the runtime's
+            // own activation seam and then drains the Promise jobs and React
+            // commits a platform host would service; a raw pointer dispatch
+            // reaches the widget but not the commit.
+            auto hit_mute_row = [&]() {
+                rig.activate("[data-spectr-band-action=\"mute-band\"]");
+            };
+
+            if (!open_menu("to-mute")) {
+                std::fprintf(stderr, "PREMISE UNPROVEN: the right-press did "
+                                     "not open a menu\n");
+                return 3;
+            }
+            capture(rig, dir, prefix + "unmute-1-menu-open", backend, scale);
+            hit_mute_row();
+            settle_round();
+            const auto muted = report("after menu MUTE");
+
+            // PREMISE 3 -- the mute half worked. If it did not, the unmute
+            // assertion below is measuring nothing.
+            if (!muted.muted) {
+                std::fprintf(stderr, "PREMISE UNPROVEN: the menu's mute did "
+                                     "not mute the band\n");
+                return 3;
+            }
+
+            if (!open_menu("to-unmute")) {
+                std::fprintf(stderr, "PREMISE UNPROVEN: the menu did not "
+                                     "reopen for the unmute half\n");
+                return 3;
+            }
+            hit_mute_row();
+            settle_round();
+            if (plant) {
+                // NEGATIVE CONTROL. The band is now legitimately UNMUTED by the
+                // menu; overwrite its level with the 0 dB the defect produced.
+                // This is deliberately applied AFTER the real unmute so the
+                // DRIFT check is the one that fires -- an earlier version
+                // flattened while still muted, went red on "still muted", and
+                // so never exercised the comparison it exists to guard. A
+                // control that trips a different assertion than the one under
+                // test proves nothing about that assertion.
+                std::printf("[unmute] PLANT: overwriting the restored level "
+                            "with the 0 dB a flattening unmute produced\n");
+                rig.store.set_value(spectr::band_gain_param_id(kBand), 0.0f);
+                settle_round();
+                settle_round();
+            }
+            const auto restored = report("after menu UNMUTE");
+            capture(rig, dir, prefix + "unmute-2-restored", backend, scale);
+
+            if (restored.muted) {
+                std::fprintf(stderr, "FAIL: the band is still muted after the "
+                                     "menu's unmute\n");
+                return 1;
+            }
+            const float drift = std::abs(restored.gain_db - kAuthoredDb);
+            std::printf("[unmute] authored=%.3f dB restored=%.3f dB "
+                        "drift=%.3f dB\n", kAuthoredDb, restored.gain_db, drift);
+            // The floor: the band field carries dB as a float and the editor
+            // round-trips it through a normalised -1..1 gain (x24), so exact
+            // equality is not available. 0.5 dB is far below the 13.5 dB the
+            // defect loses, so a flatten-to-0 cannot hide inside it.
+            // The inversion lives HERE rather than in CTest's WILL_FAIL,
+            // because WILL_FAIL accepts ANY non-zero exit -- including a usage
+            // error, a missing binary or an unproven premise -- so a control
+            // registered that way passes while measuring nothing.
+            if (drift > 0.5f) {
+                if (plant) {
+                    std::printf("[unmute] NEGATIVE CONTROL: the planted "
+                                "flatten-to-0 was caught (drift %.2f dB)\n",
+                                drift);
+                    return 0;
+                }
+                std::fprintf(stderr,
+                             "FAIL: the menu's unmute did not restore the "
+                             "band's level -- authored %.2f dB, came back "
+                             "%.2f dB (drift %.2f dB). A flattening unmute "
+                             "returns 0.00 dB.\n",
+                             kAuthoredDb, restored.gain_db, drift);
+                return 1;
+            }
+            if (plant) {
+                std::fprintf(stderr,
+                             "FAIL: the planted flatten-to-0 was NOT caught. "
+                             "The comparison cannot fail, so its clean run in "
+                             "the real arm proves nothing.\n");
+                return 1;
+            }
+            std::printf("[unmute] the menu's unmute restored the band's "
+                        "level\n");
+
+            // PHASE 2 -- the SELECTION path. "Mute selection" was an
+            // unconditional mute with no second press that reverses it, so it
+            // lost levels the same way and could not unmute at all. It now
+            // defers to the bank's `toggleMuteSelection`; this proves the
+            // deferral actually restores, because a rewire that merely
+            // compiles would pass every check above.
+            constexpr std::size_t kOther = 12;
+            constexpr float kOtherDb = 7.25f;
+            rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
+            settle_round();
+            settle_round();
+            const auto other_before = rig.processor.field().bands[kOther];
+            std::printf("[unmute] sel: band %zu authored gain_db=%.3f\n",
+                        kOther, other_before.gain_db);
+            if (std::abs(other_before.gain_db - kOtherDb) > 0.5f) {
+                std::fprintf(stderr, "PREMISE UNPROVEN: the second band's "
+                                     "level did not take\n");
+                return 3;
+            }
+
+            if (!open_menu("to-select-all")) return 3;
+            rig.activate("[data-spectr-band-action=\"select-all\"]");
+            settle_round();
+
+            if (!open_menu("to-mute-sel")) return 3;
+            rig.activate("[data-spectr-band-action=\"mute-selection\"]");
+            settle_round();
+            const auto sel_muted = rig.processor.field().bands[kOther];
+            std::printf("[unmute] sel: after MUTE   gain_db=%.3f muted=%s\n",
+                        sel_muted.gain_db, sel_muted.muted ? "yes" : "no");
+            if (!sel_muted.muted) {
+                std::fprintf(stderr, "PREMISE UNPROVEN: the menu's group mute "
+                                     "did not mute the selection\n");
+                return 3;
+            }
+
+            if (!open_menu("to-unmute-sel")) return 3;
+            rig.activate("[data-spectr-band-action=\"mute-selection\"]");
+            settle_round();
+            const auto sel_back = rig.processor.field().bands[kOther];
+            std::printf("[unmute] sel: after UNMUTE gain_db=%.3f muted=%s\n",
+                        sel_back.gain_db, sel_back.muted ? "yes" : "no");
+            if (sel_back.muted) {
+                std::fprintf(stderr,
+                             "FAIL: the menu's group mute is still one-way -- "
+                             "a second activation did not unmute the "
+                             "selection\n");
+                return 1;
+            }
+            const float sel_drift = std::abs(sel_back.gain_db - kOtherDb);
+            if (sel_drift > 0.5f) {
+                std::fprintf(stderr,
+                             "FAIL: the menu's group unmute did not restore "
+                             "the band's level -- authored %.2f dB, came back "
+                             "%.2f dB (drift %.2f dB)\n",
+                             kOtherDb, sel_back.gain_db, sel_drift);
+                return 1;
+            }
+            std::printf("[unmute] the menu's group unmute restored the "
+                        "selection's levels (drift %.3f dB)\n", sel_drift);
+            return 0;
+        }
+
         if (std::getenv("SPECTR_PRESS_REACH") != nullptr) {
             auto& root = *rig.root;
 
