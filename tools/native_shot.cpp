@@ -2732,6 +2732,67 @@ int main(int argc, char** argv) {
             }
             std::printf("[unmute] the menu's unmute restored the band's "
                         "level\n");
+
+            // PHASE 2 -- the SELECTION path. "Mute selection" was an
+            // unconditional mute with no second press that reverses it, so it
+            // lost levels the same way and could not unmute at all. It now
+            // defers to the bank's `toggleMuteSelection`; this proves the
+            // deferral actually restores, because a rewire that merely
+            // compiles would pass every check above.
+            constexpr std::size_t kOther = 12;
+            constexpr float kOtherDb = 7.25f;
+            rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
+            settle_round();
+            settle_round();
+            const auto other_before = rig.processor.field().bands[kOther];
+            std::printf("[unmute] sel: band %zu authored gain_db=%.3f\n",
+                        kOther, other_before.gain_db);
+            if (std::abs(other_before.gain_db - kOtherDb) > 0.5f) {
+                std::fprintf(stderr, "PREMISE UNPROVEN: the second band's "
+                                     "level did not take\n");
+                return 3;
+            }
+
+            if (!open_menu("to-select-all")) return 3;
+            rig.activate("[data-spectr-band-action=\"select-all\"]");
+            settle_round();
+
+            if (!open_menu("to-mute-sel")) return 3;
+            rig.activate("[data-spectr-band-action=\"mute-selection\"]");
+            settle_round();
+            const auto sel_muted = rig.processor.field().bands[kOther];
+            std::printf("[unmute] sel: after MUTE   gain_db=%.3f muted=%s\n",
+                        sel_muted.gain_db, sel_muted.muted ? "yes" : "no");
+            if (!sel_muted.muted) {
+                std::fprintf(stderr, "PREMISE UNPROVEN: the menu's group mute "
+                                     "did not mute the selection\n");
+                return 3;
+            }
+
+            if (!open_menu("to-unmute-sel")) return 3;
+            rig.activate("[data-spectr-band-action=\"mute-selection\"]");
+            settle_round();
+            const auto sel_back = rig.processor.field().bands[kOther];
+            std::printf("[unmute] sel: after UNMUTE gain_db=%.3f muted=%s\n",
+                        sel_back.gain_db, sel_back.muted ? "yes" : "no");
+            if (sel_back.muted) {
+                std::fprintf(stderr,
+                             "FAIL: the menu's group mute is still one-way -- "
+                             "a second activation did not unmute the "
+                             "selection\n");
+                return 1;
+            }
+            const float sel_drift = std::abs(sel_back.gain_db - kOtherDb);
+            if (sel_drift > 0.5f) {
+                std::fprintf(stderr,
+                             "FAIL: the menu's group unmute did not restore "
+                             "the band's level -- authored %.2f dB, came back "
+                             "%.2f dB (drift %.2f dB)\n",
+                             kOtherDb, sel_back.gain_db, sel_drift);
+                return 1;
+            }
+            std::printf("[unmute] the menu's group unmute restored the "
+                        "selection's levels (drift %.3f dB)\n", sel_drift);
             return 0;
         }
 
