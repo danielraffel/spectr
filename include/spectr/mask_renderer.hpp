@@ -116,22 +116,23 @@ public:
 
 /// Summary of the transition geometry one shaping pass actually realised.
 ///
-/// The requested half-width is a ceiling, never a promise: an edge whose
-/// neighbour is close, or which sits near DC or Nyquist, gets less. Reporting
-/// what was realised is what makes "did this band get a transition at all?"
-/// answerable without re-deriving the clamp rule at the call site.
+/// The requested width is a ceiling, never a promise: an edge whose quieter
+/// band is narrow gets less, and an edge with no step at all gets none.
+/// Reporting what was realised is what makes "did this band get a transition at
+/// all?" answerable without re-deriving the clamp rule at the call site.
 struct TrackingTransitionGeometry {
-    int edges_considered    = 0;  ///< Edges examined.
-    int edges_shaped        = 0;  ///< Edges given a transition at least a bin wide.
-    /// Realised half-widths, in bins, and FRACTIONAL: an edge sits between
-    /// bins, so the width its clamps leave it is a fraction too. Reporting a
-    /// rounded integer here would hide exactly the sub-bin detail the placement
-    /// exists to carry.
-    double narrowest_half_width = 0.0; ///< Smallest realised half-width.
-    double widest_half_width    = 0.0; ///< Largest realised half-width.
+    int edges_considered = 0;  ///< Edges examined.
+    int edges_shaped     = 0;  ///< Edges given a transition at least a bin wide.
+    /// Realised transition widths, measured INSIDE the quieter band, in bins,
+    /// and FRACTIONAL: an edge sits between bins, so the width its clamps leave
+    /// it is a fraction too. Reporting a rounded integer here would hide
+    /// exactly the sub-bin detail the placement exists to carry.
+    double narrowest_width = 0.0; ///< Smallest realised width.
+    double widest_width    = 0.0; ///< Largest realised width.
 };
 
-/// Shape a transition into every drawn band edge of a compiled magnitude.
+/// Shape a transition into every drawn band edge of a compiled magnitude,
+/// placing the whole of it INSIDE the quieter of the two bands that meet there.
 ///
 /// The zero-latency realisation reconstructs a causal impulse by taking the
 /// LOG of this magnitude and returning through a transform of the design
@@ -147,23 +148,44 @@ struct TrackingTransitionGeometry {
 /// enough to fit, at an unchanged tap count, an unchanged latency and an
 /// unchanged render cost.
 ///
-/// `half_width_bins` is a CEILING. Each edge's transition is clamped to half
-/// the distance to its neighbouring edges and to the distance to the ends of
-/// the array, so transitions can touch but never overlap, and an edge with no
-/// room is left exactly as it was. A band too narrow to hold a transition
-/// therefore degrades continuously back to the unshaped step rather than
-/// trading its depth for a smear. The floor on "no room" is one whole bin
-/// either side of the edge: anything narrower rewrites a single bin, which
-/// moves a step rather than removing one.
+/// WHERE the interpolation is placed decides who pays for it, and that is not
+/// a free choice. Spread symmetrically about the edge, a transition subtracts
+/// from the LOUDER band as much as from the quieter one, so a band a user drew
+/// and asked to keep comes back narrower than they drew it -- by a fixed span
+/// in Hz, which is most of a narrow band and little of a wide one. Placed
+/// almost entirely inside the quieter band, the louder side holds its drawn
+/// level to within a quarter of a transition of the boundary, and nearly all
+/// the cost lands on the band that was being attenuated anyway.
+///
+/// That cost is real and is the trade this placement buys: a muted band's
+/// full-depth region is shortened by the transition at each of its ends, so a
+/// mute is shallower near its own edges than in its middle. It is bounded by
+/// the clamp below and it is what the depth gates measure.
+///
+/// `width_bins` is a CEILING. Each edge's transition is clamped to HALF the
+/// room available in its quieter band, so the transitions entering a band from
+/// its two ends can meet but never overlap, and at least half of every
+/// attenuated band keeps its full drawn depth. The floor on "no room" is one
+/// whole bin inside the quieter band: anything narrower rewrites a single bin,
+/// which moves a step rather than removing one, so a band with less than that
+/// to give keeps the drawn step unchanged. Narrow bands therefore degrade
+/// continuously back to the unshaped design rather than trading depth for a
+/// smear.
+///
+/// An edge whose two sides were drawn at the same gain carries no step and is
+/// left alone, so two adjacent bands muted together cost nothing at the
+/// boundary they share.
 ///
 /// Edges are placed at their exact FRACTIONAL position on the design grid, not
 /// rounded to a whole bin. Under a continuous viewport drag a rounded edge
 /// holds still and then jumps, and because the realisation is minimum phase
 /// each whole-bin magnitude jump moves phase across the entire spectrum — a
-/// staircase in phase, audible as pitch wobble. A fractional centre makes the
-/// same drag a glide. The linear-phase mode has no such term: its phase is
-/// identically zero however its edges are placed, which is why only this
-/// realisation's own shaping step needs to carry the fraction.
+/// staircase in phase, audible as pitch wobble. A fractional boundary makes the
+/// same drag a glide, and it is orthogonal to the placement above: the fraction
+/// decides WHERE the boundary is, the placement decides which side of it pays.
+/// The linear-phase mode has no such term: its phase is identically zero
+/// however its edges are placed, which is why only this realisation's own
+/// shaping step needs to carry the fraction.
 ///
 /// Shaping happens in the log domain against `magnitude_floor`, which must be
 /// the same floor the reconstruction is given: a transition that ran to a
@@ -178,7 +200,7 @@ TrackingTransitionGeometry shape_tracking_transitions(
     std::span<double> magnitudes,
     std::span<const float> band_edges_hz,
     double bin_width_hz,
-    int half_width_bins,
+    int width_bins,
     double magnitude_floor) noexcept;
 
 /// Latency of a mode, before anything is prepared.

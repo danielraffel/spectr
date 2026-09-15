@@ -553,7 +553,7 @@ add_test(NAME Spectr-render-mode-migration-holds
 set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
     TIMEOUT 120)
 
-# ── Tracking transition shaping: five gates, each with its inversion ───────
+# ── Tracking transition shaping: six gates, each with its inversion ────────
 #
 # Each plant substitutes a DEFECT into the subject of one gate and requires the
 # gate to reject it. The inversion lives inside the binary rather than in
@@ -566,7 +566,7 @@ set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
 # misspelled -- `planted()` returns false, the ORDINARY path runs, and the row
 # exits 0 having proved nothing. With it, the test refuses to pass unless its
 # plant actually arrived. Verified: stripping or mistyping the plant on any of
-# the five rows exits 42 rather than 0, and a filter matching no case exits 2.
+# the six rows exits 42 rather than 0, and a filter matching no case exits 2.
 #
 # Verified in BOTH directions before registering. With its defect removed each
 # row exits 42 with exactly one failed assertion, so none of them is an
@@ -596,6 +596,10 @@ set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
 #                      It reads 7.08 Hz of peak frequency modulation against
 #                      0.79 Hz for sub-bin placement, so the gate is not merely
 #                      passing on a number it cannot move.
+#   symmetric-kept     substitutes the surviving kept-band widths the SYMMETRIC
+#                      placement actually measured through this same renderer,
+#                      proving the kept-width gate rejects the placement it was
+#                      written to replace rather than restating today's build.
 add_test(NAME Spectr-tracking-transition-depth-negative-control
     COMMAND ${CMAKE_COMMAND} -E env
         SPECTR_TRANSITION_PLANT=brick-wall
@@ -603,6 +607,28 @@ add_test(NAME Spectr-tracking-transition-depth-negative-control
         $<TARGET_FILE:Spectr-test>
         "Tracking realises a drawn null at the design floor")
 set_tests_properties(Spectr-tracking-transition-depth-negative-control
+    PROPERTIES TIMEOUT 300)
+
+# The kept-side rule's negative control.
+#
+# This is the rule the shaping change shipped WITHOUT, and its absence is the
+# whole reason a kept band could lose a third of its width with four gates
+# green. So its control matters more than most: SPECTR_TRANSITION_PLANT=
+# symmetric-kept substitutes the surviving widths the SYMMETRIC placement
+# actually measured through this same renderer at c9e9c3e, and the row is green
+# only when the rule rejects them.
+#
+# It cannot be replaced by the depth rows above. Coverage reads 100 % on a
+# configuration whose kept band measures 18 % of its drawn width, because it
+# only ever looks inside the band being REMOVED -- so every existing row here
+# would stay green while the defect this rule guards returned in full.
+add_test(NAME Spectr-tracking-transition-kept-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_TRANSITION_PLANT=symmetric-kept
+        SPECTR_TRANSITION_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "A kept band comes back the width it was drawn")
+set_tests_properties(Spectr-tracking-transition-kept-negative-control
     PROPERTIES TIMEOUT 300)
 
 add_test(NAME Spectr-tracking-transition-regression-negative-control
