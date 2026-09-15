@@ -298,12 +298,22 @@ void Spectr::publish_processing_state_() noexcept {
 
     if (!processor_prepared_) return;
     if (!renderer_) return;
-    // Republishing a mask the renderer is already realising is not free: it
-    // queues a redesign that is crossfaded in at whichever block the worker
-    // finishes on, and crossfading an impulse response with an identical copy
-    // of itself is not a bit-exact identity. The sync worker observes drift
-    // often and most of it resolves to the same mask, so without this gate an
-    // offline bounce is not reproducible run to run.
+    // Republishing a mask the renderer is already realising buys nothing and
+    // costs a redesign -- a full cepstral reconstruction on the design grid --
+    // so skip it. The sync worker observes drift often and most of it resolves
+    // to the same mask, which makes this the common path rather than a corner.
+    //
+    // It is a COST gate, not a correctness one, and the difference is worth
+    // stating because the earlier comment here drew the wrong conclusion from
+    // the right observation. Republishing an unchanged mask really did perturb
+    // the audio, but not because blending an impulse response with a copy of
+    // itself is inexact -- it is exact. It was that the convolver's CROSSFADE
+    // swap path installs the incoming response with a ZEROED input delay line,
+    // so any swap, changed or not, restarted the convolution from silence.
+    // Tracking now adopts a redesign by the instantaneous swap, which carries
+    // that delay line across, so an unchanged republication is bit-exact
+    // wherever it lands and reproducibility does not rest on this gate. See
+    // `kIrCrossfadeSamples` and the swap rules in `test/test_mask_renderer.cpp`.
     if (last_published_layout_valid_
         && same_mask_layout_(last_published_layout_, mask_layout))
         return;
@@ -1071,14 +1081,12 @@ void Spectr::process(
                         automated.bands[band].muted =
                             audible.bands[band].muted;
                     }
-                    // Stage only a mask that is not already live. An
-                    // unchanged restage is not a no-op inside the renderer:
-                    // it queues a redesign that is crossfaded in at whichever
-                    // block the worker finishes on, and a crossfade between
-                    // an impulse response and an identical copy of itself
-                    // does not reproduce it bit-for-bit. Without this gate two
-                    // identical offline renders differed, which would break a
-                    // null test and any bit-exact ratchet.
+                    // Stage only a mask that is not already live, so a held
+                    // automation value does not queue a redesign per block.
+                    // Like the publication gate above this is about cost, not
+                    // correctness: the swap carries the convolver's delay
+                    // line, so an unchanged restage is bit-exact wherever the
+                    // worker happens to finish.
                     if (!last_staged_layout_valid_
                         || !same_mask_layout_(last_staged_layout_, automated)) {
                         (void)renderer->set_layout_rt(automated);

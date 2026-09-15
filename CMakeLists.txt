@@ -626,6 +626,41 @@ add_test(NAME Spectr-tracking-transition-eq-negative-control
 set_tests_properties(Spectr-tracking-transition-eq-negative-control
     PROPERTIES TIMEOUT 300)
 
+# The swap-handoff rules' negative controls.
+#
+# Tracking replaces an impulse response underneath running audio on every
+# redesign, and what that costs is decided by whether the incoming response
+# inherits the convolver's input delay line or starts from silence. The
+# shipping renderer takes the instantaneous swap, which inherits it.
+# SPECTR_SWAP_PLANT=history-reset reinstates the parallel crossfade -- the one
+# alternative the convolver offers, and the code that shipped before -- whose
+# swap path installs the incoming response with a ZEROED delay line. Both rows
+# below invert their own verdict when they see the plant, so each is green only
+# when its rule OBSERVES the defect.
+#
+# Deliberately only two rows. The third swap rule, on the boundary step a
+# discrete change makes, is NOT registered here: a parallel fade is precisely
+# what smooths a boundary, so the plant scores BETTER on that rule and a
+# control row for it would be vacuously green. That rule carries an instrument
+# control of its own instead.
+add_test(NAME Spectr-swap-unchanged-mask-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_SWAP_PLANT=history-reset
+        SPECTR_SWAP_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "A redesign that changes nothing changes no sample")
+set_tests_properties(Spectr-swap-unchanged-mask-negative-control
+    PROPERTIES TIMEOUT 300)
+
+add_test(NAME Spectr-swap-gesture-artifact-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_SWAP_PLANT=history-reset
+        SPECTR_SWAP_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "A gesture costs no more artifact than the other mode")
+set_tests_properties(Spectr-swap-gesture-artifact-negative-control
+    PROPERTIES TIMEOUT 300)
+
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
     test/test_native_state_parity.cpp
