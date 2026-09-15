@@ -152,3 +152,21 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 ^"?No band is left worse than
 ^"?A band with no room for a transition
 ^"?Transition shaping leaves an ordinary EQ
+
+# The swap handoff: the three rules and the two plants. Same trap as the
+# transition block above -- they start with the behaviour, so nothing else here
+# matches them and without these lines they register and never run. That is
+# exactly how the rule they replaced spent its life: "A live mask change does
+# not click" was never selected by this gate, so the one check that was
+# supposed to catch a redesign perturbing live audio never ran in CI, and its
+# metric could not have seen it anyway.
+#
+# The unchanged-mask rule is the one that most needs its plant selected
+# alongside it. It reads a residual at the renderer's single-precision floor --
+# 6.7e-08 -- and a rule that passes because the measurement cannot resolve the
+# failure is worse than no rule, which is what the 512-sample crossfade proved
+# by hiding a 0.02 residual inside a 0.029 tone for months.
+^Spectr-swap-
+^"?A redesign that changes nothing
+^"?A gesture costs no more artifact
+^"?A discrete mask change lands without a step

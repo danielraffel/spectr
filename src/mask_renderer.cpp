@@ -12,8 +12,10 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <vector>
 
 namespace spectr {
@@ -57,9 +59,80 @@ constexpr double kDesignMagnitudeFloor = 1.0e-6;
 /// transition that still keeps its cost inside the band it belongs to.
 constexpr int kTrackingTransitionHalfWidthBins = 8;
 
-/// Crossfade applied when a redesigned impulse response replaces the live one,
-/// so a mask edit is audibly continuous rather than a hard cut.
-constexpr std::size_t kIrCrossfadeSamples = 512;
+/// Crossfade requested of the convolver when a redesigned impulse response
+/// replaces the live one. Zero -- the swap is instantaneous, and that is what
+/// makes a drag continuous rather than what breaks it.
+///
+/// The convolver offers a parallel crossfade, and taking it looks like the
+/// obviously safer choice. It is not, because of what the two swap paths do
+/// with the INPUT DELAY LINE. A partitioned convolver holds a ring of the
+/// spectra of recent input blocks; it depends on the audio, never on the
+/// impulse, so it is the same history whichever impulse is live. The
+/// instantaneous path moves that ring into the incoming impulse, which is what
+/// makes the swap continuous. The crossfade path does not: it installs the
+/// incoming impulse with a ZEROED ring and relies on the outgoing impulse
+/// rendering in parallel to cover the gap.
+///
+/// Here the ring is `design_grid_size / kRenderBlock` = 128 partitions of 64
+/// samples -- 8192 samples, 170 ms at 48 kHz. For that long after a faded swap
+/// the live impulse convolves a history that is mostly silence, reproducing
+/// only its own first partitions while the missing tail re-enters as the ring
+/// refills.
+///
+/// A LONGER FADE DOES NOT RESCUE IT, which is the counter-intuitive part and
+/// the reason this is a structural mismatch rather than a tuning error. While
+/// the fade runs the output is a blend of a correct signal -- the outgoing
+/// impulse, rendering from its real history -- and an incorrect one, so the
+/// blend is wrong wherever the incoming side contributes at all. Swept on the
+/// bare convolver with a bit-identical impulse, a fade EQUAL to the impulse
+/// still disturbs the output for the impulse's whole length (8192 taps against
+/// an 8192-sample fade: 170.2 ms; 32768 against 32768: 682.3 ms). It comes
+/// clean only when the fade is tens of times the impulse, long enough for the
+/// ring to refill while the outgoing side still dominates the blend -- a
+/// 512-tap impulse needs a 32768-sample fade. No fade a gesture could tolerate
+/// is in that range. A zero fade is exactly correct at every impulse length.
+///
+/// It compounds under a drag, because the convolver refuses a swap while a
+/// fade is in flight. The swap rate is therefore pinned to one per fade, and a
+/// held gesture never lets the live impulse accumulate more than one fade's
+/// worth of the 8192 samples it needs -- so the whole gesture renders as a
+/// perpetually re-onsetting, truncated convolution, which is heard as recent
+/// material repeating rather than as a click. A deep attenuation is formed by
+/// cancellation across the WHOLE impulse, so the same starvation is why a
+/// gesture in a zoomed field reached only -18 dB of a drawn -40.
+///
+/// Measured through the convolver with a BIT-IDENTICAL impulse swapped into a
+/// running 8192-tap response, so every reading is handoff cost and nothing
+/// else: under a 512-sample fade one swap disturbs the output for 161.9 ms
+/// with a peak error 0.82x the signal, and swaps at gesture cadence leave it
+/// wrong continuously at 0.58x the signal. With no fade the same swaps are
+/// bit-exact -- zero deviation, at any cadence.
+///
+/// What the instantaneous path gives up is the smooth boundary on a LARGE
+/// change. It is a real cost and it is bounded: because the delay line is
+/// carried, the incoming impulse's output is correct from its first sample, so
+/// a big change lands as one step rather than as 93 ms of wrong output. A step
+/// once per discrete action is the cheaper of the two, and a drag -- where the
+/// consecutive designs differ by a fraction of a dB -- has no step to make.
+constexpr std::size_t kIrCrossfadeSamples = 0;
+
+/// Test seam for this rule's negative control.
+///
+/// A gate nobody has watched go red is not a gate, and the defect this one
+/// forbids lives in a constant -- so the control has to be able to put the
+/// constant back. This reinstates exactly the pre-fix value, in the shipping
+/// binary, so the contract is proven against the code that actually ships
+/// rather than against a compile-time variant of it. Read once per process and
+/// unset in every shipping run.
+std::size_t ir_swap_crossfade_samples() {
+    static const std::size_t samples = [] {
+        const char* value = std::getenv("SPECTR_SWAP_PLANT");
+        return (value != nullptr && std::string_view(value) == "history-reset")
+                   ? std::size_t{512}
+                   : kIrCrossfadeSamples;
+    }();
+    return samples;
+}
 
 bool valid_config(const MaskRendererConfig& config) noexcept {
     if (config.channels <= 0 || config.channels > 8) return false;
@@ -215,7 +288,8 @@ public:
             convolvers_[static_cast<std::size_t>(ch)].load_ir(
                 design_taps_.data(), design_taps_.size(),
                 static_cast<std::size_t>(kRenderBlock));
-            convolvers_[static_cast<std::size_t>(ch)].set_crossfade(kIrCrossfadeSamples);
+            convolvers_[static_cast<std::size_t>(ch)].set_crossfade(
+                ir_swap_crossfade_samples());
         }
 
         pending_generation_.store(0, std::memory_order_release);

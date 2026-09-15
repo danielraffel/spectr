@@ -583,74 +583,343 @@ TEST_CASE("A staged redesign reaches the audio path and is reported",
     REQUIRE(renderer->active_generation() > first);
 }
 
-TEST_CASE("A live mask change does not click",
-          "[mask-renderer][audio]") {
-    // The animation path in miniature. Spectr's automation sweep stages a new
-    // layout from the audio thread on every block, so an impulse response is
-    // being replaced underneath a running signal constantly. A hard cut
-    // between two responses is audible as a click; the renderer opts into the
-    // convolver's parallel crossfade so it is not.
-    auto renderer = spectr::make_mask_renderer(MaskRenderMode::zero_latency);
-    REQUIRE(renderer->prepare(zero_latency_config()));
-    REQUIRE(renderer->publish_layout(zoom_layout()));
-    settle(*renderer, 1);
-    renderer->reset();
 
-    const auto stimulus = tone(48000, 440.0);
+// ── The swap handoff ───────────────────────────────────────────────────────
+//
+// A gesture republishes a layout while audio runs, so an impulse response is
+// replaced underneath a running signal continuously. What that costs is a
+// property of the HANDOFF, not of the mask change: a partitioned convolver
+// carries a delay line of recent input spectra, and whether the incoming
+// impulse inherits it or starts from silence decides whether recent material
+// re-sounds. The rules below measure that directly.
+//
+// They deliberately do not measure the worst sample-to-sample step. That
+// metric cannot see this defect: a step reads the signal's own slew, so an
+// error smaller than the signal is invisible to it while being plainly
+// audible, and it returns the same number whether a swap happened or not.
 
-    auto worst_step = [](const std::vector<float>& x, std::size_t from,
-                         std::size_t to) {
-        double worst = 0.0;
-        for (std::size_t i = from + 1; i < to; ++i)
-            worst = std::max(worst, static_cast<double>(
-                std::abs(x[i] - x[i - 1])));
-        return worst;
-    };
+namespace {
 
-    // Steady reference: no mask change at all.
-    const auto steady = render(*renderer, stimulus, 256);
-    const double steady_step = worst_step(steady.left, 8000, 40000);
-    REQUIRE(steady_step > 0.0);   // control: the signal is actually moving
+/// Spectr's plant idiom: the named defect this file's swap rules forbid,
+/// reinstated in the shipping binary by `SPECTR_SWAP_PLANT=history-reset`.
+bool swap_planted() {
+    const char* value = std::getenv("SPECTR_SWAP_PLANT");
+    return value != nullptr && std::string(value) == "history-reset";
+}
 
-    // Now swap the mask mid-stream, the way the automation sweep does.
-    auto swapping = spectr::make_mask_renderer(MaskRenderMode::zero_latency);
-    REQUIRE(swapping->prepare(zero_latency_config()));
-    REQUIRE(swapping->publish_layout(zoom_layout()));
-    settle(*swapping, 1);
-    swapping->reset();
+/// A negative-control row declares itself with this; the rule then REQUIREs
+/// that its plant actually arrived. Without it the row is vacuously green the
+/// moment the variable is stripped or misspelled.
+void require_swap_plant_arrived(bool fired) {
+    if (std::getenv("SPECTR_SWAP_PLANT_REQUIRED") == nullptr) return;
+    INFO("this row is registered as a negative control, so its plant must fire; "
+         "SPECTR_SWAP_PLANT="
+         << (std::getenv("SPECTR_SWAP_PLANT") ? std::getenv("SPECTR_SWAP_PLANT")
+                                              : "(unset)"));
+    REQUIRE(fired);
+}
 
-    std::vector<float> out_l(stimulus.size(), 0.0f);
-    std::vector<float> out_r(stimulus.size(), 0.0f);
+/// A field with one band held at a gain, so the designed impulse has a TAIL.
+/// A flat field designs to an impulse, whose swap costs nothing because there
+/// is no history to lose -- it would score every rule below a perfect zero for
+/// the wrong reason.
+pulp::signal::SpectralBandLayout gain_layout(double gain_db, int band = 16) {
+    auto layout = full_range_layout();
+    layout.bands[static_cast<std::uint32_t>(band)].gain_db =
+        static_cast<float>(gain_db);
+    return layout;
+}
+
+/// Energy in `signal` that is NOT at `hz`, as an RMS, relative to `reference`.
+///
+/// Least-squares projection per window rather than an FFT magnitude, for the
+/// reason `project_tone_amplitude` states: a windowed magnitude would measure
+/// its own side lobes. A steady tone through a static mask leaves EXACTLY zero
+/// here, which is what makes a non-zero reading attributable to the swap.
+double non_tonal_residual(const std::vector<float>& signal, std::size_t begin,
+                          std::size_t end, double hz, double reference,
+                          std::size_t window = 512) {
+    double sse = 0.0;
+    std::size_t counted = 0;
+    const double omega = 2.0 * kPi * hz / kSampleRate;
+    for (std::size_t base = begin; base + window <= end; base += window) {
+        double cc = 0, ss = 0, cs = 0, xc = 0, xs = 0, xx = 0;
+        for (std::size_t i = 0; i < window; ++i) {
+            const double phase = omega * static_cast<double>(base + i);
+            const double c = std::cos(phase), s = std::sin(phase);
+            const double v = static_cast<double>(signal[base + i]);
+            cc += c * c; ss += s * s; cs += c * s;
+            xc += v * c; xs += v * s; xx += v * v;
+        }
+        const double det = cc * ss - cs * cs;
+        double residual = xx;
+        if (std::abs(det) > 1e-12) {
+            const double a = ( ss * xc - cs * xs) / det;
+            const double b = (-cs * xc + cc * xs) / det;
+            residual = xx - (a * xc + b * xs);
+        }
+        sse += residual > 0.0 ? residual : 0.0;
+        counted += window;
+    }
+    if (counted == 0 || !(reference > 0.0)) return 0.0;
+    return std::sqrt(sse / static_cast<double>(counted)) / reference;
+}
+
+constexpr float kGestureToneAmplitude = 0.25f;
+
+struct Gesture {
+    std::vector<float> out;
+    double residual = 0.0;     ///< non-tonal energy injected during the gesture
+    double achieved_db = 0.0;  ///< how much of the requested change arrived
+};
+
+/// Render a gesture: a steady tone at the dragged band's centre while the
+/// layout is republished every `every_blocks` host blocks.
+///
+/// `span_db == 0` republishes a BIT-IDENTICAL layout, so everything it costs
+/// is handoff cost and none of it is the mask changing.
+///
+/// Republishes through `publish_layout` rather than the worker, so the swap
+/// cadence is exact and the rule does not depend on how a background thread
+/// happened to be scheduled.
+Gesture gesture(MaskRenderMode mode, int every_blocks, double span_db,
+                double hold_db = -20.0, int band = 16, int host_block = 128) {
+    const std::size_t lead = 24576, sweep = 48000, tail = 12288;
+    const std::size_t total = lead + sweep + tail;
+    const double hz = band_centre_hz(full_range_layout(), band);
+
+    auto renderer = spectr::make_mask_renderer(mode);
+    MaskRendererConfig config = zero_latency_config(2, host_block);
+    REQUIRE(renderer->prepare(config));
+    REQUIRE(renderer->publish_layout(gain_layout(hold_db, band)));
+
+    const auto stimulus = tone(total, hz, kGestureToneAmplitude);
+    Gesture result;
+    result.out.assign(total, 0.0f);
     std::vector<float> in_l, in_r, blk_l, blk_r;
-    const auto before = swapping->active_generation();
-    for (std::size_t pos = 0; pos < stimulus.size(); pos += 256) {
-        const int n = static_cast<int>(
-            std::min<std::size_t>(256, stimulus.size() - pos));
-        if (pos == 24064) REQUIRE(swapping->set_layout_rt(zoom_layout(10)));
+    int index = 0;
+    for (std::size_t pos = 0; pos + static_cast<std::size_t>(host_block) <= total;
+         pos += static_cast<std::size_t>(host_block), ++index) {
+        if (every_blocks > 0 && pos >= lead && pos < lead + sweep
+            && (index % every_blocks) == 0) {
+            const double t = static_cast<double>(pos - lead)
+                           / static_cast<double>(sweep);
+            REQUIRE(renderer->publish_layout(
+                gain_layout(hold_db + span_db * t, band)));
+        }
         in_l.assign(stimulus.begin() + static_cast<std::ptrdiff_t>(pos),
-                    stimulus.begin() + static_cast<std::ptrdiff_t>(pos + n));
+                    stimulus.begin() + static_cast<std::ptrdiff_t>(pos + host_block));
         in_r = in_l;
-        blk_l.assign(static_cast<std::size_t>(n), 0.0f);
-        blk_r.assign(static_cast<std::size_t>(n), 0.0f);
+        blk_l.assign(static_cast<std::size_t>(host_block), 0.0f);
+        blk_r.assign(static_cast<std::size_t>(host_block), 0.0f);
         const float* in[2] = {in_l.data(), in_r.data()};
         float* out[2] = {blk_l.data(), blk_r.data()};
-        REQUIRE(swapping->process(in, out, n));
+        REQUIRE(renderer->process(in, out, host_block));
         std::copy(blk_l.begin(), blk_l.end(),
-                  out_l.begin() + static_cast<std::ptrdiff_t>(pos));
-        std::copy(blk_r.begin(), blk_r.end(),
-                  out_r.begin() + static_cast<std::ptrdiff_t>(pos));
-        std::this_thread::sleep_for(std::chrono::microseconds(200));
+                  result.out.begin() + static_cast<std::ptrdiff_t>(pos));
     }
-    // Control: the swap actually reached the audio path. Without this a
-    // renderer that dropped the staged layout would score a perfect zero
-    // click.
-    INFO("generation before " << before << ", after " << swapping->active_generation());
-    REQUIRE(swapping->active_generation() > before);
+    result.residual = non_tonal_residual(result.out, lead, lead + sweep, hz,
+                                         static_cast<double>(kGestureToneAmplitude));
+    const double before = project_tone_amplitude(result.out, lead - 8192, 8192, hz);
+    const double after  = project_tone_amplitude(result.out, lead + sweep - 8192, 8192, hz);
+    result.achieved_db = amplitude_db(after, before);
+    return result;
+}
 
-    const double swap_step = worst_step(out_l, 24064, 40000);
-    INFO("worst sample-to-sample step: steady " << steady_step
-         << ", across the swap " << swap_step);
-    // A hard cut between two 8192-tap responses shows up as a step several
-    // times the signal's own slew. The crossfade keeps it within it.
-    REQUIRE(swap_step < steady_step * 1.5);
+} // namespace
+
+TEST_CASE("A redesign that changes nothing changes no sample",
+          "[mask-renderer][audio]") {
+    // The sharpest form of the rule. Republishing a layout the renderer is
+    // ALREADY realising must cost the audio nothing at all -- and Spectr's
+    // param-sync republishes on observed drift, most of which resolves to the
+    // same mask, so this is the common case rather than a corner one.
+    const bool plant = swap_planted();
+    require_swap_plant_arrived(plant);
+
+    const auto still  = gesture(MaskRenderMode::zero_latency, /*every=*/0, 0.0);
+    const auto rerun  = gesture(MaskRenderMode::zero_latency, /*every=*/8, 0.0);
+
+    // Control: the instrument can see a real change. Without this the rule is
+    // satisfied equally by a renderer that works and by a harness measuring
+    // nothing.
+    const auto changed = gesture(MaskRenderMode::zero_latency, /*every=*/8, -40.0);
+    INFO("control: a real 40 dB gesture must register");
+    REQUIRE(changed.residual > 1.0e-4);
+    REQUIRE(changed.achieved_db < -20.0);
+
+    // Control: the unchanged run must still be driving the band it holds, or
+    // the zero below is the zero of an unloaded renderer.
+    REQUIRE(std::abs(rerun.achieved_db) < 1.0);
+
+    // The floor this rule can resolve is the renderer's own single-precision
+    // arithmetic, measured by the never-republished run rather than derived:
+    // a static mask on a steady tone is a pure tone in exact arithmetic, so
+    // whatever `still` reads IS the floor. The gate is a multiple of that
+    // measured floor, not a constant chosen to pass.
+    const double floor_ = still.residual;
+    const double gate = std::max(4.0 * floor_, 1.0e-8);
+    std::printf("\nunchanged-mask republication (Tracking)\n"
+                "  never republished   residual %.3e   <- measured arithmetic floor\n"
+                "  republished x%-3d    residual %.3e   (gate: <= %.3e)\n"
+                "  a real 40 dB gesture residual %.3e   <- control, must register\n",
+                still.residual, 375 / 8, rerun.residual, gate, changed.residual);
+
+    if (plant) {
+        // The planted handoff loses the delay line on every swap, so an
+        // unchanged mask perturbs the audio anyway -- by orders of magnitude,
+        // not by a margin.
+        REQUIRE(rerun.residual > 100.0 * gate);
+        return;
+    }
+    REQUIRE(floor_ < 1.0e-6);          // the floor itself must be a floor
+    REQUIRE(rerun.residual <= gate);
+}
+
+TEST_CASE("A gesture costs no more artifact than the other mode",
+          "[mask-renderer][audio]") {
+    // Tracking replaces an impulse response; Mixing multiplies a table into a
+    // WOLA frame. They are different realisations of the same drawn magnitude,
+    // so Mixing's own artifact is the standard Tracking is held to -- an
+    // absolute threshold would be a number chosen to pass.
+    const bool plant = swap_planted();
+    require_swap_plant_arrived(plant);
+
+    struct Row { int every; };
+    for (auto row : {Row{8}, Row{1}}) {
+        const auto tracking = gesture(MaskRenderMode::zero_latency, row.every, -40.0);
+        const auto mixing   = gesture(MaskRenderMode::linear_phase, row.every, -40.0);
+
+        // Control: Mixing's residual is the denominator, so it must be real.
+        // A zero there would make every ratio infinite or undefined.
+        INFO("control: Mixing must register the gesture too");
+        REQUIRE(mixing.residual > 1.0e-4);
+        // Control: both modes must actually have moved the band.
+        REQUIRE(tracking.achieved_db < -20.0);
+        REQUIRE(mixing.achieved_db < -20.0);
+
+        const double ratio = tracking.residual / mixing.residual;
+        std::printf("\n40 dB gesture, republished every %d host block%s\n"
+                    "  Tracking residual %.6f  (achieved %6.2f dB)\n"
+                    "  Mixing   residual %.6f  (achieved %6.2f dB)\n"
+                    "  ratio %.2f x   (gate: <= 2.5)\n",
+                    row.every, row.every == 1 ? "" : "s",
+                    tracking.residual, tracking.achieved_db,
+                    mixing.residual, mixing.achieved_db, ratio);
+
+        if (plant) {
+            REQUIRE(ratio > 4.0);   // the planted handoff is far worse
+        } else {
+            REQUIRE(ratio <= 2.5);
+        }
+    }
+}
+
+TEST_CASE("A discrete mask change lands without a step the other mode would not make",
+          "[mask-renderer][audio]") {
+    // What the instantaneous handoff trades. Carrying the delay line means the
+    // incoming impulse is correct from its first sample, so a large change
+    // arrives as one step rather than as a smeared onset -- and the step is
+    // what this rule bounds, against Mixing on the identical change.
+    //
+    // No plant row: reinstating the crossfade does NOT violate this rule. A
+    // parallel fade is exactly the thing that smooths a boundary, so the
+    // planted defect scores BETTER here while being far worse everywhere else.
+    // Registering it as a negative control would be a vacuously green row.
+    // The control this rule needs is an instrument one, below.
+    constexpr int kHostBlock = 256;
+    const std::size_t kTotal = 96000, kAt = 48000;
+
+    auto worst_in = [](const std::vector<float>& x, std::size_t from, std::size_t to) {
+        double w = 0.0;
+        for (std::size_t i = from; i < to; ++i)
+            w = std::max(w, std::abs(static_cast<double>(x[i])
+                                     - static_cast<double>(x[i - 1])));
+        return w;
+    };
+
+    // Render a mute landing mid-stream and return (output, steady slew).
+    auto render_mute = [&](MaskRenderMode mode, int band, bool broadband) {
+        auto renderer = spectr::make_mask_renderer(mode);
+        REQUIRE(renderer->prepare(zero_latency_config(2, kHostBlock)));
+        REQUIRE(renderer->publish_layout(full_range_layout()));
+        std::vector<float> in(kTotal), out(kTotal, 0.0f), il, ir, bl, br;
+        if (broadband) {
+            unsigned int seed = 99991u;
+            for (auto& v : in) {
+                seed = seed * 1664525u + 1013904223u;
+                v = 0.25f * (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f);
+            }
+        } else {
+            in = tone(kTotal, 440.0, 0.5f);
+        }
+        bool fired = false;
+        for (std::size_t pos = 0; pos + kHostBlock <= kTotal; pos += kHostBlock) {
+            if (pos >= kAt && !fired) {
+                REQUIRE(renderer->publish_layout(full_range_layout(band)));
+                fired = true;
+            }
+            il.assign(in.begin() + static_cast<std::ptrdiff_t>(pos),
+                      in.begin() + static_cast<std::ptrdiff_t>(pos + kHostBlock));
+            ir = il;
+            bl.assign(kHostBlock, 0.0f); br.assign(kHostBlock, 0.0f);
+            const float* ip[2] = {il.data(), ir.data()};
+            float* op[2] = {bl.data(), br.data()};
+            REQUIRE(renderer->process(ip, op, kHostBlock));
+            std::copy(bl.begin(), bl.end(), out.begin() + static_cast<std::ptrdiff_t>(pos));
+        }
+        // Control: the mute has to have reached the audio. Without it every
+        // reading below is the ratio of an unchanged stream to itself -- 1.00,
+        // and the rule passes having observed nothing.
+        REQUIRE(fired);
+        return out;
+    };
+
+    auto step_ratio = [&](const std::vector<float>& out) {
+        const double steady = worst_in(out, 16000, 40000);
+        REQUIRE(steady > 0.0);
+        return worst_in(out, kAt, kAt + 8000) / steady;
+    };
+
+    // ── instrument control ────────────────────────────────────────────────
+    // Displace one sample of a clean render by a known multiple of the steady
+    // slew and require the metric to report it. This proves the metric can see
+    // a large step at all; without it, the small numbers below are equally
+    // consistent with a metric that reads small no matter what.
+    {
+        auto clean = render_mute(MaskRenderMode::linear_phase, 12, /*broadband=*/true);
+        const double steady = worst_in(clean, 16000, 40000);
+        clean[kAt + 100] += static_cast<float>(6.0 * steady);
+        INFO("instrument control: an injected 6x step must be reported");
+        REQUIRE(step_ratio(clean) >= 5.0);
+    }
+
+    // ── the rule ──────────────────────────────────────────────────────────
+    double tracking = 0.0, mixing = 0.0;
+    for (int band : {4, 12, 20, 28, 30}) {
+        tracking = std::max(tracking,
+                            step_ratio(render_mute(MaskRenderMode::zero_latency, band, true)));
+        mixing = std::max(mixing,
+                          step_ratio(render_mute(MaskRenderMode::linear_phase, band, true)));
+    }
+
+    // The narrow case, measured rather than asserted away: a sustained pure
+    // tone beside the muted band is the one stimulus where this step is large,
+    // because the whole signal is a single coherent sinusoid whose phase the
+    // minimum-phase redesign rotates in one sample. Program material with
+    // content either side of the band has slew of its own for the step to sit
+    // inside, which is what the broadband rule above measures. Bounded loosely
+    // so a REGRESSION past today's behaviour is caught while the upstream fix
+    // -- carrying the delay line across a FADED swap, which would need both at
+    // once -- would simply pass.
+    const double tone_case = step_ratio(render_mute(MaskRenderMode::zero_latency, 17, false));
+
+    std::printf("\nmute one band mid-stream\n"
+                "  broadband  Tracking %.2f   Mixing %.2f   (gate: Tracking <= 2.5)\n"
+                "  pure tone beside the muted band, Tracking %.2f  (known cost, gate <= 30)\n",
+                tracking, mixing, tone_case);
+
+    REQUIRE(mixing > 0.0);             // control: the reference is real
+    REQUIRE(tracking <= 2.5);
+    REQUIRE(tone_case <= 30.0);
 }
