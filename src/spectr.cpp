@@ -302,7 +302,20 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
     if (!renderer->prepare(renderer_config_())) return nullptr;
     // Hand the new renderer the magnitude that is already drawn, so a switch
     // does not pass through a neutral field on its way to the right one.
-    if (!renderer->publish_layout(make_mask_layout_())) return nullptr;
+    //
+    // make_mask_layout_ reads field_/viewport_/layout_ and does NOT lock
+    // itself -- every other caller holds processing_state_mutex_ around it,
+    // and this one must too: a switch runs on the control thread while the
+    // editor may be writing a band. Copy the layout out under the lock and
+    // publish outside it, so the renderer is never built from a half-written
+    // field and the lock is not held across the design work publish_layout
+    // does.
+    pulp::signal::SpectralBandLayout layout;
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        layout = make_mask_layout_();
+    }
+    if (!renderer->publish_layout(layout)) return nullptr;
     renderer->set_mix(std::clamp(state().get_value(kMix) / 100.0f, 0.0f, 1.0f));
 
     // Publishing a layout only STAGES it; a renderer adopts at its own block
