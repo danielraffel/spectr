@@ -1329,6 +1329,36 @@ if(SPECTR_NODE_EXECUTABLE)
             PROPERTIES TIMEOUT 60)
     endforeach()
 
+    # The mute TRANSITION, sampled every frame rather than at its endpoints.
+    # renderGainsRef was ramped toward -1.02 so the next line could notice it
+    # crossed -1.01 and snap to the -Infinity sentinel -- a tripwire for the
+    # state machine, not a gain the band travels to. The painter cannot tell
+    # those apart, so it spent eleven frames drawing a box from the zero line to
+    # 4.5px past the bottom of the plot. Reported as "an animation flash and is
+    # just too much". The ramp now travels to 0 and trips on arrival.
+    add_test(NAME Spectr-materialized-mute-collapse-direction
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_mute_collapse_direction.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-mute-collapse-direction PROPERTIES
+        TIMEOUT 60)
+    # Four controls, separate rows so it is visible which check is load bearing.
+    # `midframe-dip` is the one that matters: it dips to the floor for a single
+    # mid-transition frame, so it is absent at both endpoints. It caught a real
+    # hole -- at the deep value the painter's own guard skips the band, so the
+    # deepest frame records NO marks, and a neighbour-to-neighbour comparison
+    # stepped straight over the gap. The check now runs against a running
+    # maximum.
+    foreach(_mutecd_plant plunge grow frozen midframe-dip)
+        add_test(NAME Spectr-materialized-mute-collapse-direction-control-${_mutecd_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_mute_collapse_direction.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_mutecd_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-mute-collapse-direction-control-${_mutecd_plant}
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+
     # Emptying a snapshot slot, and RESET ALL finally meaning what it says.
     add_test(NAME Spectr-materialized-clear-snapshot
         COMMAND ${SPECTR_NODE_EXECUTABLE}
