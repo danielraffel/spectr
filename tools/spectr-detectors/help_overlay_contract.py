@@ -176,7 +176,12 @@ def capture_boxes(plant=None):
 # the button's own text away. Without it the control goes unnamed, which no
 # screenshot and no centring measurement can see.
 TAIL_CAPTION = '"data-spectr-help-learn-more-label": true,'
-TAIL_LABEL = '"aria-label": "Learn more",'
+# Anchored on the button's own marker. The guide scrim carries
+# `"aria-label": "About Spectr",` as well -- it names the dialog after the same
+# page -- so a bare needle would be satisfied by the scrim's and report a
+# button that had lost its accessible name entirely as named.
+TAIL_LABEL = ('"data-spectr-help-learn-more": true,\n'
+              '    "aria-label": "About Spectr",')
 
 # -- THE WHEEL DOES NOT GO THROUGH REACT ---------------------------------
 #
@@ -357,8 +362,8 @@ PLANTS = {
 
 CAPTION_NEST_AT = ('  }, /* @__PURE__ */ React.createElement("span", {\n'
                    '    "data-spectr-help-learn-more-label": true,')
-CAPTION_NEST_END = '"Learn more \\u2192")));'
-CAPTION_FLAT = '  }, "Learn more \\u2192"));'
+CAPTION_NEST_END = '"About Spectr \\u2192")));'
+CAPTION_FLAT = '  }, "About Spectr \\u2192"));'
 
 
 def flatten_caption(html):
