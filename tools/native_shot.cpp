@@ -26,10 +26,13 @@
 #include <pulp/audio/buffer.hpp>
 #include <pulp/format/format.hpp>
 #include <pulp/midi/buffer.hpp>
+#include <pulp/runtime/trace.hpp>
+#include <pulp/runtime/trace_session.hpp>
 #include <pulp/state/store.hpp>
 #include <pulp/view/frame_clock.hpp>
 #include <pulp/view/layout_snapshot.hpp>
 #include <pulp/view/overlay_dismissal.hpp>
+#include <pulp/view/pointer_dispatch.hpp>
 #include <pulp/view/screenshot.hpp>
 #include <pulp/view/screenshot_compare.hpp>
 #include <pulp/view/scripted_ui.hpp>
@@ -39,6 +42,7 @@
 #include <pulp/view/widgets.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -1413,6 +1417,354 @@ int main(int argc, char** argv) {
                 // layout snapshot, and it needs a RED of its own.
                 capture(rig, dir, prefix + "PLANT", backend, scale);
             }
+            return g_failures == 0 ? 0 : 1;
+        }
+
+        // ── The About guide: the wheel's cost, and where the Learn more
+        //    caption sits inside its box ─────────────────────────────────
+        //
+        // Two user reports on one surface, so one probe, because both need the
+        // same three activations to reach the surface at all and the second
+        // reading is worthless without the first one's control.
+        //
+        // CAPTION. The `?` popover is laid out from its capture: the tail
+        // button's box is a `layout_binding` in help.materialized.json, not a
+        // live measurement, so its HEIGHT cannot be changed from the style and
+        // any centring has to happen INSIDE that frozen box. What this prints
+        // is therefore the pair that actually decides it -- the button's rect
+        // and its caption's rect, both in root space -- plus the shortcut rows'
+        // PITCH, which is the only number that can see a row being added: every
+        // row reports as one line, so line height is blind to it.
+        //
+        // WHEEL. The guide scrolls itself by hand (the runtime never lowers its
+        // `overflow` to a ScrollView), so every wheel sample is a React state
+        // write. `deliver_mouse_wheel` is the host's own wheel verb -- the same
+        // one window_host_mac.mm calls -- so this measures the shipping path
+        // rather than a synthesised callback. The offset is read before and
+        // after and required to MOVE: a wheel that reaches nothing costs almost
+        // nothing and would otherwise read as a very fast scroll.
+        if (std::getenv("SPECTR_HELP_PROBE") != nullptr) {
+            rig.activate("[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            if (!rig.is_mounted("[data-spectr-help-learn-more]")) {
+                std::printf("[help] CONTROL FAILED: the ? popover did not open, "
+                            "so nothing below is a reading about the panel.\n");
+                return 3;
+            }
+            write_layout_snapshot(*rig.root, dir, prefix + "help-popover",
+                                  kDesignWidth, kDesignHeight);
+            capture(rig, dir, prefix + "help-popover", backend, scale);
+
+            const auto* caption = find_label(*rig.root, "Learn more →");
+            if (caption == nullptr) {
+                std::printf("[help] CONTROL FAILED: no 'Learn more' caption in "
+                            "the view tree.\n");
+                return 3;
+            }
+            const auto* owner = caption->parent();
+            float cx = 0.0f, cy = 0.0f, ox = 0.0f, oy = 0.0f;
+            root_origin(*caption, cx, cy);
+            if (owner != nullptr) root_origin(*owner, ox, oy);
+            const auto cb = caption->bounds();
+            const auto ob = owner != nullptr ? owner->bounds()
+                                             : pulp::view::Rect{0, 0, 0, 0};
+            std::printf("[help] learn-more owner  root=(%.3f,%.3f) %.3fx%.3f\n",
+                        ox, oy, ob.width, ob.height);
+            std::printf("[help] learn-more caption root=(%.3f,%.3f) %.3fx%.3f"
+                        " ih=%.3f\n", cx, cy, cb.width, cb.height,
+                        caption->intrinsic_height());
+            if (ob.height > 0.0f) {
+                const float dy = (cy + cb.height * 0.5f) - (oy + ob.height * 0.5f);
+                const float dx = (cx + cb.width * 0.5f) - (ox + ob.width * 0.5f);
+                std::printf("[help] learn-more caption offset from box centre:"
+                            " dx=%+.3f dy=%+.3f\n", dx, dy);
+            }
+            // The row pitch, which is what a thirteenth row moves and a caption
+            // change does not. Printed as a list so a non-uniform run is
+            // visible rather than averaged away.
+            rig.eval(
+                "(() => {"
+                "  const rows = document.querySelectorAll("
+                "    '[data-spectr-help-popover] [data-spectr-help-row]');"
+                "  const tops = [];"
+                "  for (const row of rows) {"
+                "    const r = row.getBoundingClientRect();"
+                "    tops.push(Math.round(r.top * 1000) / 1000);"
+                "  }"
+                "  console.log('[help] shortcut rows: ' + tops.length"
+                "    + ' tops=' + JSON.stringify(tops));"
+                "})();",
+                "spectr-help-row-pitch");
+
+            // ── the wheel ────────────────────────────────────────────────
+            rig.activate("[data-spectr-help-learn-more]");
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            if (!rig.is_mounted("[data-spectr-help-guide-panel]")) {
+                std::printf("[help] CONTROL FAILED: the guide did not open.\n");
+                return 3;
+            }
+            capture(rig, dir, prefix + "help-guide-top", backend, scale);
+
+            // Where to point the wheel. Root space, from the live tree rather
+            // than the authored numbers, so a panel resize cannot aim this at
+            // the scrim.
+            const pulp::view::View* body = nullptr;
+            std::function<void(const pulp::view::View&)> find_body =
+                [&](const pulp::view::View& v) {
+                    if (body != nullptr) return;
+                    if (v.id().find("help-scroll") != std::string::npos) body = &v;
+                    for (std::size_t i = 0; i < v.child_count(); ++i)
+                        find_body(*v.child_at(i));
+                };
+            find_body(*rig.root);
+            float wx = kDesignWidth * 0.5f;
+            float wy = kDesignHeight * 0.5f;
+            if (body != nullptr) {
+                float bx = 0.0f, by = 0.0f;
+                root_origin(*body, bx, by);
+                const auto bb = body->bounds();
+                wx = bx + bb.width * 0.5f;
+                wy = by + bb.height * 0.5f;
+            }
+            std::printf("[help] wheel point root=(%.1f,%.1f) body=%s\n",
+                        wx, wy, body != nullptr ? "found" : "CENTRE FALLBACK");
+
+            auto read_offset = [&rig]() {
+                rig.eval(
+                    "(() => {"
+                    "  const el = document.querySelector("
+                    "    '[data-spectr-help-scroll-content]');"
+                    "  const raw = el && el.style ? el.style.marginTop : '';"
+                    "  const tr = el && el.style ? el.style.transform : '';"
+                    "  console.log('[help] offset marginTop=' + raw"
+                    "    + ' transform=' + tr);"
+                    "})();",
+                    "spectr-help-offset");
+            };
+            read_offset();
+
+            // FEASIBILITY, for the fix this panel actually needs. If the
+            // offset can be written straight to the node, the wheel never
+            // reaches React -- no commit, so no captured-atlas re-apply and no
+            // layout flush behind it. Whether the write lands at all, and
+            // whether the viewport still CLIPS what it moves, are both pixel
+            // questions, so this writes the offset and captures.
+            if (const char* mode = std::getenv("SPECTR_HELP_IMPERATIVE")) {
+                rig.eval(std::string("(() => { globalThis.__spectrImperativeMode__ = ")
+                             + js_string(mode) + "; })();",
+                         "spectr-help-imperative-mode");
+                rig.eval(
+                    "(() => {"
+                    "  const el = document.querySelector("
+                    "    '[data-spectr-help-scroll-content]');"
+                    "  if (!el || !el.style) {"
+                    "    console.log('[help] IMPERATIVE CONTROL FAILED: no node');"
+                    "    return;"
+                    "  }"
+                    "  const how = globalThis.__spectrImperativeMode__;"
+                    "  if (how === 'transform') {"
+                    "    const id = el.__pulpId || el.id;"
+                    "    if (typeof g5 !== 'undefined' && g5 && typeof g5.setTransform === 'function') {"
+                    "      g5.setTransform(String(id), 1, 0, 0, 1, 0, -260);"
+                    "      console.log('[help] IMPERATIVE setTransform dy=-260 id=' + id);"
+                    "    } else if (el.style) {"
+                    "      el.style.transform = 'translateY(-260px)';"
+                    "      console.log('[help] IMPERATIVE style.transform dy=-260');"
+                    "    } else {"
+                    "      console.log('[help] IMPERATIVE CONTROL FAILED: no transform route');"
+                    "    }"
+                    "    return;"
+                    "  }"
+                    "  el.style.marginTop = -260;"
+                    "  console.log('[help] IMPERATIVE wrote marginTop=-260');"
+                    "})();",
+                    "spectr-help-imperative");
+                settle(rig.clock, 24);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+                capture(rig, dir, prefix + "help-guide-imperative", backend, scale);
+            }
+
+            // ATTRIBUTION, and it is a MEASUREMENT ONLY -- nothing here is a
+            // candidate fix. Every commit that dirties the materialized tree
+            // re-applies the whole captured atlas, and each binding costs two
+            // `getLayoutBoxMetrics` reads plus five bridge writes before the
+            // layout pass that follows. To find out what share of a wheel
+            // sample that is, replace the hook `resetAfterCommit` reads with a
+            // counting no-op and run the identical burst.
+            //
+            // The swap CANNOT be assumed to have taken: the replacement counts
+            // its own calls and prints the total, so a burst that reports a
+            // speed-up while the counter reads 0 is an instrument failure, not
+            // a finding.
+            if (std::getenv("SPECTR_HELP_PROBE_NOMETA") != nullptr) {
+                rig.eval(
+                    "(() => {"
+                    "  globalThis.__spectrMetaCalls__ = 0;"
+                    "  const prior = globalThis.__pulpApplyMaterializedImportMetadata__;"
+                    "  if (typeof prior !== 'function') {"
+                    "    console.log('[help] NOMETA CONTROL FAILED: no hook');"
+                    "    return;"
+                    "  }"
+                    "  globalThis.__pulpApplyMaterializedImportMetadata__ ="
+                    "    function () { globalThis.__spectrMetaCalls__ += 1; return 0; };"
+                    "  console.log('[help] NOMETA armed');"
+                    "})();",
+                    "spectr-help-nometa");
+            }
+
+            // Perfetto, when the SDK carries it. A RELEASED SDK links zero
+            // Perfetto symbols, so `Tracing::start` there is a no-op that
+            // returns false -- and a probe that wrote an empty .pftrace and
+            // called it a capture would be worse than one that never traced.
+            // So the build config is reported from `kTracingEnabled`, which is
+            // a compile-time constant, rather than inferred from the file.
+            const char* trace_path = std::getenv("SPECTR_HELP_TRACE");
+            bool tracing = false;
+            if (trace_path != nullptr) {
+                if (!pulp::runtime::kTracingEnabled) {
+                    std::printf("[help] TRACE UNAVAILABLE: this SDK was built "
+                                "with PULP_TRACING=OFF, so no span exists to "
+                                "record. Not writing a file.\n");
+                } else {
+                    tracing = pulp::runtime::Tracing::start(
+                        {"render", "layout", "canvas", "text", "js", "state"},
+                        std::string(trace_path), 256u * 1024u);
+                    std::printf("[help] trace session: %s -> %s\n",
+                                tracing ? "started" : "REFUSED", trace_path);
+                }
+            }
+
+            // HALF DOWN, HALF BACK UP, and the reason is a measurement bug
+            // that reads as a speed-up. `scrollBy` clamps at `maxScroll`, and
+            // React bails out of a `setState` to an IDENTICAL value -- so once
+            // the content bottoms out every further sample costs ~0.02 ms and
+            // drags the mean to half the truth. Reversing keeps every sample
+            // inside the range; the no-op count is printed anyway, because a
+            // burst that silently stopped doing work is the one reading that
+            // would look like the fix landing.
+            // DOES A RE-RENDER SNAP THE CONTENT BACK? With the offset held in
+            // a ref instead of state, React's remembered `marginTop` and the
+            // node's real one diverge the moment the wheel writes. A render the
+            // panel DOES take then has to re-place the content at the scrolled
+            // offset rather than at whatever React last committed. Scroll, force
+            // renders by resizing the host away and back, and require the frame
+            // to be unchanged.
+            if (std::getenv("SPECTR_HELP_RESIZE") != nullptr) {
+                pulp::view::WheelHost host_hooks;
+                for (int i = 0; i < 12; ++i) {
+                    pulp::view::deliver_mouse_wheel(*rig.root, {wx, wy},
+                                                    0.0f, 40.0f, host_hooks);
+                    rig.clock.tick(1.0f / 60.0f);
+                }
+                rig.root->layout_children();
+                settle(rig.clock, 16);
+                capture(rig, dir, prefix + "help-guide-prerender", backend, scale);
+                rig.resize(1100.0f, 716.0f);
+                rig.resize(kDesignWidth, kDesignHeight);
+                rig.root->layout_children();
+                settle(rig.clock, 24);
+                capture(rig, dir, prefix + "help-guide-postrender", backend, scale);
+                std::printf("[help] scrolled, resized away and back\n");
+                return g_failures == 0 ? 0 : 1;
+            }
+
+            // THE KEY PATH SHARES scrollBy, so it has to be shown moving the
+            // same content. It is not a formality: keys and wheel used to go
+            // through one `setScrollTop` and now go through one imperative
+            // writer, and a writer that only the wheel reaches would leave
+            // ArrowDown looking wired and doing nothing.
+            if (std::getenv("SPECTR_HELP_KEYS") != nullptr) {
+                for (int i = 0; i < 12; ++i) {
+                    pulp::view::WidgetBridge::dispatch_key_for_root(
+                        *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+                        pulp::view::kModNone, true);
+                    pulp::view::WidgetBridge::dispatch_key_for_root(
+                        *rig.root, static_cast<int>(pulp::view::KeyCode::down),
+                        pulp::view::kModNone, false);
+                    rig.clock.tick(1.0f / 60.0f);
+                }
+                rig.root->layout_children();
+                settle(rig.clock, 16);
+                capture(rig, dir, prefix + "help-guide-keys", backend, scale);
+                std::printf("[help] 12 ArrowDown delivered through the bridge\n");
+                return g_failures == 0 ? 0 : 1;
+            }
+
+            const int samples = 48;
+            const float delta = 40.0f;
+            pulp::view::WheelHost wheel_host;
+            std::vector<double> per_sample_ms;
+            per_sample_ms.reserve(static_cast<std::size_t>(samples));
+            const auto burst_start = std::chrono::steady_clock::now();
+            for (int i = 0; i < samples; ++i) {
+                const float step = i < samples / 2 ? delta : -delta;
+                const auto t0 = std::chrono::steady_clock::now();
+                pulp::view::deliver_mouse_wheel(*rig.root, {wx, wy},
+                                                0.0f, step, wheel_host);
+                rig.clock.tick(1.0f / 60.0f);
+                const auto t1 = std::chrono::steady_clock::now();
+                per_sample_ms.push_back(
+                    std::chrono::duration<double, std::milli>(t1 - t0).count());
+                // MID-BURST, and it is the only capture that can prove the
+                // wheel moved anything. The burst is symmetric so it ENDS back
+                // at the top: comparing the last frame against the first shows
+                // zero pixels changed whether the scroll works perfectly or not
+                // at all, in either implementation. The pair is the control --
+                // mid must differ from top, end must match it.
+                if (i == samples / 2 - 1) {
+                    rig.root->layout_children();
+                    settle(rig.clock, 8);
+                    capture(rig, dir, prefix + "help-guide-mid", backend, scale);
+                }
+            }
+            const auto burst_end = std::chrono::steady_clock::now();
+            if (tracing) {
+                const auto stopped = pulp::runtime::Tracing::stop();
+                std::printf("[help] trace flushed: ok=%d bytes=%llu path=%s\n",
+                            stopped.ok ? 1 : 0,
+                            static_cast<unsigned long long>(stopped.trace_bytes),
+                            stopped.path.c_str());
+            }
+            read_offset();
+            capture(rig, dir, prefix + "help-guide-scrolled", backend, scale);
+
+            // EVERY sample is reported. An earlier version of this kept only
+            // samples costing >= 1 ms, to drop the free ones a clamped burst
+            // produces -- but that threshold encoded the OLD cost model, and
+            // once the wheel stopped going through React it classified every
+            // genuine sample as a no-op and reported "working=0". The clamp is
+            // handled by reversing the burst instead, and the mid-burst capture
+            // above is what proves work happened.
+            std::vector<double> working = per_sample_ms;
+            auto sorted = working;
+            std::sort(sorted.begin(), sorted.end());
+            const auto pick = [&sorted](double q) {
+                if (sorted.empty()) return 0.0;
+                auto index = static_cast<std::size_t>(q * (sorted.size() - 1));
+                return sorted[index];
+            };
+            double total = 0.0;
+            for (double value : working) total += value;
+            std::printf("[help] wheel samples=%d delta=%.0f\n",
+                        samples, delta);
+            std::printf("[help] wheel per-sample ms: min=%.3f "
+                        "p50=%.3f p95=%.3f max=%.3f mean=%.3f\n",
+                        pick(0.0), pick(0.50), pick(0.95), pick(1.0),
+                        working.empty() ? 0.0
+                                        : total / static_cast<double>(working.size()));
+            if (std::getenv("SPECTR_HELP_PROBE_NOMETA") != nullptr) {
+                rig.eval("(() => { console.log('[help] NOMETA suppressed calls: '"
+                         " + globalThis.__spectrMetaCalls__); })();",
+                         "spectr-help-nometa-count");
+            }
+            std::printf("[help] wheel burst wall ms: %.3f\n",
+                        std::chrono::duration<double, std::milli>(
+                            burst_end - burst_start).count());
             return g_failures == 0 ? 0 : 1;
         }
 

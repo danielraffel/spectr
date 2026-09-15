@@ -636,6 +636,200 @@ SCRIM_AT_NEW = ('      top: 0,\n      left: 0,\n'
 # The popover's content box is 320 (350 less its 15px border+padding a side).
 # 302 was measured against the 330px panel this popover had before the chip
 # column widened it to 350, so it has been 18px narrow ever since.
+# -- THE TAIL'S CAPTION, INSIDE A BOX IT CANNOT RESIZE ---------------------
+#
+# The button's BOX is a captured layout_binding (help.materialized.json:
+# 15,351.15625 320x31.2), not a live measurement, so its height is data and no
+# style can shrink it. Measured on the built standalone before this edit: the
+# box centre sits at root y=780.900 while the painted glyph ink spans
+# 769.800..777.800 -- centre 773.800. The caption rides 7.100px HIGH, with
+# 1.500px of clear above it and 15.700px below.
+#
+# A BOX-centring check calls that correct, and always will. The caption NODE
+# measures 318x29.2 inside a 320x31.2 button -- dead centre to three decimals.
+# What is off-centre is the INK inside the caption node, whose own intrinsic
+# height is 15.2. Only painted pixels can see this.
+#
+# WHY THE OBVIOUS FIX DOES NOTHING, AND WHAT ACTUALLY CAUSES IT
+#
+# Adding `alignItems: "center"` to the button changes nothing, and this was
+# measured, not assumed: the ink stayed at 769.800..777.800 to the pixel. The
+# runtime already builds a lowercase `<button>` as a Row carrying
+# `align_items: center` + `justify_content: center` with its caption in flow,
+# so the centring was never missing. It is DEFEATED afterwards, by
+# `fillCapturedCaption2`: any node that carries a captured box has its caption
+# re-pinned `position: absolute` with all four insets 0, to keep the caption at
+# the width its line layout was measured against. The caption then fills the
+# whole 31.2px box, and a Label defaults to `TextVerticalAlign::top`, so the
+# glyphs sit at the top of a box that is nearly twice their height.
+#
+# So the caption must stop being the button's own text. With NESTED markup the
+# runtime's `asText(props.children)` is undefined, the stub caption becomes the
+# "zero-contribution overlay" its own comment describes, and the authored span
+# is a real flex child of a Row that was already centring its children. The
+# button keeps its captured box; the text finds the middle of it.
+#
+# The type is restated on the span deliberately. A Row is not a text node and
+# Pulp has no CSS inheritance, so font props left on the button alone would
+# style nothing once the caption stops carrying the text. `aria-label` is
+# restated for the same reason: the runtime only calls setAccessibilityLabel
+# `if (text)`, and there is no longer any text at the button itself.
+TAIL_CENTRE = ('      textAlign: "center"\n'
+               '    }\n'
+               '  }, "Learn more \\u2192"));\n}')
+TAIL_CENTRE_NEW = ('      textAlign: "center",\n'
+                   '      display: "flex",\n'
+                   '      alignItems: "center",\n'
+                   '      justifyContent: "center"\n'
+                   '    }\n'
+                   '  }, /* @__PURE__ */ React.createElement("span", {\n'
+                   '    "data-spectr-help-learn-more-label": true,\n'
+                   '    style: {\n'
+                   '      flexShrink: 0,\n'
+                   '      whiteSpace: "nowrap",\n'
+                   '      fontFamily: "var(--mono)",\n'
+                   '      fontSize: 10,\n'
+                   '      letterSpacing: 1,\n'
+                   '      color: "rgba(200,225,255,0.95)"\n'
+                   '    }\n'
+                   '  }, "Learn more \\u2192")));\n}')
+TAIL_ARIA = '    "data-spectr-help-learn-more": true,\n'
+TAIL_ARIA_NEW = ('    "data-spectr-help-learn-more": true,\n'
+                 '    "aria-label": "Learn more",\n')
+
+# -- THE GUIDE'S BODY IS REBUILT ON EVERY WHEEL SAMPLE --------------------
+#
+# The panel scrolls itself, so one wheel sample is one `setScrollTop`, which
+# re-renders this whole component -- and the component rebuilds the entire
+# guide from source text every time it runs: `spectrHelpBlocks()` re-parses the
+# ~3.8 KB asset and `blocks.map(...)` re-creates ~90 `span` elements with ~12
+# style props apiece. None of that depends on the scroll offset. The reconciler
+# then re-normalises and diffs every one of those spans against an unchanged
+# twin, concludes nothing changed, and commits only the two nodes that moved.
+#
+# Memoising does not make that work faster, it stops it happening: React bails
+# out of a child whose element is reference-identical to the previous render,
+# so the spans are neither re-created nor re-diffed. The dependency lists name
+# the two things the body genuinely varies with -- the parsed blocks and the
+# text width -- and deliberately NOT the offset.
+#
+# This is a real reduction and it is NOT the fix. The dominant per-sample cost
+# is downstream of the commit and is not addressable from here: any commit that
+# dirties the materialized tree re-applies every captured layout binding, and
+# each one costs two `getLayoutBoxMetrics` reads plus five bridge writes. The
+# panel needs a real `pulp::view::ScrollView`, which translates its children at
+# paint time and takes no commit at all.
+# -- THE WHEEL MUST NOT GO THROUGH REACT ----------------------------------
+#
+# Every wheel sample was one `setScrollTop`, and every React commit that
+# dirties the materialized tree re-applies the WHOLE captured atlas before the
+# layout pass behind it -- `applyMaterializedImportMetadata` walks each binding
+# and spends two `getLayoutBoxMetrics` reads plus five bridge writes on it.
+#
+# Measured on the built standalone, 48 samples through the host's own
+# `deliver_mouse_wheel`, with the atlas hook replaced by a counting no-op for
+# the second arm (the counter read 48 of 48, so the swap provably took):
+#
+#     with the atlas re-apply     p50 42.167 ms   per wheel sample
+#     without it                  p50 13.011 ms
+#
+# So roughly 69% of a wheel sample was the atlas, and the panel was never going
+# to hold a 16.667 ms frame while the offset was React state.
+#
+# It does not need to be. The offset moves ONE node's margin and ONE thumb's
+# top, neither of which any captured binding describes, so it is written
+# straight to the nodes and React is never told. That is measured too, and
+# specifically INCLUDING the thing that could have made it unshippable: a
+# clipping viewport whose content moves behind its back could paint past the
+# clip. It does not -- with the offset written directly, 0 of 56,000 pixels
+# differ anywhere below the viewport's bottom edge, the same as the React path.
+# (An earlier rect that started ON the edge instead of below it read 874
+# differing pixels and looked exactly like a leak; it was the anti-aliased
+# boundary row.)
+#
+# `offset` still renders `marginTop: -offset`, and that is not vestigial: it is
+# what places the content on a render the panel does take (an origin change, a
+# host resize), and it is why the ref rather than the DOM is the source of
+# truth.
+IMPERATIVE_STATE = ('  var [scrollTop, setScrollTop] = React.useState(0);\n'
+                    '  var maxScrollRef = React.useRef(0);\n'
+                    '  var pageRef = React.useRef(400);\n'
+                    '  var scrollBy = React.useCallback(function (delta) {\n'
+                    '    setScrollTop(function (current) {\n'
+                    '      var next = current + delta;\n'
+                    '      if (next < 0) next = 0;\n'
+                    '      if (next > maxScrollRef.current) next = maxScrollRef.current;\n'
+                    '      return next;\n'
+                    '    });\n'
+                    '  }, []);\n')
+IMPERATIVE_STATE_NEW = (
+    '  var offsetRef = React.useRef(0);\n'
+    '  var contentRef = React.useRef(null);\n'
+    '  var thumbRef = React.useRef(null);\n'
+    '  var maxScrollRef = React.useRef(0);\n'
+    '  var contentHRef = React.useRef(1);\n'
+    '  var viewportHRef = React.useRef(1);\n'
+    '  var pageRef = React.useRef(400);\n'
+    '  var scrollBy = React.useCallback(function (delta) {\n'
+    '    var next = offsetRef.current + delta;\n'
+    '    if (next < 0) next = 0;\n'
+    '    if (next > maxScrollRef.current) next = maxScrollRef.current;\n'
+    '    if (next === offsetRef.current) return;\n'
+    '    offsetRef.current = next;\n'
+    '    var content = contentRef.current;\n'
+    '    if (content && content.style) content.style.marginTop = -next;\n'
+    '    var thumb = thumbRef.current;\n'
+    '    if (thumb && thumb.style) {\n'
+    '      thumb.style.top = Math.round(\n'
+    '        next / (contentHRef.current || 1) * viewportHRef.current);\n'
+    '    }\n'
+    '  }, []);\n')
+
+IMPERATIVE_CLAMP = ('  maxScrollRef.current = maxScroll;\n'
+                    '  pageRef.current = Math.max(120, viewportH - 40);\n'
+                    '  var offset = scrollTop > maxScroll ? maxScroll : scrollTop;\n')
+IMPERATIVE_CLAMP_NEW = (
+    '  maxScrollRef.current = maxScroll;\n'
+    '  contentHRef.current = contentH;\n'
+    '  viewportHRef.current = viewportH;\n'
+    '  pageRef.current = Math.max(120, viewportH - 40);\n'
+    '  if (offsetRef.current > maxScroll) offsetRef.current = maxScroll;\n'
+    '  var offset = offsetRef.current;\n')
+
+IMPERATIVE_CONTENT = '    "data-spectr-help-scroll-content": true,\n'
+IMPERATIVE_CONTENT_NEW = ('    "data-spectr-help-scroll-content": true,\n'
+                          '    ref: contentRef,\n')
+IMPERATIVE_THUMB = '    "data-spectr-help-scrollbar-thumb": true,\n'
+IMPERATIVE_THUMB_NEW = ('    "data-spectr-help-scrollbar-thumb": true,\n'
+                        '    ref: thumbRef,\n')
+
+BODY_MEMO_BLOCKS = ('  var blocks = spectrHelpBlocks();\n'
+                    '  var contentH = blocks ? '
+                    'spectrHelpContentHeight(blocks, textW) : viewportH;\n')
+# The dependency is the ASSET, not `[]`. `spectrHelpBlocks` returns null when
+# `globalThis.SPECTR_HELP_TEXT` is not yet a string, and an empty dependency
+# list would freeze that null for the life of the panel -- turning a one-frame
+# race into a permanent "The help content asset did not load." Memoising on the
+# text keeps the retry and still costs one parse per open.
+#
+# The global is read RAW here, deliberately: `spectrHelpBlocks` does its own
+# type check, and restating `typeof ... === "string"` would put a second copy
+# of that expression in the document. The ASSET rule counts that expression and
+# requires exactly one, so a second copy fails a rule this change has no
+# business touching.
+BODY_MEMO_BLOCKS_NEW = (
+    '  var helpText = globalThis.SPECTR_HELP_TEXT;\n'
+    '  var blocks = React.useMemo(spectrHelpBlocks, [helpText]);\n'
+    '  var contentH = React.useMemo(function () {\n'
+    '    return blocks ? spectrHelpContentHeight(blocks, textW) : viewportH;\n'
+    '  }, [blocks, textW, viewportH]);\n')
+BODY_MEMO_OPEN = '  var body = blocks ? blocks.map(function (block, index) {'
+BODY_MEMO_OPEN_NEW = ('  var body = React.useMemo(function () {\n'
+                      '  return blocks ? blocks.map(function (block, index) {')
+BODY_MEMO_CLOSE = '  }, "The help content asset did not load.");'
+BODY_MEMO_CLOSE_NEW = ('  }, "The help content asset did not load.");\n'
+                       '  }, [blocks, textW]);')
+
 TAIL_W = '      marginTop: 10,\n      width: 302,\n'
 TAIL_W_NEW = '      marginTop: 10,\n      width: 320,\n'
 
@@ -811,6 +1005,42 @@ EDITS = [
      (TAIL_W, TAIL_W_NEW),
      TAIL_W_NEW),
 
+    ('the Learn more caption is centred in the box the capture gives it',
+     (TAIL_CENTRE, TAIL_CENTRE_NEW),
+     '"data-spectr-help-learn-more-label": true,'),
+
+    ('the Learn more button names itself once its caption is nested markup',
+     (TAIL_ARIA, TAIL_ARIA_NEW),
+     '"aria-label": "Learn more",'),
+
+    ('the wheel writes the offset to the node instead of to React',
+     (IMPERATIVE_STATE, IMPERATIVE_STATE_NEW),
+     "if (content && content.style) content.style.marginTop = -next;"),
+
+    ('the render still places the content it no longer moves',
+     (IMPERATIVE_CLAMP, IMPERATIVE_CLAMP_NEW),
+     "  var offset = offsetRef.current;"),
+
+    ('the moving content is reachable without a query',
+     (IMPERATIVE_CONTENT, IMPERATIVE_CONTENT_NEW),
+     "ref: contentRef,"),
+
+    ('the scrollbar thumb moves with it',
+     (IMPERATIVE_THUMB, IMPERATIVE_THUMB_NEW),
+     "ref: thumbRef,"),
+
+    ('the guide body is built once, not once per wheel sample',
+     (BODY_MEMO_BLOCKS, BODY_MEMO_BLOCKS_NEW),
+     BODY_MEMO_BLOCKS_NEW),
+
+    ('the guide body survives a scroll re-render by reference',
+     (BODY_MEMO_OPEN, BODY_MEMO_OPEN_NEW),
+     BODY_MEMO_OPEN_NEW),
+
+    ('the memoised body closes over the two things it varies with',
+     (BODY_MEMO_CLOSE, BODY_MEMO_CLOSE_NEW),
+     BODY_MEMO_CLOSE_NEW),
+
     ('the guide can be copied as prose, not markup',
      (PLAINTEXT_AT, PLAINTEXT + PLAINTEXT_AT),
      "function spectrHelpPlainText() {"),
@@ -856,6 +1086,15 @@ REQUIRED_AFTER = (
     '"data-spectr-help-guide-titlegroup": true,',
     'postMessage("clipboard_write"',
     "onLearnMore: () => { setHelpOpen(false); setHelpGuideOpen(true); }",
+    '"data-spectr-help-learn-more-label": true,',
+    '"aria-label": "Learn more",',
+    "var blocks = React.useMemo(spectrHelpBlocks, [helpText]);",
+    "if (content && content.style) content.style.marginTop = -next;",
+    "var offset = offsetRef.current;",
+    "ref: contentRef,",
+    "ref: thumbRef,",
+    "var body = React.useMemo(function () {",
+    "}, [blocks, textW]);",
 )
 
 
