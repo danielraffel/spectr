@@ -317,10 +317,23 @@ for (const [key, kind] of [["s", "editMode"], ["l", "editMode"], ["b", "editMode
 
 // The tap-one variant is deliberately NOT implemented: a plain CLICK must keep
 // meaning "toggle the band under the pointer", selection or not.
+//
+// This asserts the `p.band` spelling -- the pointer-release path. It named the
+// `b` spelling until the band context menu's unmute was fixed, and `b` is the
+// MENU's handler, not the click's: the check passed for the whole life of a
+// bug in the very line it was pointing at.
 check("CLICK still toggles a single band rather than the selection",
-  html.includes("commitGain(b, isMuted(cur) ? 0 : -Infinity);"));
-check("the menu's one-way group mute is untouched",
-  html.includes("for (const i of selection) map.set(i, -Infinity);"));
+  html.includes("commitGain(p.band, isMuted(cur) ? restored : -Infinity);"));
+
+// The menu's group mute WAS a one-way `map.set(i, -Infinity)` with no second
+// press that reversed it. It now defers to `toggleMuteSelection`, the owner
+// this suite installed, instead of being a third writer of band state -- so
+// what must hold is that it routes through the owner and that the one-way
+// spelling is gone, not that it survives.
+check("the menu's group mute defers to the bank's toggle owner",
+  html.includes("owner.toggleMuteSelection()"));
+check("the menu's one-way group mute is gone",
+  !html.includes("for (const i of selection) map.set(i, -Infinity);"));
 
 // The panel must advertise the key it binds, and bind the key it advertises.
 check("the SHORTCUTS panel advertises the key",
