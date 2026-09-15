@@ -10,9 +10,10 @@ of a sound** with unusual depth and targeting.
 
 Release 1 is an effect with 32–64 authored logarithmic band controls, a
 continuously zoomable frequency viewport, nonadjacent frequency islands, and
-exact mute. The visible `RES represented/active` disclosure reports how many
-controls the selected fixed FFT geometry can represent independently in the
-current viewport. The default Balanced 8192 profile represents all 32 controls
+exact mute. The `RES represented/active` disclosure reports how many controls
+the live renderer's design grid can represent independently in the current
+viewport; it is computed and served over the editor bridge, and is not
+currently drawn in the shipping editor. The default Balanced 8192 profile represents all 32 controls
 across 20 Hz–20 kHz; a narrow zoom or a higher control count may represent fewer
 controls independently. Its reviewed HTML design is embedded source-preservingly
 through Pulp's native WebView bridge, with a narrow runtime adapter connecting
@@ -98,16 +99,21 @@ binaries must never be packaged for distribution.
 
 New build directories use the **Balanced** product default: an 8192-sample FFT
 with a 2048-sample analysis hop. At 48 kHz it represents all 32 bands across
-the full 20 Hz–20 kHz viewport and reports 8,191 samples (170.65 ms) of
-latency to the host.
+the full 20 Hz–20 kHz viewport and reports 10,240 samples (213.33 ms) of
+latency to the host in the Mixing latency mode.
+
+Latency is a function of the render mode as well as this geometry: the
+Tracking mode realises the same drawn magnitude through a minimum-phase FIR
+and reports 64 samples (1.33 ms) whatever the build profile below says. The
+figures in that table are the Mixing mode's.
 
 Two alternate fixed build profiles are available for explicit trials:
 
 | Profile | CMake configuration | 48 kHz latency | Intended tradeoff |
 |---|---|---:|---|
-| Live | `-DSPECTR_FFT_SIZE=1024 -DSPECTR_ANALYSIS_HOP=256` | 1,023 samples / 21.31 ms | Lower latency, substantially coarser narrow-view isolation |
-| Balanced (default) | `-DSPECTR_FFT_SIZE=8192 -DSPECTR_ANALYSIS_HOP=2048` | 8,191 samples / 170.65 ms | Full normal-range representation with useful zoom detail |
-| Maximum | `-DSPECTR_FFT_SIZE=16384 -DSPECTR_ANALYSIS_HOP=4096` | 16,383 samples / 341.31 ms | Highest available narrow-view detail, highest latency |
+| Live | `-DSPECTR_FFT_SIZE=1024 -DSPECTR_ANALYSIS_HOP=256` | 1,280 samples / 26.67 ms | Lower latency, substantially coarser narrow-view isolation |
+| Balanced (default) | `-DSPECTR_FFT_SIZE=8192 -DSPECTR_ANALYSIS_HOP=2048` | 10,240 samples / 213.33 ms | Full normal-range representation with useful zoom detail |
+| Maximum | `-DSPECTR_FFT_SIZE=16384 -DSPECTR_ANALYSIS_HOP=4096` | 20,480 samples / 426.67 ms | Highest available narrow-view detail, highest latency |
 
 These select one compile-time WOLA geometry for an artifact. They are not
 runtime response modes and cannot be switched dynamically in a loaded plugin.

@@ -270,6 +270,21 @@ public:
     /// The mode this instance is currently rendering through.
     [[nodiscard]] MaskRenderMode render_mode() const noexcept { return render_mode_; }
 
+    /// The rate the instance was last prepared at, for deriving the millisecond
+    /// figures the UI shows. 48 kHz before the first prepare, which is what an
+    /// editor opened ahead of audio should display rather than zero.
+    [[nodiscard]] double sample_rate() const noexcept { return sample_rate_; }
+
+    /// Delay this mode costs at the live sample rate, in samples and in
+    /// milliseconds. Derived from the renderer's own contract so no
+    /// user-facing figure is ever a number somebody typed.
+    [[nodiscard]] int render_mode_latency_samples(MaskRenderMode mode) const noexcept {
+        return mask_render_latency_samples(mode, latency_geometry_());
+    }
+    [[nodiscard]] double render_mode_latency_ms(MaskRenderMode mode) const noexcept {
+        return spectr::render_mode_latency_ms(mode, latency_geometry_(), sample_rate_);
+    }
+
     /// Switch modes on a live instance.
     ///
     /// Control thread only — it builds a whole new renderer, which allocates.
@@ -567,6 +582,12 @@ private:
     pulp::signal::SpectralBandLayout       last_published_layout_{};
     bool                                   last_published_layout_valid_ = false;
 
+    // The design grid the live renderer samples the drawn magnitude on, held
+    // as a value under processing_state_mutex_. The resolution disclosure
+    // reads this rather than dereferencing renderer_, which a mode switch can
+    // replace from a different control thread than the editor reads on.
+    int                                    active_design_grid_ = kSpectralFftSize;
+
     /// Build and fully prepare a renderer for `mode` against the current
     /// geometry, including its initial layout and mix. Returns null when the
     /// mode cannot be prepared; the caller keeps whatever was already live.
@@ -576,6 +597,16 @@ private:
     void drain_retired_renderers_() noexcept;
     /// The geometry any renderer for this instance is prepared against.
     MaskRendererConfig renderer_config_() const noexcept;
+    /// Just the geometry latency depends on -- no mix, and therefore no
+    /// parameter store. An editor may ask what a mode costs before the store
+    /// is wired, and answering that question has nothing to do with the mix.
+    [[nodiscard]] MaskRendererConfig latency_geometry_() const noexcept {
+        MaskRendererConfig config;
+        config.design_grid_size = kSpectralFftSize;
+        config.analysis_hop     = kSpectralAnalysisHop;
+        config.sample_rate      = sample_rate_;
+        return config;
+    }
     pulp::signal::SmoothedValue<float>     output_gain_{1.0f};
     bool                                   processor_prepared_ = false;
     std::array<const float*, kMaximumChannels> input_channels_{};

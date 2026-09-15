@@ -271,8 +271,16 @@ bool Spectr::spectral_resolution(
     // make_mask_layout_ reads field_/viewport_/layout_; hold the same lock
     // the writers (UI, sync worker, restore) serialize against.
     std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    // The grid the LIVE renderer designs against, published as a value under
+    // this same lock rather than read back through renderer_. Both shipped
+    // modes sample the same 8192 grid, so the build-time constant gives the
+    // right answer today -- by coincidence, not by construction, and the
+    // disclosure would start lying the moment a realisation changed its grid.
+    // It is a value and not a pointer dereference because a mode switch can
+    // replace the renderer from another control thread, and this runs on the
+    // editor's.
     return pulp::signal::analyze_spectral_band_resolution(
-        make_mask_layout_(), kSpectralFftSize,
+        make_mask_layout_(), active_design_grid_,
         static_cast<float>(sample_rate_), out_resolution);
 }
 
@@ -452,6 +460,11 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
         retired_renderers_.push_back(std::move(outgoing));
     }
 
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        active_design_grid_ = renderer_->design_grid_size();
+    }
+
     // The host's delay compensation is now wrong by the difference between the
     // two modes. This is the whole reason the switch is observable to a host.
     flag_latency_changed();
@@ -485,6 +498,11 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     last_staged_layout_ = last_published_layout_;
     last_staged_layout_valid_ = last_published_layout_valid_;
     processor_prepared_ = renderer_ != nullptr;
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        active_design_grid_ = renderer_ ? renderer_->design_grid_size()
+                                        : kSpectralFftSize;
+    }
     active_renderer_.store(renderer_.get(), std::memory_order_release);
     // The mask processor was just re-prepared, so nothing this thread applied
     // before survives into it.

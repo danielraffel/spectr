@@ -74,6 +74,17 @@ public:
     /// renderer can still emit non-zero output.
     [[nodiscard]] virtual int maximum_tail_samples() const noexcept = 0;
 
+    /// FFT points the magnitude this renderer realises is sampled on.
+    ///
+    /// The product's resolution disclosure ("how many of the drawn bands can
+    /// this geometry actually distinguish?") has to be computed on the grid
+    /// the LIVE renderer designs against, not on a constant. Both shipped
+    /// realisations sample the same grid today, so a constant happens to give
+    /// the right answer -- but only by coincidence, and the disclosure would
+    /// start lying the moment a realisation changed its grid. Asking the
+    /// renderer makes it follow instead.
+    [[nodiscard]] virtual int design_grid_size() const noexcept = 0;
+
     /// Publish one layout from the control thread. May allocate.
     [[nodiscard]] virtual bool publish_layout(const Layout& layout) = 0;
 

@@ -1837,6 +1837,23 @@ if(Python3_Interpreter_FOUND)
             --plant flat-caption)
     set_tests_properties(Spectr-materialized-help-overlay-contract-negative-control
         PROPERTIES TIMEOUT 60 WILL_FAIL TRUE)
+    # The guide now states a latency figure per mode, and forbids two phrases
+    # the design ruling rejects. One plant each, because a single plant cannot
+    # show that every rule is load bearing: staling only the Mixing figure
+    # would leave the Tracking check unexercised and free to be wrong, and a
+    # plant that removed a figure while adding a forbidden phrase would be
+    # caught by the figure rule with the phrase rule never firing. Each plant
+    # below was verified by hand to fail on ITS OWN rule and no other.
+    foreach(_help_plant
+            stale-latency stale-latency-tracking
+            zero-latency-claim seamless-claim)
+        add_test(NAME Spectr-materialized-help-overlay-control-${_help_plant}
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/help_overlay_contract.py
+                --plant ${_help_plant})
+        set_tests_properties(Spectr-materialized-help-overlay-control-${_help_plant}
+            PROPERTIES TIMEOUT 60 WILL_FAIL TRUE)
+    endforeach()
 endif()
 
 # A dropdown must keep its OWN captured state after both snapshot slots fill.

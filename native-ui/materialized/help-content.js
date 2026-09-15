@@ -22,10 +22,17 @@
 // `${`, either of which would end this template literal early and take the
 // rest of the copy with it.
 //
-// The latency figure is the product's own: kSpectralLatency is
-// kSpectralFftSize + kSpectralAnalysisHop = 8192 + 2048 = 10240 samples, which
-// is 213.33 ms at 48 kHz. README.md's "8,191 samples / 170.65 ms" is fft - 1
-// and does not describe anything the code reports.
+// Both latency figures are the product's own, and the guide has to carry BOTH
+// because there are two modes: Mixing is kSpectralFftSize +
+// kSpectralAnalysisHop = 8192 + 2048 = 10240 samples, 213.33 ms at 48 kHz;
+// Tracking is the zero-latency renderer's fixed 64-sample render block, 1.33 ms
+// at 48 kHz. help_overlay_contract.py derives both from those sources rather
+// than matching a typed string, and carries one plant per figure so neither
+// check can go stale unwatched.
+//
+// The copy states the current default in exactly one sentence ("New instances
+// start in Mixing") and nowhere argues FROM the default, so changing which mode
+// ships as the default is a one-line edit here rather than a rewrite.
 globalThis.SPECTR_HELP_TEXT = `# About Spectr
 
 Spectr splits your sound into a row of frequency bands and lets you draw what happens to each one. Pull a band down to cut that frequency. Push it up to boost it. Mute it to remove it entirely.
@@ -98,8 +105,16 @@ Eight to start: Flat, Harmonic Series, Alternating, Comb, Vocal Formants, Sub On
 
 This changes how the display moves, not how it sounds. **Live** reacts fast. **Precision** settles slowly so values sit still while you aim at them.
 
-## Good to know
+## Latency
 
-Spectr looks at a large slice of audio at once, which gives you precise control over low frequencies. This introduces about 213 ms of latency at 48 kHz.
+Spectr can realise the shape you draw in two ways, and they trade against each other. Which one suits you depends on what you are doing right now, not on which is better.
 
-Your DAW compensates for it automatically, so playback stays in sync while mixing. Spectr is not intended for live monitoring while you play.`;
+**Tracking** responds in about 1.3 ms, fast enough to play and record through Spectr and still hear yourself in time. The cost is depth: very narrow cuts come out shallower in this mode.
+
+**Mixing** looks at a large slice of audio at once, and cuts far deeper for it. A muted band lands roughly 150 dB lower than the same band in Tracking across the full range, and 5 to 10 dB lower in a zoomed view. It costs about 213 ms of latency at 48 kHz, which your DAW lines up automatically so playback stays in sync.
+
+Neither one is an upgrade on the other. If you are playing or recording through Spectr, the delay decides it. If you are shaping a part that is already recorded and latency costs you nothing, the depth decides it.
+
+New instances start in Mixing. You can change it in Settings, under Latency.
+
+Switching rebuilds the processor and tells your DAW that its delay compensation has moved, so it is a setup choice rather than something to reach for in the middle of a take. A project always reopens in the mode it was saved in, so an older session keeps sounding and lining up exactly as it did.`;
