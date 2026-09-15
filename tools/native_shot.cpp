@@ -2478,6 +2478,76 @@ int main(int argc, char** argv) {
         // into a 990x645 window, so every design number here is 0.75 of what
         // the user's pointer sees. That factor is why controls that look
         // adequate in a layout dump feel small in the product.
+        // Band context-menu RELAYOUT diagnosis. Records what happens to the
+        // menu's row geometry when its item set changes, so "the rows
+        // interleave" is a claim about measured rects rather than about a
+        // screenshot. Reports; asserts nothing and fixes nothing -- the
+        // mechanics belong with exposing pulp::view::ContextMenu through the
+        // widget bridge, and this exists so that prediction is falsifiable.
+        if (std::getenv("SPECTR_BAND_MENU_RELAYOUT") != nullptr) {
+            auto& root = *rig.root;
+            auto open_menu = [&](const char* what) {
+                const auto res = pulp::view::route_context_press(
+                    root, pulp::view::Point{378.0f, 400.0f});
+                std::printf("[relayout] right-press %-12s handled=%s "
+                            "overlay_dismissed=%s\n", what,
+                            res.handled ? "yes" : "no",
+                            res.overlay_dismissed ? "yes" : "no");
+                settle(rig.clock, 24);
+            };
+            // How many rows the runtime says the menu holds, and which group
+            // headers it carries. The header list is the discriminator: the
+            // SELECTION group only exists when a selection is live, so it is
+            // how "the item set changed" is established rather than assumed.
+            auto menu_shape = [&rig](const char* label) {
+                std::string js =
+                    "(function(){var m=document.querySelector("
+                    "'[data-spectr-band-context-menu]');"
+                    "if(!m){console.log('[relayout-js] ";
+                js += label;
+                js += " :: MENU ABSENT');return;}"
+                    "var b=m.querySelectorAll('button');"
+                    "var d=m.querySelectorAll('div');var h=[];"
+                    "for(var i=0;i<d.length;i++){var x=(d[i].textContent||'')"
+                    ".trim();if(x&&d[i].children.length===0)h.push(x);}"
+                    "console.log('[relayout-js] ";
+                js += label;
+                js += " :: rows='+b.length+' headers='+h.join(' / '));})();";
+                rig.eval(js, "spectr-band-menu-shape");
+            };
+
+            const auto sweep = press_reach_sweep(root);
+            if (sweep.context_menu_targets == 0) {
+                std::fprintf(stderr,
+                             "SKIP: no context-menu handler under this SDK; "
+                             "the menu cannot be opened, so its relayout "
+                             "cannot be observed.\n");
+                return 77;
+            }
+
+            rig.feed_tone(6); settle(rig.clock, 20);
+
+            open_menu("open#1");
+            menu_shape("open#1 (no selection)");
+            capture(rig, dir, prefix + "relayout-1-nosel", backend, scale);
+
+            // Change the item set FROM the menu, through the row's own action
+            // id. `Item`'s onClick calls onClose() after the handler, so this
+            // is a genuine activate-then-close, not an in-place re-render.
+            rig.activate("[data-spectr-band-action=\"select-all\"]");
+            rig.feed_tone(6); settle(rig.clock, 20);
+            menu_shape("after Select all");
+            capture(rig, dir, prefix + "relayout-2-after-selectall", backend,
+                    scale);
+
+            open_menu("open#2");
+            menu_shape("open#2 (selection live)");
+            capture(rig, dir, prefix + "relayout-3-reopen-withsel", backend,
+                    scale);
+
+            return 0;
+        }
+
         // The band context menu's UNMUTE must restore the level the band
         // carried at mute time, not flatten it to 0 dB.
         //
