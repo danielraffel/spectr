@@ -383,6 +383,16 @@
         "onSelectNone"
       ],
       "note": "Same two-arm screen: both read 0 at c2f35eb and 3 at 05be32b against a control of 4."
+    },
+    {
+      "id": "latency-mode-switcher",
+      "pr": 140,
+      "title": "The Latency control: choose Tracking or Mixing in Settings",
+      "tokens": [
+        "SpectrLatencySettings",
+        "__spectrLatency"
+      ],
+      "note": "Screened in both directions against BINARIES, not the document: both read 0 in the pre-change Spectr build at d2759a6 and non-zero after (1 and 2), with SpectrSettingsGroup reading 2 in both arms as the control. Both identifiers are introduced by this change, so they discriminate rather than keying on a pre-existing string. Deliberately NOT render_mode: it reads 2 in BOTH arms (it occurs in Pulp/Skia text the binary already carried), which is exactly the 'absent from the document, abundant in the artifact' trap this manifest's own header warns about."
     }
   ]
 }
