@@ -692,10 +692,43 @@ TAIL_CENTRE_NEW = ('      textAlign: "center",\n'
                    '      letterSpacing: 1,\n'
                    '      color: "rgba(200,225,255,0.95)"\n'
                    '    }\n'
-                   '  }, "Learn more \\u2192")));\n}')
+                   '  }, "About Spectr \\u2192")));\n}')
 TAIL_ARIA = '    "data-spectr-help-learn-more": true,\n'
 TAIL_ARIA_NEW = ('    "data-spectr-help-learn-more": true,\n'
-                 '    "aria-label": "Learn more",\n')
+                 '    "aria-label": "About Spectr",\n')
+
+# -- THE BUTTON NAMES THE PAGE IT OPENS ------------------------------------
+#
+# The caption read `Learn more` and the page it opens is titled `About Spectr`
+# -- the guide's own `# About Spectr` heading, and the dialog's `aria-label`.
+# Two names for one destination, and the button's was the one that said
+# nothing about where it goes.
+#
+# These two edits exist SEPARATELY from the constants above, rather than as a
+# straight rewrite of them, because both spellings have to be handled: a
+# from-scratch run inserts the new text directly (above), and the SHIPPED
+# document already carries the old text and has to be migrated (here). Same
+# "later edits upgrade what earlier edits inserted" shape the imperative-scroll
+# and centring edits already use.
+#
+# The aria-label predecessor is anchored on `data-spectr-help-learn-more`
+# rather than matched bare: `"aria-label": "About Spectr",` is ALSO the guide
+# scrim's, so an unanchored needle would rewrite the dialog's name or -- worse
+# -- report itself already applied by reading the scrim's.
+CAPTION_RENAME = '  }, "Learn more \\u2192")));\n}'
+CAPTION_RENAME_NEW = '  }, "About Spectr \\u2192")));\n}'
+CAPTION_RENAME_DONE = '"About Spectr \\u2192")));'
+ARIA_RENAME = ('    "data-spectr-help-learn-more": true,\n'
+               '    "aria-label": "Learn more",\n')
+ARIA_RENAME_NEW = ('    "data-spectr-help-learn-more": true,\n'
+                   '    "aria-label": "About Spectr",\n')
+# Rename-AGNOSTIC: it asks "does this button carry an accessible name at all",
+# which is the only question TAIL_ARIA's edit is asking. Sentinelling on the
+# VALUE meant that renaming the label made that edit read not-applied on a
+# document that already had it, and re-fire against a predecessor that is
+# still present -- appending a SECOND `aria-label` line.
+TAIL_ARIA_DONE = ('    "data-spectr-help-learn-more": true,\n'
+                  '    "aria-label"')
 
 # -- THE GUIDE'S BODY IS REBUILT ON EVERY WHEEL SAMPLE --------------------
 #
@@ -1011,7 +1044,7 @@ EDITS = [
 
     ('the Learn more button names itself once its caption is nested markup',
      (TAIL_ARIA, TAIL_ARIA_NEW),
-     '"aria-label": "Learn more",'),
+     TAIL_ARIA_DONE),
 
     ('the wheel writes the offset to the node instead of to React',
      (IMPERATIVE_STATE, IMPERATIVE_STATE_NEW),
@@ -1056,6 +1089,17 @@ EDITS = [
     ('the copy button sits beside the title, never beside the close',
      (GROUP_CLOSE, GROUP_CLOSE_NEW),
      '"data-spectr-help-copy": true,'),
+
+    # Last, and deliberately: these rewrite text the edits above inserted, so
+    # they are no-ops on a fresh run (which already emits the new spelling) and
+    # the whole of the migration on a shipped one.
+    ('the caption names the page it opens',
+     (CAPTION_RENAME, CAPTION_RENAME_NEW),
+     CAPTION_RENAME_DONE),
+
+    ('the accessible name agrees with the visible caption',
+     (ARIA_RENAME, ARIA_RENAME_NEW),
+     ARIA_RENAME_NEW),
 ]
 
 
@@ -1087,7 +1131,11 @@ REQUIRED_AFTER = (
     'postMessage("clipboard_write"',
     "onLearnMore: () => { setHelpOpen(false); setHelpGuideOpen(true); }",
     '"data-spectr-help-learn-more-label": true,',
-    '"aria-label": "Learn more",',
+    # Anchored on the button's own marker: the guide scrim carries
+    # `"aria-label": "About Spectr",` too, and a bare token would pass on a
+    # document where this button lost its name entirely.
+    ARIA_RENAME_NEW,
+    CAPTION_RENAME_DONE,
     "var blocks = React.useMemo(spectrHelpBlocks, [helpText]);",
     "if (content && content.style) content.style.marginTop = -next;",
     "var offset = offsetRef.current;",

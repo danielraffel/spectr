@@ -1421,7 +1421,7 @@ int main(int argc, char** argv) {
             return g_failures == 0 ? 0 : 1;
         }
 
-        // ── The About guide: the wheel's cost, and where the Learn more
+        // ── The About guide: the wheel's cost, and where the About Spectr
         //    caption sits inside its box ─────────────────────────────────
         //
         // Two user reports on one surface, so one probe, because both need the
@@ -1458,10 +1458,10 @@ int main(int argc, char** argv) {
                                   kDesignWidth, kDesignHeight);
             capture(rig, dir, prefix + "help-popover", backend, scale);
 
-            const auto* caption = find_label(*rig.root, "Learn more →");
+            const auto* caption = find_label(*rig.root, "About Spectr →");
             if (caption == nullptr) {
-                std::printf("[help] CONTROL FAILED: no 'Learn more' caption in "
-                            "the view tree.\n");
+                std::printf("[help] CONTROL FAILED: no 'About Spectr' caption "
+                            "in the view tree.\n");
                 return 3;
             }
             const auto* owner = caption->parent();

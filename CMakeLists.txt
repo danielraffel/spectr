@@ -1341,6 +1341,35 @@ if(SPECTR_NODE_EXECUTABLE)
             PROPERTIES TIMEOUT 60)
     endforeach()
 
+    # What that selection LOOKS like on a muted band. A muted band's painted
+    # value is the -Infinity sentinel, which the painter normalises to zero
+    # rather than to -1.02, so its body has no height and the selection rect
+    # collapsed to its own two outsets -- a 5px sliver on the zero line, which
+    # is exactly where the mute chip's speaker glyph is drawn. Reported as "a
+    # small bright box around an icon sitting inside a larger unhighlighted
+    # button". Measured against the chip's own box, so a mark that merely grew
+    # without covering the button still fails.
+    add_test(NAME Spectr-materialized-mute-selection-highlight
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_mute_selection_highlight.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-mute-selection-highlight PROPERTIES
+        TIMEOUT 60)
+    # Four controls, separate rows so it is visible which check is load
+    # bearing. `sliver` is the one that separates "the code grew a branch" from
+    # "the mark covers the button", and `transparent` covers this suite's own
+    # blind spot: it records drawing commands, so it cannot see an alpha-0
+    # stroke without being told to look.
+    foreach(_mutehl_plant body-rect sliver unconditional-ring transparent)
+        add_test(NAME Spectr-materialized-mute-selection-highlight-control-${_mutehl_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_mute_selection_highlight.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_mutehl_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-mute-selection-highlight-control-${_mutehl_plant}
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+
     # Emptying a snapshot slot, and RESET ALL finally meaning what it says.
     add_test(NAME Spectr-materialized-clear-snapshot
         COMMAND ${SPECTR_NODE_EXECUTABLE}

@@ -443,7 +443,7 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      [f(D, "help_overlay_contract.py"), "--plant", "no-learn-more"]),
     # The affordance is present and inert -- the exact shape "A to cycle" had,
     # and the one a screenshot cannot tell from a working button.
-    ("help_overlay_contract", "plant: Learn more calls nothing", 1,
+    ("help_overlay_contract", "plant: the About Spectr button calls nothing", 1,
      [f(D, "help_overlay_contract.py"), "--plant", "dead-button"]),
     ("help_overlay_contract", "plant: copy inlined back into the artifact", 1,
      [f(D, "help_overlay_contract.py"), "--plant", "inline-copy"]),
