@@ -257,14 +257,20 @@ pulp_add_binary_data(spectr_native_assets
     NAMESPACE spectr_native
 )
 
-# Test-only automation-perf fixture (SPECTR_AUTOMATION_PERF_FIXTURE env var,
-# read in Spectr::tick_native_analyzer_) forces an extra host-automation
-# projection each tick to stress the live-state dispatch path under load.
+# Test-only perf fixtures, both read in Spectr::tick_native_analyzer_:
+#   SPECTR_AUTOMATION_PERF_FIXTURE forces an extra host-automation projection
+#     each tick to stress the live-state dispatch path under load.
+#   SPECTR_GESTURE_PERF delivers one pointer sample per frame with the
+#     modifiers a gesture actually carries. The window host's own pointer
+#     drive synthesises every NSEvent with modifierFlags 0, so it can express
+#     a band drag but never a Command-held marquee -- and marquee is a
+#     separate branch of the editor's pointer handler, so without this it
+#     cannot be measured at all.
 # Default OFF so the literal env-var name and its branch are compiled out of
 # every shipping and default test target; opt in explicitly
 # (-DSPECTR_ENABLE_PERF_FIXTURES=ON) only for a dedicated perf-fixture build.
 option(SPECTR_ENABLE_PERF_FIXTURES
-       "Compile in the test-only SPECTR_AUTOMATION_PERF_FIXTURE tick hook" OFF)
+       "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
 
 function(spectr_configure_native_target target)
     target_include_directories(${target} PRIVATE
@@ -2412,6 +2418,40 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --plant-live-toggle --expect-fail)
     set_tests_properties(Spectr-materialized-additive-marquee-live-toggle-control
+        PROPERTIES TIMEOUT 60)
+
+    # The cost half of the same gesture. The suite above proves the marquee
+    # computes the right SET; this one proves it does not pay per pointer
+    # sample to do it. Measured on the shipping standalone over an identical
+    # 180-sample path, the marquee spent 64.0 ms per delivered sample against
+    # 0.66 ms for a band-gain drag, and 189 of 462 frames arrived 25 ms late
+    # against 11 -- because a drag defers React entirely (commitDrawnGains ->
+    # commitMany(map, deferReact)) while the marquee re-ran a 2,226-line
+    # component on every sample. The assertion is sample-rate INVARIANCE: the
+    # same drag sampled twice as finely crosses the same band boundaries and
+    # must cost the same.
+    add_test(NAME Spectr-materialized-marquee-render-cost
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_marquee_render_cost.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-marquee-render-cost
+        PROPERTIES TIMEOUT 60)
+    # Two controls, one per half of the fix. Each reinstates the real defect
+    # and inverts the verdict inside the script rather than using WILL_FAIL,
+    # which would accept the exit codes that mean the control never ran.
+    add_test(NAME Spectr-materialized-marquee-render-cost-selection-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_marquee_render_cost.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-selection-churn --expect-fail)
+    set_tests_properties(Spectr-materialized-marquee-render-cost-selection-control
+        PROPERTIES TIMEOUT 60)
+    add_test(NAME Spectr-materialized-marquee-render-cost-rectangle-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_marquee_render_cost.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-marquee-state --expect-fail)
+    set_tests_properties(Spectr-materialized-marquee-render-cost-rectangle-control
         PROPERTIES TIMEOUT 60)
 endif()
 

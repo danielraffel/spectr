@@ -49,6 +49,12 @@ Spectr editor
 # dropped all four in silence.
 ^Spectr-materialized-additive-marquee
 
+# The marquee's COST gate and its two controls. `materialized` above matches
+# them, but it matches a dozen other rows too, so it can never report their
+# absence -- and a cost gate that silently stops registering looks exactly
+# like an editor that got faster.
+^Spectr-materialized-marquee-render-cost
+
 # The SHORTCUTS panel's no-wrap gates. The budget half needs no binary; the
 # rendered half opens the panel in the shipping native editor. Both are named
 # outside the `materialized` pattern above, so without this line they register
