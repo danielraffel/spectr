@@ -203,6 +203,24 @@ TrackingTransitionGeometry shape_tracking_transitions(
     int width_bins,
     double magnitude_floor) noexcept;
 
+/// The same shaping with the placement share stated explicitly instead of taken
+/// from the shipping constant: `outside_pct` is the percentage of each
+/// transition allowed to sit outside the quieter band, and the five-argument
+/// form above is exactly this one called with the shipping value.
+///
+/// It exists so a sweep of the two geometry axes measures THE SHIPPING
+/// FUNCTION at every point rather than a re-implementation of it. A sweep whose
+/// rows come from a copy is a model, and a model agrees with the product
+/// exactly where it was written to agree; the only way to know a row is true of
+/// the product is for the product to have produced it.
+TrackingTransitionGeometry shape_tracking_transitions(
+    std::span<double> magnitudes,
+    std::span<const float> band_edges_hz,
+    double bin_width_hz,
+    int width_bins,
+    double magnitude_floor,
+    int outside_pct) noexcept;
+
 /// Latency of a mode, before anything is prepared.
 ///
 /// The one function every caller — the processor, its tests, and the host

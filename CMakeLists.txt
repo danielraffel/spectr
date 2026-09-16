@@ -482,6 +482,7 @@ add_executable(Spectr-test
     test/test_mode_bridge.cpp
     test/test_mask_renderer.cpp
     test/test_tracking_transition.cpp
+    test/test_tracking_transition_sweep.cpp
     test/test_render_mode.cpp
     ${SPECTR_TEST_SOURCES}
 )

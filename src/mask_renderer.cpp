@@ -44,20 +44,31 @@ constexpr double kDesignMagnitudeFloor = 1.0e-6;
 /// QUIETER band only -- the band being attenuated. The louder side keeps every
 /// bin it was drawn with.
 ///
-/// 8 is the knee, measured through the renderer on a muted band 20 of the
-/// default field, and it is carried over unchanged from the symmetric
-/// placement this replaced. It transfers because the axis that picked it was
-/// the reach OUTWARD into the neighbour -- coverage saturates by 4 bins and
-/// cannot pick a width on its own, while leak turns sharply right here:
+/// 8 was chosen under the SYMMETRIC placement this replaced, on the reach
+/// OUTWARD into the neighbour: coverage saturates by 4 bins and cannot pick a
+/// width on its own, while leak turned sharply right here --
 ///
 ///     K          4      6      8     12     16     24
 ///     leak    0.06   0.03   0.06   8.52  18.38  30.82   dB
 ///
-/// One step past 8 buys a few dB of depth for a hundred and forty times the
-/// leak, because the transition starts reaching past the neighbouring edge --
-/// and 8.5 dB of error OUTSIDE a band is plainly audible where a few dB inside
-/// a muted one is not. What this placement drops is the equal and opposite
-/// reach INWARD, which no measurement ever wanted.
+/// -- so one step past 8 bought a few dB of depth for a hundred and forty
+/// times the leak, and 8.5 dB of error OUTSIDE a band is plainly audible where
+/// a few dB inside a muted one is not.
+///
+/// THAT REASON NO LONGER PINS IT. Those numbers are the symmetric geometry's,
+/// where the reach outward equals the whole width; under the placement below
+/// the reach outward is a QUARTER of it, and the same column re-measured on
+/// this geometry stays at or under 0.02 dB all the way to K = 24. Width is now
+/// nearly free on the axis that chose this value.
+///
+/// It is left at 8 anyway, because the sweep that freed it found no width
+/// worth moving to. Widening deepens the mute and costs COVERAGE, which falls
+/// about 1.2 points per bin (90.3 % here, 88.9 % at 9, 85.4 % at 12, 80.6 % at
+/// 16 against an 88 % floor), and the one cell that clears every gate -- 9 --
+/// clears the detection-floor control by where a single probe bin's ripple
+/// happened to fall rather than by realising the depth it asserts. The full
+/// table and its controls are in test_tracking_transition_sweep.cpp; read it
+/// before moving this number.
 constexpr int kTrackingTransitionWidthBins = 8;
 
 /// How much of each transition is allowed to sit OUTSIDE the quieter band, as a
@@ -90,8 +101,20 @@ constexpr int kTrackingTransitionWidthBins = 8;
 /// on this axis now land at once: sub-bin edge placement spends about 8.7 dB of
 /// depth to buy a glide under a viewport drag, and asymmetric placement spends
 /// depth to buy the kept band back. Either alone leaves about 10 dB of room;
-/// together they leave 1.26. Widening the transition is the lever that buys
-/// depth back without giving up kept width, and it has not been re-swept here.
+/// together they leave 1.26.
+///
+/// The width above was the remaining lever and it has now been swept across
+/// both axes at once. It does buy depth -- 9 bins reads -89.07 dB here, seven
+/// dB of margin instead of one -- and the two axes separate cleanly: kept
+/// width is a function of THIS number alone (the decade case holds 86-87 % at
+/// 25 % for every width from 8 to 16, and 64-66 % at 50 % for every one of
+/// them), while depth and coverage are functions of the width alone. What
+/// width cannot buy is the thing actually blocking: a band DRAWN at -100 dB is
+/// realised across its middle half to within 2.6 dB under the symmetric
+/// placement and to within 19.9 dB at 9 bins, so the control that reads it
+/// passes there on one bin's ripple. Realising it honestly needs 13 bins,
+/// which costs coverage; restoring coverage needs 45 % or more outside, which
+/// costs the decade band two thirds of its width. The three do not meet.
 constexpr int kTransitionOutsidePct = 25;
 
 /// Crossfade requested of the convolver when a redesigned impulse response
@@ -615,6 +638,18 @@ TrackingTransitionGeometry shape_tracking_transitions(
     double bin_width_hz,
     int width_bins,
     double magnitude_floor) noexcept {
+    return shape_tracking_transitions(magnitudes, band_edges_hz, bin_width_hz,
+                                      width_bins, magnitude_floor,
+                                      kTransitionOutsidePct);
+}
+
+TrackingTransitionGeometry shape_tracking_transitions(
+    std::span<double> magnitudes,
+    std::span<const float> band_edges_hz,
+    double bin_width_hz,
+    int width_bins,
+    double magnitude_floor,
+    int outside_pct) noexcept {
     TrackingTransitionGeometry geometry{};
 
     const auto num_bins  = static_cast<std::ptrdiff_t>(magnitudes.size());
@@ -623,7 +658,7 @@ TrackingTransitionGeometry shape_tracking_transitions(
         static_cast<std::ptrdiff_t>(pulp::signal::kSpectralBandMaskMaximumBands) + 1;
     if (num_bins < 3 || num_edges < 2 || num_edges > kMaximumEdges
         || !(bin_width_hz > 0.0) || width_bins <= 0
-        || !(magnitude_floor > 0.0))
+        || !(magnitude_floor > 0.0) || outside_pct < 0 || outside_pct > 100)
         return geometry;
 
     // Edge frequencies onto the design grid, clamped into the array, and kept
@@ -750,7 +785,7 @@ TrackingTransitionGeometry shape_tracking_transitions(
         // same way as the part inside it so a transition can never reach past
         // the far edge of either band it touches.
         const double outside =
-            std::min(width * static_cast<double>(kTransitionOutsidePct) / 100.0,
+            std::min(width * static_cast<double>(outside_pct) / 100.0,
                      loud_room * 0.5);
 
         auto& sh = shaping[static_cast<std::size_t>(shaped++)];
