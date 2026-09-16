@@ -3132,6 +3132,316 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        // The band context menu must not eat the keyboard, and it must
+        // dismiss the way every other overlay in this editor dismisses.
+        //
+        // Both halves are asserted here because both were invisible to the
+        // probe that already aimed at this menu. SPECTR_BAND_MENU_RELAYOUT
+        // reads the menu's row COUNT and its group HEADER NAMES, and both of
+        // those are correct while the menu is unusable -- it drove the path in
+        // a way that could not fail. These read the two things that actually
+        // changed for the user: whether a keystroke reached the app, and
+        // whether a press outside the menu closed it.
+        //
+        // WHAT EACH ASSERTION WOULD READ IF THE DEFECT WERE MAXIMAL:
+        //   shortcut  -- the edit-mode parameter stays at the value the
+        //                CONTROL put there, never reaching glide. The control
+        //                press happens with the menu CLOSED and must move the
+        //                same parameter, so a dead key path fails the control
+        //                and no verdict is reported at all.
+        //   dismissal -- route_press_to_active_overlay answers `no_overlay`
+        //                (nothing claimed the slot) instead of `dismissed`,
+        //                and the menu is still mounted afterwards.
+        //   escape    -- the framework answers `overlay` either way, because
+        //                the slot was being dismissed correctly all along, so
+        //                the UNMOUNT is the assertion. Under the defect the
+        //                slot clears and the menu stays on screen, which is
+        //                exactly what a DAW shows and what no offline reading
+        //                of the return value alone could ever have caught.
+        //
+        // Exit: 0 all hold, 1 an invariant is violated, 3 the premise is
+        // unproven, 77 no view carries a context-menu handler under this SDK
+        // so the menu cannot be opened. 3 and 77 must never read as a pass;
+        // CTest reports 77 as "Not Run".
+        if (std::getenv("SPECTR_BAND_MENU_KEYS") != nullptr) {
+            auto& root = *rig.root;
+            // The negative control inverts the verdict from INSIDE the binary
+            // rather than through WILL_FAIL, which would accept a usage error
+            // or an unproven premise as if it had caught the defect.
+            const bool plant = std::getenv("SPECTR_BAND_MENU_KEYS_PLANT") != nullptr;
+
+            // Opened over a band, and far enough from the left edge that the
+            // menu's own clamp does not move it: the outside point below is
+            // chosen against the rect this produces.
+            constexpr float kOpenX = 378.0f, kOpenY = 400.0f;
+            // Comfortably outside that rect (the menu spans roughly
+            // x 378..608, y 400..776) and still inside the design root.
+            constexpr float kOutsideX = 60.0f, kOutsideY = 60.0f;
+            constexpr float kModeBoost = 2.0f, kModeGlide = 4.0f;
+
+            auto edit_mode = [&rig]() {
+                return rig.store.get_value(spectr::kParamEditMode);
+            };
+            auto menu_open = [&rig]() {
+                return rig.is_mounted("[data-spectr-band-context-menu]");
+            };
+            // The bridge entry point, NOT View::on_key_event. on_key_event
+            // walks the native view tree and never enters the runtime, so it
+            // cannot see a JS keydown handler at all -- a test built on it
+            // would pass while the product stayed broken, which is adjacent
+            // to the very routing being fixed here.
+            auto press_key = [&root, &rig](pulp::view::KeyCode code) {
+                pulp::view::WidgetBridge::dispatch_key_for_root(
+                    root, static_cast<int>(code), pulp::view::kModNone, true);
+                pulp::view::WidgetBridge::dispatch_key_for_root(
+                    root, static_cast<int>(code), pulp::view::kModNone, false);
+                settle(rig.clock, 24);
+            };
+            auto open_menu = [&root, &rig]() {
+                const auto res = pulp::view::route_context_press(
+                    root, pulp::view::Point{kOpenX, kOpenY});
+                settle(rig.clock, 24);
+                return res.handled;
+            };
+
+            // PREMISE 1 -- the menu has to be reachable in this tree at all.
+            // Under an SDK whose right-click fix is not an ancestor NOTHING
+            // carries on_context_menu, and every step below would be
+            // measuring an absent menu. That is a SKIP, not a pass.
+            const auto sweep = press_reach_sweep(root);
+            std::printf("[menukeys] views carrying on_context_menu: %d\n",
+                        sweep.context_menu_targets);
+            if (sweep.context_menu_targets == 0) {
+                std::fprintf(stderr,
+                             "SKIP: no view in the shipping tree carries a "
+                             "context-menu handler under this SDK, so the band "
+                             "menu cannot be opened and neither its keyboard "
+                             "behaviour nor its dismissal can be observed.\n");
+                return 77;
+            }
+
+            rig.feed_tone(6);
+            settle(rig.clock, 20);
+
+            // CONTROL -- the same key path, with the menu CLOSED, must move
+            // the edit mode. This is the instrument check: if a bare letter
+            // cannot reach the app even with nothing open, then the reading
+            // taken with the menu open says nothing about the menu, and the
+            // honest outcome is "unproven" rather than "the fix works".
+            if (menu_open()) {
+                std::fprintf(stderr,
+                             "UNPROVEN: a band menu is already mounted before "
+                             "the control press.\n");
+                return 3;
+            }
+            press_key(pulp::view::KeyCode::b);
+            const float control_mode = edit_mode();
+            std::printf("[menukeys] control  : menu closed, key 'b' -> "
+                        "edit_mode=%.1f (expect %.1f)\n",
+                        control_mode, kModeBoost);
+            if (control_mode != kModeBoost) {
+                std::fprintf(stderr,
+                             "UNPROVEN: the shortcut path does not reach the "
+                             "editor even with no menu open, so this run "
+                             "cannot say anything about the menu.\n");
+                return 3;
+            }
+
+            // PREMISE 2 -- the menu opens.
+            const bool handled = open_menu();
+            const bool open_now = menu_open();
+            std::printf("[menukeys] open     : handled=%s mounted=%s\n",
+                        handled ? "yes" : "no", open_now ? "yes" : "no");
+            if (!open_now) {
+                std::fprintf(stderr,
+                             "UNPROVEN: the right-press did not mount the band "
+                             "menu, so neither invariant can be read.\n");
+                return 3;
+            }
+
+            if (plant) {
+                // NEGATIVE CONTROL, planted in the PRODUCT rather than in the
+                // comparison. Strip the one attribute the guard's new
+                // exemption keys on and the REAL guard, running against the
+                // REAL menu, returns exactly what it returned before the fix.
+                // The gate must then fail to see the shortcut land; if it
+                // still sees it, the gate is not wired to the thing it claims
+                // to cover and its green is meaningless.
+                rig.eval("(() => { const m = document.querySelector("
+                         "'[data-spectr-band-context-menu]');"
+                         " if (!m) throw new Error('plant: menu absent');"
+                         " m.removeAttribute('data-spectr-band-context-menu');"
+                         " if (document.querySelector("
+                         "'[data-spectr-band-context-menu]'))"
+                         " throw new Error('plant: attribute survived'); })();",
+                         "spectr-band-menu-keys-plant");
+                settle(rig.clock, 12);
+                // Presence has to be read another way now: the plant removed
+                // the selector the rest of this probe addresses the menu by.
+                const bool still_mounted =
+                    rig.is_mounted("[aria-label=\"Band actions\"]");
+                press_key(pulp::view::KeyCode::g);
+                const float planted_mode = edit_mode();
+                std::printf("[menukeys] PLANT    : menu still mounted=%s, "
+                            "key 'g' -> edit_mode=%.1f (pre-fix answer %.1f)\n",
+                            still_mounted ? "yes" : "no", planted_mode,
+                            kModeBoost);
+                if (!still_mounted) {
+                    std::fprintf(stderr,
+                                 "UNPROVEN: the plant unmounted the menu, so a "
+                                 "blocked key proves nothing about the guard.\n");
+                    return 3;
+                }
+                if (planted_mode == kModeGlide) {
+                    std::fprintf(stderr,
+                                 "NEGATIVE CONTROL FAILED: the shortcut still "
+                                 "landed with the guard's exemption defeated, "
+                                 "so this gate cannot see the defect it "
+                                 "claims to cover.\n");
+                    return 1;
+                }
+                std::printf("[menukeys] negative control: the pre-fix guard "
+                            "blocked the shortcut, as it must\n");
+                return 0;
+            }
+
+            // REPORTED PREMISE, not an invariant -- and the distinction is
+            // the whole point. `role="menu"` already makes the runtime claim
+            // the overlay slot with consumes-outside-click set, so this reads
+            // TRUE both before and after the fix. It therefore CANNOT see the
+            // defect and must not be scored as if it could. What it does
+            // establish is that a plugin editor's -acceptsFirstResponder
+            // (which calls exactly this) says yes while the menu is open, so
+            // a DAW does hand Escape over -- which is why the Escape
+            // invariant below is about what happens to the key AFTER it
+            // arrives, not about whether it arrives.
+            const bool owns_keyboard =
+                pulp::view::root_overlay_owns_keyboard(root);
+            std::printf("[menukeys] keyboard : root_overlay_owns_keyboard=%s "
+                        "(premise; true before and after the fix)\n",
+                        owns_keyboard ? "yes" : "no");
+            if (!owns_keyboard) {
+                std::fprintf(stderr,
+                             "UNPROVEN: the open menu does not own the "
+                             "keyboard, so the Escape invariant below is not "
+                             "measuring what a DAW would deliver.\n");
+                return 3;
+            }
+
+            // INVARIANT B -- a shortcut pressed while the menu is open still
+            // reaches the app. `g` is deliberately a DIFFERENT mode from the
+            // control's `b`, so "unchanged" and "changed" are distinguishable
+            // values rather than the same one read twice.
+            press_key(pulp::view::KeyCode::g);
+            const float open_mode = edit_mode();
+            std::printf("[menukeys] shortcut : menu open, key 'g' -> "
+                        "edit_mode=%.1f (expect %.1f, defect leaves %.1f)\n",
+                        open_mode, kModeGlide, kModeBoost);
+
+            // INVARIANT C -- the shortcut also dismissed the menu, which is
+            // what clicking the row printing the same letter already does.
+            const bool closed_by_key = !menu_open();
+            std::printf("[menukeys] key-close: menu dismissed by shortcut=%s "
+                        "(expect yes)\n", closed_by_key ? "yes" : "no");
+
+            // INVARIANT C2 -- ESCAPE, asked the way a DAW asks it. This is the
+            // in-Logic failure the offline harness could not reproduce, and
+            // the reason it could not is instructive: the harness reaches the
+            // menu's own window keydown listener through the script bridge,
+            // and a PLUGIN host never fans a key out to script at all. It
+            // consumes Escape here, in the shared policy, before any JS could
+            // see it. So the slot was being dismissed correctly the whole
+            // time and the menu still sat on screen, because nothing told
+            // React to clear `ctxMenu`. The unmount is the assertion; the
+            // return value alone reads `overlay` in BOTH states and would be
+            // another reading that cannot fail.
+            if (!menu_open() && (!open_menu() || !menu_open())) {
+                std::fprintf(stderr,
+                             "UNPROVEN: the menu could not be reopened for the "
+                             "Escape check.\n");
+                return 3;
+            }
+            const auto esc = pulp::view::route_escape_to_active_overlay(root);
+            settle(rig.clock, 24);
+            const bool closed_by_escape = !menu_open();
+            std::printf("[menukeys] escape   : result=%s unmounted=%s "
+                        "(expect overlay / yes)\n",
+                        esc == pulp::view::OverlayEscapeResult::overlay
+                            ? "overlay" : "other",
+                        closed_by_escape ? "yes" : "no");
+
+            // INVARIANT D -- an outside press dismisses. Asked of the shared
+            // policy the hosts actually consult, so this is the same decision
+            // the product makes rather than a replica of it.
+            if (!menu_open()) {
+                if (!open_menu() || !menu_open()) {
+                    std::fprintf(stderr,
+                                 "UNPROVEN: the menu could not be reopened for "
+                                 "the outside-press check.\n");
+                    return 3;
+                }
+            }
+            const auto press = pulp::view::route_press_to_active_overlay(
+                root, pulp::view::Point{kOutsideX, kOutsideY});
+            settle(rig.clock, 24);
+            const bool dismissed_routing =
+                press.routing == pulp::view::OverlayPressRouting::dismissed;
+            const bool closed_by_press = !menu_open();
+            std::printf("[menukeys] outside  : routing=%s unmounted=%s "
+                        "(expect dismissed / yes)\n",
+                        dismissed_routing ? "dismissed" : "not-dismissed",
+                        closed_by_press ? "yes" : "no");
+
+            capture(rig, dir, prefix + "menukeys-after-outside-press", backend,
+                    scale);
+
+            // INVARIANT E -- the guard was NARROWED, not removed. Settings is
+            // a real typing surface and is exactly what this guard exists to
+            // protect, so the same key that now survives an open band menu
+            // must still die under an open Settings panel. Without this, a
+            // change that deleted the guard outright would pass every
+            // assertion above.
+            rig.activate("[data-spectr-settings-open]");
+            settle(rig.clock, 16);
+            const bool settings_up = rig.is_mounted("[data-spectr-settings-panel]");
+            const float before_settings_key = edit_mode();
+            press_key(pulp::view::KeyCode::b);
+            const float after_settings_key = edit_mode();
+            const bool settings_blocks =
+                settings_up && after_settings_key == before_settings_key;
+            std::printf("[menukeys] guard    : settings open=%s, key 'b' "
+                        "%.1f -> %.1f (expect unchanged)\n",
+                        settings_up ? "yes" : "no", before_settings_key,
+                        after_settings_key);
+            if (!settings_up) {
+                std::fprintf(stderr,
+                             "UNPROVEN: the Settings panel did not open, so "
+                             "whether the guard still blocks is unmeasured.\n");
+                return 3;
+            }
+
+            const bool ok = open_mode == kModeGlide && closed_by_key
+                && closed_by_escape && dismissed_routing && closed_by_press
+                && settings_blocks;
+            if (!ok) {
+                std::fprintf(stderr,
+                             "FAIL: band menu keyboard/dismissal invariants "
+                             "violated (shortcut=%s key-close=%s escape=%s "
+                             "outside-routing=%s outside-unmount=%s "
+                             "settings-still-blocks=%s)\n",
+                             open_mode == kModeGlide ? "ok" : "BAD",
+                             closed_by_key ? "ok" : "BAD",
+                             closed_by_escape ? "ok" : "BAD",
+                             dismissed_routing ? "ok" : "BAD",
+                             closed_by_press ? "ok" : "BAD",
+                             settings_blocks ? "ok" : "BAD");
+                return 1;
+            }
+            std::printf("[menukeys] PASS: the open menu keeps the shortcuts "
+                        "live, owns the keyboard, and dismisses\n");
+            return 0;
+        }
+
         // The band context menu's UNMUTE must restore the level the band
         // carried at mute time, not flatten it to 0 dB.
         //
