@@ -102,3 +102,33 @@ rather than a bare ctest run is the reverse check.
 — all 0 files on origin/main (control `modulation_target_mask` = 15 files, so
 the instrument works), and all present in `strings -a` of the built binary
 (2/1/1/1; control token `SPECTR` = 47).
+
+## Post-rebase verification (base 43a005a)
+- `Spectr-test`: 272 cases, 241965 assertions, ALL PASS.
+- Learn-shaped test re-confirmed by `confirm_failure.sh` after the rebase:
+  CONFIRMED, with the recompile observed at baseline/broken/restored.
+- Scope control on the editor patch (syntax alone is not enough — a
+  block-scoped declaration in the wrong function body compiles clean):
+  brace-matched `FilterBank`'s body (chars 64128..161214) and proved all 13
+  new symbols live inside it — `macroStateRef`, `postNative`, `driveMacro`,
+  `macroOwning`, `macroAdjustedGain`, the menu props, the drag hooks, and the
+  display call sites.
+- `Spectr-native-n1-test`: the copy-button failure is GONE (fixed by #155);
+  the compact-live-frame-lane failure remains, pre-existing.
+
+## Delivered
+- PR #156 opened. Validation queued as `sy-20260916-b97443`.
+  `main` is unprotected with no auto-merge, so the merge is explicit and must
+  be proven with `git merge-base --is-ancestor`, never from an exit code.
+- Follow-up issue #157 filed for #46's residue (an LFO `BandSubset`
+  destination pointing at a macro's members), including the one open design
+  question: reuse a macro's membership, or carry a separate mask.
+
+## Coordination left open
+- `native-ui/materialized/help-content.js` is NOT touched here. The
+  `docs/host-automation-help` lane (branch `fa19f4e`) rewrites it (+46 lines)
+  and owns the Automation section. Its `help_overlay_contract.py` checks an
+  explicit `PROMISED_PARAMS` allowlist, NOT every registered parameter, so
+  macros landing does not break that gate either way. Whoever lands second
+  should add a Macros entry to the Automation section and, if they want it
+  enforced, add "Macro 1" to `PROMISED_PARAMS`.
