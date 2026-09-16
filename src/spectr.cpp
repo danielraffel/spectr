@@ -329,9 +329,20 @@ bool Spectr::spectral_resolution(
 void Spectr::publish_audio_modulation_state_() noexcept {
     // All callers serialize through processing_state_mutex_. TripleBuffer
     // therefore has one logical writer and process() remains its sole reader.
+    // Designated rather than positional. This struct just grew a field, and a
+    // positional brace-init is the shape that fails SILENTLY when a later
+    // change reorders one: every member here is a snapshot of control state,
+    // several are bools and integers, and the compiler would accept two of
+    // them swapped. Naming them makes a reorder a compile error instead of a
+    // morph that quietly reads the viewport switch.
     AudioModulationState published{
-        modulation_, snapshots_, morph_applies_viewport_, morph_derived_,
-        morph_derived_ ? morph_overrides_.to_ullong() : 0ull, {}};
+        .settings = modulation_,
+        .snapshots = snapshots_,
+        .morph_applies_viewport = morph_applies_viewport_,
+        .morph_derived = morph_derived_,
+        .morph_overrides =
+            morph_derived_ ? morph_overrides_.to_ullong() : 0ull,
+        .macro_members = {}};
     for (std::size_t m = 0; m < kMacroCount; ++m)
         published.macro_members[m] = macro_members_[m].to_ullong();
     audio_modulation_publication_.write(published);
