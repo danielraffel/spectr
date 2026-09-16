@@ -201,3 +201,26 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # cases assert on pattern ids.
 ^"?native duplicate_pattern puts the copy
 ^"?native set_default_pattern survives
+
+# The band readout and its three plants. `materialized` above matches them,
+# but it also matches a dozen other rows, so it can never report their
+# absence -- and the defect they guard is a WELL-FORMED label carrying wrong
+# numbers, which no capture, row count or presence check anywhere in this gate
+# can see. The stale-layout plant reproduces the reported string character for
+# character, so that row failing is what proves the suite is not blind.
+^Spectr-materialized-band-readout
+
+# The output level readout and its three plants. Same reason: `materialized`
+# cannot report their absence. Two of the three plants fail on behaviour that
+# only appears ACROSS frames (a hold that falls, a latch that clears itself),
+# which nothing else in this gate samples over time.
+^Spectr-materialized-output-meter
+
+# The Catch2 cases behind that readout, which prove the level is measured
+# AFTER the output trim. Nothing above matches them -- they start with the
+# behaviour, not with "native" or "materialized" -- so without this line they
+# register and never run. They are the only rows in this gate that could
+# notice the meter being wired to the pre-trim buffer, which is the whole
+# defect class: every JS row above is green against a readout that reports a
+# level nobody downstream ever hears.
+^"?output level:

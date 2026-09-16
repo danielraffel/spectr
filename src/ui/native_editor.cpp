@@ -1770,6 +1770,63 @@ bool Spectr::tick_native_analyzer_(float dt) {
     native_analyzer_elapsed_ = std::fmod(native_analyzer_elapsed_, kPublishPeriodSeconds);
 
     bridge_.poll();
+
+    // ── Output level ────────────────────────────────────────────────────
+    //
+    // Published BEFORE the spectrum guard below on purpose. That guard drops
+    // the tick when the analyzer sequence has not advanced, which is exactly
+    // the silent/stopped case -- and a level readout that stops updating when
+    // the signal stops is a readout that lies about the signal stopping.
+    // This costs one triple-buffer read per tick and touches no audio thread.
+    {
+        const auto level = read_output_level();
+        // Publish only a CHANGED reading. A meter that republishes an
+        // unchanged one 30 times a second is another per-frame script
+        // evaluation and another React commit for a number that did not
+        // move -- the same cost the hover readout's 700ms throttle and the
+        // zoom readout's live guard were both written to avoid. It is also
+        // load bearing for the test fleet: an unconditional per-tick
+        // publication perturbed settle timing enough to revert a native
+        // bounds write, which turned `Spectr-preset-operations-negative-
+        // control` from a working plant into a silent pass.
+        //
+        // Compared at the resolution the editor PRINTS (0.1 dB), so
+        // dither-level movement below the last displayed digit is not a
+        // change. The hold only rises, so a still signal publishes nothing.
+        const auto quantised = std::isfinite(level.peak_db)
+            ? std::round(level.peak_db * 10.0f)
+            : std::numeric_limits<float>::lowest();
+        const bool moved = quantised != native_output_level_peak_
+            || level.over != native_output_level_over_
+            || level.trim_db != native_output_level_trim_db_;
+        native_output_level_peak_ = quantised;
+        native_output_level_over_ = level.over;
+        native_output_level_trim_db_ = level.trim_db;
+
+        // Only the publication is skipped, never the rest of the tick: the
+        // analyzer frame below has its own cadence and its own guard.
+        if (moved) {
+            std::ostringstream meter;
+            meter << "if (typeof globalThis.__spectrPublishNativeMessage === "
+                     "'function') globalThis.__spectrPublishNativeMessage("
+                     "'output_meter',{schema_version:1,peak_db:"
+                  << (std::isfinite(level.peak_db)
+                          ? std::to_string(level.peak_db)
+                          : std::string("null"))
+                  << ",over:" << (level.over ? "true" : "false")
+                  << ",trim_db:" << level.trim_db
+                  << "},'spectr-output-meter');";
+            try {
+                native_scripted_ui_->bridge()->load_script(
+                    meter.str(), "spectr-native-output-meter");
+            } catch (const std::exception& error) {
+                pulp::runtime::log_error(
+                    "[Spectr native] output meter publication rejected: {}",
+                    error.what());
+            }
+        }
+    }
+
     const auto& spectrum = read_spectrum();
     if (!finite_spectrum(spectrum)
         || spectrum.sequence_number == native_analyzer_sequence_)
@@ -1817,6 +1874,11 @@ void Spectr::close_native_editor_() {
     native_frame_clock_ = nullptr;
     native_analyzer_elapsed_ = 0.0f;
     native_analyzer_sequence_ = 0;
+    // Forget the last published level, so reopening the editor republishes
+    // rather than sitting at "--" until the reading happens to move.
+    native_output_level_peak_ = std::numeric_limits<float>::max();
+    native_output_level_over_ = false;
+    native_output_level_trim_db_ = std::numeric_limits<float>::max();
     native_host_automation_revision_ = host_automation_revision();
     editor_authority().reset_transient_state();
     native_editor_root_ = nullptr;

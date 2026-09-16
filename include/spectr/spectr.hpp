@@ -19,6 +19,7 @@
 #include <atomic>
 #include <bitset>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -512,6 +513,30 @@ public:
     const pulp::view::WaveformData& read_waveform() { return bridge_.read_waveform(); }
     const pulp::signal::MultiChannelMeterData& read_meter() { return bridge_.read_meter(); }
 
+    /// One UI-thread reading of the level Spectr handed the host.
+    ///
+    /// `bridge_.process()` is fed the buffer AFTER the output trim has been
+    /// applied, in both the shared-processor and the direct render paths, so
+    /// this is the level downstream sees and not an internal one. Spectr is
+    /// float end to end and clips nothing itself: `over` means the signal
+    /// leaving the plugin reached or passed full scale, which is the exact
+    /// condition under which anything fixed-point downstream distorts. That
+    /// is why the editor labels it OVER and not CLIP.
+    ///
+    /// Lock-free; reads the latest complete meter frame. Hold and reset
+    /// policy deliberately live in the UI, which knows how long a person
+    /// needs to see a number.
+    struct OutputLevelReading {
+        /// Highest sample peak across channels, dBFS. -inf for digital silence.
+        float peak_db = -std::numeric_limits<float>::infinity();
+        /// Any channel reached full scale in the latest frame.
+        bool  over = false;
+        /// The Output trim in force, dB, so the editor's control and its
+        /// meter cannot disagree about which gain produced the reading.
+        float trim_db = 0.0f;
+    };
+    OutputLevelReading read_output_level();
+
     /// Latest post-LFO band field from the audio owner, for drawing only.
     /// Lock-free; always a complete frame. `active == false` means no
     /// modulator is running and the editor should draw canonical state.
@@ -789,6 +814,11 @@ private:
     pulp::view::FrameClock* native_frame_clock_ = nullptr;
     int native_frame_subscription_ = -1;
     float native_analyzer_elapsed_ = 0.0f;
+    // Last PUBLISHED output-level reading, so an unchanged one costs no
+    // script evaluation. peak is held at the 0.1 dB the editor prints.
+    float native_output_level_peak_ = std::numeric_limits<float>::max();
+    bool  native_output_level_over_ = false;
+    float native_output_level_trim_db_ = std::numeric_limits<float>::max();
     std::uint64_t native_analyzer_sequence_ = 0;
     // Last modulated-field sequence projected to the editor, so a UI tick
     // that finds no new audio frame does not re-dispatch the same overlay.
