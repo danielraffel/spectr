@@ -32,7 +32,8 @@
 //
 // Usage:
 //   node test_materialized_output_meter.mjs <materialized-document.runtime.json>
-//        [--plant-falling-hold | --plant-no-latch | --plant-clip-label]
+//        [--plant-falling-hold | --plant-no-latch | --plant-clip-label
+//         | --plant-untyped-readout]
 //        [--expect-fail]
 //
 // --plant-falling-hold makes the hold track every frame, so the loudest moment
@@ -43,6 +44,10 @@
 // frame, so a transient overload is gone before anyone sees it.
 // --plant-clip-label renames the reading CLIP, a claim about Spectr that is
 // false.
+// --plant-untyped-readout strips the trim readout's own face and size so it
+// inherits the document body default again -- how it shipped: 47% taller ink
+// than every other readout in the header, and a 37pt glyph run inside its own
+// 34pt box at the trim extremes.
 // --expect-fail inverts the verdict, so a control is green only when this
 // suite REJECTS that document. The inversion lives here rather than in
 // WILL_FAIL because WILL_FAIL accepts any non-zero exit -- a usage error or an
@@ -55,12 +60,14 @@ const args = process.argv.slice(2);
 const plantFallingHold = args.includes("--plant-falling-hold");
 const plantNoLatch = args.includes("--plant-no-latch");
 const plantClipLabel = args.includes("--plant-clip-label");
+const plantUntypedReadout = args.includes("--plant-untyped-readout");
 const expectFail = args.includes("--expect-fail");
 const documentPath = args.find((a) => !a.startsWith("--"));
 
 if (!documentPath) {
   console.error("usage: test_materialized_output_meter.mjs <runtime.json> "
-    + "[--plant-falling-hold|--plant-no-latch|--plant-clip-label] "
+    + "[--plant-falling-hold|--plant-no-latch|--plant-clip-label"
+    + "|--plant-untyped-readout] "
     + "[--expect-fail]");
   process.exit(2);
 }
@@ -75,6 +82,9 @@ const RISING_HOLD = "      if (peak !== null && (hold.peakDb === null "
   + "|| peak > hold.peakDb))\n        hold.peakDb = peak;\n";
 const LATCH = "      if (payload.over === true) hold.over = true;\n";
 const LABEL = '(over ? "OVER " : "PEAK ") + peakText';
+const READOUT_STYLE = 'style: { width: 34, textAlign: "right", '
+  + 'whiteSpace: "nowrap", flexShrink: 0, fontFamily: "var(--mono)", '
+  + 'fontSize: 10, color: "rgba(255,255,255,0.72)" }';
 
 function plant(label, from, to) {
   const hits = html.split(from).length - 1;
@@ -98,6 +108,11 @@ if (plantNoLatch) {
 if (plantClipLabel) {
   plant("a readout that claims Spectr clipped", LABEL,
     '(over ? "CLIP " : "PEAK ") + peakText');
+}
+if (plantUntypedReadout) {
+  plant("a trim readout with no type of its own", READOUT_STYLE,
+    'style: { width: 34, textAlign: "right", whiteSpace: "nowrap", '
+    + "flexShrink: 0 }");
 }
 
 const failures = [];
@@ -229,6 +244,70 @@ if (/"CLIP /.test(meterBody)) {
 if (!meterBody.includes('"data-spectr-output-over"')) {
   fail("the over state is not exposed as an attribute, so nothing outside "
     + "the component can read it");
+}
+
+// S5. THE TRIM READOUT CARRIES ITS OWN TYPE, and it is the PEAK button's.
+//
+// This is the half of the cluster nobody looked at. The readout declared
+// width/textAlign/whiteSpace/flexShrink and no font at all, so it inherited
+// the document body default while its sibling 14pt away declared
+// var(--mono)/10/rgba(255,255,255,0.72). Rastered through the shipping native
+// editor (`Spectr-native-shot --backend=skia`, authored 1320x860 box) the
+// glyph ink measured 11.0pt against 7.5pt for PEAK, LIVE, BARS, BOTH,
+// `32 bands` and `1.00x zoom` alike -- 47% taller than every other readout in
+// the row, taller than the SPECTR wordmark, and the brightest non-brand
+// element in a header where it is the one control with no on-screen label.
+//
+// It also overflowed: at the extremes the inherited face painted `+12.0` as a
+// 37pt run inside a 34pt box. `tools/appearance_invariants.py` is the detector
+// for exactly that, and it cannot see this one -- it adjudicates a checked-in
+// Settings dump and never sees the header.
+//
+// Asserted against the sibling's declarations rather than against literals, so
+// a deliberate retype of the cluster moves both halves or fails here.
+const peakFontFamily = /fontFamily: "([^"]+)"/.exec(meterBody);
+const peakFontSize = /fontSize: (\d+)/.exec(meterBody);
+const readoutStyle = /"data-spectr-output-trim-readout": true,[\s\S]{0,400}?style: \{([^}]*)\}/
+  .exec(meterBody);
+if (!peakFontFamily || !peakFontSize) {
+  fail("the PEAK button declares no fontFamily/fontSize, so there is no "
+    + "sibling treatment for the trim readout to match");
+} else if (!readoutStyle) {
+  fail("no style object found on the trim readout");
+} else {
+  const style = readoutStyle[1];
+  const family = /fontFamily: "([^"]+)"/.exec(style);
+  const size = /fontSize: (\d+)/.exec(style);
+  if (!family || family[1] !== peakFontFamily[1]) {
+    fail("the trim readout does not declare the PEAK button's font family "
+      + `(${JSON.stringify(peakFontFamily[1])}); unstated it inherits the `
+      + "document body face and renders in a different typeface from the "
+      + "number beside it");
+  }
+  if (!size || size[1] !== peakFontSize[1]) {
+    fail("the trim readout does not declare the PEAK button's font size "
+      + `(${peakFontSize[1]}); unstated it inherits the document body size `
+      + "and rendered 47% taller than every other readout in the header");
+  }
+  if (!/color: "/.test(style)) {
+    fail("the trim readout declares no colour, so it inherits the body "
+      + "default and outshines every other readout in the row");
+  }
+  // The box must hold the widest value the control can print. min/max are
+  // +-24 and the format is one optional sign, two digits, a point and a
+  // decimal -- five glyphs. A mono advance is ~0.6em, which is what made the
+  // inherited face overflow this same 34pt box at 37pt.
+  const width = /width: (\d+)/.exec(style);
+  const declared = size ? Number(size[1]) : Number(peakFontSize[1]);
+  const widest = 5 * declared * 0.6;
+  if (!width) {
+    fail("the trim readout declares no width, so its box cannot be checked "
+      + "against the widest value it can print");
+  } else if (Number(width[1]) < widest) {
+    fail(`the trim readout's ${width[1]}pt box cannot hold the widest value `
+      + `it can print ("-24.0", ~${widest.toFixed(1)}pt at ${declared}pt `
+      + "mono); the run paints outside its own box");
+  }
 }
 
 // ----------------------------------------------------------- runtime check
