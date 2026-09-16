@@ -41,13 +41,13 @@ Think of it as a precise way to reach into a sound and grab one part of it.
 
 ## How the bands work
 
-The row runs from low frequencies on the left to high on the right, the way a piano runs from bass to treble. You choose 32 or 64 bands from the toolbar. More bands means finer control and narrower cuts.
+The row runs from low frequencies on the left to high on the right, the way a piano runs from bass to treble. You choose 32, 40, 48, 56 or 64 bands from the toolbar. More bands means finer control and narrower cuts.
 
 The bands are not evenly spaced in Hz. They are spaced more like how we hear pitch, so there is as much detail in the low end as the high end, even though the high end covers far more Hz.
 
 ## Zooming
 
-Scroll to zoom into the frequency range. You always have the same 32 or 64 bands, but they spread across whatever range you are viewing.
+Scroll to zoom into the frequency range. You always have the same number of bands, but they spread across whatever range you are viewing.
 
 Zoomed out, each band covers a wide range of frequencies. Zoom into a smaller range and each band becomes much narrower, giving you finer control.
 
@@ -93,9 +93,49 @@ A and B do nothing if that snapshot is empty. Morph requires both snapshots. You
 
 ## Automation
 
-Every control is automatable in any DAW that supports it. Record a morph sweep, automate the shape, or draw the moves into your arrangement.
+Every control here is a plug-in parameter, and your DAW can drive any of them. In Logic that means Learn Plug-in Parameter: open a Modulator or an automation lane, choose Learn, then touch the control in Spectr and the two are linked. Whatever you touched shows up by name, so moving band 31 offers you **Band 31 Gain**.
+
+MIDI CC is a different mechanism, and Spectr does not listen to it. It is an audio effect with no MIDI input at all, so there are no CC numbers to look up and a list of them is not the thing to aim at here. Plug-in parameters are the whole surface.
+
+There is no right-click path for this either. Right-clicking a band gives you band actions, mute, solo, reset to 0 dB, select. Assigning a modulator is something your host does, not something Spectr does.
 
 One exception worth knowing. An LFO's **Target** can be automated by your DAW. **Destinations**, which is how you pick more than one at a time, is set in the plugin only.
+
+## Modulating a range of bands
+
+One band is easy. The whole bank at once is easy too, that is what **Bank** and the LFOs already do. A range in the middle is the interesting case, and the answer is the morph.
+
+The morph blends every band from snapshot A to snapshot B independently, so a band holding the same value in both snapshots does not move at all. The range is simply wherever A and B disagree:
+
+- Capture your current curve into **A**.
+- Change only the bands you want to move, and capture that into **B**.
+- Point your modulator at **A/B Morph**.
+
+Only those bands travel. That is better than a plain range, because the shape across it is whatever you drew. The middle can move further than the edges, and part of it can go the other way.
+
+Three things to know before you lean on it.
+
+**Mute does not blend.** A band muted in one snapshot but not the other flips at the halfway point instead of fading, which is a click rather than a sweep. Keep the mutes matching in both snapshots and let gain do the work. Gain bottoms out at -24 dB, so a band fades down rather than away entirely.
+
+**The zoom window travels too.** If A and B are looking at different frequency ranges, morphing slides the view as well as the bands. Turn that off in Settings, under Modulation, with the **Viewport** switch.
+
+**The two end bands are not only themselves.** The leftmost visible band owns everything below the window and the rightmost owns everything above it, so a range reaching either end moves more than it appears to.
+
+The morph is one parameter, so it gives you one range at a time. Two ranges moving independently means two instances of Spectr in series. And the path each band takes is fixed once you have drawn the two ends: you shape where it goes, and your modulator's own shape decides how it gets there.
+
+The LFO **Target** control is not a second route to this. Its choices are Bank, A, B and Morph, and none of those is a range of bands. An LFO pointed at A or B is range-selective in the same way the morph is, but an LFO is always moving, so driving its **Depth** from your DAW scales an oscillation rather than placing the bands where you want them.
+
+## What you can automate
+
+The list your DAW shows is long, because every band is in it. The ones worth knowing by name:
+
+- **A/B Morph** blends the whole bank between the two snapshots. The most musical single target in the plugin.
+- **Viewport Center** and **Viewport Width** slide and widen the frequency range the bands cover. Automating the centre sweeps your whole shape up and down the spectrum.
+- **LFO Rate**, **LFO Depth**, and the same pair on **LFO 2**, let you modulate the modulators from outside.
+- **Band 01 Gain** through **Band 64 Gain**, and **Band 01 Mute** through **Band 64 Mute**, for one band at a time.
+- **Mix** blends Spectr against the untouched signal. **Output** trims the level on the way out, by up to 24 dB either way.
+
+Band numbers count from the left, so Band 01 is the lowest. Which frequency that actually is depends on where you are zoomed and how many bands you are showing, so the same lane means something different at 32 bands than at 64. Settle the band count before writing any band automation. **Band Count** is automatable itself, but changing it re-lays out the whole bank underneath your existing lanes, so treat it as a setup choice rather than a move.
 
 ## Presets
 
