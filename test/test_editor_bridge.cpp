@@ -1098,6 +1098,88 @@ TEST_CASE("native pattern CRUD persists through the plugin state blob") {
     CHECK(reopened.proc->patterns().user().empty());
 }
 
+// Both verbs below existed as PatternLibrary methods with ZERO production
+// callers: the editor did each of them by writing its own React state, which
+// the next command's response replaces wholesale from this library. So a
+// duplicate or a default survived only until the user's next save. The loss is
+// invisible to a row count -- a copy being dropped and a save landing cancel
+// out in the total -- which is why these assert on ids.
+
+TEST_CASE("native duplicate_pattern puts the copy in the library") {
+    Rig r;
+    r.proc->field().bands[6] = {-4.25f, false};
+    REQUIRE(response_ok(r.dispatch(
+        R"({"type":"save_current_pattern","payload":{"name":"SOURCE"}})")));
+    REQUIRE(r.proc->patterns().user().size() == 1);
+    const auto source_id = r.proc->patterns().user().front().id;
+
+    const auto resp = r.dispatch(
+        std::string{"{\"type\":\"duplicate_pattern\",\"payload\":{\"id\":\""}
+        + source_id + R"("}})");
+    REQUIRE(response_ok(resp));
+    REQUIRE(r.proc->patterns().user().size() == 2);
+
+    const auto& copy = r.proc->patterns().user().back();
+    CHECK(copy.name == "SOURCE COPY");
+    CHECK(copy.id != source_id);
+    CHECK(copy.gain_db[6] == Approx(-4.25f));
+    // The response names the new pattern, so the editor can select it without
+    // guessing which of two same-named rows it just made.
+    CHECK(resp.find(copy.id) != std::string::npos);
+
+    // It is in the LIBRARY, not only in a response: it survives the state blob.
+    const auto bytes = r.proc->serialize_plugin_state();
+    Rig reopened;
+    REQUIRE(reopened.proc->deserialize_plugin_state(bytes));
+    REQUIRE(reopened.proc->patterns().user().size() == 2);
+    CHECK(reopened.proc->patterns().user().back().name == "SOURCE COPY");
+
+    CHECK_FALSE(response_ok(r.dispatch(
+        R"({"type":"duplicate_pattern","payload":{"id":"user:nope"}})")));
+    CHECK_FALSE(response_ok(r.dispatch(
+        R"({"type":"duplicate_pattern","payload":{}})")));
+}
+
+TEST_CASE("native set_default_pattern survives a later pattern command") {
+    Rig r;
+    REQUIRE(response_ok(r.dispatch(
+        R"({"type":"save_current_pattern","payload":{"name":"MINE"}})")));
+    const auto id = r.proc->patterns().user().front().id;
+    // The resting default is a FACTORY pattern, so the COUNT of defaults is
+    // one before and after whatever happens. Only the id can see a revert.
+    const auto at_rest = r.proc->patterns().default_id();
+    CHECK(at_rest != id);
+
+    REQUIRE(response_ok(r.dispatch(
+        std::string{"{\"type\":\"set_default_pattern\",\"payload\":{\"id\":\""}
+        + id + R"("}})")));
+    CHECK(r.proc->patterns().default_id() == id);
+
+    // The revert this exists to catch: one more pattern command used to
+    // overwrite the editor's local default from a library that never heard
+    // about it.
+    REQUIRE(response_ok(r.dispatch(
+        R"({"type":"save_current_pattern","payload":{"name":"OTHER"}})")));
+    CHECK(r.proc->patterns().default_id() == id);
+
+    const auto bytes = r.proc->serialize_plugin_state();
+    Rig reopened;
+    REQUIRE(reopened.proc->deserialize_plugin_state(bytes));
+    CHECK(reopened.proc->patterns().default_id() == id);
+
+    // Deleting the default returns it to the factory resting value rather
+    // than leaving a dangling id nothing resolves.
+    REQUIRE(response_ok(reopened.dispatch(
+        std::string{"{\"type\":\"delete_pattern\",\"payload\":{\"id\":\""}
+        + id + R"("}})")));
+    CHECK(reopened.proc->patterns().default_id() == at_rest);
+
+    CHECK_FALSE(response_ok(r.dispatch(
+        R"({"type":"set_default_pattern","payload":{"id":"user:nope"}})")));
+    CHECK_FALSE(response_ok(r.dispatch(
+        R"({"type":"set_default_pattern","payload":{}})")));
+}
+
 // Obsolete under pulp#711: the EditorBridge framework takes the
 // library by reference at handler registration, so there's no
 // "nullptr library" code path to exercise. Unknown-pattern-id is

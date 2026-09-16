@@ -3305,9 +3305,14 @@ TEST_CASE("native frozen state atlas interactions and persistence",
     activate(reopened, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
     activate(reopened, "[data-spectr-pattern-manage]");
     activate(reopened, "[data-spectr-pattern-id=" + js_string(pattern_id) + "]");
-    reopened.bridge().load_script("globalThis.confirm = () => true;",
-                                  "spectr-native-confirm-delete");
+    // This used to inject `globalThis.confirm = () => true` before pressing
+    // DELETE, which is why it passed while DELETE did nothing for users: the
+    // handler's only statement called `confirm`, the Pulp scripted-UI runtime
+    // defines no such global, and the shim supplied the one thing the product
+    // was missing. The confirmation is now a panel the runtime can paint, so
+    // the test presses it the way a user does.
     activate(reopened, "[data-spectr-manager-action=\"delete\"]");
+    activate(reopened, "[data-spectr-manager-action=\"delete-confirm\"]");
     REQUIRE(reopened.processor.patterns().user().empty());
     storage.require_unchanged();
 

@@ -2363,6 +2363,548 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        // PRESET-OPS. Every operation the preset manager offers, driven one
+        // at a time, each judged by a count or an identity taken before and
+        // after -- never by a presence check, which is what hid three
+        // defects in this panel already.
+        //
+        // WHY BOTH PRESS CHANNELS. `__pulpActivateMaterializedElement__`
+        // reaches a handler by selector and bypasses hit-testing entirely,
+        // so it answers "is this wired?"; a press at the centre of the rect
+        // the control PAINTS, resolved through View::hit_test, answers "can a
+        // pointer get to it?". Those are different repairs. DELETE was
+        // reported as missing and was neither: the button is REACHABLE, and
+        // both channels left the list the same length, because the handler's
+        // only statement called `confirm` -- a browser dialog this runtime
+        // does not define -- and threw before deleting anything. A probe that
+        // ran one channel could not have told those apart.
+        //
+        // Exit codes follow this file's convention: 0 pass, 1 a finding,
+        // 3 the premise is unproven. 3 is never a pass.
+        if (std::getenv("SPECTR_PRESET_OPS") != nullptr) {
+            auto& root = *rig.root;
+            int findings = 0;
+            auto fail = [&findings](const char* what) {
+                ++findings;
+                std::printf("[FINDING] %s\n", what);
+            };
+
+            // The bridge's load_script has no return channel, so a value
+            // rides out on a thrown message -- the PULPVALUE idiom the
+            // press-reach block uses to resolve element ids.
+            auto js_value = [&rig](const std::string& expr) -> std::string {
+                try {
+                    rig.eval("(() => { let v; try { v = String(" + expr +
+                                 "); } catch (e) { v = 'THREW:' + e.message; } "
+                                 "throw new Error('PULPVALUE:' + v); })();",
+                             "spectr-preset-ops-value");
+                } catch (const std::exception& e) {
+                    const std::string msg = e.what();
+                    const auto at = msg.find("PULPVALUE:");
+                    if (at != std::string::npos) {
+                        std::string v = msg.substr(at + 10);
+                        const auto end = v.find_first_of("\n\"");
+                        if (end != std::string::npos) v = v.substr(0, end);
+                        return v;
+                    }
+                    return std::string("EVALFAIL:") + msg;
+                }
+                return "(no value)";
+            };
+            auto count_of = [&js_value](const std::string& selector) -> int {
+                const std::string v = js_value(
+                    "document.querySelectorAll('" + selector + "').length");
+                try { return std::stoi(v); } catch (...) { return -1; }
+            };
+            auto user_rows = [&count_of]() {
+                return count_of("[data-spectr-pattern-source=\"user\"]");
+            };
+            // Identity by ATTRIBUTE. Two earlier instruments failed here and
+            // both failed silently: a row count read DUPLICATE as 1->2 and
+            // the following save as 2->2, because the copy dying and the save
+            // landing cancelled; and a leaf-text walk returned the whole
+            // document's text, because `element.querySelectorAll` is not
+            // element-scoped in this shim, so two named rows printed as the
+            // same " | " an empty library gives. `getAttribute` on a data-*
+            // name does work, and a preset id is unique.
+            auto user_ids = [&js_value]() {
+                return js_value(
+                    "(function(){var r=document.querySelectorAll("
+                    "'[data-spectr-pattern-source=\"user\"]');var o=[];"
+                    "for(var i=0;i<r.length;i++)o.push(r[i].getAttribute("
+                    "'data-spectr-pattern-id')||'?');"
+                    "return o.join(',')||'(empty)';})()");
+            };
+            auto default_id = [&js_value]() {
+                return js_value(
+                    "(function(){var r=document.querySelector("
+                    "'[data-spectr-pattern-default=\"true\"]');"
+                    "return r?String(r.getAttribute("
+                    "'data-spectr-pattern-id')):'(none)';})()");
+            };
+
+            // --- host globals the captured page calls unguarded ----------
+            // The mechanism behind DELETE, IMPORT FILE and EXPORT (FILE)
+            // reduces to this table: the page is a browser app and this
+            // runtime is not a browser.
+            std::printf("--- host globals the preset manager calls ---\n");
+            static const char* kGlobals[] = {
+                "confirm", "Blob", "URL", "navigator", "FileReader",
+                "alert", "prompt"};
+            for (const char* g : kGlobals)
+                std::printf("[global] %-12s typeof=%s\n", g,
+                            js_value(std::string("typeof ") + g).c_str());
+            // CONTROL. If `document` or `React.createElement` read undefined
+            // the probe is measuring a dead runtime and every 'undefined'
+            // above is an artifact of the instrument, not a fact about it.
+            const std::string doc_t = js_value("typeof document");
+            const std::string rce_t = js_value("typeof React.createElement");
+            std::printf("[global] control document=%s React.createElement=%s\n",
+                        doc_t.c_str(), rce_t.c_str());
+            if (doc_t != "object" || rce_t != "function") {
+                std::printf("[ops] NO VERDICT: the runtime's own controls read "
+                            "wrong, so the census above measures nothing.\n");
+                return 3;
+            }
+
+            auto save_one = [&]() -> bool {
+                const int before = user_rows();
+                rig.activate("[data-spectr-manager-action=\"save-current\"]");
+                settle(rig.clock, 16);
+                if (rig.is_mounted("[data-spectr-save-dialog]"))
+                    rig.activate("[data-spectr-manager-action=\"save-submit\"]");
+                settle(rig.clock, 24);
+                return user_rows() == before + 1;
+            };
+            // Select by INDEX and by pixels. A second pixel press on the same
+            // row inside the double-click window commits and closes the
+            // manager, and Date.now() barely advances under a simulated frame
+            // clock -- so every scenario selects a row it has not just
+            // pressed.
+            auto select_user = [&](int index) -> bool {
+                const std::string id = js_value(
+                    "(function(){var r=document.querySelectorAll("
+                    "'[data-spectr-pattern-source=\"user\"]');"
+                    "return r.length>" + std::to_string(index) + "?(r["
+                    + std::to_string(index) + "].id||'') : '';})()");
+                if (id.empty() || id.rfind("THREW:", 0) == 0) return false;
+                const auto hit = measure_hit(root, id);
+                if (!hit.found || hit.painted.width <= 0.0f) return false;
+                root.simulate_click(pulp::view::Point{
+                    hit.painted.x + hit.painted.width / 2.0f,
+                    hit.painted.y + hit.painted.height / 2.0f});
+                settle(rig.clock, 24);
+                return true;
+            };
+            auto press_by_pixels = [&](const char* action) -> bool {
+                const std::string id = js_value(
+                    std::string("(function(){var e=document.querySelector("
+                    "'[data-spectr-manager-action=\"") + action +
+                    "\"]');return e?(e.id||''):'';})()");
+                if (id.empty() || id.rfind("THREW:", 0) == 0) return false;
+                const auto hit = measure_hit(root, id);
+                if (!hit.found || hit.painted.width <= 0.0f
+                    || hit.painted.height <= 0.0f) return false;
+                root.simulate_click(pulp::view::Point{
+                    hit.painted.x + hit.painted.width / 2.0f,
+                    hit.painted.y + hit.painted.height / 2.0f});
+                settle(rig.clock, 32);
+                return true;
+            };
+
+            // --- open the manager the way a user does --------------------
+            auto open_manager = [&]() -> bool {
+                if (rig.is_mounted("[data-spectr-manager-action]")) return true;
+                rig.activate("[data-spectr-menu-root=\"pattern\"] "
+                             "[data-spectr-menu-trigger]");
+                if (!rig.is_mounted("[data-spectr-pattern-manage]")) return false;
+                rig.activate("[data-spectr-pattern-manage]");
+                settle(rig.clock, 24);
+                return rig.is_mounted("[data-spectr-manager-action]");
+            };
+            if (!open_manager()) {
+                std::printf("[ops] NO VERDICT: the manager never opened.\n");
+                return 3;
+            }
+            const int factory_rows = count_of(
+                "[data-spectr-pattern-source=\"factory\"]");
+            std::printf("[ops] manager open: factory=%d user=%d\n",
+                        factory_rows, user_rows());
+            if (factory_rows <= 0) {
+                std::printf("[ops] NO VERDICT: no factory rows, so the list "
+                            "instrument reports nothing.\n");
+                return 3;
+            }
+
+            // The detail pane -- and therefore seven of the eight actions --
+            // exists only while a preset is selected, so seed and select
+            // BEFORE sweeping. The first version of this swept an empty
+            // library and reported seven controls "NOT PRESENT", which reads
+            // exactly like a panel that lost its buttons.
+            if (!save_one()) {
+                std::printf("[ops] NO VERDICT: could not save a preset.\n");
+                return 3;
+            }
+            if (!select_user(0)) {
+                std::printf("[ops] NO VERDICT: could not select a row.\n");
+                return 3;
+            }
+
+            // --- can a pointer reach each action? ------------------------
+            // REPORTED, NOT ASSERTED. The action row's geometry is owned by a
+            // concurrent change; this records the measurement so the claim is
+            // falsifiable rather than anecdotal. APPLY, SET AS DEFAULT and
+            // DUPLICATE resolve to a NEIGHBOUR's view at the centre of the
+            // rect they paint -- DELETE's painted box (x 766..828) overlaps
+            // DUPLICATE's (785..867) and wins the hit test, so a press aimed
+            // at DUPLICATE lands on DELETE.
+            std::printf("--- can a pointer reach each action? ---\n");
+            static const char* kActions[] = {
+                "apply", "set-default", "duplicate", "delete",
+                "export-file", "export-clip", "rename-start", "save-current"};
+            int resolved_actions = 0;
+            for (const char* a : kActions) {
+                const std::string id = js_value(
+                    std::string("(function(){var e=document.querySelector("
+                    "'[data-spectr-manager-action=\"") + a +
+                    "\"]');return e?(e.id||''):'';})()");
+                if (id.empty() || id.rfind("THREW:", 0) == 0) {
+                    std::printf("[reach] %-14s NOT PRESENT\n", a);
+                    continue;
+                }
+                const auto hit = measure_hit(root, id);
+                if (!hit.found) {
+                    std::printf("[reach] %-14s no addressable view\n", a);
+                    continue;
+                }
+                ++resolved_actions;
+                const float cx = hit.painted.x + hit.painted.width / 2.0f;
+                const float cy = hit.painted.y + hit.painted.height / 2.0f;
+                auto* landed = root.hit_test(pulp::view::Point{cx, cy});
+                const bool ok = hit.painted.width > 0.0f
+                    && hit.painted.height > 0.0f
+                    && is_self_or_descendant(landed, find_by_id(root, id));
+                std::printf("[reach] %-14s painted=(%.1f,%.1f %.1fx%.1f) "
+                            "press->%s %s\n", a, hit.painted.x, hit.painted.y,
+                            hit.painted.width, hit.painted.height,
+                            owner_name(landed).c_str(),
+                            ok ? "REACHABLE" : "UNREACHABLE (owned elsewhere)");
+            }
+            // CONTROL: an action nothing paints must resolve to nothing.
+            // Without it, a sweep that answers every name is equally
+            // consistent with a resolver that answers anything it is asked.
+            std::printf("[reach] control no-such-action resolves: %s\n",
+                        js_value("(function(){var e=document.querySelector("
+                                 "'[data-spectr-manager-action="
+                                 "\"no-such-action\"]');"
+                                 "return e?'A VIEW (INSTRUMENT BROKEN)':"
+                                 "'nothing (as it must)';})()").c_str());
+            if (resolved_actions == 0) {
+                std::printf("[ops] NO VERDICT: not one action resolved.\n");
+                return 3;
+            }
+
+            // --- 1. DELETE actually deletes -----------------------------
+            std::printf("--- DELETE ---\n");
+            const int before_delete = user_rows();
+            if (!press_by_pixels("delete")) {
+                std::printf("[ops] NO VERDICT: DELETE has no pressable rect.\n");
+                return 3;
+            }
+            const bool planting =
+                std::getenv("SPECTR_PRESET_OPS_PLANT") != nullptr;
+            const bool asked = rig.is_mounted("[data-spectr-delete-dialog]");
+            // Capture WITH the confirmation standing. This is the frame that
+            // has to be looked at: the dialog is a new absolutely-positioned
+            // sibling inside the manager's overlay, and the claim that it
+            // leaves the 780x520 panel centred where it was is a claim about
+            // pixels, not about CSS.
+            if (asked)
+                capture(rig, dir, prefix + "preset-delete-confirm", backend,
+                        scale);
+            // PLANTED AFTER THE CAPTURE, deliberately. capture() re-runs
+            // layout, which reverts a native bounds write made before it --
+            // the first version planted first, the capture undid it, and the
+            // control reported "the plant did not bite" as a PASS.
+            // THE RED ARM. Collapse the confirmation's DELETE to the 0x0 box
+            // an unreachable control paints, NATIVELY -- a JS style write is
+            // reverted by the next React commit, and a gate that went green
+            // because its plant was undone is worse than no plant. With the
+            // button unpressable the scenario below MUST report a finding; if
+            // it still passes, its clean run proves nothing.
+            if (planting && asked) {
+                const std::string cid = js_value(
+                    "(function(){var e=document.querySelector("
+                    "'[data-spectr-manager-action=\"delete-confirm\"]');"
+                    "return e?(e.id||''):'';})()");
+                auto* cview = cid.empty() ? nullptr : find_by_id(root, cid);
+                if (cview == nullptr) {
+                    std::printf("[plant] CONTROL FAILED: the confirmation's "
+                                "DELETE could not be resolved, so nothing was "
+                                "planted and the run below proves nothing.\n");
+                    return 3;
+                }
+                const auto before = cview->bounds();
+                cview->set_bounds({before.x, before.y, 0.0f, 0.0f});
+                settle(rig.clock, 8);
+                std::printf("[plant] delete-confirm %s: (%.1fx%.1f) -> 0x0\n",
+                            cid.c_str(), before.width, before.height);
+            }
+            std::printf("[delete] press -> confirmation shown: %s\n",
+                        asked ? "yes" : "NO");
+            if (!asked)
+                fail("DELETE did not ask for confirmation");
+            const int during_delete = user_rows();
+            if (during_delete != before_delete)
+                fail("DELETE removed a preset before it was confirmed");
+            if (asked) {
+                if (!press_by_pixels("delete-confirm"))
+                    fail("the confirmation's DELETE has no pressable rect");
+            }
+            const int after_delete = user_rows();
+            std::printf("[delete] user rows %d -> (asked) %d -> (confirmed) "
+                        "%d\n", before_delete, during_delete, after_delete);
+            if (after_delete != before_delete - 1)
+                fail("DELETE did not remove exactly one preset");
+
+            // --- 2. CANCEL really cancels -------------------------------
+            // Without this the dialog could be decorative: a confirm that
+            // deletes either way passes the scenario above.
+            std::printf("--- DELETE / CANCEL ---\n");
+            if (!save_one() || !select_user(0)) {
+                std::printf("[ops] NO VERDICT: could not stage the cancel "
+                            "scenario.\n");
+                return 3;
+            }
+            const int before_cancel = user_rows();
+            if (press_by_pixels("delete")
+                && rig.is_mounted("[data-spectr-delete-dialog]")) {
+                press_by_pixels("delete-cancel");
+                const int after_cancel = user_rows();
+                std::printf("[delete] CANCEL: user rows %d -> %d\n",
+                            before_cancel, after_cancel);
+                if (after_cancel != before_cancel)
+                    fail("CANCEL on the delete confirmation still deleted");
+                if (rig.is_mounted("[data-spectr-delete-dialog]"))
+                    fail("CANCEL left the delete confirmation standing");
+            } else {
+                std::printf("[ops] NO VERDICT: could not open the "
+                            "confirmation for the cancel scenario.\n");
+                return 3;
+            }
+
+            // --- 3. a search that matches nothing ------------------------
+            // An empty USER list and a query matching none of a full one are
+            // the same length and are not the same fact. The panel reported
+            // both as "no user patterns -- click SAVE CURRENT below", which
+            // tells a user with presets saved that they have none and invites
+            // them to save their first.
+            //
+            // THE CONTROL IS A REOPEN, not a second edit of the same field.
+            // Re-activating one input twice returns true and lands nothing in
+            // this harness -- the seam appears to hold the first element it
+            // resolved -- so a "cleared the query" control silently measured
+            // nothing. Closing and reopening exercises the shipped
+            // reset-search-on-open behaviour instead, which is a real user
+            // path and protects that fix at the same time.
+            std::printf("--- search ---\n");
+            if (user_rows() < 1 && !save_one()) {
+                std::printf("[ops] NO VERDICT: no preset to search past.\n");
+                return 3;
+            }
+            const int saved_now = user_rows();
+            const std::string empty_before = js_value(
+                "(function(){var e=document.querySelector("
+                "'[data-spectr-user-empty]');return e?String(e.getAttribute("
+                "'data-spectr-user-empty')):'(absent)';})()");
+            std::printf("[search] %d saved, empty-state before any query: "
+                        "%s\n", saved_now, empty_before.c_str());
+            if (empty_before != "(absent)")
+                fail("the USER empty state is showing while presets are "
+                     "listed");
+            rig.eval("(() => { const el = document.querySelector("
+                     "'[data-spectr-manager-search]'); if (!el) throw new "
+                     "Error('no search field'); "
+                     "globalThis.__pulpActivateMaterializedElement__("
+                     "'[data-spectr-manager-search]','change',"
+                     "'ZZQQ-NO-SUCH-PRESET'); "
+                     "if (typeof globalThis.__pulpRuntimeSettle__ === "
+                     "'function') globalThis.__pulpRuntimeSettle__(8); })();",
+                     "spectr-preset-ops-search");
+            settle(rig.clock, 24);
+            const int matched = user_rows();
+            const std::string empty_kind = js_value(
+                "(function(){var e=document.querySelector("
+                "'[data-spectr-user-empty]');return e?String(e.getAttribute("
+                "'data-spectr-user-empty')):'(absent)';})()");
+            std::printf("[search] query matches %d, empty-state reads '%s'\n",
+                        matched, empty_kind.c_str());
+            if (matched != 0) {
+                std::printf("[ops] NO VERDICT: the no-match query matched %d "
+                            "row(s), so the empty-state reading below is "
+                            "about some other state.\n", matched);
+                return 3;
+            }
+            if (empty_kind != "no-match")
+                fail("a search matching nothing reports the USER library as "
+                     "empty rather than as no match");
+            // Reopen. The query resets, the rows must come back, and the
+            // empty state must go away -- which is also the control proving
+            // "0 rows" above was the filter and not a dead list.
+            rig.activate("[data-spectr-manager-close]");
+            settle(rig.clock, 24);
+            if (!open_manager()) {
+                std::printf("[ops] NO VERDICT: the manager did not reopen.\n");
+                return 3;
+            }
+            const int rows_reopened = user_rows();
+            const std::string empty_reopened = js_value(
+                "(function(){var e=document.querySelector("
+                "'[data-spectr-user-empty]');return e?String(e.getAttribute("
+                "'data-spectr-user-empty')):'(absent)';})()");
+            std::printf("[search] control: reopened -> %d row(s), "
+                        "empty-state %s\n", rows_reopened,
+                        empty_reopened.c_str());
+            if (rows_reopened != saved_now)
+                fail("reopening the manager did not restore the user list");
+            if (empty_reopened != "(absent)")
+                fail("the USER empty state survived a reopen");
+
+            // --- 4. DUPLICATE reaches the library ------------------------
+            // Invisible to a count: the copy dying and a save landing cancel
+            // out in the total, so this compares preset ids across one
+            // native command.
+            std::printf("--- DUPLICATE ---\n");
+            if (!select_user(0)) {
+                std::printf("[ops] NO VERDICT: nothing selected.\n");
+                return 3;
+            }
+            const std::string ids_before = user_ids();
+            rig.activate("[data-spectr-manager-action=\"duplicate\"]");
+            settle(rig.clock, 32);
+            const std::string ids_after = user_ids();
+            std::printf("[dup] %s -> %s\n", ids_before.c_str(),
+                        ids_after.c_str());
+            if (ids_after == ids_before) {
+                fail("DUPLICATE added no preset");
+            } else {
+                save_one();
+                const std::string ids_later = user_ids();
+                std::printf("[dup] after one native save: %s\n",
+                            ids_later.c_str());
+                std::string added;
+                size_t at = 0;
+                while (at < ids_after.size()) {
+                    const auto next = ids_after.find(',', at);
+                    const std::string one = ids_after.substr(
+                        at, next == std::string::npos ? std::string::npos
+                                                      : next - at);
+                    if (ids_before.find(one) == std::string::npos) added = one;
+                    if (next == std::string::npos) break;
+                    at = next + 1;
+                }
+                if (added.empty())
+                    fail("could not identify the id DUPLICATE added");
+                else if (ids_later.find(added) == std::string::npos)
+                    fail("the duplicate was erased by the next native command "
+                         "-- it never reached the library");
+            }
+
+            // --- 5. SET AS DEFAULT reaches the library -------------------
+            // The COUNT of starred rows is 1 before and after whatever
+            // happens, because a factory preset is default at rest. Only the
+            // marked row's id can see this fail.
+            std::printf("--- SET AS DEFAULT ---\n");
+            if (!select_user(0)) {
+                std::printf("[ops] NO VERDICT: nothing selected.\n");
+                return 3;
+            }
+            const std::string dflt_rest = default_id();
+            rig.activate("[data-spectr-manager-action=\"set-default\"]");
+            settle(rig.clock, 32);
+            const std::string dflt_set = default_id();
+            std::printf("[default] %s -> %s\n", dflt_rest.c_str(),
+                        dflt_set.c_str());
+            if (dflt_set == dflt_rest) {
+                fail("SET AS DEFAULT did not move the default marker");
+            } else {
+                save_one();
+                const std::string dflt_later = default_id();
+                std::printf("[default] after one native save: %s\n",
+                            dflt_later.c_str());
+                if (dflt_later != dflt_set)
+                    fail("the default was reverted by the next native command "
+                         "-- it never reached the library");
+            }
+
+            // --- 6. EXPORT does not claim a file it cannot write ---------
+            // Blob, URL and document.createElement all EXIST here, so the
+            // browser export body runs clean to its last line and announces
+            // EXPORTED while delivering nowhere. FileReader is the same
+            // capability class and is undefined, which is the discriminator
+            // the page now uses.
+            std::printf("--- EXPORT ---\n");
+            std::printf("[export] file sink available here: %s\n",
+                        js_value("typeof FileReader === 'function'").c_str());
+            std::printf("[export] clipboard writeText present: %s\n",
+                        js_value("typeof (navigator.clipboard||{}).writeText")
+                            .c_str());
+            for (const char* a : {"export-file", "export-clip"}) {
+                bool threw = false;
+                try { rig.activate(std::string(
+                        "[data-spectr-manager-action=\"") + a + "\"]"); }
+                catch (const std::exception&) { threw = true; }
+                settle(rig.clock, 24);
+                std::printf("[export] %-12s %s\n", a,
+                            threw ? "THREW" : "ran without throwing");
+                if (threw) fail("an EXPORT action threw");
+            }
+
+            // --- instrument controls ------------------------------------
+            // A frozen count and a dead counter read identically, so prove
+            // the counter moves on this very tree before trusting any
+            // "unchanged" above.
+            const int before_control = user_rows();
+            rig.eval("(() => { const l = document.querySelectorAll("
+                     "'[data-spectr-pattern-source=\"user\"]');"
+                     " if (l.length) l[0].setAttribute("
+                     "'data-spectr-pattern-source','factory'); })();",
+                     "spectr-preset-ops-count-control");
+            settle(rig.clock, 8);
+            const int after_control = user_rows();
+            std::printf("[control] count instrument: %d -> %d  %s\n",
+                        before_control, after_control,
+                        after_control != before_control
+                            ? "MOVES"
+                            : "FROZEN (INSTRUMENT DEAD)");
+            if (after_control == before_control) {
+                std::printf("[ops] NO VERDICT: the row counter cannot move, "
+                            "so every count above is uninterpretable.\n");
+                return 3;
+            }
+
+            rig.print_layout_receipt();
+            capture(rig, dir, prefix + "preset-ops", backend, scale);
+            std::printf("[ops] %d finding(s)\n", findings);
+            if (planting) {
+                // Inverted: the planted run is green only when the gate
+                // NOTICED. Inverting here rather than in ctest's WILL_FAIL is
+                // deliberate -- WILL_FAIL accepts any non-zero exit, so a
+                // usage error or an unproven premise would satisfy it while
+                // measuring nothing.
+                if (findings == 0) {
+                    std::printf("[plant] the planted regression did not redden "
+                                "the gate -- it can no longer fail, so its "
+                                "clean run proves nothing\n");
+                    return 1;
+                }
+                std::printf("[plant] the gate noticed the planted "
+                            "regression\n");
+                return 0;
+            }
+            return findings == 0 ? 0 : 1;
+        }
+
         if (std::getenv("SPECTR_PRESET_SWEEP") != nullptr) {
             auto probe = [&rig](const char* label) {
                 static const char* hooks[] = {
