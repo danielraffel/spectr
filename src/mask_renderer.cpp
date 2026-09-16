@@ -752,8 +752,19 @@ TrackingTransitionGeometry shape_tracking_transitions(
         // Snapped BEFORE the clamp, so a quantum never pushes an edge out of
         // the array. Zero is the exact position; `1.0` is the whole-bin
         // placement this design replaced.
-        if (edge_quantum_bins > 0.0)
-            bin = std::round(bin / edge_quantum_bins) * edge_quantum_bins;
+        //
+        // The snap is checked rather than trusted, for the same reason the edge
+        // frequency above is: an infinite quantum, or one small enough that
+        // `bin / q` overflows, produces a NON-FINITE position, and a non-finite
+        // position survives the clamp below (neither comparison holds against a
+        // NaN) to reach `ceil` and a cast, which is undefined. A quantum that
+        // cannot be honoured leaves the edge exact, which is the same answer
+        // this function gives every other input it cannot use.
+        if (edge_quantum_bins > 0.0) {
+            const double snapped =
+                std::round(bin / edge_quantum_bins) * edge_quantum_bins;
+            if (std::isfinite(snapped)) bin = snapped;
+        }
         edge_bin[static_cast<std::size_t>(e)] =
             std::clamp(bin, 0.0, static_cast<double>(num_bins - 1));
         exact_bin[static_cast<std::size_t>(e)] =

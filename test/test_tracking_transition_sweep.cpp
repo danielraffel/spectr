@@ -25,6 +25,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <limits>
 #include <span>
 #include <thread>
 #include <vector>
@@ -670,7 +671,7 @@ TEST_CASE("sweep: the edge-quantum axis is live", "[.][sweep][transition]") {
     // the edge can be moved by a known sub-quantum amount instead of by
     // whatever a viewport happens to produce. The function is pure, so this is
     // the same function the product calls.
-    auto shaped_at = [](double edge_bin_pos, double q) {
+    auto shaped_at = [](double edge_bin_pos, double q, bool shape = true) {
         // The step sits where the COMPILER would have put it for this edge:
         // `ceil(edge)` is the first bin of the upper band, so an edge anywhere
         // in (256, 257] compiles to a step at 257. That is the real situation
@@ -682,8 +683,9 @@ TEST_CASE("sweep: the edge-quantum axis is live", "[.][sweep][transition]") {
         for (std::size_t i = 257; i < m.size(); ++i) m[i] = kFloor;
         const float e[3] = {0.0f, static_cast<float>(edge_bin_pos * kBinHz),
                             static_cast<float>(512.0 * kBinHz)};
-        (void)spectr::shape_tracking_transitions(m, std::span<const float>(e, 3),
-                                                 kBinHz, 8, kFloor, 25, q);
+        if (shape)
+            (void)spectr::shape_tracking_transitions(
+                m, std::span<const float>(e, 3), kBinHz, 8, kFloor, 25, q);
         return m;
     };
     const auto moved_exact = shaped_at(256.30, 0.0) != shaped_at(256.40, 0.0);
@@ -714,6 +716,26 @@ TEST_CASE("sweep: the edge-quantum axis is live", "[.][sweep][transition]") {
                     static_cast<long long>(g.edges_considered));
         REQUIRE(g.edges_shaped == 2);   // a one-muted-band field has two steps
     }
+
+    // A quantum the arithmetic cannot honour must leave the edge exact rather
+    // than reach `ceil` with a NaN. Infinity and a denormal both drive
+    // `round(bin / q) * q` non-finite; the clamp does not catch that, because
+    // neither comparison holds against a NaN. Read as "identical to exact",
+    // which is a stronger claim than "did not crash".
+    const auto exact_design = shaped_at(256.30, 0.0);
+    const auto unshaped     = shaped_at(256.30, 0.0, false);
+    // Without this the two expectations below could be the same vector and
+    // either claim would be satisfiable by the other.
+    REQUIRE(exact_design != unshaped);
+
+    // Infinity and a denormal PASS the argument guard -- both are >= 0 -- so
+    // each must fall back to exact placement.
+    for (double q : {std::numeric_limits<double>::infinity(), 1.0e-300})
+        REQUIRE(shaped_at(256.30, q) == exact_design);
+    // A NaN or a negative quantum is rejected by the guard, so the field comes
+    // back untouched, which is what every other unusable argument does.
+    for (double q : {std::numeric_limits<double>::quiet_NaN(), -1.0})
+        REQUIRE(shaped_at(256.30, q) == unshaped);
 }
 
 TEST_CASE("sweep: the edge quantum against depth",
