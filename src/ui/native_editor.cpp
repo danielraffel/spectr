@@ -1514,6 +1514,144 @@ bool Spectr::tick_native_analyzer_(float dt) {
         drag_fixture_done_ = true;
     }
 
+#if defined(SPECTR_ENABLE_PERF_FIXTURES)
+    // ── Per-frame gesture-perf fixture ──────────────────────────────────
+    //
+    // SPECTR_GESTURE_PERF=<mods>,<x0>,<y0>,<x1>,<y1>,<steps>
+    //   mods   none | cmd | cmd-shift | shift   (anything else disables)
+    //   x,y    normalized to the editor root box, top-left origin
+    //   steps  drag samples; the gesture emits steps + 1 events
+    //
+    // Why this exists rather than the window host's own pointer drive: that
+    // drive synthesises every NSEvent with `modifierFlags:0`, so it can
+    // express a band drag but never a Command-held marquee. Marquee is a
+    // separate branch of the editor's pointer handler, not a variant of the
+    // drag, so without modifiers it cannot be measured at all.
+    //
+    // One sample per frame, through the same pointer_dispatch verbs a window
+    // host calls, so the JS handler, the React render it schedules, the
+    // native commit and the canvas repaint all run exactly as they do under a
+    // human pointer. What it does NOT reach is the window-space ->
+    // design-space transform in WindowHost; that cost is per-event and
+    // identical for every mods value, so it cancels in an A/B.
+    // Latched off once the gesture and its readback are behind us, so the
+    // frames AFTER the measured window carry none of this fixture's parsing.
+    if (!gesture_perf_done_ && native_editor_root_ != nullptr) {
+        if (const auto* spec = std::getenv("SPECTR_GESTURE_PERF");
+            spec != nullptr && *spec != '\0') {
+            std::uint16_t mods = 0;
+            float pt[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            int steps = 0;
+            bool valid = true;
+            {
+                std::string_view rest{spec};
+                const auto take = [&rest]() -> std::string {
+                    const auto comma = rest.find(',');
+                    std::string field{rest.substr(0, comma)};
+                    rest.remove_prefix(comma == std::string_view::npos
+                                           ? rest.size()
+                                           : comma + 1);
+                    return field;
+                };
+                const std::string name = take();
+                if (name == "none") mods = 0;
+                else if (name == "cmd") mods = pulp::view::kModCmd;
+                else if (name == "shift") mods = pulp::view::kModShift;
+                else if (name == "cmd-shift")
+                    mods = pulp::view::kModCmd | pulp::view::kModShift;
+                else valid = false;
+                for (int i = 0; i < 4 && valid; ++i) {
+                    const std::string field = take();
+                    if (field.empty()) { valid = false; break; }
+                    pt[i] = std::strtof(field.c_str(), nullptr);
+                    if (!(pt[i] >= 0.0f && pt[i] <= 1.0f)) valid = false;
+                }
+                const std::string steps_field = take();
+                steps = std::atoi(steps_field.c_str());
+                if (steps < 1) valid = false;
+            }
+            // Refuse rather than guess: a typo that silently dragged off-plot
+            // would produce a plausible idle trace with no gesture in it.
+            if (!valid) {
+                if (gesture_perf_tick_ < 0)
+                    std::fprintf(stderr,
+                                 "[gesture-perf] refusing unparseable spec '%s'\n",
+                                 spec);
+                gesture_perf_tick_ = 0;
+            } else {
+                // Enough frames for the document to mount, the band count to
+                // settle and the analyzer to start publishing, so the first
+                // sample is not competing with first-frame work.
+                constexpr int kWarmupFrames = 90;
+                const int tick = gesture_perf_tick_ < 0 ? 0 : gesture_perf_tick_;
+                gesture_perf_tick_ = tick + 1;
+                const int sample = tick - kWarmupFrames;
+                // Readback AFTER the measured window. A gain dump proves the
+                // marquee did not drag; it cannot prove it SELECTED. Without
+                // this, "marquee changed nothing" and "the fixture never
+                // reached the marquee branch" produce identical evidence.
+                if (sample == steps + 1 && native_scripted_ui_
+                    && native_scripted_ui_->bridge()) {
+                    try {
+                        native_scripted_ui_->bridge()->load_script(
+                            "(() => { const h = globalThis.__spectrTestHooks; "
+                            "if (!h || typeof h.renderState !== 'function') { "
+                            "console.log('[gesture-perf] selection=<no-hook>'); return; } "
+                            "const s = h.renderState().selection; "
+                            "console.log('[gesture-perf] selection=' + s.length "
+                            "+ ' [' + s.join(',') + ']'); })();",
+                            "spectr-gesture-perf-readback");
+                    } catch (const std::exception& error) {
+                        std::fprintf(stderr, "[gesture-perf] readback failed: %s\n",
+                                     error.what());
+                    }
+                    gesture_perf_done_ = true;
+                }
+                if (sample >= 0 && sample <= steps) {
+                    const auto bounds = native_editor_root_->bounds();
+                    const float t = static_cast<float>(sample)
+                                  / static_cast<float>(steps);
+                    const pulp::view::Point p{
+                        (pt[0] + (pt[2] - pt[0]) * t) * bounds.width,
+                        (pt[1] + (pt[3] - pt[1]) * t) * bounds.height};
+                    PULP_TRACE_SCOPE_NAMED("js", "gesture perf sample");
+                    if (sample == 0) {
+                        gesture_perf_target_ = native_editor_root_->hit_test(p);
+                        std::fprintf(stderr,
+                                     "[gesture-perf] mods=0x%x start=(%.1f,%.1f) "
+                                     "steps=%d root=%gx%g target=%s\n",
+                                     static_cast<unsigned>(mods), p.x, p.y, steps,
+                                     bounds.width, bounds.height,
+                                     gesture_perf_target_
+                                         ? (gesture_perf_target_->id().empty()
+                                                ? "<anonymous>"
+                                                : gesture_perf_target_->id().c_str())
+                                         : "NONE");
+                        if (gesture_perf_target_ != nullptr)
+                            pulp::view::deliver_mouse_down(*native_editor_root_,
+                                                           gesture_perf_target_,
+                                                           p, mods, 1, true);
+                    } else if (gesture_perf_target_ != nullptr) {
+                        if (sample == steps) {
+                            pulp::view::deliver_mouse_up(
+                                *native_editor_root_, gesture_perf_target_, p,
+                                mods, 1, pulp::view::MouseUpHost{});
+                            std::fprintf(stderr,
+                                         "[gesture-perf] released after %d samples\n",
+                                         steps);
+                            gesture_perf_target_ = nullptr;
+                        } else {
+                            pulp::view::deliver_mouse_drag(*native_editor_root_,
+                                                           gesture_perf_target_,
+                                                           p, mods);
+                        }
+                    }
+                }
+            }
+        }
+    }
+#endif
+
     // Timed probes after the gesture. The overlay's hold and its clean
     // disappearance are both TIME properties, so they are read on the wall
     // clock from the same process, at offsets the caller names.
@@ -2342,6 +2480,14 @@ void Spectr::close_native_editor_() {
     native_output_level_trim_db_ = std::numeric_limits<float>::max();
     native_host_automation_revision_ = host_automation_revision();
     editor_authority().reset_transient_state();
+#if defined(SPECTR_ENABLE_PERF_FIXTURES)
+    // The gesture-perf fixture holds a raw View* into the tree being torn
+    // down, and its tick counter would otherwise resume mid-gesture against a
+    // freshly mounted editor. Both are dropped with the tree they belong to.
+    gesture_perf_target_ = nullptr;
+    gesture_perf_tick_ = -1;
+    gesture_perf_done_ = false;
+#endif
     native_editor_root_ = nullptr;
     if (native_scripted_ui_) {
         native_editor_bridge_.detach_native_runtime(

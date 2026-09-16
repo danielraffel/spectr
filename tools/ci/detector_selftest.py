@@ -1010,6 +1010,28 @@ CASES: list[tuple[str, str, int, list[str]]] = [
       f("native-ui", "materialized", "materialized-document.runtime.json"),
       "--plant-live-toggle"]),
 
+    # The marquee's COST. The suite above proves the gesture computes the right
+    # SET; this one proves it does not re-render the band component once per
+    # pointer sample to do it. Both plants are the measured defect: the
+    # marquee spent 64.0 ms per delivered sample against 0.66 ms for a
+    # band-gain drag over the identical path, because a drag defers React
+    # entirely and the marquee did not. Its assertion is sample-rate
+    # INVARIANCE, which a "the selection is correct" test passes either way.
+    ("materialized_marquee_render_cost",
+     "a marquee costs what it changes, not what it samples", 0,
+     [f("test", "test_materialized_marquee_render_cost.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json")]),
+    ("materialized_marquee_render_cost",
+     "plant: a fresh Set on every sample re-renders per sample", 1,
+     [f("test", "test_materialized_marquee_render_cost.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-selection-churn"]),
+    ("materialized_marquee_render_cost",
+     "plant: the rubber band back in React state re-renders per sample", 1,
+     [f("test", "test_materialized_marquee_render_cost.mjs"),
+      f("native-ui", "materialized", "materialized-document.runtime.json"),
+      "--plant-marquee-state"]),
+
     # Two SHORTCUTS rows wrapped in the shipped build. The RED fixture is that
     # build's own capture, so the known-bad case is evidence rather than a
     # plant; the budget cases read the shipping artifact and need no capture

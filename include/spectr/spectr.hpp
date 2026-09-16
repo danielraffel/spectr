@@ -845,6 +845,20 @@ private:
     int menu_scenario_tick_ = 0;
     int menu_scenario_delay_ = 20;
     bool menu_scenario_done_ = false;
+#if defined(SPECTR_ENABLE_PERF_FIXTURES)
+    // Per-frame gesture-perf fixture (SPECTR_GESTURE_PERF). The AppKit drive in
+    // the window host synthesises every NSEvent with `modifierFlags:0`, so it
+    // can express a band drag but NOT a Command-held marquee — and the marquee
+    // is a distinct code path in the editor, not a variant of the drag. This
+    // fixture delivers one pointer sample per frame through the same
+    // pointer_dispatch verbs a host calls, with the modifiers the gesture
+    // actually carries, so a marquee and a drag can be compared sample for
+    // sample. It does not reach the window-space -> design-space pointer
+    // transform, which is a per-event constant and identical in both arms.
+    int gesture_perf_tick_ = -1;
+    bool gesture_perf_done_ = false;
+    pulp::view::View* gesture_perf_target_ = nullptr;
+#endif
     bool resize_fixture_applied_ = false;
     bool resize_request_sent_ = false;
     // Per-tick state trace for externally driven gestures. The AppKit drag

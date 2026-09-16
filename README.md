@@ -98,6 +98,35 @@ repeats more than once per delivered input, or the M5 trace misses the 120 Hz
 p95 / 60 Hz p99 frame budgets. These are development artifacts; traced
 binaries must never be packaged for distribution.
 
+#### Measuring one gesture
+
+`verify_interaction_perf.sh`'s three workloads come from the window host's own
+pointer drive, which synthesises every NSEvent with `modifierFlags: 0`. That
+expresses a band drag and the minimap gestures, but no modifier-held gesture —
+and a Command-held marquee is a separate branch of the editor's pointer
+handler, not a variant of the drag, so it is unreachable that way.
+
+`SPECTR_GESTURE_PERF` (same `-DSPECTR_ENABLE_PERF_FIXTURES=ON` build, absent
+from every ordinary build) delivers one pointer sample per frame through the
+same `pointer_dispatch` verbs a window host calls, carrying the modifiers the
+gesture actually holds:
+
+```bash
+# <mods>,<x0>,<y0>,<x1>,<y1>,<steps>  — mods: none | cmd | cmd-shift | shift
+#                                       coordinates normalized to the editor box
+tools/gesture_perf_capture.sh build-native/Spectr.app out marquee \
+    cmd,0.12,0.45,0.88,0.45,180 32 noaudio on
+tools/gesture_perf_report.py out/marquee.pftrace
+```
+
+Each arm records the machine load it ran under beside its trace, because a
+latency distribution without its load is not a result. Run arms that differ in
+exactly one thing (gesture kind, band count, audio live, traced or not) —
+whichever pair separates names the mechanism — and interleave the two binaries
+of a before/after in one pass rather than running two passes hours apart.
+Read the frame-gap p95/p99 and the count of gaps at or beyond 25 ms; the gap
+p50 is pinned to the vsync interval in every arm and says nothing.
+
 ### Spectral build profiles
 
 New build directories use the **Balanced** product default: an 8192-sample FFT
