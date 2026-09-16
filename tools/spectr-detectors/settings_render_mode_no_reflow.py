@@ -24,21 +24,34 @@ WHAT IT ASSERTS
      exactly like a clean one.
   2. Every box in the Settings subtree has the same x, y and w in both modes,
      and the same h -- with ONE exception, the out-of-flow line of guidance
-     text itself, whose own height follows its own string. That exception is
-     safe only because its PARENT's height is asserted identical: a box that
-     escaped the reserve and pushed the row would move the parent and fail.
-  3. Each mode's guidance text FITS the reserved box. The reserve is sized from
-     the longest option's string, which is a proxy for the tallest rendering;
-     if that proxy ever picks wrong the text would overflow the box instead of
-     growing it, and the rule above could not see it. This one can.
+     text itself, whose own height follows its own string. The exemption is
+     safe because it is narrow in a specific way: x, y and w are never exempt
+     for ANY node, and every other node's h is compared, so a box that escaped
+     the reserve and pushed the row would move its neighbours and fail.
+  3. Each mode's guidance text FITS the reserved box -- measured as the
+     SHAPED TEXT height against the reserve, never box against box. That
+     distinction is the whole rule: `measured_text_boxes[].rect.h` is a
+     Label's `measured_height(width)`, computed without reference to its
+     layout box, so it still reads 61 when the box has been pinned to 52 and
+     the sentence is clipped. Comparing box against box reads 0 in exactly
+     that case and sees nothing, which is how a reserve written as `height:`
+     rather than `minHeight:` would sail through -- the same class of edit
+     this fix is about.
   4. The reserve is a real height -- non-zero and at least as tall as the
-     taller of the two measured strings. Two equal zeros satisfy rule 2 while
-     reserving nothing.
+     taller of the two measured strings, taken as the MINIMUM over reserves
+     so one real reserve cannot mask a zero one.
+
+WHAT IT STRUCTURALLY CANNOT SEE. Rects inside a scroll container are in
+unscrolled content space (see layout_common), so a switch that changed the
+panel's SCROLL OFFSET would be a visible jump with every rect identical. That
+is a different mechanism from the reported defect and this instrument is blind
+to it.
 
 Usage:
   settings_render_mode_no_reflow.py --app <Spectr binary> [--out-dir DIR]
                                     [--emit-receipt PATH]
   settings_render_mode_no_reflow.py --receipt <receipt.json> [--plant NAME]
+                                    [--expect-fail]
 
 Exit codes: 0 pass, 1 fail, 2 harness/instrument error.
 
@@ -70,6 +83,19 @@ EPS = 0.01
 # is called an overflow. Half a pixel of rounding in the text shaper is not a
 # clipped sentence.
 FIT_SLACK = 0.5
+# A floor, not a pin. The Settings subtree measures ~315 boxes; this exists so
+# that a refactor moving the panel's content out of the scroll viewport reports
+# an unmeasured run instead of "all checks passed" over a handful of nodes that
+# trivially agree with each other.
+MIN_SETTINGS_NODES = 100
+
+
+def fail_instrument(message):
+    """Exit 2, not 1. `raise SystemExit("text")` exits 1, which would report an
+    instrument failure as a product regression -- and the control rows here are
+    justified on exactly the 1-vs-2 distinction."""
+    print("INSTRUMENT: %s" % message, file=sys.stderr)
+    raise SystemExit(2)
 
 
 def capture(app, name, out_dir, clicks):
@@ -93,19 +119,40 @@ def capture(app, name, out_dir, clicks):
     if clicks:
         env["SPECTR_CLICK"] = clicks
     else:
+        # Never inherit a press from the caller's environment: it would make
+        # the two captures identical and the comparison vacuous.
         env.pop("SPECTR_CLICK", None)
     log = os.path.join(out_dir, name + ".log")
-    with open(log, "wb") as fh:
-        subprocess.run([app], env=env, stdout=fh, stderr=subprocess.STDOUT,
-                       timeout=300)
+    try:
+        with open(log, "wb") as fh:
+            proc = subprocess.run([app], env=env, stdout=fh,
+                                  stderr=subprocess.STDOUT, timeout=300)
+    except subprocess.TimeoutExpired:
+        fail_instrument("'%s' did not exit within 300s (see %s)" % (name, log))
+    except OSError as err:
+        fail_instrument("could not launch %s: %s" % (app, err))
+    if proc.returncode != 0:
+        fail_instrument("'%s' exited %d; a dump written by a run that then "
+                        "failed describes a state nobody should adjudicate "
+                        "(see %s)" % (name, proc.returncode, log))
     if not os.path.exists(dump):
-        raise SystemExit("no layout dump produced for '%s' (see %s)"
-                         % (name, log))
+        fail_instrument("no layout dump produced for '%s' (see %s)" % (name, log))
     return dump
 
 
 def texts(node):
     return [b.get("text", "") for b in (node.get("measured_text_boxes") or [])]
+
+
+def shaped_height(node):
+    """Tallest SHAPED-TEXT height on this node, independent of its layout box.
+
+    For a Label the emitter writes `measured_height(width)`, which is computed
+    from the string and the node's width and is NOT clamped to the node's
+    height. That is what makes rule 3 able to see a clipped sentence.
+    """
+    return max([float((b.get("rect") or {}).get("h", 0.0))
+                for b in (node.get("measured_text_boxes") or [])] or [0.0])
 
 
 def settings_subtree(dump):
@@ -119,9 +166,8 @@ def settings_subtree(dump):
     scrollers = [i for i, n in enumerate(dump.nodes)
                  if (n.get("overflow") or "") in layout_common.SCROLL_OVERFLOWS]
     if len(scrollers) != 1:
-        raise SystemExit("expected exactly one scrolling node, found %d -- "
-                         "the Settings panel is probably not open"
-                         % len(scrollers))
+        fail_instrument("expected exactly one scrolling node, found %d -- the "
+                        "Settings panel is probably not open" % len(scrollers))
     root = scrollers[0]
     idx = [root]
     for i in range(len(dump.nodes)):
@@ -134,8 +180,8 @@ def compact(dump_path):
     """Reduce one capture to the Settings subtree, as a committable receipt."""
     d = layout_common.Dump(dump_path)
     if d.parent is None:
-        raise SystemExit("no depths sidecar beside %s; ancestry is "
-                         "unrecoverable and no verdict is possible" % dump_path)
+        fail_instrument("no depths sidecar beside %s; ancestry is "
+                        "unrecoverable and no verdict is possible" % dump_path)
     idx, _root = settings_subtree(d)
     nodes = []
     for i in idx:
@@ -155,20 +201,26 @@ def compact(dump_path):
         # so a receipt that kept all text would change on every single build
         # and churn against the other lanes editing this repo, for two labels
         # no rule here consults.
+        #
+        # `text_h` rides along for those same nodes and is load bearing: it is
+        # the SHAPED height, which rule 3 needs and which the node's own rect
+        # cannot supply once the box is height-constrained.
         t = " | ".join(texts(n))
         if t and (MIXING_MARK in t or TRACKING_MARK in t):
             row["text"] = t
+            row["text_h"] = round(shaped_height(n), 4)
         nodes.append(row)
     return {"viewport": d.viewport, "nodes": nodes}
 
 
 def mode_of(state):
-    """Which mode a capture is SHOWING, read from the rendered guidance line.
+    """Which guidance sentences a capture contains.
 
-    The sizer -- the transparent copy that reserves the height -- always
-    carries the longest option's string, so "the capture contains the Mixing
-    sentence" is true in both modes and cannot be the signal. The signal is the
-    node whose text differs between captures, which is the visible line.
+    NOTE the sizer -- the transparent copy that reserves the height -- always
+    carries the longest option's string, so "this capture contains the Mixing
+    sentence" is true in BOTH modes. That is why this is only a presence
+    report; which mode is on show is decided by comparing the visible text
+    across the two captures, not by this.
     """
     seen = set()
     for n in state["nodes"]:
@@ -187,18 +239,25 @@ def hint_nodes(state):
     surface, which had no sizer. Both are returned deliberately rather than
     filtered down to "the visible one": the rules below want the worst case
     over all of them, and a filter that guessed which is which would be one
-    more thing to get wrong. Which capture is showing which MODE is decided
-    separately, by comparing the texts across the two captures.
+    more thing to get wrong.
+
+    A guidance node whose parent is missing from the compared set is an
+    INSTRUMENT failure rather than a silent drop. Dropping it quietly removes
+    the node the reserve rules are about, and the gate then misreports the
+    result as "the press never landed" -- a confidently wrong diagnosis.
     """
     by_i = {n["i"]: n for n in state["nodes"]}
-    cands = [n for n in state["nodes"]
-             if MIXING_MARK in n.get("text", "")
-             or TRACKING_MARK in n.get("text", "")]
     out = []
-    for n in cands:
+    for n in state["nodes"]:
+        if MIXING_MARK not in n.get("text", "") \
+                and TRACKING_MARK not in n.get("text", ""):
+            continue
         p = by_i.get(n["parent"])
-        if p is not None:
-            out.append((n, p))
+        if p is None:
+            fail_instrument("guidance node #%d has no parent in the compared "
+                            "set, so the rules about its reserve cannot run"
+                            % n["i"])
+        out.append((n, p))
     return out
 
 
@@ -218,12 +277,14 @@ def adjudicate(mixing, tracking, note):
               "(%d vs %d Settings nodes); no verdict"
               % (len(mixing["nodes"]), len(tracking["nodes"])))
         return 2
-    if not mixing["nodes"]:
-        print("INSTRUMENT: the Settings subtree is empty; no verdict")
+    if len(mixing["nodes"]) < MIN_SETTINGS_NODES:
+        print("INSTRUMENT: only %d Settings boxes were captured (floor %d). "
+              "Two nearly-empty captures agree with each other trivially, so "
+              "this is an unmeasured run, not a clean one."
+              % (len(mixing["nodes"]), MIN_SETTINGS_NODES))
         return 2
 
     # ---- 1. THE SWITCH ACTUALLY HAPPENED ---------------------------------
-    m_seen, t_seen = mode_of(mixing), mode_of(tracking)
     m_hints = hint_nodes(mixing)
     t_hints = hint_nodes(tracking)
     if not m_hints or not t_hints:
@@ -233,37 +294,29 @@ def adjudicate(mixing, tracking, note):
         return 2
     m_text = " ".join(n.get("text", "") for n, _ in m_hints)
     t_text = " ".join(n.get("text", "") for n, _ in t_hints)
-    switched = (m_text != t_text)
-    if not switched:
+    if m_text == t_text:
         print("INSTRUMENT: both captures show the same guidance text, so the "
               "Tracking press never landed. Comparing a capture with itself "
               "would pass whatever the panel does; no verdict.")
         print("  text = %r" % m_text[:120])
         return 2
-    check("the captures show different modes (the press landed)",
-          "mixing" in m_seen and "tracking" in t_seen,
-          "mixing-capture=%s tracking-capture=%s" % (sorted(m_seen), sorted(t_seen)))
+    # Each capture must contain the sentence its own mode is supposed to show.
+    # This is weaker than it looks on the Mixing side -- the sizer carries that
+    # string in both modes -- so it is a presence check backing the text
+    # inequality above, not a substitute for it.
+    if "tracking" not in mode_of(tracking) or "mixing" not in mode_of(mixing):
+        print("INSTRUMENT: a capture does not contain its own mode's guidance "
+              "sentence (mixing=%s tracking=%s); no verdict"
+              % (sorted(mode_of(mixing)), sorted(mode_of(tracking))))
+        return 2
 
     # ---- 2. THE GATE: no box moves ---------------------------------------
     # The visible guidance line is out of flow, so its OWN height follows its
-    # own string. Everything else -- including that node's parent -- must be
-    # identical, which is what makes the exception safe.
+    # own string. x/y/w are exempt for nothing, and every other node's h is
+    # compared, which is what keeps the exception narrow.
     exempt_h = {n["i"] for n, _ in t_hints
                 if n.get("text") != next((x.get("text") for x, _ in m_hints
                                           if x["i"] == n["i"]), None)}
-    # The exemption is only safe while the exempt node's PARENT is itself
-    # under the height rule -- that is what stops a box from escaping the
-    # reserve and pushing the row while hiding inside the exception. Prove the
-    # parent is actually in the compared set rather than assuming it.
-    compared = {n["i"] for n in tracking["nodes"]}
-    for n, parent in t_hints:
-        if n["i"] in exempt_h and parent["i"] not in compared:
-            print("INSTRUMENT: the out-of-flow guidance line #%d is exempt "
-                  "from the height rule but its parent #%d is not compared, "
-                  "so the exemption guards nothing; no verdict"
-                  % (n["i"], parent["i"]))
-            return 2
-
     moved = []
     resized = []
     for a, b in zip(mixing["nodes"], tracking["nodes"]):
@@ -287,37 +340,42 @@ def adjudicate(mixing, tracking, note):
                     for a, b in resized[:6])
           + (" (+%d more)" % (len(resized) - 6) if len(resized) > 6 else ""))
 
-    # ---- 3. THE TEXT FITS THE RESERVE IN EACH MODE ------------------------
+    # ---- 3. THE SHAPED TEXT FITS THE RESERVE IN EACH MODE -----------------
     # Guards the proxy: the reserve is sized from the LONGEST string, which is
     # a stand-in for the TALLEST rendering. If that ever picks wrong, the
     # out-of-flow text overflows its box instead of growing it, and rule 2
-    # above stays green while the sentence runs into the row below.
+    # above stays green. Measured as SHAPED height vs the reserve -- comparing
+    # the node's box against its parent's reads 0 whenever the box is
+    # height-constrained, which is precisely the regression worth catching.
     for label, state in (("Mixing", mixing), ("Tracking", tracking)):
         worst = None
         for n, p in hint_nodes(state):
-            over = n["rect"]["h"] - p["rect"]["h"]
+            if "text_h" not in n:
+                print("INSTRUMENT: guidance node #%d carries no shaped-text "
+                      "height, so whether its line fits cannot be measured; "
+                      "no verdict" % n["i"])
+                return 2
+            over = n["text_h"] - p["rect"]["h"]
             if worst is None or over > worst[0]:
                 worst = (over, n, p)
-        if worst is None:
-            check("%s: a reserved box encloses the guidance line" % label, False,
-                  "no guidance line found")
-            continue
         over, n, p = worst
         check("%s: the guidance line fits its reserved box" % label,
               over <= FIT_SLACK,
-              "line h=%.2f exceeds reserve h=%.2f by %.2f (#%d in #%d)"
-              % (n["rect"]["h"], p["rect"]["h"], over, n["i"], p["i"]))
+              "shaped text h=%.2f exceeds reserve h=%.2f by %.2f (#%d in #%d)"
+              % (n["text_h"], p["rect"]["h"], over, n["i"], p["i"]))
 
     # ---- 4. THE RESERVE IS A REAL HEIGHT ----------------------------------
-    # Two equal zeros would satisfy rule 2 and reserve nothing at all.
-    reserves = [p["rect"]["h"] for _, p in hint_nodes(mixing)]
-    tallest_text = max([n["rect"]["h"] for n, _ in hint_nodes(mixing)]
-                       + [n["rect"]["h"] for n, _ in hint_nodes(tracking)])
-    check("the reserve is a real height, not zero",
-          bool(reserves) and max(reserves) > 0, str(reserves))
+    # Two equal zeros would satisfy rule 2 and reserve nothing at all. Taken as
+    # the MINIMUM over reserves, so one real reserve cannot mask a zero one.
+    reserves = [p["rect"]["h"] for _, p in hint_nodes(mixing)] \
+        + [p["rect"]["h"] for _, p in hint_nodes(tracking)]
+    tallest_text = max([n.get("text_h", 0.0) for n, _ in hint_nodes(mixing)]
+                       + [n.get("text_h", 0.0) for n, _ in hint_nodes(tracking)])
+    check("the reserve is a real height, not zero", min(reserves) > 0,
+          str(reserves))
     check("the reserve is at least as tall as the taller guidance line",
-          bool(reserves) and max(reserves) + FIT_SLACK >= tallest_text,
-          "reserve=%s tallest line=%.2f" % (reserves, tallest_text))
+          min(reserves) + FIT_SLACK >= tallest_text,
+          "reserves=%s tallest shaped line=%.2f" % (reserves, tallest_text))
 
     print("")
     if note:
@@ -333,20 +391,56 @@ PLANTS = {
     # The shipped defect, reproduced from the receipt: the reserve was a typed
     # constant 9px shy of what the taller option renders, so the row -- and
     # every group below it -- was as tall as whatever happened to be selected.
-    "fixed-reserve-too-small": "reinstate the pre-fix geometry",
+    # Fails rules 2a and 2b.
+    "fixed-reserve-too-small":
+        "re-adjudicate the recorded pre-fix capture pair",
+    # The OPPOSITE regression, and the reason rule 3 measures shaped text
+    # rather than boxes: a reserve written as `height:` instead of `minHeight:`
+    # pins the row in BOTH modes, so nothing moves and rule 2 stays green while
+    # the taller sentence is silently clipped. Without this plant, rules 3 and
+    # 4 would never have been observed failing.
+    "clipped-reserve":
+        "pin every reserve below the text it has to hold",
 }
 
 
 def plant_receipt(receipt, name):
-    """Rebuild a receipt so it describes the defect, for a negative control."""
-    if name != "fixed-reserve-too-small":
-        raise SystemExit("unknown plant %r; known: %s"
-                         % (name, ", ".join(sorted(PLANTS))))
-    pre = receipt.get("pre_fix")
-    if not pre:
-        raise SystemExit("this receipt carries no 'pre_fix' pair, so the "
-                         "control cannot reinstate the defect it names")
-    return pre["mixing"], pre["tracking"]
+    """Rebuild a receipt so it describes a defect, for a negative control."""
+    if name == "fixed-reserve-too-small":
+        pre = receipt.get("pre_fix")
+        if not pre:
+            fail_instrument("this receipt carries no 'pre_fix' pair, so the "
+                            "control cannot reinstate the defect it names")
+        if "mixing" not in pre or "tracking" not in pre:
+            fail_instrument("the receipt's 'pre_fix' pair is incomplete")
+        return pre["mixing"], pre["tracking"]
+
+    if name == "clipped-reserve":
+        import copy
+        # ONE floor across BOTH captures -- the shorter option's shaped height.
+        # It has to be shared, or the two captures get different pins, boxes
+        # change height between them and rule 2 fires. Rule 2 firing would
+        # defeat the point: this plant exists to show rule 3 catching a defect
+        # that moves NOTHING, which is the case box-against-box comparison is
+        # blind to.
+        floor = min(n["text_h"]
+                    for key in ("mixing", "tracking")
+                    for n in receipt[key]["nodes"] if "text_h" in n)
+        out = []
+        for key in ("mixing", "tracking"):
+            st = copy.deepcopy(receipt[key])
+            by_i = {n["i"]: n for n in st["nodes"]}
+            for n in st["nodes"]:
+                if "text_h" in n:
+                    n["rect"]["h"] = floor
+                    parent = by_i.get(n["parent"])
+                    if parent is not None:
+                        parent["rect"]["h"] = floor
+            out.append(st)
+        return out[0], out[1]
+
+    fail_instrument("unknown plant %r; known: %s"
+                    % (name, ", ".join(sorted(PLANTS))))
 
 
 def verdict(rc, expect_fail):
@@ -385,6 +479,24 @@ def write_receipt(path, payload):
         fh.write("{\n" + ",\n".join(parts) + "\n}\n")
 
 
+def load_receipt(path):
+    try:
+        with open(path) as fh:
+            receipt = json.load(fh)
+    except (OSError, ValueError) as err:
+        fail_instrument("could not read receipt %s: %s" % (path, err))
+    for key in ("mixing", "tracking"):
+        state = receipt.get(key)
+        if not isinstance(state, dict) or not isinstance(state.get("nodes"), list):
+            fail_instrument("receipt %s has no usable '%s' capture"
+                            % (path, key))
+        for n in state["nodes"]:
+            if not isinstance(n.get("rect"), dict) or "i" not in n:
+                fail_instrument("receipt %s has a malformed node in '%s'"
+                                % (path, key))
+    return receipt
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--app")
@@ -400,31 +512,48 @@ def main():
     ap.add_argument("--expect-fail", action="store_true")
     args = ap.parse_args()
 
+    if args.app and args.receipt:
+        ap.error("--app and --receipt name two different instruments; passing "
+                 "both would silently adjudicate the frozen receipt and never "
+                 "launch the binary")
+    if not args.app and not args.receipt:
+        ap.error("one of --app or --receipt is required")
+
     if args.receipt:
-        with open(args.receipt) as fh:
-            receipt = json.load(fh)
+        receipt = load_receipt(args.receipt)
         if args.plant:
             mixing, tracking = plant_receipt(receipt, args.plant)
-            note = ("CONTROL: adjudicated the pre-fix capture pair recorded in "
-                    "%s" % os.path.basename(args.receipt))
+            note = ("CONTROL (%s): %s" % (args.plant, PLANTS[args.plant]))
         else:
             mixing, tracking = receipt["mixing"], receipt["tracking"]
             note = "receipt: %s" % os.path.basename(args.receipt)
         return verdict(adjudicate(mixing, tracking, note), args.expect_fail)
 
-    if not args.app:
-        ap.error("one of --app or --receipt is required")
     os.makedirs(args.out_dir, exist_ok=True)
-    mixing_dump = capture(args.app, "mixing", args.out_dir, None)
-    tracking_dump = capture(args.app, "tracking", args.out_dir,
-                            CHIP_SELECTOR % "zero_latency")
-    mixing = compact(mixing_dump)
-    tracking = compact(tracking_dump)
+    mixing = compact(capture(args.app, "mixing", args.out_dir, None))
+    tracking = compact(capture(args.app, "tracking", args.out_dir,
+                               CHIP_SELECTOR % "zero_latency"))
+    rc = adjudicate(mixing, tracking, "live: %s" % args.app)
+    # Emit only AFTER a clean verdict, and never drop an existing pre_fix
+    # pair: writing an unadjudicated capture over the committed evidence would
+    # record a possibly-failing pair AND destroy the negative control's input.
     if args.emit_receipt:
-        write_receipt(args.emit_receipt, {"mixing": mixing, "tracking": tracking})
-        print("wrote %s" % args.emit_receipt)
-    return verdict(adjudicate(mixing, tracking, "live: %s" % args.app),
-                   args.expect_fail)
+        if rc != 0:
+            print("not writing %s: the captures did not pass"
+                  % args.emit_receipt, file=sys.stderr)
+        else:
+            payload = {"mixing": mixing, "tracking": tracking}
+            if os.path.exists(args.emit_receipt):
+                try:
+                    with open(args.emit_receipt) as fh:
+                        prior = json.load(fh)
+                    if "pre_fix" in prior:
+                        payload["pre_fix"] = prior["pre_fix"]
+                except (OSError, ValueError):
+                    pass
+            write_receipt(args.emit_receipt, payload)
+            print("wrote %s" % args.emit_receipt)
+    return verdict(rc, args.expect_fail)
 
 
 if __name__ == "__main__":

@@ -2544,6 +2544,21 @@ if(Python3_Interpreter_FOUND)
             --plant fixed-reserve-too-small --expect-fail)
     set_tests_properties(Spectr-settings-render-mode-no-reflow-negative-control
         PROPERTIES TIMEOUT 60)
+    # A SECOND plant, because the first exercises only the two "nothing moves"
+    # rules and leaves the two rules about the reserve's SIZE proven by
+    # nothing. This one pins every reserve below the text it has to hold,
+    # identically in both captures: the panel moves not one pixel -- the first
+    # two rules stay green -- while the taller sentence is clipped. That is the
+    # case a box-against-box comparison reads as 0 and cannot see, which is why
+    # the fit rule measures SHAPED text height instead.
+    add_test(NAME Spectr-settings-render-mode-no-reflow-clipped-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/settings_render_mode_no_reflow.py
+            --receipt
+            ${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/2026-09-15/SETTINGS-RENDER-MODE-no-reflow.json
+            --plant clipped-reserve --expect-fail)
+    set_tests_properties(Spectr-settings-render-mode-no-reflow-clipped-control
+        PROPERTIES TIMEOUT 60)
 endif()
 
 if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
