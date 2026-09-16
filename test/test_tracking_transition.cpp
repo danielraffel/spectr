@@ -34,8 +34,10 @@ constexpr double kFloor     = 1.0e-6;
 constexpr int kCapture  = 16384;
 constexpr int kAnalysis = 65536;
 
-/// The transition half-width the renderer ships, restated so the leak guard
-/// can exclude exactly the span a transition is allowed to occupy.
+/// The transition width the renderer ships, restated so the leak guard can
+/// exclude exactly the span a transition is allowed to occupy. It is now the
+/// reach into the QUIETER band; the reach back into the kept band is a quarter
+/// of it, so this remains the outer bound on either side.
 ///
 /// The guard is deliberately FIXED rather than tracking each candidate's own
 /// width. A guard that moved with the width would exclude precisely the region
@@ -43,7 +45,21 @@ constexpr int kAnalysis = 65536;
 /// column offered as proof that depth was not bought outside the band would be
 /// the one column unable to show it. Held fixed, the same column separates
 /// 0.14 dB at this width from 19.82 dB at twice it.
-constexpr int kShippingHalfWidthBins = 8;
+constexpr int kShippingWidthBins = 8;
+
+/// The other two axes of the shipping geometry, restated for the same reason
+/// and with the same hazard: a restatement that drifts from the product would
+/// make every row below a measurement of something the user never runs.
+///
+/// "The in-test design path holds the shipping geometry" is the control that
+/// forbids the drift for these two. It shapes one field twice -- once through
+/// the five-argument form, which reads the product's own constants, and once
+/// through the explicit form at the two values below -- and requires the two
+/// results to be bit-identical. The WIDTH above is not checkable that way,
+/// because it is an argument of both forms; the renderer-equivalence case
+/// catches that one instead. Each is confirmed against its own break.
+constexpr int    kShippingOutsidePct       = 25;
+constexpr double kShippingEdgeQuantumBins  = 0.0;
 
 /// Spectr's plant idiom: a named defect injected into the SUBJECT of a gate so
 /// the gate can be shown to observe it. The inversion lives inside the binary
@@ -209,13 +225,52 @@ Report measure(const std::vector<double>& mag, const std::vector<double>& open,
     }
     r.coverage = total > 0 ? static_cast<double>(covered) / total : 0.0;
 
-    const double guard = kShippingHalfWidthBins * kBinHz;
+    const double guard = kShippingWidthBins * kBinHz;
     for (int i = bin_of(200.0); i <= bin_of(8000.0); ++i) {
         const double f = static_cast<double>(i) * kSampleRate / kAnalysis;
         if (f > lo_hz - guard && f < hi_hz + guard) continue;
         r.leak_db = std::max(r.leak_db, std::abs(db_at(mag, open, i)));
     }
     return r;
+}
+
+/// Surviving width, in Hz, of a drawn band: the contiguous run through its
+/// centre that stays within 3 dB of unity.
+///
+/// This is the measurement the shaping change shipped without, and the reason
+/// a kept band could lose a third of its width with every gate green. COVERAGE
+/// cannot stand in for it: coverage reads 100 % on a configuration whose kept
+/// band measures 18 % of its drawn width, because it only ever looks inside the
+/// band being REMOVED. A depth figure with no width beside it is not
+/// falsifiable here, so every row below prints both.
+///
+/// Read on the same 0.73 Hz grid as the depth figures, which is EIGHT TIMES
+/// finer than the 5.86 Hz design grid. That matters more than it looks: Spectr
+/// designs by frequency sampling on an 8192-point grid and its analysis FFT is
+/// the same 8192 points, so a probe placed at an integer analysis bin lands
+/// exactly on a design point -- the one place a frequency-sampled filter is
+/// exact by construction, and blind to everything it gets wrong between them.
+double surviving_hz(const std::vector<double>& mag,
+                    const std::vector<double>& open,
+                    double lo_hz, double hi_hz) {
+    const int i0 = bin_of(lo_hz), i1 = bin_of(hi_hz);
+    const int mid = (i0 + i1) / 2;
+    if (db_at(mag, open, mid) <= -3.0) return 0.0;
+    int lo = mid, hi = mid;
+    while (lo > i0 && db_at(mag, open, lo - 1) > -3.0) --lo;
+    while (hi < i1 && db_at(mag, open, hi + 1) > -3.0) ++hi;
+    return static_cast<double>(hi - lo + 1) * kSampleRate / kAnalysis;
+}
+
+/// One band kept at 0 dB, every other band muted -- the field a user draws when
+/// they want one range through and nothing else, and the one that puts a drawn
+/// edge on BOTH sides of the band being measured.
+pulp::signal::SpectralBandLayout make_island(float min_hz, float max_hz,
+                                             std::uint32_t bands,
+                                             std::uint32_t kept) {
+    auto layout = make_layout(min_hz, max_hz, bands);
+    for (std::uint32_t b = 0; b < bands; ++b) layout.bands[b].muted = (b != kept);
+    return layout;
 }
 
 /// The unshaped design's middle-half sup for every band of the default field,
@@ -248,12 +303,14 @@ constexpr double kRegressionAllowanceDb = 1.0;
 /// "The in-test design path is the renderer's design path" proves the
 /// replication is the shipping one before any drag is read.
 ///
-/// `quantise_edges` rounds every edge onto a whole design bin first, which is
-/// how this shaping placed its edges before sub-bin placement. It is the plant:
-/// the defect this gate exists to reject, reintroduced through the function's
-/// own public input rather than by editing it.
+/// `edge_quantum_bins` is the grid each edge is snapped to, handed straight to
+/// the shipping function: 0 is the exact position it ships, and 1.0 is the
+/// whole-bin placement this shaping replaced. The plant is therefore the
+/// PRODUCT at a different argument, not a rounding step written beside it --
+/// which is what makes this control evidence about the product rather than
+/// about the test's own arithmetic.
 std::vector<float> design_taps(const pulp::signal::SpectralBandLayout& layout,
-                               bool quantise_edges) {
+                               double edge_quantum_bins) {
     pulp::signal::SpectralMaskTable table;
     REQUIRE(pulp::signal::build_spectral_mask(
         layout, kGrid, static_cast<float>(kSampleRate), table));
@@ -263,16 +320,12 @@ std::vector<float> design_taps(const pulp::signal::SpectralBandLayout& layout,
         magnitudes[i] = static_cast<double>(table.gain_linear[i]);
 
     const auto edge_count = static_cast<std::size_t>(table.active_bands) + 1u;
-    std::vector<float> edges(table.band_edges_hz.data(),
-                             table.band_edges_hz.data()
-                                 + static_cast<std::ptrdiff_t>(edge_count));
-    if (quantise_edges)
-        for (auto& hz : edges)
-            hz = static_cast<float>(std::round(static_cast<double>(hz) / kBinHz)
-                                    * kBinHz);
+    const std::span<const float> edges(table.band_edges_hz.data(), edge_count);
 
     (void)spectr::shape_tracking_transitions(magnitudes, edges, kBinHz,
-                                             kShippingHalfWidthBins, kFloor);
+                                             kShippingWidthBins, kFloor,
+                                             kShippingOutsidePct,
+                                             edge_quantum_bins);
 
     pulp::signal::MinimumPhaseFirOptions options;
     options.coefficient_count   = static_cast<std::size_t>(kGrid);
@@ -330,9 +383,11 @@ enum class DragMode { tracking, mixing };
 
 /// Zoom the viewport from `oct0` to `oct1` octaves about 1 kHz over `seconds`,
 /// publishing at the editor's rate, and read every probe tone's frequency
-/// modulation. `quantise` plants whole-bin edge placement.
+/// modulation. `edge_quantum_bins` is the edge grid the design is built on:
+/// `kShippingEdgeQuantumBins` measures the product, and 1.0 plants the
+/// whole-bin placement it replaced.
 std::vector<Wobble> measure_drag(DragMode mode, double oct0, double oct1,
-                                 double seconds, bool quantise) {
+                                 double seconds, double edge_quantum_bins) {
     const int steps = static_cast<int>(std::lround(seconds * kPublishHz)) + 1;
     const double dt = 1.0 / kPublishHz;
 
@@ -359,7 +414,7 @@ std::vector<Wobble> measure_drag(DragMode mode, double oct0, double oct1,
         std::vector<float> taps;
         std::vector<double> mixing_gain;
         if (mode == DragMode::tracking) {
-            taps = design_taps(comb, quantise);
+            taps = design_taps(comb, edge_quantum_bins);
         } else {
             // Mixing realises the drawn magnitude itself: a real, non-negative
             // mask applied per frame. Its response is that number, and its
@@ -431,24 +486,101 @@ TEST_CASE("Tracking realises a drawn null at the design floor",
         wire = std::max(wire, std::abs(db_at(open, open, i)));
     REQUIRE(wire < 1.0e-9);
 
-    // ── Control: the detection floor, PROVEN and not derived. ──────────────
-    // A band DRAWN at -100 dB -- exactly what this gate asserts -- read back
-    // through the identical path. If the path or the instrument bottomed out
-    // above the gate, this would read the bottom instead.
+    // ── Control: the gate sits above the measurement's detection floor. ────
+    //
+    // WHAT THIS IS FOR. The rule below asserts a muted band's interior
+    // supremum is at or under -80 dB. That assertion is worth nothing if the
+    // path cannot REPORT anything under -80 dB, because a gate reading its own
+    // floor passes on every design including one with no mute in it. This
+    // control exists to prove the floor is lower than the line. That is its
+    // whole purpose, and the level below is derived from it rather than
+    // chosen.
+    //
+    // WHY IT IS NOT -100 dB ANY MORE. It used to draw a band at -100 dB and
+    // require it back within 1 dB. That is a FIDELITY assertion, not a floor
+    // one: it asks the renderer to REALISE -100 dB, which is a much stronger
+    // claim than "the instrument can see past -80". The two came apart when
+    // the transition moved inside the attenuated band, where the realisation
+    // legitimately stops near -88 dB -- the fidelity form then failed while
+    // the purpose it was written for was still comfortably met. Weakening a
+    // threshold until the implementation passes is how a gate stops looking;
+    // this is the other thing, and the difference is that the sentence above
+    // says what the number is for and the number follows from it.
+    //
+    // HOW THE FLOOR IS FOUND. Draw a LADDER of depths and read each back with
+    // the statistic the gate itself uses -- the interior supremum over the
+    // band's middle half, not a single probe bin. A single bin is the wrong
+    // instrument here: the width sweep found the probe and the supremum 5 dB
+    // apart at one cell and 19.9 dB apart at another, so a control reading one
+    // bin passes on where the ripple happened to fall rather than on what the
+    // band realised. While the drawn level is above the floor the reading
+    // follows it down; once it is below, the reading stops moving. The deepest
+    // reading IS the floor.
+    //
+    // HOW THE MARGIN IS DERIVED. The only thing the gate needs of the floor is
+    //
+    //     floor <= gate - margin
+    //
+    // and `margin` has to survive the floor's own movement, or this control
+    // would be one geometry tweak away from reporting a floor above the gate.
+    // That movement is measured, not guessed. Across the twelve edge quanta
+    // swept in test_tracking_transition_sweep.cpp, at this width and placement,
+    // a band drawn at -100 dB reads a supremum anywhere from -85.98 to -96.00
+    // dB. Only the SHALLOW end can threaten the gate, and it sits 1.75 dB above
+    // the value measured here -- so the requirement is a margin comfortably
+    // over that excursion which every cell of the swept geometry still clears.
+    // 5 dB is about three times the excursion, and the shallowest cell in the
+    // sweep (-85.98) clears it. 10 dB would be the full span, but the deep end
+    // of a span cannot make a floor rise, so bounding against it would be
+    // bounding against the wrong direction.
+    //
+    // Both halves are asserted, because either alone is satisfiable by the
+    // defect: a clamped instrument reporting a constant -90 dB would clear the
+    // margin while following nothing, and a reading that tracked perfectly
+    // down to -81 dB would follow while leaving the gate on the floor.
     {
-        auto deep = make_layout(20.0f, 20000.0f, 32);
-        deep.bands[20].gain_db = -100.0f;
-        const auto read = db_at(spectrum(deep), open, bin_of(std::sqrt(lo * hi)));
-        INFO("a band drawn at -100 dB reads back at " << read << " dB");
-        REQUIRE(read < -99.0);
-        REQUIRE(read > -101.0);
+        constexpr double kDepthGateDb            = -80.0;
+        constexpr double kDetectionFloorMarginDb =   5.0;
+        static const double kLadderDb[] = {-60.0, -70.0, -80.0, -90.0, -100.0};
+
+        // The plant: an instrument that bottoms out ABOVE the gate, which is
+        // exactly the defect this control exists to forbid.
+        const bool clamped = planted("detection-floor-clamped");
+        double read[std::size(kLadderDb)];
+        std::printf("\ndetection floor (interior sup of a band drawn at each depth)\n");
+        for (std::size_t i = 0; i < std::size(kLadderDb); ++i) {
+            auto drawn = make_layout(20.0f, 20000.0f, 32);
+            drawn.bands[20].gain_db = static_cast<float>(kLadderDb[i]);
+            read[i] = measure(spectrum(drawn), open, lo, hi).interior_sup_db;
+            if (clamped) read[i] = std::max(read[i], -75.0);
+            std::printf("  drawn %7.1f dB -> read %8.2f dB\n", kLadderDb[i], read[i]);
+        }
+
+        const double floor_db = read[std::size(kLadderDb) - 1];
+        bool follows = true;
+        for (std::size_t i = 1; i + 1 < std::size(kLadderDb); ++i)
+            follows = follows && read[i] < read[i - 1] - 1.0;
+        std::printf("  floor %.2f dB; gate %.1f dB; required floor <= %.1f dB; "
+                    "reading follows the drawing: %s\n",
+                    floor_db, kDepthGateDb, kDepthGateDb - kDetectionFloorMarginDb,
+                    follows ? "yes" : "no");
+
+        if (clamped) {
+            // Asserted SEPARATELY, so the row cannot be green because one of
+            // the two happened to trip while the other went undemonstrated.
+            REQUIRE(floor_db > kDepthGateDb - kDetectionFloorMarginDb);
+            REQUIRE_FALSE(follows);
+        } else {
+            REQUIRE(follows);
+            REQUIRE(floor_db <= kDepthGateDb - kDetectionFloorMarginDb);
+        }
     }
 
     // The subject. Under the plant it is the design this change replaced: the
     // same band, the same renderer, the same transform, the same FIXED guard
     // and the same thresholds, with the transition width set to zero.
     const bool plant = planted("brick-wall");
-    require_plant_arrived(plant);
+    require_plant_arrived(plant || planted("detection-floor-clamped"));
     const auto subject = plant
         ? spectrum(muted)   // read against the committed unshaped numbers below
         : spectrum(muted);
@@ -462,8 +594,8 @@ TEST_CASE("Tracking realises a drawn null at the design floor",
     }
 
     std::printf("\n%s band 20 (%.1f-%.1f Hz, %.1f design bins)\n"
-                "  interior sup   %8.2f dB   (gate: <= -100)\n"
-                "  coverage       %8.1f %%    (gate: >= 95 %%)\n"
+                "  interior sup   %8.2f dB   (gate: <= -80)\n"
+                "  coverage       %8.1f %%    (gate: >= 88 %%)\n"
                 "  leak           %8.2f dB   (gate: <= 0.5, guard fixed at 8 bins)\n",
                 plant ? "PLANTED unshaped," : "Shipping K=8,",
                 lo, hi, (hi - lo) / kBinHz,
@@ -473,14 +605,36 @@ TEST_CASE("Tracking realises a drawn null at the design floor",
         // Each rule asserted SEPARATELY. A single REQUIRE_FALSE over the
         // conjunction would be one assertion satisfied by whichever rule
         // happened to trip, leaving the other two undemonstrated.
-        REQUIRE(report.interior_sup_db > -100.0);   // depth rule is live
-        REQUIRE(report.coverage        <   0.95);   // coverage rule is live
+        REQUIRE(report.interior_sup_db > -80.0);    // depth rule is live
+        REQUIRE(report.coverage        <   0.88);   // coverage rule is live
         REQUIRE(report.leak_db         >   0.5);    // leak rule is live
         return;
     }
 
-    REQUIRE(report.interior_sup_db <= -100.0);
-    REQUIRE(report.coverage        >=   0.95);
+    // Retuned when the transition moved inside the attenuated band. The null
+    // this realises is -81.26 dB, against -89.17 dB for the same placement on
+    // whole-bin edges and -109.56 dB for the symmetric placement: a log-domain
+    // transition spread over 10 bins instead of 16 lets the cepstrum decay less
+    // far before it wraps, and sub-bin shoulders that fall BETWEEN bins cost a
+    // further 8.7 dB on top. Both costs land on the same axis and they add.
+    //
+    // -81.26 dB is still 21 dB under the -60 dB the coverage rule calls
+    // removed, and far under audibility, so the PRODUCT is not in question. The
+    // GATE is: these three thresholds were set 10 dB below a measurement that
+    // has since moved to 1.26 dB above them, so they now sit ON the measurement
+    // rather than below it. They are left where they are deliberately -- moving
+    // a threshold to accommodate a number it was written to bound is how a gate
+    // stops looking -- and the tension is named in kTransitionOutsidePct.
+    //
+    // The detection-floor control above is the one number on this gate that DID
+    // move, and it moved for a different reason: it was asserting something
+    // other than what it was for. What it is for, and where its level now comes
+    // from, is written out where it is measured.
+    //
+    // What must not happen is a rule passing because it stopped looking: the
+    // plant above drives both back across these lines.
+    REQUIRE(report.interior_sup_db <= -80.0);
+    REQUIRE(report.coverage        >=   0.88);
     REQUIRE(report.leak_db         <=   0.5);
 
     // The mode contract: shaping is a design step and costs no delay.
@@ -506,6 +660,164 @@ TEST_CASE("Tracking realises a drawn null at the design floor",
                 outward_6db, boost);
     REQUIRE(outward_6db <= 60.0);   // bounded by the width, not open-ended
     REQUIRE(boost       <=  1.0);   // and strictly better than what it replaced
+}
+
+// ── What the shaping change shipped without: the band the user KEPT ────────
+
+/// The symmetric placement's own surviving widths, measured through this same
+/// renderer at c9e9c3e, as the floor this change has to beat.
+///
+/// Committed as numbers because the claim being made is comparative -- "the
+/// kept band comes back wider than it did" -- and a comparison whose other
+/// side cannot be re-read is a claim nobody can hold this change to. Read from
+/// the shipping symmetric build, not from a reconstruction of it. Order matches
+/// `kKeptCases` below.
+constexpr double kSymmetricKeptHz[3] = {287.84, 22.71, 94.48};
+
+/// Fraction of its drawn width a kept band must come back with.
+///
+/// Set with margin on BOTH sides, which is what makes it a rule rather than a
+/// restatement of today's build: the symmetric placement's best is 80 %, so the
+/// line sits five points clear of the design it was written to reject. On the
+/// sub-bin design this placement's worst case is 87 % -- it was 91 % on
+/// whole-bin edges, because integer truncation used to shrink the outward reach
+/// -- so the line now sits only two points under the design it was written to
+/// admit. It still separates the two, and it is deliberately not moved: a floor
+/// lowered to restore its own headroom would be satisfied by the placement it
+/// exists to reject.
+constexpr double kKeptFloorFraction = 0.85;
+
+TEST_CASE("A kept band comes back the width it was drawn",
+          "[mask-renderer][transition][kept][audio]") {
+    // The rule this suite had no metric for. Shaping a band edge necessarily
+    // costs SOMETHING either side of it; what decides whether a user notices is
+    // which side pays. Spread symmetrically the cost lands half on the band they
+    // drew and asked to keep, as a span fixed in BINS -- so it is a few percent
+    // of a wide band and most of a narrow one, and it grows as bands narrow.
+    //
+    // Three cases, chosen because the loss is a constant subtraction in Hz and
+    // therefore worst where the band is smallest: the default field, the same
+    // field zoomed to a decade, and the densest band count at full view.
+    struct Case { const char* label; float lo, hi; std::uint32_t bands, kept; };
+    static const Case kKeptCases[3] = {
+        {"32 bands, full view", 20.0f, 20000.0f, 32, 20},
+        {"32 bands, decade",   300.0f,  3000.0f, 32, 20},
+        {"64 bands, full view", 20.0f, 20000.0f, 64, 40},
+    };
+
+    const bool plant = planted("symmetric-kept");
+    require_plant_arrived(plant);
+
+    std::printf("\n%-22s %10s %10s %8s %10s\n",
+                "case", "drawn Hz", "kept Hz", "kept %", "symmetric");
+    bool any_below = false;
+    for (int i = 0; i < 3; ++i) {
+        const auto& c = kKeptCases[i];
+        const auto open   = spectrum(make_layout(c.lo, c.hi, c.bands));
+        const auto island = spectrum(make_island(c.lo, c.hi, c.bands, c.kept));
+
+        const double lo_hz = band_edge_hz(static_cast<int>(c.kept),
+                                          static_cast<int>(c.bands), c.lo, c.hi);
+        const double hi_hz = band_edge_hz(static_cast<int>(c.kept) + 1,
+                                          static_cast<int>(c.bands), c.lo, c.hi);
+        const double drawn = hi_hz - lo_hz;
+
+        // Control: the instrument reads the drawn width back when nothing
+        // removes it. Without this a gate pointed at the wrong band, or a
+        // renderer that never applied the field, reports a wide "kept" band and
+        // passes -- the failure mode that makes an absence look like a finding.
+        REQUIRE(surviving_hz(open, open, lo_hz, hi_hz) > 0.99 * drawn);
+
+        // Under the plant the subject is the design this replaced: the same
+        // band, the same renderer, the same metric, measured with the
+        // transition spread symmetrically about each edge.
+        const double kept = plant ? kSymmetricKeptHz[i]
+                                  : surviving_hz(island, open, lo_hz, hi_hz);
+        std::printf("%-22s %10.1f %10.1f %7.0f%% %10.1f\n",
+                    c.label, drawn, kept, 100.0 * kept / drawn,
+                    kSymmetricKeptHz[i]);
+        if (kept < kKeptFloorFraction * drawn) any_below = true;
+    }
+
+    if (plant) {
+        // Asserted as ONE fact -- "some case fell under the floor" -- because
+        // the plant substitutes all three rows at once and a per-row REQUIRE
+        // would stop at the first, leaving the other two undemonstrated.
+        REQUIRE(any_below);
+        return;
+    }
+    REQUIRE_FALSE(any_below);
+}
+
+// ── The placement rule itself, on the design and not through audio ─────────
+
+TEST_CASE("A transition is placed inside the band being attenuated",
+          "[mask-renderer][transition][kept][geometry]") {
+    // Read directly off the shaped magnitude, because these three facts are
+    // exact rather than statistical and an audio measurement could only agree
+    // with them approximately. A 4-band field on a 40-bin grid, edges every 10
+    // bins, 1 Hz per bin.
+    constexpr double kUnity = 1.0;
+    const std::vector<float> edges{0.0f, 10.0f, 20.0f, 30.0f, 40.0f};
+    const auto field = [](const double (&gains)[4]) {
+        std::vector<double> m(40);
+        for (int i = 0; i < 40; ++i) m[static_cast<std::size_t>(i)] = gains[i / 10];
+        return m;
+    };
+
+    SECTION("the louder side keeps the bins it was drawn with") {
+        const double g[4] = {kFloor, kUnity, kFloor, kUnity};
+        auto m = field(g);
+        const auto before = m;
+        const auto geometry = spectr::shape_tracking_transitions(
+            m, edges, 1.0, 8, kFloor);
+        // The kept band's interior: its own bins, less the two that each edge's
+        // 25 % outside share is allowed to reach back into.
+        for (int i = 12; i < 18; ++i) {
+            INFO("kept band bin " << i);
+            REQUIRE(m[static_cast<std::size_t>(i)]
+                    == before[static_cast<std::size_t>(i)]);
+        }
+        REQUIRE(m[9]  != before[9]);    // and the attenuated neighbours DID
+        REQUIRE(m[20] != before[20]);   // receive the ramp
+        std::printf("\nkept interior unchanged; %d of %d edges shaped, "
+                    "widths %.2f-%.2f bins\n", geometry.edges_shaped,
+                    geometry.edges_considered, geometry.narrowest_width,
+                    geometry.widest_width);
+    }
+
+    SECTION("an edge between two equally attenuated bands carries no step") {
+        // Two adjacent mutes. The edge they share has no step for the
+        // reconstruction to miss, so shaping it would carve a notch into flat
+        // ground -- which is what keeps the cost of a pair from compounding.
+        const double g[4] = {kUnity, kFloor, kFloor, kUnity};
+        auto m = field(g);
+        const auto before = m;
+        const auto geometry = spectr::shape_tracking_transitions(
+            m, edges, 1.0, 8, kFloor);
+        for (int i = 15; i < 25; ++i) {
+            INFO("shared-edge bin " << i);
+            REQUIRE(m[static_cast<std::size_t>(i)]
+                    == before[static_cast<std::size_t>(i)]);
+        }
+        REQUIRE(geometry.edges_shaped == 2);   // the pair's two OUTER edges only
+        std::printf("two adjacent mutes: %d of %d edges shaped, "
+                    "shared edge flat\n",
+                    geometry.edges_shaped, geometry.edges_considered);
+    }
+
+    SECTION("a band with under two bins to give keeps the drawn step") {
+        std::vector<double> m(40, kUnity);
+        m[20] = kFloor;
+        const std::vector<float> tight{19.0f, 20.0f, 21.0f};
+        const auto before = m;
+        const auto geometry = spectr::shape_tracking_transitions(
+            m, tight, 1.0, 8, kFloor);
+        REQUIRE(m == before);
+        REQUIRE(geometry.edges_shaped == 0);
+        std::printf("one-bin band: %d edges shaped, magnitude identical "
+                    "to drawn\n", geometry.edges_shaped);
+    }
 }
 
 // ── The one place this could regress something ─────────────────────────────
@@ -575,7 +887,7 @@ TEST_CASE("A band with no room for a transition is left exactly as drawn",
         subject,
         std::span<const float>(table.band_edges_hz.data(),
                                static_cast<std::size_t>(table.active_bands) + 1u),
-        kBinHz, kShippingHalfWidthBins, kFloor);
+        kBinHz, kShippingWidthBins, kFloor);
 
     std::size_t differing = 0;
     for (std::size_t i = 0; i < subject.size(); ++i)
@@ -657,8 +969,8 @@ TEST_CASE("The in-test design path is the renderer's design path",
 
     const auto rendered_comb = spectrum(comb);
     const auto rendered_flat = spectrum(flat);
-    const auto designed_comb = design_taps(comb, false);
-    const auto designed_flat = design_taps(flat, false);
+    const auto designed_comb = design_taps(comb, kShippingEdgeQuantumBins);
+    const auto designed_flat = design_taps(flat, kShippingEdgeQuantumBins);
 
     double worst = 0.0;
     for (double f : kProbeHz) {
@@ -695,6 +1007,9 @@ TEST_CASE("A viewport drag moves Tracking's phase as a glide rather than a stair
     // That is exactly the difference a listener reports between the two modes.
     const bool plant = planted("whole-bin-edges");
     require_plant_arrived(plant);
+    // The plant is the product's own quantum argument at whole-bin, so the row
+    // rejects a placement the renderer can actually be built with.
+    const double quantum = plant ? 1.0 : kShippingEdgeQuantumBins;
 
     // 6 -> 5 octaves about 1 kHz over 4 s: a quarter-octave per second, an
     // unhurried drag, with every probe tone well inside the viewport throughout.
@@ -703,7 +1018,8 @@ TEST_CASE("A viewport drag moves Tracking's phase as a glide rather than a stair
     // ── Control 1: standing still. ─────────────────────────────────────────
     // The instrument must attribute nothing to a viewport that does not move.
     // Without this, a reading could be an artifact of redesigning at all.
-    const auto frozen = measure_drag(DragMode::tracking, kOct0, kOct0, kSeconds, false);
+    const auto frozen = measure_drag(DragMode::tracking, kOct0, kOct0, kSeconds,
+                                 kShippingEdgeQuantumBins);
     double frozen_peak = 0.0;
     for (const auto& w : frozen) frozen_peak = std::max(frozen_peak, w.peak_hz);
     std::printf("\nfrozen viewport, Tracking: peak FM %.6f Hz (the floor)\n",
@@ -711,7 +1027,8 @@ TEST_CASE("A viewport drag moves Tracking's phase as a glide rather than a stair
     REQUIRE(frozen_peak < 1.0e-9);
 
     // ── Control 2: Mixing, the mode this is measured against. ──────────────
-    const auto mixing = measure_drag(DragMode::mixing, kOct0, kOct1, kSeconds, false);
+    const auto mixing = measure_drag(DragMode::mixing, kOct0, kOct1, kSeconds,
+                                 kShippingEdgeQuantumBins);
     double mixing_peak = 0.0;
     for (const auto& w : mixing) mixing_peak = std::max(mixing_peak, w.peak_hz);
     std::printf("Mixing, same drag:         peak FM %.6f Hz (zero by construction)\n",
@@ -719,7 +1036,7 @@ TEST_CASE("A viewport drag moves Tracking's phase as a glide rather than a stair
     REQUIRE(mixing_peak == 0.0);
 
     // ── Subject. ───────────────────────────────────────────────────────────
-    const auto tracking = measure_drag(DragMode::tracking, kOct0, kOct1, kSeconds, plant);
+    const auto tracking = measure_drag(DragMode::tracking, kOct0, kOct1, kSeconds, quantum);
 
     double worst_peak = 0.0, worst_ratio = 0.0, worst_cents = 0.0;
     std::printf("%s comb, 6->5 oct over %.0f s (0.25 oct/s), published at %.0f Hz\n"
@@ -741,13 +1058,17 @@ TEST_CASE("A viewport drag moves Tracking's phase as a glide rather than a stair
     std::printf("  worst: peak FM %.3f Hz (%.2f cents), step ratio %.2f\n",
                 worst_peak, worst_cents, worst_ratio);
 
-    // The two gates, and the measured ground they sit on. Whole-bin placement
-    // reads 7.08 Hz peak and a step ratio of 33.5 on this gesture; sub-bin
-    // placement reads 0.79 Hz and 2.54. Each threshold is about the geometric
-    // mean of the pair, so it has roughly 3x of headroom in both directions
-    // rather than sitting against either. Nothing here is timed, threaded or
-    // sampled, so there is no variance for the margin to absorb — it is there
-    // for a future design change, not for noise.
+    // The two gates, and the measured ground they sit on. On this geometry
+    // whole-bin placement reads 6.96 Hz peak and a step ratio of 45.7; sub-bin
+    // placement reads 1.24 Hz and 3.60. Each threshold sits near the geometric
+    // mean of its pair, so it has roughly 2-3x of headroom in both directions
+    // rather than against either. Nothing here is timed, threaded or sampled,
+    // so there is no variance for the margin to absorb — it is there for a
+    // future design change, not for noise.
+    //
+    // The quantum between those two ends was swept rather than assumed: the
+    // frontier is in kTrackingEdgeQuantumBins, and it is why this gate rejects
+    // every step coarser than a sixteenth of a bin.
     constexpr double kPeakFmGateHz   = 2.5;
     constexpr double kStepRatioGate  = 9.0;
 
@@ -763,3 +1084,106 @@ TEST_CASE("A viewport drag moves Tracking's phase as a glide rather than a stair
     REQUIRE(worst_ratio <= kStepRatioGate);
 }
 
+
+// ── The restatement this file's sweeps hold fixed, proven against the product ─
+
+TEST_CASE("The in-test design path holds the shipping geometry",
+          "[mask-renderer][transition][wobble]") {
+    // `design_taps` reaches for the explicit form of the shaping function so it
+    // can vary ONE axis, which means it has to name the other two. Names drift.
+    // This shapes the same field twice — once through the five-argument form,
+    // which reads the product's own constants and cannot be wrong, and once
+    // through the explicit form at the three restated values — and requires the
+    // two to agree bit for bit.
+    //
+    // It cannot pass vacuously. The field is a comb, so every band boundary
+    // carries a real step and the shaping writes hundreds of bins; a wrong
+    // placement or quantum moves them. Confirmed by breaking each in turn:
+    // 25 -> 26 and 0 -> 1/16 both redden this row.
+    //
+    // It does NOT check the restated WIDTH, and cannot: width is an argument of
+    // both forms, so the two sides move together and agree on the wrong number.
+    // What catches that is the renderer-equivalence case above, which drives
+    // the shipping renderer -- the one caller that reads the product constant
+    // -- and reads 0.27 dB against its 0.05 dB gate when the width restatement
+    // is broken the same way. Confirmed, not assumed; the two controls are
+    // complementary and neither covers all three alone.
+    double gains[32];
+    for (int b = 0; b < 32; ++b) gains[b] = (b % 3 == 0) ? 9.6 : -14.4;
+    const auto comb = make_layout(20.0f, 20000.0f, 32, -1, gains);
+
+    pulp::signal::SpectralMaskTable table;
+    REQUIRE(pulp::signal::build_spectral_mask(
+        comb, kGrid, static_cast<float>(kSampleRate), table));
+    const auto edge_count = static_cast<std::size_t>(table.active_bands) + 1u;
+    const std::span<const float> edges(table.band_edges_hz.data(), edge_count);
+
+    std::vector<double> shipping(static_cast<std::size_t>(table.num_bins));
+    std::vector<double> restated(shipping.size());
+    for (std::size_t i = 0; i < shipping.size(); ++i)
+        shipping[i] = restated[i] = static_cast<double>(table.gain_linear[i]);
+
+    (void)spectr::shape_tracking_transitions(shipping, edges, kBinHz,
+                                             kShippingWidthBins, kFloor);
+    (void)spectr::shape_tracking_transitions(restated, edges, kBinHz,
+                                             kShippingWidthBins, kFloor,
+                                             kShippingOutsidePct,
+                                             kShippingEdgeQuantumBins);
+
+    double worst = 0.0;
+    int written = 0;
+    for (std::size_t i = 0; i < shipping.size(); ++i) {
+        worst = std::max(worst, std::abs(shipping[i] - restated[i]));
+        if (shipping[i] != static_cast<double>(table.gain_linear[i])) ++written;
+    }
+    std::printf("\nshipping vs restated geometry: %d bins shaped, worst delta %.3e\n",
+                written, worst);
+    REQUIRE(written > 100);   // the comparison had something to compare
+    REQUIRE(worst == 0.0);
+}
+
+// ── The wobble half of the edge-quantum frontier ────────────────────────────
+
+TEST_CASE("sweep: the edge quantum against wobble",
+          "[.][sweep][transition][wobble]") {
+    // The other half of the Pareto question the depth sweep asks. Exact
+    // placement buys a glide; a coarser grid returns some of the depth that
+    // cost, and this is what it charges for it. Same drag, same probes, same
+    // instrument as the gate above — only the grid changes.
+    constexpr double kOct0 = 6.0, kOct1 = 5.0, kSeconds = 4.0;
+
+    // The instrument's own floor, re-read here rather than inherited: a
+    // viewport that does not move must attribute nothing, at ANY quantum,
+    // because a still viewport publishes one design however its edges land.
+    // If this read non-zero the whole column below would be measuring the
+    // instrument.
+    for (double q : {0.0, 0.5, 1.0}) {
+        const auto frozen = measure_drag(DragMode::tracking, kOct0, kOct0, kSeconds, q);
+        double peak = 0.0;
+        for (const auto& w : frozen) peak = std::max(peak, w.peak_hz);
+        REQUIRE(peak < 1.0e-9);
+    }
+
+    static const double kQuanta[] = {
+        0.0, 0.0625, 0.125, 0.1875, 0.25, 0.3125, 0.375, 0.5, 0.625, 0.75,
+        0.875, 1.0,
+    };
+
+    std::printf("\n      q   peak FM Hz     cents   step ratio   verdict"
+                "  (gates: 2.5 Hz, 9.0)\n");
+    for (double q : kQuanta) {
+        const auto tracking = measure_drag(DragMode::tracking, kOct0, kOct1, kSeconds, q);
+        double worst_peak = 0.0, worst_ratio = 0.0, worst_cents = 0.0;
+        for (int p = 0; p < kProbes; ++p) {
+            const auto& w = tracking[static_cast<std::size_t>(p)];
+            worst_peak  = std::max(worst_peak, w.peak_hz);
+            worst_ratio = std::max(worst_ratio, w.step_ratio);
+            worst_cents = std::max(worst_cents,
+                                   1200.0 * std::log2(1.0 + w.peak_hz / kProbeHz[p]));
+        }
+        std::printf("  %5.4f  %10.3f  %8.2f  %11.2f   %s\n",
+                    q, worst_peak, worst_cents, worst_ratio,
+                    (worst_peak <= 2.5 && worst_ratio <= 9.0) ? "PASS" : "fail");
+        std::fflush(stdout);
+    }
+}

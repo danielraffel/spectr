@@ -152,15 +152,28 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 ^"?No band is left worse than
 ^"?A band with no room for a transition
 ^"?Transition shaping leaves an ordinary EQ
+# The kept-side rule and the placement rule behind it. Neither is matched by
+# the four lines above -- they start with the band, not with "Tracking" or
+# "Transition" -- so without these two lines they register and never run, which
+# is the precise failure mode that let the defect they guard reach a user: the
+# depth rules were selected and green the entire time, and not one of them can
+# see the kept band.
+^"?A kept band comes back the width
+^"?A transition is placed inside
 # The drag gate, its in-test/renderer equivalence control, and its plant row.
 # NONE of the lines above reaches them: the Catch2 names start with "A viewport
 # drag" and "The in-test design path", and the CTest row is
 # `Spectr-tracking-drag-glide-negative-control`, which `^Spectr-tracking-
-# transition` does not match. Measured, not guessed -- the alternation above
-# selects 9 of the 12 tracking rows this file registers and exactly these three
-# are missing, so the one gate here that measures a GESTURE rather than a
-# settled design has never run. Nothing else in this file can report its
-# absence.
+# transition` does not match. Measured, not guessed: without these three lines
+# the alternation leaves the one gate here that measures a GESTURE rather than
+# a settled design unselected, so it has never run, and nothing else in this
+# file can report its absence. With them the alternation selects all 16
+# tracking and transition rows the suite registers -- counted, not assumed.
+#
+# `^"?The in-test design path` deliberately selects BOTH cases beginning that
+# way: the renderer-equivalence control and the shipping-geometry restatement
+# control. They guard different halves of the same claim and neither is
+# reachable by any other line here.
 ^"?A viewport drag moves Tracking
 ^"?The in-test design path
 ^Spectr-tracking-drag-glide

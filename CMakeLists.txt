@@ -482,6 +482,7 @@ add_executable(Spectr-test
     test/test_mode_bridge.cpp
     test/test_mask_renderer.cpp
     test/test_tracking_transition.cpp
+    test/test_tracking_transition_sweep.cpp
     test/test_render_mode.cpp
     ${SPECTR_TEST_SOURCES}
 )
@@ -553,7 +554,7 @@ add_test(NAME Spectr-render-mode-migration-holds
 set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
     TIMEOUT 120)
 
-# ── Tracking transition shaping: five gates, each with its inversion ───────
+# ── Tracking transition shaping: six gates, each with its inversion ────────
 #
 # Each plant substitutes a DEFECT into the subject of one gate and requires the
 # gate to reject it. The inversion lives inside the binary rather than in
@@ -566,7 +567,7 @@ set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
 # misspelled -- `planted()` returns false, the ORDINARY path runs, and the row
 # exits 0 having proved nothing. With it, the test refuses to pass unless its
 # plant actually arrived. Verified: stripping or mistyping the plant on any of
-# the five rows exits 42 rather than 0, and a filter matching no case exits 2.
+# the six rows exits 42 rather than 0, and a filter matching no case exits 2.
 #
 # Verified in BOTH directions before registering. With its defect removed each
 # row exits 42 with exactly one failed assertion, so none of them is an
@@ -590,12 +591,44 @@ set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
 #   eq-drift           adds 1 dB to the drawn reference, proving the ordinary-EQ
 #                      gate observes a drift rather than agreeing with whatever
 #                      it measured.
-#   whole-bin-edges    rounds every band edge onto a whole design bin before
-#                      shaping -- the placement this design replaced -- proving
-#                      the drag gate can see the staircase it exists to reject.
-#                      It reads 7.08 Hz of peak frequency modulation against
-#                      0.79 Hz for sub-bin placement, so the gate is not merely
-#                      passing on a number it cannot move.
+#   detection-floor-clamped
+#                      an instrument that bottoms out at -75 dB -- above the
+#                      -80 dB depth gate -- proving the detection-floor control
+#                      rejects a path that cannot see past the line it guards.
+#   whole-bin-edges    places every band edge on a whole design bin, through the
+#                      shaping function's OWN quantum argument rather than a
+#                      rounding step written beside it, so the control is the
+#                      product at a different argument. That is the placement
+#                      this design replaced, and it reads 6.96 Hz of peak
+#                      frequency modulation against 1.24 Hz for sub-bin
+#                      placement, so the gate is not merely passing on a number
+#                      it cannot move.
+#   symmetric-kept     substitutes the surviving kept-band widths the SYMMETRIC
+#                      placement actually measured through this same renderer,
+#                      proving the kept-width gate rejects the placement it was
+#                      written to replace rather than restating today's build.
+# The depth rule's OTHER control: the instrument, not the design.
+#
+# "Tracking realises a drawn null at the design floor" asserts a supremum at or
+# under -80 dB, which is worth nothing unless the path can report a number under
+# -80 dB at all. The case proves that by drawing a ladder of depths and showing
+# the reading follows the drawing down to a floor with margin under the gate.
+# SPECTR_TRANSITION_PLANT=detection-floor-clamped substitutes the exact defect
+# that control forbids -- an instrument that bottoms out at -75 dB, above the
+# gate -- and the row is green only when both halves of the control reject it.
+#
+# It is a separate row from brick-wall because the two plant different things:
+# brick-wall replaces the DESIGN and proves the three product rules can fail;
+# this replaces the INSTRUMENT and proves those rules are reading something.
+add_test(NAME Spectr-tracking-transition-detection-floor-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_TRANSITION_PLANT=detection-floor-clamped
+        SPECTR_TRANSITION_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "Tracking realises a drawn null at the design floor")
+set_tests_properties(Spectr-tracking-transition-detection-floor-negative-control
+    PROPERTIES TIMEOUT 300)
+
 add_test(NAME Spectr-tracking-transition-depth-negative-control
     COMMAND ${CMAKE_COMMAND} -E env
         SPECTR_TRANSITION_PLANT=brick-wall
@@ -603,6 +636,28 @@ add_test(NAME Spectr-tracking-transition-depth-negative-control
         $<TARGET_FILE:Spectr-test>
         "Tracking realises a drawn null at the design floor")
 set_tests_properties(Spectr-tracking-transition-depth-negative-control
+    PROPERTIES TIMEOUT 300)
+
+# The kept-side rule's negative control.
+#
+# This is the rule the shaping change shipped WITHOUT, and its absence is the
+# whole reason a kept band could lose a third of its width with four gates
+# green. So its control matters more than most: SPECTR_TRANSITION_PLANT=
+# symmetric-kept substitutes the surviving widths the SYMMETRIC placement
+# actually measured through this same renderer at c9e9c3e, and the row is green
+# only when the rule rejects them.
+#
+# It cannot be replaced by the depth rows above. Coverage reads 100 % on a
+# configuration whose kept band measures 18 % of its drawn width, because it
+# only ever looks inside the band being REMOVED -- so every existing row here
+# would stay green while the defect this rule guards returned in full.
+add_test(NAME Spectr-tracking-transition-kept-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_TRANSITION_PLANT=symmetric-kept
+        SPECTR_TRANSITION_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "A kept band comes back the width it was drawn")
+set_tests_properties(Spectr-tracking-transition-kept-negative-control
     PROPERTIES TIMEOUT 300)
 
 add_test(NAME Spectr-tracking-transition-regression-negative-control
