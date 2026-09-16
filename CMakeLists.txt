@@ -855,6 +855,66 @@ set_tests_properties(Spectr-preset-operations-negative-control PROPERTIES
     SKIP_RETURN_CODE 77
     RESOURCE_LOCK spectr_native_materialized_editor)
 
+# The band context menu must not eat the keyboard, and must dismiss the way
+# every other overlay in this editor dismisses.
+#
+# Both behaviours are long-standing code that only became observable when the
+# SDK pin reached v0.854.1 and a right-click first reached the menu's handler.
+# Neither was a regression, and neither was visible to the probe that already
+# aimed here: SPECTR_BAND_MENU_RELAYOUT reads the menu's row COUNT and its
+# group HEADER NAMES, and both are correct while the menu is unusable.
+#
+# What is asserted, and what each would read if the defect were maximal:
+#   - a shortcut pressed with the menu open reaches the app (the edit-mode
+#     PARAMETER moves, read natively off the store rather than scraped from
+#     the runtime). Defect: it stays where the control put it.
+#   - that shortcut also dismisses the menu, matching the row printing the
+#     same letter. Defect: the menu stays.
+#   - Escape UNMOUNTS the menu. The framework's return value reads `overlay`
+#     in both states -- it was dismissing the slot correctly all along -- so
+#     the unmount is the assertion. Defect: slot dismissed, menu still there,
+#     which is precisely what a DAW shows, because a plugin host consumes
+#     Escape in the shared policy and never fans it out to script.
+#   - an outside press dismisses, asked of the same shared policy the hosts
+#     consult rather than a replica of it.
+#   - Settings, a real typing surface, STILL blocks the same key. The guard
+#     was narrowed, not removed, and without this a change that deleted it
+#     outright would pass everything above.
+#
+# Exit: 0 all hold, 1 an invariant is violated, 3 the premise is unproven
+# (the key path is dead with nothing open, or the menu would not open), 77 no
+# view carries a context-menu handler under the pinned SDK. 3 and 77 must
+# never read as a pass; CTest reports 77 as "Not Run".
+add_test(NAME Spectr-band-menu-keyboard-and-dismissal
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_BAND_MENU_KEYS=1
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-band-menu-keys
+        --backend=skia)
+set_tests_properties(Spectr-band-menu-keyboard-and-dismissal PROPERTIES
+    TIMEOUT 300
+    SKIP_RETURN_CODE 77
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Its negative control, planted in the PRODUCT rather than in the comparison.
+# It strips the one attribute the shortcut guard's exemption keys on, so the
+# real guard runs against the real menu and returns exactly what it returned
+# before the fix; the run then REQUIRES the shortcut to be blocked. A gate
+# that still saw the key land would not be wired to the thing it covers.
+#
+# The inversion lives inside the binary rather than in WILL_FAIL, which would
+# accept a usage error or an unproven premise as if it had caught the defect.
+add_test(NAME Spectr-band-menu-keyboard-and-dismissal-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_BAND_MENU_KEYS=1
+        SPECTR_BAND_MENU_KEYS_PLANT=1
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-band-menu-keys-negctl
+        --backend=skia)
+set_tests_properties(Spectr-band-menu-keyboard-and-dismissal-negative-control
+    PROPERTIES
+        TIMEOUT 300
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+
 # Status overlay (section 5): the overlay must sit where the design puts it,
 # track a live drag, and then dismiss itself. The last of those is a TIME
 # property and the first is a PIXEL property, so this gate drives the shipping
