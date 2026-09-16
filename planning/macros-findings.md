@@ -74,3 +74,31 @@ COUNTS post-conditions. Applied:
 - `text_bindings`/`layout_bindings`/`paint_bindings` address nodes by
   POSITIONAL DOM PATH. Insert children LAST or every later sibling silently
   re-points.
+
+## Rebase onto advanced origin/main (43a005a, after #146 and #155)
+Two conflicts, both expected:
+- `native-ui/materialized/materialized-document.runtime.json` — one minified
+  line, so any two edits conflict. Resolved by taking origin/main's artifact
+  wholesale and RE-RUNNING the idempotent script. NOT `checkout --theirs`.
+  The script then caught a genuinely stale anchor: the band-readout lane
+  changed `hoverRef.current = { band, x, y }` to `{ band, x, y, n: N }`, so
+  the pointer-down anchor was re-pointed at the enclosing block instead.
+  That is the anchor assertion doing its job — a looser patch would have
+  silently no-op'd and shipped a drag that never opened a gesture.
+- `tools/ci/acceptance-ctest-patterns.txt` — resolved by keeping BOTH sides.
+
+## Pattern gate
+`ctest_pattern_gate.py` exits 1 on my build with 2 DEAD patterns, `^native:`
+and `Built Spectr`. Controlled: the SAME 2 are dead running my base's
+unmodified patterns file against the same build, so they are pre-existing and
+not mine (they may simply be targets this build dir does not build).
+All 5 macro patterns match (12 + 1 + 1 + 1 + 1). `--plant` exits 1 and names
+the planted row, and a raw `ctest -R` on a non-matching pattern printed
+"Total Tests: 0" and exited 0 — the documented trap, which is why the gate
+rather than a bare ctest run is the reverse check.
+
+## fix-manifest tokens (screened)
+`macro_set_members`, `macroAdjustedGain`, `macro_members`, `parseNativeMacros`
+— all 0 files on origin/main (control `modulation_target_mask` = 15 files, so
+the instrument works), and all present in `strings -a` of the built binary
+(2/1/1/1; control token `SPECTR` = 47).
