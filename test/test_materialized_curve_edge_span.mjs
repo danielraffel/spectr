@@ -108,6 +108,15 @@ const plant = (label, from, to, expected = 1) => {
   console.log(`planted   ${label}`);
 };
 
+// NOTE ON THE `rendered` LINE IN EVERY PLANT BELOW. It routes through
+// `macroAdjustedGain`, matching the shipping painter. That call is NOT part of
+// any defect these plants reproduce -- it is carried on both sides of each
+// substitution so a plant changes ONLY the geometry under test. Dropping it
+// from the `from` side makes the plant match nothing, and the detector then
+// exits 2 ("found 0 sites") rather than reporting a pass it cannot prove;
+// dropping it from the `to` side would silently revert the macro overlay while
+// claiming to test band centres.
+
 if (plantResponse) {
   // The ORIGINAL painter: band centres only, and straight through a mute.
   plant("the response line goes back to band centres",
@@ -117,7 +126,7 @@ if (plantResponse) {
     + "        inRun = false;\n"
     + "        continue;\n"
     + "      }\n"
-    + "      const rendered = Number.isFinite(rg[i]) ? clamp(rg[i], -1, 1) : 0;\n"
+    + "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -1, 1) : 0;\n"
     + "      const y = g.zeroY - rendered * g.halfH;\n"
     + "      const x = bandCenterX(i, g);\n"
     + "      if (!inRun) {\n"
@@ -129,7 +138,7 @@ if (plantResponse) {
     + "        ctx.lineTo(bandLeftX(i, g) + g.bandW, y);\n"
     + "    }\n",
     "    for (let i = 0; i < N; ++i) {\n"
-    + "      const rendered = Number.isFinite(rg[i]) ? clamp(rg[i], -1, 1) : 0;\n"
+    + "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -1, 1) : 0;\n"
     + "      const y = isMuted(tg[i]) ? g.zeroY : g.zeroY - rendered * g.halfH;\n"
     + "      const x = bandCenterX(i, g);\n"
     + "      if (i === 0) ctx.moveTo(x, y);\n"
@@ -147,7 +156,7 @@ if (plantResponseMutes) {
     + "        inRun = false;\n"
     + "        continue;\n"
     + "      }\n"
-    + "      const rendered = Number.isFinite(rg[i]) ? clamp(rg[i], -1, 1) : 0;\n"
+    + "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -1, 1) : 0;\n"
     + "      const y = g.zeroY - rendered * g.halfH;\n"
     + "      const x = bandCenterX(i, g);\n"
     + "      if (!inRun) {\n"
@@ -159,7 +168,7 @@ if (plantResponseMutes) {
     + "        ctx.lineTo(bandLeftX(i, g) + g.bandW, y);\n"
     + "    }\n",
     "    for (let i = 0; i < N; ++i) {\n"
-    + "      const rendered = Number.isFinite(rg[i]) ? clamp(rg[i], -1, 1) : 0;\n"
+    + "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -1, 1) : 0;\n"
     + "      const y = isMuted(tg[i]) ? g.zeroY : g.zeroY - rendered * g.halfH;\n"
     + "      const x = bandCenterX(i, g);\n"
     + "      if (i === 0) {\n"

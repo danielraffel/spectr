@@ -291,12 +291,26 @@ if (liftedGate && liftedCentre && liftedLabel) {
   sandbox.globalThis = sandbox;
   const harness = `
     var N, view, clamp, isMuted, renderGainsRef, targetGainsRef, window;
+    // The readout routes its level through the macro overlay, so the lifted
+    // source needs that rule in scope. It is supplied FAITHFULLY rather than
+    // as an identity stub: a stub would let this suite keep passing while the
+    // readout reported a level the user is not hearing, which is precisely
+    // the class of defect this file exists to catch.
+    var macroOffsetsRef, modulationActiveRef, macroAdjustedGain;
     function build(n, viewIn) {
       N = n; view = viewIn;
       clamp = (v, a, b) => Math.max(a, Math.min(b, v));
       isMuted = (v) => !(v > -1.0e9) || v === -Infinity;
       renderGainsRef = { current: new Array(128).fill(1.0) };
       targetGainsRef = { current: new Array(128).fill(1.0) };
+      macroOffsetsRef = { current: new Float32Array(128) };
+      modulationActiveRef = { current: false };
+      macroAdjustedGain = (value, index) => {
+        if (modulationActiveRef.current) return value;
+        if (!Number.isFinite(value)) return value;
+        const offset = macroOffsetsRef.current[index];
+        return offset === 0 ? value : clamp(value + offset, -1.02, 1.02);
+      };
       window = { SpectrFreq: { fmt: (f) => String(Math.round(f)) } };
       ${gateSrc}
       ${liftedCentre}
@@ -305,6 +319,10 @@ if (liftedGate && liftedCentre && liftedLabel) {
         gate: (h) => hoverBandOf(h),
         centre: (i) => bandCenterFreq(i),
         label: (h) => liveHoverLabel(h),
+        setMacro: (index, normalised) => {
+          macroOffsetsRef.current[index] = normalised;
+        },
+        setModulationActive: (on) => { modulationActiveRef.current = on; },
       };
     }
   `;
@@ -350,6 +368,33 @@ if (liftedGate && liftedCentre && liftedLabel) {
     if (!(Math.abs(liveHz - 1763.4) < 1.0)) {
       fail(`band 42 of 64 across 20Hz-20kHz is ${liveHz.toFixed(1)} Hz, `
         + "expected 1763.4 Hz");
+    }
+
+    // R2b. THE READOUT REPORTS THE LEVEL THE USER IS HEARING, macros included.
+    // A macro is never written back to a band's gain lane, so the readout
+    // cannot learn about it from the lane -- it has to apply the overlay
+    // itself. Without this, a band driven +6 dB by a macro would keep
+    // reporting the level it was drawn at, and the one surface a user checks
+    // a number on would be the one surface that lies.
+    {
+      const bank = context.build(64, view);
+      const drawn = bank.label(stale);
+      bank.setMacro(41, 6 / 24);
+      const lifted = bank.label(stale);
+      readings.push(`macroDrawn=${JSON.stringify(drawn)}`);
+      readings.push(`macroLifted=${JSON.stringify(lifted)}`);
+      if (lifted === drawn) {
+        fail("a macro offset on the hovered band does not move the readout, "
+          + "so the number reports the drawn level rather than the heard one");
+      }
+      // While an LFO overlay owns the paint refs the published field already
+      // carries the macro, so applying it again here would double-count it.
+      bank.setModulationActive(true);
+      if (bank.label(stale) !== drawn) {
+        fail("the readout still adds the macro offset while the modulation "
+          + "overlay owns the paint refs, which double-counts it");
+      }
+      bank.setModulationActive(false);
     }
 
     // R3. THE WRONG-DIVISOR ARITHMETIC ITSELF. Index 41 under N=32 is what

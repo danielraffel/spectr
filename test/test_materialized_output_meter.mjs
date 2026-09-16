@@ -48,6 +48,12 @@
 // inherits the document body default again -- how it shipped: 47% taller ink
 // than every other readout in the header, and a 37pt glyph run inside its own
 // 34pt box at the trim extremes.
+// --plant-unlabelled-trim removes the visible OUTPUT label, restoring the
+// state that shipped: a slider next to a meter carrying only aria-label and
+// title, neither of which a DAW ever draws.
+// --plant-short-track restores the 58pt track, which under the runtime's
+// fixed ~20pt thumb resolved 0.83 dB per point -- a 0.5 dB step roughly every
+// device pixel at 2x, which is not adjustment.
 // --expect-fail inverts the verdict, so a control is green only when this
 // suite REJECTS that document. The inversion lives here rather than in
 // WILL_FAIL because WILL_FAIL accepts any non-zero exit -- a usage error or an
@@ -61,13 +67,15 @@ const plantFallingHold = args.includes("--plant-falling-hold");
 const plantNoLatch = args.includes("--plant-no-latch");
 const plantClipLabel = args.includes("--plant-clip-label");
 const plantUntypedReadout = args.includes("--plant-untyped-readout");
+const plantUnlabelledTrim = args.includes("--plant-unlabelled-trim");
+const plantShortTrack = args.includes("--plant-short-track");
 const expectFail = args.includes("--expect-fail");
 const documentPath = args.find((a) => !a.startsWith("--"));
 
 if (!documentPath) {
   console.error("usage: test_materialized_output_meter.mjs <runtime.json> "
     + "[--plant-falling-hold|--plant-no-latch|--plant-clip-label"
-    + "|--plant-untyped-readout] "
+    + "|--plant-untyped-readout|--plant-unlabelled-trim|--plant-short-track] "
     + "[--expect-fail]");
   process.exit(2);
 }
@@ -85,6 +93,18 @@ const LABEL = '(over ? "OVER " : "PEAK ") + peakText';
 const READOUT_STYLE = 'style: { width: 34, textAlign: "right", '
   + 'whiteSpace: "nowrap", flexShrink: 0, fontFamily: "var(--mono)", '
   + 'fontSize: 10, color: "rgba(255,255,255,0.72)" }';
+const TRACK_STYLE = 'style: { width: 156, flexShrink: 0, '
+  + 'accentColor: "hsl(200,80%,60%)" }';
+const TRIM_LABEL_ELEMENT = '    /* @__PURE__ */ React.createElement("span", {\n'
+  + '      "data-spectr-output-trim-label": true,\n'
+  + '      // Declares its own face, size, tracking and colour. A control that\n'
+  + '      // declares no type inherits the document body default, which is\n'
+  + '      // how the readout beside it shipped 47% taller than every other\n'
+  + '      // readout in this header.\n'
+  + '      style: { fontFamily: "var(--mono)", fontSize: 10, '
+  + 'letterSpacing: 0.8, color: "rgba(255,255,255,0.72)", lineHeight: 1, '
+  + 'whiteSpace: "nowrap", flexShrink: 0 }\n'
+  + '    }, "OUTPUT"),\n';
 
 function plant(label, from, to) {
   const hits = html.split(from).length - 1;
@@ -113,6 +133,13 @@ if (plantUntypedReadout) {
   plant("a trim readout with no type of its own", READOUT_STYLE,
     'style: { width: 34, textAlign: "right", whiteSpace: "nowrap", '
     + "flexShrink: 0 }");
+}
+if (plantUnlabelledTrim) {
+  plant("a trim with no on-screen label", TRIM_LABEL_ELEMENT, "");
+}
+if (plantShortTrack) {
+  plant("the 58pt track that shipped", TRACK_STYLE,
+    'style: { width: 58, flexShrink: 0, accentColor: "hsl(200,80%,60%)" }');
 }
 
 const failures = [];
@@ -310,6 +337,182 @@ if (!peakFontFamily || !peakFontSize) {
   }
 }
 
+// S6. THE TRIM HAS AN ON-SCREEN LABEL, AND IT LABELS THE TRACK.
+//
+// Every other control in this header is labelled -- LIVE, PRECISION, BARS,
+// RESPONSE, BOTH, the band chip, the zoom readout. The trim shipped carrying
+// only `aria-label` and `title`. Neither is drawn: in a DAW a user met an
+// unlabelled slider beside a meter and had to guess what it moved.
+//
+// The word is asserted to be the host parameter's own name. kOutputTrim is
+// exposed to the host as "Output", so somebody automating it in their DAW
+// reads the same word in both places; a label that said TRIM or GAIN would
+// be a second name for one parameter.
+const labelStyle =
+  /"data-spectr-output-trim-label": true,[\s\S]{0,600}?style: \{([^}]*)\}/
+    .exec(meterBody);
+const labelText =
+  /"data-spectr-output-trim-label": true,[\s\S]{0,900}?\}, "([^"]*)"\)/
+    .exec(meterBody);
+if (!labelStyle || !labelText) {
+  fail("the trim carries no on-screen label; aria-label and title are not "
+    + "drawn, so in a DAW this is an unlabelled slider beside a meter");
+} else {
+  if (labelText[1] !== "OUTPUT") {
+    fail(`the trim's visible label reads ${JSON.stringify(labelText[1])}; it `
+      + 'must read "OUTPUT", the name the host already shows for kOutputTrim, '
+      + "or one parameter has two names");
+  }
+  // Same defect class as S5, on the element added to fix a different one: a
+  // control that declares no type inherits the document body default.
+  const style = labelStyle[1];
+  const family = /fontFamily: "([^"]+)"/.exec(style);
+  const size = /fontSize: (\d+)/.exec(style);
+  if (!peakFontFamily || !peakFontSize) {
+    // already reported by S5
+  } else {
+    if (!family || family[1] !== peakFontFamily[1]) {
+      fail("the trim label does not declare the PEAK button's font family "
+        + `(${JSON.stringify(peakFontFamily[1])}); unstated it inherits the `
+        + "document body face and reads as a different kind of thing from "
+        + "every other word in the header");
+    }
+    if (!size || size[1] !== peakFontSize[1]) {
+      fail("the trim label does not declare the PEAK button's font size "
+        + `(${peakFontSize[1]}); unstated it inherits the document body size`);
+    }
+  }
+  if (!/color: "/.test(style)) {
+    fail("the trim label declares no colour, so it inherits the body default "
+      + "and outshines the readouts it sits among");
+  }
+  // No declared width, so the label can never be a box too small for its own
+  // word -- the failure mode S5 guards for the readout, which DOES need a
+  // fixed box because its value changes width.
+  if (/width: /.test(style)) {
+    fail("the trim label declares a fixed width; it has no reason to, and a "
+      + "box narrower than the word clips it");
+  }
+  if (!/whiteSpace: "nowrap"/.test(style)) {
+    fail("the trim label does not declare whiteSpace nowrap, so it can wrap "
+      + "inside a 26pt-tall header row");
+  }
+  // Order. A label after the track labels the readout, not the control.
+  const labelAt = meterBody.indexOf('"data-spectr-output-trim-label"');
+  const trackAt = meterBody.indexOf('"data-spectr-output-trim":');
+  const readoutAt = meterBody.indexOf('"data-spectr-output-trim-readout"');
+  if (!(labelAt < trackAt && trackAt < readoutAt)) {
+    fail("the cluster is not laid out label -> track -> readout "
+      + `(${labelAt}/${trackAt}/${readoutAt}); a label after the track reads `
+      + "as a caption on the number instead of a name for the control");
+  }
+}
+
+// S7. THE TRACK RESOLVES FINELY ENOUGH TO AIM WITH, MEASURED AGAINST THE
+// PATTERN THIS REPO ALREADY USES.
+//
+// The runtime maps a press to a value across the FULL declared track width
+// under a fixed ~20pt thumb, so resolution is (max - min) / width dB per
+// point and nothing else. It shipped at 58pt:
+//
+//     48 dB / 58pt = 0.828 dB per point
+//
+// -- confirmed through the shipping standalone, where a 25pt drag from the
+// track centre moved the trim 20.5 dB (0.82 measured, the difference being
+// the 0.5 dB step). At 2x that is a 0.5 dB step roughly every device pixel:
+// there is no fine adjustment at all.
+//
+// The bar is Spectr's own Settings slider, whose track is DERIVED from that
+// component's declarations rather than pinned to a literal here, so a
+// deliberate change to the Settings row moves this gate with it.
+const sliderRow = /const SSlider = [\s\S]{0,400}?gap: (\d+), width: (\d+) \}/
+  .exec(html);
+const sliderReadout =
+  /const SSlider = [\s\S]{0,1200}?className: "tnum", style: \{ width: (\d+)/
+    .exec(html);
+const trackStyle =
+  /"data-spectr-output-trim": true,[\s\S]{0,600}?style: \{([^}]*)\}/
+    .exec(meterBody);
+const trackWidth = trackStyle ? /width: (\d+)/.exec(trackStyle[1]) : null;
+const trimMin = /min:\s*(-?\d+)/.exec(meterBody);
+const trimMax = /max:\s*(-?\d+)/.exec(meterBody);
+const trimStep = /step:\s*([\d.]+)/.exec(meterBody);
+if (!sliderRow || !sliderReadout) {
+  fail("the Settings SSlider's own geometry is unreadable, so there is no "
+    + "in-repo pattern to measure the header trim against -- this check "
+    + "would otherwise pass vacuously");
+} else if (!trackWidth || !trimMin || !trimMax || !trimStep) {
+  fail("the trim declares no width/min/max/step, so its resolution cannot be "
+    + "computed at all");
+} else {
+  const settingsTrack =
+    Number(sliderRow[2]) - Number(sliderRow[1]) - Number(sliderReadout[1]);
+  const width = Number(trackWidth[1]);
+  const span = Number(trimMax[1]) - Number(trimMin[1]);
+  const step = Number(trimStep[1]);
+  const dbPerPoint = span / width;
+  const pointsPerStep = step / dbPerPoint;
+  console.log("control   %s %s", "settings track".padEnd(16), settingsTrack);
+  console.log("measured  trim track %dpt -> %s dB/pt, %s pt per %s dB step",
+    width, dbPerPoint.toFixed(3), pointsPerStep.toFixed(2), step);
+  if (width < settingsTrack) {
+    fail(`the trim's ${width}pt track is shorter than the ${settingsTrack}pt `
+      + "track Spectr's own Settings sliders use under the same fixed thumb "
+      + `(${dbPerPoint.toFixed(2)} dB per point against `
+      + `${(span / settingsTrack).toFixed(2)}); it shipped at 58pt and was `
+      + "unusable for fine adjustment");
+  }
+  // Independent floor, in case the Settings row is ever shortened: one
+  // pointer point of travel must never skip a step, or consecutive device
+  // pixels land on non-adjacent values.
+  if (pointsPerStep < 1) {
+    fail(`one ${step} dB step is ${pointsPerStep.toFixed(2)}pt of travel, so `
+      + "a single-point pointer move skips values");
+  }
+}
+
+// S8. AND IT STILL FITS THE GAP IT WAS PLACED IN.
+//
+// The cluster is absolutely positioned at x=282 in the header's empty flex
+// spacer, measured at x=281.7..669.5 with the LIVE button's painted left edge
+// at x=687.5. Lengthening the track is only a fix if the result stays inside
+// that gap -- a track long enough to reach under LIVE trades one defect for a
+// worse one. Computed from the cluster's own declarations so it tracks any
+// later edit to them.
+const clusterLeft =
+  /"data-spectr-output-cluster": true,[\s\S]{0,400}?left: (\d+)/
+    .exec(meterBody);
+const clusterGap = /gap: (\d+),\n\s*flexShrink/.exec(meterBody);
+const peakWidth = /width: (\d+),\n\s*minWidth/.exec(meterBody);
+const readoutWidth = readoutStyle ? /width: (\d+)/.exec(readoutStyle[1]) : null;
+const HEADER_GAP_END = 669.5;
+if (!clusterLeft || !clusterGap || !peakWidth || !readoutWidth || !trackWidth
+    || !labelText) {
+  fail("the cluster's own geometry is unreadable, so whether it still fits "
+    + "the header's measured gap cannot be answered");
+} else {
+  const glyph = Number(peakFontSize ? peakFontSize[1] : 10);
+  // A mono advance is ~0.6em, plus the button's own 0.8pt of tracking. This
+  // estimates "OUTPUT" at 40.8pt against 41.0pt measured from a Skia raster
+  // of the shipping editor, so it is accurate to ~0.2pt -- immaterial against
+  // the ~19pt of headroom the bound below leaves, but it IS an estimate and
+  // not a measurement, which is why the bound is the gap's end and not the
+  // LIVE button's edge 18pt further right.
+  const labelWidth = labelText[1].length * (glyph * 0.6 + 0.8);
+  const right = Number(clusterLeft[1])
+    + Number(peakWidth[1]) + Number(clusterGap[1])
+    + labelWidth + Number(clusterGap[1])
+    + Number(trackWidth[1]) + Number(clusterGap[1])
+    + Number(readoutWidth[1]);
+  console.log("measured  cluster 282..%s against a gap ending %s",
+    right.toFixed(1), HEADER_GAP_END);
+  if (right > HEADER_GAP_END) {
+    fail(`the cluster now ends at ~${right.toFixed(1)}, past the header's `
+      + `measured empty gap (x=281.7..${HEADER_GAP_END}); it crowds or runs `
+      + "under the LIVE/PRECISION group at x=687.5");
+  }
+}
+
 // ----------------------------------------------------------- runtime check
 // Static text cannot tell a hold that rises from one that follows. Execute the
 // leaf's own script block and drive it with frames.
@@ -422,6 +625,33 @@ if (!leafBlock) {
       if (!listeners.has("output_meter")) {
         fail("the leaf never subscribed to output_meter, so nothing can ever "
           + "reach it and every reading below would be vacuous");
+      }
+
+      // R0. THE LABEL IS ACTUALLY RENDERED, not merely declared somewhere in
+      // the source. S6 reads text; this reads the tree the component returns,
+      // so a label parked in a branch nothing takes -- or a component that
+      // returns nothing at all -- is caught here and nowhere else.
+      const labelNode = find(element, (p) => p["data-spectr-output-trim-label"]);
+      if (!labelNode) {
+        fail("the rendered cluster contains no trim label node; it is "
+          + "declared in the source and absent from what a person sees");
+      } else if (flatten(labelNode) !== "OUTPUT") {
+        fail(`the rendered trim label reads ${JSON.stringify(flatten(labelNode))}`);
+      }
+      // ...and it is a SIBLING of the track inside the cluster, not nested in
+      // it, which would make it part of the slider's own hit region.
+      const clusterNode = find(element, (p) => p["data-spectr-output-cluster"]);
+      if (clusterNode) {
+        const kinds = (clusterNode.children || [])
+          .filter((c) => c && typeof c === "object" && c.props)
+          .map((c) => c.props["data-spectr-output-peak"] ? "peak"
+            : c.props["data-spectr-output-trim-label"] ? "label"
+            : c.props["data-spectr-output-trim"] ? "track"
+            : c.props["data-spectr-output-trim-readout"] ? "readout" : "?");
+        if (kinds.join(",") !== "peak,label,track,readout") {
+          fail(`the rendered cluster's children are ${kinds.join(",")}, `
+            + "expected peak,label,track,readout");
+        }
       }
 
       // R1. SILENCE READS "--", NOT "0.0". A meter that prints 0 dBFS for

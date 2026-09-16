@@ -64,6 +64,11 @@ std::vector<std::pair<std::uint32_t, std::string>> expected_host_parameters() {
         {spectr::kParamLfo2Rate, "LFO 2 Rate"},
         {spectr::kParamLfo2Depth, "LFO 2 Depth"},
     });
+    for (std::size_t macro = 0; macro < spectr::kMacroCount; ++macro) {
+        char name[24];
+        std::snprintf(name, sizeof(name), "Macro %zu", macro + 1);
+        expected.emplace_back(spectr::macro_param_id(macro), name);
+    }
     return expected;
 }
 

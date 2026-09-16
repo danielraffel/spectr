@@ -479,6 +479,7 @@ add_executable(Spectr-test
     test/test_preset.cpp
     test/test_snapshot.cpp
     test/test_param_surface.cpp
+    test/test_param_macro.cpp
     test/test_mode_bridge.cpp
     test/test_mask_renderer.cpp
     test/test_tracking_transition.cpp
@@ -1756,6 +1757,32 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --plant-untyped-readout --expect-fail)
     set_tests_properties(Spectr-materialized-output-meter-readout-type-control
+        PROPERTIES TIMEOUT 30)
+    # The trim's on-screen label. It shipped carrying only aria-label and
+    # title -- neither of which a DAW ever draws -- so a user met an
+    # unlabelled slider beside a meter and had to guess what it moved, in a
+    # header where every other control is labelled. This plant removes the
+    # visible label again, so the row is green only when the suite rejects
+    # the state that shipped.
+    add_test(NAME Spectr-materialized-output-meter-trim-label-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-unlabelled-trim --expect-fail)
+    set_tests_properties(Spectr-materialized-output-meter-trim-label-control
+        PROPERTIES TIMEOUT 30)
+    # The trim's resolution. The runtime maps a press across the FULL declared
+    # track width under a fixed ~20pt thumb, so 58pt resolved 0.83 dB per
+    # point -- a 0.5 dB step roughly every device pixel at 2x, measured
+    # through the shipping standalone as 20.5 dB from a 25pt drag. A separate
+    # row from the label because a labelled control that still cannot be
+    # aimed is only half fixed.
+    add_test(NAME Spectr-materialized-output-meter-trim-track-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-short-track --expect-fail)
+    set_tests_properties(Spectr-materialized-output-meter-trim-track-control
         PROPERTIES TIMEOUT 30)
 endif()
 
