@@ -160,8 +160,14 @@ const controls = {
   // document and abort before the check the plant exists to exercise.
   "mute ramp": html.split("rg[i] = smooth(rg[i], ").length - 1,
   "sentinel normalisation": html.split(
-    "const effectiveGains = rg.map((value) => Number.isFinite(value) "
-    + "? clamp(value, -1.02, 1.02) : 0);").length - 1,
+    "const effectiveGains = rg.map((value, index) => Number.isFinite(value) "
+    + "? clamp(macroAdjustedGain(value, index), -1.02, 1.02) : 0);").length - 1,
+  // The needle above carries `macroAdjustedGain` because the shipping painter
+  // routes every displayed gain through the macro overlay. That call is
+  // irrelevant to mute collapse, but the needle must match the painter
+  // EXACTLY or this control reads 0 and the suite refuses to render a verdict
+  // -- which is what it did, correctly, the first time the macro lane changed
+  // this line.
   "mute chip box": html.split("function muteChipRect(i, g) {").length - 1,
   "paint state readback": html.split(
     "gains: Array.from(renderGainsRef.current)").length - 1,
@@ -594,8 +600,8 @@ for (const muteStyle of ["cutout", "collapse"]) {
 // E. The settled state and the #134 chip routing are untouched.
 const settledChecks = {
   "muted bands still normalise to zero height":
-    html.includes("const effectiveGains = rg.map((value) => Number.isFinite(value) "
-      + "? clamp(value, -1.02, 1.02) : 0);"),
+    html.includes("const effectiveGains = rg.map((value, index) => Number.isFinite(value) "
+      + "? clamp(macroAdjustedGain(value, index), -1.02, 1.02) : 0);"),
   "the mute chip still has one shared box": html.includes("function muteChipRect(i, g) {"),
   "a selected muted band still outlines its chip":
     html.includes('if (G.targetMuted && muteStyle === "cutout") {'),
