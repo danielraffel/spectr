@@ -494,6 +494,13 @@ PLANTS = {
     # rule can catch it.
     "stale-param-name": lambda h, a: (
         h, a.replace("**A/B Morph**", "**Morph Position**")),
+    # The Mix target is removed from the guide outright. This plant exists
+    # because the rule could not catch it while presence was a bare
+    # substring: "Mix" lives inside "Mixing", which the Latency section
+    # repeats throughout, so the needle matched prose that has nothing to do
+    # with the parameter. Checking the bold form is what makes it catchable.
+    "lost-mix-target": lambda h, a: (
+        h, a.replace("**Mix** blends Spectr against the untouched signal. ", "")),
     # The recipe's payoff sentence goes, leaving the section describing the
     # morph without ever saying that the untouched bands stay put, which is
     # the whole reason the technique works.
@@ -819,7 +826,12 @@ def main():
                    "and every parameter-name check here is meaningless")
     else:
         for name in PROMISED_PARAMS:
-            if name not in text:
+            # The BOLD form, which is how this copy marks a control the reader
+            # is meant to find. A bare substring is satisfied by ordinary
+            # prose: "Mix" is inside "Mixing", which the Latency section says
+            # a dozen times, so deleting the Mix target entirely left the
+            # check green. Measured before this line was written.
+            if ("**%s**" % name) not in text:
                 bad.append("the guide no longer names %r, which its automation "
                            "guidance promises a user will find in their host"
                            % name)
@@ -829,7 +841,7 @@ def main():
                            "host's parameter list has changed and the guide "
                            "now names a control that cannot be found" % name)
         for (index, suffix), name in sorted(band_names.items()):
-            if name not in text:
+            if ("**%s**" % name) not in text:
                 bad.append("the guide does not quote %r, which is what band %d "
                            "registers its %s under: a reader searching their "
                            "host for the name in the guide finds nothing"

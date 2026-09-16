@@ -2477,7 +2477,7 @@ if(Python3_Interpreter_FOUND)
             # bands stay put under a morph, that mute alone does not blend,
             # and that MIDI CC is the wrong instrument entirely.
             stale-param-name lost-range-guidance
-            lost-mute-caveat lost-midi-answer)
+            lost-mute-caveat lost-midi-answer lost-mix-target)
         add_test(NAME Spectr-materialized-help-overlay-control-${_help_plant}
             COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/help_overlay_contract.py
