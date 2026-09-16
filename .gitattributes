@@ -1,0 +1,12 @@
+# The materialized editor document is a checked-in, minified, single-line JSON
+# artifact (~830 KB). Because it is one physical line, git's default content
+# merge conflicts on ANY two changes to it -- including changes thousands of
+# lines apart once its `html` payload is decoded. `merge=materialized-runtime`
+# routes it to tools/git/merge_materialized_runtime.py, which merges the
+# decoded payload and refuses anything it cannot compose safely.
+#
+# The driver is per-clone configuration, so enable it once with:
+#     tools/git/install-merge-driver.sh
+# Until you do, git falls back to its normal conflict behaviour for this path.
+# Nothing breaks without it; you just keep conflicting.
+native-ui/materialized/materialized-document.runtime.json merge=materialized-runtime
