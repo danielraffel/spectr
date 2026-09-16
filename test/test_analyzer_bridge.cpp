@@ -256,3 +256,108 @@ TEST_CASE("Analyzer bridge: silence in → silence published") {
         CHECK(spec.magnitude_db[k] == Approx(spec.floor_db).margin(0.001f));
     }
 }
+
+// ── The output-level readout ────────────────────────────────────────────────
+//
+// The product claim is "this is the level Spectr handed the host", and the one
+// thing that can make it false is reading the meter from the wrong side of the
+// output trim. `bridge_.process()` is fed the post-trim buffer in both render
+// paths, so these gates read the trim BACK out of the published level: a
+// change of the trim alone, with the input untouched, has to move the readout
+// by exactly that many dB.
+//
+// Every assertion here is a NUMBER, not a flag. A readout suite that checks
+// "a level is published" passes on a meter wired to the pre-trim buffer, which
+// is the whole defect class.
+
+namespace {
+
+/// Feed a settled tone at `amplitude` with `trim_db` in force and report the
+/// published reading. Mix is left at its default (fully wet) and the mask flat,
+/// so the only thing between the tone and the meter is the trim.
+spectr::Spectr::OutputLevelReading level_after_tone(float amplitude,
+                                                    float trim_db) {
+    PreparedSpectr s{};
+    s.store.set_value(spectr::kOutputTrim, trim_db);
+    feed_sine(*s.processor, 1000.0, 256, settled_samples(), amplitude);
+    drain_analyzer(*s.processor);
+    return s.processor->read_output_level();
+}
+
+} // namespace
+
+TEST_CASE("output level: the readout is measured after the output trim",
+          "[output-level]") {
+    // -12 dBFS in. The tone is a sine, so its sample peak IS its amplitude,
+    // which makes the expected dBFS figure exact rather than approximate.
+    constexpr float kAmplitude = 0.25119f;   // -12 dBFS
+    constexpr float kInputDb   = -12.0f;
+
+    const auto unity = level_after_tone(kAmplitude, 0.0f);
+    CAPTURE(unity.peak_db, unity.trim_db, unity.over);
+    REQUIRE(std::isfinite(unity.peak_db));
+    CHECK(unity.trim_db == Approx(0.0f).margin(1.0e-6f));
+    CHECK(unity.peak_db == Approx(kInputDb).margin(0.35f));
+    CHECK_FALSE(unity.over);
+
+    // The load-bearing pair. Nothing about the input changed; only the trim.
+    // A meter reading the pre-trim buffer returns the SAME number for both,
+    // which is exactly what this difference refuses.
+    for (const float trim_db : {-9.0f, -3.0f, 6.0f, 9.0f}) {
+        const auto trimmed = level_after_tone(kAmplitude, trim_db);
+        CAPTURE(trim_db, trimmed.peak_db, trimmed.trim_db);
+        REQUIRE(std::isfinite(trimmed.peak_db));
+        CHECK(trimmed.trim_db == Approx(trim_db).margin(1.0e-6f));
+        CHECK(trimmed.peak_db - unity.peak_db == Approx(trim_db).margin(0.35f));
+    }
+}
+
+TEST_CASE("output level: a trim that pushes past full scale reads over",
+          "[output-level]") {
+    // -12 dBFS in with +18 dB of trim is +6 dBFS out. Spectr clips nothing
+    // itself -- it is float end to end -- so the sample values really do pass
+    // 1.0 and this is the condition anything fixed-point downstream distorts
+    // under. That is what the editor labels OVER.
+    constexpr float kAmplitude = 0.25119f;
+
+    const auto hot = level_after_tone(kAmplitude, 18.0f);
+    CAPTURE(hot.peak_db, hot.over);
+    REQUIRE(std::isfinite(hot.peak_db));
+    CHECK(hot.peak_db == Approx(6.0f).margin(0.35f));
+    CHECK(hot.over);
+
+    // NEGATIVE CONTROL, same stimulus. The identical tone with a trim that
+    // leaves headroom must NOT report over -- otherwise "over" would be a
+    // constant and the gate above would pass on a stuck flag.
+    const auto safe = level_after_tone(kAmplitude, 6.0f);
+    CAPTURE(safe.peak_db, safe.over);
+    CHECK(safe.peak_db == Approx(-6.0f).margin(0.35f));
+    CHECK_FALSE(safe.over);
+}
+
+TEST_CASE("output level: digital silence reads as -inf, never as 0 dBFS",
+          "[output-level]") {
+    // A meter that reports 0 for silence cannot be told apart from one
+    // reporting full scale, and the editor prints "--" only because this is
+    // non-finite. Feeding a real, settled silence is the point: the readout
+    // has to survive the path, not just an unprepared default.
+    PreparedSpectr s{};
+    s.store.set_value(spectr::kOutputTrim, 0.0f);
+    feed_sine(*s.processor, 1000.0, 256, settled_samples(), 0.0f);
+    drain_analyzer(*s.processor);
+
+    const auto silent = s.processor->read_output_level();
+    CAPTURE(silent.peak_db, silent.over);
+    CHECK_FALSE(std::isfinite(silent.peak_db));
+    CHECK(silent.peak_db < 0.0f);
+    CHECK_FALSE(silent.over);
+
+    // CONTROL on the instrument: the same fixture with real audio in it has to
+    // publish a finite level, or "not finite" above would be a fact about the
+    // fixture rather than about silence.
+    PreparedSpectr loud{};
+    loud.store.set_value(spectr::kOutputTrim, 0.0f);
+    feed_sine(*loud.processor, 1000.0, 256, settled_samples(), 0.5f);
+    drain_analyzer(*loud.processor);
+    CHECK(std::isfinite(loud.processor->read_output_level().peak_db));
+}
