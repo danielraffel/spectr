@@ -1494,6 +1494,20 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-clip-label --expect-fail)
     set_tests_properties(Spectr-materialized-output-meter-clip-label-control
         PROPERTIES TIMEOUT 30)
+    # The readout's own type. It shipped declaring no font at all, so it
+    # inherited the document body default while the PEAK button 14pt away
+    # declared var(--mono)/10/rgba(255,255,255,0.72): rastered through the
+    # shipping native editor its ink measured 11.0pt against 7.5pt for every
+    # other readout in the header, and `+12.0` painted a 37pt run inside its
+    # own 34pt box. This plant restores exactly that document, so the row is
+    # green only when the suite rejects the state that merged.
+    add_test(NAME Spectr-materialized-output-meter-readout-type-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-untyped-readout --expect-fail)
+    set_tests_properties(Spectr-materialized-output-meter-readout-type-control
+        PROPERTIES TIMEOUT 30)
 endif()
 
 # Morph moves the viewport, not just the bands.
