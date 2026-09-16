@@ -122,9 +122,13 @@ public:
 /// answerable without re-deriving the clamp rule at the call site.
 struct TrackingTransitionGeometry {
     int edges_considered    = 0;  ///< Edges examined.
-    int edges_shaped        = 0;  ///< Edges given a non-zero transition.
-    int narrowest_half_width = 0; ///< Smallest realised half-width, in bins.
-    int widest_half_width    = 0; ///< Largest realised half-width, in bins.
+    int edges_shaped        = 0;  ///< Edges given a transition at least a bin wide.
+    /// Realised half-widths, in bins, and FRACTIONAL: an edge sits between
+    /// bins, so the width its clamps leave it is a fraction too. Reporting a
+    /// rounded integer here would hide exactly the sub-bin detail the placement
+    /// exists to carry.
+    double narrowest_half_width = 0.0; ///< Smallest realised half-width.
+    double widest_half_width    = 0.0; ///< Largest realised half-width.
 };
 
 /// Shape a transition into every drawn band edge of a compiled magnitude.
@@ -148,7 +152,18 @@ struct TrackingTransitionGeometry {
 /// the array, so transitions can touch but never overlap, and an edge with no
 /// room is left exactly as it was. A band too narrow to hold a transition
 /// therefore degrades continuously back to the unshaped step rather than
-/// trading its depth for a smear.
+/// trading its depth for a smear. The floor on "no room" is one whole bin
+/// either side of the edge: anything narrower rewrites a single bin, which
+/// moves a step rather than removing one.
+///
+/// Edges are placed at their exact FRACTIONAL position on the design grid, not
+/// rounded to a whole bin. Under a continuous viewport drag a rounded edge
+/// holds still and then jumps, and because the realisation is minimum phase
+/// each whole-bin magnitude jump moves phase across the entire spectrum — a
+/// staircase in phase, audible as pitch wobble. A fractional centre makes the
+/// same drag a glide. The linear-phase mode has no such term: its phase is
+/// identically zero however its edges are placed, which is why only this
+/// realisation's own shaping step needs to carry the fraction.
 ///
 /// Shaping happens in the log domain against `magnitude_floor`, which must be
 /// the same floor the reconstruction is given: a transition that ran to a

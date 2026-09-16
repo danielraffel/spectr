@@ -3,6 +3,7 @@
 #include "spectr/mask_renderer.hpp"
 
 #include <pulp/signal/fft.hpp>
+#include <pulp/signal/fir_design.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 
 #include <algorithm>
@@ -237,6 +238,181 @@ constexpr double kUnshapedSupDb[32] = {
 /// without room to deepen it, and this is the bound on that.
 constexpr double kRegressionAllowanceDb = 1.0;
 
+// ── The drag instrument ────────────────────────────────────────────────────
+
+/// The design path, replicated from ZeroLatencyMaskRenderer::design_and_stage_:
+/// compile the layout, shape its drawn edges, reconstruct the causal impulse.
+/// Replicated rather than driven through the renderer because a drag is
+/// HUNDREDS of designs and the renderer stages each one through a worker, a
+/// convolver and a swap — none of which this measures. The control
+/// "The in-test design path is the renderer's design path" proves the
+/// replication is the shipping one before any drag is read.
+///
+/// `quantise_edges` rounds every edge onto a whole design bin first, which is
+/// how this shaping placed its edges before sub-bin placement. It is the plant:
+/// the defect this gate exists to reject, reintroduced through the function's
+/// own public input rather than by editing it.
+std::vector<float> design_taps(const pulp::signal::SpectralBandLayout& layout,
+                               bool quantise_edges) {
+    pulp::signal::SpectralMaskTable table;
+    REQUIRE(pulp::signal::build_spectral_mask(
+        layout, kGrid, static_cast<float>(kSampleRate), table));
+
+    std::vector<double> magnitudes(static_cast<std::size_t>(table.num_bins));
+    for (std::size_t i = 0; i < magnitudes.size(); ++i)
+        magnitudes[i] = static_cast<double>(table.gain_linear[i]);
+
+    const auto edge_count = static_cast<std::size_t>(table.active_bands) + 1u;
+    std::vector<float> edges(table.band_edges_hz.data(),
+                             table.band_edges_hz.data()
+                                 + static_cast<std::ptrdiff_t>(edge_count));
+    if (quantise_edges)
+        for (auto& hz : edges)
+            hz = static_cast<float>(std::round(static_cast<double>(hz) / kBinHz)
+                                    * kBinHz);
+
+    (void)spectr::shape_tracking_transitions(magnitudes, edges, kBinHz,
+                                             kShippingHalfWidthBins, kFloor);
+
+    pulp::signal::MinimumPhaseFirOptions options;
+    options.coefficient_count   = static_cast<std::size_t>(kGrid);
+    options.log_magnitude_floor = kFloor;
+    const auto result = pulp::signal::reconstruct_minimum_phase_fir(magnitudes, options);
+    REQUIRE(result);
+
+    std::vector<float> taps(static_cast<std::size_t>(kGrid), 0.0f);
+    const auto n = std::min(taps.size(), result.coefficients.size());
+    for (std::size_t i = 0; i < n; ++i)
+        taps[i] = static_cast<float>(result.coefficients[i]);
+    return taps;
+}
+
+/// Exact DTFT of a finite impulse at one frequency, by incremental rotation.
+/// Exact because the sum is finite and every tap is included: no window, no
+/// grid, nothing to interpolate.
+std::complex<double> response_at(const std::vector<float>& taps, double hz) {
+    const double w = 2.0 * kPi * hz / kSampleRate;
+    const std::complex<double> step{std::cos(-w), std::sin(-w)};
+    std::complex<double> rotor{1.0, 0.0};
+    std::complex<double> acc{0.0, 0.0};
+    for (float tap : taps) {
+        acc += static_cast<double>(tap) * rotor;
+        rotor *= step;
+    }
+    return acc;
+}
+
+/// The frequencies the drag is read at. All six stay inside the viewport for
+/// the whole gesture, so every reading is about the filter moving underneath a
+/// tone rather than about a tone leaving the field.
+constexpr double kProbeHz[] = {500.0, 707.0, 1000.0, 1414.0, 2000.0, 2828.0};
+constexpr int    kProbes    = 6;
+
+/// The rate the editor publishes a layout at while a viewport drag is in
+/// flight, and therefore the rate the design is re-staged at.
+constexpr double kPublishHz = 120.0;
+
+/// What one probe tone experiences across a drag.
+///
+/// A carrier at f0 leaving a filter whose phase is phi(t) comes out at
+/// f0 + (1/2pi) dphi/dt: the phase trajectory IS a frequency modulation, and
+/// this reads it in Hz without an estimator, a window, or any audio. Mixing's
+/// phase is identically zero however its edges land, so Mixing reads exactly
+/// zero here — which is what makes it the reference rather than merely the
+/// other mode.
+struct Wobble {
+    double peak_hz   = 0.0;  ///< Largest frequency excursion over one publish.
+    double rms_hz    = 0.0;
+    double step_ratio = 0.0; ///< peak |dphi| / mean |dphi|: 1 is a glide.
+};
+
+enum class DragMode { tracking, mixing };
+
+/// Zoom the viewport from `oct0` to `oct1` octaves about 1 kHz over `seconds`,
+/// publishing at the editor's rate, and read every probe tone's frequency
+/// modulation. `quantise` plants whole-bin edge placement.
+std::vector<Wobble> measure_drag(DragMode mode, double oct0, double oct1,
+                                 double seconds, bool quantise) {
+    const int steps = static_cast<int>(std::lround(seconds * kPublishHz)) + 1;
+    const double dt = 1.0 / kPublishHz;
+
+    std::vector<double> previous(kProbes, 0.0);
+    std::vector<double> unwrapped(kProbes, 0.0);
+    std::vector<std::vector<double>> delta(kProbes);
+
+    for (int step = 0; step < steps; ++step) {
+        const double t01 = static_cast<double>(step) / (steps - 1);
+        const double octaves = oct0 + (oct1 - oct0) * t01;
+        const auto layout = make_layout(
+            static_cast<float>(1000.0 * std::pow(2.0, -octaves * 0.5)),
+            static_cast<float>(1000.0 * std::pow(2.0, +octaves * 0.5)), 32,
+            -1, nullptr);
+
+        // The comb: the factory pattern the wobble was reported on, and the
+        // worst case by construction. Every tooth contributes a pair of edges
+        // and minimum phase sums them, which is why a single moving edge reads
+        // at the floor while this reads far above it.
+        auto comb = layout;
+        for (std::uint32_t b = 0; b < 32; ++b)
+            comb.bands[b].gain_db = (b % 3 == 0) ? 9.6f : -14.4f;
+
+        std::vector<float> taps;
+        std::vector<double> mixing_gain;
+        if (mode == DragMode::tracking) {
+            taps = design_taps(comb, quantise);
+        } else {
+            // Mixing realises the drawn magnitude itself: a real, non-negative
+            // mask applied per frame. Its response is that number, and its
+            // phase is the argument of a positive real — zero.
+            pulp::signal::SpectralMaskTable table;
+            REQUIRE(pulp::signal::build_spectral_mask(
+                comb, kGrid, static_cast<float>(kSampleRate), table));
+            mixing_gain.assign(static_cast<std::size_t>(table.num_bins), 0.0);
+            for (std::size_t i = 0; i < mixing_gain.size(); ++i)
+                mixing_gain[i] = static_cast<double>(table.gain_linear[i]);
+        }
+
+        for (int p = 0; p < kProbes; ++p) {
+            double phase = 0.0;
+            if (mode == DragMode::tracking) {
+                phase = std::arg(response_at(taps, kProbeHz[p]));
+            } else {
+                const auto bin = static_cast<std::size_t>(
+                    std::llround(kProbeHz[p] / kBinHz));
+                phase = std::arg(std::complex<double>(
+                    bin < mixing_gain.size() ? mixing_gain[bin] : 0.0, 0.0));
+            }
+            if (step > 0) {
+                double d = phase - previous[static_cast<std::size_t>(p)];
+                while (d >  kPi) d -= 2.0 * kPi;
+                while (d < -kPi) d += 2.0 * kPi;
+                unwrapped[static_cast<std::size_t>(p)] += d;
+                delta[static_cast<std::size_t>(p)].push_back(d);
+            }
+            previous[static_cast<std::size_t>(p)] = phase;
+        }
+    }
+
+    std::vector<Wobble> out(kProbes);
+    for (int p = 0; p < kProbes; ++p) {
+        const auto& d = delta[static_cast<std::size_t>(p)];
+        double peak = 0.0, sum_sq = 0.0, sum_abs = 0.0;
+        for (double v : d) {
+            peak = std::max(peak, std::abs(v));
+            sum_sq += v * v;
+            sum_abs += std::abs(v);
+        }
+        const double n = static_cast<double>(d.size());
+        const double to_hz = 1.0 / (2.0 * kPi * dt);
+        auto& w = out[static_cast<std::size_t>(p)];
+        w.peak_hz = peak * to_hz;
+        w.rms_hz  = std::sqrt(sum_sq / n) * to_hz;
+        const double mean_abs = sum_abs / n;
+        w.step_ratio = mean_abs > 0.0 ? peak / mean_abs : 1.0;
+    }
+    return out;
+}
+
 } // namespace
 
 // ── The claim ──────────────────────────────────────────────────────────────
@@ -465,3 +641,125 @@ TEST_CASE("Transition shaping leaves an ordinary EQ curve where it was drawn",
     REQUIRE(worst_centre <= 0.6);
     REQUIRE(worst_across <= 4.59);   // the unshaped design is the floor
 }
+
+// ── A viewport drag must be a glide, not a staircase ───────────────────────
+
+TEST_CASE("The in-test design path is the renderer's design path",
+          "[mask-renderer][transition][wobble]") {
+    // The drag gate below reads hundreds of designs, which is why it designs
+    // them itself instead of staging each through the renderer. That shortcut
+    // is only honest if the two paths agree, so prove it here — against the
+    // SHIPPING renderer, measured through audio, on the same field.
+    double gains[32];
+    for (int b = 0; b < 32; ++b) gains[b] = (b % 3 == 0) ? 9.6 : -14.4;
+    const auto comb = make_layout(20.0f, 20000.0f, 32, -1, gains);
+    const auto flat = make_layout(20.0f, 20000.0f, 32);
+
+    const auto rendered_comb = spectrum(comb);
+    const auto rendered_flat = spectrum(flat);
+    const auto designed_comb = design_taps(comb, false);
+    const auto designed_flat = design_taps(flat, false);
+
+    double worst = 0.0;
+    for (double f : kProbeHz) {
+        // Read BOTH at the analysis bin's own centre frequency. The renderer is
+        // measured on a 0.73 Hz grid, and several probes sit on a transition
+        // slope steep enough that the 0.24 Hz between a probe and its nearest
+        // bin is worth 0.1 dB — a disagreement about where, not about what.
+        const int bin = bin_of(f);
+        const double exact = static_cast<double>(bin) * kSampleRate / kAnalysis;
+        const double rendered = db_at(rendered_comb, rendered_flat, bin);
+        const double designed =
+            20.0 * std::log10(std::abs(response_at(designed_comb, exact))
+                              / std::abs(response_at(designed_flat, exact)));
+        std::printf("  %7.1f Hz: renderer %8.3f dB   in-test %8.3f dB   %+.4f\n",
+                    exact, rendered, designed, designed - rendered);
+        worst = std::max(worst, std::abs(designed - rendered));
+    }
+    std::printf("in-test design vs renderer: worst %.4f dB\n", worst);
+    REQUIRE(worst < 0.05);
+}
+
+TEST_CASE("A viewport drag moves Tracking's phase as a glide rather than a staircase",
+          "[mask-renderer][transition][wobble]") {
+    // WHAT THIS IS FOR. Tracking reconstructs a minimum-phase impulse, so its
+    // phase is a function of the WHOLE log-magnitude curve: change the design
+    // anywhere and phase moves everywhere. A viewport drag redesigns 120 times
+    // a second, and if each redesign is a discrete jump rather than a small
+    // step, the tone sitting under the filter is frequency-modulated. That is
+    // audible as pitch wobble, and it was invisible to every other gate here,
+    // all of which hold the viewport still and measure one design.
+    //
+    // Mixing is the reference: it realises the drawn magnitude directly, with
+    // no reconstruction, so its phase is identically zero and it CANNOT wobble.
+    // That is exactly the difference a listener reports between the two modes.
+    const bool plant = planted("whole-bin-edges");
+    require_plant_arrived(plant);
+
+    // 6 -> 5 octaves about 1 kHz over 4 s: a quarter-octave per second, an
+    // unhurried drag, with every probe tone well inside the viewport throughout.
+    constexpr double kOct0 = 6.0, kOct1 = 5.0, kSeconds = 4.0;
+
+    // ── Control 1: standing still. ─────────────────────────────────────────
+    // The instrument must attribute nothing to a viewport that does not move.
+    // Without this, a reading could be an artifact of redesigning at all.
+    const auto frozen = measure_drag(DragMode::tracking, kOct0, kOct0, kSeconds, false);
+    double frozen_peak = 0.0;
+    for (const auto& w : frozen) frozen_peak = std::max(frozen_peak, w.peak_hz);
+    std::printf("\nfrozen viewport, Tracking: peak FM %.6f Hz (the floor)\n",
+                frozen_peak);
+    REQUIRE(frozen_peak < 1.0e-9);
+
+    // ── Control 2: Mixing, the mode this is measured against. ──────────────
+    const auto mixing = measure_drag(DragMode::mixing, kOct0, kOct1, kSeconds, false);
+    double mixing_peak = 0.0;
+    for (const auto& w : mixing) mixing_peak = std::max(mixing_peak, w.peak_hz);
+    std::printf("Mixing, same drag:         peak FM %.6f Hz (zero by construction)\n",
+                mixing_peak);
+    REQUIRE(mixing_peak == 0.0);
+
+    // ── Subject. ───────────────────────────────────────────────────────────
+    const auto tracking = measure_drag(DragMode::tracking, kOct0, kOct1, kSeconds, plant);
+
+    double worst_peak = 0.0, worst_ratio = 0.0, worst_cents = 0.0;
+    std::printf("%s comb, 6->5 oct over %.0f s (0.25 oct/s), published at %.0f Hz\n"
+                "   probe      peak FM      rms FM    cents   step ratio\n",
+                plant ? "PLANTED whole-bin edges," : "Sub-bin edges,",
+                kSeconds, kPublishHz);
+    for (int p = 0; p < kProbes; ++p) {
+        const auto& w = tracking[static_cast<std::size_t>(p)];
+        // Cents, because that is the unit the excursion is HEARD in: the same
+        // number of Hz is a large detuning at 500 Hz and a small one at 2828.
+        const double cents =
+            1200.0 * std::log2(1.0 + w.peak_hz / kProbeHz[p]);
+        std::printf("  %6.0f Hz  %9.3f Hz %9.3f Hz %8.2f %9.2f\n",
+                    kProbeHz[p], w.peak_hz, w.rms_hz, cents, w.step_ratio);
+        worst_peak  = std::max(worst_peak, w.peak_hz);
+        worst_ratio = std::max(worst_ratio, w.step_ratio);
+        worst_cents = std::max(worst_cents, cents);
+    }
+    std::printf("  worst: peak FM %.3f Hz (%.2f cents), step ratio %.2f\n",
+                worst_peak, worst_cents, worst_ratio);
+
+    // The two gates, and the measured ground they sit on. Whole-bin placement
+    // reads 7.08 Hz peak and a step ratio of 33.5 on this gesture; sub-bin
+    // placement reads 0.79 Hz and 2.54. Each threshold is about the geometric
+    // mean of the pair, so it has roughly 3x of headroom in both directions
+    // rather than sitting against either. Nothing here is timed, threaded or
+    // sampled, so there is no variance for the margin to absorb — it is there
+    // for a future design change, not for noise.
+    constexpr double kPeakFmGateHz   = 2.5;
+    constexpr double kStepRatioGate  = 9.0;
+
+    if (plant) {
+        // Asserted SEPARATELY: one REQUIRE_FALSE over the conjunction would be
+        // a single assertion satisfied by whichever rule happened to trip,
+        // leaving the other undemonstrated.
+        REQUIRE(worst_peak  > kPeakFmGateHz);
+        REQUIRE(worst_ratio > kStepRatioGate);
+        return;
+    }
+    REQUIRE(worst_peak  <= kPeakFmGateHz);
+    REQUIRE(worst_ratio <= kStepRatioGate);
+}
+
