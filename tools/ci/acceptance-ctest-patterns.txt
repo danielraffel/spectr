@@ -164,11 +164,16 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # NONE of the lines above reaches them: the Catch2 names start with "A viewport
 # drag" and "The in-test design path", and the CTest row is
 # `Spectr-tracking-drag-glide-negative-control`, which `^Spectr-tracking-
-# transition` does not match. Measured, not guessed -- the acceptance
-# alternation selected 10 of the 15 tracking/transition rows and exactly these
-# three were missing. The drag gate is the only one here that measures a
-# GESTURE rather than one settled design, so nothing else in this file can
-# report its absence.
+# transition` does not match. Measured, not guessed: without these three lines
+# the alternation leaves the one gate here that measures a GESTURE rather than
+# a settled design unselected, so it has never run, and nothing else in this
+# file can report its absence. With them the alternation selects all 16
+# tracking and transition rows the suite registers -- counted, not assumed.
+#
+# `^"?The in-test design path` deliberately selects BOTH cases beginning that
+# way: the renderer-equivalence control and the shipping-geometry restatement
+# control. They guard different halves of the same claim and neither is
+# reachable by any other line here.
 ^"?A viewport drag moves Tracking
 ^"?The in-test design path
 ^Spectr-tracking-drag-glide
