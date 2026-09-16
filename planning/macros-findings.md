@@ -146,3 +146,47 @@ Artifact restored afterwards and re-verified: the patch script reports
 ## Gate
 Run 35057383424, event `pull_request`, head_sha 31ab891 — matches HEAD exactly,
 so the docs push re-triggered rather than leaving a stale-SHA validation.
+
+## The context-menu rows were MEASURED and WITHDRAWN (second rebase, base 946cd2e)
+Both contested menu lanes landed while this was in flight: #150 (shortcuts and
+dismissal) and #154 (menu-item validation, which added
+`tools/menu_scenario_check.py` -- a gate that drives every named band-menu row
+in the real standalone and judges it on the state it changes).
+
+The macro rows were applied and driven through that gate:
+  - origin/main's artifact, same binary: 19 checks, 0 failures
+  - with the macro rows:                 19 checks, 6 failures
+Two failures are presses landing on the WRONG row (`Zero selection` and
+`Sculpt` fire something else). Three are structural child counts the gate pins
+exactly (17 rows with a selection live, 14 without) -- any added row breaks
+those at any position, so tail placement does not help.
+
+Root cause is upstream: the menu container carries a stale layout solve and
+does not grow when children are added. Not this lane's to fix -- but not a
+licence to regress a surface two lanes had just repaired either.
+
+WITHDRAWN. The bridge command `macro_set_members` stays, with its validation
+and tests, so the affordance is one patch away. The patch script's docstring
+records exactly what was removed and instructs the next author to RE-MEASURE
+with the menu gate rather than assume the pinned misaim map still holds.
+
+Honest consequence: until that follow-up lands there is no in-product way to
+ASSIGN a macro. Parameters are live and automatable and the drag re-route works
+for any macro that has members; membership can only be set via the bridge today.
+
+## Third-party test suites this lane had to re-point (all caught by the gate)
+Routing every displayed gain through `macroAdjustedGain` moved three lines that
+other suites quote verbatim. Each refused to render a verdict rather than
+reporting a pass it could not prove -- the gate working exactly as designed:
+  - materialized_curve_edge_span: two plants reported "found 0 sites,
+    expected 1" (exit 2). All four plant strings now carry the macro call on
+    BOTH sides so each plant changes only its own geometry. Five plants
+    re-verified to exit 1.
+  - materialized_mute_collapse_direction: its own `sentinel normalisation`
+    CONTROL read 0 and the suite aborted by design. Needle updated at 2 sites.
+  - materialized_band_readout: lifts the readout source into an isolated scope
+    where `macroAdjustedGain` was a free identifier -> ReferenceError. The
+    harness now supplies the rule FAITHFULLY, and a new assertion checks that a
+    macro offset moves the readout and is NOT double-counted while the
+    modulation overlay owns the paint refs. Confirmed failing when the rule is
+    reduced to the identity.
