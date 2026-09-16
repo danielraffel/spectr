@@ -12,6 +12,7 @@
 #include <pulp/view/hover_cursor.hpp>
 #include <pulp/view/input_events.hpp>
 #include <pulp/view/layout_snapshot.hpp>
+#include <pulp/view/overlay_dismissal.hpp>
 #include <pulp/view/pointer_dispatch.hpp>
 #include <pulp/view/ui_components.hpp>
 #include <pulp/view/view.hpp>
@@ -20,6 +21,104 @@
 #include <choc/text/choc_JSON.h>
 
 #include "spectr_native_assets_data.hpp"
+
+// ── Band context menu, addressed from the SHIPPING standalone ───────────
+//
+// A row is found by the text painted on it and pressed at the pixels that
+// text occupies, because that is the only thing a human can do. Every other
+// way this menu has ever been driven -- SPECTR_CLICK, and every ctest over
+// it -- resolves a row by CSS selector and never consults `hit_test`, so it
+// drives rows a pointer cannot reach and reports them working.
+namespace spectr_menu_probe {
+
+pulp::view::View* nearest_clickable(pulp::view::View* view) {
+    for (auto* node = view; node != nullptr; node = node->parent())
+        if (node->on_click) return node;
+    return nullptr;
+}
+
+void root_origin_of(const pulp::view::View& view, float& x, float& y) {
+    x = 0.0f;
+    y = 0.0f;
+    for (const auto* node = &view; node != nullptr; node = node->parent()) {
+        x += node->bounds().x;
+        y += node->bounds().y;
+    }
+}
+
+const pulp::view::Label* find_label_if(
+        const pulp::view::View& view,
+        bool (*match)(const std::string&, const std::string&),
+        const std::string& needle) {
+    if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+        label != nullptr && match(label->text(), needle))
+        return label;
+    for (std::size_t i = 0; i < view.child_count(); ++i)
+        if (const auto* hit = find_label_if(*view.child_at(i), match, needle))
+            return hit;
+    return nullptr;
+}
+
+bool ends_with(const std::string& text, const std::string& suffix) {
+    return text.size() >= suffix.size()
+        && text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// The group header the menu always draws, "BAND <n>", used to scope every
+// row lookup to the menu rather than to an editor that also paints the words
+// "Solo" and "Level" elsewhere.
+bool is_band_header(const std::string& text, const std::string&) {
+    if (text.rfind("BAND ", 0) != 0 || text.size() < 6) return false;
+    for (std::size_t i = 5; i < text.size(); ++i)
+        if (text[i] < '0' || text[i] > '9') return false;
+    return true;
+}
+
+pulp::view::View* menu_container(pulp::view::View& root, int& band_number) {
+    band_number = -1;
+    const auto* header = find_label_if(root, is_band_header, std::string{});
+    if (header == nullptr) return nullptr;
+    band_number = std::atoi(header->text().c_str() + 5);
+    for (auto* node = const_cast<pulp::view::Label*>(header)->parent();
+         node != nullptr; node = node->parent())
+        if (node->child_count() >= 8) return node;
+    return nullptr;
+}
+
+struct RowAim {
+    bool found = false;
+    pulp::view::View* row = nullptr;
+    float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+    float cx = 0.0f, cy = 0.0f;
+};
+
+RowAim aim_row(pulp::view::View& scope, const std::string& suffix) {
+    RowAim aim;
+    const auto* label = find_label_if(scope, ends_with, suffix);
+    if (label == nullptr) return aim;
+    auto* live = const_cast<pulp::view::Label*>(label);
+    aim.found = true;
+    aim.row = nearest_clickable(live);
+    root_origin_of(*live, aim.x, aim.y);
+    aim.w = live->bounds().width;
+    aim.h = live->bounds().height;
+    aim.cx = aim.x + aim.w * 0.5f;
+    aim.cy = aim.y + aim.h * 0.5f;
+    return aim;
+}
+
+std::string json_escape(const std::string& in) {
+    std::string out;
+    for (char c : in) {
+        if (c == '"' || c == '\\') { out.push_back('\\'); out.push_back(c); }
+        else if (static_cast<unsigned char>(c) < 0x20) out += " ";
+        else out.push_back(c);
+    }
+    return out;
+}
+
+}  // namespace spectr_menu_probe
+
 
 #include <atomic>
 #include <algorithm>
@@ -1679,6 +1778,368 @@ bool Spectr::tick_native_analyzer_(float dt) {
             std::ofstream file(gesture_out);
             file << out.str();
             gesture_probe_done_ = true;
+        }
+    }
+
+    // ── Band-menu scenario runner (standalone) ──────────────────────────
+    //
+    // The band context menu could not be driven by ANY existing harness in
+    // this repo: the gesture probe above is single-tick and left-button only,
+    // so it can neither open the menu (that needs a context press) nor wait
+    // the frames a React commit and a relayout take. Every gate over this menu
+    // therefore drove it by CSS selector, which never consults `hit_test` --
+    // and a selector happily "presses" a row no pointer can reach, which is
+    // exactly this menu's failure mode.
+    //
+    // This runs one step per `SPECTR_MENU_SCENARIO_DELAY` ticks in the real
+    // shipping standalone, and after every step records what a human could
+    // see and what the DSP actually got: whether the menu is mounted, the
+    // container's rect, every row's painted rect and whether a press at that
+    // rect's centre resolves inside that same row, plus the band field, the
+    // edit-mode parameter and the viewport.
+    //
+    // Steps (semicolon-separated, `name=kind[:arg]`):
+    //   rpress:x,y     a context press -- the call the platform host makes on
+    //                  a right-click, which is the only way this menu opens
+    //   press:x,y      a left click at root coordinates (down then up)
+    //   row:LABEL      a left click at the painted centre of the row whose
+    //                  label ENDS WITH LABEL, resolved from the live tree at
+    //                  that moment. The honest driver: it is where the words
+    //                  the user is reading actually are.
+    //   escape         the host's own Escape route for an active overlay
+    //   outside:x,y    the host's own outside-press route
+    //   param:ID=V     a host parameter write (arrangement, never a verdict)
+    //   wait           nothing at all -- the ambient control
+    if (settings_fixture_scrolled_ && !menu_scenario_done_
+        && native_editor_root_ != nullptr) {
+        const auto* spec = std::getenv("SPECTR_MENU_SCENARIO");
+        const auto* out_path = std::getenv("SPECTR_MENU_SCENARIO_OUT");
+        if (spec != nullptr && *spec != '\0'
+            && out_path != nullptr && *out_path != '\0') {
+            if (menu_scenario_steps_.empty()) {
+                std::string_view rest{spec};
+                while (!rest.empty()) {
+                    const auto semi = rest.find(';');
+                    const auto one = rest.substr(0, semi);
+                    if (semi == std::string_view::npos) rest = {};
+                    else rest.remove_prefix(semi + 1);
+                    if (!one.empty()) menu_scenario_steps_.emplace_back(one);
+                }
+                menu_scenario_json_ = "{\"schema\":\"spectr-menu-scenario-v1\","
+                                      "\"steps\":[";
+                if (const auto* delay = std::getenv("SPECTR_MENU_SCENARIO_DELAY"))
+                    menu_scenario_delay_ = std::max(1, std::atoi(delay));
+            }
+            if (++menu_scenario_tick_ >= menu_scenario_delay_) {
+                menu_scenario_tick_ = 0;
+                auto& root = *native_editor_root_;
+                const std::string step = menu_scenario_steps_[menu_scenario_index_];
+                const auto eq = step.find('=');
+                const std::string name = eq == std::string::npos
+                    ? step : step.substr(0, eq);
+                const std::string body = eq == std::string::npos
+                    ? std::string{} : step.substr(eq + 1);
+                const auto colon = body.find(':');
+                const std::string kind = colon == std::string::npos
+                    ? body : body.substr(0, colon);
+                const std::string arg = colon == std::string::npos
+                    ? std::string{} : body.substr(colon + 1);
+
+                const auto point_of = [](const std::string& text,
+                                         pulp::view::Point& pt) {
+                    const auto comma = text.find(',');
+                    if (comma == std::string::npos) return false;
+                    pt.x = std::strtof(text.substr(0, comma).c_str(), nullptr);
+                    pt.y = std::strtof(text.substr(comma + 1).c_str(), nullptr);
+                    return true;
+                };
+                // The platform host's OWN press sequence, in its order
+                // (window_host_mac.mm -mouseDown:/-mouseUp:), because any
+                // shortcut here measures the shortcut. Two parts of it are
+                // load-bearing and easy to omit:
+                //
+                //   * a press inside the active overlay is routed by
+                //     route_press_to_active_overlay and delivered with
+                //     bubble=FALSE, so it never reaches the ancestors the
+                //     overlay is mounted inside. A driver that skips this and
+                //     hit-tests directly bubbles the press into the spectrum
+                //     surface underneath and measures a defect the host does
+                //     not have.
+                //   * the CLICK is fired by mouseUp's MouseUpHost::fire_click.
+                //     With a default-constructed host nothing fires, every row
+                //     reads inert, and the run looks like a product failure.
+                const auto click_at = [&root](pulp::view::Point pt) {
+                    pulp::view::ViewCapture capture;
+                    std::string route = "hit-test";
+                    bool bubble = true;
+                    const auto overlay_press =
+                        pulp::view::route_press_to_active_overlay(root, pt);
+                    if (overlay_press.routing
+                        == pulp::view::OverlayPressRouting::routed) {
+                        capture.set(overlay_press.target);
+                        bubble = false;
+                        route = "overlay-routed";
+                    } else if (overlay_press.consume_press) {
+                        return std::string{"dismiss-consumed-press"};
+                    } else {
+                        capture.set(root.hit_test(pt));
+                    }
+                    auto* target = capture.live_in(root);
+                    if (target == nullptr) return route + ":no-target";
+                    if (!pulp::view::deliver_mouse_down(root, target, pt, 0, 1,
+                                                       bubble))
+                        capture.reset();
+                    auto* live = capture.live_in(root);
+                    if (live == nullptr) return route + ":unmounted-on-down";
+                    std::string clicked{"<none>"};
+                    pulp::view::MouseUpHost up_host;
+                    up_host.fire_click =
+                        [&clicked](const std::function<void()>& handler,
+                                   const std::string& id, std::uint16_t) {
+                            clicked = id.empty() ? std::string{"<anon>"} : id;
+                            if (handler) handler();
+                        };
+                    pulp::view::deliver_mouse_up(root, live, pt, 0, 1, up_host);
+                    return route + ":click=" + clicked;
+                };
+
+                std::string action = kind;
+                std::string detail;
+                float press_x = -1.0f, press_y = -1.0f;
+                bool attributable = false;
+                if (kind == "rpress") {
+                    pulp::view::Point pt{};
+                    if (point_of(arg, pt)) {
+                        const auto res = pulp::view::route_context_press(root, pt);
+                        press_x = pt.x; press_y = pt.y;
+                        detail = res.handled ? "handled" : "not-handled";
+                    } else detail = "bad-arg";
+                } else if (kind == "press") {
+                    pulp::view::Point pt{};
+                    if (point_of(arg, pt)) {
+                        press_x = pt.x; press_y = pt.y;
+                        detail = click_at(pt);
+                    } else detail = "bad-arg";
+                } else if (kind == "row") {
+                    int number = -1;
+                    auto* scope = spectr_menu_probe::menu_container(root, number);
+                    if (scope == nullptr) detail = "menu-absent";
+                    else {
+                        const auto aim = spectr_menu_probe::aim_row(*scope, arg);
+                        if (!aim.found || aim.row == nullptr) detail = "row-absent";
+                        else if (aim.w <= 0.0f || aim.h <= 0.0f) detail = "zero-area";
+                        else {
+                            press_x = aim.cx; press_y = aim.cy;
+                            auto* hit = root.hit_test(
+                                pulp::view::Point{aim.cx, aim.cy});
+                            attributable =
+                                spectr_menu_probe::nearest_clickable(hit) == aim.row;
+                            detail = click_at(
+                                pulp::view::Point{aim.cx, aim.cy});
+                        }
+                    }
+                } else if (kind == "escape") {
+                    const auto res =
+                        pulp::view::route_escape_to_active_overlay(root);
+                    detail = res == pulp::view::OverlayEscapeResult::overlay
+                        ? "overlay"
+                        : (res == pulp::view::OverlayEscapeResult::none
+                               ? "none" : "modal");
+                } else if (kind == "outside") {
+                    pulp::view::Point pt{};
+                    if (point_of(arg, pt)) {
+                        press_x = pt.x; press_y = pt.y;
+                        const auto res =
+                            pulp::view::route_press_to_active_overlay(root, pt);
+                        detail = res.routing
+                                     == pulp::view::OverlayPressRouting::dismissed
+                            ? "dismissed" : "not-dismissed";
+                    } else detail = "bad-arg";
+                } else if (kind == "param") {
+                    const auto assign = arg.find('=');
+                    if (assign != std::string::npos && param_store_ != nullptr) {
+                        param_store_->set_value(
+                            static_cast<pulp::state::ParamID>(
+                                std::atoi(arg.substr(0, assign).c_str())),
+                            static_cast<float>(
+                                std::atof(arg.substr(assign + 1).c_str())));
+                        detail = "written";
+                    } else detail = "bad-arg";
+                } else if (kind == "drag") {
+                    // A real band drag, delivered through the same verbs the
+                    // host runs. This is the ONLY way to arrange a band level
+                    // here: a host-parameter write reaches the field through
+                    // apply_parameters on the AUDIO thread, and a headless
+                    // run opens no audio device, so process() never runs and
+                    // the write is invisible. Arranging through the editor is
+                    // also the more faithful arrangement.
+                    const auto gt = arg.find('>');
+                    int dsteps = 16;
+                    std::string coords = arg;
+                    if (const auto at = coords.find('@'); at != std::string::npos) {
+                        dsteps = std::max(1, std::atoi(coords.substr(at + 1).c_str()));
+                        coords = coords.substr(0, at);
+                    }
+                    pulp::view::Point a{}, b{};
+                    const auto gt2 = coords.find('>');
+                    if (gt == std::string::npos || !point_of(coords.substr(0, gt2), a)
+                        || !point_of(coords.substr(gt2 + 1), b)) {
+                        detail = "bad-arg";
+                    } else {
+                        pulp::view::ViewCapture capture;
+                        capture.set(root.hit_test(a));
+                        auto* target = capture.live_in(root);
+                        if (target == nullptr) detail = "no-target";
+                        else {
+                            pulp::view::deliver_mouse_down(root, target, a, 0, 1);
+                            for (int i = 1; i <= dsteps; ++i) {
+                                const float t = static_cast<float>(i)
+                                              / static_cast<float>(dsteps);
+                                auto* live = capture.live_in(root);
+                                if (live == nullptr) break;
+                                pulp::view::deliver_mouse_drag(
+                                    root, live,
+                                    pulp::view::Point{a.x + (b.x - a.x) * t,
+                                                      a.y + (b.y - a.y) * t},
+                                    0, 1);
+                            }
+                            if (auto* live = capture.live_in(root)) {
+                                pulp::view::MouseUpHost up_host;
+                                pulp::view::deliver_mouse_up(root, live, b, 0, 1,
+                                                             up_host);
+                            }
+                            detail = "dragged";
+                        }
+                    }
+                } else if (kind == "wheel") {
+                    // The real zoom gesture, through the host's own wheel verb.
+                    // arg is "x,y,dy[,count]".
+                    float wx = 0.0f, wy = 0.0f, dy = 0.0f;
+                    int count = 1;
+                    {
+                        std::vector<std::string> parts;
+                        std::string cur;
+                        for (char c : arg) {
+                            if (c == ',') { parts.push_back(cur); cur.clear(); }
+                            else cur.push_back(c);
+                        }
+                        parts.push_back(cur);
+                        if (parts.size() >= 3) {
+                            wx = std::strtof(parts[0].c_str(), nullptr);
+                            wy = std::strtof(parts[1].c_str(), nullptr);
+                            dy = std::strtof(parts[2].c_str(), nullptr);
+                            if (parts.size() >= 4)
+                                count = std::max(1, std::atoi(parts[3].c_str()));
+                            pulp::view::WheelHost wheel_host;
+                            for (int i = 0; i < count; ++i)
+                                pulp::view::deliver_mouse_wheel(
+                                    root, {wx, wy}, 0.0f, dy, wheel_host);
+                            detail = "wheeled";
+                        } else detail = "bad-arg";
+                    }
+                } else if (kind == "neutral") {
+                    // Arrangement primitive: every band back to 0 dB and
+                    // unmuted, through the host parameters. Never a verdict.
+                    if (param_store_ != nullptr) {
+                        for (std::size_t i = 0; i < kMaxBands; ++i) {
+                            param_store_->set_value(band_gain_param_id(i), 0.0f);
+                            param_store_->set_value(band_mute_param_id(i), 0.0f);
+                        }
+                        detail = "neutralised";
+                    } else detail = "no-store";
+                } else if (kind == "wait" || kind.empty()) {
+                    detail = "ambient";
+                } else {
+                    detail = "unknown-step";
+                }
+
+                // ── the reading ──
+                int band_number = -1;
+                auto* scope = spectr_menu_probe::menu_container(root, band_number);
+                const auto snap = processing_state_snapshot();
+                const auto n = visible_count(snap.layout);
+                std::ostringstream js;
+                js << (menu_scenario_index_ ? ",\n  " : "\n  ")
+                   << "{\"step\":\"" << spectr_menu_probe::json_escape(name)
+                   << "\",\"kind\":\"" << spectr_menu_probe::json_escape(kind)
+                   << "\",\"arg\":\"" << spectr_menu_probe::json_escape(arg)
+                   << "\",\"result\":\"" << spectr_menu_probe::json_escape(detail)
+                   << "\",\"press\":[" << press_x << "," << press_y << "]"
+                   << ",\"attributable\":" << (attributable ? "true" : "false")
+                   << ",\"menu_mounted\":" << (scope != nullptr ? "true" : "false")
+                   << ",\"menu_band\":" << band_number;
+                if (scope != nullptr) {
+                    float mx = 0.0f, my = 0.0f;
+                    spectr_menu_probe::root_origin_of(*scope, mx, my);
+                    js << ",\"menu_rect\":[" << mx << "," << my << ","
+                       << scope->bounds().width << "," << scope->bounds().height
+                       << "],\"menu_children\":" << scope->child_count()
+                       << ",\"rows\":[";
+                    bool first_row = true;
+                    std::vector<pulp::view::View*> seen;
+                    std::function<void(pulp::view::View&)> walk =
+                        [&](pulp::view::View& v) {
+                            if (const auto* label =
+                                    dynamic_cast<const pulp::view::Label*>(&v);
+                                label != nullptr && !label->text().empty()) {
+                                float lx = 0.0f, ly = 0.0f;
+                                spectr_menu_probe::root_origin_of(v, lx, ly);
+                                const auto box = v.bounds();
+                                auto* own = spectr_menu_probe::nearest_clickable(
+                                    const_cast<pulp::view::View*>(&v));
+                                bool self = false;
+                                if (own != nullptr && box.width > 0.0f
+                                    && box.height > 0.0f) {
+                                    auto* hit = root.hit_test(pulp::view::Point{
+                                        lx + box.width * 0.5f,
+                                        ly + box.height * 0.5f});
+                                    self = spectr_menu_probe::nearest_clickable(hit)
+                                        == own;
+                                }
+                                js << (first_row ? "" : ",")
+                                   << "{\"label\":\""
+                                   << spectr_menu_probe::json_escape(label->text())
+                                   << "\",\"rect\":[" << lx << "," << ly << ","
+                                   << box.width << "," << box.height << "]"
+                                   << ",\"pressable\":" << (own != nullptr
+                                                              ? "true" : "false")
+                                   << ",\"owns_own_centre\":"
+                                   << (self ? "true" : "false") << "}";
+                                first_row = false;
+                            }
+                            for (std::size_t i = 0; i < v.child_count(); ++i)
+                                walk(*v.child_at(i));
+                        };
+                    walk(*scope);
+                    js << "]";
+                }
+                js << ",\"n_visible\":" << n
+                   << ",\"edit_mode\":"
+                   << (param_store_ != nullptr
+                           ? param_store_->get_value(kParamEditMode) : -1.0f)
+                   << ",\"min_hz\":" << snap.viewport.min_hz
+                   << ",\"max_hz\":" << snap.viewport.max_hz
+                   << ",\"gain_db\":[";
+                for (std::uint32_t i = 0; i < n; ++i)
+                    js << (i ? "," : "") << snap.field.bands[i].gain_db;
+                js << "],\"muted\":[";
+                for (std::uint32_t i = 0; i < n; ++i)
+                    js << (i ? "," : "")
+                       << (snap.field.bands[i].muted ? "true" : "false");
+                js << "]}";
+                menu_scenario_json_ += js.str();
+
+                if (++menu_scenario_index_ >= menu_scenario_steps_.size()) {
+                    menu_scenario_json_ += "\n ]}\n";
+                    std::ofstream file(out_path);
+                    file << menu_scenario_json_;
+                    file.close();
+                    menu_scenario_done_ = true;
+                    pulp::runtime::log_info(
+                        "Spectr: band-menu scenario complete ({} steps) -> {}",
+                        menu_scenario_steps_.size(), out_path);
+                }
+            }
         }
     }
 
