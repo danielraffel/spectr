@@ -123,6 +123,74 @@ runtime response modes and cannot be switched dynamically in a loaded plugin.
 Use a fresh build directory when comparing profiles so an older CMake cache
 does not retain its previous geometry.
 
+## Merging the materialized editor document
+
+`native-ui/materialized/materialized-document.runtime.json` is a checked-in,
+minified, single-line JSON artifact (~830 KB) carrying the whole editor
+document. Because it is one physical line, git's default content merge treats
+*any* two changes to it as a conflict -- including changes thousands of lines
+apart once its `html` payload is decoded. On 2026-09-15 that cost four PRs
+repeated rebases for changes with nothing to do with each other: a menu fix, a
+header label and a marquee perf fix.
+
+Enable the merge driver once per clone:
+
+```sh
+tools/git/install-merge-driver.sh
+```
+
+It parses both sides plus the ancestor, three-way merges the *decoded* `html`
+payload (8000+ ordinary lines), and splices the result back into the existing
+bytes, so the artifact's formatting never drifts. Two branches editing
+different parts of the editor stop conflicting.
+
+It deliberately refuses rather than guess. The document's `text_bindings`,
+`layout_bindings` and `paint_bindings` address DOM nodes by *positional path*,
+and are derived from `html`: a binding set computed against one side's html is
+not valid once the other side's insertions also land. So the driver merges only
+when `html` is the single key either side changed, and falls back to an
+ordinary conflict whenever a binding list differs, the decoded payload itself
+conflicts, or its own post-merge check finds the result is not both sides'
+changes composed. Of the 76 changes in this file's history whose parent is
+comparable, 73 touched `html` alone and would be permitted.
+
+A counter both sides advance to the same value also conflicts rather than being
+taken once -- the case where "both sides agree" is exactly what makes the result
+wrong, and where git's own merge of the decoded content accepts it silently. It
+happened twice in one night elsewhere in this organisation: a header census
+(212 + 212 -> 213, truth 214) and a `receipt_binding_count` (9 + 9 -> 10, truth
+11), the second forcing two PRs to land strictly sequentially.
+
+And nothing may appear in the merged document that was in none of the three
+inputs. That is a stronger guarantee than "both sides' changes survive",
+because it catches the merge *inventing* material rather than losing it -- a
+three-way merge elsewhere produced 204 placeholder entries in a file that had
+zero on both the PR head and the base.
+
+Two lanes inserting a child at the same point in the same parent also conflict
+rather than composing -- the case where both children would survive and every
+binding indexing a later sibling would be wrong. Two insertions at *different*
+points do merge, and the driver does not pretend otherwise: a single insertion
+renumbers later siblings by the same mechanism, so that staleness is a property
+of editing this document, not of merging it.
+
+The driver is optional. `.gitattributes` names it, but git will not run a
+command a repository supplies, so it lives in local config. Until you install
+it nothing breaks -- you just keep conflicting. Coverage:
+`ctest -R Spectr-materialized-merge-driver`.
+
+Git reads `.gitattributes` from the branch you have checked out, so a branch
+created before this landed keeps conflicting until it merges `main` once. That
+first merge is the old behaviour; every merge after it uses the driver. This is
+deliberate rather than worked around -- see the note in
+`tools/git/install-merge-driver.sh` for why making the rule branch-independent
+would risk silently dropping one side.
+
+When a conflict *is* reported here, resolve it by re-running the relevant
+`tools/patch_materialized_*.py` script against the merged document. Never
+`git checkout --theirs`: it discards the other side's edits wholesale, and this
+artifact is one line, so that is the entire document.
+
 ## License
 
 TBD.

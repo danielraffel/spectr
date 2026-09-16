@@ -2738,3 +2738,23 @@ add_test(NAME Spectr-render-path-clock-product
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
         ${CMAKE_CURRENT_SOURCE_DIR}/src/spectr.cpp)
 set_tests_properties(Spectr-render-path-clock-product PROPERTIES TIMEOUT 60)
+
+# The merge driver for the materialized editor document. That artifact is one
+# minified line, so git's default merge conflicts on ANY two changes to it --
+# four PRs paid for that on 2026-09-15 alone. The driver merges its decoded
+# `html` payload and refuses whatever it cannot compose; this row is what keeps
+# it honest, because a merge tool that quietly takes one side still exits 0.
+# The suite replays real conflicting commits out of this repo's own history,
+# asserts the specific content each side contributed, and pairs every mergeable
+# fixture with a control proving git's default merge really does conflict on it.
+# Pure Python against the checked-in artifact: no binary, no node, no network.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-materialized-merge-driver
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/git/test_merge_materialized_runtime.py)
+    set_tests_properties(Spectr-materialized-merge-driver PROPERTIES TIMEOUT 120)
+else()
+    message(STATUS
+        "Spectr: Python3 interpreter not found; "
+        "Spectr-materialized-merge-driver is NOT registered")
+endif()
