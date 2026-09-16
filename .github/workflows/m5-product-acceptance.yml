@@ -2,6 +2,34 @@ name: Spectr M5 Product Acceptance
 
 on:
   workflow_dispatch:
+    inputs:
+      # ACCEPTED AND IGNORED, ON PURPOSE. `shipyard ship` resolves this
+      # repository's `mac` target through its cloud backend, and that backend
+      # unconditionally appends `-f runner_provider=<cloud.provider>` to
+      # `gh workflow run` -- it does not first ask the workflow which inputs it
+      # declares. A workflow_dispatch with no `inputs:` block therefore gets
+      # HTTP 422 "Unexpected inputs provided: [runner_provider]" and NO RUN IS
+      # CREATED; Shipyard records that dispatch rejection as evidence
+      # {"mac": "fail"} -- which reads as a failed gate -- and `shipyard
+      # auto-merge` then correctly refuses with "targets failed: mac". Every PR
+      # in this repo was unmergeable through the tooling that way while the
+      # real gate was passing.
+      #
+      # The value names SHIPYARD'S DISPATCH TRANSPORT (its GitHub Actions
+      # adapter), not runner capacity -- see the same note in
+      # .shipyard/config.toml. This job's capacity is selected by the literal
+      # self-hosted labels on `runs-on:` below and by nothing else. So this
+      # input is declared to make the dispatch legal and is read by no step:
+      # routing the gate off the spectr-gate-* pool would be a material change
+      # nobody asked for. tools/ci/test_product_acceptance_contract.py asserts
+      # both halves -- that it stays declared, and that it stays inert.
+      runner_provider:
+        description: >-
+          Ignored. Accepted only so Shipyard's dispatch is not rejected; the
+          runner is fixed by this job's self-hosted labels.
+        required: false
+        type: string
+        default: ''
   # This gate is the only automated check in the repo, so it has to run on a PR
   # rather than only on demand. It is also a 120-minute job on a SHARED
   # self-hosted Mac, so the trigger is narrowed twice: pure docs/planning edits
