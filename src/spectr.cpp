@@ -233,6 +233,40 @@ void Spectr::publish_field() noexcept {
     publish_processing_state_();
 }
 
+Spectr::OutputLevelReading Spectr::read_output_level() {
+    // The metering the audio thread already computes over the buffer it just
+    // handed the host. Reading it here costs a triple-buffer read and no DSP:
+    // there is no second analysis path and nothing new runs on the audio
+    // thread for this readout to exist.
+    const auto& meter = read_meter();
+    OutputLevelReading reading;
+    reading.trim_db = param_store_
+        ? param_store_->get_value(kOutputTrim)
+        : 0.0f;
+
+    float peak = 0.0f;
+    bool  over = false;
+    const auto channels = std::clamp(
+        meter.num_channels, 0,
+        static_cast<int>(pulp::signal::kMaxMeterChannels));
+    for (int ch = 0; ch < channels; ++ch) {
+        const auto value = meter.channels[static_cast<std::size_t>(ch)].peak;
+        if (std::isfinite(value)) peak = std::max(peak, value);
+        over = over || meter.channels[static_cast<std::size_t>(ch)].clipped;
+    }
+    // `clipped` is the audio thread's own sample-level verdict and is the
+    // authority; the peak comparison only covers a frame whose peak landed on
+    // full scale exactly. Deriving `over` from the dB figure alone would make
+    // the flag a function of this rounding rather than of the samples.
+    over = over || peak >= 1.0f;
+
+    reading.peak_db = peak > 0.0f
+        ? 20.0f * std::log10(peak)
+        : -std::numeric_limits<float>::infinity();
+    reading.over = over;
+    return reading;
+}
+
 bool Spectr::set_editor_mode_param(pulp::state::ParamID id,
                                    float value) noexcept {
     if (!param_store_ || id < kParamMotionMode || id > kParamVisualization)

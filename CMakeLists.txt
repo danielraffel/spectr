@@ -1441,6 +1441,116 @@ if(SPECTR_NODE_EXECUTABLE)
         TIMEOUT 30)
 endif()
 
+# The band readout never prints an index from one band layout against another
+# layout's divisor.
+#
+# A user screenshot read "155.5kHz  24.0 dB  BAND 42/32" on a bank hovered as
+# one of 64. Both halves are one mismatch: index 41 was measured under a
+# 64-band layout while `N` -- the divisor in the label AND in bandCenterFreq --
+# had already become 32, and bandCenterFreq carried no clamp, so the wrong
+# divisor extrapolated 155473 Hz out of a 20Hz-20kHz view (band 42 of 64 is
+# 1763 Hz). `N` is `settings.bandCount`, and band count is host parameter 3003,
+# so automation / a preset recall / a live-state resync rewrites it with NO
+# pointer event while `hover` keeps the index it last measured.
+#
+# The suite reads NUMBERS, never the presence of a label -- the defect produced
+# a perfectly well-formed label, so any presence check passes on it. It lifts
+# the shipping source of the gate, the label builder and bandCenterFreq out of
+# the document and executes them in a vm against the exact screenshot stimulus.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-band-readout
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_readout.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-band-readout PROPERTIES TIMEOUT 30)
+    # The control that matters: --plant-no-guard restores the pre-fix document
+    # exactly, and it reproduces the reported string character for character
+    # ("155473Hz   24.0 dB   BAND 42/32"). If this row ever goes green the
+    # suite above cannot see the defect it was written for.
+    add_test(NAME Spectr-materialized-band-readout-stale-layout-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_readout.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-guard --expect-fail)
+    set_tests_properties(Spectr-materialized-band-readout-stale-layout-control
+        PROPERTIES TIMEOUT 30)
+    # The clamp on its own. The layout gate above already refuses a stale
+    # reading, so without this row the clamp could be deleted tomorrow with
+    # every test still green -- and an unclamped extrapolation resurfaces
+    # wherever a new caller forgets.
+    add_test(NAME Spectr-materialized-band-readout-unclamped-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_readout.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-clamp --expect-fail)
+    set_tests_properties(Spectr-materialized-band-readout-unclamped-control
+        PROPERTIES TIMEOUT 30)
+    # The regression in the other direction, and a mistake actually made while
+    # writing the fix: stamp the ref copy and hand the bare object to setHover,
+    # and the gate refuses every reading forever -- the readout does not go
+    # wrong, it disappears. Nothing that only checks "no bad reading" can see
+    # that, which is why it is its own row.
+    add_test(NAME Spectr-materialized-band-readout-unstamped-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_readout.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-unstamped-state --expect-fail)
+    set_tests_properties(Spectr-materialized-band-readout-unstamped-control
+        PROPERTIES TIMEOUT 30)
+endif()
+
+# The output level readout, and the Output trim beside it.
+#
+# `kOutputTrim` is applied post-render and proved exact by a unit test, and
+# `bridge_.process()` has always been fed the POST-TRIM buffer -- yet neither
+# "Output" nor "Mix" appeared anywhere in the shipping editor document or its
+# help text, and `Spectr::read_meter()`'s only caller was a test. So the level
+# handed to the host was computed and discarded, and the trim was unreachable
+# from the plug-in.
+#
+# The readout is labelled OVER rather than CLIP: Spectr is float end to end and
+# clips nothing internally, so what it reports is that the signal LEAVING the
+# plug-in passed full scale. It shows the dBFS number rather than a lamp,
+# because how far over is the actionable part. The hold only rises and is
+# cleared by clicking it -- a decaying hold would let the loudest moment of a
+# session vanish while nobody was looking, which is the thing a person opens a
+# meter to find out.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-output-meter
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-output-meter PROPERTIES TIMEOUT 30)
+    # A hold that follows every frame. Invisible to any check that reads the
+    # current frame, and it destroys the one thing the readout is for.
+    add_test(NAME Spectr-materialized-output-meter-falling-hold-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-falling-hold --expect-fail)
+    set_tests_properties(Spectr-materialized-output-meter-falling-hold-control
+        PROPERTIES TIMEOUT 30)
+    # An OVER that clears itself on the next quiet frame. Separate row because
+    # it fails a different assertion than the hold: the hold can be correct
+    # while a transient overload is gone before anyone sees it.
+    add_test(NAME Spectr-materialized-output-meter-latch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-latch --expect-fail)
+    set_tests_properties(Spectr-materialized-output-meter-latch-control
+        PROPERTIES TIMEOUT 30)
+    # The wording. CLIP is a claim about Spectr that is false, and a label is
+    # exactly the kind of thing a later edit "tidies" without knowing why.
+    add_test(NAME Spectr-materialized-output-meter-clip-label-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-clip-label --expect-fail)
+    set_tests_properties(Spectr-materialized-output-meter-clip-label-control
+        PROPERTIES TIMEOUT 30)
+endif()
+
 # Morph moves the viewport, not just the bands.
 #
 # A snapshot has always captured the window it was taken under; morph ignored
