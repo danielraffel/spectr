@@ -134,6 +134,7 @@ The list your DAW shows is long, because every band is in it. The ones worth kno
 - **LFO Rate**, **LFO Depth**, and the same pair on **LFO 2**, let you modulate the modulators from outside.
 - **Band 01 Gain** through **Band 64 Gain**, and **Band 01 Mute** through **Band 64 Mute**, for one band at a time.
 - **Mix** blends Spectr against the untouched signal. **Output** trims the level on the way out, by up to 24 dB either way.
+- **Macro 1** through **Macro 4**, in a Macros group of their own, are four spare lanes each worth up to 24 dB either way. A macro is an offset: it rides on top of whatever its member bands are already drawn at, rather than replacing them. They are listed in every build so your host never has to rescan to find them, and they stay inert until bands are assigned to one, which this version has no way to do yet. Four lanes that currently move nothing, and worth recognising rather than hunting for.
 
 Band numbers count from the left, so Band 01 is the lowest. Which frequency that actually is depends on where you are zoomed and how many bands you are showing, so the same lane means something different at 32 bands than at 64. Settle the band count before writing any band automation. **Band Count** is automatable itself, but changing it re-lays out the whole bank underneath your existing lanes, so treat it as a setup choice rather than a move.
 

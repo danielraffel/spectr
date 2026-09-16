@@ -2477,7 +2477,12 @@ if(Python3_Interpreter_FOUND)
             # bands stay put under a morph, that mute alone does not blend,
             # and that MIDI CC is the wrong instrument entirely.
             stale-param-name lost-range-guidance
-            lost-mute-caveat lost-midi-answer lost-mix-target)
+            lost-mute-caveat lost-midi-answer lost-mix-target
+            # The four macro lanes leave the enumeration. They are registered
+            # unconditionally, so every host lists them whether or not the
+            # guide admits it; a list that claims to name what is worth
+            # knowing and omits four lanes sends a user hunting.
+            lost-macro-lanes)
         add_test(NAME Spectr-materialized-help-overlay-control-${_help_plant}
             COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/help_overlay_contract.py
@@ -2491,7 +2496,12 @@ if(Python3_Interpreter_FOUND)
     # it tells a user to find stops existing. `renamed-morph` is that rename;
     # `unpadded-band-names` drops the zero padding, so "Band 01 Gain" becomes
     # a name no host will show. Both are silent to every other gate here.
-    foreach(_help_source_plant renamed-morph unpadded-band-names)
+    # `padded-macro-names` is the same drift on the macro lanes: the format
+    # string stays findable, so the plant exercises the name comparison rather
+    # than the parser's own missing-format error, which a WILL_FAIL row would
+    # accept without the rule ever running.
+    foreach(_help_source_plant renamed-morph unpadded-band-names
+            padded-macro-names)
         add_test(NAME Spectr-materialized-help-overlay-control-${_help_source_plant}
             COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/help_overlay_contract.py

@@ -302,7 +302,7 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 ^"?a plugin state blob without macro members
 ^"?#34: the macro block
 
-# The About guide's contract and its twelve plants. `materialized` above
+# The About guide's contract and its fourteen plants. `materialized` above
 # matches them, but it also matches a dozen other rows, so it can never report
 # their absence -- and the parameter-name rule added with the automation
 # guidance fails SILENTLY in the direction that matters: a rename leaves the

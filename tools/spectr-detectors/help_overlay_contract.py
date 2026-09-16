@@ -345,6 +345,7 @@ PARAM_SOURCES = (
     os.path.join(REPO, "src", "spectr.cpp"),
 )
 BAND_STATE = os.path.join(REPO, "include", "spectr", "band_state.hpp")
+MACRO_FIELD = os.path.join(REPO, "include", "spectr", "macro_field.hpp")
 # Named in the copy and registered by the plugin. Both directions are checked.
 PROMISED_PARAMS = (
     "A/B Morph", "Viewport Center", "Viewport Width", "Band Count",
@@ -354,6 +355,13 @@ PROMISED_PARAMS = (
 # is the Learn example, and the one a reader is most likely to copy verbatim.
 PROMISED_BANDS = ((0, "Gain"), (30, "Gain"), (63, "Gain"),
                   (0, "Mute"), (63, "Mute"))
+# The macro lanes, derived the same way and for the same reason. They are the
+# one block in the guide a reader meets BEFORE they can use it: the four lanes
+# are registered unconditionally, so a host lists them in every build, and the
+# guide's job is to stop a user hunting for a control that will not respond.
+# Deriving first and last pins kMacroCount too, so a bank that grew would be
+# caught here rather than by a user scrolling for "Macro 5".
+PROMISED_MACROS = (0, 3)
 
 
 def read_param_sources():
@@ -394,7 +402,21 @@ def registered_parameter_names(sources):
         if index >= int(max_bands.group(1)):
             continue  # the bank shrank; the caller reports it as a miss
         band_names[(index, suffix)] = py_fmt % (index + 1, suffix)
-    return names, band_names
+    macro_fmt = re.search(r'"(Macro %0?\d*zu)"', sources)
+    if not macro_fmt:
+        raise RuntimeError(
+            "cannot find the macro name format in the registration sites")
+    with open(MACRO_FIELD, encoding="utf-8") as handle:
+        macro_count = re.search(r"kMacroCount\s*=\s*(\d+)", handle.read())
+    if not macro_count:
+        raise RuntimeError("cannot read kMacroCount from macro_field.hpp")
+    py_macro = macro_fmt.group(1).replace("%02zu", "%02d").replace("%zu", "%d")
+    macro_names = {}
+    for index in PROMISED_MACROS:
+        if index >= int(macro_count.group(1)):
+            continue  # the bank shrank; the caller reports it as a miss
+        macro_names[index] = py_macro % (index + 1)
+    return names, band_names, macro_names
 
 
 # Plants against the REGISTRATION SITES rather than the document or the copy.
@@ -410,6 +432,14 @@ SOURCE_PLANTS = {
     # guide quotes stops being findable in a host's parameter list.
     "unpadded-band-names": lambda src: src.replace(
         '"Band %02zu %s"', '"Band %zu %s"'),
+    # The macro lanes GAIN zero padding at their registration site, so a host
+    # lists "Macro 01" while the guide sends a reader looking for "Macro 1".
+    # Padding rather than a new word on purpose: it keeps the format string
+    # findable, so this plant exercises the name comparison rather than the
+    # parser's own missing-format error, which is a different failure and
+    # would pass a WILL_FAIL row without the rule ever running.
+    "padded-macro-names": lambda src: src.replace(
+        '"Macro %zu"', '"Macro %02zu"'),
 }
 
 
@@ -515,6 +545,12 @@ PLANTS = {
     # answer, and the most cuttable sentence in it: it reads like an aside.
     "lost-midi-answer": lambda h, a: (
         h, a.replace("and Spectr does not listen to it", "")),
+    # The macro lanes go from the enumeration. The section still reads as a
+    # complete list of what a host shows, which is exactly the failure: four
+    # lanes appear in every host's parameter list and the guide that claims to
+    # name the ones worth knowing does not admit they exist.
+    "lost-macro-lanes": lambda h, a: (
+        h, a.replace("- **Macro 1** through **Macro 4**", "- Four spare lanes")),
     "double-offset": lambda h, a: (
         h.replace(SCRIM_ROOT,
                   '      top: origin.y,\n      left: origin.x,\n'
@@ -813,9 +849,10 @@ def main():
             return 1
         sources = planted_sources
         print("planted: %s (registration sites)" % args.plant_source)
-    registered, band_names = registered_parameter_names(sources)
-    print("  PARAMS %d registered display names, %d band names derived"
-          % (len(registered), len(band_names)))
+    registered, band_names, macro_names = registered_parameter_names(sources)
+    print("  PARAMS %d registered display names, %d band names derived, "
+          "%d macro names derived"
+          % (len(registered), len(band_names), len(macro_names)))
     # CONTROL for the parser, and it has to be a name this rule does NOT
     # police: if the pattern rotted or the files moved, every check below would
     # report the copy as wrong rather than the instrument as broken, which is
@@ -850,6 +887,17 @@ def main():
         if absent:
             bad.append("the bank no longer contains the bands the guide quotes "
                        "(%s), so kMaxBands has moved under the copy" % absent)
+        for index, name in sorted(macro_names.items()):
+            if ("**%s**" % name) not in text:
+                bad.append("the guide does not quote %r, which is what macro "
+                           "%d registers under: the lane is in every host's "
+                           "parameter list and the guide that enumerates that "
+                           "list does not name it" % (name, index + 1))
+        absent_macros = [m for m in PROMISED_MACROS if m not in macro_names]
+        if absent_macros:
+            bad.append("the macro bank no longer contains the lanes the guide "
+                       "quotes (%s), so kMacroCount has moved under the copy"
+                       % absent_macros)
 
     if bad:
         for line in bad:
