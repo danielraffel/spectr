@@ -132,3 +132,17 @@ the instrument works), and all present in `strings -a` of the built binary
   macros landing does not break that gate either way. Whoever lands second
   should add a Macros entry to the Automation section and, if they want it
   enforced, add "Macro 1" to `PROMISED_PARAMS`.
+
+## Native-failure control re-run on the NEW base (43a005a) — decisive
+My parser change touches the live-state path, so "pre-existing" could not be
+carried over from the old base by assumption. Re-controlled: with
+origin/main's UNMODIFIED artifact rebuilt into the test binary, both
+  - "native host automation projects through the compact live frame lane"
+  - "the settings copy button centres its feedback and answers a press"
+still fail (each 1 case, 1 of 12 assertions). Neither is caused by this lane.
+Artifact restored afterwards and re-verified: the patch script reports
+"no change needed" against the committed artifact.
+
+## Gate
+Run 35057383424, event `pull_request`, head_sha 31ab891 — matches HEAD exactly,
+so the docs push re-triggered rather than leaving a stale-SHA validation.
