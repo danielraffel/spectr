@@ -51,6 +51,22 @@ build without macros must still parse.
 NOT IN SCOPE, DELIBERATELY: a Macros panel in Settings (the values are
 ordinary parameters and the host already lists them), and per-macro naming.
 
+AND NOT THE CONTEXT-MENU ROWS, WHICH WERE MEASURED AND WITHDRAWN.  An
+"Assign selection to Macro N" / "Clear Macro N" block was written, applied and
+driven through `tools/menu_scenario_check.py` against the real standalone.  It
+took that gate from 0 failures to 6.  Two of them are the serious kind: with
+the extra rows present, a press aimed at `Zero selection` and one aimed at
+`Sculpt` fire something else, because the menu's container carries a stale
+layout solve and does not grow when children are added.  Three more are
+structural child COUNTS the gate pins exactly (17 rows with a selection, 14
+without), which ANY added row breaks regardless of where it is placed -- so
+there is no position in the menu that avoids this.
+
+The bridge command `macro_set_members` is deliberately kept: the affordance is
+one patch away once the container fix lands, and the command is covered by its
+own tests in the meantime.  Re-measure with the menu gate before re-adding the
+rows; do not assume the pinned misaim map still holds.
+
 Idempotent: a second run reports "already applied" and writes nothing.
 Exit codes: 0 applied or already applied, 1 a patch point is missing/ambiguous.
 """
@@ -315,95 +331,6 @@ EDITS = [
       postNative("macro_drag_start", {});
     hoverRef.current = { band, x, y, n: N };""",
     ),
-    # ── 8. Context menu: assign a selection, clear a macro ──
-    #
-    # NOTE ON LAYOUT. The menu container carries a stale layout solve and does
-    # not grow when rows are added, so these rows make the existing row
-    # overlap worse until the queued Pulp fixes land (child add/remove, and
-    # typography). That is an upstream container defect, not a property of
-    # these rows -- they are ordinary `Item`s built exactly like their
-    # siblings, and `H` below is grown honestly so the menu's own
-    # position clamp stays correct once the container does grow.
-    (
-        "ContextMenu takes the macro props",
-        """function ContextMenu({ x, y, band, N, selection, editMode, onClose, onEditMode, onMuteBand, onZeroBand, onSoloBand, onSelectAll, onSelectNone, onZeroSel, onMuteSel, onFitView }) {""",
-        """function ContextMenu({ x, y, band, N, selection, editMode, macros, onClose, onEditMode, onMuteBand, onZeroBand, onSoloBand, onSelectAll, onSelectNone, onZeroSel, onMuteSel, onFitView, onAssignMacro, onClearMacro }) {""",
-    ),
-    (
-        "the menu height accounts for the macro rows it renders",
-        """  const W = 230, H = 380;
-  const left = Math.min(x, vw - W - 8);
-  const top = Math.min(y, vh - H - 8);
-  const hasBand = band >= 0;
-  const hasSel = selection && selection.size > 0;""",
-        """  const hasBand = band >= 0;
-  const hasSel = selection && selection.size > 0;
-  const macroList = Array.isArray(macros) ? macros : [];
-  const assignedMacros = macroList
-    .map((macro, index) => ({ index, count: (macro && macro.slots ? macro.slots.length : 0) }))
-    .filter((macro) => macro.count > 0);
-  // Rows actually rendered below, so the position clamp stays honest. A
-  // fixed height would push the menu off the bottom of the window once the
-  // container is fixed and the menu really is taller.
-  const macroRows = (hasSel ? macroList.length : 0) + assignedMacros.length
-    + (hasSel || assignedMacros.length ? 1 : 0);
-  const W = 230, H = 380 + macroRows * 26;
-  const left = Math.min(x, vw - W - 8);
-  const top = Math.min(y, vh - H - 8);""",
-    ),
-    (
-        "the macro rows, after the selection group",
-        """React.createElement(Item, { action: "mute-selection", label: "Mute / Unmute selection", onClick: onMuteSel })),""",
-        """React.createElement(Item, { action: "mute-selection", label: "Mute / Unmute selection", onClick: onMuteSel })),
-    (hasSel || assignedMacros.length > 0) && /* @__PURE__ */ React.createElement(React.Fragment, null,
-      /* @__PURE__ */ React.createElement(Divider, { label: "MACROS" }),
-      ...macroList.map((macro, index) => hasSel ? /* @__PURE__ */ React.createElement(Item, {
-        key: "assign-macro-" + index,
-        action: "assign-macro-" + (index + 1),
-        label: `Assign selection to Macro ${index + 1}`,
-        sub: macro && macro.slots && macro.slots.length
-          ? `${macro.slots.length} now` : "unassigned",
-        onClick: () => onAssignMacro(index)
-      }) : null),
-      ...assignedMacros.map((macro) => /* @__PURE__ */ React.createElement(Item, {
-        key: "clear-macro-" + macro.index,
-        action: "clear-macro-" + (macro.index + 1),
-        label: `Clear Macro ${macro.index + 1}`,
-        sub: `${macro.count} band${macro.count === 1 ? "" : "s"}`,
-        onClick: () => onClearMacro(macro.index)
-      }))),""",
-    ),
-    (
-        "the memo comparator sees a macro change",
-        """previous.selection === next.selection && previous.editMode === next.editMode);""",
-        """previous.selection === next.selection && previous.editMode === next.editMode && previous.macros === next.macros);""",
-    ),
-    (
-        "the call site threads macro state and handlers",
-        """        selection,
-        editMode: editModeRef.current,
-        onClose: () => setCtxMenu(null),""",
-        """        selection,
-        editMode: editModeRef.current,
-        macros: macroStateRef.current,
-        onClose: () => setCtxMenu(null),
-        // Membership is editor state with no host lane, so it goes through
-        // its own command rather than through `param_set`. The macro's VALUE
-        // stays an ordinary parameter -- that is what makes it automatable.
-        onAssignMacro: (index) => {
-          postNative("macro_set_members", {
-            macro: index,
-            slots: [...selection].filter((slot) => slot >= 0 && slot < N).sort((a, b) => a - b)
-          });
-          setCtxMenu(null);
-        },
-        onClearMacro: (index) => {
-          // An empty array is the payload, not a missing one: "clear" is a
-          // real assignment of no members.
-          postNative("macro_set_members", { macro: index, slots: [] });
-          setCtxMenu(null);
-        },""",
-    ),
 ]
 
 
@@ -457,9 +384,6 @@ def main():
 
 
 FORBIDDEN_AFTER = (
-    # The fixed menu height, which would clamp the menu's position as though
-    # the macro rows were not there.
-    'const W = 230, H = 380;',
     # The unrouted display reads. Each of these would draw or report a gain
     # that ignores the macro the user is driving.
     'const effectiveGains = rg.map((value) => Number.isFinite(value)',
@@ -475,10 +399,6 @@ REQUIRED_AFTER = (
     'postNative("macro_drag_start", {});',
     'postNative("macro_drag_end", {});',
     'macros: parseNativeMacros(payload, n),',
-    'onAssignMacro: (index) => {',
-    'onClearMacro: (index) => {',
-    'label: `Assign selection to Macro ${index + 1}`,',
-    'previous.macros === next.macros);',
     'const parseNativeMacros = (payload, n) => {',
     'parseMacros: parseNativeMacros',
     'const macroOwning = (band) => {',
@@ -504,10 +424,6 @@ COUNTS_AFTER = {
     # re-route depend on which one the interpreter reached first.
     'if (p.groupStart) {': 1,
     'macros: parseNativeMacros(payload, n),': 2,
-    'const W = 230, H = 380 + macroRows * 26;': 1,
-    'onAssignMacro: (index) => {': 1,
-    'onClearMacro: (index) => {': 1,
-    'React.createElement(Divider, { label: "MACROS" })': 1,
 }
 
 
