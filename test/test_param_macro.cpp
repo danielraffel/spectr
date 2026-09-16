@@ -388,28 +388,40 @@ TEST_CASE("the audio owner composes macros exactly as the control thread does") 
     overlap.set(11);
     REQUIRE(plugin->set_macro_members(1, overlap));
 
+    // Drive the surface through the STORE rather than through a parameter
+    // event queue. Events reach the audio owner's cursor but are not
+    // committed to the store by this host, so canonical state would stay at
+    // its defaults and the comparison below would be against nothing. The
+    // store lane is also the one the `surface_drift.audio` path exists for --
+    // an AU generic control, a restored preset -- so this is a real host
+    // shape, not a test convenience.
+    auto& store = plugin->state();
+    for (std::size_t band = 0; band < 32; ++band) {
+        // A non-flat drawn curve, so a macro that replaced levels instead of
+        // offsetting them would be visible in the comparison.
+        store.set_value(spectr::band_gain_param_id(band),
+                        -9.0f + static_cast<float>(band % 5));
+    }
+    store.set_value(spectr::band_mute_param_id(19), 1.0f);
+    store.set_value(spectr::macro_param_id(0), 7.0f);
+    store.set_value(spectr::macro_param_id(1), -4.0f);
+    // An LFO is enabled only so the audio owner publishes the frame this test
+    // reads. The comparison is against `pre_field`, the post-morph,
+    // post-macro, PRE-LFO field, so the oscillator's value never enters it.
+    store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    store.set_value(spectr::kParamLfoDepth, 1.0f);
+    // Settle canonical state on this thread rather than waiting for the
+    // worker process() spawns, so the comparison is not a race with the
+    // scheduler.
+    REQUIRE(plugin->apply_surface_params(true));
+
     pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
     const float* input_channels[] = {
         in.channel(0).data(), in.channel(1).data()};
     pulp::audio::BufferView<const float> input(input_channels, 2, block_size);
     auto output = out.view();
-
     for (std::size_t block = 0; block < 8; ++block) {
         pulp::state::ParameterEventQueue events;
-        // A non-flat drawn curve, so a macro that replaced levels instead of
-        // offsetting them would be visible in the comparison.
-        for (std::size_t band = 0; band < 32; ++band)
-            REQUIRE(events.push({spectr::band_gain_param_id(band), 0,
-                                 -9.0f + static_cast<float>(band % 5), 0}));
-        REQUIRE(events.push({spectr::band_mute_param_id(19), 0, 1.0f, 0}));
-        REQUIRE(events.push({spectr::macro_param_id(0), 0, 7.0f, 0}));
-        REQUIRE(events.push({spectr::macro_param_id(1), 0, -4.0f, 0}));
-        // An LFO is enabled only so the audio owner publishes the frame this
-        // test reads. The comparison is against `pre_field`, which is the
-        // post-morph, post-macro, PRE-LFO field, so the oscillator's value
-        // never enters the assertion.
-        REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
-        REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
         host.process(output, input, events);
     }
 

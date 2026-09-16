@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 147;
+constexpr std::size_t kExpectedParamCount = 151;  // +4 macros
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {
@@ -172,11 +172,40 @@ TEST_CASE("#34: band parameter names are zero-padded and grouped") {
     CHECK(g1->group_id != 0);
     CHECK(m1->group_id != 0);
     CHECK(g1->group_id != m1->group_id);
-    CHECK(w.store.all_groups().size() == 7);
+    CHECK(w.store.all_groups().size() == 8);  // ...Modulation, Macros
     REQUIRE(find(w.store, 1) != nullptr);
     REQUIRE(find(w.store, 2) != nullptr);
     CHECK(find(w.store, 1)->group_id == 1);
     CHECK(find(w.store, 2)->group_id == 1);
+}
+
+
+TEST_CASE("#34: the macro block is registered with its own group") {
+    Wired w;
+    // Literal IDs, like the rest of this file: the documented scheme is the
+    // contract, so a careless edit to kParamMacroBase must fail here rather
+    // than move the expectation along with it.
+    for (int i = 0; i < 4; ++i) {
+        const auto* p = find(w.store, 4200 + i);
+        REQUIRE(p != nullptr);
+        CHECK(p->name == "Macro " + std::to_string(i + 1));
+        CHECK(p->unit == "dB");
+        CHECK(p->range.min == Approx(-24.0f));
+        CHECK(p->range.max == Approx(24.0f));
+        CHECK(p->range.default_value == Approx(0.0f));
+        // Grouped away from the LFO lanes: a host that draws clumps shows
+        // Macros as its own section rather than folding them into Modulation.
+        CHECK(p->group_id == 8);
+    }
+    // The reserved growth tail stays empty. Raising the macro count consumes
+    // it upward from 4204; anything already sitting there would be a
+    // compatibility break waiting to happen.
+    CHECK(find(w.store, 4204) == nullptr);
+    CHECK(find(w.store, 4299) == nullptr);
+    // Control: the range either side of the tail IS populated, so the two
+    // nulls above are an empty reservation and not a broken lookup.
+    REQUIRE(find(w.store, 4203) != nullptr);
+    REQUIRE(find(w.store, 4013) != nullptr);
 }
 
 TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
