@@ -11,7 +11,13 @@ backend = "cloud"
 platform = "macos-arm64"
 workflow = "m5-product-acceptance.yml"
 repository = "danielraffel/spectr"
+# `timeout_secs` is NOT read by the cloud backend -- `resolved_cloud()` resolves
+# its ceiling from `cloud_max_poll_secs` -> `max_poll_secs` -> `cloud.max_poll_secs`
+# and otherwise defaults to 3600s, so this key alone silently capped a gate the
+# workflow allows 120 minutes at half that. It stays for the day the backend
+# reads it; `max_poll_secs` is the one that actually takes effect today.
 timeout_secs = 7200
+max_poll_secs = 7200
 
 [cloud]
 # Capacity is selected by the workflow's literal self-hosted labels. This
@@ -25,20 +31,22 @@ require_platforms = ["macos"]
 
 # What must arrive before this repository's PRs are allowed to merge, and which
 # workflow produces it. Shipyard's landability preflight reads branch
-# protection first and falls back to these; `main` is NOT protected today
-# (`GET /branches/main/protection/required_status_checks` -> 404 "Branch not
-# protected"), so without this table the preflight has nothing to check and
-# says so -- which is not the same as nothing being wrong.
+# protection first and falls back to these.
 #
-# The larger hole this names: with nothing required on GitHub's side, a
-# `mergeStateStatus: CLEAN` with an EMPTY check rollup is GitHub being literal,
-# and auto-merge armed on such a PR would merge it untested. Protecting `main`
-# is the real fix and is deliberately NOT done here, because a required check
-# whose workflow is skipped by a path filter stays *Pending forever* and blocks
-# the PR -- and `m5-product-acceptance.yml` carries a `paths-ignore`. Adding
-# protection therefore has to land together with a companion workflow posting
-# the same check name under the negated filter, or every docs-only PR becomes
-# the mirror image of the 2026-09-14 incident.
+# `main` IS protected now, with this exact context required. That was blocked
+# until the gate could always report: a required check whose workflow is
+# skipped by a path filter stays *Pending forever*, and
+# `m5-product-acceptance.yml` used to carry a `paths-ignore` -- measured, PR #94
+# was docs-only and produced zero check runs. The fix was to drop that filter
+# and short-circuit inside the job, NOT to add a companion workflow posting the
+# same name: two producers of one check name is the same failure wearing a
+# different hat. The gate now always runs, always reports, and a docs-only PR
+# costs a checkout instead of a build.
+#
+# The string below must match the JOB name in that workflow exactly -- it is
+# `Spectr M5 product-acceptance gate` (lowercase "product-acceptance gate"),
+# which is NOT the workflow's display name `Spectr M5 Product Acceptance`. Get
+# it wrong and every PR blocks forever on a status nothing will ever post.
 [governance]
 required_status_checks = ["Spectr M5 product-acceptance gate"]
 

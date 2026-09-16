@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Static, non-dispatching checks for Spectr's local-first acceptance lane."""
 from pathlib import Path
-import json, re, tomllib
+import json, re, subprocess, sys, tomllib
 from validate_release_sdk import cmake_bool, feature_mismatches
 from cmake_parse_check import scan as cmake_scan, PLANTS as CMAKE_PLANTS
 
@@ -33,6 +33,33 @@ workflow_commands = "\n".join(
     line for line in workflow.splitlines()
     if not line.lstrip().startswith("#"))
 
+EXEMPT_FROM_SCOPE_GATE = (
+    "Check out exact admitted Spectr head",
+    "Scope - classify the change",
+)
+
+
+def scope_gate_violations(text):
+    """Names of steps whose scope guard is wrong.
+
+    Two different mistakes, reported together. A heavy step missing the guard
+    only wastes a build on a docs-only PR. The checkout or the scope step
+    CARRYING the guard is the dangerous one: the job could then never classify
+    anything, and every PR would skip the gate it is supposed to enforce.
+    """
+    steps = re.findall(
+        r"(?m)^      - name: (.+?)\s*$\n((?:        .*\n|\n)*)", text)
+    bad = []
+    for name, body in steps:
+        guarded = "if: steps.scope.outputs.docs_only != 'true'" in body
+        exempt = name in EXEMPT_FROM_SCOPE_GATE
+        if exempt and guarded:
+            bad.append(f"{name} (must NOT be gated)")
+        elif not exempt and not guarded:
+            bad.append(f"{name} (missing scope guard)")
+    return bad
+
+
 config_text = (ROOT / ".shipyard/config.toml").read_text()
 config = tomllib.loads(config_text)
 pin = json.loads((ROOT / "tools/ci/pulp-sdk-release.json").read_text())
@@ -49,8 +76,28 @@ checks = {
                              and not re.search(r"(?m)^  (push|schedule):", workflow)),
     "PR trigger targets main": bool(re.search(
         r"(?m)^  pull_request:\n(?:.*\n)*?    branches: \[main\]", workflow)),
-    "PR trigger skips docs-only": bool(re.search(
-        r"(?m)^    paths-ignore:\n(?:      - .*\n)+", workflow)),
+    # The trigger must carry NO path filter. A workflow skipped by a trigger
+    # filter creates no check run at all, so the moment this gate is a required
+    # check a docs-only PR waits forever on a status that can never arrive --
+    # measured here before the change: PR #94 was docs-only and produced zero
+    # check runs, and 4 of the last 113 merges into main were docs-only. Scope
+    # is decided inside the job instead, which also keeps ONE source of truth
+    # for the check name; a second workflow posting the same name would split
+    # it and reintroduce the same class of failure.
+    "PR trigger carries no path filter": not re.search(
+        r"(?m)^    paths(-ignore)?:", workflow),
+    "job classifies scope itself": bool(re.search(
+        r"(?m)^      - name: Scope - classify the change\n        id: scope\n",
+        workflow)),
+    "scope classifier is present": (
+        ROOT / "tools/ci/classify_change_scope.py").is_file(),
+    # The classifier decides whether an expensive gate is skipped, so it has to
+    # be able to return BOTH verdicts. Its own selftest asserts that, and this
+    # runs it rather than trusting that it exists.
+    "scope classifier can pass and fail": subprocess.run(
+        [sys.executable, str(ROOT / "tools/ci/classify_change_scope.py"),
+         "--selftest"], capture_output=True).returncode == 0,
+    "every product step is scope-gated": not scope_gate_violations(workflow),
     "PR pushes collapse to one run": (
         "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow),
     "exact labels": "runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-gate-fast]" in workflow,

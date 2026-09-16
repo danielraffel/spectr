@@ -32,18 +32,23 @@ on:
         default: ''
   # This gate is the only automated check in the repo, so it has to run on a PR
   # rather than only on demand. It is also a 120-minute job on a SHARED
-  # self-hosted Mac, so the trigger is narrowed twice: pure docs/planning edits
-  # are skipped outright, and a rapid push series on one PR collapses to a
-  # single run instead of stacking builds on the runner. Anything that can
-  # reach the product -- src, include, test, native-ui, resources, tools, the
-  # SDK pin, CMakeLists.txt, this workflow -- still runs, deliberately: a gate
+  # self-hosted Mac, so its cost is bounded twice: a rapid push series on one
+  # PR collapses to a single run instead of stacking builds on the runner, and
+  # a change that cannot reach the product short-circuits INSIDE the job (see
+  # "Scope - classify the change") after a checkout, in seconds.
+  #
+  # That filtering is deliberately NOT a `paths-ignore:` on this trigger. A
+  # workflow skipped by a trigger filter creates NO CHECK RUN AT ALL, so the
+  # moment this gate becomes a required check a docs-only PR waits forever on a
+  # status that can never arrive. Measured on this repository before the
+  # change: PR #94 was docs-only and produced zero check runs, and 4 of the
+  # last 113 merges into main were docs-only. Filtering inside the job instead
+  # keeps ONE source of truth for the check name -- a second workflow posting
+  # the same name would split it -- and makes the gate always report. Anything
+  # that can reach the product still runs the full build, deliberately: a gate
   # that opts out by default is not a gate.
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - 'planning/**'
-      - '**/*.md'
 
 permissions:
   contents: read
@@ -67,7 +72,40 @@ jobs:
           clean: true
           fetch-depth: 1
 
+      # Decides whether the heavy steps below run. Every one of them is gated
+      # on this verdict rather than on a trigger filter, so the job always runs
+      # and this check always reports.
+      #
+      # Fails CLOSED, on purpose: `docs_only` becomes true ONLY when this is a
+      # pull_request, the base commit was fetched, the diff was produced, and
+      # every changed path positively matched a documentation pattern. Any
+      # error, an empty file list, or a workflow_dispatch leaves it false and
+      # runs the full gate. The dangerous direction here is a product change
+      # misread as docs-only and merged unvalidated, so ambiguity must build.
+      - name: Scope - classify the change
+        id: scope
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+          docs_only=false
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" && -n "${PR_BASE_SHA:-}" ]]; then
+            if git fetch --no-tags --depth=1 origin "$PR_BASE_SHA" >/dev/null 2>&1; then
+              # Two-dot diff compares two trees and needs no common history, so
+              # the depth-1 base fetch above is enough against a depth-1 head.
+              if git diff --name-only "$PR_BASE_SHA" HEAD > "$RUNNER_TEMP/spectr-changed-paths.txt" 2>/dev/null; then
+                if python3 tools/ci/classify_change_scope.py "$RUNNER_TEMP/spectr-changed-paths.txt"; then
+                  docs_only=true
+                fi
+              fi
+            fi
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "scope: docs_only=$docs_only"
+
       - name: Gate - Spectr M5 product acceptance static contract
+        if: steps.scope.outputs.docs_only != 'true'
         run: python3 tools/ci/test_product_acceptance_contract.py
 
       # BLOCKING, and deliberately before the build: seconds, fixtures only, no
@@ -78,9 +116,11 @@ jobs:
       # known-bad one (or its own --plant). A detector that can only pass is
       # not coverage.
       - name: Gate - detector suite self-test (blocking)
+        if: steps.scope.outputs.docs_only != 'true'
         run: python3 tools/ci/detector_selftest.py
 
       - name: Gate - a drag pointer sample enqueues no React commit
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -96,6 +136,7 @@ jobs:
           fi
 
       - name: Gate - the preset manager's advertised commit gestures are wired
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -116,6 +157,7 @@ jobs:
           fi
 
       - name: Gate - Spectr M5 product acceptance immutable released SDK
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -148,6 +190,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Gate - Spectr M5 product acceptance Release configure and provenance
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -169,6 +212,7 @@ jobs:
       # produces the regex ctest is handed, so assertion and execution cannot
       # drift.
       - name: Gate - Spectr M5 product acceptance focused native artifacts
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -203,6 +247,7 @@ jobs:
       # statically-registered tests and almost every pattern reports zero --
       # which is indistinguishable from a genuinely rotted pattern.
       - name: Gate - every acceptance test pattern matches a test
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -215,6 +260,7 @@ jobs:
           echo "SPECTR_ACCEPTANCE_CTEST_REGEX=$regex" >> "$GITHUB_ENV"
 
       - name: Gate - Spectr M5 product acceptance focused behavior
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         env:
           PULP_DISABLE_PLUGIN_EDITOR: "1"
@@ -229,6 +275,7 @@ jobs:
               -R '^Pulp host loads'
 
       - name: Gate - Spectr M5 product acceptance native editor capture
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         env:
           PULP_DISABLE_PLUGIN_EDITOR: "1"
@@ -264,6 +311,7 @@ jobs:
           fi
 
       - name: Gate - no collapsed box on the captured native surface
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -298,6 +346,7 @@ jobs:
           exit $rc
 
       - name: Gate - every control reaches the area it paints
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         env:
           PULP_DISABLE_PLUGIN_EDITOR: "1"
@@ -351,6 +400,7 @@ jobs:
           exit $rc
 
       - name: Gate - a named control is REACHED by a press at the rect it paints
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         env:
           PULP_DISABLE_PLUGIN_EDITOR: "1"
@@ -400,6 +450,7 @@ jobs:
           exit $rc
 
       - name: Gate - the morph track is laid out clear of its A/B labels
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -448,6 +499,7 @@ jobs:
       # they report here instead of blocking. Promote one to a gate only once
       # it has produced a stable 0/1 verdict across several runs on this host.
       - name: Report - app-driven detectors (non-blocking)
+        if: steps.scope.outputs.docs_only != 'true'
         continue-on-error: true
         timeout-minutes: 20
         shell: bash
@@ -497,6 +549,7 @@ jobs:
           echo "::notice::app-driven detector verdicts: $rc_summary"
 
       - name: Gate - Spectr M5 product acceptance AUv2 validation
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -522,6 +575,7 @@ jobs:
           done
 
       - name: Gate - Spectr M5 product acceptance testable PKG
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -545,6 +599,7 @@ jobs:
           echo "SPECTR_ACCEPTANCE_PKG=$pkg" >> "$GITHUB_ENV"
 
       - name: Publish exact-head M5-testable product-acceptance PKG
+        if: steps.scope.outputs.docs_only != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Spectr-M5-Product-Acceptance-${{ github.sha }}
