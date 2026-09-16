@@ -970,6 +970,140 @@ set_tests_properties(Spectr-band-menu-keyboard-and-dismissal-negative-control
         SKIP_RETURN_CODE 77
         RESOURCE_LOCK spectr_native_materialized_editor)
 
+# Every row of the band context menu, driven in the SHIPPING STANDALONE
+# through the platform host's own press sequence.
+#
+# This is the gate that is actually about the product. The offscreen one below
+# is faster and sweeps band counts, but it drives a rig; this one launches
+# build/Spectr.app, opens the menu with a real context press, and presses each
+# row at the painted centre of that row's own label -- where the words the user
+# is reading actually are.
+#
+# Two things in the driver are load-bearing, and getting either wrong invents a
+# defect the product does not have:
+#   * a press inside the active overlay is routed by
+#     route_press_to_active_overlay and delivered with bubble=FALSE. A driver
+#     that hit-tests directly bubbles the press into the spectrum surface the
+#     menu is mounted inside, the surface claims the pointer, and every row
+#     reads inert. (`View::simulate_click` does exactly that, which is how an
+#     earlier revision of this lane "found" and "fixed" a defect that was not
+#     there.)
+#   * the click is fired by mouseUp's MouseUpHost::fire_click. A
+#     default-constructed host fires nothing.
+#
+# Every row is judged on TWO separate assertions -- the effect it promises
+# (band gains and mute flags from the processor's own field, the edit-mode
+# parameter, the viewport in Hz) and whether the menu CLOSED -- because they
+# fail separately. A press that closes the menu while firing a different row's
+# action and a press that fires nothing and leaves the menu up are different
+# bugs, and collapsing them into one pass is how this surface stayed green
+# while being unusable.
+#
+# It also pins what the menu does while a SELECTION is live, which is the state
+# the user reported: the container does not grow past 376px, the overflowing
+# rows restack over the first ones, and a press aimed at "Mute / Unmute"
+# reaches Boost, at "Reset to 0 dB" reaches Glide, at "Solo" reaches the VIEW
+# divider (nothing happens and the menu stays open) and at "Select all"
+# reaches Fit full range. Four consecutive reopens are measured, because
+# closing and reopening was reported to help and does not.
+#
+# Runs headless and asserts the run reported opening no audio device.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(APPLE AND Python3_Interpreter_FOUND)
+add_test(NAME Spectr-standalone-band-menu-rows
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/menu_scenario_check.py
+        --binary ${CMAKE_CURRENT_BINARY_DIR}/Spectr.app/Contents/MacOS/Spectr
+        --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-standalone-band-menu)
+set_tests_properties(Spectr-standalone-band-menu-rows PROPERTIES
+    TIMEOUT 900
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Its negative control: every measured row press becomes a no-op wait and
+# nothing else changes -- the menu still opens, the arrangement drags still
+# run, the geometry is still read. Green only when NO press-driven assertion
+# still passes. Escape and the outside press are excluded because this control
+# cannot neuter them; they carry their own mounted-before/unmounted-after
+# control inside the main run.
+add_test(NAME Spectr-standalone-band-menu-rows-negative-control
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/menu_scenario_check.py
+        --binary ${CMAKE_CURRENT_BINARY_DIR}/Spectr.app/Contents/MacOS/Spectr
+        --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-standalone-band-menu-negctl
+        --plant-no-press)
+set_tests_properties(Spectr-standalone-band-menu-rows-negative-control
+    PROPERTIES
+        TIMEOUT 900
+        RESOURCE_LOCK spectr_native_materialized_editor)
+else()
+    message(STATUS "Spectr: Spectr-standalone-band-menu-rows not registered "
+                   "(needs APPLE + Python3)")
+endif()
+
+# Every row of the band context menu, driven by a press at the pixels its own
+# label occupies, and judged on the STATE it claims to change.
+#
+# The distinction from every gate that came before it is load-bearing. All of
+# them drive this menu through `rig.activate(selector)`, which resolves a row by
+# CSS selector and never consults `hit_test` -- so they were green while a real
+# press on a row did nothing at all. Measured on this menu, with the row's rect
+# taken from the live view tree:
+#
+#   row->on_click()                      -> the band changed  (handler fine)
+#   rig.activate("[data-spectr-band-action=…]") -> the band changed  (seam fine)
+#   root.simulate_click(row centre)      -> NOTHING            (the press is not)
+#
+# The menu is a DOM child of the spectrum surface, whose pointer handler starts
+# a band drag and takes pointer capture, so a press on a row bubbled into it and
+# the click was never resolved on the button.
+#
+# What is asserted, per row, and what each would read if the row were inert:
+#   - the band field the DSP consumes (gain_db / muted), not the menu
+#   - the edit-mode HOST PARAMETER, read off the store
+#   - the processor's viewport, in Hz
+#   - the editor's own selection, and the group-mute shortcut reaching it
+# Each press also prints WHICH view owns the point it was aimed at, so a state
+# change is attributable to that row rather than to a neighbour stacked on it.
+#
+# It also pins, exactly, the four rows that a pointer cannot reach while a
+# selection is live -- the upstream layout defect in which the menu's container
+# does not grow past 376px and the overflowing rows restack over the first ones.
+# Growing that list is a regression; SHRINKING it means the upstream fix landed
+# and this gate's own statement has gone stale, so both fail.
+#
+# Exit: 0 every row did what it says, 1 a row did not (or the unreachable set
+# moved), 3 a premise could not be arranged, 77 no view carries a context-menu
+# handler under the pinned SDK. 3 and 77 must never read as a pass.
+add_test(NAME Spectr-band-menu-items-do-what-they-say
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_BAND_MENU_ITEMS=1
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-band-menu-items
+        --backend=skia)
+set_tests_properties(Spectr-band-menu-items-do-what-they-say PROPERTIES
+    TIMEOUT 900
+    SKIP_RETURN_CODE 77
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Its negative control. Every MEASURED press is skipped and nothing else
+# changes: the arrangement still runs, the menu still opens, every row is still
+# resolved and its rect still printed. The run is green only when NO row
+# assertion still reads PASS -- an assertion that survives its own item being
+# inert cannot see the defect it claims to cover, and that is precisely how
+# this menu stayed green through a press path that never worked.
+#
+# The inversion lives inside the binary rather than in WILL_FAIL, which would
+# accept a usage error or an unproven premise as if it had caught the defect.
+add_test(NAME Spectr-band-menu-items-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_BAND_MENU_ITEMS=1
+        SPECTR_BAND_MENU_ITEMS_PLANT=nopress
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-band-menu-items-negctl
+        --backend=skia)
+set_tests_properties(Spectr-band-menu-items-negative-control PROPERTIES
+    TIMEOUT 900
+    SKIP_RETURN_CODE 77
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
 # Status overlay (section 5): the overlay must sit where the design puts it,
 # track a live drag, and then dismiss itself. The last of those is a TIME
 # property and the first is a PIXEL property, so this gate drives the shipping

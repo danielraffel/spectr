@@ -778,6 +778,13 @@ private:
     // before/after pair cannot tell a drag that tracked the pointer from one
     // that jumped straight to its end point.
     bool gesture_probe_done_ = false;
+    // Band-menu scenario runner (SPECTR_MENU_SCENARIO), one step per N ticks.
+    std::vector<std::string> menu_scenario_steps_;
+    std::string menu_scenario_json_;
+    std::size_t menu_scenario_index_ = 0;
+    int menu_scenario_tick_ = 0;
+    int menu_scenario_delay_ = 20;
+    bool menu_scenario_done_ = false;
     bool resize_fixture_applied_ = false;
     bool resize_request_sent_ = false;
     // Per-tick state trace for externally driven gestures. The AppKit drag

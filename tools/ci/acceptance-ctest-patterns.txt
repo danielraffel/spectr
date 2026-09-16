@@ -152,6 +152,24 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # visible rather than silent.
 ^Spectr-band-menu-keyboard-and-dismissal
 
+# The same menu, driven in the SHIPPING STANDALONE through the platform host's
+# own press sequence, plus its negative control. This is the gate that is about
+# the product rather than about a rig: it launches Spectr.app, opens the menu
+# with a real context press, and presses each row where its own label paints.
+# Nothing above matches the name, and without these lines both register and
+# never run.
+^Spectr-standalone-band-menu-rows
+
+# Every row of the same menu, driven by a press at its own pixels rather than by
+# a selector, plus its negative control. Nothing above matches the name. This is
+# the gate that can see a row whose handler is correct and whose press never
+# arrives -- the defect every selector-driven gate over this menu was blind to,
+# and the one a user experiences as "clicking the item does nothing". Like the
+# rows above it reports 77 (CTest "Not Run") when the pinned SDK carries no
+# context-menu handler, so a pin that cannot open the menu is visible rather
+# than silent.
+^Spectr-band-menu-items-
+
 # Tracking transition shaping: the three gates and their three plants. Nothing
 # above matches them -- they start with the behaviour, not with "native" or
 # "materialized" -- so without these lines they register and never run. The
