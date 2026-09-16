@@ -115,7 +115,49 @@ constexpr int kTrackingTransitionWidthBins = 8;
 /// passes there on one bin's ripple. Realising it honestly needs 13 bins,
 /// which costs coverage; restoring coverage needs 45 % or more outside, which
 /// costs the decade band two thirds of its width. The three do not meet.
+///
+/// The third axis -- how finely an edge may be positioned -- was then swept the
+/// same way and is no better: see `kTrackingEdgeQuantumBins`, where the whole
+/// frontier is printed. What finally moved was neither geometry axis but the
+/// control that was blocking: it asserted the renderer could REALISE -100 dB,
+/// which is a fidelity claim, where its purpose is only to show the -80 dB
+/// depth gate sits above the measurement's detection floor. That purpose is met
+/// here with 7.7 dB to spare, and the control now states and measures it. The
+/// derivation is written beside the control in test_tracking_transition.cpp.
 constexpr int kTransitionOutsidePct = 25;
+
+/// Grid that each band edge's fractional position is snapped to before a
+/// transition is placed about it, in design bins. Zero is the exact position.
+///
+/// This is the third geometry axis and the only one with a term on BOTH sides
+/// of the trade. A coarser grid deepens the mute -- whole-bin edges put every
+/// transition shoulder exactly on a bin, so the cepstrum sees a shape it can
+/// represent and decays further before it wraps -- and it is also precisely
+/// what makes a viewport drag a staircase instead of a glide, because an edge
+/// that can only sit on grid points holds still and then jumps.
+///
+/// So it is a Pareto question, not a threshold: depth inside a muted band is
+/// inaudible, pitch wobble under a drag plainly is not, and a coarser grid buys
+/// the first with the second. Swept end to end, both halves measured in every
+/// cell (depth as muted band 20's interior supremum, wobble as the worst peak
+/// frequency excursion over the same 6->5 octave drag the gate uses):
+///
+///     q (bins)    0    1/16   1/8    1/4    3/8    1/2    5/8    3/4      1
+///     depth   -81.3  -81.1  -81.5  -82.3  -83.0  -81.7  -86.0  -86.4  -89.2 dB
+///     wobble   0.78   2.29   4.19   8.02  10.43  14.07  17.05  20.55  23.92 cents
+///
+/// THERE IS NO KNEE, and the frontier is concave the wrong way. Wobble is
+/// nearly linear in the quantum from the very first step, while depth is flat
+/// to within the statistic's own ripple until 5/8 of a bin and only arrives in
+/// full at a whole one. Every cell that buys 3 dB or more costs 17 cents or
+/// more -- two thirds of the 23 cents sub-bin placement was introduced to
+/// remove, for a third of the 8 dB it cost. The only quantum that keeps the
+/// drag gate green is a sixteenth of a bin, and it reads 0.15 dB SHALLOWER
+/// than exact placement while tripling the wobble: strictly worse on both
+/// axes. Exact placement is the Pareto point.
+///
+/// Zero, therefore, and it is a measured choice rather than an untried default.
+constexpr double kTrackingEdgeQuantumBins = 0.0;
 
 /// Crossfade requested of the convolver when a redesigned impulse response
 /// replaces the live one. Zero -- the swap is instantaneous, and that is what
@@ -640,7 +682,8 @@ TrackingTransitionGeometry shape_tracking_transitions(
     double magnitude_floor) noexcept {
     return shape_tracking_transitions(magnitudes, band_edges_hz, bin_width_hz,
                                       width_bins, magnitude_floor,
-                                      kTransitionOutsidePct);
+                                      kTransitionOutsidePct,
+                                      kTrackingEdgeQuantumBins);
 }
 
 TrackingTransitionGeometry shape_tracking_transitions(
@@ -649,7 +692,8 @@ TrackingTransitionGeometry shape_tracking_transitions(
     double bin_width_hz,
     int width_bins,
     double magnitude_floor,
-    int outside_pct) noexcept {
+    int outside_pct,
+    double edge_quantum_bins) noexcept {
     TrackingTransitionGeometry geometry{};
 
     const auto num_bins  = static_cast<std::ptrdiff_t>(magnitudes.size());
@@ -658,7 +702,8 @@ TrackingTransitionGeometry shape_tracking_transitions(
         static_cast<std::ptrdiff_t>(pulp::signal::kSpectralBandMaskMaximumBands) + 1;
     if (num_bins < 3 || num_edges < 2 || num_edges > kMaximumEdges
         || !(bin_width_hz > 0.0) || width_bins <= 0
-        || !(magnitude_floor > 0.0) || outside_pct < 0 || outside_pct > 100)
+        || !(magnitude_floor > 0.0) || outside_pct < 0 || outside_pct > 100
+        || !(edge_quantum_bins >= 0.0))
         return geometry;
 
     // Edge frequencies onto the design grid, clamped into the array, and kept
@@ -682,20 +727,49 @@ TrackingTransitionGeometry shape_tracking_transitions(
     // about different things. The fraction decides WHERE the boundary is; the
     // placement decides which side of it pays for the ramp. A fractional
     // boundary is simply placed asymmetrically about.
+    //
+    // TWO positions are kept per edge, and the difference matters. `edge_bin`
+    // is where the transition is PLACED, snapped to the caller's quantum.
+    // `exact_bin` is where the drawn step actually IS, and it is never snapped,
+    // because the magnitude array was compiled from the exact edge: the bin the
+    // compiler assigned to the upper band is a fact about the table, not about
+    // this function's geometry. Reading the step from a snapped position asks
+    // the table a question about a boundary it does not have, and the answer is
+    // silently wrong in one direction only -- a snapped edge that lands just
+    // INSIDE the upper band finds the same value either side of it, concludes
+    // there is no step, and leaves the drawn edge unshaped. Measured: at a
+    // quantum of 3/8 bin the default field left one of muted band 20's two
+    // edges unshaped and the band read its unshaped -34.6 dB, and the same
+    // desync cost a kept band a third of its width at a quantum of a
+    // SIXTEENTH of a bin. At zero quantum the two positions are identical, so
+    // this costs the shipping design nothing.
     std::array<double, static_cast<std::size_t>(kMaximumEdges)> edge_bin{};
+    std::array<double, static_cast<std::size_t>(kMaximumEdges)> exact_bin{};
     for (std::ptrdiff_t e = 0; e < num_edges; ++e) {
         const double hz = static_cast<double>(band_edges_hz[static_cast<std::size_t>(e)]);
-        const double bin = std::isfinite(hz) ? hz / bin_width_hz : 0.0;
+        const double exact = std::isfinite(hz) ? hz / bin_width_hz : 0.0;
+        double bin = exact;
+        // Snapped BEFORE the clamp, so a quantum never pushes an edge out of
+        // the array. Zero is the exact position; `1.0` is the whole-bin
+        // placement this design replaced.
+        if (edge_quantum_bins > 0.0)
+            bin = std::round(bin / edge_quantum_bins) * edge_quantum_bins;
         edge_bin[static_cast<std::size_t>(e)] =
             std::clamp(bin, 0.0, static_cast<double>(num_bins - 1));
+        exact_bin[static_cast<std::size_t>(e)] =
+            std::clamp(exact, 0.0, static_cast<double>(num_bins - 1));
     }
     // An out-of-range or non-finite edge can land out of order once clamped; a
     // non-monotonic table would give a negative span below, so make it
     // monotonic and let the zero-width clamp drop the degenerate edges.
-    for (std::ptrdiff_t e = 1; e < num_edges; ++e)
+    for (std::ptrdiff_t e = 1; e < num_edges; ++e) {
         edge_bin[static_cast<std::size_t>(e)] = std::max(
             edge_bin[static_cast<std::size_t>(e)],
             edge_bin[static_cast<std::size_t>(e - 1)]);
+        exact_bin[static_cast<std::size_t>(e)] = std::max(
+            exact_bin[static_cast<std::size_t>(e)],
+            exact_bin[static_cast<std::size_t>(e - 1)]);
+    }
 
     // Two passes. Every plateau is read from the UNSHAPED magnitude before
     // anything is written, so the result cannot depend on the order edges are
@@ -739,7 +813,9 @@ TrackingTransitionGeometry shape_tracking_transitions(
         // transition at all. Equal plateaus mean no step; that is the answer,
         // not a reason to go looking elsewhere.
         const auto first_above = std::clamp<std::ptrdiff_t>(
-            static_cast<std::ptrdiff_t>(std::ceil(centre)), 1, num_bins - 1);
+            static_cast<std::ptrdiff_t>(
+                std::ceil(exact_bin[static_cast<std::size_t>(e)])),
+            1, num_bins - 1);
 
         const double below = magnitudes[static_cast<std::size_t>(first_above - 1)];
         const double above = magnitudes[static_cast<std::size_t>(first_above)];

@@ -591,16 +591,44 @@ set_tests_properties(Spectr-render-mode-migration-holds PROPERTIES
 #   eq-drift           adds 1 dB to the drawn reference, proving the ordinary-EQ
 #                      gate observes a drift rather than agreeing with whatever
 #                      it measured.
-#   whole-bin-edges    rounds every band edge onto a whole design bin before
-#                      shaping -- the placement this design replaced -- proving
-#                      the drag gate can see the staircase it exists to reject.
-#                      It reads 7.08 Hz of peak frequency modulation against
-#                      0.79 Hz for sub-bin placement, so the gate is not merely
-#                      passing on a number it cannot move.
+#   detection-floor-clamped
+#                      an instrument that bottoms out at -75 dB -- above the
+#                      -80 dB depth gate -- proving the detection-floor control
+#                      rejects a path that cannot see past the line it guards.
+#   whole-bin-edges    places every band edge on a whole design bin, through the
+#                      shaping function's OWN quantum argument rather than a
+#                      rounding step written beside it, so the control is the
+#                      product at a different argument. That is the placement
+#                      this design replaced, and it reads 6.96 Hz of peak
+#                      frequency modulation against 1.24 Hz for sub-bin
+#                      placement, so the gate is not merely passing on a number
+#                      it cannot move.
 #   symmetric-kept     substitutes the surviving kept-band widths the SYMMETRIC
 #                      placement actually measured through this same renderer,
 #                      proving the kept-width gate rejects the placement it was
 #                      written to replace rather than restating today's build.
+# The depth rule's OTHER control: the instrument, not the design.
+#
+# "Tracking realises a drawn null at the design floor" asserts a supremum at or
+# under -80 dB, which is worth nothing unless the path can report a number under
+# -80 dB at all. The case proves that by drawing a ladder of depths and showing
+# the reading follows the drawing down to a floor with margin under the gate.
+# SPECTR_TRANSITION_PLANT=detection-floor-clamped substitutes the exact defect
+# that control forbids -- an instrument that bottoms out at -75 dB, above the
+# gate -- and the row is green only when both halves of the control reject it.
+#
+# It is a separate row from brick-wall because the two plant different things:
+# brick-wall replaces the DESIGN and proves the three product rules can fail;
+# this replaces the INSTRUMENT and proves those rules are reading something.
+add_test(NAME Spectr-tracking-transition-detection-floor-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_TRANSITION_PLANT=detection-floor-clamped
+        SPECTR_TRANSITION_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "Tracking realises a drawn null at the design floor")
+set_tests_properties(Spectr-tracking-transition-detection-floor-negative-control
+    PROPERTIES TIMEOUT 300)
+
 add_test(NAME Spectr-tracking-transition-depth-negative-control
     COMMAND ${CMAKE_COMMAND} -E env
         SPECTR_TRANSITION_PLANT=brick-wall

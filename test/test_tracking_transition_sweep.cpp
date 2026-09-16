@@ -151,9 +151,14 @@ std::vector<double> spectrum_via_renderer(
 /// -- which applies the taps and does not change them -- and the case
 /// "the design path is the renderer's" below proves that skip costs nothing at
 /// the depths this sweep reads.
+/// Exact edge placement -- the grid the product ships, and the value every row
+/// this file published was measured at. Named rather than written as a bare 0.0
+/// so those rows keep reproducing whatever the shipping quantum becomes.
+constexpr double kExactEdges = 0.0;
+
 std::vector<double> spectrum_via_design(
     const pulp::signal::SpectralBandLayout& layout, int width_bins,
-    int outside_pct) {
+    int outside_pct, double edge_quantum_bins = kExactEdges) {
     pulp::signal::SpectralMaskTable table;
     REQUIRE(pulp::signal::build_spectral_mask(
         layout, kGrid, static_cast<float>(kSampleRate), table));
@@ -166,7 +171,8 @@ std::vector<double> spectrum_via_design(
     const std::span<const float> edges(table.band_edges_hz.data(), edge_count);
 
     (void)spectr::shape_tracking_transitions(magnitudes, edges, kBinHz,
-                                             width_bins, kFloor, outside_pct);
+                                             width_bins, kFloor, outside_pct,
+                                             edge_quantum_bins);
 
     pulp::signal::MinimumPhaseFirOptions options;
     options.coefficient_count   = static_cast<std::size_t>(kGrid);
@@ -634,4 +640,146 @@ TEST_CASE("sweep: was the -100 dB control ever reading more than one bin",
                     r.interior_sup_db - r.deepest_db);
         std::fflush(stdout);
     }
+}
+
+// ── The third axis: how finely a band edge is allowed to be positioned ──────
+
+TEST_CASE("sweep: the edge-quantum axis is live", "[.][sweep][transition]") {
+    // Same discipline as the width and placement axes: two quanta must give two
+    // different designs, or every row of the table below is one row printed
+    // eleven times. The separation to look for is the one sub-bin placement
+    // paid for its glide -- exact against whole-bin -- about 8 dB.
+    const auto layout = make_layout(20.0f, 20000.0f, 32, 20);
+    const auto open   = spectrum_via_design(make_layout(20.0f, 20000.0f, 32), 8, 25);
+    const double lo = band_edge_hz(20), hi = band_edge_hz(21);
+
+    const auto exact = measure(spectrum_via_design(layout, 8, 25, 0.0), open, lo, hi);
+    const auto whole = measure(spectrum_via_design(layout, 8, 25, 1.0), open, lo, hi);
+    std::printf("\n  exact -> %.2f dB, whole-bin -> %.2f dB, separation %.2f dB\n",
+                exact.interior_sup_db, whole.interior_sup_db,
+                std::abs(whole.interior_sup_db - exact.interior_sup_db));
+    REQUIRE(std::abs(whole.interior_sup_db - exact.interior_sup_db) > 3.0);
+
+    // And the arm that makes the axis a QUANTISATION rather than a second
+    // placement knob: at a non-zero quantum the shaped design must HOLD STILL
+    // as the edge slides within one step, and at zero it must not. That
+    // standing-still is the whole mechanism -- it is what makes a drag a
+    // staircase, and it is what a coarser grid is being bought with.
+    //
+    // Measured on a synthetic two-band field rather than a compiled layout, so
+    // the edge can be moved by a known sub-quantum amount instead of by
+    // whatever a viewport happens to produce. The function is pure, so this is
+    // the same function the product calls.
+    auto shaped_at = [](double edge_bin_pos, double q) {
+        // The step sits where the COMPILER would have put it for this edge:
+        // `ceil(edge)` is the first bin of the upper band, so an edge anywhere
+        // in (256, 257] compiles to a step at 257. That is the real situation
+        // the placement lives in -- the array's step moves only at integer
+        // crossings while the edge itself moves continuously -- and a field
+        // whose step disagreed with its edge would be measuring the desync
+        // above rather than the placement.
+        std::vector<double> m(512, 1.0);
+        for (std::size_t i = 257; i < m.size(); ++i) m[i] = kFloor;
+        const float e[3] = {0.0f, static_cast<float>(edge_bin_pos * kBinHz),
+                            static_cast<float>(512.0 * kBinHz)};
+        (void)spectr::shape_tracking_transitions(m, std::span<const float>(e, 3),
+                                                 kBinHz, 8, kFloor, 25, q);
+        return m;
+    };
+    const auto moved_exact = shaped_at(256.30, 0.0) != shaped_at(256.40, 0.0);
+    const auto moved_half  = shaped_at(256.30, 0.5) != shaped_at(256.40, 0.5);
+    std::printf("  a 0.1-bin edge move changes the design: exact %s, q=0.5 %s\n",
+                moved_exact ? "yes" : "no", moved_half ? "yes" : "no");
+    REQUIRE(moved_exact);    // the instrument can see a sub-bin move at all
+    REQUIRE(!moved_half);    // and a quantum of half a bin absorbs it
+
+    pulp::signal::SpectralMaskTable table;
+    REQUIRE(pulp::signal::build_spectral_mask(
+        layout, kGrid, static_cast<float>(kSampleRate), table));
+    const auto edge_count = static_cast<std::size_t>(table.active_bands) + 1u;
+
+    // The step probe must stay on the EXACT edge while the placement snaps.
+    // Reading it from the snapped position instead leaves an edge unshaped
+    // whenever the snap lands just inside the upper band, which is silent: the
+    // band comes back at its drawn depth and every other gate still passes.
+    for (double q : {0.0, 0.0625, 0.375, 0.5, 0.625, 1.0}) {
+        std::vector<double> m(static_cast<std::size_t>(table.num_bins));
+        for (std::size_t i = 0; i < m.size(); ++i)
+            m[i] = static_cast<double>(table.gain_linear[i]);
+        const auto g = spectr::shape_tracking_transitions(
+            m, std::span<const float>(table.band_edges_hz.data(), edge_count),
+            kBinHz, 8, kFloor, 25, q);
+        std::printf("  q=%.4f: %lld of %lld edges shaped\n", q,
+                    static_cast<long long>(g.edges_shaped),
+                    static_cast<long long>(g.edges_considered));
+        REQUIRE(g.edges_shaped == 2);   // a one-muted-band field has two steps
+    }
+}
+
+TEST_CASE("sweep: the edge quantum against depth",
+          "[.][sweep][transition]") {
+    // Sub-bin edge placement spends depth to buy a glide. This asks what a
+    // COARSER grid than exact returns of that depth -- one half of a Pareto
+    // question whose other half (what the same grid costs in wobble) is
+    // measured in the gate file, because that is where the drag instrument and
+    // its controls live.
+    //
+    // Width and placement are held at the shipping cell throughout, so every
+    // row differs from every other in exactly one thing.
+    static const double kQuanta[] = {
+        0.0, 0.0625, 0.125, 0.1875, 0.25, 0.3125, 0.375, 0.5, 0.625, 0.75,
+        0.875, 1.0,
+    };
+
+    const double lo = band_edge_hz(20), hi = band_edge_hz(21);
+    const auto muted = make_layout(20.0f, 20000.0f, 32, 20);
+
+    const auto open32 = spectrum_via_design(make_layout(20.0f, 20000.0f, 32), 8, 25);
+    std::vector<std::vector<double>> opens(3);
+    for (int c = 0; c < 3; ++c)
+        opens[static_cast<std::size_t>(c)] = spectrum_via_design(
+            make_layout(kKeptCases[c].lo, kKeptCases[c].hi, kKeptCases[c].bands),
+            8, 25);
+
+    auto deep_layout = make_layout(20.0f, 20000.0f, 32);
+    deep_layout.bands[20].gain_db = -100.0f;
+    const int deep_bin = bin_of(std::sqrt(lo * hi));
+
+    std::printf("\n"
+        "    q   interior   on-grid  deepest   cover    leak   "
+        "kept: 32full decade 64full   -100dB ctl   ctl sup\n");
+
+    for (double q : kQuanta) {
+        const auto r = measure(spectrum_via_design(muted, 8, 25, q), open32, lo, hi);
+        const auto deep_mag = spectrum_via_design(deep_layout, 8, 25, q);
+        const double deep = db_at(deep_mag, open32, deep_bin);
+        // The control's own supremum over the same middle half, printed beside
+        // the single probe bin it is read at. The width sweep found those two
+        // 5 dB apart at the candidate cell, which is how a cell passes the
+        // control on ripple rather than on realisation.
+        const double deep_sup = measure(deep_mag, open32, lo, hi).interior_sup_db;
+
+        double kept_pct[3];
+        for (int c = 0; c < 3; ++c) {
+            const auto& kc = kKeptCases[c];
+            const double klo = band_edge_hz(static_cast<int>(kc.kept),
+                                            static_cast<int>(kc.bands), kc.lo, kc.hi);
+            const double khi = band_edge_hz(static_cast<int>(kc.kept) + 1,
+                                            static_cast<int>(kc.bands), kc.lo, kc.hi);
+            const auto island = spectrum_via_design(
+                make_island(kc.lo, kc.hi, kc.bands, kc.kept), 8, 25, q);
+            kept_pct[c] = 100.0
+                * surviving_hz(island, opens[static_cast<std::size_t>(c)], klo, khi)
+                / (khi - klo);
+        }
+
+        std::printf("  %5.4f  %8.2f  %8.2f %8.2f  %5.1f%%  %6.2f   "
+                    "%7.0f%% %6.0f%% %6.0f%%   %9.2f  %8.2f\n",
+                    q, r.interior_sup_db, r.on_grid_sup_db, r.deepest_db,
+                    100.0 * r.coverage, r.leak_db,
+                    kept_pct[0], kept_pct[1], kept_pct[2], deep, deep_sup);
+        std::fflush(stdout);
+    }
+    std::printf("\n  gates: interior <= -80 dB | cover >= 88%% | leak <= 0.5 dB | "
+                "kept >= 85%% (all three) | -100dB ctl in (-101,-99)\n");
 }

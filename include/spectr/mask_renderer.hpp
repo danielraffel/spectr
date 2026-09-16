@@ -187,6 +187,14 @@ struct TrackingTransitionGeometry {
 /// however its edges are placed, which is why only this realisation's own
 /// shaping step needs to carry the fraction.
 ///
+/// How coarse that fraction may be is a swept axis rather than an assumption:
+/// a grid step buys realised depth in the muted band and charges pitch wobble
+/// under a drag, and the whole frontier -- both halves measured in every cell
+/// -- is printed at `kTrackingEdgeQuantumBins` in the implementation. It has no
+/// knee: exact placement is the Pareto point, so this ships with no grid at
+/// all. The explicit form below takes the grid as an argument, which is how
+/// that was measured and how the drag gate's negative control is built.
+///
 /// Shaping happens in the log domain against `magnitude_floor`, which must be
 /// the same floor the reconstruction is given: a transition that ran to a
 /// different floor than the one the reconstruction applies would put a second
@@ -203,23 +211,32 @@ TrackingTransitionGeometry shape_tracking_transitions(
     int width_bins,
     double magnitude_floor) noexcept;
 
-/// The same shaping with the placement share stated explicitly instead of taken
-/// from the shipping constant: `outside_pct` is the percentage of each
-/// transition allowed to sit outside the quieter band, and the five-argument
-/// form above is exactly this one called with the shipping value.
+/// The same shaping with every geometry axis stated explicitly instead of taken
+/// from the shipping constants. `outside_pct` is the percentage of each
+/// transition allowed to sit outside the quieter band; `edge_quantum_bins` is
+/// the grid each edge's fractional position is snapped to, in design bins, with
+/// zero meaning the exact position. The five-argument form above is exactly
+/// this one called with the shipping values of both.
 ///
-/// It exists so a sweep of the two geometry axes measures THE SHIPPING
-/// FUNCTION at every point rather than a re-implementation of it. A sweep whose
-/// rows come from a copy is a model, and a model agrees with the product
-/// exactly where it was written to agree; the only way to know a row is true of
-/// the product is for the product to have produced it.
+/// It exists so a sweep of the geometry measures THE SHIPPING FUNCTION at every
+/// point rather than a re-implementation of it. A sweep whose rows come from a
+/// copy is a model, and a model agrees with the product exactly where it was
+/// written to agree; the only way to know a row is true of the product is for
+/// the product to have produced it.
+///
+/// `edge_quantum_bins == 1.0` is the whole-bin placement this design replaced,
+/// so the negative control that proves the drag gate can see a staircase is
+/// this function at that argument rather than a rounding step written beside
+/// it. A control implemented in the test can only ever demonstrate that the
+/// test's own arithmetic moves the gate.
 TrackingTransitionGeometry shape_tracking_transitions(
     std::span<double> magnitudes,
     std::span<const float> band_edges_hz,
     double bin_width_hz,
     int width_bins,
     double magnitude_floor,
-    int outside_pct) noexcept;
+    int outside_pct,
+    double edge_quantum_bins) noexcept;
 
 /// Latency of a mode, before anything is prepared.
 ///
