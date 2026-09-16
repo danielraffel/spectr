@@ -372,7 +372,14 @@ def registered_parameter_names(sources):
     sites. Band names are built from `band_name`'s own format string and
     `kMaxBands`, so this cannot agree with the copy by coincidence.
     """
-    names = set(re.findall(r'\bname\s*=\s*"([^"]+)"', sources))
+    # Anchored on the two registration FORMS, not on any `.name` assignment.
+    # A bare `name = "..."` also matches things that are not parameters at all
+    # -- `settings.name = "Settings..."` is a COMMAND -- and a set carrying
+    # non-parameters could one day let a promised name pass because something
+    # unrelated happened to share its string.
+    names = set(re.findall(r'\binfo\.name\s*=\s*"([^"]+)"', sources))
+    for block in re.findall(r'add_parameter\(\{(.*?)\}\)', sources, re.S):
+        names.update(re.findall(r'\.name\s*=\s*"([^"]+)"', block))
     fmt = re.search(r'"(Band %0?\d*zu %s)"', sources)
     if not fmt:
         raise RuntimeError(
