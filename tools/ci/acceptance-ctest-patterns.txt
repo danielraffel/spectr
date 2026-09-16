@@ -315,3 +315,24 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # copy word for word correct while the control it names stops existing, which
 # no capture, layout or wording check can see.
 ^Spectr-materialized-help-overlay
+
+# Undo/redo, and the two controls that give its headline number a scale.
+# Nothing above reaches these: the Catch2 names start with "undo:", while the
+# closest existing line, `editor authority`, matches only cases beginning that
+# way. Without this pattern all nine register and never run.
+#
+# The row that matters is `undo: one drag across many bands is one undo step`.
+# It is the whole point of the feature and the one a naive implementation gets
+# wrong, because this editor republishes the COMPLETE processing state on every
+# pointer sample -- so the un-bracketed shape is one undo step per sample, not
+# per drag. `undo: the unbracketed shape is what the gesture replaces` measures
+# that displaced shape (20 steps for one drag) so "one" is visibly a change
+# rather than a number with no scale. Confirmed failing without the bracket:
+# removing the in-gesture suppression turns the first row into 21 == 1.
+#
+# `undo: gain and mute are restored together` is the second row that has to be
+# selected. A band's level and its muted flag are separate fields, and an undo
+# that restored one without the other loses work while every count-based and
+# flag-based assertion here stays green. Confirmed failing: dropping mute on
+# restore reddens that row and only that row.
+^"?undo:
