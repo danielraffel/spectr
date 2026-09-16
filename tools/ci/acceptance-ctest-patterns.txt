@@ -270,3 +270,19 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # defect class: every JS row above is green against a readout that reports a
 # level nobody downstream ever hears.
 ^"?output level:
+# Band-group macros. A macro is one host-automatable offset addressed to a
+# user-chosen subset of the 64 band slots, so a scattered group can be driven
+# from a lane a host modulator can reach.
+#
+# The drag case is the one that matters. A group drag used to commit one
+# `Band NN Gain` write per selected band, each with its own gesture bracket, so
+# Logic's Learn latched onto whichever band was written first. `macro drag
+# emits one gesture bracket on one parameter` asserts the replacement, and its
+# sibling `macro drag: the old group-drag shape is what it replaces` measures
+# the four-bracket shape it displaced -- so "one" is visibly a change rather
+# than a number with no scale. Both were confirmed failing without the fix.
+^"?macro
+^"?the audio owner composes macros
+^"?plugin state round-trips macro membership
+^"?a plugin state blob without macro members
+^"?#34: the macro block

@@ -31,17 +31,54 @@ layout remain stored but do not enter the active spectral mask.
 | `4002` | Internal LFO rate (beats per cycle) |
 | `4003` | Internal LFO depth |
 | `4004` | Internal LFO target (whole bank/snapshot A/snapshot B/morph) |
-| `4005...4199` | Reserved modulation growth |
+| `4005...4009` | Reserved modulation growth |
+| `4010` | Internal LFO 2 enabled |
+| `4011` | Internal LFO 2 shape (sine/triangle/square/saw) |
+| `4012` | Internal LFO 2 rate (beats per cycle) |
+| `4013` | Internal LFO 2 depth |
+| `4014...4199` | Reserved modulation growth |
+| `4200...4203` | Macro 1...4 |
+| `4204...4299` | Reserved macro growth |
 
 The gain and mute names are zero-padded (`Band 01 Gain` through
 `Band 64 Gain`) so hosts that flatten groups still sort them correctly.
 
+## Macros
+
+A macro is one host-automatable offset addressed to a user-chosen subset of the
+64 canonical band slots, so a scattered group of bands can be driven from a
+single lane a host modulator can reach.
+
+- Range is the full band range, ±24 dB, default 0. A macro is an OFFSET, so
+  +24 dB only reaches the ceiling for a member already at 0 dB.
+- A macro ADDS to each member's gain, shape-preserving: the contour drawn
+  inside the group survives. Offsets from overlapping macros SUM, and the
+  result is clamped ONCE into the band range, so it never depends on the order
+  the macros are visited.
+- A muted member receives no offset, and a macro never toggles a mute.
+- Macros compose BEFORE the internal LFOs, so an LFO wobbles around the
+  macro-driven level rather than around the drawn one.
+- A macro is never written back to its members' gain lanes. Like the LFOs it is
+  a non-destructive overlay, and the drawn curve stays editable underneath.
+
+Membership is NOT a parameter. A set of slots is not a value a host can
+automate, and exposing one lane per member would reproduce the 64-lane echo
+macros exist to remove. It is editor state, persisted in the supplemental
+plugin-state blob as an optional `macro_members` array of index arrays. Absence
+means no macros are assigned, which is what a writer predating the feature
+meant, so the member was added without a schema-version bump.
+
+Membership survives a band-count change: the layout is a projection onto the
+first N canonical slots, so a member above the visible count is inert rather
+than forgotten, and returns when the count rises again.
+
 ## Groups
 
 The StateStore schema assigns parameters to Global, Band Gain, Band Mute,
-Snapshots, Viewport, and Modes groups. Format adapters should project those
-groups through their native host grouping mechanism where the format supports
-one; the stable names remain the fallback presentation.
+Snapshots, Viewport, Modes, Modulation, and Macros groups. Format adapters
+project those groups through their native host grouping mechanism where the
+format supports one; the AU v2 adapter maps them to parameter clumps. The
+stable names remain the fallback presentation.
 
 ## Viewport encoding
 

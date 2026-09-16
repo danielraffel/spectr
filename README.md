@@ -24,11 +24,14 @@ suite covers the shared spectral-mask DSP, exact latency and mute behavior,
 state round-trip, actual CLAP/VST3 artifact hosting, and a headless Standalone
 launch. Visible host validation is tracked in the canonical goal document.
 
-For the M5 trial, hosts see only the meaningful continuous audio controls:
-`Mix` and `Output`. Snapshot A/B selection and per-band morph remain editor-local
-working state and are preserved with Spectr's supplemental plugin state; they are
-not advertised as host automation until their realtime publication contract is
-ready.
+Hosts see the full surface: `Mix` and `Output`, all 64 band gains and mutes,
+the A/B snapshot morph, the viewport and band count, the mode toggles, the two
+internal LFOs, and four macros — each macro a single automatable lane that
+drives a user-chosen group of bands. See
+[`docs/parameter-surface.md`](docs/parameter-surface.md) for the ID scheme and
+the compatibility contract. Macro MEMBERSHIP and the snapshot bank itself stay
+editor-local working state, preserved in Spectr's supplemental plugin state:
+neither is a value a host can automate.
 
 See [`planning/`](planning/) for the full design package:
 
