@@ -252,10 +252,14 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # character, so that row failing is what proves the suite is not blind.
 ^Spectr-materialized-band-readout
 
-# The output level readout and its three plants. Same reason: `materialized`
-# cannot report their absence. Two of the three plants fail on behaviour that
-# only appears ACROSS frames (a hold that falls, a latch that clears itself),
-# which nothing else in this gate samples over time.
+# The output level readout and its six plants. Same reason: `materialized`
+# cannot report their absence. Two of the six fail on behaviour that only
+# appears ACROSS frames (a hold that falls, a latch that clears itself), which
+# nothing else in this gate samples over time; three more fail on the header
+# Output trim being present but unreachable -- untyped, unlabelled, or on a
+# 58pt track where one 0.5 dB step is 0.6pt of travel. None of those three
+# reddens a capture, a layout assertion or a hit test: the control is visible,
+# correct, and unusable.
 ^Spectr-materialized-output-meter
 
 # The Catch2 cases behind that readout, which prove the level is measured

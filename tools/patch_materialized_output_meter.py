@@ -133,8 +133,10 @@ COMPONENT = '''function SpectrOutputMeter() {
   //
   // The header's own flex spacer is empty from x=281.7 to x=669.5 (measured
   // from a SPECTR_LAYOUT_DUMP of the authored 1320x860 box), so this sits at
-  // 282 and is 200pt wide, ending at 482 -- inside that gap with ~187pt to
-  // spare, and out of the flow that cannot absorb it.
+  // 282 and runs 96 peak + 14 + ~41 OUTPUT + 14 + 156 track + 14 + 34
+  // readout, ending at ~651 -- inside that gap, with ~36pt of clear header
+  // before the LIVE button at x=687.5, and out of the flow that cannot
+  // absorb it. A longer track would eat that clearance.
   return /* @__PURE__ */ React.createElement("span", {
     "data-spectr-output-cluster": true,
     style: {
@@ -186,6 +188,14 @@ COMPONENT = '''function SpectrOutputMeter() {
   }, /* @__PURE__ */ React.createElement("span", { className: "tnum", style: {
     lineHeight: 1, whiteSpace: "nowrap"
   } }, (over ? "OVER " : "PEAK ") + peakText)),
+    /* @__PURE__ */ React.createElement("span", {
+      "data-spectr-output-trim-label": true,
+      // Declares its own face, size, tracking and colour. A control that
+      // declares no type inherits the document body default, which is
+      // how the readout beside it shipped 47% taller than every other
+      // readout in this header.
+      style: { fontFamily: "var(--mono)", fontSize: 10, letterSpacing: 0.8, color: "rgba(255,255,255,0.72)", lineHeight: 1, whiteSpace: "nowrap", flexShrink: 0 }
+    }, "OUTPUT"),
     /* @__PURE__ */ React.createElement("input", {
       "data-spectr-output-trim": true,
       type: "range",
@@ -196,7 +206,7 @@ COMPONENT = '''function SpectrOutputMeter() {
       "aria-label": "Output trim, decibels",
       title: "Output trim, dB",
       onChange: (event) => writeTrim(parseFloat(event.target.value)),
-      style: { width: 58, flexShrink: 0, accentColor: "hsl(200,80%,60%)" }
+      style: { width: 156, flexShrink: 0, accentColor: "hsl(200,80%,60%)" }
     }),
     /* @__PURE__ */ React.createElement("span", {
       "data-spectr-output-trim-readout": true,
@@ -253,6 +263,7 @@ EDITS = [
 
 REQUIRED_AFTER = (
     'function SpectrOutputMeter() {',
+    '"data-spectr-output-trim-label": true,',
     'React.createElement(SpectrOutputMeter, null));',
     'window.pulp.on("output_meter"',
     'window.pulp.postMessage("param_set",',
