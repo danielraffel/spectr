@@ -55,7 +55,40 @@ checks = {
         "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow),
     "exact labels": "runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-gate-fast]" in workflow,
     "no hosted label": not re.search(r"runs-on:.*(macos-|ubuntu-|windows-)", workflow, re.I),
-    "no selector input": "runner_selector" not in workflow and "runner_provider" not in workflow,
+    # `runner_provider` MUST be declared, and MUST be inert. Those are two
+    # separate requirements and this repo has been burned by the first.
+    #
+    # Declared: Shipyard's cloud backend unconditionally appends
+    # `-f runner_provider=<cloud.provider>` to `gh workflow run` without first
+    # asking the workflow which inputs it accepts. Undeclared, GitHub answers
+    # HTTP 422 "Unexpected inputs provided" and creates no run at all --
+    # and Shipyard stores that dispatch rejection as evidence {"mac": "fail"},
+    # so a gate that never ran is indistinguishable from one that failed, and
+    # `shipyard auto-merge` refuses the PR forever. This check previously read
+    # `"runner_provider" not in workflow`, which forbade the only fix.
+    #
+    # Inert: the reason that ban existed is still real -- nothing dispatched
+    # from outside may steer this job off the self-hosted spectr-gate-* pool.
+    # That invariant is now asserted directly rather than by banning a
+    # substring: no workflow input may be READ anywhere, so none can route.
+    # `runner_selector` and `runner_overrides` stay undeclared on purpose --
+    # Shipyard's input-aware dispatch path sends only inputs a workflow
+    # declares, so leaving them out is what keeps a selector from ever being
+    # sent.
+    "runner_provider input is declared": bool(re.search(
+        r"(?m)^  workflow_dispatch:\n    inputs:\n(?:.*\n)*?      runner_provider:\n",
+        workflow)),
+    "runner_provider input is optional": bool(re.search(
+        r"(?m)^      runner_provider:\n(?:        .*\n)*?        required: false\n",
+        workflow)),
+    "no selector input": ("runner_selector" not in workflow
+                          and "runner_overrides" not in workflow),
+    # Command lines only: the comment above the input explains the 422 in
+    # prose, and a check that cannot tell a comment from a command would read
+    # that explanation as the thing it forbids.
+    "no dispatch input can route anything": (
+        "inputs." not in workflow_commands
+        and not re.search(r"runs-on:.*\$\{\{", workflow)),
     "clean temp": "$RUNNER_TEMP/spectr-product-acceptance-" in workflow,
     "Release": "-DCMAKE_BUILD_TYPE=Release" in workflow,
     "provenance": ("validate_release_sdk.py" in workflow
