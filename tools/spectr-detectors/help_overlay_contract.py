@@ -123,10 +123,29 @@ COPY_MARKERS = (
     # Pinned because it is the most easily lost sentence in the section -- it
     # reads like a caveat and would be the first thing an editorial pass cut.
     "percussive material when you are cutting a narrow low band",
+    # The three sentences the automation guidance is actually FOR. Each is the
+    # kind an editorial pass removes as an aside, and each answers a question a
+    # user arrives with and cannot answer from the parameter list itself.
+    #
+    # The morph-as-range technique rests entirely on untouched bands staying
+    # put, which is a property of `morph_fields` (linear per band, so an
+    # identical pair returns its own value) and is invisible in the parameter
+    # list.
+    "Only those bands travel",
+    # Mute is the one thing the morph does NOT interpolate: `morph_fields`
+    # picks it wholesale from whichever slot dominates past t = 0.5, so a band
+    # muted in one snapshot flips at the midpoint. A user following the recipe
+    # without this gets a click where they designed a sweep.
+    "Mute does not blend",
+    # The question the automation guidance was written to answer. Spectr sets
+    # no `accepts_midi`, so a CC list is the wrong instrument entirely, and
+    # nothing in a host's UI says so.
+    "Spectr does not listen to it",
 )
 HEADINGS = (
     "How the bands work", "Zooming", "Drawing", "The analyzer",
-    "Snapshots and morph", "Movement", "Automation", "Presets",
+    "Snapshots and morph", "Movement", "Automation",
+    "Modulating a range of bands", "What you can automate", "Presets",
     "Live and Precision", "Latency",
 )
 
@@ -305,6 +324,125 @@ COPY_PLAIN = "function spectrHelpPlainText() {"
 COPY_CONFIRM = 'settle("Copied");'
 TITLE_IS_ABOUT = "# About Spectr"
 
+# -- THE NAMES THE GUIDE SENDS A USER LOOKING FOR ------------------------
+#
+# The Automation sections name parameters a user is told to find in their
+# host's parameter list. A doc claim is a claim: every one of those names has
+# to be a name the plugin actually REGISTERS, and the only way that stays true
+# through a rename is to read the registration sites rather than type the list
+# twice. `test_built_clap.cpp` already proves the registered names reach a real
+# CLAP/VST3/AU host under exactly these strings, so matching the registration
+# site is matching what Logic shows.
+#
+# The band names are DERIVED from the format string instead of pinned, because
+# the padding is the part that silently drifts: "Band 1 Gain" and "Band 01
+# Gain" look equally plausible in prose and only one of them is findable in a
+# host. Deriving the first, last and the one the guide uses as its Learn
+# example also pins kMaxBands, so a bank that grew would be caught here rather
+# than by a user scrolling for a parameter that does not exist.
+PARAM_SOURCES = (
+    os.path.join(REPO, "src", "param_surface.cpp"),
+    os.path.join(REPO, "src", "spectr.cpp"),
+)
+BAND_STATE = os.path.join(REPO, "include", "spectr", "band_state.hpp")
+MACRO_FIELD = os.path.join(REPO, "include", "spectr", "macro_field.hpp")
+# Named in the copy and registered by the plugin. Both directions are checked.
+PROMISED_PARAMS = (
+    "A/B Morph", "Viewport Center", "Viewport Width", "Band Count",
+    "LFO Rate", "LFO Depth", "Mix", "Output",
+)
+# (band index, suffix) whose derived display name the copy must quote. Index 30
+# is the Learn example, and the one a reader is most likely to copy verbatim.
+PROMISED_BANDS = ((0, "Gain"), (30, "Gain"), (63, "Gain"),
+                  (0, "Mute"), (63, "Mute"))
+# The macro lanes, derived the same way and for the same reason. They are the
+# one block in the guide a reader meets BEFORE they can use it: the four lanes
+# are registered unconditionally, so a host lists them in every build, and the
+# guide's job is to stop a user hunting for a control that will not respond.
+# Deriving first and last pins kMacroCount too, so a bank that grew would be
+# caught here rather than by a user scrolling for "Macro 5".
+PROMISED_MACROS = (0, 3)
+
+
+def read_param_sources():
+    """The registration sites, concatenated, as text."""
+    out = []
+    for path in PARAM_SOURCES:
+        with open(path, encoding="utf-8") as handle:
+            out.append(handle.read())
+    return "\n".join(out)
+
+
+def registered_parameter_names(sources):
+    """Every literal display name the plugin registers, plus the band names.
+
+    Literal names come from the `name = "..."` assignments at the registration
+    sites. Band names are built from `band_name`'s own format string and
+    `kMaxBands`, so this cannot agree with the copy by coincidence.
+    """
+    # Anchored on the two registration FORMS, not on any `.name` assignment.
+    # A bare `name = "..."` also matches things that are not parameters at all
+    # -- `settings.name = "Settings..."` is a COMMAND -- and a set carrying
+    # non-parameters could one day let a promised name pass because something
+    # unrelated happened to share its string.
+    names = set(re.findall(r'\binfo\.name\s*=\s*"([^"]+)"', sources))
+    for block in re.findall(r'add_parameter\(\{(.*?)\}\)', sources, re.S):
+        names.update(re.findall(r'\.name\s*=\s*"([^"]+)"', block))
+    fmt = re.search(r'"(Band %0?\d*zu %s)"', sources)
+    if not fmt:
+        raise RuntimeError(
+            "cannot find band_name's format string in the registration sites")
+    with open(BAND_STATE, encoding="utf-8") as handle:
+        max_bands = re.search(r"kMaxBands\s*=\s*(\d+)", handle.read())
+    if not max_bands:
+        raise RuntimeError("cannot read kMaxBands from band_state.hpp")
+    py_fmt = fmt.group(1).replace("%02zu", "%02d").replace("%zu", "%d")
+    band_names = {}
+    for index, suffix in PROMISED_BANDS:
+        if index >= int(max_bands.group(1)):
+            continue  # the bank shrank; the caller reports it as a miss
+        band_names[(index, suffix)] = py_fmt % (index + 1, suffix)
+    macro_fmt = re.search(r'"(Macro %0?\d*zu)"', sources)
+    if not macro_fmt:
+        raise RuntimeError(
+            "cannot find the macro name format in the registration sites")
+    with open(MACRO_FIELD, encoding="utf-8") as handle:
+        macro_count = re.search(r"kMacroCount\s*=\s*(\d+)", handle.read())
+    if not macro_count:
+        raise RuntimeError("cannot read kMacroCount from macro_field.hpp")
+    py_macro = macro_fmt.group(1).replace("%02zu", "%02d").replace("%zu", "%d")
+    macro_names = {}
+    for index in PROMISED_MACROS:
+        if index >= int(macro_count.group(1)):
+            continue  # the bank shrank; the caller reports it as a miss
+        macro_names[index] = py_macro % (index + 1)
+    return names, band_names, macro_names
+
+
+# Plants against the REGISTRATION SITES rather than the document or the copy.
+# They are separate from PLANTS because this rule reads a third input, and
+# because a rename is the failure it exists to catch: the copy stays word for
+# word correct while the name it sends a user looking for stops existing.
+SOURCE_PLANTS = {
+    # The single most quoted parameter in the guide is renamed at its
+    # registration site. Every word of the copy still reads fine.
+    "renamed-morph": lambda src: src.replace(
+        'info.name = "A/B Morph";', 'info.name = "Morph Position";'),
+    # The band-name format loses its zero padding, so every band name the
+    # guide quotes stops being findable in a host's parameter list.
+    "unpadded-band-names": lambda src: src.replace(
+        '"Band %02zu %s"', '"Band %zu %s"'),
+    # The macro lanes GAIN zero padding at their registration site, so a host
+    # lists "Macro 01" while the guide sends a reader looking for "Macro 1".
+    # Padding rather than a new word on purpose: it keeps the format string
+    # findable, so this plant exercises the name comparison rather than the
+    # parser's own missing-format error, which is a different failure and
+    # would pass a WILL_FAIL row without the rule ever running.
+    "padded-macro-names": lambda src: src.replace(
+        '"Macro %zu"', '"Macro %02zu"'),
+}
+
+
 PLANTS = {
     # The affordance disappears: the popover is a keycap list again with no way
     # into the guide, which is the state this whole lane exists to leave.
@@ -381,6 +519,38 @@ PLANTS = {
     "markup-leaks": lambda h, a: (
         h.replace(COPY_PLAIN, "function spectrHelpPlainTextUnused() {"), a),
     "stale-title": lambda h, a: (h, a.replace(TITLE_IS_ABOUT, "# What Spectr does")),
+    # The copy sends a user looking for a parameter the plugin does not
+    # register. Nothing else here reads parameter names, so only the PARAMS
+    # rule can catch it.
+    "stale-param-name": lambda h, a: (
+        h, a.replace("**A/B Morph**", "**Morph Position**")),
+    # The Mix target is removed from the guide outright. This plant exists
+    # because the rule could not catch it while presence was a bare
+    # substring: "Mix" lives inside "Mixing", which the Latency section
+    # repeats throughout, so the needle matched prose that has nothing to do
+    # with the parameter. Checking the bold form is what makes it catchable.
+    "lost-mix-target": lambda h, a: (
+        h, a.replace("**Mix** blends Spectr against the untouched signal. ", "")),
+    # The recipe's payoff sentence goes, leaving the section describing the
+    # morph without ever saying that the untouched bands stay put, which is
+    # the whole reason the technique works.
+    "lost-range-guidance": lambda h, a: (
+        h, a.replace("Only those bands travel.", "")),
+    # The mute caveat goes. Everything else still reads correctly, and a user
+    # following the guide gets a click at the halfway point instead of a
+    # sweep, which is exactly what the code does NOT interpolate.
+    "lost-mute-caveat": lambda h, a: (
+        h, a.replace("**Mute does not blend.**", "Mute blends too.")),
+    # The MIDI CC answer goes. That is the question the guide was written to
+    # answer, and the most cuttable sentence in it: it reads like an aside.
+    "lost-midi-answer": lambda h, a: (
+        h, a.replace("and Spectr does not listen to it", "")),
+    # The macro lanes go from the enumeration. The section still reads as a
+    # complete list of what a host shows, which is exactly the failure: four
+    # lanes appear in every host's parameter list and the guide that claims to
+    # name the ones worth knowing does not admit they exist.
+    "lost-macro-lanes": lambda h, a: (
+        h, a.replace("- **Macro 1** through **Macro 4**", "- Four spare lanes")),
     "double-offset": lambda h, a: (
         h.replace(SCRIM_ROOT,
                   '      top: origin.y,\n      left: origin.x,\n'
@@ -448,6 +618,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--plant", choices=sorted(PLANTS))
     ap.add_argument("--plant-capture", choices=sorted(CAPTURE_PLANTS))
+    ap.add_argument("--plant-source", choices=sorted(SOURCE_PLANTS))
     args = ap.parse_args()
 
     with open(DOC, encoding="utf-8") as handle:
@@ -668,13 +839,74 @@ def main():
         bad.append("the copy calls the switch seamless; it is a re-prepare "
                    "that moves the host's delay compensation")
 
+    # -- PARAMS -----------------------------------------------------------
+    sources = read_param_sources()
+    if args.plant_source:
+        planted_sources = SOURCE_PLANTS[args.plant_source](sources)
+        if planted_sources == sources:
+            print("FAIL: source plant %r changed nothing, so it proves nothing"
+                  % args.plant_source, file=sys.stderr)
+            return 1
+        sources = planted_sources
+        print("planted: %s (registration sites)" % args.plant_source)
+    registered, band_names, macro_names = registered_parameter_names(sources)
+    print("  PARAMS %d registered display names, %d band names derived, "
+          "%d macro names derived"
+          % (len(registered), len(band_names), len(macro_names)))
+    # CONTROL for the parser, and it has to be a name this rule does NOT
+    # police: if the pattern rotted or the files moved, every check below would
+    # report the copy as wrong rather than the instrument as broken, which is
+    # the reading that sends someone off to edit correct prose.
+    if "Analyzer Mode" not in registered:
+        bad.append("the registration-site parser found no \"Analyzer Mode\", so "
+                   "it is reading the wrong files or its pattern has rotted "
+                   "and every parameter-name check here is meaningless")
+    else:
+        for name in PROMISED_PARAMS:
+            # The BOLD form, which is how this copy marks a control the reader
+            # is meant to find. A bare substring is satisfied by ordinary
+            # prose: "Mix" is inside "Mixing", which the Latency section says
+            # a dozen times, so deleting the Mix target entirely left the
+            # check green. Measured before this line was written.
+            if ("**%s**" % name) not in text:
+                bad.append("the guide no longer names %r, which its automation "
+                           "guidance promises a user will find in their host"
+                           % name)
+            elif name not in registered:
+                bad.append("the guide sends a user looking for %r, which the "
+                           "plugin does not register: the name shown in the "
+                           "host's parameter list has changed and the guide "
+                           "now names a control that cannot be found" % name)
+        for (index, suffix), name in sorted(band_names.items()):
+            if ("**%s**" % name) not in text:
+                bad.append("the guide does not quote %r, which is what band %d "
+                           "registers its %s under: a reader searching their "
+                           "host for the name in the guide finds nothing"
+                           % (name, index + 1, suffix))
+        absent = [b for b in PROMISED_BANDS if b not in band_names]
+        if absent:
+            bad.append("the bank no longer contains the bands the guide quotes "
+                       "(%s), so kMaxBands has moved under the copy" % absent)
+        for index, name in sorted(macro_names.items()):
+            if ("**%s**" % name) not in text:
+                bad.append("the guide does not quote %r, which is what macro "
+                           "%d registers under: the lane is in every host's "
+                           "parameter list and the guide that enumerates that "
+                           "list does not name it" % (name, index + 1))
+        absent_macros = [m for m in PROMISED_MACROS if m not in macro_names]
+        if absent_macros:
+            bad.append("the macro bank no longer contains the lanes the guide "
+                       "quotes (%s), so kMacroCount has moved under the copy"
+                       % absent_macros)
+
     if bad:
         for line in bad:
             print("FAIL: " + line, file=sys.stderr)
         return 1
     print("PASS: the ? popover reaches the guide, the guide clips and moves its "
-          "own content, and the approved copy lives in the bundled asset rather "
-          "than the compiled document")
+          "own content, the approved copy lives in the bundled asset rather "
+          "than the compiled document, and every parameter name the automation "
+          "guidance sends a user looking for is one the plugin registers")
     return 0
 
 
