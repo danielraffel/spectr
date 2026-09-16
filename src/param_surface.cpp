@@ -1,4 +1,5 @@
 #include "spectr/param_surface.hpp"
+#include "spectr/macro_field.hpp"
 #include "spectr/spectr.hpp"
 
 #include <pulp/state/store.hpp>
@@ -62,9 +63,11 @@ float param_value_from_layout(Layout layout) noexcept {
 
 namespace {
 
-// Group ids (StateStore ParamGroup). The pinned SDK's adapters do not yet
-// surface groups to hosts; they are registered so the contract exists when
-// they do, and the zero-padded names carry the ordering today.
+// Group ids (StateStore ParamGroup). The pinned SDK's AU adapter projects
+// these to AudioUnit parameter clumps, so a host that draws clumps (Logic
+// does) shows the surface grouped rather than as one flat list of 151. The
+// names are what the user reads there, so they are product copy, not
+// internal labels.
 constexpr int kGroupGlobal    = 1;
 constexpr int kGroupBandGain  = 2;
 constexpr int kGroupBandMute  = 3;
@@ -72,6 +75,7 @@ constexpr int kGroupSnapshots = 4;
 constexpr int kGroupViewport  = 5;
 constexpr int kGroupModes     = 6;
 constexpr int kGroupModulation= 7;
+constexpr int kGroupMacros    = 8;
 
 std::string band_name(std::size_t i, const char* suffix) {
     char buf[32];
@@ -128,6 +132,7 @@ void register_surface_params(pulp::state::StateStore& store) {
     store.add_group({kGroupViewport, "Viewport", 0});
     store.add_group({kGroupModes, "Modes", 0});
     store.add_group({kGroupModulation, "Modulation", 0});
+    store.add_group({kGroupMacros, "Macros", 0});
 
     for (std::size_t i = 0; i < kMaxBands; ++i) {
         pulp::state::ParamInfo info;
@@ -314,6 +319,27 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.name = "LFO 2 Depth";
         info.range = {0.0f, 1.0f, 0.0f};
         info.group_id = kGroupModulation;
+        store.add_parameter(info);
+    }
+
+    // Macros. Registered unconditionally like every other slot in the
+    // surface: a macro with no members is inert, but its lane must exist
+    // before the user assigns one, or a host would have to rescan to see it.
+    //
+    // The range is the full band range rather than something narrower. A
+    // macro is an OFFSET, so +24 dB only reaches the ceiling for a member
+    // already at 0 dB; a member the user drew at -12 dB needs the whole
+    // span to be driven to the top. Matching the band range also means the
+    // host's automation lane reads in the same units as the thing it moves.
+    for (std::size_t m = 0; m < kMacroCount; ++m) {
+        pulp::state::ParamInfo info;
+        info.id = macro_param_id(m);
+        char name[24];
+        std::snprintf(name, sizeof(name), "Macro %zu", m + 1);
+        info.name = name;
+        info.unit = "dB";
+        info.range = {kBandGainMinDb, kBandGainMaxDb, 0.0f};
+        info.group_id = kGroupMacros;
         store.add_parameter(info);
     }
 }
@@ -530,6 +556,25 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         editor_changed = true;
     }
 
+    // Macros. The VALUE is an ordinary host lane, so a move has to stamp the
+    // applied cache here like every other slot: `sample_surface_drift_`
+    // sweeps all of kSurfaceCacheSlots, so a slot nothing ever stamps reports
+    // drift on every single block and respawns the sync worker forever.
+    //
+    // Membership is not read from the store — it has no lane — so this loop
+    // only reconciles values. A macro with no members is INERT: its value
+    // moved, the editor should show that, but nothing audible changed and a
+    // mask republish would be pure cost.
+    for (std::size_t m = 0; m < kMacroCount; ++m) {
+        const float value = store->get_value(macro_param_id(m));
+        auto& cached = applied_param_cache_[detail::kSlotMacroBase + m];
+        if (value != cached.load(std::memory_order_relaxed)) {
+            cached.store(value, std::memory_order_relaxed);
+            if (macro_members_[m].any()) sound_changed = true;
+            editor_changed = true;
+        }
+    }
+
     if (sound_changed || editor_changed) {
         if (sound_changed) publish_processing_state_();
         host_automation_revision_.store(
@@ -574,6 +619,75 @@ bool Spectr::set_modulation_target_mask(std::uint8_t mask) noexcept {
     std::lock_guard<std::mutex> lock(processing_state_mutex_);
     modulation_.target_mask = static_cast<std::uint8_t>(mask & 0x0f);
     publish_audio_modulation_state_();
+    host_automation_revision_.store(
+        editor_authority_.record_external_mutation(),
+        std::memory_order_release);
+    return true;
+}
+
+MacroMembership<kMaxBands> Spectr::macro_members(
+    std::size_t macro) const noexcept {
+    if (macro >= kMacroCount) return {};
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return macro_members_[macro];
+}
+
+bool Spectr::set_macro_members(
+    std::size_t macro, const MacroMembership<kMaxBands>& members) noexcept {
+    if (macro >= kMacroCount) return false;
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        if (macro_members_[macro] == members) return true;
+        macro_members_[macro] = members;
+        // Republish the whole processing state, not just the modulation
+        // publication: changing membership changes the AUDIBLE field, because
+        // the macro's current value now reaches a different set of bands. A
+        // macro sitting at +6 dB that gains a member must lift it on the very
+        // next block, exactly as it would have had the member been assigned
+        // before the value moved.
+        publish_processing_state_();
+    }
+    host_automation_revision_.store(
+        editor_authority_.record_external_mutation(),
+        std::memory_order_release);
+    return true;
+}
+
+BandMacroBank Spectr::macro_bank_locked_() const noexcept {
+    BandMacroBank bank;
+    bank.members = macro_members_;
+    const auto* store = param_store_;
+    if (!store) return bank;
+    for (std::size_t m = 0; m < kMacroCount; ++m)
+        bank.values[m] = store->get_value(macro_param_id(m));
+    return bank;
+}
+
+BandMacroBank Spectr::macro_bank() const noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return macro_bank_locked_();
+}
+
+bool Spectr::set_macro_value(std::size_t macro, float value_db) noexcept {
+    if (macro >= kMacroCount) return false;
+    if (!param_store_) return false;
+    if (!std::isfinite(value_db)) return false;
+    const float clamped = std::clamp(value_db, kBandGainMinDb, kBandGainMaxDb);
+    // Clamped BEFORE the push so the applied cache records the value the
+    // store will actually hold. push_surface_param_ mirrors what it is given,
+    // and an out-of-range mirror would read as permanent drift.
+    push_surface_param_(macro_param_id(macro),
+                        detail::kSlotMacroBase + macro, clamped,
+                        /*emit_gesture=*/true);
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        // Republish here rather than leaving it to the sync worker: the push
+        // above stamped the applied cache, so `apply_surface_params` will see
+        // no drift and would never republish the mask this value changed.
+        // An unassigned macro changes nothing audible, so it skips the
+        // redesign and only advances the editor revision below.
+        if (macro_members_[macro].any()) publish_processing_state_();
+    }
     host_automation_revision_.store(
         editor_authority_.record_external_mutation(),
         std::memory_order_release);

@@ -453,6 +453,18 @@
         "setQuery(String(spectrInputValue"
       ],
       "note": "The search input was the only one of four in this panel reading `e.target.value` raw. A value that does not survive that read makes `query` undefined, and the next line of the render is `query.toLowerCase()` inside `userPatterns.filter`, so the panel throws out of render. Reproduced through the activation seam; no user-reachable path was established, so this is hardening to match its siblings rather than a fix for a reported defect."
+    },
+    {
+      "id": "band-group-macros",
+      "pr": 156,
+      "title": "A selection can be assigned to a macro and driven as one host lane",
+      "tokens": [
+        "macro_set_members",
+        "macroAdjustedGain",
+        "macro_members",
+        "parseNativeMacros"
+      ],
+      "note": "Four tokens spanning both halves, because either half alone would be a feature that does not work. `macro_set_members` is the bridge command behind Assign/Clear; `macro_members` is the supplemental-blob key that persists it; `macroAdjustedGain` is the read-time display rule; `parseNativeMacros` is the parser that carries membership to the editor at all. Screened: all four return 0 files on the pre-change tree (control `modulation_target_mask` returns 15, so the screen works) and all four appear in `strings -a` of the built binary."
     }
   ]
 }

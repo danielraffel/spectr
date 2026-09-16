@@ -986,3 +986,85 @@ TEST_CASE("authored mute: a user-dragged morph still moves mute") {
     spectr::morph_fields(out, a, b, 0.5f);
     CHECK_FALSE(out.bands[0].muted);
 }
+
+TEST_CASE("plugin state round-trips macro membership") {
+    // Scattered, overlapping, and reaching a slot above the default visible
+    // count. Contiguity would round-trip through almost any encoding; this
+    // shape only survives if the indices themselves are carried.
+    Spectr a;
+    pulp::state::StateStore store_a;
+    a.set_state_store(&store_a);
+    a.define_parameters(store_a);
+
+    spectr::MacroMembership<spectr::kMaxBands> first;
+    for (const std::size_t slot : {0u, 7u, 31u, 63u}) first.set(slot);
+    spectr::MacroMembership<spectr::kMaxBands> second;
+    for (const std::size_t slot : {7u, 8u}) second.set(slot);  // 7 is shared
+    REQUIRE(a.set_macro_members(0, first));
+    REQUIRE(a.set_macro_members(3, second));
+
+    const auto blob = a.serialize_plugin_state();
+    REQUIRE_FALSE(blob.empty());
+
+    Spectr b;
+    pulp::state::StateStore store_b;
+    b.set_state_store(&store_b);
+    b.define_parameters(store_b);
+    REQUIRE(b.macro_members(0).none());  // control: it starts empty
+    REQUIRE(b.deserialize_plugin_state(blob));
+
+    CHECK(b.macro_members(0) == first);
+    CHECK(b.macro_members(3) == second);
+    // The macros that were never assigned must still be empty — a reader that
+    // smeared one macro's membership across the bank would otherwise pass.
+    CHECK(b.macro_members(1).none());
+    CHECK(b.macro_members(2).none());
+}
+
+TEST_CASE("a plugin state blob without macro members loads with none assigned") {
+    // A writer that predates macros emits no member. That absence means "no
+    // macros assigned", which is exactly what that writer meant — so the blob
+    // must load, not be refused, and must not leave a stale assignment behind.
+    Spectr a;
+    pulp::state::StateStore store_a;
+    a.set_state_store(&store_a);
+    a.define_parameters(store_a);
+    const auto blob = a.serialize_plugin_state();
+    std::string json(blob.begin(), blob.end());
+
+    // Rebuild the object without the member rather than cutting the text:
+    // `macro_members` is an array OF arrays, so a comma-scan would stop inside
+    // the first nested array and corrupt the payload.
+    const auto parsed = choc::json::parse(json);
+    REQUIRE(parsed.isObject());
+    REQUIRE(parsed.hasObjectMember("macro_members"));  // control: it is there
+    auto stripped = choc::value::createObject("SpectrPluginState");
+    for (uint32_t i = 0; i < parsed.size(); ++i) {
+        const auto member = parsed.getObjectMemberAt(i);
+        if (std::string_view(member.name) == "macro_members") continue;
+        stripped.addMember(member.name, member.value);
+    }
+    REQUIRE_FALSE(stripped.hasObjectMember("macro_members"));
+    const auto text = choc::json::toString(stripped, false);
+
+    Spectr b;
+    pulp::state::StateStore store_b;
+    b.set_state_store(&store_b);
+    b.define_parameters(store_b);
+    // Start from an assignment, so a reader that simply left the field alone
+    // would be caught rather than passing by luck on a fresh instance.
+    spectr::MacroMembership<spectr::kMaxBands> prior;
+    prior.set(12);
+    REQUIRE(b.set_macro_members(2, prior));
+
+    const std::vector<uint8_t> bytes(text.begin(), text.end());
+    REQUIRE(b.deserialize_plugin_state(bytes));
+    CHECK(b.macro_members(2).none());
+
+    // Control on the same instrument: the UNstripped blob must still restore
+    // a membership, so the "none" above is the absence being honoured and not
+    // the reader having stopped working.
+    REQUIRE(a.set_macro_members(2, prior));
+    REQUIRE(b.deserialize_plugin_state(a.serialize_plugin_state()));
+    CHECK(b.macro_members(2).test(12));
+}
