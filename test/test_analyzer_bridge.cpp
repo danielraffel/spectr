@@ -335,6 +335,25 @@ TEST_CASE("output level: a trim that pushes past full scale reads over",
     CHECK_FALSE(safe.over);
 }
 
+TEST_CASE("output level: the editor's trim control writes kOutputTrim",
+          "[output-level]") {
+    // The editor's Output control reaches the DSP through the flat `param_set`
+    // verb, which takes a raw parameter id -- and the editor carries that id as
+    // the literal 2, because JS has no access to this enum. Renumbering
+    // kOutputTrim would therefore leave the control writing some OTHER
+    // parameter, with the panel, the readout and every JS gate still green: the
+    // slider would move, the meter would not follow it, and nothing would say
+    // why. Pin the two together so the renumbering fails here instead.
+    STATIC_REQUIRE(static_cast<int>(spectr::kOutputTrim) == 2);
+
+    // And prove the write actually lands, through the same StateStore path the
+    // bridge handler uses -- otherwise the constant above would be pinning an
+    // id nothing reads.
+    PreparedSpectr s{};
+    s.store.set_value(static_cast<pulp::state::ParamID>(2), 7.5f);
+    CHECK(s.processor->read_output_level().trim_db == Approx(7.5f));
+}
+
 TEST_CASE("output level: digital silence reads as -inf, never as 0 dBFS",
           "[output-level]") {
     // A meter that reports 0 for silence cannot be told apart from one
