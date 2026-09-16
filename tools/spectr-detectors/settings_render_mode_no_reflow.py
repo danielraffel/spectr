@@ -180,11 +180,15 @@ def mode_of(state):
 
 
 def hint_nodes(state):
-    """(visible-line node, its parent node) for the guidance line on show.
+    """Every (guidance-text node, its parent) pair in this capture.
 
-    The visible line is the guidance node that is positioned out of flow; it is
-    identified as the node carrying a guidance sentence whose parent ALSO
-    carries one (the sizer's twin). Returns the deepest such pair.
+    There are two on the fixed surface -- the transparent sizer that reserves
+    the height, and the visible line drawn over it -- and one on the pre-fix
+    surface, which had no sizer. Both are returned deliberately rather than
+    filtered down to "the visible one": the rules below want the worst case
+    over all of them, and a filter that guessed which is which would be one
+    more thing to get wrong. Which capture is showing which MODE is decided
+    separately, by comparing the texts across the two captures.
     """
     by_i = {n["i"]: n for n in state["nodes"]}
     cands = [n for n in state["nodes"]
