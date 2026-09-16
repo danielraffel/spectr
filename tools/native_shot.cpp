@@ -460,6 +460,24 @@ struct Rig {
         }
     }
 
+    // Ask the shipping runtime a yes/no question about its OWN state. The
+    // bridge has no value-returning eval, so the answer is carried by whether
+    // the script throws -- which is enough for every predicate here and keeps
+    // the reading inside the runtime rather than in a C++ replica of it. The
+    // expression is also logged, so a report can quote what was asked.
+    bool truth(const std::string& expression) {
+        try {
+            eval("(() => { const v = (" + expression + ");"
+                 " console.log('[truth] ' + " + js_string(expression)
+                 + " + ' => ' + JSON.stringify(v));"
+                 " if (!v) throw new Error('false'); })();",
+                 "spectr-native-shot-truth");
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+
     // COR-4's census. The population is the runtime's OWN focus order, not a
     // list of selectors I guessed: a guessed list cannot report a control it
     // was never told about, and the first version of this returned total=0 on
@@ -1051,6 +1069,145 @@ std::string owner_at(pulp::view::View& root, float x, float y) {
             return "(anon +" + std::to_string(depth) + " under " + node->id() + ")";
     }
     return "(anon, no named ancestor)";
+}
+
+// ── Band context menu: addressing a row the way a user addresses it ──────
+//
+// By the text painted on it, then by a press at the pixels that text
+// occupies. `rig.activate(selector)` resolves by CSS selector and never
+// consults `hit_test`, so it will happily "press" a row no pointer could
+// reach -- which is exactly this menu's failure mode when its rows restack
+// on top of one another. A row driven that way is evidence about the
+// HANDLER and about nothing else.
+struct MenuRow {
+    const pulp::view::Label* label = nullptr;
+    pulp::view::View* row = nullptr;      // nearest ancestor carrying on_click
+    pulp::view::Rect painted{};           // the LABEL's rect, in root space
+    float cx = 0.0f;
+    float cy = 0.0f;
+    bool found() const { return label != nullptr; }
+};
+
+pulp::view::View* nearest_clickable(pulp::view::View* view) {
+    for (auto* node = view; node != nullptr; node = node->parent())
+        if (node->on_click) return node;
+    return nullptr;
+}
+
+const pulp::view::Label* find_label_if(
+        const pulp::view::View& view,
+        const std::function<bool(const std::string&)>& match) {
+    if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+        label != nullptr && match(label->text()))
+        return label;
+    for (std::size_t i = 0; i < view.child_count(); ++i)
+        if (const auto* hit = find_label_if(*view.child_at(i), match))
+            return hit;
+    return nullptr;
+}
+
+// Ends-with, because the edit-mode rows are authored as
+// `(active ? "● " : "   ") + label`: "Glide" is reachable only as a suffix,
+// and which row carries the bullet must not change how it is addressed.
+const pulp::view::Label* find_label_suffix(const pulp::view::View& view,
+                                           const std::string& suffix) {
+    return find_label_if(view, [&suffix](const std::string& text) {
+        return text.size() >= suffix.size()
+            && text.compare(text.size() - suffix.size(), suffix.size(),
+                            suffix) == 0;
+    });
+}
+
+MenuRow resolve_row(pulp::view::View& scope, const std::string& suffix) {
+    MenuRow out;
+    const auto* label = find_label_suffix(scope, suffix);
+    if (label == nullptr) return out;
+    auto* live = const_cast<pulp::view::Label*>(label);
+    out.label = label;
+    out.row = nearest_clickable(live);
+    float x = 0.0f, y = 0.0f;
+    root_origin(*live, x, y);
+    const auto box = live->bounds();
+    out.painted = {x, y, box.width, box.height};
+    out.cx = x + box.width * 0.5f;
+    out.cy = y + box.height * 0.5f;
+    return out;
+}
+
+// The menu's own container, found from the group header it always draws
+// ("BAND <n>"), so every row lookup is scoped to the menu rather than to a
+// whole editor that also paints the words "Solo" and "Level" elsewhere.
+pulp::view::View* find_band_menu_container(pulp::view::View& root,
+                                           int& out_band_number) {
+    out_band_number = -1;
+    const auto* header = find_label_if(root, [](const std::string& text) {
+        if (text.rfind("BAND ", 0) != 0) return false;
+        if (text.size() < 6) return false;
+        for (std::size_t i = 5; i < text.size(); ++i)
+            if (text[i] < '0' || text[i] > '9') return false;
+        return true;
+    });
+    if (header == nullptr) return nullptr;
+    out_band_number = std::atoi(header->text().c_str() + 5);
+    for (auto* node = const_cast<pulp::view::Label*>(header)->parent();
+         node != nullptr; node = node->parent())
+        if (node->child_count() >= 8) return node;
+    return nullptr;
+}
+
+// Every label under the menu, with the rect it paints and who owns a press
+// at its centre. A row-by-row report needs this even when everything passes:
+// "the press landed on the row whose label it was aimed at" is what makes a
+// state change attributable to THAT row rather than to a neighbour stacked
+// over it.
+void dump_menu_rows(pulp::view::View& view, pulp::view::View& root, int depth) {
+    if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+        label != nullptr && !label->text().empty()) {
+        float x = 0.0f, y = 0.0f;
+        root_origin(view, x, y);
+        const auto box = view.bounds();
+        const float cx = x + box.width * 0.5f;
+        const float cy = y + box.height * 0.5f;
+        auto* owner = (box.width > 0.0f && box.height > 0.0f)
+            ? root.hit_test(pulp::view::Point{cx, cy}) : nullptr;
+        auto* clickable = nearest_clickable(const_cast<pulp::view::View*>(&view));
+        auto* hit_click = nearest_clickable(owner);
+        std::printf("[menuitems]   %-28s rect=(%7.1f,%7.1f %6.1fx%5.1f) "
+                    "press@centre owner=%-26s same-row=%s\n",
+                    label->text().c_str(), x, y, box.width, box.height,
+                    owner_name(owner).c_str(),
+                    (clickable != nullptr && hit_click == clickable)
+                        ? "yes" : "NO");
+    }
+    for (std::size_t i = 0; i < view.child_count(); ++i)
+        dump_menu_rows(*view.child_at(i), root, depth + 1);
+}
+
+// Distinct pressable rows whose painted centre is owned by a DIFFERENT row.
+// A row in that state cannot be operated by a pointer at all, however sound
+// its handler is -- and the reading a gate takes from it belongs to whichever
+// row is stacked on top, which is worse than a failure because it looks like
+// one row's verdict while being another's.
+void collect_unreachable_rows(pulp::view::View& view, pulp::view::View& root,
+                              std::vector<pulp::view::View*>& seen,
+                              std::vector<std::string>& unreachable) {
+    if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+        label != nullptr && !label->text().empty()) {
+        auto* own = nearest_clickable(const_cast<pulp::view::View*>(&view));
+        const auto box = view.bounds();
+        if (own != nullptr && box.width > 0.0f && box.height > 0.0f
+            && std::find(seen.begin(), seen.end(), own) == seen.end()) {
+            seen.push_back(own);
+            float x = 0.0f, y = 0.0f;
+            root_origin(view, x, y);
+            auto* hit = root.hit_test(pulp::view::Point{
+                x + box.width * 0.5f, y + box.height * 0.5f});
+            if (nearest_clickable(hit) != own)
+                unreachable.push_back(label->text());
+        }
+    }
+    for (std::size_t i = 0; i < view.child_count(); ++i)
+        collect_unreachable_rows(*view.child_at(i), root, seen, unreachable);
 }
 
 // ── Press reachability ──────────────────────────────────────────────────
@@ -3129,6 +3286,1355 @@ int main(int argc, char** argv) {
             capture(rig, dir, prefix + "relayout-3-reopen-withsel", backend,
                     scale);
 
+            return 0;
+        }
+
+        // The band context menu must not eat the keyboard, and it must
+        // dismiss the way every other overlay in this editor dismisses.
+        //
+        // Both halves are asserted here because both were invisible to the
+        // probe that already aimed at this menu. SPECTR_BAND_MENU_RELAYOUT
+        // reads the menu's row COUNT and its group HEADER NAMES, and both of
+        // those are correct while the menu is unusable -- it drove the path in
+        // a way that could not fail. These read the two things that actually
+        // changed for the user: whether a keystroke reached the app, and
+        // whether a press outside the menu closed it.
+        //
+        // WHAT EACH ASSERTION WOULD READ IF THE DEFECT WERE MAXIMAL:
+        //   shortcut  -- the edit-mode parameter stays at the value the
+        //                CONTROL put there, never reaching glide. The control
+        //                press happens with the menu CLOSED and must move the
+        //                same parameter, so a dead key path fails the control
+        //                and no verdict is reported at all.
+        //   dismissal -- route_press_to_active_overlay answers `no_overlay`
+        //                (nothing claimed the slot) instead of `dismissed`,
+        //                and the menu is still mounted afterwards.
+        //   escape    -- the framework answers `overlay` either way, because
+        //                the slot was being dismissed correctly all along, so
+        //                the UNMOUNT is the assertion. Under the defect the
+        //                slot clears and the menu stays on screen, which is
+        //                exactly what a DAW shows and what no offline reading
+        //                of the return value alone could ever have caught.
+        //
+        // Exit: 0 all hold, 1 an invariant is violated, 3 the premise is
+        // unproven, 77 no view carries a context-menu handler under this SDK
+        // so the menu cannot be opened. 3 and 77 must never read as a pass;
+        // CTest reports 77 as "Not Run".
+        if (std::getenv("SPECTR_BAND_MENU_KEYS") != nullptr) {
+            auto& root = *rig.root;
+            // The negative control inverts the verdict from INSIDE the binary
+            // rather than through WILL_FAIL, which would accept a usage error
+            // or an unproven premise as if it had caught the defect.
+            const bool plant = std::getenv("SPECTR_BAND_MENU_KEYS_PLANT") != nullptr;
+
+            // Opened over a band, and far enough from the left edge that the
+            // menu's own clamp does not move it: the outside point below is
+            // chosen against the rect this produces.
+            constexpr float kOpenX = 378.0f, kOpenY = 400.0f;
+            // Comfortably outside that rect (the menu spans roughly
+            // x 378..608, y 400..776) and still inside the design root.
+            constexpr float kOutsideX = 60.0f, kOutsideY = 60.0f;
+            constexpr float kModeBoost = 2.0f, kModeGlide = 4.0f;
+
+            auto edit_mode = [&rig]() {
+                return rig.store.get_value(spectr::kParamEditMode);
+            };
+            auto menu_open = [&rig]() {
+                return rig.is_mounted("[data-spectr-band-context-menu]");
+            };
+            // The bridge entry point, NOT View::on_key_event. on_key_event
+            // walks the native view tree and never enters the runtime, so it
+            // cannot see a JS keydown handler at all -- a test built on it
+            // would pass while the product stayed broken, which is adjacent
+            // to the very routing being fixed here.
+            auto press_key = [&root, &rig](pulp::view::KeyCode code) {
+                pulp::view::WidgetBridge::dispatch_key_for_root(
+                    root, static_cast<int>(code), pulp::view::kModNone, true);
+                pulp::view::WidgetBridge::dispatch_key_for_root(
+                    root, static_cast<int>(code), pulp::view::kModNone, false);
+                settle(rig.clock, 24);
+            };
+            auto open_menu = [&root, &rig]() {
+                const auto res = pulp::view::route_context_press(
+                    root, pulp::view::Point{kOpenX, kOpenY});
+                settle(rig.clock, 24);
+                return res.handled;
+            };
+
+            // PREMISE 1 -- the menu has to be reachable in this tree at all.
+            // Under an SDK whose right-click fix is not an ancestor NOTHING
+            // carries on_context_menu, and every step below would be
+            // measuring an absent menu. That is a SKIP, not a pass.
+            const auto sweep = press_reach_sweep(root);
+            std::printf("[menukeys] views carrying on_context_menu: %d\n",
+                        sweep.context_menu_targets);
+            if (sweep.context_menu_targets == 0) {
+                std::fprintf(stderr,
+                             "SKIP: no view in the shipping tree carries a "
+                             "context-menu handler under this SDK, so the band "
+                             "menu cannot be opened and neither its keyboard "
+                             "behaviour nor its dismissal can be observed.\n");
+                return 77;
+            }
+
+            rig.feed_tone(6);
+            settle(rig.clock, 20);
+
+            // CONTROL -- the same key path, with the menu CLOSED, must move
+            // the edit mode. This is the instrument check: if a bare letter
+            // cannot reach the app even with nothing open, then the reading
+            // taken with the menu open says nothing about the menu, and the
+            // honest outcome is "unproven" rather than "the fix works".
+            if (menu_open()) {
+                std::fprintf(stderr,
+                             "UNPROVEN: a band menu is already mounted before "
+                             "the control press.\n");
+                return 3;
+            }
+            press_key(pulp::view::KeyCode::b);
+            const float control_mode = edit_mode();
+            std::printf("[menukeys] control  : menu closed, key 'b' -> "
+                        "edit_mode=%.1f (expect %.1f)\n",
+                        control_mode, kModeBoost);
+            if (control_mode != kModeBoost) {
+                std::fprintf(stderr,
+                             "UNPROVEN: the shortcut path does not reach the "
+                             "editor even with no menu open, so this run "
+                             "cannot say anything about the menu.\n");
+                return 3;
+            }
+
+            // PREMISE 2 -- the menu opens.
+            const bool handled = open_menu();
+            const bool open_now = menu_open();
+            std::printf("[menukeys] open     : handled=%s mounted=%s\n",
+                        handled ? "yes" : "no", open_now ? "yes" : "no");
+            if (!open_now) {
+                std::fprintf(stderr,
+                             "UNPROVEN: the right-press did not mount the band "
+                             "menu, so neither invariant can be read.\n");
+                return 3;
+            }
+
+            if (plant) {
+                // NEGATIVE CONTROL, planted in the PRODUCT rather than in the
+                // comparison. Strip the one attribute the guard's new
+                // exemption keys on and the REAL guard, running against the
+                // REAL menu, returns exactly what it returned before the fix.
+                // The gate must then fail to see the shortcut land; if it
+                // still sees it, the gate is not wired to the thing it claims
+                // to cover and its green is meaningless.
+                rig.eval("(() => { const m = document.querySelector("
+                         "'[data-spectr-band-context-menu]');"
+                         " if (!m) throw new Error('plant: menu absent');"
+                         " m.removeAttribute('data-spectr-band-context-menu');"
+                         " if (document.querySelector("
+                         "'[data-spectr-band-context-menu]'))"
+                         " throw new Error('plant: attribute survived'); })();",
+                         "spectr-band-menu-keys-plant");
+                settle(rig.clock, 12);
+                // Presence has to be read another way now: the plant removed
+                // the selector the rest of this probe addresses the menu by.
+                const bool still_mounted =
+                    rig.is_mounted("[aria-label=\"Band actions\"]");
+                press_key(pulp::view::KeyCode::g);
+                const float planted_mode = edit_mode();
+                std::printf("[menukeys] PLANT    : menu still mounted=%s, "
+                            "key 'g' -> edit_mode=%.1f (pre-fix answer %.1f)\n",
+                            still_mounted ? "yes" : "no", planted_mode,
+                            kModeBoost);
+                if (!still_mounted) {
+                    std::fprintf(stderr,
+                                 "UNPROVEN: the plant unmounted the menu, so a "
+                                 "blocked key proves nothing about the guard.\n");
+                    return 3;
+                }
+                if (planted_mode == kModeGlide) {
+                    std::fprintf(stderr,
+                                 "NEGATIVE CONTROL FAILED: the shortcut still "
+                                 "landed with the guard's exemption defeated, "
+                                 "so this gate cannot see the defect it "
+                                 "claims to cover.\n");
+                    return 1;
+                }
+                std::printf("[menukeys] negative control: the pre-fix guard "
+                            "blocked the shortcut, as it must\n");
+                return 0;
+            }
+
+            // REPORTED PREMISE, not an invariant -- and the distinction is
+            // the whole point. `role="menu"` already makes the runtime claim
+            // the overlay slot with consumes-outside-click set, so this reads
+            // TRUE both before and after the fix. It therefore CANNOT see the
+            // defect and must not be scored as if it could. What it does
+            // establish is that a plugin editor's -acceptsFirstResponder
+            // (which calls exactly this) says yes while the menu is open, so
+            // a DAW does hand Escape over -- which is why the Escape
+            // invariant below is about what happens to the key AFTER it
+            // arrives, not about whether it arrives.
+            const bool owns_keyboard =
+                pulp::view::root_overlay_owns_keyboard(root);
+            std::printf("[menukeys] keyboard : root_overlay_owns_keyboard=%s "
+                        "(premise; true before and after the fix)\n",
+                        owns_keyboard ? "yes" : "no");
+            if (!owns_keyboard) {
+                std::fprintf(stderr,
+                             "UNPROVEN: the open menu does not own the "
+                             "keyboard, so the Escape invariant below is not "
+                             "measuring what a DAW would deliver.\n");
+                return 3;
+            }
+
+            // INVARIANT B -- a shortcut pressed while the menu is open still
+            // reaches the app. `g` is deliberately a DIFFERENT mode from the
+            // control's `b`, so "unchanged" and "changed" are distinguishable
+            // values rather than the same one read twice.
+            press_key(pulp::view::KeyCode::g);
+            const float open_mode = edit_mode();
+            std::printf("[menukeys] shortcut : menu open, key 'g' -> "
+                        "edit_mode=%.1f (expect %.1f, defect leaves %.1f)\n",
+                        open_mode, kModeGlide, kModeBoost);
+
+            // INVARIANT C -- the shortcut also dismissed the menu, which is
+            // what clicking the row printing the same letter already does.
+            const bool closed_by_key = !menu_open();
+            std::printf("[menukeys] key-close: menu dismissed by shortcut=%s "
+                        "(expect yes)\n", closed_by_key ? "yes" : "no");
+
+            // INVARIANT C2 -- ESCAPE, asked the way a DAW asks it. This is the
+            // in-Logic failure the offline harness could not reproduce, and
+            // the reason it could not is instructive: the harness reaches the
+            // menu's own window keydown listener through the script bridge,
+            // and a PLUGIN host never fans a key out to script at all. It
+            // consumes Escape here, in the shared policy, before any JS could
+            // see it. So the slot was being dismissed correctly the whole
+            // time and the menu still sat on screen, because nothing told
+            // React to clear `ctxMenu`. The unmount is the assertion; the
+            // return value alone reads `overlay` in BOTH states and would be
+            // another reading that cannot fail.
+            if (!menu_open() && (!open_menu() || !menu_open())) {
+                std::fprintf(stderr,
+                             "UNPROVEN: the menu could not be reopened for the "
+                             "Escape check.\n");
+                return 3;
+            }
+            const auto esc = pulp::view::route_escape_to_active_overlay(root);
+            settle(rig.clock, 24);
+            const bool closed_by_escape = !menu_open();
+            std::printf("[menukeys] escape   : result=%s unmounted=%s "
+                        "(expect overlay / yes)\n",
+                        esc == pulp::view::OverlayEscapeResult::overlay
+                            ? "overlay" : "other",
+                        closed_by_escape ? "yes" : "no");
+
+            // INVARIANT D -- an outside press dismisses. Asked of the shared
+            // policy the hosts actually consult, so this is the same decision
+            // the product makes rather than a replica of it.
+            if (!menu_open()) {
+                if (!open_menu() || !menu_open()) {
+                    std::fprintf(stderr,
+                                 "UNPROVEN: the menu could not be reopened for "
+                                 "the outside-press check.\n");
+                    return 3;
+                }
+            }
+            const auto press = pulp::view::route_press_to_active_overlay(
+                root, pulp::view::Point{kOutsideX, kOutsideY});
+            settle(rig.clock, 24);
+            const bool dismissed_routing =
+                press.routing == pulp::view::OverlayPressRouting::dismissed;
+            const bool closed_by_press = !menu_open();
+            std::printf("[menukeys] outside  : routing=%s unmounted=%s "
+                        "(expect dismissed / yes)\n",
+                        dismissed_routing ? "dismissed" : "not-dismissed",
+                        closed_by_press ? "yes" : "no");
+
+            capture(rig, dir, prefix + "menukeys-after-outside-press", backend,
+                    scale);
+
+            // INVARIANT E -- the guard was NARROWED, not removed. Settings is
+            // a real typing surface and is exactly what this guard exists to
+            // protect, so the same key that now survives an open band menu
+            // must still die under an open Settings panel. Without this, a
+            // change that deleted the guard outright would pass every
+            // assertion above.
+            rig.activate("[data-spectr-settings-open]");
+            settle(rig.clock, 16);
+            const bool settings_up = rig.is_mounted("[data-spectr-settings-panel]");
+            const float before_settings_key = edit_mode();
+            press_key(pulp::view::KeyCode::b);
+            const float after_settings_key = edit_mode();
+            const bool settings_blocks =
+                settings_up && after_settings_key == before_settings_key;
+            std::printf("[menukeys] guard    : settings open=%s, key 'b' "
+                        "%.1f -> %.1f (expect unchanged)\n",
+                        settings_up ? "yes" : "no", before_settings_key,
+                        after_settings_key);
+            if (!settings_up) {
+                std::fprintf(stderr,
+                             "UNPROVEN: the Settings panel did not open, so "
+                             "whether the guard still blocks is unmeasured.\n");
+                return 3;
+            }
+
+            const bool ok = open_mode == kModeGlide && closed_by_key
+                && closed_by_escape && dismissed_routing && closed_by_press
+                && settings_blocks;
+            if (!ok) {
+                std::fprintf(stderr,
+                             "FAIL: band menu keyboard/dismissal invariants "
+                             "violated (shortcut=%s key-close=%s escape=%s "
+                             "outside-routing=%s outside-unmount=%s "
+                             "settings-still-blocks=%s)\n",
+                             open_mode == kModeGlide ? "ok" : "BAD",
+                             closed_by_key ? "ok" : "BAD",
+                             closed_by_escape ? "ok" : "BAD",
+                             dismissed_routing ? "ok" : "BAD",
+                             closed_by_press ? "ok" : "BAD",
+                             settings_blocks ? "ok" : "BAD");
+                return 1;
+            }
+            std::printf("[menukeys] PASS: the open menu keeps the shortcuts "
+                        "live, owns the keyboard, and dismisses\n");
+            return 0;
+        }
+
+        // Every row of the band context menu, driven by a press at the pixels
+        // its own label occupies, and judged on the STATE it claims to change.
+        //
+        // Why a press and not `rig.activate`: the selector seam resolves a row
+        // by CSS selector and never consults `hit_test`, so it drives rows a
+        // pointer cannot reach. That is not a hypothetical here -- this menu's
+        // container does not grow past 376px, so the rows that do not fit
+        // restack from its top and paint over the first five. A selector-driven
+        // row is evidence about the HANDLER; only a press is evidence about the
+        // ITEM. Each press therefore prints which view actually owns the point
+        // it was aimed at, and a press that lands outside its own row is
+        // reported as BLOCKED rather than scored.
+        //
+        // Why state and not appearance: a highlighted row, a closed menu and a
+        // correct label are all true while the band is untouched. Every
+        // assertion below reads either the band field the DSP consumes, a host
+        // parameter, the processor's viewport, or the editor's own selection --
+        // never the menu.
+        //
+        // Exit: 0 every row did what it says, 1 a row did not, 3 the premise is
+        // unproven, 77 no view carries a context-menu handler under this SDK.
+        if (std::getenv("SPECTR_BAND_MENU_ITEMS") != nullptr) {
+            auto& root = *rig.root;
+            const char* plant_env = std::getenv("SPECTR_BAND_MENU_ITEMS_PLANT");
+            const std::string plant = plant_env == nullptr ? "" : plant_env;
+            // The negative control, inverted inside the binary rather than
+            // through WILL_FAIL (which accepts a usage error or an unproven
+            // premise as if it had caught the defect). Every MEASURED press is
+            // skipped and nothing else changes: the arrangement still runs, the
+            // menu still opens, every row is still resolved and its rect still
+            // printed. An assertion that still reads "ok" is an assertion that
+            // cannot see its own item being inert.
+            const bool no_press = plant == "nopress";
+
+            constexpr float kOpenX = 378.0f;
+            constexpr float kOpenY = 400.0f;
+            constexpr std::size_t kOther = 12;
+            constexpr float kAuthoredDb = -13.5f;
+            constexpr float kOtherDb = 7.25f;
+
+            struct Row {
+                std::string item;
+                std::string state;
+                std::string driver;
+                std::string asserted;
+                std::string reading;
+                int verdict = 0;   // 0 pass, 1 fail, 2 blocked, 3 unproven
+            };
+            std::vector<Row> report;
+            auto verdict_name = [](int v) {
+                switch (v) {
+                    case 0: return "PASS";
+                    case 1: return "FAIL";
+                    case 2: return "BLOCKED";
+                    case 4: return "NOT-COVERED";
+                    default: return "UNPROVEN";
+                }
+            };
+            auto record = [&](const char* item, const char* state,
+                              const char* driver, const char* asserted,
+                              int verdict, const std::string& reading) {
+                report.push_back({item, state, driver, asserted, reading, verdict});
+                std::printf("[menuitems] %-7s %-24s %-10s %-34s %s\n",
+                            verdict_name(verdict), item, state, asserted,
+                            reading.c_str());
+            };
+
+            auto settle_round = [&rig, &root]() {
+                rig.feed_tone(6);
+                settle(rig.clock, 20);
+                root.layout_children();
+                settle(rig.clock, 8);
+            };
+            auto band_of = [&rig](std::size_t i) {
+                return rig.processor.field().bands[i];
+            };
+            auto edit_mode = [&rig]() {
+                return rig.store.get_value(spectr::kParamEditMode);
+            };
+            auto menu_open = [&rig]() {
+                return rig.is_mounted("[data-spectr-band-context-menu]");
+            };
+            auto close_menu = [&]() {
+                if (!menu_open()) return;
+                pulp::view::route_escape_to_active_overlay(root);
+                settle(rig.clock, 16);
+            };
+            auto open_menu = [&]() {
+                close_menu();
+                const auto res = pulp::view::route_context_press(
+                    root, pulp::view::Point{kOpenX, kOpenY});
+                settle(rig.clock, 24);
+                root.layout_children();
+                settle(rig.clock, 8);
+                return res.handled && menu_open();
+            };
+            auto press_key = [&root, &rig](pulp::view::KeyCode code) {
+                pulp::view::WidgetBridge::dispatch_key_for_root(
+                    root, static_cast<int>(code), pulp::view::kModNone, true);
+                pulp::view::WidgetBridge::dispatch_key_for_root(
+                    root, static_cast<int>(code), pulp::view::kModNone, false);
+                settle(rig.clock, 24);
+            };
+            // Put every band back to a known neutral through the HOST
+            // PARAMETER -- the same real, user-reachable path automation uses,
+            // and deliberately not through any editor hook, so an arrangement
+            // can never be mistaken for the thing under test.
+            auto neutralise = [&](std::size_t count) {
+                for (std::size_t i = 0; i < count; ++i) {
+                    rig.store.set_value(spectr::band_gain_param_id(i), 0.0f);
+                    rig.store.set_value(spectr::band_mute_param_id(i), 0.0f);
+                }
+                settle_round();
+                settle_round();
+            };
+
+            // PREMISE -- the menu is reachable in this tree at all.
+            const auto sweep = press_reach_sweep(root);
+            std::printf("[menuitems] views carrying on_context_menu: %d\n",
+                        sweep.context_menu_targets);
+            if (sweep.context_menu_targets == 0) {
+                std::fprintf(stderr,
+                             "SKIP: no view carries a context-menu handler "
+                             "under this SDK, so no menu row can be pressed.\n");
+                return 77;
+            }
+
+            settle_round();
+            settle_round();
+
+            // How many bands the editor is drawing. Read from the editor's own
+            // state rather than assumed, because a band INDEX means a different
+            // frequency at every layout and the selection assertions count it.
+            int n_bands = 0;
+            for (int candidate : {32, 40, 48, 56, 64}) {
+                if (rig.truth("window.__spectrTestHooks.renderState().nVisible === "
+                              + std::to_string(candidate))) {
+                    n_bands = candidate;
+                    break;
+                }
+            }
+            if (n_bands == 0) {
+                std::fprintf(stderr, "UNPROVEN: the editor did not report a "
+                                     "band count.\n");
+                return 3;
+            }
+            std::printf("[menuitems] band count: %d\n", n_bands);
+
+            if (!open_menu()) {
+                std::fprintf(stderr, "UNPROVEN: the right-press did not open "
+                                     "the band menu.\n");
+                return 3;
+            }
+            int band_number = -1;
+            auto* menu = find_band_menu_container(root, band_number);
+            if (menu == nullptr || band_number < 1) {
+                std::fprintf(stderr, "UNPROVEN: the menu opened but its own "
+                                     "BAND header could not be located, so no "
+                                     "row can be scoped to it.\n");
+                return 3;
+            }
+            const std::size_t kBand = static_cast<std::size_t>(band_number - 1);
+            float menu_x = 0.0f, menu_y = 0.0f;
+            root_origin(*menu, menu_x, menu_y);
+            std::printf("[menuitems] menu container: band=%d children=%zu "
+                        "rect=(%.1f,%.1f %.1fx%.1f)\n",
+                        band_number, menu->child_count(), menu_x, menu_y,
+                        menu->bounds().width, menu->bounds().height);
+            std::printf("[menuitems] ── rows, no selection ──\n");
+            dump_menu_rows(*menu, root, 0);
+            std::vector<std::string> unreachable_nosel;
+            {
+                std::vector<pulp::view::View*> seen;
+                collect_unreachable_rows(*menu, root, seen, unreachable_nosel);
+                std::printf("[menuitems] rows a pointer cannot reach, no "
+                            "selection: %zu of %zu\n",
+                            unreachable_nosel.size(), seen.size());
+                for (const auto& name : unreachable_nosel)
+                    std::printf("[menuitems]   unreachable (no selection): %s "
+                                "-- expected only for a row authored disabled\n",
+                                name.c_str());
+            }
+
+            // Resolve a row inside the menu and press the pixels its label
+            // occupies. Returns false when the press could not be attributed
+            // to that row -- absent, zero-area, or owned by a neighbour
+            // stacked over it -- which is a BLOCKED reading, never a pass.
+            struct Aim { bool resolved = false; bool attributable = false;
+                         std::string owner; std::string rect; };
+            auto press_row = [&](const std::string& suffix) -> Aim {
+                Aim aim;
+                int number = -1;
+                auto* scope = find_band_menu_container(root, number);
+                if (scope == nullptr) {
+                    std::printf("[menuitems]   aim %-26s MENU ABSENT\n",
+                                suffix.c_str());
+                    return aim;
+                }
+                const auto row = resolve_row(*scope, suffix);
+                if (!row.found() || row.row == nullptr) {
+                    std::printf("[menuitems]   aim %-26s ROW ABSENT\n",
+                                suffix.c_str());
+                    return aim;
+                }
+                aim.resolved = true;
+                char rect[96];
+                std::snprintf(rect, sizeof(rect), "(%.1f,%.1f %.1fx%.1f)",
+                              row.painted.x, row.painted.y,
+                              row.painted.width, row.painted.height);
+                aim.rect = rect;
+                if (row.painted.width <= 0.0f || row.painted.height <= 0.0f) {
+                    std::printf("[menuitems]   aim %-26s ZERO-AREA %s\n",
+                                suffix.c_str(), rect);
+                    return aim;
+                }
+                auto* hit = root.hit_test(pulp::view::Point{row.cx, row.cy});
+                auto* hit_click = nearest_clickable(hit);
+                aim.owner = owner_name(hit);
+                aim.attributable = (hit_click == row.row);
+                std::printf("[menuitems]   aim %-26s %s press@(%.1f,%.1f) "
+                            "owner=%s attributable=%s%s\n",
+                            suffix.c_str(), rect, row.cx, row.cy,
+                            aim.owner.c_str(),
+                            aim.attributable ? "yes" : "NO",
+                            no_press ? "  [PLANT: press skipped]" : "");
+                if (!no_press) {
+                    // The platform host's OWN press sequence, not
+                    // `simulate_click`. The difference is the whole lane:
+                    // simulate_click hit-tests and delivers with bubble=TRUE,
+                    // so a press inside this menu bubbles into the spectrum
+                    // surface the menu is mounted in and the surface claims
+                    // the pointer -- a defect the host does not have, because
+                    // -mouseDown: routes a press inside the active overlay
+                    // through route_press_to_active_overlay and delivers it
+                    // with bubble=FALSE. The click itself is fired by
+                    // mouseUp's MouseUpHost::fire_click; a default-constructed
+                    // host fires nothing and every row reads inert.
+                    pulp::view::ViewCapture capture;
+                    bool bubble = true;
+                    const auto overlay_press =
+                        pulp::view::route_press_to_active_overlay(
+                            root, pulp::view::Point{row.cx, row.cy});
+                    if (overlay_press.routing
+                        == pulp::view::OverlayPressRouting::routed) {
+                        capture.set(overlay_press.target);
+                        bubble = false;
+                    } else if (!overlay_press.consume_press) {
+                        capture.set(root.hit_test(
+                            pulp::view::Point{row.cx, row.cy}));
+                    }
+                    if (auto* target = capture.live_in(root)) {
+                        if (!pulp::view::deliver_mouse_down(
+                                root, target,
+                                pulp::view::Point{row.cx, row.cy}, 0, 1,
+                                bubble))
+                            capture.reset();
+                        if (auto* live = capture.live_in(root)) {
+                            pulp::view::MouseUpHost up_host;
+                            up_host.fire_click =
+                                [](const std::function<void()>& handler,
+                                   const std::string&, std::uint16_t) {
+                                    if (handler) handler();
+                                };
+                            pulp::view::deliver_mouse_up(
+                                root, live,
+                                pulp::view::Point{row.cx, row.cy}, 0, 1,
+                                up_host);
+                        }
+                    }
+                }
+                settle(rig.clock, 24);
+                root.layout_children();
+                settle(rig.clock, 8);
+                return aim;
+            };
+
+            auto fmt = [](const char* f, auto... args) {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), f, args...);
+                return std::string(buf);
+            };
+
+            std::vector<std::string> unreachable_selection;
+
+            // Read a small integer out of the runtime by asking yes/no
+            // questions, so a failed arrangement can SAY what it got instead
+            // of only that it was not what was wanted.
+            auto js_int = [&rig](const std::string& expr, int lo, int hi) {
+                for (int v = lo; v <= hi; ++v)
+                    if (rig.truth(expr + " === " + std::to_string(v))) return v;
+                return -1;
+            };
+
+            // ── 1/2. Mute / Unmute, no selection ────────────────────────────
+            neutralise(static_cast<std::size_t>(n_bands));
+            rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
+            settle_round();
+            settle_round();
+            {
+                const auto before = band_of(kBand);
+                if (std::abs(before.gain_db - kAuthoredDb) > 0.5f || before.muted) {
+                    std::fprintf(stderr, "UNPROVEN: the authored level did not "
+                                         "reach band %zu.\n", kBand);
+                    return 3;
+                }
+                // Ambient control: the same settle WITHOUT a press must leave
+                // the reading alone, or the change measured after the press is
+                // not the press's.
+                settle_round();
+                const auto quiet = band_of(kBand);
+                const bool ambient_stable =
+                    std::abs(quiet.gain_db - before.gain_db) <= 0.01f
+                    && quiet.muted == before.muted;
+                if (!ambient_stable) {
+                    std::fprintf(stderr, "UNPROVEN: band %zu moved with no "
+                                         "press at all.\n", kBand);
+                    return 3;
+                }
+                if (!open_menu()) return 3;
+                const auto aim = press_row("Mute / Unmute");
+                settle_round();
+                const auto after = band_of(kBand);
+                const std::string reading = fmt(
+                    "band %zu %.2f dB muted=%s -> %.2f dB muted=%s",
+                    kBand, before.gain_db, before.muted ? "yes" : "no",
+                    after.gain_db, after.muted ? "yes" : "no");
+                record("Mute / Unmute", "no-sel", "real press",
+                       "band.muted becomes true",
+                       !aim.resolved ? 3 : (!aim.attributable ? 2
+                           : (after.muted ? 0 : 1)), reading);
+            }
+            {
+                const auto before = band_of(kBand);
+                // A band that was never muted is already "unmuted, at its
+                // authored level", so without this premise the assertion
+                // below is true of a row that did nothing at all.
+                if (!before.muted) {
+                    record("Mute / Unmute (2nd)", "no-sel", "real press",
+                           "unmuted AND level restored", 3,
+                           "premise unmet: the first press left the band "
+                           "unmuted, so a restore cannot be measured");
+                } else {
+                    if (!open_menu()) return 3;
+                    const auto aim = press_row("Mute / Unmute");
+                    settle_round();
+                    const auto after = band_of(kBand);
+                    const float drift = std::abs(after.gain_db - kAuthoredDb);
+                    const std::string reading = fmt(
+                        "muted=yes -> muted=%s, level %.2f dB (authored %.2f, "
+                        "drift %.2f)", after.muted ? "yes" : "no",
+                        after.gain_db, kAuthoredDb, drift);
+                    record("Mute / Unmute (2nd)", "no-sel", "real press",
+                           "unmuted AND level restored",
+                           !aim.resolved ? 3 : (!aim.attributable ? 2
+                               : ((!after.muted && drift <= 0.5f) ? 0 : 1)),
+                           reading);
+                }
+            }
+
+            // ── 3. Reset to 0 dB ────────────────────────────────────────────
+            rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
+            settle_round();
+            settle_round();
+            {
+                const auto before = band_of(kBand);
+                if (!open_menu()) return 3;
+                const auto aim = press_row("Reset to 0 dB");
+                settle_round();
+                const auto after = band_of(kBand);
+                std::string reading = fmt(
+                    "band %zu %.2f dB -> %.2f dB muted=%s", kBand,
+                    before.gain_db, after.gain_db, after.muted ? "yes" : "no");
+                // The discriminator for this whole lane. A row that does
+                // nothing under a press is either a dead handler or a press
+                // that never arrived, and those want opposite fixes. Ask the
+                // row's own handler directly, and say which it was.
+                if (!no_press && std::abs(after.gain_db) > 0.5f) {
+                    int n2 = -1;
+                    auto* scope2 = find_band_menu_container(root, n2);
+                    const auto again = scope2 != nullptr
+                        ? resolve_row(*scope2, "Reset to 0 dB") : MenuRow{};
+                    if (again.row != nullptr && again.row->on_click) {
+                        again.row->on_click();
+                        settle_round();
+                        const bool handler_alive =
+                            std::abs(band_of(kBand).gain_db) <= 0.5f;
+                        reading += handler_alive
+                            ? "  [the row's own handler DOES work when called "
+                              "directly -- the press never reached it]"
+                            : "  [the row's handler is inert when called "
+                              "directly too]";
+                    }
+                }
+                record("Reset to 0 dB", "no-sel", "real press",
+                       "band lands at 0 dB, unmuted",
+                       !aim.resolved ? 3 : (!aim.attributable ? 2
+                           : ((std::abs(after.gain_db) <= 0.5f && !after.muted)
+                              ? 0 : 1)), reading);
+            }
+
+            // ── 4. Solo ─────────────────────────────────────────────────────
+            neutralise(static_cast<std::size_t>(n_bands));
+            rig.store.set_value(spectr::band_gain_param_id(kBand), -6.0f);
+            rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
+            settle_round();
+            settle_round();
+            {
+                const auto self_before = band_of(kBand);
+                const auto other_before = band_of(kOther);
+                if (self_before.muted || other_before.muted) {
+                    std::fprintf(stderr, "UNPROVEN: a band was already muted "
+                                         "before the solo.\n");
+                    return 3;
+                }
+                if (!open_menu()) return 3;
+                const auto aim = press_row("Solo");
+                settle_round();
+                const auto self_after = band_of(kBand);
+                const auto other_after = band_of(kOther);
+                const bool others_muted = other_after.muted;
+                const bool self_audible = !self_after.muted;
+                const float self_drift =
+                    std::abs(self_after.gain_db - self_before.gain_db);
+                const std::string reading = fmt(
+                    "other band %zu muted=%s; soloed band %zu %.2f -> %.2f dB "
+                    "(drift %.2f dB)", kOther, others_muted ? "yes" : "no",
+                    kBand, self_before.gain_db, self_after.gain_db, self_drift);
+                record("Solo (mute others)", "no-sel", "real press",
+                       "others muted, soloed band audible + level kept",
+                       !aim.resolved ? 3 : (!aim.attributable ? 2
+                           : ((others_muted && self_audible
+                               && self_drift <= 0.5f) ? 0 : 1)), reading);
+            }
+
+            // ── 5. Select none, with NOTHING selected. The row is authored
+            // disabled in this state, so the honest assertion is that it
+            // changes nothing AND does not dismiss -- a disabled row that
+            // closed the menu would be a row that ran.
+            neutralise(static_cast<std::size_t>(n_bands));
+            {
+                const bool empty_before =
+                    rig.truth("window.__spectrTestHooks.renderState()"
+                              ".selection.length === 0");
+                if (!empty_before) {
+                    std::fprintf(stderr, "UNPROVEN: something was already "
+                                         "selected before the disabled-row "
+                                         "check.\n");
+                    return 3;
+                }
+                if (!open_menu()) return 3;
+                const auto aim = press_row("Select none");
+                const bool still_open = menu_open();
+                const bool still_empty =
+                    rig.truth("window.__spectrTestHooks.renderState()"
+                              ".selection.length === 0");
+                // "Nothing happened" is also what a press that never occurred
+                // reads, so this row needs a live control inside the same menu
+                // instance: press an ENABLED row straight afterwards and
+                // require it to work. If that fails, the menu was not
+                // pressable at this moment and the inertness above says
+                // nothing about the disabled row.
+                const auto control_aim = press_row("Select all");
+                settle_round();
+                const bool control_worked =
+                    rig.truth("window.__spectrTestHooks.renderState()"
+                              ".selection.length === " + std::to_string(n_bands));
+                const std::string reading = fmt(
+                    "selection empty after the disabled row=%s, menu still "
+                    "open=%s; live control (Select all, same menu) worked=%s",
+                    still_empty ? "yes" : "no", still_open ? "yes" : "no",
+                    control_worked ? "yes" : "no");
+                record("Select none (disabled)", "no-sel", "real press",
+                       "inert while a live row in the same menu still works",
+                       (!aim.resolved || !control_aim.resolved) ? 3
+                           : ((still_empty && still_open && control_worked)
+                              ? 0 : 1), reading);
+            }
+
+            // ── 6. Select all ───────────────────────────────────────────────
+            // From empty: the control in the previous case left a selection,
+            // and "all N are selected" is trivially true of a selection that
+            // was already all N.
+            {
+                if (!open_menu()) return 3;
+                press_row("Select none");
+                settle_round();
+                if (!rig.truth("window.__spectrTestHooks.renderState()"
+                               ".selection.length === 0")) {
+                    std::fprintf(stderr, "UNPROVEN: the selection could not be "
+                                         "cleared before measuring Select "
+                                         "all.\n");
+                    return 3;
+                }
+                if (!open_menu()) return 3;
+                const auto aim = press_row("Select all");
+                settle_round();
+                const bool all_selected =
+                    rig.truth("window.__spectrTestHooks.renderState()"
+                              ".selection.length === " + std::to_string(n_bands));
+                // The selection is React state, so read it a second way that
+                // a plugin host can also see: the group-mute shortcut acts on
+                // exactly the selection, so after a real Select all it must
+                // reach a band far from the one the menu was opened over.
+                press_key(pulp::view::KeyCode::m);
+                settle_round();
+                const bool reached_far = band_of(kOther).muted;
+                press_key(pulp::view::KeyCode::m);
+                settle_round();
+                const std::string reading = fmt(
+                    "selection size == %d: %s; group-mute reached band %zu: %s",
+                    n_bands, all_selected ? "yes" : "no", kOther,
+                    reached_far ? "yes" : "no");
+                record("Select all", "no-sel", "real press",
+                       "all N bands selected (and group-mute reaches them)",
+                       !aim.resolved ? 3 : (!aim.attributable ? 2
+                           : ((all_selected && reached_far) ? 0 : 1)), reading);
+            }
+
+            // ── 7. Zero selection (needs a live selection) ──────────────────
+            rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
+            rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
+            settle_round();
+            settle_round();
+            {
+                const auto a_before = band_of(kBand);
+                const auto b_before = band_of(kOther);
+                if (!open_menu()) return 3;
+                std::printf("[menuitems] ── rows, selection live ──\n");
+                int number = -1;
+                if (auto* scope = find_band_menu_container(root, number)) {
+                    dump_menu_rows(*scope, root, 0);
+                    std::vector<pulp::view::View*> seen;
+                    collect_unreachable_rows(*scope, root, seen,
+                                             unreachable_selection);
+                    std::printf("[menuitems] rows a pointer cannot reach, "
+                                "selection live: %zu of %zu\n",
+                                unreachable_selection.size(), seen.size());
+                    for (const auto& name : unreachable_selection)
+                        std::printf("[menuitems]   unreachable: %s\n",
+                                    name.c_str());
+                }
+                const auto aim = press_row("Zero selection");
+                settle_round();
+                const auto a_after = band_of(kBand);
+                const auto b_after = band_of(kOther);
+                const std::string reading = fmt(
+                    "band %zu %.2f -> %.2f dB, band %zu %.2f -> %.2f dB",
+                    kBand, a_before.gain_db, a_after.gain_db,
+                    kOther, b_before.gain_db, b_after.gain_db);
+                record("Zero selection", "selection", "real press",
+                       "every selected band lands at 0 dB",
+                       !aim.resolved ? 3 : (!aim.attributable ? 2
+                           : ((std::abs(a_after.gain_db) <= 0.5f
+                               && std::abs(b_after.gain_db) <= 0.5f) ? 0 : 1)),
+                       reading);
+            }
+
+            // ── 8/9. Mute / Unmute selection ────────────────────────────────
+            rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
+            rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
+            settle_round();
+            settle_round();
+            {
+                if (!open_menu()) return 3;
+                const auto aim = press_row("Mute / Unmute selection");
+                settle_round();
+                const auto a = band_of(kBand);
+                const auto b = band_of(kOther);
+                const std::string reading = fmt(
+                    "band %zu muted=%s, band %zu muted=%s", kBand,
+                    a.muted ? "yes" : "no", kOther, b.muted ? "yes" : "no");
+                record("Mute/Unmute selection", "selection", "real press",
+                       "every selected band muted",
+                       !aim.resolved ? 3 : (!aim.attributable ? 2
+                           : ((a.muted && b.muted) ? 0 : 1)), reading);
+            }
+            {
+                if (!open_menu()) return 3;
+                const auto aim = press_row("Mute / Unmute selection");
+                settle_round();
+                const auto a = band_of(kBand);
+                const auto b = band_of(kOther);
+                const float da = std::abs(a.gain_db - kAuthoredDb);
+                const float db = std::abs(b.gain_db - kOtherDb);
+                const std::string reading = fmt(
+                    "band %zu muted=%s %.2f dB (drift %.2f), band %zu muted=%s "
+                    "%.2f dB (drift %.2f)", kBand, a.muted ? "yes" : "no",
+                    a.gain_db, da, kOther, b.muted ? "yes" : "no", b.gain_db, db);
+                record("Mute/Unmute selection (2nd)", "selection", "real press",
+                       "unmuted AND levels restored",
+                       !aim.resolved ? 3 : (!aim.attributable ? 2
+                           : ((!a.muted && !b.muted && da <= 0.5f && db <= 0.5f)
+                              ? 0 : 1)), reading);
+            }
+
+            // ── 10. Select none, with a live selection ──────────────────────
+            {
+                const bool had_selection =
+                    rig.truth("window.__spectrTestHooks.renderState()"
+                              ".selection.length === " + std::to_string(n_bands));
+                if (!open_menu()) return 3;
+                const auto aim = press_row("Select none");
+                settle_round();
+                const bool cleared =
+                    rig.truth("window.__spectrTestHooks.renderState()"
+                              ".selection.length === 0");
+                // Second reading, the way a host can see it: with nothing
+                // selected the group-mute shortcut must reach nothing.
+                neutralise(static_cast<std::size_t>(n_bands));
+                press_key(pulp::view::KeyCode::m);
+                settle_round();
+                const bool nothing_muted =
+                    !band_of(kBand).muted && !band_of(kOther).muted;
+                const std::string reading = fmt(
+                    "had selection=%s; cleared=%s; group-mute now reaches "
+                    "nothing=%s", had_selection ? "yes" : "no",
+                    cleared ? "yes" : "no", nothing_muted ? "yes" : "no");
+                record("Select none", "selection", "real press",
+                       "selection emptied",
+                       !aim.resolved ? 3 : (!aim.attributable ? 2
+                           : ((had_selection && cleared && nothing_muted)
+                              ? 0 : 1)), reading);
+            }
+
+            // ── 11-15. The five edit modes ──────────────────────────────────
+            // Each is arranged to a DIFFERENT mode first, through the keyboard
+            // path, so "changed" and "unchanged" are distinguishable values
+            // rather than the same one read twice.
+            {
+                struct Mode { const char* label; float value;
+                              pulp::view::KeyCode away; };
+                const Mode modes[] = {
+                    {"Sculpt", 0.0f, pulp::view::KeyCode::g},
+                    {"Level",  1.0f, pulp::view::KeyCode::s},
+                    {"Boost",  2.0f, pulp::view::KeyCode::s},
+                    {"Flare",  3.0f, pulp::view::KeyCode::s},
+                    {"Glide",  4.0f, pulp::view::KeyCode::s},
+                };
+                for (const auto& mode : modes) {
+                    close_menu();
+                    press_key(mode.away);
+                    settle_round();
+                    const float before = edit_mode();
+                    if (before == mode.value) {
+                        record(mode.label, "no-sel", "real press",
+                               "edit-mode parameter moves to this mode", 3,
+                               fmt("arrangement failed: already at %.1f",
+                                   before));
+                        continue;
+                    }
+                    if (!open_menu()) return 3;
+                    const auto aim = press_row(mode.label);
+                    settle_round();
+                    const float after = edit_mode();
+                    const bool closed = !menu_open();
+                    const std::string reading = fmt(
+                        "kParamEditMode %.1f -> %.1f (want %.1f), menu "
+                        "closed=%s", before, after, mode.value,
+                        closed ? "yes" : "no");
+                    record(mode.label, "no-sel", "real press",
+                           "edit-mode parameter moves to this mode",
+                           !aim.resolved ? 3 : (!aim.attributable ? 2
+                               : ((after == mode.value && closed) ? 0 : 1)),
+                           reading);
+                }
+            }
+
+            // ── 16. Fit full range ──────────────────────────────────────────
+            // Arranged with a REAL wheel zoom through the host's own wheel
+            // verb, so the viewport this row is asked to restore was moved the
+            // way a user moves it -- and so the native side is known to have
+            // followed before the row runs.
+            {
+                close_menu();
+                pulp::view::WheelHost wheel_host;
+                for (int i = 0; i < 12; ++i) {
+                    pulp::view::deliver_mouse_wheel(
+                        root, {kOpenX, kOpenY}, 0.0f, -240.0f, wheel_host);
+                    settle(rig.clock, 4);
+                }
+                settle_round();
+                settle_round();
+                const auto zoomed = rig.processor.viewport();
+                const bool js_zoomed = rig.truth(
+                    "(window.__spectrTestHooks.renderState().view.lmax"
+                    " - window.__spectrTestHooks.renderState().view.lmin) < 2.5");
+                std::printf("[menuitems] zoom arrangement: processor "
+                            "viewport %.1f..%.1f Hz, editor zoomed=%s\n",
+                            zoomed.min_hz, zoomed.max_hz,
+                            js_zoomed ? "yes" : "no");
+                if (!js_zoomed) {
+                    record("Fit full range", "no-sel", "real press",
+                           "viewport returns to 20 Hz - 20 kHz", 3,
+                           "arrangement failed: the wheel did not zoom the "
+                           "editor, so a restored view would prove nothing");
+                } else {
+                    if (!open_menu()) return 3;
+                    const auto aim = press_row("Fit full range");
+                    settle_round();
+                    settle_round();
+                    const bool js_full = rig.truth(
+                        "Math.abs(window.__spectrTestHooks.renderState()"
+                        ".view.lmin - Math.log10(20)) < 1e-3 && "
+                        "Math.abs(window.__spectrTestHooks.renderState()"
+                        ".view.lmax - Math.log10(20000)) < 1e-3");
+                    const auto after = rig.processor.viewport();
+                    const bool native_full =
+                        std::abs(after.min_hz - 20.0f) < 1.0f
+                        && std::abs(after.max_hz - 20000.0f) < 200.0f;
+                    const std::string reading = fmt(
+                        "editor view full=%s; processor viewport %.1f..%.1f Hz "
+                        "-> %.1f..%.1f Hz, full=%s", js_full ? "yes" : "no",
+                        zoomed.min_hz, zoomed.max_hz, after.min_hz,
+                        after.max_hz, native_full ? "yes" : "no");
+                    record("Fit full range", "no-sel", "real press",
+                           "editor AND processor viewport back to full",
+                           !aim.resolved ? 3 : (!aim.attributable ? 2
+                               : ((js_full && native_full) ? 0 : 1)), reading);
+                }
+            }
+
+            // ── the combinations that break these rows in practice ─────────
+            //
+            // A band INDEX means a different frequency at every layout, a
+            // selection of one is not a selection of many, and the bands that
+            // own everything outside the window are exactly the ones a zoomed
+            // view hides. Each of these is asserted on the same band field the
+            // DSP consumes, and each is arranged by a real gesture or a real
+            // host parameter write.
+
+            // ONE band selected, by a real cmd-drag marquee -- the only
+            // gesture in this editor that makes a selection without the menu,
+            // so it is also an independent check that the menu's own
+            // "Select all" is not the only thing these rows can see.
+            {
+                close_menu();
+                neutralise(static_cast<std::size_t>(n_bands));
+                // The marquee is a cmd-drag. Which native modifier bit the
+                // runtime turns into `metaKey`/`ctrlKey` is not something to
+                // assume, and a rectangle narrower than one band selects
+                // nothing, so try the small matrix and SAY which one worked
+                // rather than reporting a silent zero.
+                int selected = -1;
+                const float gain_before_drags = band_of(kBand).gain_db;
+                const std::uint16_t mods[] = {pulp::view::kModCmd,
+                                              pulp::view::kModMeta,
+                                              pulp::view::kModCtrl};
+                const char* mod_names[] = {"cmd", "meta", "ctrl"};
+                const float widths[] = {24.0f, 12.0f, 2.0f};
+                const char* chosen = "none";
+                float chosen_width = 0.0f;
+                for (std::size_t m = 0; m < 3 && selected != 1; ++m) {
+                    for (float width : widths) {
+                        pulp::view::View::SimulatedPointer meta;
+                        meta.modifiers = mods[m];
+                        root.simulate_drag(
+                            pulp::view::Point{kOpenX, kOpenY},
+                            pulp::view::Point{kOpenX + width, kOpenY + 40.0f},
+                            10, meta);
+                        settle_round();
+                        selected = js_int(
+                            "window.__spectrTestHooks.renderState()"
+                            ".selection.length", 0, 8);
+                        std::printf("[menuitems] marquee %s width=%.0f -> "
+                                    "%d band(s) selected\n", mod_names[m],
+                                    width, selected);
+                        if (selected == 1) {
+                            chosen = mod_names[m];
+                            chosen_width = width;
+                            break;
+                        }
+                    }
+                }
+                std::printf("[menuitems] marquee arrangement: %s width=%.0f\n",
+                            chosen, chosen_width);
+                const bool exactly_one = selected == 1;
+                if (!exactly_one) {
+                    // Classified, not swallowed. The only gesture in this
+                    // editor that makes a selection WITHOUT the menu is a
+                    // cmd-drag marquee, and this harness cannot produce one.
+                    // Which half fails is measured rather than assumed: if an
+                    // unmodified drag moves the band it crosses, the drags
+                    // arrive and the MODIFIER does not; if it does not, the
+                    // drag driver never reaches this editor's pointer path at
+                    // all. Either way it is a limitation of the driver, not a
+                    // reading about the row, so it is reported as NOT COVERED
+                    // rather than as a pass or a failure.
+                    const bool drags_reached_surface =
+                        std::abs(band_of(kBand).gain_db - gain_before_drags) > 0.5f;
+                    record("Mute/Unmute selection", "1 selected", "cmd-drag + press",
+                           "acts on exactly the one selected band", 4,
+                           fmt("NOT COVERED: the cmd-drag marquee selected %d "
+                               "band(s), and the drags %s, so a one-band "
+                               "selection cannot be arranged in this harness",
+                               selected, drags_reached_surface
+                                   ? "DO reach the surface -- the modifier is "
+                                     "not arriving as metaKey/ctrlKey"
+                                   : "do NOT reach the surface at all -- "
+                                     "simulate_drag does not drive this "
+                                     "editor's pointer path"));
+                } else {
+                    const bool is_the_menu_band = rig.truth(
+                        "window.__spectrTestHooks.renderState().selection[0] === "
+                        + std::to_string(kBand));
+                    if (!open_menu()) return 3;
+                    const auto aim = press_row("Mute / Unmute selection");
+                    settle_round();
+                    const bool only_that_band =
+                        band_of(kBand).muted && !band_of(kOther).muted
+                        && !band_of(0).muted;
+                    record("Mute/Unmute selection", "1 selected",
+                           "cmd-drag + press",
+                           "acts on exactly the one selected band",
+                           !aim.resolved ? 3 : (!aim.attributable ? 2
+                               : ((only_that_band && is_the_menu_band) ? 0 : 1)),
+                           fmt("selection=[%zu]; band %zu muted=%s, band %zu "
+                               "muted=%s, band 0 muted=%s", kBand, kBand,
+                               band_of(kBand).muted ? "yes" : "no", kOther,
+                               band_of(kOther).muted ? "yes" : "no",
+                               band_of(0).muted ? "yes" : "no"));
+                }
+            }
+
+            // A ZOOMED viewport, where most of the selection is off-screen.
+            // The edge bands own everything outside the window, so a row that
+            // quietly acted on "what is drawn" would leave them behind.
+            {
+                close_menu();
+                neutralise(static_cast<std::size_t>(n_bands));
+                const std::size_t last =
+                    static_cast<std::size_t>(n_bands) - 1;
+                rig.store.set_value(spectr::band_gain_param_id(0), -9.0f);
+                rig.store.set_value(spectr::band_gain_param_id(last), 9.0f);
+                settle_round();
+                settle_round();
+                pulp::view::WheelHost wheel_host;
+                for (int i = 0; i < 12; ++i) {
+                    pulp::view::deliver_mouse_wheel(
+                        root, {kOpenX, kOpenY}, 0.0f, -240.0f, wheel_host);
+                    settle(rig.clock, 4);
+                }
+                settle_round();
+                const bool zoomed = rig.truth(
+                    "(window.__spectrTestHooks.renderState().view.lmax"
+                    " - window.__spectrTestHooks.renderState().view.lmin) < 2.5");
+                if (!open_menu()) return 3;
+                press_row("Select all");
+                settle_round();
+                const bool all_selected = rig.truth(
+                    "window.__spectrTestHooks.renderState().selection.length === "
+                    + std::to_string(n_bands));
+                if (!open_menu()) return 3;
+                const auto aim = press_row("Zero selection");
+                settle_round();
+                const bool edges_zeroed =
+                    std::abs(band_of(0).gain_db) <= 0.5f
+                    && std::abs(band_of(last).gain_db) <= 0.5f;
+                record("Zero selection", "zoomed", "real press",
+                       "reaches selected bands outside the window",
+                       (!zoomed || !all_selected) ? 3
+                           : (!aim.resolved ? 3 : (!aim.attributable ? 2
+                               : (edges_zeroed ? 0 : 1))),
+                       fmt("zoomed=%s all-selected=%s; band 0 -9.00 -> %.2f dB, "
+                           "band %zu 9.00 -> %.2f dB", zoomed ? "yes" : "no",
+                           all_selected ? "yes" : "no", band_of(0).gain_db,
+                           last, band_of(last).gain_db));
+                close_menu();
+                if (!open_menu()) return 3;
+                press_row("Fit full range");
+                settle_round();
+            }
+
+            // EVERY BAND COUNT. A band index is a different frequency at each
+            // layout, and changing the count resets the selection, so a row
+            // that is correct at 32 is not thereby correct at 64.
+            for (int count : {40, 48, 56, 64}) {
+                close_menu();
+                const std::string label = "count " + std::to_string(count);
+                int adopted = -1;
+                // The first write of the sweep has been observed not to take
+                // on the first round-trip, so ask twice rather than report a
+                // layout that was simply still in flight.
+                for (int attempt = 0; attempt < 2 && adopted != count; ++attempt) {
+                    rig.store.set_value(spectr::kParamBandCount,
+                                        static_cast<float>(count));
+                    for (int i = 0; i < 6; ++i) settle_round();
+                    adopted = js_int(
+                        "window.__spectrTestHooks.renderState().nVisible", 32, 64);
+                }
+                if (adopted != count) {
+                    record("Select all + Mute selection", label.c_str(),
+                           "real press", "acts on all N bands at this layout",
+                           3, fmt("arrangement failed: asked for %d, the editor "
+                                  "is drawing %d", count, adopted));
+                    continue;
+                }
+                neutralise(static_cast<std::size_t>(count));
+                const std::size_t last = static_cast<std::size_t>(count) - 1;
+                if (!open_menu()) return 3;
+                const auto aim_all = press_row("Select all");
+                settle_round();
+                const bool all_selected = rig.truth(
+                    "window.__spectrTestHooks.renderState().selection.length === "
+                    + std::to_string(count));
+                if (!open_menu()) return 3;
+                const auto aim_mute = press_row("Mute / Unmute selection");
+                settle_round();
+                const bool highest_muted = band_of(last).muted;
+                record("Select all + Mute selection", label.c_str(),
+                       "real press", "acts on all N bands at this layout",
+                       (!aim_all.resolved || !aim_mute.resolved) ? 3
+                           : ((!aim_all.attributable || !aim_mute.attributable) ? 2
+                               : ((all_selected && highest_muted) ? 0 : 1)),
+                       fmt("nVisible=%d selection size correct=%s; highest band "
+                           "%zu muted=%s", count, all_selected ? "yes" : "no",
+                           last, highest_muted ? "yes" : "no"));
+            }
+            close_menu();
+            rig.store.set_value(spectr::kParamBandCount, 32.0f);
+            settle_round();
+
+            capture(rig, dir, prefix + "menuitems-final", backend, scale);
+
+            // ── the layout defect this lane does NOT own, stated exactly ────
+            //
+            // With a selection live the menu holds 17 children and its
+            // container does not grow past 376px, so the rows that do not fit
+            // restack from its top and paint over the first ones. Those rows
+            // are then unreachable by pointer in THAT state: a press at their
+            // pixels belongs to whatever is stacked on them. The mechanism is
+            // below this document -- four candidate fixes were measured and
+            // disproven (a pulp#8430 object swap with a passing positive
+            // control, a constant 17-child count, flexShrink:0, an explicit
+            // computed height; the box stayed 376 in every case) -- so it is
+            // not hacked around here.
+            //
+            // Every row above is therefore driven in the state where it DOES
+            // lay out correctly, and the set that cannot be reached in the
+            // other state is pinned to an exact list rather than left silent.
+            // Growing it is a regression. SHRINKING it means the upstream fix
+            // landed and this gate's own statement has gone stale, which is
+            // also a failure -- the selection-state coverage should then be
+            // extended to the rows it frees, not quietly left out.
+            static const char* kKnownUnreachableWithSelection[] = {
+                "Mute / Unmute", "Reset to 0 dB", "Solo", "Select all"};
+            constexpr std::size_t kKnownUnreachableCount = 4;
+            std::printf("[menuitems] ── rows unreachable with a selection "
+                        "live: %zu (expected %zu, upstream layout defect) ──\n",
+                        unreachable_selection.size(), kKnownUnreachableCount);
+            bool unreachable_matches =
+                unreachable_selection.size() == kKnownUnreachableCount;
+            if (unreachable_matches)
+                for (std::size_t i = 0; i < kKnownUnreachableCount; ++i)
+                    if (unreachable_selection[i]
+                        != kKnownUnreachableWithSelection[i])
+                        unreachable_matches = false;
+            for (const auto& name : unreachable_selection)
+                std::printf("[menuitems]   still unreachable: %s\n",
+                            name.c_str());
+
+            // ── verdict ─────────────────────────────────────────────────────
+            int passes = 0, fails = 0, blocked = 0, unproven = 0, uncovered = 0;
+            for (const auto& row : report) {
+                if (row.verdict == 0) ++passes;
+                else if (row.verdict == 1) ++fails;
+                else if (row.verdict == 2) ++blocked;
+                else if (row.verdict == 4) ++uncovered;
+                else ++unproven;
+            }
+            std::printf("[menuitems] ── summary ── rows=%zu pass=%d fail=%d "
+                        "blocked=%d unproven=%d not-covered=%d\n",
+                        report.size(), passes, fails, blocked, unproven,
+                        uncovered);
+            if (uncovered > 0)
+                std::printf("[menuitems] ── %d check(s) are NOT COVERED by this "
+                            "harness. They are listed above with the reason; "
+                            "they are not passes. ──\n", uncovered);
+            for (const auto& row : report)
+                std::printf("[menuitems] | %-28s | %-9s | %-10s | %-7s | %s\n",
+                            row.item.c_str(), row.state.c_str(),
+                            row.driver.c_str(), verdict_name(row.verdict),
+                            row.reading.c_str());
+
+            if (no_press) {
+                if (passes > 0) {
+                    std::fprintf(stderr,
+                                 "NEGATIVE CONTROL FAILED: %d row assertion(s) "
+                                 "still read PASS with every measured press "
+                                 "skipped, so those assertions cannot see "
+                                 "their own item being inert.\n", passes);
+                    return 1;
+                }
+                std::printf("[menuitems] negative control: every row assertion "
+                            "went red with the presses skipped, as it must\n");
+                return 0;
+            }
+            if (fails > 0) {
+                std::fprintf(stderr,
+                             "FAIL: %d band-menu row(s) did not do what the "
+                             "row says.\n", fails);
+                return 1;
+            }
+            if (!unreachable_matches) {
+                if (unreachable_selection.size() < kKnownUnreachableCount) {
+                    std::fprintf(stderr,
+                                 "FAIL: fewer rows are unreachable with a "
+                                 "selection live than this gate says (%zu vs "
+                                 "%zu). If the upstream layout defect is "
+                                 "fixed, this list and the selection-state "
+                                 "coverage must both be updated -- leaving a "
+                                 "stale exemption behind is how rows stop "
+                                 "being tested.\n",
+                                 unreachable_selection.size(),
+                                 kKnownUnreachableCount);
+                } else {
+                    std::fprintf(stderr,
+                                 "FAIL: %zu rows cannot be pressed with a "
+                                 "selection live, more than the %zu this gate "
+                                 "records. A row a pointer cannot reach is a "
+                                 "row nobody can use.\n",
+                                 unreachable_selection.size(),
+                                 kKnownUnreachableCount);
+                }
+                return 1;
+            }
+            if (blocked > 0 || unproven > 0) {
+                std::fprintf(stderr,
+                             "UNPROVEN: %d row(s) could not be pressed where "
+                             "they paint and %d could not be arranged, so this "
+                             "run is not a verdict on them.\n",
+                             blocked, unproven);
+                return 3;
+            }
+            std::printf("[menuitems] PASS: %d checks — every band-menu row did "
+                        "what it says, driven by a press at its own pixels "
+                        "(%d not covered, named above)\n", passes, uncovered);
             return 0;
         }
 

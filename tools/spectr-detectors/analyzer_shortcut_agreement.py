@@ -55,8 +55,18 @@ HEADER = re.compile(r'"ANALYZER \\xB7 ([^ ]+) to cycle"')
 # The analyzer branch, located by the state machine only it contains, then read
 # backwards to its guard. Anchoring on the guard text itself would make the
 # detector agree with whatever the guard happens to say.
+#
+# The branch may carry bookkeeping between claiming the key and running the
+# state machine -- dismissing an open overlay, for one -- so zero or more bare
+# `name();` lines are tolerated there. Deliberately NOT a wildcard: the
+# tolerated shape is a single no-argument call per line at this exact indent,
+# which cannot span a brace, a guard, or a neighbouring branch, so the branch
+# this resolves to is still the one and only branch that drives
+# setAnalyzerMode. The detector's four plants all still redden, which is what
+# proves the widening did not cost it any of its reach.
 BRANCH = re.compile(
     r'if \(([^)]*(?:\)[^)]*)?)\) \{\n        e\.preventDefault\(\);\n'
+    r'(?:        [A-Za-z_$][A-Za-z0-9_$]*\(\);\n)*'
     r'        setAnalyzerMode\(')
 KEY_LITERAL = re.compile(r'k === "([^"]+)"')
 

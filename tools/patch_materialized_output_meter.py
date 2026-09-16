@@ -201,7 +201,11 @@ COMPONENT = '''function SpectrOutputMeter() {
     /* @__PURE__ */ React.createElement("span", {
       "data-spectr-output-trim-readout": true,
       className: "tnum",
-      style: { width: 34, textAlign: "right", whiteSpace: "nowrap", flexShrink: 0 }
+      // Declares its own face, size and colour rather than inheriting the
+      // document body default: unstated, this number rendered 47% taller and
+      // far brighter than every other readout in the header, and overflowed
+      // its own 34pt box at the trim extremes. Matches the PEAK button above.
+      style: { width: 34, textAlign: "right", whiteSpace: "nowrap", flexShrink: 0, fontFamily: "var(--mono)", fontSize: 10, color: "rgba(255,255,255,0.72)" }
     }, trimText));
 }
 '''
