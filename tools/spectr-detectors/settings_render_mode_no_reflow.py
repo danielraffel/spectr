@@ -148,11 +148,15 @@ def compact(dump_path):
             "parent": d.parent[i],
             "rect": {k: round(float(r.get(k, 0.0)), 4) for k in ("x", "y", "w", "h")},
         }
-        # Most boxes carry no text. Omitting the empty ones keeps the committed
-        # receipt readable and roughly a third the size; every reader below
-        # goes through text_of()/rect_of(), which supply the default.
+        # This is a GEOMETRY receipt, so it keeps only the text the adjudicator
+        # actually reads -- the two guidance sentences, which are how a capture
+        # says which mode it is showing. Everything else is dropped on purpose:
+        # the panel also paints the build's own git SHA and a DIRTY/CLEAN flag,
+        # so a receipt that kept all text would change on every single build
+        # and churn against the other lanes editing this repo, for two labels
+        # no rule here consults.
         t = " | ".join(texts(n))
-        if t:
+        if t and (MIXING_MARK in t or TRACKING_MARK in t):
             row["text"] = t
         nodes.append(row)
     return {"viewport": d.viewport, "nodes": nodes}
