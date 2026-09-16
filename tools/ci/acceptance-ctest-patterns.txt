@@ -152,6 +152,18 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 ^"?No band is left worse than
 ^"?A band with no room for a transition
 ^"?Transition shaping leaves an ordinary EQ
+# The drag gate, its in-test/renderer equivalence control, and its plant row.
+# NONE of the lines above reaches them: the Catch2 names start with "A viewport
+# drag" and "The in-test design path", and the CTest row is
+# `Spectr-tracking-drag-glide-negative-control`, which `^Spectr-tracking-
+# transition` does not match. Measured, not guessed -- the alternation above
+# selects 9 of the 12 tracking rows this file registers and exactly these three
+# are missing, so the one gate here that measures a GESTURE rather than a
+# settled design has never run. Nothing else in this file can report its
+# absence.
+^"?A viewport drag moves Tracking
+^"?The in-test design path
+^Spectr-tracking-drag-glide
 
 # The swap handoff: the three rules and the two plants. Same trap as the
 # transition block above -- they start with the behaviour, so nothing else here
