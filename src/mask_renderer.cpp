@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace spectr {
@@ -237,38 +238,82 @@ constexpr double kTrackingEdgeQuantumBins = 0.0;
 /// like: at a fixed 160 dB/s, dropping from 95 swaps to 5 makes it 18x WORSE,
 /// because the per-swap step grows faster than the count falls.
 ///
-/// The cure is a crossfade, and it is blocked on the convolver rather than on
-/// this constant. It becomes available once a swap can fade from the SAME
-/// retained input history instead of installing the incoming impulse cold.
-/// Measured end to end against that convolver, a 128-sample (2.7 ms) fade puts
-/// a band drag back on the arithmetic floor and 192 samples (4 ms) does the
-/// same for a zoom -- an 896x and 1656x reduction, with the delivered magnitude
-/// unchanged at -39.67 dB. Both sit inside the 384-sample gap between redesigns
-/// at a 120 Hz pointer, which matters because the convolver refuses a swap
-/// while a fade is in flight: a 512-sample fade drops 33 swaps to 26.
+/// The cure is a crossfade, and it works only because the convolver fades from
+/// the SAME retained input history rather than installing the incoming impulse
+/// cold. Measured end to end against that convolver, a 128-sample (2.7 ms)
+/// fade puts a band drag back on the arithmetic floor and 192 samples (4 ms)
+/// does the same for a zoom -- an 896x and 1656x reduction, with the delivered
+/// magnitude unchanged at -39.67 dB. The value here is the zoom's, because the
+/// zoom is the worse case and a single constant has to cover both.
 ///
-/// Until that lands in a cut SDK this must stay 0. Against the CURRENT one a
-/// non-zero value reinstates the cold start measured above -- a 64-sample fade
-/// scores 0.1095 non-tonal residual where the instantaneous path scores 0.0017,
-/// 66x worse -- so the fade and the SDK repin are one change, never two.
-constexpr std::size_t kIrCrossfadeSamples = 0;
+/// It is not simply "longer is safer". The fade has to sit inside the
+/// 384-sample gap between redesigns at a 120 Hz pointer, because the convolver
+/// refuses a swap while a fade is in flight: a 512-sample fade drops 33 landed
+/// swaps to 26, and a gesture that cannot land its swaps tracks the pointer
+/// late. 192 leaves half that gap.
+///
+/// The value is meaningful ONLY against a convolver that shares one input
+/// history across its IRs. Against one that installs each incoming impulse
+/// cold, a fade is actively worse than no fade at all -- a 64-sample fade
+/// scores 0.1095 non-tonal residual where the instantaneous path scores
+/// 0.0017, 66x worse -- so this value and the SDK that supports it are one
+/// change, never two. The guard below is what makes that ordering structural
+/// rather than remembered.
+constexpr std::size_t kIrCrossfadeSamples = 192;
+
+/// Structural guard for the value above.
+///
+/// `ConvolverInputHistoryT` names the input delay line only on a convolver
+/// that owns ONE of them for every IR it renders. On a convolver that keeps
+/// the delay line inside each IR's state -- and so starts the incoming
+/// impulse from silence -- the name does not exist and this is a hard compile
+/// error. That is the intent: the failure mode being guarded is silent, a
+/// binary that builds and runs and simply replays recent material for roughly
+/// the length of the impulse, so the build has to fail closed instead.
+static_assert(sizeof(pulp::signal::ConvolverInputHistoryT<float>) > 0,
+              "a non-zero kIrCrossfadeSamples requires a convolver that shares "
+              "one input history across its IRs; against one that installs "
+              "each IR cold it reinstates the artifact it is meant to cure");
+
+/// ...and that the convolver carrying it is the generic one.
+///
+/// The shared history is a property of `PartitionedConvolverT`. Naming the
+/// `PartitionedConvolver` alias is not by itself evidence the renderer gets
+/// that template -- a fork or a locally specialised copy could satisfy the
+/// name while keeping the delay line inside each IR's state, which is the
+/// arrangement the fade above is unsafe against. Assert the identity instead
+/// of trusting the spelling, so the two types cannot drift apart silently.
+static_assert(std::is_same_v<pulp::signal::PartitionedConvolver,
+                             pulp::signal::PartitionedConvolverT<float>>,
+              "the renderer must use Pulp's generic PartitionedConvolver; a "
+              "fork would need the input-history ownership split ported "
+              "before a non-zero kIrCrossfadeSamples is safe");
+static_assert(std::is_same_v<pulp::signal::ConvolverIrSwapper,
+                             pulp::signal::ConvolverIrSwapperT<float>>,
+              "the renderer must use Pulp's generic ConvolverIrSwapper; the "
+              "swap path is where the shared history is honoured");
 
 /// Test seam for this rule's negative control.
 ///
-/// A gate nobody has watched go red is not a gate, and the defect this one
-/// forbids lives in a constant -- so the control has to be able to put the
-/// constant back. This reinstates exactly the pre-fix value, in the shipping
-/// binary, so the contract is proven against the code that actually ships
-/// rather than against a compile-time variant of it. Read once per process and
-/// unset in every shipping run.
-std::size_t ir_swap_crossfade_samples() {
-    static const std::size_t samples = [] {
+/// A gate nobody has watched go red is not a gate, so the control has to be
+/// able to put the defect back -- and it has to put back a defect the CURRENT
+/// convolver can still produce, or the control passes for the wrong reason and
+/// the gate quietly stops being able to fail.
+///
+/// The rule is that a swap must not restart the input history. Forcing a long
+/// fade no longer breaks it, because the fade now renders both sides against
+/// the one retained history; the reading collapses to the arithmetic floor and
+/// proves nothing. `reset()` is the call that still drops that history on
+/// purpose, and reaching for it on a swap is a live regression -- it is the
+/// obvious way to "clean up" a handoff. So the control reinstates exactly that,
+/// at the swap site, in the shipping binary rather than in a compile-time
+/// variant of it. Read once per process and unset in every shipping run.
+bool swap_plants_history_reset() {
+    static const bool planted = [] {
         const char* value = std::getenv("SPECTR_SWAP_PLANT");
-        return (value != nullptr && std::string_view(value) == "history-reset")
-                   ? std::size_t{512}
-                   : kIrCrossfadeSamples;
+        return value != nullptr && std::string_view(value) == "history-reset";
     }();
-    return samples;
+    return planted;
 }
 
 bool valid_config(const MaskRendererConfig& config) noexcept {
@@ -425,8 +470,11 @@ public:
             convolvers_[static_cast<std::size_t>(ch)].load_ir(
                 design_taps_.data(), design_taps_.size(),
                 static_cast<std::size_t>(kRenderBlock));
+            // Order is load-bearing: set_crossfade sizes its scratch from the
+            // state load_ir built, so reversing these two leaves the scratch
+            // empty and the fade silently never engages.
             convolvers_[static_cast<std::size_t>(ch)].set_crossfade(
-                ir_swap_crossfade_samples());
+                kIrCrossfadeSamples);
         }
 
         pending_generation_.store(0, std::memory_order_release);
@@ -529,8 +577,11 @@ private:
         bool swapped = false;
         for (int ch = 0; ch < channels_; ++ch) {
             auto& conv = convolvers_[static_cast<std::size_t>(ch)];
-            if (conv.try_swap_ir(*swappers_[static_cast<std::size_t>(ch)]))
+            if (conv.try_swap_ir(*swappers_[static_cast<std::size_t>(ch)])) {
                 swapped = true;
+                // Negative control only -- see swap_plants_history_reset().
+                if (plant_history_reset_) conv.reset();
+            }
             conv.process(in_ptrs_[static_cast<std::size_t>(ch)],
                          out_ptrs_[static_cast<std::size_t>(ch)], kRenderBlock);
         }
@@ -647,6 +698,10 @@ private:
     MaskRendererConfig config_{};
     bool               prepared_ = false;
     int                channels_ = 0;
+
+    // Cached once at construction so the audio thread never reads the
+    // environment. False in every shipping run.
+    const bool         plant_history_reset_ = swap_plants_history_reset();
 
     std::vector<pulp::signal::PartitionedConvolver>                     convolvers_;
     std::vector<std::unique_ptr<pulp::signal::ConvolverIrSwapper>>      swappers_;
