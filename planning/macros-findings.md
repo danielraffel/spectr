@@ -1,0 +1,76 @@
+# Band-group macros — working findings (feature/band-group-macros)
+
+## Landed and proven (committed)
+- `ed8e9fd` feat: C++ core. Params 4200-4203, group 8 "Macros", ±24 dB.
+  `include/spectr/param_macro.hpp` (pure, Pulp-shaped, no Spectr includes),
+  `include/spectr/macro_field.hpp` (band-domain rules), composition on BOTH
+  threads via one shared `apply_macro_offsets`, `macro_members` in the
+  supplemental blob at the EXISTING schema version, bridge commands.
+- `HEAD~` test: 15 macro cases + surface/state/CLAP updates.
+  Full `Spectr-test` suite green: 265 cases, 241540 assertions.
+
+## confirm_failure.sh verdicts (recompile observed each step — not stale objects)
+- Learn-shaped test "macro drag emits one gesture bracket on one parameter":
+  broke it by re-pointing `set_macro_value` at `band_gain_param_id(macro)`.
+  **CONFIRMED** (passes with fix, fails without).
+- Parity test "the audio owner composes macros exactly as the control thread
+  does": broke it by zeroing the audio owner's macro values.
+  **CONFIRMED**.
+
+## Verified design claims (not assumed)
+- Pinned SDK is v0.854.1 = `084d4afbd23c70040881dd7271f460d17ceca9e1`,
+  extracted at /Users/danielraffel/Code/spectr-sdk-0854/sdk/pulp-sdk.
+- `6867ef9c` ("feat(format): project parameter groups to hosts") IS an
+  ancestor of the pin (2630 commits back). `au_v2_common.cpp:126-136` sets
+  `kAudioUnitParameterFlag_HasClump` + `clumpID`. So the comment in
+  `src/param_surface.cpp` claiming otherwise was stale; it is corrected.
+  Positive control ran: `clump` 20 hits / `kAudioUnitParameterFlag` 12 hits.
+
+## Pre-existing failures on origin/main (NOT mine — controlled on both axes)
+`Spectr-native-n1-test`: 42 cases, 2 failed, both on origin/main:
+  - "native host automation projects through the compact live frame lane"
+    (`gain7=-Infinity` where a gain was expected — a mute question)
+  - "the settings copy button centres its feedback and answers a press"
+Controls run: (a) original runtime JSON + my C++ → same 2; (b) my runtime
+JSON + macros payload removed from `make_editor_state_payload` → same 2.
+Recompile of editor_bridge.cpp observed in (b).
+
+## Test-lane notes
+- ctest names for `Spectr-test` are Catch2 TEST_CASE names registered WITH
+  literal quotes → acceptance patterns need the `^"?` prefix.
+- `tools/ci/ctest_pattern_gate.py` already asserts every pattern matches >=1
+  test and has a `--plant` self-check. That IS the reverse check for
+  `ctest -R` matching nothing and exiting 0.
+- `Spectr-band-drag-cadence` (add_test, launches the Standalone) must be
+  excluded — not run in this lane.
+
+## Editor (materialized runtime) — patched via tools/patch_materialized_band_macros.py
+Idempotent, asserts each anchor occurs exactly once, plus FORBIDDEN/REQUIRED/
+COUNTS post-conditions. Applied:
+  - `parseNativeMacros` in the head script + exported as `parseMacros`;
+    absence -> null, never a rejection (old payloads still parse).
+  - all THREE parsers carry `macros` (head live, bundle live, hydration) —
+    they whitelist, so an unknown member would have been silently dropped.
+  - `macroAdjustedGain(value, index)`: ONE read-time rule, four call sites
+    (bars `effectiveGains`, response curve, both hover readouts).
+    Gated on `modulationActiveRef` because the published modulated field
+    ALREADY has macros composed in (processor applies macros before LFOs) —
+    adding them again would double-count, and only while an LFO ran.
+    NOT written into `renderGainsRef`: both `applyModulationFrame` and
+    `applyHostAutomationState` overwrite that ref wholesale.
+  - drag re-route: `macroDrag` recorded on pointer down, a member drag calls
+    `driveMacro` (optimistic local + `macro_set`), `macro_drag_start` /
+    `macro_drag_end` bracket it. Alt/Cmd opts out to direct member editing.
+
+## Known hazards carried into this lane
+- Context menu is contested: #150 (shortcuts/dismissal) + a menu-validation
+  lane. Rebase onto whichever lands first. NEVER `git checkout --theirs` on
+  the runtime artifact.
+- The menu container carries a stale layout solve and does not grow when
+  rows are added — extra rows paint over each other and a press can land on
+  the wrong element. Pulp #8430 (child add/remove) and #8447 (typography)
+  are queued. Adding macro rows makes that WORSE until those land. Expected,
+  not mine, must be stated in the report.
+- `text_bindings`/`layout_bindings`/`paint_bindings` address nodes by
+  POSITIONAL DOM PATH. Insert children LAST or every later sibling silently
+  re-points.
