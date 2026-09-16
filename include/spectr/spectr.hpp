@@ -44,6 +44,7 @@
 #include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
 #include "spectr/editor_resize.hpp"
+#include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
 
 #ifndef SPECTR_FFT_SIZE
@@ -93,6 +94,18 @@ struct AudioModulationState {
     /// muted after capturing A and B is silently un-muted and heard. Measured
     /// at every morph value, not just at the dominance flip.
     std::uint64_t morph_overrides = 0;
+    /// Macro membership, one bit per canonical slot per macro.
+    ///
+    /// Carried here for the same reason `morph_overrides` is: the audio owner
+    /// composes the macro overlay itself (the VALUES are host lanes it reads
+    /// per block through the cursor), so it needs the membership the control
+    /// thread holds. Raw bits rather than `std::bitset` to keep the
+    /// publication trivially copyable and its size explicit.
+    ///
+    /// Values are deliberately NOT carried: they are ordinary automatable
+    /// parameters, and reading them from the cursor is what makes a macro
+    /// sample-accurate within a block instead of one publication behind.
+    std::array<std::uint64_t, kMacroCount> macro_members{};
 };
 static_assert(std::is_trivially_copyable_v<AudioModulationState>,
               "audio modulation publication must remain allocation-free POD");
@@ -481,6 +494,39 @@ public:
         pulp::state::ParamID id) const noexcept;
     [[nodiscard]] ModulationSettings modulation_settings() const noexcept;
     bool set_modulation_target_mask(std::uint8_t mask) noexcept;
+
+    /// The slots @p macro drives. Out-of-range reads as empty.
+    [[nodiscard]] MacroMembership<kMaxBands> macro_members(
+        std::size_t macro) const noexcept;
+    /// Replace one macro's membership. Returns false for an out-of-range
+    /// index. Bits at or above the visible count are KEPT, not dropped: the
+    /// layout is a projection, so narrowing it must not destroy a membership
+    /// widening it would restore.
+    bool set_macro_members(std::size_t macro,
+                           const MacroMembership<kMaxBands>& members) noexcept;
+    /// Membership plus the live parameter values, as one bank for
+    /// `apply_macro_offsets`. Control-thread reader (the editor projection and
+    /// `make_mask_layout_`); the audio thread assembles its own from the
+    /// publication and its cursor so it never reads the store off-block.
+    [[nodiscard]] BandMacroBank macro_bank() const noexcept;
+    /// Write one macro's VALUE, the way a drag should.
+    ///
+    /// This is the whole point of the feature's gesture story. A group drag
+    /// used to commit one band-gain write per selected band, each with its
+    /// own host gesture bracket — so Logic's Learn latched onto whichever
+    /// `Band NN Gain` happened to be written first, and the user ended up
+    /// automating one arbitrary band instead of the group. Driving the macro
+    /// instead means ONE parameter and ONE bracket, which is the only shape
+    /// a host modulator can usefully grab.
+    ///
+    /// Inside an open gesture epoch (`begin_param_gesture_epoch`) the bracket
+    /// opens once and closes when the epoch ends, so a drag of any length is
+    /// still one bracket. Outside one, each call is its own complete
+    /// bracket, which is what a discrete command (a menu item, a typed
+    /// value) needs.
+    ///
+    /// Returns false for an out-of-range index or before the store exists.
+    bool set_macro_value(std::size_t macro, float value_db) noexcept;
     void sync_params_from_field(bool emit_gestures = true) noexcept;
 
     /// Paint-drag gesture epochs (EditorAuthority drives these from
@@ -653,8 +699,9 @@ private:
     // directions. Slot layout: 0..63 gains, 64..127 mutes, 128 morph,
     // 129 viewport center, 130 viewport width, 131 band count, then motion,
     // analyzer, edit, and visualization at 132..135, then internal LFO
-    // enabled/shape/rate/depth/target at 136..140.
-    static constexpr std::size_t kSurfaceCacheSlots = 145;
+    // enabled/shape/rate/depth/target at 136..140, LFO 2
+    // enabled/shape/rate/depth at 141..144, and Macro 1..4 at 145..148.
+    static constexpr std::size_t kSurfaceCacheSlots = 149;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
     // The audio thread's OWN record of the surface values it last pushed into
@@ -717,6 +764,19 @@ private:
     // Guarded by processing_state_mutex_ and published to the audio thread in
     // AudioModulationState, so both sides of a morph agree on what moves.
     bool morph_applies_viewport_ = true;
+    // Which canonical slots each macro drives. Guarded by
+    // processing_state_mutex_ and published in AudioModulationState.
+    //
+    // Editor state, not a parameter: a SET OF SLOTS is not a number a host
+    // can automate, and exposing one lane per member would put the 64 echoing
+    // lanes back that macros exist to remove. It persists in the supplemental
+    // blob instead (`macro_members`).
+    //
+    // Membership survives a band-count change untouched. The C++ layout
+    // change keeps slot identity — slot 7 is slot 7 at every count — so a
+    // member that scrolls out of the visible range is merely inert and
+    // returns to its macro when the count comes back up.
+    std::array<MacroMembership<kMaxBands>, kMacroCount> macro_members_{};
     // Open paint-drag epoch (UI thread only): params already begin-gestured.
     std::vector<pulp::state::ParamID> epoch_gesture_params_{};
     bool param_gesture_epoch_open_ = false;
@@ -862,6 +922,9 @@ private:
 
     [[nodiscard]] pulp::signal::SpectralBandLayout
         make_mask_layout_() const noexcept;
+    /// `macro_bank()` without the lock, for callers that already hold
+    /// processing_state_mutex_ (make_mask_layout_ and the publish path).
+    [[nodiscard]] BandMacroBank macro_bank_locked_() const noexcept;
     void publish_audio_modulation_state_() noexcept;
     void publish_processing_state_() noexcept;
     void configure_bridge_(int num_channels);

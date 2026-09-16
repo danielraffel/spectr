@@ -292,9 +292,17 @@ pulp::signal::SpectralBandLayout Spectr::make_mask_layout_() const noexcept {
     mask_layout.boundary_kernel = pulp::signal::SpectralMaskBoundaryKernel::hard;
     mask_layout.transition_fraction = 0.0f;
     mask_layout.transition_frames = 0;
+    // The macro overlay composes here rather than in field_, because it is
+    // non-destructive: canonical state stays exactly what the user drew, and
+    // the macros are added on the way to the mask. The audio owner runs the
+    // SAME function over the same inputs a few lines further down its own
+    // path, which is what makes the control-published mask and the
+    // audio-staged one agree.
+    BandField audible = field_;
+    apply_macro_offsets(audible, mask_layout.active_bands, macro_bank_locked_());
     for (std::size_t i = 0; i < mask_layout.active_bands; ++i) {
-        mask_layout.bands[i].gain_db = field_.bands[i].gain_db;
-        mask_layout.bands[i].muted = field_.bands[i].muted;
+        mask_layout.bands[i].gain_db = audible.bands[i].gain_db;
+        mask_layout.bands[i].muted = audible.bands[i].muted;
     }
     return mask_layout;
 }
@@ -321,9 +329,12 @@ bool Spectr::spectral_resolution(
 void Spectr::publish_audio_modulation_state_() noexcept {
     // All callers serialize through processing_state_mutex_. TripleBuffer
     // therefore has one logical writer and process() remains its sole reader.
-    audio_modulation_publication_.write(AudioModulationState{
+    AudioModulationState published{
         modulation_, snapshots_, morph_applies_viewport_, morph_derived_,
-        morph_derived_ ? morph_overrides_.to_ullong() : 0ull});
+        morph_derived_ ? morph_overrides_.to_ullong() : 0ull, {}};
+    for (std::size_t m = 0; m < kMacroCount; ++m)
+        published.macro_members[m] = macro_members_[m].to_ullong();
+    audio_modulation_publication_.write(published);
 }
 
 void Spectr::publish_processing_state_() noexcept {
@@ -926,6 +937,38 @@ void Spectr::process(
                                         canonical.bands[band];
                         }
                     }
+
+                    // ── Macros ──────────────────────────────────────────
+                    // BEFORE the LFOs, deliberately. A Whole Bank LFO is a
+                    // wobble around the level you are listening to, so it has
+                    // to wobble around the macro-driven level rather than
+                    // around the drawn one — otherwise raising a macro would
+                    // slide the whole modulation out from under its own
+                    // centre.
+                    //
+                    // The VALUES come from the cursor, so a macro automated
+                    // mid-block lands at its event's sample offset like any
+                    // other lane. Only the MEMBERSHIP comes from the
+                    // publication, and that is editor state that cannot move
+                    // during a block.
+                    //
+                    // This is the same `apply_macro_offsets` the control
+                    // thread calls in `make_mask_layout_`, over the same
+                    // inputs. One function, two threads: that is what makes
+                    // the mask this block stages and the mask the worker
+                    // publishes agree instead of almost-agree.
+                    {
+                        BandMacroBank bank;
+                        for (std::size_t m = 0; m < kMacroCount; ++m) {
+                            bank.members[m] = MacroMembership<kMaxBands>(
+                                audio_modulation.macro_members[m]);
+                            bank.values[m] = cursor.value(macro_param_id(m));
+                        }
+                        apply_macro_offsets(host_field,
+                                            visible_count(automated_layout),
+                                            bank);
+                    }
+
                     ModulationSettings modulation_settings;
                     modulation_settings.enabled =
                         cursor.value(kParamLfoEnabled) >= 0.5f;
@@ -1341,6 +1384,31 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // than with a feature mysteriously off.
     root.addMember("morph_applies_viewport", morph_applies_viewport_);
 
+    // Macro membership: four arrays of canonical slot indices, shaped exactly
+    // like `morph_overrides` above. The macro VALUES are StateStore
+    // parameters and ride the base blob; only the membership is editor state
+    // with no lane, so without it a reloaded session would restore four
+    // macros that are worth something and drive nothing.
+    //
+    // NO VERSION BUMP. Like `modulation_target_mask` and
+    // `morph_applies_viewport`, this is an OPTIONAL member whose absence has
+    // a defined meaning — no macros assigned, which is exactly what a writer
+    // predating the feature meant. An old session therefore opens with the
+    // macros at 0 dB driving nothing, and a new session opened on an old
+    // build drops the membership silently rather than being refused. Bumping
+    // would buy nothing and would refuse blobs an older Spectr can render
+    // perfectly well.
+    auto macro_members = createEmptyArray();
+    for (std::size_t m = 0; m < kMacroCount; ++m) {
+        auto slots = createEmptyArray();
+        for (std::size_t i = 0; i < kMaxBands; ++i) {
+            if (macro_members_[m].test(i))
+                slots.addArrayElement(static_cast<int32_t>(i));
+        }
+        macro_members.addArrayElement(slots);
+    }
+    root.addMember("macro_members", macro_members);
+
     // Which realisation of the drawn magnitude this project was authored
     // through. Always written, by every writer, from the moment the mode
     // existed -- that is what makes its ABSENCE meaningful rather than
@@ -1512,6 +1580,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             morph_applies_viewport_ = true;
             morph_derived_ = false;
             morph_overrides_.reset();
+            for (auto& members : macro_members_) members.reset();
             // An empty payload is the host saying "reset to defaults", and it
             // is the ONE path here that means a fresh instance rather than a
             // restored project. It therefore takes the new-instance default,
@@ -1694,6 +1763,28 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_morph_applies_viewport = flag.getBool();
     }
 
+    std::array<MacroMembership<kMaxBands>, kMacroCount> new_macro_members{};
+    if (root.hasObjectMember("macro_members")) {
+        const auto macros = root["macro_members"];
+        if (!macros.isArray()) return false;
+        // A blob written by a build with MORE macros than this one has is
+        // truncated rather than refused: the extra macros are lanes this
+        // build does not register, and dropping them loses nothing it could
+        // have driven. A blob with fewer leaves the remainder empty.
+        const auto n = std::min<std::uint32_t>(
+            macros.size(), static_cast<std::uint32_t>(kMacroCount));
+        for (std::uint32_t m = 0; m < n; ++m) {
+            const auto slots = macros[m];
+            if (!slots.isArray()) return false;
+            for (std::uint32_t i = 0; i < slots.size(); ++i) {
+                const auto parsed = read_int_(slots[i]);
+                if (!parsed || *parsed < 0
+                    || *parsed >= static_cast<int>(kMaxBands)) return false;
+                new_macro_members[m].set(static_cast<std::size_t>(*parsed));
+            }
+        }
+    }
+
     std::uint8_t new_target_mask = kModulationTargetMaskUnset;
     if (root.hasObjectMember("modulation_target_mask")) {
         const auto parsed_mask = read_int_(root["modulation_target_mask"]);
@@ -1749,6 +1840,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_derived_ = new_morph_derived;
         morph_overrides_ = new_morph_overrides;
         morph_applies_viewport_ = new_morph_applies_viewport;
+        macro_members_ = new_macro_members;
         // Re-derive the LFO lanes from the restored parameters before the
         // mask rides along: the audio thread only honours a published mask
         // while the published target still matches the automation lane, so a

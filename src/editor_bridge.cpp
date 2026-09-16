@@ -277,6 +277,32 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
         plugin.editor_mode_param(kParamEditMode)));
     payload.addMember("visualization_mode", static_cast<double>(
         plugin.editor_mode_param(kParamVisualization)));
+    // Macros ride the LIVE per-revision projection rather than the
+    // hydration-only block below, because unlike "Morph moves the view" a
+    // macro IS a host parameter: automation moves it, and the editor has to
+    // redraw the offset it applies without waiting for a re-hydration.
+    //
+    // Membership and value are both carried. The editor needs both to draw
+    // the offset itself — it cannot read the macro back off the band lanes,
+    // because a macro is never written to them.
+    auto macros = choc::value::createEmptyArray();
+    for (std::size_t m = 0; m < kMacroCount; ++m) {
+        auto entry = choc::value::createObject("SpectrMacro");
+        entry.addMember("value_db", static_cast<double>(
+            plugin.state().get_value(macro_param_id(m))));
+        auto slots = choc::value::createEmptyArray();
+        const auto members = plugin.macro_members(m);
+        // Only VISIBLE members are projected. Membership is kept across a
+        // layout change on the C++ side, but the editor draws `n_visible`
+        // bands and an index past that end would be an out-of-range write in
+        // the render pass.
+        for (std::size_t i = 0; i < n; ++i)
+            if (members.test(i)) slots.addArrayElement(static_cast<std::int32_t>(i));
+        entry.addMember("slots", slots);
+        macros.addArrayElement(entry);
+    }
+    payload.addMember("macros", macros);
+
     auto modulation = make_modulation_payload_(plugin);
     // Whether a morph moves the viewport is drawn in the same Settings group
     // as the LFO lanes, but unlike them it is not a host parameter and cannot
@@ -755,6 +781,78 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             return plugin.set_modulation_target_mask(mask)
                 ? EditorBridge::ok_response()
                 : EditorBridge::err_response("modulation target state unavailable");
+        });
+
+    // Assign or clear one macro's membership. The macro's VALUE is not here
+    // on purpose: it is an ordinary parameter and goes through `param_set`
+    // like every other lane, which is what lets a host record and automate it.
+    bridge.add_handler("macro_set_members",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("macro"))
+                return EditorBridge::err_response("macro index missing");
+            const auto macro = EditorBridge::get_uint(p, "macro", kMacroCount);
+            if (macro >= kMacroCount)
+                return EditorBridge::err_response("macro index out of range");
+            if (!p.hasObjectMember("slots") || !p["slots"].isArray())
+                return EditorBridge::err_response("slots must be an array");
+            const auto slots = p["slots"];
+            MacroMembership<kMaxBands> members;
+            for (std::uint32_t i = 0; i < slots.size(); ++i) {
+                const auto& entry = slots[i];
+                if (!entry.isInt32() && !entry.isInt64())
+                    return EditorBridge::err_response("slot indices must be integers");
+                const auto slot = entry.isInt32()
+                    ? static_cast<std::int64_t>(entry.getInt32())
+                    : entry.getInt64();
+                if (slot < 0 || slot >= static_cast<std::int64_t>(kMaxBands))
+                    return EditorBridge::err_response("slot index out of range");
+                members.set(static_cast<std::size_t>(slot));
+            }
+            // An empty array is a legitimate payload — it is "Clear Macro N" —
+            // so it must not be mistaken for a malformed one.
+            if (!plugin.set_macro_members(macro, members))
+                return EditorBridge::err_response("macro state unavailable");
+            return EditorBridge::ok_response(
+                make_editor_state_payload(plugin,
+                                          plugin.editor_authority().revision()));
+        });
+
+    // The macro DRAG triad. Shaped like paint_start/paint/paint_end and for
+    // the same reason: a drag is one host gesture, not one per event.
+    //
+    // `macro_drag_start` opens the gesture epoch, every `macro_set` inside it
+    // reuses the single open bracket, and `macro_drag_end` closes it. A
+    // `macro_set` sent OUTSIDE a drag (a menu item, a typed value) still
+    // emits its own complete bracket, so a host always sees a balanced
+    // begin/end whichever surface issued the change.
+    bridge.add_handler("macro_drag_start",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            plugin.begin_param_gesture_epoch();
+            return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("macro_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("macro"))
+                return EditorBridge::err_response("macro index missing");
+            const auto macro = EditorBridge::get_uint(p, "macro", kMacroCount);
+            if (macro >= kMacroCount)
+                return EditorBridge::err_response("macro index out of range");
+            if (!p.hasObjectMember("value_db"))
+                return EditorBridge::err_response("macro value missing");
+            const auto value = finite_number_(p["value_db"]);
+            if (!value || *value < kBandGainMinDb || *value > kBandGainMaxDb)
+                return EditorBridge::err_response(
+                    "macro value must be finite and within -24 and +24 dB");
+            if (!plugin.set_macro_value(macro, static_cast<float>(*value)))
+                return EditorBridge::err_response("macro state unavailable");
+            return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("macro_drag_end",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            plugin.end_param_gesture_epoch();
+            return EditorBridge::ok_response();
         });
 
     bridge.add_handler("morph_viewport_set",

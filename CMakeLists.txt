@@ -479,6 +479,7 @@ add_executable(Spectr-test
     test/test_preset.cpp
     test/test_snapshot.cpp
     test/test_param_surface.cpp
+    test/test_param_macro.cpp
     test/test_mode_bridge.cpp
     test/test_mask_renderer.cpp
     test/test_tracking_transition.cpp
