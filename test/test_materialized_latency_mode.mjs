@@ -106,12 +106,17 @@ if (plantNoNotify) {
     "        ([]).forEach(function (fn) {");
 }
 if (plantUnevenHint) {
-  // The defect the reserve exists for: without a floor the row is as tall as
-  // whichever description happens to be selected, so every group below it
-  // jumps on each switch. Planting a zero reserve reinstates exactly that.
-  plant("a description with no reserved height, so the row resizes per option",
-    "      style: { minHeight: 52 } },",
-    "      style: { minHeight: 0 } },");
+  // The defect the reserve exists for: when the reserved box is sized from
+  // the SELECTED option rather than the longest one, the row is as tall as
+  // whatever happens to be selected and every group below it jumps on each
+  // switch. Planting a sizer that follows the selection reinstates exactly
+  // that -- it is what the row did before any reserve existed, and what it
+  // still did for 9px of every switch afterwards, because the constant that
+  // stood here predicted 52px for a description the renderer lays out at 61.
+  plant("a reserve sized from the selected option instead of the longest",
+    "    const text = hintFor(option);\n"
+    + "    return text.length > longest.length ? text : longest;",
+    "    return hintText;");
 }
 if (plantTypedLabel) {
   plant("a panel that types the option labels instead of reading them",
@@ -261,13 +266,20 @@ let chips = null;
   }
   const field = out.created.filter((n) => n.type === "SpectrSettingsField")[0];
   if (field) {
-    // The hint is an element carrying the height reserve, so read the text it
-    // wraps rather than stringifying the element (which yields [object Object]
-    // and would make both assertions below vacuously fail -- or, with a looser
-    // comparison, vacuously pass).
+    // The hint is an element tree -- a transparent sizer that reserves the
+    // height, plus the visible line on top of it -- so read the VISIBLE line
+    // rather than stringifying the element (which yields [object Object] and
+    // would make both assertions below vacuously fail, or with a looser
+    // comparison vacuously pass). Reading the whole subtree would not do
+    // either: the sizer always carries the longest option's sentence, so a
+    // panel showing the WRONG mode's guidance would still contain the right
+    // words somewhere and pass.
     const hintNode = field.props.hint;
+    const visibleLine = ((hintNode && hintNode.children) || []).filter(
+      (k) => k && k.props && k.props["data-spectr-latency-hint-text"] === true)[0];
     const hint = String(
-      hintNode && hintNode.children ? hintNode.children.join("") : (hintNode || ""));
+      visibleLine && visibleLine.children ? visibleLine.children.join("")
+        : (visibleLine || ""));
     // 213 from the payload's ms, not typed: the payload carries 213.3333...,
     // so a panel that printed a typed "213 ms" would still pass -- but one
     // that printed the RAW number, or the wrong mode's number, would not.
@@ -360,32 +372,93 @@ let chips = null;
     `listener fired ${woke} time(s)`);
 }
 
-// ---- 7. Switching must not change the row's height ----------------------
+// ---- 7. The reserve must be DERIVED, not declared -----------------------
 // The owner's report: selecting one option after the other pushed every group
-// below LATENCY up or down. The two descriptions wrap to different line counts
-// (four against three), so the row was as tall as whatever was selected.
+// below LATENCY up or down.
+//
+// WHAT THIS SECTION CAN AND CANNOT SEE, stated plainly because the previous
+// version of it was green throughout a jump the owner could see. It read the
+// DECLARED constant -- `style.minHeight` -- out of both renders and required
+// them to match. They always matched: it is one literal in one place. It read
+// 52 against 52 while "Mixing" rendered 61px tall and the panel moved 9px, and
+// it would read 52 against 52 if the panel moved 200px. A reserve is a claim
+// about RENDERED height and no document assertion can settle it.
+//
+// So the rendered proof lives in tools/spectr-detectors/
+// settings_render_mode_no_reflow.py, which drives the shipping standalone and
+// compares the two settled layouts box by box. What is left here is the
+// STRUCTURAL property that makes such a reserve possible at all: the reserved
+// box is sized by a real string that does not change with the selection.
 {
-  const heightFor = (mode) => {
+  const shapeFor = (mode) => {
     const globals = {};
     const payload = JSON.parse(JSON.stringify(PAYLOAD));
     payload.mode = mode;
     const out = run(globals, { latency: payload, snapshots: {} });
     const field = out.created.filter((n) => n.type === "SpectrSettingsField")[0];
     const hint = field && field.props && field.props.hint;
-    // The hint is an element carrying the reserve, not a bare string.
-    const style = hint && hint.props && hint.props.style;
-    return style ? style.minHeight : null;
+    const kids = (hint && hint.children) || [];
+    const withProp = (name) => kids.filter(
+      (k) => k && k.props && k.props[name] === true)[0];
+    const textOf = (n) => String(
+      n && n.children ? n.children.join("") : (n || ""));
+    return {
+      hint,
+      sizer: withProp("data-spectr-latency-hint-sizer"),
+      visible: withProp("data-spectr-latency-hint-text"),
+      sizerText: textOf(withProp("data-spectr-latency-hint-sizer")),
+      visibleText: textOf(withProp("data-spectr-latency-hint-text")),
+    };
   };
-  const mixing = heightFor("linear_phase");
-  const tracking = heightFor("zero_latency");
-  check("both options reserve the same description height",
-    mixing !== null && tracking !== null && mixing === tracking,
-    `mixing=${mixing} tracking=${tracking}`);
-  // Control: the reserve is a real height, not zero. A zero reserve would be
-  // "equal" in both selections and reserve nothing at all, which is the
-  // defect wearing the assertion's clothes.
-  check("the reserved height is non-zero",
-    typeof mixing === "number" && mixing > 0, String(mixing));
+  const mixing = shapeFor("linear_phase");
+  const tracking = shapeFor("zero_latency");
+
+  check("the hint reserves height with a sizer element",
+    !!mixing.sizer && !!tracking.sizer,
+    `mixing=${!!mixing.sizer} tracking=${!!tracking.sizer}`);
+
+  // THE LOAD-BEARING ONE. The reserved box is sized by this string, so the box
+  // is invariant exactly when the string is.
+  check("the sizer carries the SAME string whichever option is selected",
+    mixing.sizerText.length > 0 && mixing.sizerText === tracking.sizerText,
+    `mixing=${JSON.stringify(mixing.sizerText)} `
+    + `tracking=${JSON.stringify(tracking.sizerText)}`);
+
+  // And it must be the LONGEST option's string, not merely a constant one --
+  // a sizer pinned to the shorter option is stable and reserves too little.
+  const longest = PAYLOAD.options
+    .map((o) => o.description + " (" + (o.ms < 10 ? o.ms.toFixed(1)
+      : String(Math.round(o.ms))) + " ms)")
+    .reduce((a, b) => (b.length > a.length ? b : a), "");
+  check("the sizer carries the LONGEST option's string",
+    mixing.sizerText === longest,
+    `sizer=${JSON.stringify(mixing.sizerText)} longest=${JSON.stringify(longest)}`);
+
+  // The visible line must be OUT OF FLOW, or it adds its own height to the
+  // sizer's and the box grows with the selection after all.
+  const pos = (s) => s.visible && s.visible.props && s.visible.props.style
+    && s.visible.props.style.position;
+  check("the visible guidance line is positioned out of flow",
+    pos(mixing) === "absolute" && pos(tracking) === "absolute",
+    `mixing=${pos(mixing)} tracking=${pos(tracking)}`);
+
+  // The sizer must be hidden by a PAINT property. In this runtime
+  // `visibility` lowers to setVisible() and `display:none` to the same, both
+  // of which take the box out of the layout -- reserving nothing, while
+  // looking right in the document.
+  const sstyle = (mixing.sizer && mixing.sizer.props
+    && mixing.sizer.props.style) || {};
+  check("the sizer is hidden by opacity, not by a layout-removing property",
+    sstyle.opacity === 0 && sstyle.visibility === undefined
+      && sstyle.display === undefined,
+    JSON.stringify(sstyle));
+
+  // And the visible line still says what the selected mode says.
+  check("the visible line follows the selection",
+    mixing.visibleText.includes("Deepest cuts")
+      && tracking.visibleText.includes("Plays in time"),
+    `mixing=${JSON.stringify(mixing.visibleText)} `
+    + `tracking=${JSON.stringify(tracking.visibleText)}`);
 }
 
 console.log("");

@@ -237,3 +237,18 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # defect class: every JS row above is green against a readout that reports a
 # level nobody downstream ever hears.
 ^"?output level:
+
+# Switching the Latency mode must not move the Settings panel. Nothing above
+# reaches these three rows -- they start with "Spectr-settings", and the
+# closest existing line, `^settings overflow`, matches a different test
+# entirely -- so without this pattern they register and never run.
+#
+# The live row is the one that matters and the one most easily lost: it is the
+# only gate anywhere in this suite that presses a Settings control and compares
+# two SETTLED LAYOUTS. Every other check on this panel reads the document, and
+# a document assertion is exactly what let this defect ship -- the previous
+# reserve's test compared one declared constant against itself and was green
+# through a 9px jump the owner could see. The control row re-adjudicates the
+# real pre-fix capture pair, so the gate is watched rejecting the shipped
+# defect on every run rather than merely asserted to be able to.
+^Spectr-settings-render-mode-no-reflow

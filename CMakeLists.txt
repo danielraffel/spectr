@@ -2299,6 +2299,56 @@ if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalon
         RESOURCE_LOCK spectr_native_materialized_editor)
 endif()
 
+# Switching the Latency mode must not move one pixel of the Settings panel.
+#
+# The reserve that was supposed to settle this already had a test, and that
+# test read the DECLARED constant (`style.minHeight`) out of the document and
+# required both selections to declare the same one. They always did -- it is a
+# single literal -- so it read 52 against 52 while "Mixing" rendered 61px tall
+# and the panel still moved 9px on every switch, and it would read 52 against
+# 52 if the panel moved 200px. A reserve is a claim about RENDERED height, so
+# the only instrument that can settle it is the renderer.
+#
+# The receipt half adjudicates a committed capture pair and needs no binary, so
+# it holds wherever Python does; the live half drives the shipping standalone,
+# presses each chip and compares the two settled layouts box by box. The
+# control half re-adjudicates the PRE-FIX pair recorded in the same receipt --
+# real captures from the build the owner reported, in which 302 boxes move and
+# the reserved row goes 61 -> 52.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-settings-render-mode-no-reflow-receipt
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/settings_render_mode_no_reflow.py
+            --receipt
+            ${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/2026-09-15/SETTINGS-RENDER-MODE-no-reflow.json)
+    set_tests_properties(Spectr-settings-render-mode-no-reflow-receipt PROPERTIES
+        TIMEOUT 60)
+    # --expect-fail lives in the script rather than in WILL_FAIL because
+    # WILL_FAIL accepts ANY non-zero exit, so a missing receipt or a usage
+    # error would read green while proving nothing -- and this detector also
+    # exits 2 for "no verdict reached", which WILL_FAIL cannot tell from
+    # "rejected the defect".
+    add_test(NAME Spectr-settings-render-mode-no-reflow-negative-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/settings_render_mode_no_reflow.py
+            --receipt
+            ${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/2026-09-15/SETTINGS-RENDER-MODE-no-reflow.json
+            --plant fixed-reserve-too-small --expect-fail)
+    set_tests_properties(Spectr-settings-render-mode-no-reflow-negative-control
+        PROPERTIES TIMEOUT 60)
+endif()
+
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-settings-render-mode-no-reflow-live
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/settings_render_mode_no_reflow.py
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out-dir ${CMAKE_CURRENT_BINARY_DIR}/spectr-render-mode-reflow)
+    set_tests_properties(Spectr-settings-render-mode-no-reflow-live PROPERTIES
+        TIMEOUT 600
+        RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
 # ── Plugin targets ─────────────────────────────────────────────────────
 
 if(SPECTR_BUILD_WEBVIEW_REFERENCE)
