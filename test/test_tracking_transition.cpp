@@ -521,12 +521,18 @@ TEST_CASE("Tracking realises a drawn null at the design floor",
     //
     //     floor <= gate - margin
     //
-    // and `margin` has to exceed the supremum's own variation, or this control
+    // and `margin` has to survive the floor's own movement, or this control
     // would be one geometry tweak away from reporting a floor above the gate.
-    // That variation is measured, not guessed: across the twelve edge quanta
-    // swept in test_tracking_transition_sweep.cpp, at this width and
-    // placement, a band drawn at -100 dB reads a supremum spanning 3.9 dB
-    // (-85.98 to -89.86). 5 dB is the next whole decibel above that span.
+    // That movement is measured, not guessed. Across the twelve edge quanta
+    // swept in test_tracking_transition_sweep.cpp, at this width and placement,
+    // a band drawn at -100 dB reads a supremum anywhere from -85.98 to -96.00
+    // dB. Only the SHALLOW end can threaten the gate, and it sits 1.75 dB above
+    // the value measured here -- so the requirement is a margin comfortably
+    // over that excursion which every cell of the swept geometry still clears.
+    // 5 dB is about three times the excursion, and the shallowest cell in the
+    // sweep (-85.98) clears it. 10 dB would be the full span, but the deep end
+    // of a span cannot make a floor rise, so bounding against it would be
+    // bounding against the wrong direction.
     //
     // Both halves are asserted, because either alone is satisfiable by the
     // defect: a clamped instrument reporting a constant -90 dB would clear the
