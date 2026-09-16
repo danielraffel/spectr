@@ -750,7 +750,14 @@ TEST_CASE("A redesign that changes nothing changes no sample",
 
     // Control: the unchanged run must still be driving the band it holds, or
     // the zero below is the zero of an unloaded renderer.
-    REQUIRE(std::abs(rerun.achieved_db) < 1.0);
+    //
+    // Shipping only. The plant perturbs the delivered magnitude on purpose, so
+    // asking it to hold here would be asking the defect not to have happened,
+    // and any bound picked for that case would be a number fitted to whatever
+    // the plant currently scores. Nothing rests on it there: the planted
+    // verdict is itself a "must be large" reading, and an unloaded renderer
+    // scores ~0 and fails it.
+    if (!plant) REQUIRE(std::abs(rerun.achieved_db) < 1.0);
 
     // The floor this rule can resolve is the renderer's own single-precision
     // arithmetic, measured by the never-republished run rather than derived:
@@ -794,9 +801,20 @@ TEST_CASE("A gesture costs no more artifact than the other mode",
         // A zero there would make every ratio infinite or undefined.
         INFO("control: Mixing must register the gesture too");
         REQUIRE(mixing.residual > 1.0e-4);
-        // Control: both modes must actually have moved the band.
-        REQUIRE(tracking.achieved_db < -20.0);
+        // Control: both modes must actually have moved the band. Mixing is the
+        // denominator and is untouched by the plant, so it is held to the
+        // drawn depth in both modes.
         REQUIRE(mixing.achieved_db < -20.0);
+        // Tracking is the planted path. The drawn depth is formed by
+        // cancellation across the WHOLE impulse, and restarting the history on
+        // every swap starves exactly that -- the same starvation that made a
+        // zoomed gesture reach -18 dB of a drawn -40 -- so under the plant it
+        // reaches only a couple of dB. Requiring a depth there would be
+        // requiring the defect not to have happened, and any figure chosen for
+        // it would be fitted to the plant's current score. The planted verdict
+        // below needs no such help: it is a ratio that must be LARGE, and a
+        // Tracking renderer that had stopped driving the band would score ~0.
+        if (!plant) REQUIRE(tracking.achieved_db < -20.0);
 
         const double ratio = tracking.residual / mixing.residual;
         std::printf("\n40 dB gesture, republished every %d host block%s\n"
@@ -822,10 +840,13 @@ TEST_CASE("A discrete mask change lands without a step the other mode would not 
     // arrives as one step rather than as a smeared onset -- and the step is
     // what this rule bounds, against Mixing on the identical change.
     //
-    // No plant row: reinstating the crossfade does NOT violate this rule. A
-    // parallel fade is exactly the thing that smooths a boundary, so the
-    // planted defect scores BETTER here while being far worse everywhere else.
-    // Registering it as a negative control would be a vacuously green row.
+    // No plant row: dropping the input history does NOT violate this rule.
+    // What this rule measures is the size of ONE discrete step, and a step is
+    // already a full change of response -- restarting the history alongside it
+    // does not make that step bigger. Planted, it scores 1.38 against its own
+    // 2.5 gate while the other two rules move by two and three orders of
+    // magnitude. Registering it as a negative control would be a vacuously
+    // green row.
     // The control this rule needs is an instrument one, below.
     constexpr int kHostBlock = 256;
     const std::size_t kTotal = 96000, kAt = 48000;
