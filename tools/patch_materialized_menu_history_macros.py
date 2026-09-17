@@ -119,7 +119,12 @@ def main():
         assert raw.count(old) == 1
         raw = raw.replace(old, '    return dispatch(type, payload, id);', 1)
     for label, old, new in EDITS:
-        old, new = json.dumps(old)[1:-1], json.dumps(new)[1:-1]
+        legacy = json.dumps(new)[1:-1]
+        old, new = (json.dumps(value, ensure_ascii=False)[1:-1]
+                    for value in (old, new))
+        # Keep the token encoding used by the materialized merge driver.
+        if legacy != new and raw.count(legacy) == 1:
+            raw = raw.replace(legacy, new, 1)
         if raw.count(new) == 1:
             continue
         if raw.count(old) != 1:

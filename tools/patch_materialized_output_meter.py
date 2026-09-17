@@ -269,13 +269,13 @@ EDITS = [
      CHROME_TAIL,
      'onLearnMore: () => { setHelpOpen(false); setHelpGuideOpen(true); } })))'
      ', /* @__PURE__ */ React.createElement(SpectrOutputMeter, null));\n}',
-     'React.createElement(SpectrOutputMeter, null));'),
+     'React.createElement(SpectrOutputMeter, null)'),
 ]
 
 REQUIRED_AFTER = (
     'function SpectrOutputMeter() {',
     '"data-spectr-output-trim-label": true,',
-    'React.createElement(SpectrOutputMeter, null));',
+    'React.createElement(SpectrOutputMeter, null)',
     'window.pulp.on("output_meter"',
     'window.pulp.postMessage("param_set",',
     '"data-spectr-output-over": over ? "true" : "false",',

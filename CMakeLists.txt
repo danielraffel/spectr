@@ -1117,14 +1117,11 @@ endif()
 # Each press also prints WHICH view owns the point it was aimed at, so a state
 # change is attributable to that row rather than to a neighbour stacked on it.
 #
-# It also pins, exactly, the four rows that a pointer cannot reach while a
-# selection is live -- the upstream layout defect in which the menu's container
-# does not grow past 376px and the overflowing rows restack over the first ones.
-# Growing that list is a regression; SHRINKING it means the upstream fix landed
-# and this gate's own statement has gone stale, so both fail.
+# Every enabled row must also be reachable at its painted centre, with and
+# without a selection. Disabled history actions are intentionally inert.
 #
-# Exit: 0 every row did what it says, 1 a row did not (or the unreachable set
-# moved), 3 a premise could not be arranged, 77 no view carries a context-menu
+# Exit: 0 all covered rows did what they say, 1 a row did not (or an enabled row
+# is unreachable), 3 a premise could not be arranged, 77 no view carries a context-menu
 # handler under the pinned SDK. 3 and 77 must never read as a pass.
 add_test(NAME Spectr-band-menu-items-do-what-they-say
     COMMAND ${CMAKE_COMMAND} -E env SPECTR_BAND_MENU_ITEMS=1

@@ -1184,7 +1184,7 @@ void dump_menu_rows(pulp::view::View& view, pulp::view::View& root, int depth) {
         dump_menu_rows(*view.child_at(i), root, depth + 1);
 }
 
-// Distinct pressable rows whose painted centre is owned by a DIFFERENT row.
+// Distinct enabled rows whose painted centre is owned by a DIFFERENT row.
 // A row in that state cannot be operated by a pointer at all, however sound
 // its handler is -- and the reading a gate takes from it belongs to whichever
 // row is stacked on top, which is worse than a failure because it looks like
@@ -1196,7 +1196,8 @@ void collect_unreachable_rows(pulp::view::View& view, pulp::view::View& root,
         label != nullptr && !label->text().empty()) {
         auto* own = nearest_clickable(const_cast<pulp::view::View*>(&view));
         const auto box = view.bounds();
-        if (own != nullptr && box.width > 0.0f && box.height > 0.0f
+        if (own != nullptr && own->enabled()
+            && box.width > 0.0f && box.height > 0.0f
             && std::find(seen.begin(), seen.end(), own) == seen.end()) {
             seen.push_back(own);
             float x = 0.0f, y = 0.0f;
@@ -3778,8 +3779,7 @@ int main(int argc, char** argv) {
                             "selection: %zu of %zu\n",
                             unreachable_nosel.size(), seen.size());
                 for (const auto& name : unreachable_nosel)
-                    std::printf("[menuitems]   unreachable (no selection): %s "
-                                "-- expected only for a row authored disabled\n",
+                    std::printf("[menuitems]   unreachable (no selection): %s\n",
                                 name.c_str());
             }
 
@@ -4523,39 +4523,12 @@ int main(int argc, char** argv) {
 
             capture(rig, dir, prefix + "menuitems-final", backend, scale);
 
-            // ── the layout defect this lane does NOT own, stated exactly ────
-            //
-            // With a selection live the menu holds 17 children and its
-            // container does not grow past 376px, so the rows that do not fit
-            // restack from its top and paint over the first ones. Those rows
-            // are then unreachable by pointer in THAT state: a press at their
-            // pixels belongs to whatever is stacked on them. The mechanism is
-            // below this document -- four candidate fixes were measured and
-            // disproven (a pulp#8430 object swap with a passing positive
-            // control, a constant 17-child count, flexShrink:0, an explicit
-            // computed height; the box stayed 376 in every case) -- so it is
-            // not hacked around here.
-            //
-            // Every row above is therefore driven in the state where it DOES
-            // lay out correctly, and the set that cannot be reached in the
-            // other state is pinned to an exact list rather than left silent.
-            // Growing it is a regression. SHRINKING it means the upstream fix
-            // landed and this gate's own statement has gone stale, which is
-            // also a failure -- the selection-state coverage should then be
-            // extended to the rows it frees, not quietly left out.
-            static const char* kKnownUnreachableWithSelection[] = {
-                "Mute / Unmute", "Reset to 0 dB", "Solo", "Select all"};
-            constexpr std::size_t kKnownUnreachableCount = 4;
-            std::printf("[menuitems] ── rows unreachable with a selection "
-                        "live: %zu (expected %zu, upstream layout defect) ──\n",
-                        unreachable_selection.size(), kKnownUnreachableCount);
-            bool unreachable_matches =
-                unreachable_selection.size() == kKnownUnreachableCount;
-            if (unreachable_matches)
-                for (std::size_t i = 0; i < kKnownUnreachableCount; ++i)
-                    if (unreachable_selection[i]
-                        != kKnownUnreachableWithSelection[i])
-                        unreachable_matches = false;
+            // The SDK and materialized layout now let the menu grow with its
+            // contents. Every enabled row must be reachable in both states;
+            // disabled history actions intentionally do not accept a press.
+            std::printf("[menuitems] ── enabled rows unreachable with a selection "
+                        "live: %zu (expected 0) ──\n",
+                        unreachable_selection.size());
             for (const auto& name : unreachable_selection)
                 std::printf("[menuitems]   still unreachable: %s\n",
                             name.c_str());
@@ -4602,27 +4575,13 @@ int main(int argc, char** argv) {
                              "row says.\n", fails);
                 return 1;
             }
-            if (!unreachable_matches) {
-                if (unreachable_selection.size() < kKnownUnreachableCount) {
-                    std::fprintf(stderr,
-                                 "FAIL: fewer rows are unreachable with a "
-                                 "selection live than this gate says (%zu vs "
-                                 "%zu). If the upstream layout defect is "
-                                 "fixed, this list and the selection-state "
-                                 "coverage must both be updated -- leaving a "
-                                 "stale exemption behind is how rows stop "
-                                 "being tested.\n",
-                                 unreachable_selection.size(),
-                                 kKnownUnreachableCount);
-                } else {
-                    std::fprintf(stderr,
-                                 "FAIL: %zu rows cannot be pressed with a "
-                                 "selection live, more than the %zu this gate "
-                                 "records. A row a pointer cannot reach is a "
-                                 "row nobody can use.\n",
-                                 unreachable_selection.size(),
-                                 kKnownUnreachableCount);
-                }
+            if (!unreachable_nosel.empty() || !unreachable_selection.empty()) {
+                std::fprintf(stderr,
+                             "FAIL: enabled menu rows cannot be pressed "
+                             "at their painted centres: %zu without selection, "
+                             "%zu with selection.\n",
+                             unreachable_nosel.size(),
+                             unreachable_selection.size());
                 return 1;
             }
             if (blocked > 0 || unproven > 0) {

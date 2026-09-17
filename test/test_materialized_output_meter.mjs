@@ -270,18 +270,19 @@ if (!chromeBody.includes("React.createElement(SpectrOutputMeter, null)")) {
   fail("Chrome() does not render SpectrOutputMeter, so the readout exists in "
     + "the document and nowhere on screen");
 }
-// S1b. It must be the LAST child of Chrome's fragment, and absolutely
-// positioned. This document's text/layout/paint bindings address their nodes
+// S1b. The meter stays after the captured Chrome children, immediately before
+// the appended latency rail. This document's bindings address their nodes
 // by positional DOM path, so a child inserted anywhere but the end renumbers
 // every later sibling and silently re-points them: appended into the header's
 // flex row, "BARS" lost its captured 48pt text basis and remeasured at 20pt,
 // shrinking its hit box. Only `native buttons are tappable across their whole
 // painted bounds` can see that, so pin the shape that avoids it here.
 if (!chromeBody.includes(
-    "React.createElement(SpectrOutputMeter, null));")) {
-  fail("SpectrOutputMeter is not the last child of Chrome's fragment; "
-    + "inserting it earlier renumbers the captured binding paths of every "
-    + "later sibling and silently breaks their text measurement");
+    "React.createElement(SpectrOutputMeter, null), /* @__PURE__ */ "
+    + "React.createElement(SpectrLatencyRail, null));")) {
+  fail("SpectrOutputMeter and SpectrLatencyRail are not appended in order "
+    + "after Chrome's captured children; moving them earlier renumbers "
+    + "the later binding paths and breaks their text measurement");
 }
 // The bar it sits over declares zIndex 5. Without a higher one this cluster
 // paints under it and every press inside the button resolves to the bar: a
