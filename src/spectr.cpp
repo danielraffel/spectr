@@ -363,13 +363,15 @@ void Spectr::publish_processing_state_() noexcept {
     // stating because the earlier comment here drew the wrong conclusion from
     // the right observation. Republishing an unchanged mask really did perturb
     // the audio, but not because blending an impulse response with a copy of
-    // itself is inexact -- it is exact. It was that the convolver's CROSSFADE
-    // swap path installs the incoming response with a ZEROED input delay line,
-    // so any swap, changed or not, restarted the convolution from silence.
-    // Tracking now adopts a redesign by the instantaneous swap, which carries
-    // that delay line across, so an unchanged republication is bit-exact
-    // wherever it lands and reproducibility does not rest on this gate. See
-    // `kIrCrossfadeSamples` and the swap rules in `test/test_mask_renderer.cpp`.
+    // itself is inexact -- it is exact. It was that a crossfade used to install
+    // the incoming response with a ZEROED input delay line, so any swap,
+    // changed or not, restarted the convolution from silence. The convolver
+    // now keeps ONE input history for every response it renders, so both sides
+    // of a fade convolve against the same real past and an unchanged
+    // republication costs nothing measurable -- 46 of them sit on the
+    // renderer's arithmetic floor. Reproducibility does not rest on this gate.
+    // See `kIrCrossfadeSamples` and the swap rules in
+    // `test/test_mask_renderer.cpp`.
     if (last_published_layout_valid_
         && same_mask_layout_(last_published_layout_, mask_layout))
         return;

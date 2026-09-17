@@ -708,18 +708,19 @@ set_tests_properties(Spectr-tracking-drag-glide-negative-control
 # Tracking replaces an impulse response underneath running audio on every
 # redesign, and what that costs is decided by whether the incoming response
 # inherits the convolver's input delay line or starts from silence. The
-# shipping renderer takes the instantaneous swap, which inherits it.
-# SPECTR_SWAP_PLANT=history-reset reinstates the parallel crossfade -- the one
-# alternative the convolver offers, and the code that shipped before -- whose
-# swap path installs the incoming response with a ZEROED delay line. Both rows
-# below invert their own verdict when they see the plant, so each is green only
-# when its rule OBSERVES the defect.
+# shipping renderer crossfades, and that is only safe because the convolver
+# renders both sides of the fade against ONE retained history.
+# SPECTR_SWAP_PLANT=history-reset drops that history at the swap site, which is
+# the defect the rule forbids and the one form of it the current convolver can
+# still be made to produce. Both rows below invert their own verdict when they
+# see the plant, so each is green only when its rule OBSERVES the defect.
 #
 # Deliberately only two rows. The third swap rule, on the boundary step a
-# discrete change makes, is NOT registered here: a parallel fade is precisely
-# what smooths a boundary, so the plant scores BETTER on that rule and a
-# control row for it would be vacuously green. That rule carries an instrument
-# control of its own instead.
+# discrete change makes, is NOT registered here: it measures the size of a
+# single discrete step, and restarting the history does not inflate that --
+# planted, it scores 1.38 against its own 2.5 gate -- so a control row for it
+# would be vacuously green. That rule carries an instrument control of its own
+# instead.
 add_test(NAME Spectr-swap-unchanged-mask-negative-control
     COMMAND ${CMAKE_COMMAND} -E env
         SPECTR_SWAP_PLANT=history-reset
