@@ -93,13 +93,13 @@ A and B do nothing if that snapshot is empty. Morph requires both snapshots. You
 
 ## Automation
 
-Every control here is a plug-in parameter, and your DAW can drive any of them. In Logic that means Learn Plug-in Parameter: open a Modulator or an automation lane, choose Learn, then touch the control in Spectr and the two are linked. Whatever you touched shows up by name, so moving band 31 offers you **Band 31 Gain**.
+Nearly every control here is a plug-in parameter, and your DAW can drive any of those. In Logic that means Learn Plug-in Parameter: open a Modulator or an automation lane, choose Learn, then touch the control in Spectr and the two are linked. Whatever you touched shows up by name, so moving band 31 offers you **Band 31 Gain**.
 
 MIDI CC is a different mechanism, and Spectr does not listen to it. It is an audio effect with no MIDI input at all, so there are no CC numbers to look up and a list of them is not the thing to aim at here. Plug-in parameters are the whole surface.
 
 There is no right-click path for this either. Right-clicking a band gives you band actions, mute, solo, reset to 0 dB, select. Assigning a modulator is something your host does, not something Spectr does.
 
-One exception worth knowing. An LFO's **Target** can be automated by your DAW. **Destinations**, which is how you pick more than one at a time, is set in the plugin only.
+Three exceptions worth knowing, and they are the only ones. An LFO's **Target** can be automated by your DAW; **Destinations**, which is how you pick more than one at a time, is set in the plugin only. **Morph moves the view** is likewise plugin-only. So is **Latency**, and for a reason worth stating: switching it rebuilds the processor and moves your DAW's delay compensation, which is not something a lane should be able to ask for once per block. It is saved with your project and recalled with it, but your DAW cannot sweep it.
 
 ## Modulating a range of bands
 
@@ -160,6 +160,6 @@ Most of the time you will never hear it. It only becomes audible when you cut a 
 
 Neither one is an upgrade on the other. Use **Tracking** for drums and other percussive material when you are cutting a narrow low band, and whenever you are playing or recording through Spectr. Use **Mixing** everywhere else: it is dramatically deeper on mutes, and on most material that backward spread sits far too quiet to notice.
 
-New instances start in Mixing. You can change it in Settings, under Latency.
+New instances start in Mixing. The chip at the bottom right, beside the gear, always shows which mode you are in and what it currently costs. Click it to switch. The same control is in Settings under Latency, with a line of guidance for each mode.
 
 Switching rebuilds the processor and tells your DAW that its delay compensation has moved, so it is a setup choice rather than something to reach for in the middle of a take. A project always reopens in the mode it was saved in, so an older session keeps sounding and lining up exactly as it did.`;

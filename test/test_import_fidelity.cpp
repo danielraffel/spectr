@@ -26,7 +26,7 @@ constexpr std::string_view kAssetSetDigest =
 constexpr std::string_view kTemplateDigest =
     "0cdb964975467a0f93ebe83bcdfe821bcd84055518e5b57233e7829e2c73172c";
 constexpr std::string_view kAdapterDigest =
-    "5a280e4b288986decd3ea34d20c196b836eac4e83d3a11231ad32ad470e3e5a7";
+    "cb16da17db4ea910d7b9892ad71dd8eeb0e1739406c472372ab7a6dd1f56cfa6";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -360,7 +360,8 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     CHECK(adapter.find("data-spectr-redraw-unmutes") != adapter.npos);
     CHECK(adapter.find("const commitDrawnGains = (map) => {") != adapter.npos);
     CHECK(adapter.find("const editBaseGain = (value, index) => {") != adapter.npos);
-    CHECK(count_occurrences(adapter, "commitDrawnGains(map);") == 6);
+    CHECK(count_occurrences(adapter, "commitDrawnGains(map);") == 5);
+    CHECK(count_occurrences(adapter, "commitGroupOffset(map);") == 1);
     CHECK(adapter.find("defers the mute decision") != adapter.npos);
     CHECK(adapter.find("Apply synchronously when it is ready") != adapter.npos);
     CHECK(adapter.find("-Infinity is categorical state, never an interpolation operand")
@@ -731,7 +732,8 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         // -document half: a mode that kept a policy of its own would still make
         // that lane fail, but only here does the SHIPPING document say so.
         CHECK(count_occurrences(document, "const commitDrawnGains = (map) => {") == 1);
-        CHECK(count_occurrences(document, "commitDrawnGains(map);") == 6);
+        CHECK(count_occurrences(document, "commitDrawnGains(map);") == 5);
+        CHECK(count_occurrences(document, "commitGroupOffset(map);") == 1);
         CHECK(count_occurrences(document, "commitMany(map, true);") == 1);
         CHECK(count_occurrences(document, "commitMany(held, true);") == 1);
         CHECK(count_occurrences(document, "if (!deferReact) setGains") == 2);

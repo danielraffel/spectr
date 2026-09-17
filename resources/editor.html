@@ -804,6 +804,27 @@ window.FilterBank = FilterBank;`,
       held.set(index, isMuted(targetGainsRef.current[index]) ? -Infinity : value);
     commitMany(held, true);
   };
+  // Dragging a SELECTION is an offset, not a draw: one shared dB delta over
+  // every member, which is what preserves the shape the user drew. Mute is a
+  // separate axis and this gesture says nothing about it, so the offset lands
+  // on the level UNDERNEATH a muted member and the flag is left alone -- the
+  // band stays silent, and unmuting later returns it to where the group moved
+  // it. Routing an offset through the draw policy above gave two wrong answers
+  // and no right one: with unmuteOnDraw on it unmuted every muted member, and
+  // with it off it held the mute and discarded the offset.
+  const commitGroupOffset = (map) => {
+    const moved = new Map();
+    for (const [index, value] of map) {
+      if (isMuted(targetGainsRef.current[index])) {
+        mutedGainDbRef.current[index] = clamp(value, -1, 1) * 24;
+        continue;
+      }
+      moved.set(index, value);
+    }
+    // Committed even when every member is muted: targetGains did not move in
+    // that case, but the stashed levels did, and the publication carries them.
+    commitMany(moved, true);
+  };
   // A muted band's authored gain is stashed, not destroyed. Modes that scale or
   // blend an existing value need a finite operand or -Infinity swallows the
   // edit before the policy above can decide anything -- which is exactly how
@@ -823,10 +844,22 @@ window.FilterBank = FilterBank;`,
           map.set(i, clamp(v0 + delta, -1, 1));
         }
         commitMany(map);`,
-      String.raw`        for (const [i, v0] of p.groupStart.entries())
-          map.set(i, clamp(editBaseGain(v0, i) + delta, -1, 1));
-        commitDrawnGains(map);`,
-      'group drag defers the mute decision');
+      String.raw`        for (const [i, base] of p.groupStart.entries())
+          map.set(i, clamp(base + delta, -1, 1));
+        commitGroupOffset(map);`,
+      'group drag offsets levels and never mute');
+    // The base is resolved ONCE, at press. commitGroupOffset writes a muted
+    // member's new level into the same store editBaseGain reads, so a base
+    // resolved per sample would add the delta to a base that already carried
+    // it and the band would run away up the plot.
+    replaceSpectrSource(
+      String.raw`      groupStart: selection.size > 1 && selection.has(band)
+        ? new Map([...selection].map(i => [i, targetGainsRef.current[i]]))
+        : null,`,
+      String.raw`      groupStart: selection.size > 1 && selection.has(band)
+        ? new Map([...selection].map(i => [i, editBaseGain(targetGainsRef.current[i], i)]))
+        : null,`,
+      'group base resolved at press');
     replaceSpectrSource(
       String.raw`        map.set(curBand, newG);
         commitMany(map);

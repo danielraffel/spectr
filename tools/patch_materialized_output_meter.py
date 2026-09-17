@@ -250,21 +250,32 @@ ZOOM_HEADER = "function SpectrZoomReadout({ bankRef }) {\n"
 CHROME_TAIL = ('onLearnMore: () => { setHelpOpen(false); setHelpGuideOpen(true); }'
                ' }))));\n}')
 
+# A fourth field, PROBE, is the STABLE needle that answers "is this edit
+# already in the document". Keying that question on the whole replacement text
+# was wrong and this is the incident: a later slice edited the component body,
+# after which `COMPONENT + ZOOM_HEADER` no longer occurred, this script read
+# that as "not applied", and a replay re-inserted a SECOND, older copy of the
+# leaf. It failed closed on the duplicate-count assertion rather than writing
+# it -- but the script had stopped being replayable, which is the only reason
+# it exists. A probe that is a declaration rather than a body survives any
+# later edit to that body, and is still absent from a clean pre-slice document.
 EDITS = [
     ('the output meter leaf is declared beside the zoom readout',
      ZOOM_HEADER,
-     COMPONENT + ZOOM_HEADER),
+     COMPONENT + ZOOM_HEADER,
+     'function SpectrOutputMeter() {'),
 
     ('the toolbar renders it without renumbering a captured sibling',
      CHROME_TAIL,
      'onLearnMore: () => { setHelpOpen(false); setHelpGuideOpen(true); } })))'
-     ', /* @__PURE__ */ React.createElement(SpectrOutputMeter, null));\n}'),
+     ', /* @__PURE__ */ React.createElement(SpectrOutputMeter, null));\n}',
+     'React.createElement(SpectrOutputMeter, null)'),
 ]
 
 REQUIRED_AFTER = (
     'function SpectrOutputMeter() {',
     '"data-spectr-output-trim-label": true,',
-    'React.createElement(SpectrOutputMeter, null));',
+    'React.createElement(SpectrOutputMeter, null)',
     'window.pulp.on("output_meter"',
     'window.pulp.postMessage("param_set",',
     '"data-spectr-output-over": over ? "true" : "false",',
@@ -290,19 +301,17 @@ def main():
     changed = False
     applied = 0
     already = 0
-    for edit in EDITS:
-        label, old, new = edit[:3]
-        expected = edit[3] if len(edit) == 4 else 1
-        old_e, new_e = escaped(old), escaped(new)
-        if raw.count(new_e) >= expected:
+    for label, old, new, probe in EDITS:
+        old_e, new_e, probe_e = escaped(old), escaped(new), escaped(probe)
+        if raw.count(probe_e):
             print('already applied ', label)
             already += 1
             continue
         count = raw.count(old_e)
-        if count != expected:
-            sys.exit('FAIL %s: patch point occurs %d times, expected %d'
-                     % (label, count, expected))
-        raw = raw.replace(old_e, new_e, expected)
+        if count != 1:
+            sys.exit('FAIL %s: patch point occurs %d times, expected 1'
+                     % (label, count))
+        raw = raw.replace(old_e, new_e, 1)
         changed = True
         applied += 1
         print('applied         ', label)

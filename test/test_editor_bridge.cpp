@@ -473,6 +473,32 @@ TEST_CASE("host automation publication is compact and revisioned") {
     CHECK(payload["modulation"].size() == 10);
 }
 
+TEST_CASE("live publication carries macro membership and current undo availability", "[undo][macros]") {
+    Rig r;
+    const auto initial = spectr::make_editor_live_state_payload(*r.proc, 0);
+    REQUIRE_FALSE(initial["can_undo"].getBool());
+    REQUIRE_FALSE(initial["can_redo"].getBool());
+    REQUIRE(initial["macros"].size() == spectr::kMacroCount);
+    REQUIRE(initial["macros"][0]["slots"].size() == 0);
+    REQUIRE(response_ok(r.dispatch(R"({"type":"undo_gesture_start","payload":{}})")));
+    REQUIRE(response_ok(r.dispatch(field_envelope(32, 8, -7.0f))));
+    const auto ended = choc::json::parse(r.dispatch(
+        R"({"type":"undo_gesture_end","payload":{}})"));
+    REQUIRE(ended["can_undo"].getBool());
+    REQUIRE(ended["undo_depth"].get<int>() == 1);
+    REQUIRE(response_ok(r.dispatch(R"({"type":"undo","payload":{}})")));
+    const auto undone = spectr::make_editor_live_state_payload(*r.proc, 1);
+    REQUIRE(undone["can_redo"].getBool());
+    REQUIRE_FALSE(undone["can_undo"].getBool());
+    REQUIRE(undone["gain_db"][8].get<double>() == Approx(0));
+    REQUIRE(response_ok(r.dispatch(
+        R"({"type":"macro_set_members","payload":{"macro":2,"slots":[3,8]}})")));
+    const auto assigned = spectr::make_editor_live_state_payload(*r.proc, 2);
+    REQUIRE(assigned["macros"][2]["slots"].size() == 2);
+    REQUIRE(assigned["macros"][2]["slots"][0].get<int>() == 3);
+    REQUIRE(assigned["macros"][2]["slots"][1].get<int>() == 8);
+}
+
 TEST_CASE("live publication carries every automatable modulation lane") {
     // The user-visible case is a DAW automating the LFO while the editor is
     // open: the overlay animates from the audio owner's post-LFO field, so a

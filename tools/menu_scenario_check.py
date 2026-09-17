@@ -40,6 +40,9 @@ import tempfile
 # and a headless run opens no audio device, so process() never runs and the
 # write would be invisible.
 SCENARIO = ";".join([
+    "d_history=drag:378,400>378,330@12",
+    "o_undo=rpress:378,400", "undo=row:Undo", "after_undo=wait",
+    "o_redo=rpress:378,400", "redo=row:Redo", "after_redo=wait",
     "d_band8=drag:378,400>378,330@12",
     "d_band12=drag:520,400>520,350@12",
     "o_mute=rpress:378,400",       "mute=row:Mute / Unmute",
@@ -80,18 +83,17 @@ SCENARIO = ";".join([
     # whole tree, so whether it repairs the menu's stale box is measurable.
     "grow=resize:1500,980",        "o_re5=rpress:378,400", "esc_re5=escape",
     "shrink=resize:1320,860",      "o_re6=rpress:378,400",
+    "assign1=row:Assign selection to Macro 1", "after_assign1=wait",
+    "o_assign2=rpress:378,400", "assign2=row:Assign selection to Macro 2", "after_assign2=wait",
+    "o_assign3=rpress:378,400", "assign3=row:Assign selection to Macro 3", "after_assign3=wait",
+    "o_assign4=rpress:378,400", "assign4=row:Assign selection to Macro 4", "after_assign4=wait",
+    "o_allmacros=rpress:378,400", "clear1=row:Clear Macro 1", "after_clear1=wait",
+    "o_clear2=rpress:378,400", "clear2=row:Clear Macro 2", "after_clear2=wait",
+    "o_clear3=rpress:378,400", "clear3=row:Clear Macro 3", "after_clear3=wait",
+    "o_clear4=rpress:378,400", "clear4=row:Clear Macro 4", "after_clear4=wait",
+    "o_final=rpress:378,400",
 ])
 
-# What each row is aimed at, and what a press aimed at it ACTUALLY reaches
-# while a selection is live. Pinned exactly: the rows whose box is stale sit
-# under a row from the overflowing tail, so the press fires that row instead.
-KNOWN_MISAIM_WITH_SELECTION = {
-    "Mute / Unmute": "Boost (edit mode)",
-    "Reset to 0 dB": "Glide (edit mode)",
-    "Solo": "the VIEW divider — nothing at all, and the menu stays open",
-    "mute others": "the VIEW divider — nothing at all, and the menu stays open",
-    "Select all": "Fit full range (the viewport)",
-}
 
 
 def step(steps, name):
@@ -107,6 +109,10 @@ def muted_set(s):
 
 def gain(s, i):
     return s["gain_db"][i] if i < len(s["gain_db"]) else None
+
+
+def labels(s):
+    return {row['label'] for row in (s or {}).get('rows', [])}
 
 
 def main():
@@ -136,7 +142,7 @@ def main():
         "SPECTR_MENU_SCENARIO_OUT": json_path,
         "SPECTR_MENU_SCENARIO_DELAY": "10",
         "PULP_SCREENSHOT": os.path.join(args.out, "menu-scenario.png"),
-        "PULP_FRAMES": "1400",
+        "PULP_FRAMES": "2100",
     })
     log_path = os.path.join(args.out, "menu-scenario.log")
     with open(log_path, "w") as log:
@@ -184,6 +190,18 @@ def main():
         return 3
     level = gain(d, 8)
 
+    history = step(steps, "d_history")
+    undo = step(steps, "after_undo")
+    redo = step(steps, "after_redo")
+    record("Undo", "one drag", "one undo reverses the entire gesture and closes the menu",
+           abs(gain(history, 8)) > 1 and abs(gain(undo, 8)) < 0.1
+           and history['undo_depth'] == undo['undo_depth'] + 1 and closed('undo'),
+           f"gain {gain(history, 8)} -> {gain(undo, 8)}, depth {history['undo_depth']} -> {undo['undo_depth']}")
+    record("Redo", "after undo", "redo restores the complete gesture and closes the menu",
+           abs(gain(redo, 8) - gain(history, 8)) < 0.1
+           and undo['redo_depth'] == redo['redo_depth'] + 1 and closed('redo'),
+           f"gain {gain(undo, 8)} -> {gain(redo, 8)}")
+
     m = step(steps, "mute")
     record("Mute / Unmute", "no selection", "band 8 muted, menu closed",
            8 in muted_set(m) and closed("mute"),
@@ -227,7 +245,7 @@ def main():
            "inert AND the menu stays, while a live row in the same menu works",
            dis["menu_mounted"] and muted_set(dis) == muted_set(s_solo)
            and closed("selall")
-           and (step(steps, "o_zero") or {}).get("menu_children") == 17,
+           and 'Zero selection' in labels(step(steps, 'o_zero')),
            "menu stayed=%s state unchanged=%s; live control (Select all) "
            "closed=%s and the reopened menu has %s children"
            % (dis["menu_mounted"], muted_set(dis) == muted_set(s_solo),
@@ -236,9 +254,9 @@ def main():
 
     record("Select all", "no selection",
            "the reopened menu carries the selection rows",
-           (step(steps, "o_zero") or {}).get("menu_children") == 17,
-           "menu children after reopen = %s (17 = selection rows present)"
-           % (step(steps, "o_zero") or {}).get("menu_children"))
+           'Zero selection' in labels(step(steps, "o_zero"))
+           and 'Mute / Unmute selection' in labels(step(steps, "o_zero")),
+           "selection actions = %s" % sorted(labels(step(steps, "o_zero"))))
 
     z = step(steps, "zerosel")
     record("Zero selection", "all selected",
@@ -267,11 +285,21 @@ def main():
 
     record("Select none", "all selected",
            "the reopened menu has lost the selection rows",
-           (step(steps, "o_after_seln") or {}).get("menu_children") == 14
+           'Zero selection' not in labels(step(steps, "o_after_seln"))
            and closed("selnone"),
-           "menu children after reopen = %s (14 = selection rows gone) "
-           "closed=%s" % ((step(steps, "o_after_seln") or {}).get(
-               "menu_children"), closed("selnone")))
+           "selection rows gone=%s closed=%s" % (
+               'Zero selection' not in labels(step(steps, "o_after_seln")), closed("selnone")))
+
+    for macro in range(4):
+        number = macro + 1
+        assigned = step(steps, f'after_assign{number}')
+        cleared = step(steps, f'after_clear{number}')
+        record(f'Assign Macro {number}', 'all selected', 'native membership is every visible band and menu closes',
+               assigned['macros'][macro] == list(range(assigned['n_visible']))
+               and closed(f'assign{number}'), str(assigned['macros'][macro]))
+        record(f'Clear Macro {number}', 'assigned', 'native membership is empty and menu closes',
+               bool(assigned['macros'][macro]) and cleared['macros'][macro] == []
+               and closed(f'clear{number}'), str(cleared['macros'][macro]))
 
     for name, value in (("sculpt", 0.0), ("level", 1.0), ("boost", 2.0),
                         ("flare", 3.0), ("glide2", 4.0)):
@@ -317,7 +345,7 @@ def main():
            "mounted before=%s; policy answered '%s'; mounted after=%s"
            % (pre_o["menu_mounted"], out["result"], out["menu_mounted"]))
 
-    # ── the layout defect this lane does not own, pinned exactly ──
+    # Every painted action must own its centre, including the largest menu.
     def unreachable(name):
         s = step(steps, name)
         if s is None or not s.get("rows"):
@@ -325,29 +353,17 @@ def main():
         return sorted(r["label"] for r in s["rows"]
                       if r["pressable"] and not r["owns_own_centre"])
 
-    reopens = ["o_re1", "o_re2", "o_re3", "o_re4", "o_re5", "o_re6"]
+    reopens = ["o_re1", "o_re2", "o_re3", "o_re4", "o_re5", "o_re6", "o_allmacros"]
     heights = [(step(steps, k) or {}).get("menu_rect", [0, 0, 0, 0])[3]
                for k in reopens]
     sets = [unreachable(k) for k in reopens]
-    expected = sorted(KNOWN_MISAIM_WITH_SELECTION)
-
-    print("\n── the band menu with a selection live ──")
-    print("Neither closing and reopening NOR a host resize changes it. "
-          "Container height at six opens (the last two straddling a resize to "
-          "1500x980 and back): %s" % heights)
-    for k, s in zip(reopens, sets):
-        print("  %-6s rows a pointer cannot reach: %s" % (k, s))
-    print("\nWhat a press aimed at each of those rows ACTUALLY reaches:")
-    for label in expected:
-        print("  %-16s -> %s" % (label, KNOWN_MISAIM_WITH_SELECTION[label]))
-
-    stale = [h for h in heights if h != heights[0]]
-    layout_ok = (not stale) and all(s == expected for s in sets)
-    record("(upstream) menu container height", "all selected",
-           "unchanged across six reopens and a resize; same rows unreachable",
-           layout_ok,
-           "heights %s; unreachable sets identical=%s, expected=%s"
-           % (heights, all(s == sets[0] for s in sets), sets[0] == expected))
+    print("\n── band-menu reachability with a live selection ──")
+    for name, missing in zip(reopens, sets):
+        print("  %-6s unreachable rows: %s" % (name, missing))
+    layout_ok = all(not missing for missing in sets)
+    record("Menu row reachability", "all selected",
+           "every enabled row owns its painted centre after reopen and resize",
+           layout_ok, "heights %s; unreachable rows %s" % (heights, sets))
 
     print("\n%-32s %-14s %-8s %s" % ("ITEM", "STATE", "VERDICT", "READING"))
     failures = 0
@@ -365,7 +381,7 @@ def main():
         # this control cannot neuter them and must not score them; they carry
         # their own before/after control inside the main run instead. The
         # layout row is a geometry reading and is press-independent by design.
-        not_press_driven = ("(upstream)", "Escape", "Press outside")
+        not_press_driven = ("Menu row reachability", "Escape", "Press outside")
         press_driven = [r for r in rows
                         if not r[0].startswith(not_press_driven)]
         still_passing = [r[0] for r in press_driven if r[3]]

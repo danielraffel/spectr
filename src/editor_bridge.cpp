@@ -237,6 +237,48 @@ choc::value::Value make_modulation_payload_(const Spectr& plugin) {
     return modulation;
 }
 
+void add_history_and_macros_(choc::value::Value& payload, const Spectr& plugin,
+                             std::size_t n) {
+    // Undo availability rides the LIVE per-revision projection so a menu row
+    // or a shortcut can be disabled the moment the stack empties, rather than
+    // firing a command that reports "nothing to undo" after the fact. The
+    // DEPTHS are carried too, because a boolean cannot distinguish "one step
+    // left" from "many" — which is exactly what a gate asserting that one
+    // drag is ONE undo step has to read.
+    payload.addMember("can_undo", plugin.editor_authority().can_undo());
+    payload.addMember("can_redo", plugin.editor_authority().can_redo());
+    payload.addMember("undo_depth", static_cast<std::int32_t>(
+        plugin.editor_authority().undo_depth()));
+    payload.addMember("redo_depth", static_cast<std::int32_t>(
+        plugin.editor_authority().redo_depth()));
+    // Macros ride the LIVE per-revision projection rather than the
+    // hydration-only block below, because unlike "Morph moves the view" a
+    // macro IS a host parameter: automation moves it, and the editor has to
+    // redraw the offset it applies without waiting for a re-hydration.
+    //
+    // Membership and value are both carried. The editor needs both to draw
+    // the offset itself — it cannot read the macro back off the band lanes,
+    // because a macro is never written to them.
+    auto macros = choc::value::createEmptyArray();
+    for (std::size_t m = 0; m < kMacroCount; ++m) {
+        auto entry = choc::value::createObject("SpectrMacro");
+        entry.addMember("value_db", static_cast<double>(
+            plugin.state().get_value(macro_param_id(m))));
+        auto slots = choc::value::createEmptyArray();
+        const auto members = plugin.macro_members(m);
+        // Only VISIBLE members are projected. Membership is kept across a
+        // layout change on the C++ side, but the editor draws `n_visible`
+        // bands and an index past that end would be an out-of-range write in
+        // the render pass.
+        for (std::size_t i = 0; i < n; ++i)
+            if (members.test(i)) slots.addArrayElement(static_cast<std::int32_t>(i));
+        entry.addMember("slots", slots);
+        macros.addArrayElement(entry);
+    }
+    payload.addMember("macros", macros);
+
+}
+
 std::string authority_response_(const Spectr& plugin,
                                 const EditorReceipt& receipt) {
     if (!receipt.accepted) return EditorBridge::err_response(receipt.error);
@@ -277,43 +319,7 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
         plugin.editor_mode_param(kParamEditMode)));
     payload.addMember("visualization_mode", static_cast<double>(
         plugin.editor_mode_param(kParamVisualization)));
-    // Undo availability rides the LIVE per-revision projection so a menu row
-    // or a shortcut can be disabled the moment the stack empties, rather than
-    // firing a command that reports "nothing to undo" after the fact. The
-    // DEPTHS are carried too, because a boolean cannot distinguish "one step
-    // left" from "many" — which is exactly what a gate asserting that one
-    // drag is ONE undo step has to read.
-    payload.addMember("can_undo", plugin.editor_authority().can_undo());
-    payload.addMember("can_redo", plugin.editor_authority().can_redo());
-    payload.addMember("undo_depth", static_cast<std::int32_t>(
-        plugin.editor_authority().undo_depth()));
-    payload.addMember("redo_depth", static_cast<std::int32_t>(
-        plugin.editor_authority().redo_depth()));
-    // Macros ride the LIVE per-revision projection rather than the
-    // hydration-only block below, because unlike "Morph moves the view" a
-    // macro IS a host parameter: automation moves it, and the editor has to
-    // redraw the offset it applies without waiting for a re-hydration.
-    //
-    // Membership and value are both carried. The editor needs both to draw
-    // the offset itself — it cannot read the macro back off the band lanes,
-    // because a macro is never written to them.
-    auto macros = choc::value::createEmptyArray();
-    for (std::size_t m = 0; m < kMacroCount; ++m) {
-        auto entry = choc::value::createObject("SpectrMacro");
-        entry.addMember("value_db", static_cast<double>(
-            plugin.state().get_value(macro_param_id(m))));
-        auto slots = choc::value::createEmptyArray();
-        const auto members = plugin.macro_members(m);
-        // Only VISIBLE members are projected. Membership is kept across a
-        // layout change on the C++ side, but the editor draws `n_visible`
-        // bands and an index past that end would be an out-of-range write in
-        // the render pass.
-        for (std::size_t i = 0; i < n; ++i)
-            if (members.test(i)) slots.addArrayElement(static_cast<std::int32_t>(i));
-        entry.addMember("slots", slots);
-        macros.addArrayElement(entry);
-    }
-    payload.addMember("macros", macros);
+    add_history_and_macros_(payload, plugin, n);
 
     auto modulation = make_modulation_payload_(plugin);
     // Whether a morph moves the viewport is drawn in the same Settings group
@@ -386,6 +392,7 @@ choc::value::Value make_editor_live_state_payload(const Spectr& plugin,
         plugin.editor_mode_param(kParamEditMode)));
     payload.addMember("visualization_mode", static_cast<double>(
         plugin.editor_mode_param(kParamVisualization)));
+    add_history_and_macros_(payload, plugin, n);
     payload.addMember("modulation", make_modulation_payload_(plugin));
     return payload;
 }
@@ -649,9 +656,9 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         });
 
     bridge.add_handler("undo_gesture_end",
-        [&authority](const choc::value::ValueView&) -> std::string {
+        [&plugin, &authority](const choc::value::ValueView&) -> std::string {
             authority.end_undo_gesture();
-            return EditorBridge::ok_response();
+            return authority_response_(plugin, {true, authority.revision(), {}});
         });
 
     bridge.add_handler("undo",

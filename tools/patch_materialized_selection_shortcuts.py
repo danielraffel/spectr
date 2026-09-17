@@ -252,6 +252,16 @@ DOCUMENT_EDITS = [
      '"Mute/unmute selection"), '
      '/* @__PURE__ */ React.createElement("button", {',
      'React.createElement(Hrow, { k: "M" }, "Mute/unmute selection")'),
+    # The row that advertises the Latency toggle on `t`. It goes LAST, beside
+    # the other whole-surface toggle, for the geometry reason above.
+    ('the panel advertises the latency toggle on `t`',
+     'React.createElement(Hrow, { k: "M" }, "Mute/unmute selection"), '
+     '/* @__PURE__ */ React.createElement("button", {',
+     'React.createElement(Hrow, { k: "M" }, "Mute/unmute selection"), '
+     '/* @__PURE__ */ React.createElement(Hrow, { k: "T" }, '
+     '"Latency: Mixing / Tracking"), '
+     '/* @__PURE__ */ React.createElement("button", {',
+     'React.createElement(Hrow, { k: "T" }, "Latency: Mixing / Tracking")'),
 ]
 
 # ------------------------------------------------------- captured help panel
@@ -470,14 +480,30 @@ MUTE_SEL_ROWS = AFTER_ROWS + [MUTE_SEL_ROW]
 MUTE_SEL = layout_model(MUTE_SEL_ROWS, FINAL_PANEL_W, FINAL_CHIP_W,
                         FINAL_DESC_LEFT, tail=True)
 
+# THE FOURTEENTH ROW: the Latency mode toggle on `t`.
+#
+# LAST again, and for the same reason the thirteenth was: rows stack top-down
+# from a fixed title, so appending is the only insertion that leaves all
+# thirteen existing boxes at the tops they were captured at. The capture is the
+# one artifact here that cannot be re-derived from the product.
+#
+# The description is 26 characters = 169px against a 206px budget, and the chip
+# is one character in a 104px column. Both are re-checked by
+# shortcut_panel_single_line.py.
+LATENCY_ROW = ('Latency: Mixing / Tracking',
+               CHAR_W * len('Latency: Mixing / Tracking'), False)
+LATENCY_ROWS = MUTE_SEL_ROWS + [LATENCY_ROW]
+LATENCY = layout_model(LATENCY_ROWS, FINAL_PANEL_W, FINAL_CHIP_W,
+                       FINAL_DESC_LEFT, tail=True)
+
 KNOWN_STATES = (('pre-change', BEFORE), ('narrow-chip', AFTER),
                 ('wide-chip', WIDE_CHIP), ('final', FINAL),
-                ('mute-selection', MUTE_SEL))
+                ('mute-selection', MUTE_SEL), ('latency', LATENCY))
 
 # What this run converges the capture ON. Everything below writes TARGET
 # rather than naming a state, so the row list and the geometry cannot drift.
-TARGET = MUTE_SEL
-TARGET_ROWS = MUTE_SEL_ROWS
+TARGET = LATENCY
+TARGET_ROWS = LATENCY_ROWS
 TARGET_TAIL_INDEX = tail_index(TARGET_ROWS)
 
 
@@ -545,6 +571,10 @@ TEXT_EDITS = [
     # same path every other description takes -- which is also what
     # re-measures its glyph count, basis width and ink box.
     (13, 1, 'Group move', 'Mute/unmute selection'),
+    # Row 14 arrives as a clone of row 13, so it is relabelled through the same
+    # path -- which is also what re-measures its glyph count, basis width and
+    # ink box.
+    (14, 1, 'Mute/unmute selection', 'Latency: Mixing / Tracking'),
 ]
 
 # Every KEY CHIP in the panel is re-measured, not only the two this change

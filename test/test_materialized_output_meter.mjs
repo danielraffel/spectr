@@ -24,24 +24,54 @@
 //            rather than polling; the trim written through the existing
 //            `param_set` verb at Spectr's own kOutputTrim id; OVER not CLIP.
 //   RUNTIME  the leaf's own script block is evaluated in a vm with a hook
-//            runtime and driven with published frames: the hold must rise and
-//            never fall, OVER must latch across quiet frames, a click must
-//            clear both, silence must read "--" and not "0.0", the trim must
-//            reach the host as a param_set, and an externally published trim
-//            must move the control.
+//            runtime, a real frame queue and a controllable clock, then
+//            driven with published frames: the number must rise instantly,
+//            stay readable for the hold window, then FALL to the live level;
+//            OVER must survive that same elapsed time; a click must clear the
+//            latch without blanking a meter that has signal in it; silence
+//            must read "--" and not "0.0"; the trim must reach the host as a
+//            param_set; and an externally published trim must move the
+//            control.
+//
+// THE SPLIT THIS SUITE EXISTS TO HOLD. The number and the overload used to be
+// one welded value, held forever. A level that only ever rises cannot show
+// that the signal is alive -- a held reading and a frozen plug-in look
+// identical, which is what a user asked about. An overload that decayed would
+// hide the event it exists to catch. So they decay differently, and both
+// halves get their own plant: a number that does not fall must be rejected,
+// and an OVER that does fall must be rejected.
+//
+// THE CLOCK IS LOAD BEARING. The native side publishes only a CHANGED
+// reading, so a steady tone publishes nothing at all. Every fall below is
+// therefore driven by advancing TIME with no further publication -- the
+// harshest case, and the one a frame-driven decay would freeze in.
 //
 // Usage:
 //   node test_materialized_output_meter.mjs <materialized-document.runtime.json>
-//        [--plant-falling-hold | --plant-no-latch | --plant-clip-label
-//         | --plant-untyped-readout]
+//        [--plant-no-decay | --plant-two-clock-reads
+//         | --plant-decaying-latch | --plant-no-hold-window
+//         | --plant-no-latch | --plant-clip-label | --plant-untyped-readout]
 //        [--expect-fail]
 //
-// --plant-falling-hold makes the hold track every frame, so the loudest moment
-// of a session disappears while nobody is looking -- the exact thing a peak
-// hold exists to prevent, and invisible to any check that only reads the
-// current frame.
-// --plant-no-latch keeps the hold but lets OVER clear itself on the next quiet
-// frame, so a transient overload is gone before anyone sees it.
+// --plant-no-decay welds the two halves back together: the number holds
+// forever, which is the state that shipped. Nothing that reads a single frame
+// can see it -- only elapsed time with no publication under it can.
+// --plant-two-clock-reads restores the version measured on the shipping
+// standalone, where the pump read Date.now() separately for its commit and for
+// its keep-falling decision. The fall then stops up to a frame above the live
+// level and STAYS there -- -11.1 against a -11.5 signal. The runtime section
+// is structurally blind to it, because its clock does not advance between two
+// calls inside one frame; only the static shape can see it.
+// --plant-decaying-latch welds them together the other way: OVER falls with
+// the number, so an overload is gone once the reading has come back down and
+// a person who looked away never learns it happened.
+// --plant-no-hold-window removes the hold WINDOW, so the number follows every
+// frame instantly. The fall is still there, so --plant-no-decay cannot see
+// this one: a transient is simply unreadable because it was never held.
+// --plant-no-latch keeps the number's ballistic but lets OVER clear itself on
+// the next quiet frame, so a transient overload is gone before anyone sees
+// it. A different mechanism from --plant-decaying-latch, and a different
+// assertion: that one clears on TIME, this one on a FRAME.
 // --plant-clip-label renames the reading CLIP, a claim about Spectr that is
 // false.
 // --plant-untyped-readout strips the trim readout's own face and size so it
@@ -63,7 +93,10 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
 const args = process.argv.slice(2);
-const plantFallingHold = args.includes("--plant-falling-hold");
+const plantNoDecay = args.includes("--plant-no-decay");
+const plantTwoClockReads = args.includes("--plant-two-clock-reads");
+const plantDecayingLatch = args.includes("--plant-decaying-latch");
+const plantNoHoldWindow = args.includes("--plant-no-hold-window");
 const plantNoLatch = args.includes("--plant-no-latch");
 const plantClipLabel = args.includes("--plant-clip-label");
 const plantUntypedReadout = args.includes("--plant-untyped-readout");
@@ -74,9 +107,10 @@ const documentPath = args.find((a) => !a.startsWith("--"));
 
 if (!documentPath) {
   console.error("usage: test_materialized_output_meter.mjs <runtime.json> "
-    + "[--plant-falling-hold|--plant-no-latch|--plant-clip-label"
-    + "|--plant-untyped-readout|--plant-unlabelled-trim|--plant-short-track] "
-    + "[--expect-fail]");
+    + "[--plant-no-decay|--plant-two-clock-reads|--plant-decaying-latch"
+    + "|--plant-no-hold-window"
+    + "|--plant-no-latch|--plant-clip-label|--plant-untyped-readout"
+    + "|--plant-unlabelled-trim|--plant-short-track] [--expect-fail]");
   process.exit(2);
 }
 
@@ -86,9 +120,20 @@ if (typeof html !== "string" || html.length === 0) {
   process.exit(2);
 }
 
-const RISING_HOLD = "      if (peak !== null && (hold.peakDb === null "
-  + "|| peak > hold.peakDb))\n        hold.peakDb = peak;\n";
-const LATCH = "      if (payload.over === true) hold.over = true;\n";
+// The fall itself: strip it and the number holds forever, which is the state
+// that shipped.
+const FALL = "    const fallen = hold.holdDb\n"
+  + "      - PEAK_FALL_DB_PER_SEC * (since - PEAK_HOLD_MS) / 1000;\n";
+// The hold WINDOW, separately. Planted by zeroing the constant rather than by
+// deleting the early return: deleting it leaves `since - PEAK_HOLD_MS`
+// negative for the first two seconds, so the readout would climb ABOVE the
+// peak it just measured -- a different and cruder defect, which would let this
+// control pass on an assertion that is not the one it claims to make.
+const HOLD_WINDOW = "  const PEAK_HOLD_MS = 2000;\n";
+const LATCH = "      if (payload.over === true) {\n        hold.over = true;\n";
+// The latch read back out at render time. Tying it to the reading's own level
+// is how an overload would decay WITH the number.
+const LATCH_RENDER = "  const over = reading.over === true;\n";
 const LABEL = '(over ? "OVER " : "PEAK ") + peakText';
 const READOUT_STYLE = 'style: { width: 34, textAlign: "right", '
   + 'whiteSpace: "nowrap", flexShrink: 0, fontFamily: "var(--mono)", '
@@ -117,13 +162,30 @@ function plant(label, from, to) {
   console.log("planted   %s", label);
 }
 
-if (plantFallingHold) {
-  plant("a hold that follows every frame", RISING_HOLD,
-    "      if (peak !== null) hold.peakDb = peak;\n");
+const ONE_CLOCK_READ = "    const now = Date.now();\n"
+  + "    commitReading(now);\n"
+  + "    if (falling(holdRef.current, now)) schedulePump();\n";
+if (plantTwoClockReads) {
+  plant("a pump that reads the clock twice", ONE_CLOCK_READ,
+    "    commitReading(Date.now());\n"
+    + "    if (falling(holdRef.current, Date.now())) schedulePump();\n");
+}
+if (plantNoDecay) {
+  plant("a number that never falls", FALL,
+    "    const fallen = hold.holdDb;\n");
+}
+if (plantDecayingLatch) {
+  plant("an overload that decays with the number", LATCH_RENDER,
+    "  const over = reading.over === true && reading.peakDb !== null\n"
+    + "    && reading.peakDb >= -12;\n");
+}
+if (plantNoHoldWindow) {
+  plant("a number with no hold window", HOLD_WINDOW,
+    "  const PEAK_HOLD_MS = 0;\n");
 }
 if (plantNoLatch) {
   plant("an OVER that clears itself", LATCH,
-    "      hold.over = payload.over === true;\n");
+    "      if (true) {\n        hold.over = payload.over === true;\n");
 }
 if (plantClipLabel) {
   plant("a readout that claims Spectr clipped", LABEL,
@@ -208,18 +270,19 @@ if (!chromeBody.includes("React.createElement(SpectrOutputMeter, null)")) {
   fail("Chrome() does not render SpectrOutputMeter, so the readout exists in "
     + "the document and nowhere on screen");
 }
-// S1b. It must be the LAST child of Chrome's fragment, and absolutely
-// positioned. This document's text/layout/paint bindings address their nodes
+// S1b. The meter stays after the captured Chrome children, immediately before
+// the appended latency rail. This document's bindings address their nodes
 // by positional DOM path, so a child inserted anywhere but the end renumbers
 // every later sibling and silently re-points them: appended into the header's
 // flex row, "BARS" lost its captured 48pt text basis and remeasured at 20pt,
 // shrinking its hit box. Only `native buttons are tappable across their whole
 // painted bounds` can see that, so pin the shape that avoids it here.
 if (!chromeBody.includes(
-    "React.createElement(SpectrOutputMeter, null));")) {
-  fail("SpectrOutputMeter is not the last child of Chrome's fragment; "
-    + "inserting it earlier renumbers the captured binding paths of every "
-    + "later sibling and silently breaks their text measurement");
+    "React.createElement(SpectrOutputMeter, null), /* @__PURE__ */ "
+    + "React.createElement(SpectrLatencyRail, null));")) {
+  fail("SpectrOutputMeter and SpectrLatencyRail are not appended in order "
+    + "after Chrome's captured children; moving them earlier renumbers "
+    + "the later binding paths and breaks their text measurement");
 }
 // The bar it sits over declares zIndex 5. Without a higher one this cluster
 // paints under it and every press inside the button resolves to the bar: a
@@ -271,6 +334,51 @@ if (/"CLIP /.test(meterBody)) {
 if (!meterBody.includes('"data-spectr-output-over"')) {
   fail("the over state is not exposed as an attribute, so nothing outside "
     + "the component can read it");
+}
+// S4a2. THE PRINTED LEVEL IS READABLE FROM OUTSIDE. The runtime's element
+// shim reads textContent as empty, so a probe driving the shipping app can
+// only see this number through an attribute -- and without one, "the number
+// did not move" cannot be told from "the number could not be read", which is
+// the failure mode this whole change is about.
+if (!meterBody.includes('"data-spectr-output-peak-db"')) {
+  fail("the printed level is not exposed as an attribute, so nothing driving "
+    + "the real app can read the value that now has to move");
+}
+
+// S4b. THE TWO HALVES ARE SEPARATE VALUES. `over` must be carried by the
+// latch alone; deriving it from the printed level is how it would decay with
+// the number, and the runtime section below is the only other thing that
+// could notice.
+if (!/const over = reading\.over === true;/.test(meterBody)) {
+  fail("the rendered OVER state is not read straight off the latch; anything "
+    + "else makes it a function of the level, which decays");
+}
+// S4c. THE FALL HAS ITS OWN CLOCK. The native side publishes only a CHANGED
+// reading, so a decay driven by incoming frames freezes on a steady tone --
+// the exact defect being removed. rAF, and self-terminating: `setInterval` is
+// already rejected by S2.
+if (!/requestAnimationFrame\(pump\)/.test(meterBody)) {
+  fail("the fall is not driven by a frame clock, so it can only advance when "
+    + "the native side publishes -- and it publishes nothing while a reading "
+    + "is unchanged");
+}
+if (!/if \(falling\(holdRef\.current, now\)\) schedulePump\(\);/
+    .test(meterBody)) {
+  fail("the fall pump does not reschedule itself conditionally, so it is "
+    + "either a one-shot or a permanent per-frame animation in the header");
+}
+// S4d. ONE CLOCK READ PER FRAME, SHARED BY THE COMMIT AND THE STOP DECISION.
+// Two reads leave the fall a frame short: the last commit lands just above the
+// live level, the check a moment later sees the crossing and stops, and the
+// readout sits 0.1-0.4 dB high on a signal that is still there. This is a
+// STATIC check on purpose -- it is the one defect in this component the
+// runtime section below is structurally blind to, because its clock does not
+// advance between two calls inside one frame.
+if (!/const pump = \(\) => \{\s*pumpRef\.current = 0;\s*const now = Date\.now\(\);\s*commitReading\(now\);/
+    .test(meterBody)) {
+  fail("the fall pump does not take a single timestamp and use it for both "
+    + "the commit and the keep-falling decision; two clock reads stop the "
+    + "fall up to a frame above the live level, and it stays there");
 }
 
 // S5. THE TRIM READOUT CARRIES ITS OWN TYPE, and it is the PEAK button's.
@@ -552,6 +660,14 @@ if (!leafBlock) {
   };
   const listeners = new Map();
   let now = 1000000;
+  // A REAL frame queue, not a synchronous stub. The stub that used to sit
+  // here called its callback immediately, which turns any self-rescheduling
+  // animation into unbounded recursion -- so the decay this suite exists to
+  // measure could not have been evaluated at all, let alone measured over
+  // time.
+  let frameSeq = 1;
+  const frames = new Map();
+  const FRAME_MS = 1000 / 60;
   const pulp = {
     on(type, callback) {
       listeners.set(type, callback);
@@ -564,8 +680,12 @@ if (!leafBlock) {
     isFinite, parseFloat,
     Date: { now: () => now },
     console: { log() {}, warn() {}, error(...a) { commits.push("error:" + a.join(" ")); } },
-    requestAnimationFrame(fn) { fn(); return 1; },
-    cancelAnimationFrame() {},
+    requestAnimationFrame(fn) {
+      const id = frameSeq++;
+      frames.set(id, fn);
+      return id;
+    },
+    cancelAnimationFrame(id) { frames.delete(id); },
   };
   sandbox.globalThis = sandbox;
   sandbox.window = sandbox;
@@ -621,6 +741,20 @@ if (!leafBlock) {
         const cb = listeners.get("output_meter");
         if (cb) cb({ payload });
       };
+      // Advance the clock and run whatever frames fall due, PUBLISHING
+      // NOTHING. This is the harsh case and the realistic one: the native
+      // side publishes only a CHANGED reading, so a steady level or a stopped
+      // transport delivers no frames at all, and a decay driven by incoming
+      // publications would freeze here.
+      const advance = (ms) => {
+        const until = now + ms;
+        while (now < until) {
+          now = Math.min(until, now + FRAME_MS);
+          const due = [...frames.values()];
+          frames.clear();
+          for (const fn of due) fn(now);
+        }
+      };
 
       if (!listeners.has("output_meter")) {
         fail("the leaf never subscribed to output_meter, so nothing can ever "
@@ -665,63 +799,184 @@ if (!leafBlock) {
         fail(`silence reads ${JSON.stringify(silent)}, which is a level`);
       }
 
-      // R2. THE HOLD RISES.
+      // R2. THE NUMBER RISES INSTANTLY. A peak meter that ramps up misses
+      // the transient it exists to catch.
       publish({ peak_db: -20.0, over: false, trim_db: 0 });
       if (!peakText().includes("-20.0")) {
         fail(`a -20 dBFS frame reads ${JSON.stringify(peakText())}`);
       }
 
-      // R3. THE HOLD DOES NOT FALL. Sweep genuinely quieter frames, then
-      // require the printed value to be unchanged -- and control the STIMULUS,
-      // because "unchanged" is trivially true if the frames were all the same.
+      // THE BALLISTIC'S OWN NUMBERS, read out of the component rather than
+      // pinned here, so a deliberate retune moves this suite with it -- but
+      // bounded, because "conventional" is the whole justification and a
+      // 50 ms hold or a 200 dB/s fall would satisfy every timing assertion
+      // below while being unreadable on screen.
+      const holdMs = Number((/const PEAK_HOLD_MS = (\d+)/.exec(meterBody)
+        || [])[1]);
+      const fallRate = Number(
+        (/const PEAK_FALL_DB_PER_SEC = ([\d.]+)/.exec(meterBody) || [])[1]);
+      if (!isFinite(holdMs) || !isFinite(fallRate)) {
+        fail("the component declares no PEAK_HOLD_MS / PEAK_FALL_DB_PER_SEC, "
+          + "so its ballistic cannot be measured and every timing check "
+          + "below would be vacuous");
+      } else {
+        console.log("measured  hold %dms, fall %s dB/s", holdMs, fallRate);
+        if (holdMs < 1000 || holdMs > 3000) {
+          fail(`a ${holdMs}ms hold is outside the 1000-3000ms window a `
+            + "number you READ needs: under a second it is gone before a "
+            + "glance lands on it, over three it stops tracking the signal");
+        }
+        if (fallRate < 6 || fallRate > 30) {
+          fail(`a ${fallRate} dB/s fall is outside 6-30: slower and a 40 dB `
+            + "return takes most of a bar, faster and the digits blur");
+        }
+      }
+
+      // R3. THE NUMBER IS HELD LONG ENOUGH TO READ, THEN FALLS TO THE LIVE
+      //     LEVEL -- AND THE OVERLOAD SURVIVES THAT SAME ELAPSED TIME.
+      //
+      // This is the split, asserted in one place, because the two halves are
+      // only meaningful against each other: a moving number says the readout
+      // is live, and a word that stays through the same interval says
+      // something happened. Driven by TIME with no publication under it.
+      const LOUD = 1.4;      // over full scale
+      const LIVE = -40.0;    // the programme level it must return to
       commits.length = 0;
-      const quiet = new Set();
-      for (let i = 0; i < 40; i++) {
-        const db = -30 - i * 0.7;
-        quiet.add(db.toFixed(1));
-        publish({ peak_db: db, over: false, trim_db: 0 });
-      }
-      if (quiet.size < 20) {
-        fail(`the quiet sweep produced ${quiet.size} distinct levels, so "the `
-          + 'hold did not move" proves nothing');
-      }
-      const heldAfterQuiet = peakText();
-      if (!peakText().includes("-20.0")) {
-        fail(`after ${quiet.size} quieter frames the hold reads `
-          + `${JSON.stringify(peakText())}, expected it to still read -20.0 -- `
-          + "the loudest moment must survive until someone clears it");
-      }
-      const quietCommits = commits.filter((c) => typeof c === "object").length;
-      if (quietCommits !== 0) {
-        fail(`${quietCommits} React commit(s) across ${quiet.size} quiet `
-          + "frames; a hold that is not moving must cost nothing");
-      }
-
-      // R4. OVER LATCHES, AND SHOWS HOW FAR OVER.
-      publish({ peak_db: 1.4, over: true, trim_db: 0 });
-      if (overFlag() !== "true") {
-        fail(`an over frame left data-spectr-output-over = `
-          + `${JSON.stringify(overFlag())}`);
-      }
+      publish({ peak_db: LOUD, over: true, trim_db: 0 });
       if (!peakText().startsWith("OVER") || !peakText().includes("+1.4")) {
-        fail(`an over frame reads ${JSON.stringify(peakText())}, expected `
-          + '"OVER +1.4" -- the number is the actionable part, not the state');
+        fail(`the overload frame reads ${JSON.stringify(peakText())}, `
+          + 'expected "OVER +1.4"');
       }
-      for (let i = 0; i < 40; i++) publish({ peak_db: -50, over: false, trim_db: 0 });
-      const heldAfterOver = peakText();
-      const overAfterQuiet = overFlag();
-      if (overFlag() !== "true" || !peakText().includes("+1.4")) {
-        fail(`40 quiet frames cleared the overload: reads `
-          + `${JSON.stringify(peakText())} with over=${overFlag()}. A person `
-          + "who looked away has no way to learn it happened.");
+      // The attribute and the glyphs must be the SAME number. An attribute
+      // that drifts from the printed text would make every probe below a
+      // measurement of the attribute rather than of the readout.
+      const levelAttr = () => peakNode().props["data-spectr-output-peak-db"];
+      if (!peakText().includes(levelAttr())) {
+        fail(`the chip prints ${JSON.stringify(peakText())} while its `
+          + `attribute says ${JSON.stringify(levelAttr())}; a probe reading `
+          + "the attribute would not be reading the readout");
+      }
+      const overPeakAttr = peakNode().props["data-spectr-output-over-peak"];
+      if (overPeakAttr !== "1.4") {
+        fail(`the worst overshoot is exposed as `
+          + `${JSON.stringify(overPeakAttr)}, expected "1.4" -- it is no `
+          + "longer what the chip prints, so losing it here loses it");
+      }
+      // The signal drops to programme level and then NOTHING is published
+      // again, exactly as the native publisher behaves once a reading stops
+      // changing.
+      publish({ peak_db: LIVE, over: false, trim_db: 0 });
+      // A FIXED interval, deliberately NOT derived from PEAK_HOLD_MS. Timing
+      // the stimulus off the constant under test makes this check blind to
+      // that constant shrinking: with a 0 ms hold, `advance(holdMs * 0.8)`
+      // advances nothing and the transient is trivially still on screen. 800
+      // ms is the human quantity the hold exists to cover -- hear it, look
+      // over, read a five-glyph run.
+      const GLANCE_MS = 800;
+      advance(GLANCE_MS);
+      const duringHold = peakText();
+      if (!duringHold.includes("+1.4")) {
+        fail(`${GLANCE_MS}ms after the transient the readout is `
+          + `${JSON.stringify(duringHold)}; it must still show +1.4 or a peak `
+          + "you were not looking at is unreadable");
+      }
+      // Partway down. A SNAP to the live level would satisfy the end state
+      // below while showing nothing in between, so require a value strictly
+      // inside the interval -- this is the assertion that makes it a fall.
+      advance(holdMs + 200);
+      const midFall = peakText();
+      const midValue = Number((/(-?\d+\.\d)/.exec(midFall) || [])[1]);
+      if (!(midValue < LOUD && midValue > LIVE)) {
+        fail(`one second into the fall the readout is `
+          + `${JSON.stringify(midFall)}; expected a value strictly between `
+          + `${LIVE} and ${LOUD} -- it is snapping, not falling`);
+      }
+      // And it lands ON the live level rather than sailing past it.
+      advance(((LOUD - LIVE) / fallRate) * 1000 + 500);
+      const settled = peakText();
+      if (!settled.includes(LIVE.toFixed(1))) {
+        fail(`after the hold plus a full ${fallRate} dB/s return the readout `
+          + `is ${JSON.stringify(settled)}, expected ${LIVE.toFixed(1)} -- `
+          + "the number is not falling back to the signal, so a held reading "
+          + "and a frozen plug-in still look identical");
+      }
+      if (levelAttr() !== LIVE.toFixed(1)) {
+        fail(`after the fall the level attribute is `
+          + `${JSON.stringify(levelAttr())}, expected ${LIVE.toFixed(1)} -- `
+          + "it has drifted from the glyphs beside it");
+      }
+      // THE OTHER HALF. Same elapsed time, and it must NOT have moved.
+      if (overFlag() !== "true") {
+        fail(`the overload cleared itself while the number fell `
+          + `(over=${overFlag()}). A person who looked away has no other way `
+          + "to learn it happened.");
+      }
+      if (!settled.startsWith("OVER")) {
+        fail(`the chip reads ${JSON.stringify(settled)} after the fall; the `
+          + "word must still say OVER while the number tracks the signal");
+      }
+      if (peakNode().props["data-spectr-output-over-peak"] !== "1.4") {
+        fail("the worst overshoot was lost while the number fell");
       }
 
-      // R5. A PERSON CLEARS IT. That is the only event meaning "I saw this".
+      // R3b. THE FALL SELF-TERMINATES. A converged readout must schedule no
+      // frame and cost no commit, or this is a permanent per-frame animation
+      // in a header -- the cost the zoom readout's live guard exists to
+      // avoid.
+      const pendingAtRest = frames.size;
+      commits.length = 0;
+      advance(2000);
+      const restCommits = commits.filter((c) => typeof c === "object").length;
+      if (pendingAtRest !== 0) {
+        fail(`${pendingAtRest} frame callback(s) still scheduled once the `
+          + "readout converged; the fall does not self-terminate");
+      }
+      if (restCommits !== 0) {
+        fail(`${restCommits} React commit(s) across 2s of a settled readout `
+          + "with nothing published; a meter that is not moving must cost "
+          + "nothing");
+      }
+
+      // R4. IT RE-ARMS AGAINST WHAT IS SHOWN, not against the session's
+      // loudest. After the fall above, a -25 transient is well under the
+      // +1.4 that was once latched -- and it is the only thing a person
+      // would see, so it must be held.
+      publish({ peak_db: -25.0, over: false, trim_db: 0 });
+      if (!peakText().includes("-25.0")) {
+        fail(`a -25 dBFS transient after the fall reads `
+          + `${JSON.stringify(peakText())}; a hold that re-arms only above `
+          + "the session maximum catches nothing after the first peak");
+      }
+      publish({ peak_db: LIVE, over: false, trim_db: 0 });
+      advance(holdMs * 0.8);
+      if (!peakText().includes("-25.0")) {
+        fail(`the re-armed hold did not survive its own window: `
+          + `${JSON.stringify(peakText())}`);
+      }
+      advance(holdMs + ((LOUD - LIVE) / fallRate) * 1000 + 500);
+
+      // R5. A PERSON CLEARS THE LATCH -- AND CLEARING DOES NOT BLANK A METER
+      //     THAT HAS SIGNAL IN IT.
+      //
+      // The number clears itself now, so what a click is FOR is the latch.
+      // Blanking the level as well would be the same lie in the other
+      // direction: with a steady signal the native publishes nothing, so a
+      // blanked readout would sit at "--" while audio runs.
       peakNode().props.onClick();
       const afterClick = peakText();
-      if (overFlag() !== "false" || !peakText().includes("--")) {
-        fail(`after a click the readout is ${JSON.stringify(peakText())} with `
-          + `over=${overFlag()}, expected a cleared "--"`);
+      if (overFlag() !== "false") {
+        fail(`after a click over=${overFlag()}, expected it cleared`);
+      }
+      if (afterClick.startsWith("OVER")) {
+        fail(`after a click the chip still reads ${JSON.stringify(afterClick)}`);
+      }
+      if (!afterClick.includes(LIVE.toFixed(1))) {
+        fail(`after a click the readout is ${JSON.stringify(afterClick)}; it `
+          + `must fall back to the live ${LIVE.toFixed(1)}, not blank -- the `
+          + "signal is still there and nothing will republish it");
+      }
+      if (peakNode().props["data-spectr-output-over-peak"] !== "") {
+        fail("a click left the worst overshoot behind");
       }
       // ...and it re-arms, or clearing would be a one-way off switch.
       publish({ peak_db: -6.0, over: false, trim_db: 0 });
@@ -730,6 +985,20 @@ if (!leafBlock) {
           + "-- the readout does not re-arm");
       }
 
+      // R5b. DIGITAL SILENCE RETURNS TO "--". With nothing under it the fall
+      // is unbounded, so it must end at the floor rather than counting down
+      // forever -- and it must not stop at a number, which would read as a
+      // level that is not there.
+      publish({ peak_db: null, over: false, trim_db: 0 });
+      advance(holdMs + 200000 / fallRate + 1000);
+      const afterSilence = peakText();
+      if (!afterSilence.includes("--")) {
+        fail(`after the signal stopped the readout is `
+          + `${JSON.stringify(afterSilence)}, expected "--"`);
+      }
+      if (frames.size !== 0) {
+        fail("the fall into silence never stopped scheduling frames");
+      }
       // R6. THE TRIM REACHES THE HOST, at the right id, with the right value.
       posted.length = 0;
       trimNode().props.onChange({ target: { value: "6" } });
@@ -771,11 +1040,12 @@ if (!leafBlock) {
       if (listeners.has("output_meter")) {
         fail("unmount left the output_meter subscription attached");
       }
-      console.log("runtime   silence=%s afterQuietSweep=%s(%d distinct) "
-        + "afterOverThenQuiet=%s/%s afterClick=%s trim=%s",
-        JSON.stringify(silent), JSON.stringify(heldAfterQuiet), quiet.size,
-        JSON.stringify(heldAfterOver), String(overAfterQuiet),
-        JSON.stringify(afterClick), JSON.stringify(trimText()));
+      console.log("runtime   silence=%s duringHold=%s midFall=%s "
+        + "settled=%s over=%s afterClick=%s afterSilence=%s trim=%s",
+        JSON.stringify(silent), JSON.stringify(duringHold),
+        JSON.stringify(midFall), JSON.stringify(settled), String(overFlag()),
+        JSON.stringify(afterClick), JSON.stringify(afterSilence),
+        JSON.stringify(trimText()));
     }
   } catch (error) {
     fail(`evaluating the readout's script block threw `
@@ -788,8 +1058,9 @@ if (!leafBlock) {
 const passed = failures.length === 0;
 for (const f of failures) console.log("FAIL:", f);
 if (passed) {
-  console.log("PASS: the output readout holds its peak, latches OVER until a "
-    + "person clears it, and its trim reaches kOutputTrim.");
+  console.log("PASS: the readout holds its peak long enough to read and then "
+    + "falls to the live level, the overload latches until a person clears "
+    + "it, and the trim reaches kOutputTrim.");
 }
 
 if (expectFail) {
