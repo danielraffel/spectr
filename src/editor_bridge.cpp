@@ -277,6 +277,18 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
         plugin.editor_mode_param(kParamEditMode)));
     payload.addMember("visualization_mode", static_cast<double>(
         plugin.editor_mode_param(kParamVisualization)));
+    // Undo availability rides the LIVE per-revision projection so a menu row
+    // or a shortcut can be disabled the moment the stack empties, rather than
+    // firing a command that reports "nothing to undo" after the fact. The
+    // DEPTHS are carried too, because a boolean cannot distinguish "one step
+    // left" from "many" — which is exactly what a gate asserting that one
+    // drag is ONE undo step has to read.
+    payload.addMember("can_undo", plugin.editor_authority().can_undo());
+    payload.addMember("can_redo", plugin.editor_authority().can_redo());
+    payload.addMember("undo_depth", static_cast<std::int32_t>(
+        plugin.editor_authority().undo_depth()));
+    payload.addMember("redo_depth", static_cast<std::int32_t>(
+        plugin.editor_authority().redo_depth()));
     // Macros ride the LIVE per-revision projection rather than the
     // hydration-only block below, because unlike "Morph moves the view" a
     // macro IS a host parameter: automation moves it, and the editor has to
@@ -613,6 +625,43 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             b.active = (b.active == SnapshotBank::Slot::A) ? SnapshotBank::Slot::B
                                                            : SnapshotBank::Slot::A;
             return EditorBridge::ok_response();
+        });
+
+    // ── Undo / redo ────────────────────────────────────────────────────
+    //
+    // The gesture pair is shaped like `macro_drag_start`/`macro_drag_end`
+    // above, and for the same reason stated there: a drag is ONE gesture, not
+    // one per event. It matters more here than it does for a host bracket.
+    // This editor republishes the complete processing state on every pointer
+    // sample, so without these two verbs a single drag across 32 bands would
+    // land as dozens of separate undo steps and the user would press undo
+    // dozens of times to get back to where they started.
+    //
+    // Unbalanced calls are safe by construction: an unmatched end is ignored
+    // and a second start keeps the first one's base, so a JS error path that
+    // drops an `undo_gesture_end` cannot corrupt the stack — the worst case
+    // is the next edit joining the open gesture.
+    bridge.add_handler("undo_gesture_start",
+        [&authority](const choc::value::ValueView& p) -> std::string {
+            auto name = EditorBridge::get_string(p, "name");
+            authority.begin_undo_gesture(std::move(name));
+            return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("undo_gesture_end",
+        [&authority](const choc::value::ValueView&) -> std::string {
+            authority.end_undo_gesture();
+            return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("undo",
+        [&plugin, &authority](const choc::value::ValueView&) -> std::string {
+            return authority_response_(plugin, authority.undo());
+        });
+
+    bridge.add_handler("redo",
+        [&plugin, &authority](const choc::value::ValueView&) -> std::string {
+            return authority_response_(plugin, authority.redo());
         });
 
     // ── Pattern library ────────────────────────────────────────────────
