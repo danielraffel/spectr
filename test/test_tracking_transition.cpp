@@ -361,8 +361,22 @@ std::complex<double> response_at(const std::vector<float>& taps, double hz) {
 constexpr double kProbeHz[] = {500.0, 707.0, 1000.0, 1414.0, 2000.0, 2828.0};
 constexpr int    kProbes    = 6;
 
-/// The rate the editor publishes a layout at while a viewport drag is in
-/// flight, and therefore the rate the design is re-staged at.
+/// The rate a drag is re-staged at here. The editor publishes once per
+/// painted frame (a requestAnimationFrame in the materialized editor), so on
+/// a 60 Hz display that is 60, and 120 is the fastest common display -- the
+/// SMALLEST per-publish step a real drag makes, which is the right end for a
+/// gate on staircase-versus-glide.
+///
+/// What this instrument cannot see is how each step is LANDED. It spreads
+/// every step over the whole publish gap by construction, whereas the audio
+/// path glides it inside the convolver's crossfade and holds still for the
+/// rest of the gap, so the excursion a listener hears is larger by roughly
+/// gap/fade and this reads the same number at any fade. That half is measured
+/// through the audio path in test_mask_renderer.cpp ("A drag's fade spans the
+/// gap between publishes"). Two more things to hold in mind when reading a
+/// figure from here: a ZOOM about 1 kHz moves a tooth at 2828 Hz at a quarter
+/// of the span rate, where a PAN moves every tooth at the full rate; and a
+/// real hand pans at one to several octaves per second, not a quarter.
 constexpr double kPublishHz = 120.0;
 
 /// What one probe tone experiences across a drag.
