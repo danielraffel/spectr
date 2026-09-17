@@ -884,6 +884,36 @@ set_tests_properties(Spectr-band-menu-unmute-restores-negative-control
         SKIP_RETURN_CODE 77
         RESOURCE_LOCK spectr_native_materialized_editor)
 
+# THE OUTPUT READOUT'S BALLISTICS, ON THE SHIPPING NATIVE SURFACE.
+#
+# The JS suite beside this proves the arithmetic in a vm. A vm cannot say
+# whether this runtime pumps the frame callback the fall rides on, whether the
+# glyphs land where the arithmetic says, or whether a HOST-OWNED press at the
+# chip's painted centre reaches the control -- and this cluster has already
+# shipped twice with a control that was fully visible and completely dead
+# (painted under the top bar's zIndex, and hit slop reaching across its
+# neighbour). So this row drives the real editor in real wall-clock time and
+# reads the chip out of the view tree.
+#
+# It carries its own controls, because each failure mode here looks like a
+# defect in the readout: a frame-callback census (a queue that is never
+# drained makes a correct fall look frozen), the hit owner over the header gap
+# (an open modal dims the header and the captures photograph nothing), the
+# chip's presence, and a negative press in the empty gap that must leave the
+# latch standing.
+#
+# Exit: 0 pass, 1 a finding, 3 the premise is unproven -- the loop never
+# sampled inside the 800 ms glance interval, so whether the transient was
+# readable was never measured. 3 must never read as a pass.
+add_test(NAME Spectr-native-output-meter-ballistics
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_METER_SHOT=1
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-output-meter
+        --backend=skia)
+set_tests_properties(Spectr-native-output-meter-ballistics PROPERTIES
+    TIMEOUT 300
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
 # PRESET OPERATIONS. Every action the preset manager offers, driven in the real
 # native editor and judged by a count or an identity taken before and after.
 #
@@ -1770,24 +1800,71 @@ endif()
 # The readout is labelled OVER rather than CLIP: Spectr is float end to end and
 # clips nothing internally, so what it reports is that the signal LEAVING the
 # plug-in passed full scale. It shows the dBFS number rather than a lamp,
-# because how far over is the actionable part. The hold only rises and is
-# cleared by clicking it -- a decaying hold would let the loudest moment of a
-# session vanish while nobody was looking, which is the thing a person opens a
-# meter to find out.
+# because how far over is the actionable part.
+#
+# TWO FACTS, TWO BALLISTICS. They were once one welded value held forever, and
+# that is a defect in each direction. A level that only ever rises cannot show
+# that the signal is alive, so a held reading and a frozen plug-in look
+# identical -- somebody watching OVER +5.8 with their Output trim pulled to
+# -11.5 asked which it was. An overload that decayed would hide the event it
+# exists to catch. So the NUMBER holds 2 s and then falls at 12 dB/s (the IEC
+# 60268-10 Type I peak-programme-meter return rate), and the OVER state
+# latches until a person clicks it. Between them: a number that moves proves
+# the readout is live, and a word that stays proves something happened.
 if(SPECTR_NODE_EXECUTABLE)
     add_test(NAME Spectr-materialized-output-meter
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
     set_tests_properties(Spectr-materialized-output-meter PROPERTIES TIMEOUT 30)
-    # A hold that follows every frame. Invisible to any check that reads the
-    # current frame, and it destroys the one thing the readout is for.
-    add_test(NAME Spectr-materialized-output-meter-falling-hold-control
+    # THE NUMBER MUST FALL. This plant welds the two halves back together as
+    # they shipped: the reading holds forever. Nothing that samples a single
+    # frame can see it -- the defect only exists across elapsed time with no
+    # publication under it, which is precisely the case the native side
+    # produces once a reading stops changing.
+    add_test(NAME Spectr-materialized-output-meter-no-decay-control
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
-            --plant-falling-hold --expect-fail)
-    set_tests_properties(Spectr-materialized-output-meter-falling-hold-control
+            --plant-no-decay --expect-fail)
+    set_tests_properties(Spectr-materialized-output-meter-no-decay-control
+        PROPERTIES TIMEOUT 30)
+    # ...AND IT MUST LAND ON THE SIGNAL, not a frame above it. This plant
+    # restores the version measured on the shipping standalone, whose pump
+    # read the clock once for its commit and again for its stop decision: the
+    # fall halted 0.1-0.4 dB high and stayed there, reporting a level that was
+    # not there. The runtime section cannot see it -- its clock does not
+    # advance between two calls inside one frame -- so the assertion behind
+    # this row is a static one, which is exactly why it needs a control.
+    add_test(NAME Spectr-materialized-output-meter-two-clock-reads-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-two-clock-reads --expect-fail)
+    set_tests_properties(Spectr-materialized-output-meter-two-clock-reads-control
+        PROPERTIES TIMEOUT 30)
+    # ...AND THE OVERLOAD MUST NOT. The mirror plant, welding them the other
+    # way: OVER becomes a function of the printed level and is gone once the
+    # number has come back down. A separate row from the two latch plants
+    # below because it fails on TIME rather than on a frame, and because a
+    # readout where both halves decay looks perfectly healthy in any capture.
+    add_test(NAME Spectr-materialized-output-meter-decaying-latch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-decaying-latch --expect-fail)
+    set_tests_properties(Spectr-materialized-output-meter-decaying-latch-control
+        PROPERTIES TIMEOUT 30)
+    # The hold WINDOW, which is the half of the ballistic a fall alone does
+    # not give you: with a 0 ms hold the number is correct on every frame and
+    # a transient is still unreadable, because it was never held long enough
+    # for a glance to land on it.
+    add_test(NAME Spectr-materialized-output-meter-hold-window-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-hold-window --expect-fail)
+    set_tests_properties(Spectr-materialized-output-meter-hold-window-control
         PROPERTIES TIMEOUT 30)
     # An OVER that clears itself on the next quiet frame. Separate row because
     # it fails a different assertion than the hold: the hold can be correct

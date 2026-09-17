@@ -339,3 +339,6 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 
 # Selection gain movement preserves mute and updates underlying gain.
 ^Spectr-group-drag-preserves-mute
+
+# Native output readout decay and overload latch.
+^Spectr-native-output-meter-ballistics$

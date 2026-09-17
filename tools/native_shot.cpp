@@ -61,6 +61,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -5678,6 +5679,301 @@ int main(int argc, char** argv) {
         // settings capture carries its geometry but never its pixels. Scroll it
         // into view when asked, so a width claim can be read off the raster and
         // not only off the layout dump.
+        // THE OUTPUT READOUT'S TWO BALLISTICS, ON THE SHIPPING SURFACE.
+        //
+        // The number holds then falls; the OVER state latches until a person
+        // presses the chip. Both halves need the REAL surface: the JS suite
+        // proves the arithmetic in a vm, and a vm cannot say whether the
+        // runtime pumps the frame callback the fall rides on, whether the
+        // glyphs land where the arithmetic says, or whether a HOST-OWNED
+        // press at the painted centre reaches the control at all -- which is
+        // exactly the class of defect this cluster has already shipped twice
+        // (painted under the bar's zIndex, and hit slop reaching across a
+        // neighbour).
+        //
+        // Real wall clock, not `settle`. `settle` ticks a virtual frame clock
+        // without advancing Date.now(), so a wall-clock ballistic does not
+        // move under it -- a probe built on settle alone would photograph a
+        // frozen number and call it a hold.
+        if (std::getenv("SPECTR_METER_SHOT") != nullptr) {
+            auto& root = *rig.root;
+            // The chip's own view, addressed through the runtime rather than
+            // guessed: the authored attribute never becomes a view id, and a
+            // guessed id resolves nothing while reading exactly like a missing
+            // control.
+            std::string chip_id;
+            try {
+                rig.eval("(() => { const el = document.querySelector("
+                         "'[data-spectr-output-peak]');"
+                         " throw new Error('PULPVALUE:' + (el ? (el.id || "
+                         "el.__pulpId || '(no id)') : '(absent)')); })();",
+                         "spectr-meter-shot-id");
+            } catch (const std::exception& error) {
+                const std::string message = error.what();
+                const auto at = message.find("PULPVALUE:");
+                if (at != std::string::npos) {
+                    chip_id = message.substr(at + 10);
+                    const auto end = chip_id.find_first_of(" \n\"'");
+                    if (end != std::string::npos)
+                        chip_id = chip_id.substr(0, end);
+                }
+            }
+            std::printf("[meter] chip view id: %s\n",
+                        chip_id.empty() ? "(unresolved)" : chip_id.c_str());
+            // Read the label INSIDE the chip, never by scanning the whole tree
+            // for a "PEAK" prefix: the first such scan matched the band-count
+            // dropdown's own "PEAK" caption and reported a frozen readout for
+            // four sampling points in a row, which is exactly the verdict this
+            // probe exists to render.
+            const auto chip_text = [&root, &chip_id]() -> std::string {
+                auto* chip = chip_id.empty()
+                    ? nullptr : find_by_id(root, chip_id);
+                if (chip == nullptr) return {};
+                std::string found;
+                std::function<void(const pulp::view::View&)> walk =
+                    [&](const pulp::view::View& view) {
+                        if (const auto* label =
+                                dynamic_cast<const pulp::view::Label*>(&view))
+                            found += std::string{label->text()};
+                        for (std::size_t i = 0; i < view.child_count(); ++i)
+                            walk(*view.child_at(i));
+                    };
+                walk(*chip);
+                return found;
+            };
+            const auto publish = [&rig](const std::string& body) {
+                rig.eval("globalThis.__spectrPublishNativeMessage("
+                         "'output_meter',{schema_version:1," + body
+                         + "},'spectr-output-meter');",
+                         "spectr-meter-shot-publish");
+            };
+            // Wall clock AND a pumped frame queue. `settle` alone ticks the
+            // view's FrameClock, which is not what drains the scripted
+            // runtime's requestAnimationFrame queue -- measured, not assumed:
+            // with settle alone the number sat at its peak for 4.6 s while the
+            // component's own state was correct, because the fall callback was
+            // queued and never called. `__pulpRuntimeSettle__` is the drain
+            // the click fixture already uses.
+            const auto run_ms = [&rig](int ms) {
+                const auto end = std::chrono::steady_clock::now()
+                    + std::chrono::milliseconds(ms);
+                while (std::chrono::steady_clock::now() < end) {
+                    settle(rig.clock, 1);
+                    rig.eval("if (typeof globalThis.__pulpRuntimeSettle__ "
+                             "=== 'function') globalThis.__pulpRuntimeSettle__(1);",
+                             "spectr-meter-shot-pump");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(8));
+                }
+            };
+            // POSITIVE CONTROL for that pump. A fall that never advances and a
+            // frame queue that is never drained look identical from outside,
+            // and the second one is a fact about this harness rather than
+            // about the readout.
+            rig.eval("globalThis.__spectrMeterFrames = 0; "
+                     "globalThis.__spectrMeterStop = false; "
+                     "(function step(){ globalThis.__spectrMeterFrames++; "
+                     "if (!globalThis.__spectrMeterStop) "
+                     "requestAnimationFrame(step); })();",
+                     "spectr-meter-shot-raf-control");
+
+            // CLOSE WHATEVER THE EARLIER PROBES LEFT OPEN. This block runs
+            // after the Settings captures, and an open modal DIMS the header
+            // behind it: the first captures taken here photographed a dimmed,
+            // unreadable cluster (0.13 header edge energy against 2.23 for
+            // the same strip on the home capture) and nothing in the reading
+            // said so, because the state reads are taken from the view tree
+            // rather than from the pixels.
+            root.simulate_click(pulp::view::Point{675.0f, 22.0f});
+            settle(rig.clock, 24);
+            // The control for that dismissal is the SCRIM, not a selector:
+            // what ruins the captures is a modal painting over the header, and
+            // the thing that answers "is anything over this point" is the same
+            // hit-owner resolution the press trial below uses. A selector read
+            // would have said "panel mounted" while the pixels were fine, and
+            // it is the pixels that were wrong.
+            std::printf("[meter] owner over the header gap after dismissal: "
+                        "%s\n", owner_at(root, 675.0f, 22.0f).c_str());
+
+            // CONTROL FIRST. If the readout is not on screen at all, every
+            // reading below is a statement about nothing.
+            publish("peak_db:-30.0,over:false,trim_db:0");
+            run_ms(200);
+            std::string raf_frames;
+            try {
+                rig.eval("(() => { throw new Error('PULPVALUE:' + "
+                         "globalThis.__spectrMeterFrames); })();",
+                         "spectr-meter-shot-raf-read");
+            } catch (const std::exception& error) {
+                const std::string message = error.what();
+                const auto at = message.find("PULPVALUE:");
+                if (at != std::string::npos) {
+                    raf_frames = message.substr(at + 10);
+                    const auto end = raf_frames.find_first_of(" \n\"'");
+                    if (end != std::string::npos)
+                        raf_frames = raf_frames.substr(0, end);
+                }
+            }
+            std::printf("[meter] control: %s frame callbacks ran in 200ms\n",
+                        raf_frames.empty() ? "(unreadable)" : raf_frames.c_str());
+            if (raf_frames == "0" || raf_frames == "1") {
+                std::printf("[meter] CONTROL FAILED: the frame queue is not "
+                            "being drained, so a number that does not fall "
+                            "here is a fact about this harness. Report "
+                            "nothing from the ballistic below.\n");
+                ++g_failures;
+            }
+            const std::string armed = chip_text();
+            std::printf("[meter] control: chip reads %s\n",
+                        armed.empty() ? "(ABSENT)" : armed.c_str());
+            if (armed.empty()) {
+                std::printf("[meter] CONTROL FAILED: no PEAK/OVER chip in the "
+                            "native tree. Report nothing from this probe.\n");
+                ++g_failures;
+            } else {
+                // THE REPORTED SCENARIO, sampled as a timeline rather than
+                // at three chosen instants: a transient over full scale, then
+                // the Output trim pulled down so the live level sits well
+                // under it -- which is the exact state somebody was looking at
+                // when they asked whether the readout was stuck.
+                publish("peak_db:5.8,over:true,trim_db:0");
+                run_ms(100);
+                publish("peak_db:-11.5,over:false,trim_db:-11.5");
+                const auto t0 = std::chrono::steady_clock::now();
+                struct Sample { int ms; std::string text; };
+                std::vector<Sample> timeline;
+                // The frame-callback census has served its purpose; leaving
+                // it running re-renders on every frame and the capture below
+                // lands on a half-composited one -- measured as a header with
+                // 0.13 edge energy against 2.22 for the same strip in the
+                // baseline capture, i.e. a photograph of nothing.
+                rig.eval("globalThis.__spectrMeterStop = true;",
+                         "spectr-meter-shot-raf-stop");
+                for (int i = 0; i < 26; ++i) {
+                    run_ms(250);
+                    const int ms = static_cast<int>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0).count());
+                    timeline.push_back({ms, chip_text()});
+                    // Inside the hold, and again once the fall has landed.
+                    // A capture taken only at the end cannot show the state
+                    // somebody actually complained about.
+                    if (i == 2 || i == 20) {
+                        settle(rig.clock, 24);
+                        capture(rig, dir, prefix + (i == 2
+                            ? "meter-over-held" : "meter-over-settled"),
+                            backend, scale);
+                    }
+                }
+                for (const auto& sample : timeline)
+                    std::printf("[meter] t+%5dms  %s\n", sample.ms,
+                                sample.text.c_str());
+
+                const auto value_of = [](const std::string& text) {
+                    const auto space = text.find(' ');
+                    if (space == std::string::npos) return 1e9;
+                    try { return std::stod(text.substr(space + 1)); }
+                    catch (...) { return 1e9; }
+                };
+                const auto word_of = [](const std::string& text) {
+                    return text.substr(0, text.find(' '));
+                };
+                // HELD: still reading the transient 800ms after it, which is
+                // the interval a glance needs. Not derived from PEAK_HOLD_MS:
+                // timing the stimulus off the constant under test makes this
+                // blind to that constant shrinking.
+                bool held = false;
+                bool held_sampled = false;
+                bool fell = false;
+                bool latched = true;
+                double lowest = 1e9;
+                for (const auto& sample : timeline) {
+                    if (word_of(sample.text) != "OVER") latched = false;
+                    const double db = value_of(sample.text);
+                    if (db > 1e8) continue;
+                    // The glance interval, fixed at 800 ms and deliberately
+                    // not derived from the component's own PEAK_HOLD_MS.
+                    // Every verdict here is "some sample satisfies it", so a
+                    // loaded machine stretching the loop cannot turn a pass
+                    // into a failure -- it can only fail to SAMPLE the hold,
+                    // which is reported separately as an unproven premise
+                    // rather than as a defect.
+                    if (sample.ms <= 800) {
+                        held_sampled = true;
+                        held = db > 5.0;
+                    }
+                    lowest = std::min(lowest, db);
+                    // Landed on the live level and did not sail past it.
+                    if (sample.ms >= 3000 && std::abs(db + 11.5) <= 0.6)
+                        fell = true;
+                }
+                if (!held_sampled)
+                    std::printf("[meter] PREMISE UNPROVEN: no sample landed "
+                                "inside the 800ms glance interval, so whether "
+                                "the transient was readable was never "
+                                "measured\n");
+                std::printf("[meter] lowest reading %.1f dBFS against a live "
+                            "level of -11.5\n", lowest);
+                if (lowest < -12.1) {
+                    std::printf("[meter] the fall undercut the signal, which "
+                                "reports a level that is not there\n");
+                    fell = false;
+                }
+                const std::string settled = timeline.back().text;
+
+                const auto chip = measure_hit(root, chip_id);
+                print_hit("output peak chip", chip);
+                if (!chip.found) {
+                    std::printf("[meter] CONTROL FAILED: the chip has no "
+                                "addressable view, so the press trial cannot "
+                                "run.\n");
+                    ++g_failures;
+                } else {
+                    const float cx = chip.painted.x + chip.painted.width / 2.0f;
+                    const float cy = chip.painted.y + chip.painted.height / 2.0f;
+                    std::printf("[meter] press-target owner at the painted "
+                                "centre (%.1f,%.1f): %s\n", cx, cy,
+                                owner_at(root, cx, cy).c_str());
+
+                    // NEGATIVE half first, on the latched state: a press in
+                    // the header's empty gap to the right of the cluster must
+                    // leave OVER standing. Without it, a "clear" that fired on
+                    // every press anywhere would pass the positive half alone.
+                    root.simulate_click(pulp::view::Point{675.0f, cy});
+                    run_ms(200);
+                    const std::string after_gap = chip_text();
+                    std::printf("[meter] press in the empty gap (675,%.1f): "
+                                "%s (expect: still OVER)\n", cy,
+                                after_gap.c_str());
+
+                    // POSITIVE half: a HOST-OWNED press at the painted centre.
+                    root.simulate_click(pulp::view::Point{cx, cy});
+                    run_ms(200);
+                    const std::string after_press = chip_text();
+                    std::printf("[meter] press at the painted centre: %s "
+                                "(expect: PEAK)\n", after_press.c_str());
+                    settle(rig.clock, 24);
+                    capture(rig, dir, prefix + "meter-after-press", backend,
+                            scale);
+
+                    const bool latched_through =
+                        latched && after_gap.rfind("OVER ", 0) == 0;
+                    const bool cleared = after_press.rfind("PEAK ", 0) == 0;
+                    std::printf("[meter] VERDICT held=%s fell=%s "
+                                "latched-through-the-fall=%s "
+                                "cleared-by-press=%s : %s\n",
+                                held ? "yes" : "NO", fell ? "yes" : "NO",
+                                latched_through ? "yes" : "NO",
+                                cleared ? "yes" : "NO",
+                                (held && fell && latched_through && cleared)
+                                    ? "PASS" : "FAIL");
+                    if (!(held && fell && latched_through && cleared))
+                        ++g_failures;
+                    if (!held_sampled) return 3;
+                }
+            }
+            return g_failures == 0 ? 0 : 1;
+        }
+
         if (std::getenv("SPECTR_COPY_SHOT") != nullptr) {
             const pulp::view::Label* copy_label = nullptr;
             for (const char* candidate : {"COPY UNAVAILABLE", "COPYING", "COPIED", "COPY"}) {
