@@ -8410,6 +8410,7 @@ function createWidget(type, id, parentId, props) {
           shim._textContent = initialText ?? "";
           shim._nativeCreated = true;
           shim.__pulpId = id;
+          shim.__pulpAuthoredLayout__ = normalizedProps;
           shim.id = id;
           domShim = shim;
           domRegistry().set(id, shim);
@@ -8524,6 +8525,7 @@ function createWidget(type, id, parentId, props) {
           newProps
         );
         const dom = instance._dom;
+        dom.__pulpAuthoredLayout__ = newN;
         const committedText = asText(newN.children) ?? newN.text;
         if (committedText !== void 0) dom._textContent = committedText;
         if (instance.textTargetId) dom.__pulpTextTargetId = instance.textTargetId;
@@ -9183,6 +9185,8 @@ function createWidget(type, id, parentId, props) {
   };
   var activeCapturedState = "";
   var activeMaterializedMetadata = capturedHomeMetadata;
+  var activeMaterializedMatch = null;
+  var capturedGeometryNodes = new WeakSet();
   var syncMaterializedCanvasBehaviorsAfterCommit = null;
   function materializedElementChildren(node, registrySet) {
     const children = Array.isArray(node && node._children) ? node._children : [];
@@ -9729,6 +9733,74 @@ function createWidget(type, id, parentId, props) {
     });
     return matches.length === 1 ? matches[0] : null;
   }
+  // Shared Pulp dynamic-state geometry, source revision 222a463ba
+// A captured state describes one DOM shape. Added or removed children invalidate
+// its positional geometry, including the parent's captured intrinsic size.
+function materializedDynamicLayoutScope(scope, bindings, values, pathIndex,
+                                               nodeAtPath, elementChildren, nodeTag) {
+  if (!scope) return new Set();
+  const rootBinding = bindings.find(binding =>
+    nodeAtPath(binding, values, pathIndex) === scope);
+  if (!rootBinding) return new Set();
+  const prefix = rootBinding.path;
+  const inside = path => path.length >= prefix.length && prefix.every((step, i) =>
+    step.index === path[i].index && step.tag === path[i].tag);
+  const expected = new Map();
+  for (const binding of bindings) {
+    if (!inside(binding.path)) continue;
+    const relative = binding.path.slice(prefix.length);
+    for (let depth = 0; depth <= relative.length; ++depth) {
+      const key = JSON.stringify(relative.slice(0, depth));
+      if (!expected.has(key)) expected.set(key, new Map());
+      if (depth < relative.length) {
+        const step = relative[depth];
+        expected.get(key).set(step.index, step.tag);
+      }
+    }
+  }
+  const subtree = new Set();
+  let changed = false;
+  function visit(node, path, paintOnly = false) {
+    subtree.add(node);
+    const children = elementChildren(node, pathIndex.registrySet);
+    // SVG primitives carry paint geometry rather than layout bindings.
+    if (!paintOnly && nodeTag(node) !== 'svg') {
+      const captured = expected.get(JSON.stringify(path));
+      if (!captured || captured.size !== children.length) changed = true;
+      children.forEach((child, index) => {
+        const tag = nodeTag(child);
+        if (captured?.get(index) !== tag) changed = true;
+        visit(child, [...path, { tag, index }]);
+      });
+    } else {
+      children.forEach(child => visit(child, [], true));
+    }
+  }
+  visit(scope, []);
+  return changed ? subtree : new Set();
+}
+
+function restoreMaterializedLayout(node, bridge) {
+  const id = String(node.__pulpId || node.id || '');
+  if (!id) return;
+  const authored = node.__pulpAuthoredLayout__ || {};
+  const style = node.style || {};
+  const value = (key, fallback) => {
+    const live = style[key];
+    return live !== undefined && live !== '' ? live : authored[key] ?? fallback;
+  };
+  bridge.setPosition(id, value('position', 'relative'));
+  bridge.setLeft(id, value('left', 'auto'));
+  bridge.setTop(id, value('top', 'auto'));
+  bridge.setFlex(id, 'width', value('width', 'auto'));
+  bridge.setFlex(id, 'height', value('height', 'auto'));
+  if (typeof bridge.clearCapturedLineBoxes === 'function') {
+    bridge.clearCapturedLineBoxes(String(node.__pulpTextTargetId || id));
+    for (const target of node.__pulpAnonymousTextTargets || [])
+      bridge.clearCapturedLineBoxes(String(target.id));
+  }
+}
+
   function applyMaterializedImportMetadata(metadata) {
     const values = materializedDomRegistryValues();
     const pathIndex = materializedPathIndex(values);
@@ -9815,12 +9887,25 @@ function createWidget(type, id, parentId, props) {
       });
     const activePaintBindings = (Array.isArray(metadata && metadata.paint_bindings) ? metadata.paint_bindings : [])
       .filter((binding) => !isSettingsDescendantBinding(binding));
+    const scope = activeMaterializedMatch
+      ? g5.__pulpFindMaterializedElement__(activeMaterializedMatch.selector,
+          activeMaterializedMatch.ancestor) : null;
+    const dynamicNodes = materializedDynamicLayoutScope(scope, activeLayoutBindings,
+      values, pathIndex, (binding, nodes, index) =>
+        materializedNodeAtPath(binding, nodes, true, index),
+      materializedElementChildren, materializedNodeTag);
+    for (const node of dynamicNodes) {
+      if (!capturedGeometryNodes.has(node)) continue;
+      restoreMaterializedLayout(node, g5);
+      capturedGeometryNodes.delete(node);
+    }
     let applied = 0;
     const diagnostics = {
       state_id: typeof activeCapturedState === "string" ? activeCapturedState : "",
       layout_expected: activeLayoutBindings.length,
       layout_applied: 0,
       layout_node_miss: 0,
+      layout_dynamic_nodes: dynamicNodes.size,
       text_expected: activeTextBindings.filter((binding) => !binding.runtime_optional).length,
       text_applied: 0,
       text_node_miss: 0,
@@ -9860,6 +9945,7 @@ function createWidget(type, id, parentId, props) {
       for (const binding of activeLayoutBindings) {
         if (liveSettingsLayout) break;
         const node = materializedNodeAtPath(binding, values, true, pathIndex);
+        if (dynamicNodes.has(node)) continue;
         const id = node && (node.__pulpId || node.id);
         if (!id) {
           ++diagnostics.layout_node_miss;
@@ -9881,6 +9967,7 @@ function createWidget(type, id, parentId, props) {
         g5.setTop(String(id), top);
         g5.setFlex(String(id), "width", binding.box.width);
         g5.setFlex(String(id), "height", binding.box.height);
+        capturedGeometryNodes.add(node);
         fillCapturedCaption2(g5, node.__pulpTextTargetId);
         ++applied;
         ++diagnostics.layout_applied;
@@ -9926,6 +10013,7 @@ function createWidget(type, id, parentId, props) {
     for (const binding of activePaintBindings) {
       if (liveSettingsLayout) break;
       const node = materializedNodeAtPath(binding, values, true, pathIndex);
+      if (dynamicNodes.has(node)) continue;
       const id = node && (node.__pulpId || node.id);
       if (!id) {
         ++diagnostics.paint_node_miss;
@@ -9970,6 +10058,7 @@ function createWidget(type, id, parentId, props) {
       if (liveSettingsLayout) break;
       const optional = binding.runtime_optional === true;
       const node = materializedNodeAtPath(binding, values, true, pathIndex) || (optional ? materializedOptionalTextNode(binding, values) : null);
+      if (dynamicNodes.has(node)) continue;
       if (!node) {
         if (optional) ++diagnostics.text_optional_miss;
         else ++diagnostics.text_node_miss;
@@ -11660,6 +11749,7 @@ function createWidget(type, id, parentId, props) {
       activeCapturedState = next;
       const state = capturedStates.find((candidate) => candidate.id === next);
       activeMaterializedMetadata = state && state.metadata ? state.metadata : capturedHomeMetadata;
+      activeMaterializedMatch = state && state.match || null;
       applyMaterializedImportMetadata(activeMaterializedMetadata);
       applySpectrToolbarOpticalCentering();
       const prior = g5.__spectrResponsiveLayoutReceipt__;

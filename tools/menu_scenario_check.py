@@ -82,16 +82,6 @@ SCENARIO = ";".join([
     "shrink=resize:1320,860",      "o_re6=rpress:378,400",
 ])
 
-# What each row is aimed at, and what a press aimed at it ACTUALLY reaches
-# while a selection is live. Pinned exactly: the rows whose box is stale sit
-# under a row from the overflowing tail, so the press fires that row instead.
-KNOWN_MISAIM_WITH_SELECTION = {
-    "Mute / Unmute": "Boost (edit mode)",
-    "Reset to 0 dB": "Glide (edit mode)",
-    "Solo": "the VIEW divider — nothing at all, and the menu stays open",
-    "mute others": "the VIEW divider — nothing at all, and the menu stays open",
-    "Select all": "Fit full range (the viewport)",
-}
 
 
 def step(steps, name):
@@ -329,25 +319,13 @@ def main():
     heights = [(step(steps, k) or {}).get("menu_rect", [0, 0, 0, 0])[3]
                for k in reopens]
     sets = [unreachable(k) for k in reopens]
-    expected = sorted(KNOWN_MISAIM_WITH_SELECTION)
-
-    print("\n── the band menu with a selection live ──")
-    print("Neither closing and reopening NOR a host resize changes it. "
-          "Container height at six opens (the last two straddling a resize to "
-          "1500x980 and back): %s" % heights)
-    for k, s in zip(reopens, sets):
-        print("  %-6s rows a pointer cannot reach: %s" % (k, s))
-    print("\nWhat a press aimed at each of those rows ACTUALLY reaches:")
-    for label in expected:
-        print("  %-16s -> %s" % (label, KNOWN_MISAIM_WITH_SELECTION[label]))
-
-    stale = [h for h in heights if h != heights[0]]
-    layout_ok = (not stale) and all(s == expected for s in sets)
-    record("(upstream) menu container height", "all selected",
-           "unchanged across six reopens and a resize; same rows unreachable",
-           layout_ok,
-           "heights %s; unreachable sets identical=%s, expected=%s"
-           % (heights, all(s == sets[0] for s in sets), sets[0] == expected))
+    print("\n── band-menu reachability with a live selection ──")
+    for name, missing in zip(reopens, sets):
+        print("  %-6s unreachable rows: %s" % (name, missing))
+    layout_ok = all(not missing for missing in sets)
+    record("Menu row reachability", "all selected",
+           "every enabled row owns its painted centre after reopen and resize",
+           layout_ok, "heights %s; unreachable rows %s" % (heights, sets))
 
     print("\n%-32s %-14s %-8s %s" % ("ITEM", "STATE", "VERDICT", "READING"))
     failures = 0

@@ -1237,7 +1237,7 @@ if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalon
             RESOURCE_LOCK spectr_native_materialized_editor)
 endif()
 
-# A group gain drag moves every selected band's LEVEL and no band's MUTE.
+# The rail and native key path must change the processor's render mode.
 if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
     add_test(NAME Spectr-latency-rail-effect
         COMMAND ${Python3_EXECUTABLE}
