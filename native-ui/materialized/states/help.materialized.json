@@ -2810,9 +2810,9 @@
       ],
       "box": {
         "left": -324,
-        "top": -405.35625,
+        "top": -428.653125,
         "width": 350,
-        "height": 397.35625
+        "height": 420.653125
       }
     },
     {
@@ -2836,12 +2836,12 @@
         },
         {
           "tag": "button",
-          "index": 14
+          "index": 15
         }
       ],
       "box": {
         "left": 15,
-        "top": 351.15625,
+        "top": 374.453125,
         "width": 320,
         "height": 31.2
       }
@@ -4086,6 +4086,37 @@
       }
     },
     {
+      "anchor": "#root",
+      "path": [
+        {
+          "tag": "div",
+          "index": 0
+        },
+        {
+          "tag": "div",
+          "index": 3
+        },
+        {
+          "tag": "div",
+          "index": 16
+        },
+        {
+          "tag": "div",
+          "index": 1
+        },
+        {
+          "tag": "div",
+          "index": 14
+        }
+      ],
+      "box": {
+        "left": 15,
+        "top": 341.15625,
+        "width": 320,
+        "height": 23.296875
+      }
+    },
+    {
       "index": 117,
       "anchor": "#root",
       "path": [
@@ -4143,6 +4174,41 @@
         {
           "tag": "div",
           "index": 13
+        },
+        {
+          "tag": "span",
+          "index": 0
+        }
+      ],
+      "box": {
+        "left": 0,
+        "top": 2,
+        "width": 104,
+        "height": 19.296875
+      }
+    },
+    {
+      "anchor": "#root",
+      "path": [
+        {
+          "tag": "div",
+          "index": 0
+        },
+        {
+          "tag": "div",
+          "index": 3
+        },
+        {
+          "tag": "div",
+          "index": 16
+        },
+        {
+          "tag": "div",
+          "index": 1
+        },
+        {
+          "tag": "div",
+          "index": 14
         },
         {
           "tag": "span",
@@ -4224,6 +4290,41 @@
         "left": 114,
         "top": 3.140625,
         "width": 136.5,
+        "height": 17
+      }
+    },
+    {
+      "anchor": "#root",
+      "path": [
+        {
+          "tag": "div",
+          "index": 0
+        },
+        {
+          "tag": "div",
+          "index": 3
+        },
+        {
+          "tag": "div",
+          "index": 16
+        },
+        {
+          "tag": "div",
+          "index": 1
+        },
+        {
+          "tag": "div",
+          "index": 14
+        },
+        {
+          "tag": "span",
+          "index": 1
+        }
+      ],
+      "box": {
+        "left": 114,
+        "top": 3.140625,
+        "width": 169,
         "height": 17
       }
     }
@@ -6917,6 +7018,65 @@
       ]
     },
     {
+      "anchor": "#root",
+      "path": [
+        {
+          "tag": "div",
+          "index": 0
+        },
+        {
+          "tag": "div",
+          "index": 3
+        },
+        {
+          "tag": "div",
+          "index": 16
+        },
+        {
+          "tag": "div",
+          "index": 1
+        },
+        {
+          "tag": "div",
+          "index": 14
+        },
+        {
+          "tag": "span",
+          "index": 0
+        }
+      ],
+      "text": "T",
+      "basis": {
+        "width": 104,
+        "resolved_face": "JetBrainsMono-Regular",
+        "resolved_faces": [
+          {
+            "family_name": "JetBrains Mono",
+            "post_script_name": "JetBrainsMono-Regular",
+            "is_custom_font": true,
+            "glyph_count": 1
+          }
+        ],
+        "requested": {
+          "font_family": "\"JetBrains Mono\", ui-monospace, monospace",
+          "font_size": 9,
+          "font_weight": 400,
+          "font_slant": 0,
+          "letter_spacing": 0.5
+        }
+      },
+      "boxes": [
+        {
+          "left": 49.046875,
+          "top": 3,
+          "width": 5.90625,
+          "height": 12,
+          "start": 0,
+          "length": 1
+        }
+      ]
+    },
+    {
       "index": 47,
       "anchor": "#root",
       "path": [
@@ -7032,6 +7192,65 @@
           "height": 13,
           "start": 0,
           "length": 21
+        }
+      ]
+    },
+    {
+      "anchor": "#root",
+      "path": [
+        {
+          "tag": "div",
+          "index": 0
+        },
+        {
+          "tag": "div",
+          "index": 3
+        },
+        {
+          "tag": "div",
+          "index": 16
+        },
+        {
+          "tag": "div",
+          "index": 1
+        },
+        {
+          "tag": "div",
+          "index": 14
+        },
+        {
+          "tag": "span",
+          "index": 1
+        }
+      ],
+      "text": "Latency: Mixing / Tracking",
+      "basis": {
+        "width": 169,
+        "resolved_face": "JetBrainsMono-Regular",
+        "resolved_faces": [
+          {
+            "family_name": "JetBrains Mono",
+            "post_script_name": "JetBrainsMono-Regular",
+            "is_custom_font": true,
+            "glyph_count": 26
+          }
+        ],
+        "requested": {
+          "font_family": "\"JetBrains Mono\", ui-monospace, monospace",
+          "font_size": 10,
+          "font_weight": 400,
+          "font_slant": 0,
+          "letter_spacing": 0.5
+        }
+      },
+      "boxes": [
+        {
+          "left": 0,
+          "top": 3.140625,
+          "width": 169,
+          "height": 13,
+          "start": 0,
+          "length": 26
         }
       ]
     }

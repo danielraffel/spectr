@@ -1238,6 +1238,17 @@ if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalon
 endif()
 
 # A group gain drag moves every selected band's LEVEL and no band's MUTE.
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-latency-rail-effect
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/latency_rail_effect.py
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out-dir ${CMAKE_CURRENT_BINARY_DIR}/spectr-latency-rail-effect)
+    set_tests_properties(Spectr-latency-rail-effect PROPERTIES
+        TIMEOUT 600 RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
+# A group gain drag moves every selected band's LEVEL and no band's MUTE.
 #
 # Reported by the user: select all, Shift-drag a few bands to mute them, drag
 # the selection up, and the muted bands unmute and come back. Mute and gain are
