@@ -2523,12 +2523,46 @@ if(Python3_Interpreter_FOUND)
     foreach(_help_plant
             stale-latency stale-latency-tracking
             zero-latency-claim seamless-claim
-            lost-percussive-guidance)
+            lost-percussive-guidance
+            # The automation guidance. `stale-param-name` is the only one of
+            # these caught by the parameter-name rule rather than the approved
+            # copy rule: it renames the control in the PROSE, which reads
+            # perfectly and sends the user hunting for something their host
+            # does not list. The other three each delete one sentence that
+            # answers a question the parameter list cannot -- that untouched
+            # bands stay put under a morph, that mute alone does not blend,
+            # and that MIDI CC is the wrong instrument entirely.
+            stale-param-name lost-range-guidance
+            lost-mute-caveat lost-midi-answer lost-mix-target
+            # The four macro lanes leave the enumeration. They are registered
+            # unconditionally, so every host lists them whether or not the
+            # guide admits it; a list that claims to name what is worth
+            # knowing and omits four lanes sends a user hunting.
+            lost-macro-lanes)
         add_test(NAME Spectr-materialized-help-overlay-control-${_help_plant}
             COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/help_overlay_contract.py
                 --plant ${_help_plant})
         set_tests_properties(Spectr-materialized-help-overlay-control-${_help_plant}
+            PROPERTIES TIMEOUT 60 WILL_FAIL TRUE)
+    endforeach()
+    # Plants against the REGISTRATION SITES rather than the copy, which is the
+    # half the copy alone can never defend: a parameter renamed in
+    # param_surface.cpp leaves every word of the guide correct while the name
+    # it tells a user to find stops existing. `renamed-morph` is that rename;
+    # `unpadded-band-names` drops the zero padding, so "Band 01 Gain" becomes
+    # a name no host will show. Both are silent to every other gate here.
+    # `padded-macro-names` is the same drift on the macro lanes: the format
+    # string stays findable, so the plant exercises the name comparison rather
+    # than the parser's own missing-format error, which a WILL_FAIL row would
+    # accept without the rule ever running.
+    foreach(_help_source_plant renamed-morph unpadded-band-names
+            padded-macro-names)
+        add_test(NAME Spectr-materialized-help-overlay-control-${_help_source_plant}
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/help_overlay_contract.py
+                --plant-source ${_help_source_plant})
+        set_tests_properties(Spectr-materialized-help-overlay-control-${_help_source_plant}
             PROPERTIES TIMEOUT 60 WILL_FAIL TRUE)
     endforeach()
 endif()
