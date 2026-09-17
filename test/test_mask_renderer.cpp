@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <complex>
 #include <numeric>
 #include <string>
 #include <thread>
@@ -607,6 +608,12 @@ bool swap_planted() {
     return value != nullptr && std::string(value) == "history-reset";
 }
 
+/// The fade rule's plant: every swap held at the floor fade whatever the gap.
+bool swap_fixed_fade_planted() {
+    const char* value = std::getenv("SPECTR_SWAP_PLANT");
+    return value != nullptr && std::string(value) == "fixed-fade";
+}
+
 /// A negative-control row declares itself with this; the rule then REQUIREs
 /// that its plant actually arrived. Without it the row is vacuously green the
 /// moment the variable is stripped or misspelled.
@@ -943,4 +950,209 @@ TEST_CASE("A discrete mask change lands without a step the other mode would not 
     REQUIRE(mixing > 0.0);             // control: the reference is real
     REQUIRE(tracking <= 2.5);
     REQUIRE(tone_case <= 30.0);
+}
+
+// ── The fade rule: a drag's fade spans the gap between publishes ───────────
+
+namespace {
+
+/// Box filter, in place, over a complex or real sequence.
+template <class T>
+void box_filter(std::vector<T>& x, std::size_t length) {
+    if (length < 2 || x.size() < length) return;
+    std::vector<T> out(x.size(), T{});
+    T sum{};
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        sum += x[i];
+        if (i >= length) sum -= x[i - length];
+        if (i + 1 >= length)
+            out[i + 1 - length] = sum / static_cast<double>(length);
+    }
+    x.swap(out);
+}
+
+/// What a tone at `hz` experiences in `signal[begin, end)`, read as a
+/// frequency excursion in cents and split at 20 Hz.
+///
+/// Complex demodulation at `hz`, then three cascaded boxes (64, 48, 40
+/// samples) whose nulls bracket the image at 2*hz, so the phase left over is
+/// the tone's own. Its per-sample derivative is the instantaneous frequency;
+/// a 50 ms box (first null at 20 Hz) takes the slow part off it, and what
+/// remains is the fast part. The split is the point: the slow part is the
+/// design's own phase trajectory across the gesture, which a listener hears
+/// as pitch wobble and which the swap mechanism cannot change; the fast part
+/// is how each redesign is LANDED, and is what this rule bounds.
+struct Excursion {
+    double slow_p2p_cents = 0.0;  ///< 0.1st-99.9th percentile span, below 20 Hz
+    double fast_p99_cents = 0.0;  ///< 99th percentile of |above 20 Hz|
+};
+
+Excursion frequency_excursion(const std::vector<float>& signal,
+                              std::size_t begin, std::size_t end, double hz) {
+    const double omega = 2.0 * kPi * hz / kSampleRate;
+    std::vector<std::complex<double>> z(end - begin);
+    for (std::size_t i = 0; i < z.size(); ++i) {
+        const double phase = -omega * static_cast<double>(begin + i);
+        z[i] = static_cast<double>(signal[begin + i])
+             * std::complex<double>(std::cos(phase), std::sin(phase));
+    }
+    for (std::size_t length : {64u, 48u, 40u}) box_filter(z, length);
+
+    std::vector<double> deviation(z.size() - 1, 0.0);
+    for (std::size_t i = 1; i < z.size(); ++i) {
+        double d = std::arg(z[i]) - std::arg(z[i - 1]);
+        while (d >  kPi) d -= 2.0 * kPi;
+        while (d < -kPi) d += 2.0 * kPi;
+        deviation[i - 1] = d * kSampleRate / (2.0 * kPi);
+    }
+    box_filter(deviation, 48);                      // 1 ms, sample noise
+    std::vector<double> slow = deviation;
+    box_filter(slow, 2400);                         // 50 ms: null at 20 Hz
+    // Drop the filters' settling at both ends before reading anything.
+    const std::size_t guard = 2400 + 64 + 48 + 40 + 48;
+    if (deviation.size() <= 2 * guard) return {};
+    std::vector<double> fast, slow_kept;
+    for (std::size_t i = guard; i + guard < deviation.size(); ++i) {
+        fast.push_back(std::abs(deviation[i] - slow[i]));
+        slow_kept.push_back(slow[i]);
+    }
+    std::sort(fast.begin(), fast.end());
+    std::sort(slow_kept.begin(), slow_kept.end());
+    const auto at = [](const std::vector<double>& v, double q) {
+        return v[static_cast<std::size_t>(q * static_cast<double>(v.size() - 1))];
+    };
+    const auto cents = [hz](double dev) { return 1200.0 * std::log2(1.0 + dev / hz); };
+    return {cents(at(slow_kept, 0.999) - at(slow_kept, 0.001)),
+            cents(at(fast, 0.99))};
+}
+
+/// The pan the wobble is reported on: a 6-octave viewport whose centre
+/// travels `octaves` about 1 kHz over the gesture, under the factory comb.
+/// A tone at 2828 Hz stays inside the window throughout. `t01` is gesture
+/// progress; a frozen viewport passes the same value every time.
+pulp::signal::SpectralBandLayout panned_comb(double octaves, double t01) {
+    const double centre = 1000.0 * std::pow(2.0, octaves * (t01 - 0.5));
+    auto layout = make_layout(static_cast<float>(centre / 8.0),
+                              static_cast<float>(centre * 8.0), 32);
+    for (std::uint32_t b = 0; b < 32; ++b)
+        layout.bands[b].gain_db = (b % 3 == 0) ? 9.6f : -14.4f;
+    return layout;
+}
+
+struct Drag {
+    std::vector<float> out;
+    int publishes = 0;   ///< layouts staged during the gesture
+    int landed    = 0;   ///< swaps the audio thread adopted
+};
+
+/// Drive the shipping Tracking renderer through the pan with the editor's
+/// real cadence: one publish per painted frame, 60 Hz. The host block is one
+/// render block, so a publish lands on the block boundary it names.
+Drag drag(double octaves, double seconds, double hold, double tone_hz,
+          std::size_t publish_gap) {
+    constexpr int kBlock = 64;
+    auto renderer = spectr::make_mask_renderer(MaskRenderMode::zero_latency);
+    REQUIRE(renderer->prepare(zero_latency_config(1, kBlock)));
+    // No settle(): the first publish below is staged before the first render
+    // block and lands on it, inside the leading hold, so nothing read here
+    // starts from the unity impulse prepare() loads.
+
+    const auto total = static_cast<std::size_t>((seconds + 2.0 * hold) * kSampleRate);
+    const auto stimulus = tone(total, tone_hz, 0.5f);
+    Drag result;
+    result.out.assign(total, 0.0f);
+    std::vector<float> in(kBlock), out(kBlock);
+    std::size_t next_publish = 0;
+    auto generation = renderer->active_generation();
+    for (std::size_t pos = 0; pos + kBlock <= total; pos += kBlock) {
+        if (pos >= next_publish) {
+            const double t = static_cast<double>(pos) / kSampleRate;
+            const double t01 = std::clamp((t - hold) / seconds, 0.0, 1.0);
+            REQUIRE(renderer->publish_layout(panned_comb(octaves, t01)));
+            ++result.publishes;
+            next_publish = pos + publish_gap;
+        }
+        std::copy(stimulus.begin() + static_cast<std::ptrdiff_t>(pos),
+                  stimulus.begin() + static_cast<std::ptrdiff_t>(pos + kBlock),
+                  in.begin());
+        const float* ip[1] = {in.data()};
+        float* op[1] = {out.data()};
+        REQUIRE(renderer->process(ip, op, kBlock));
+        std::copy(out.begin(), out.end(),
+                  result.out.begin() + static_cast<std::ptrdiff_t>(pos));
+        const auto now = renderer->active_generation();
+        if (now != generation) { ++result.landed; generation = now; }
+    }
+    return result;
+}
+
+} // namespace
+
+TEST_CASE("A drag's fade spans the gap between publishes",
+          "[mask-renderer][audio][wobble]") {
+    // WHAT THIS IS FOR. Every redesign under a drag carries a phase step, and
+    // the crossfade is where that step is glided. A fade shorter than the gap
+    // between publishes glides the whole step in a fraction of the gap and
+    // then holds still, so the tone's instantaneous frequency spikes by
+    // gap/fade more than the trajectory itself demands -- at the editor's real
+    // cadence, one publish per painted frame, that was a 3x spike on top of
+    // the wobble a listener already hears. The renderer now gives each swap
+    // the gap it closes; this reads the result through the audio path, with
+    // the editor's cadence and the gesture the wobble was reported on.
+    //
+    // The design-domain drag gate in test_tracking_transition.cpp cannot see
+    // this: it spreads every step over the whole publish gap by construction,
+    // so it reads the same number at any fade. This is the other half.
+    const bool plant = swap_fixed_fade_planted();
+    require_swap_plant_arrived(plant);
+
+    constexpr double kToneHz  = 2828.0;
+    constexpr double kOctaves = 2.0;    // one octave per second...
+    constexpr double kSeconds = 2.0;    // ...over two seconds
+    constexpr double kHold    = 0.5;    // still viewport either side
+    constexpr std::size_t kGap = 800;   // one painted frame at 60 Hz, 48 kHz
+    const auto begin = static_cast<std::size_t>(kHold * kSampleRate);
+    const auto end   = static_cast<std::size_t>((kHold + kSeconds) * kSampleRate);
+
+    // ── Control 1: a still viewport reads the instrument's floor. ──────────
+    // Publishes continue at the same cadence; only the layout stops moving.
+    // Without this a reading could be an artifact of publishing at all.
+    const auto frozen = drag(0.0, kSeconds, kHold, kToneHz, kGap);
+    const auto floor  = frequency_excursion(frozen.out, begin, end, kToneHz);
+    std::printf("\nfrozen viewport, published at 60 Hz: fast %.3f cents, slow %.3f cents\n",
+                floor.fast_p99_cents, floor.slow_p2p_cents);
+    REQUIRE(floor.fast_p99_cents < 0.05);
+    REQUIRE(frozen.landed == frozen.publishes);
+
+    // ── Subject. ───────────────────────────────────────────────────────────
+    const auto moving = drag(kOctaves, kSeconds, kHold, kToneHz, kGap);
+    const auto read   = frequency_excursion(moving.out, begin, end, kToneHz);
+    std::printf("%s comb panned 1 oct/s, tone %.0f Hz, published at 60 Hz:\n"
+                "  slow (<20 Hz) excursion %.2f cents p2p -- the trajectory\n"
+                "  fast (>20 Hz) excursion %.2f cents p99 -- the landing\n"
+                "  swaps landed %d of %d publishes\n",
+                plant ? "PLANTED fixed fade," : "Fade spans the gap,", kToneHz,
+                read.slow_p2p_cents, read.fast_p99_cents,
+                moving.landed, moving.publishes);
+
+    // ── Control 2: the gesture registered, and every publish was adopted. ──
+    // The slow term is the design moving; if it were near the floor nothing
+    // below would be about a drag. And a fade that outlives the gap would
+    // show up here first, as refused swaps -- that is the cost the cap bounds.
+    REQUIRE(read.slow_p2p_cents > 5.0);
+    REQUIRE(moving.landed == moving.publishes);
+
+    // The gate. Measured on this geometry through this instrument: 13.4
+    // cents with the fade spanning the gap, 34.1 with it fixed at the floor,
+    // and the same 8.9-cent slow term in both. The threshold sits at their
+    // geometric mean, about 1.6x from either, and is a fast-term bound only:
+    // the slow term is the min-phase trajectory and is not this rule's to
+    // move. Nothing here is timed or threaded, so the margin is for a future
+    // design change rather than for noise.
+    constexpr double kFastGateCents = 21.0;
+    if (plant) {
+        REQUIRE(read.fast_p99_cents > kFastGateCents);
+        return;
+    }
+    REQUIRE(read.fast_p99_cents <= kFastGateCents);
 }

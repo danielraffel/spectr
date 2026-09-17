@@ -715,12 +715,18 @@ set_tests_properties(Spectr-tracking-drag-glide-negative-control
 # still be made to produce. Both rows below invert their own verdict when they
 # see the plant, so each is green only when its rule OBSERVES the defect.
 #
-# Deliberately only two rows. The third swap rule, on the boundary step a
-# discrete change makes, is NOT registered here: it measures the size of a
-# single discrete step, and restarting the history does not inflate that --
-# planted, it scores 1.38 against its own 2.5 gate -- so a control row for it
-# would be vacuously green. That rule carries an instrument control of its own
-# instead.
+# Deliberately only two history-reset rows. The third swap rule, on the
+# boundary step a discrete change makes, is NOT registered here: it measures
+# the size of a single discrete step, and restarting the history does not
+# inflate that -- planted, it scores 1.38 against its own 2.5 gate -- so a
+# control row for it would be vacuously green. That rule carries an
+# instrument control of its own instead.
+#
+# The fourth swap rule has its own plant. A drag's fade must span the gap
+# between publishes; SPECTR_SWAP_PLANT=fixed-fade holds every swap at the
+# floor fade whatever the gap, which is the configuration that shipped before
+# the fade followed the gap, and the row is green only when the rule reads the
+# 3x larger fast excursion that configuration produces.
 add_test(NAME Spectr-swap-unchanged-mask-negative-control
     COMMAND ${CMAKE_COMMAND} -E env
         SPECTR_SWAP_PLANT=history-reset
@@ -737,6 +743,15 @@ add_test(NAME Spectr-swap-gesture-artifact-negative-control
         $<TARGET_FILE:Spectr-test>
         "A gesture costs no more artifact than the other mode")
 set_tests_properties(Spectr-swap-gesture-artifact-negative-control
+    PROPERTIES TIMEOUT 300)
+
+add_test(NAME Spectr-swap-fixed-fade-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_SWAP_PLANT=fixed-fade
+        SPECTR_SWAP_PLANT_REQUIRED=1
+        $<TARGET_FILE:Spectr-test>
+        "A drag's fade spans the gap between publishes")
+set_tests_properties(Spectr-swap-fixed-fade-negative-control
     PROPERTIES TIMEOUT 300)
 
 add_executable(Spectr-native-n1-test

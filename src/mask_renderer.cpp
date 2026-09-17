@@ -246,11 +246,37 @@ constexpr double kTrackingEdgeQuantumBins = 0.0;
 /// magnitude unchanged at -39.67 dB. The value here is the zoom's, because the
 /// zoom is the worse case and a single constant has to cover both.
 ///
-/// It is not simply "longer is safer". The fade has to sit inside the
-/// 384-sample gap between redesigns at a 120 Hz pointer, because the convolver
-/// refuses a swap while a fade is in flight: a 512-sample fade drops 33 landed
-/// swaps to 26, and a gesture that cannot land its swaps tracks the pointer
-/// late. 192 leaves half that gap.
+/// It is not simply "longer is safer", and it is not simply this constant
+/// either. The convolver refuses a swap while a fade is in flight, so a fade
+/// longer than the gap between redesigns drops swaps (a 512-sample fade at a
+/// 384-sample gap lands 26 of 33) and the gesture tracks the pointer late.
+/// But a fade SHORTER than the gap has a cost of its own, and it is the one a
+/// listener reports as pitch wobble. Each redesign carries a phase step (see
+/// above); the fade is where that step is glided, and for the rest of the gap
+/// the response holds still. A tone's instantaneous frequency during the
+/// glide is the step over the FADE, not over the gap, so at a fixed fade the
+/// peak excursion scales with gap/fade -- and the editor's gap is not 384
+/// samples. It publishes once per painted frame (a requestAnimationFrame in
+/// the materialized editor), which is 800 samples at 48 kHz on a 60 Hz
+/// display.
+///
+/// Measured on a 2828 Hz tone under a 32-band comb panned at one octave per
+/// second, published at 60 Hz: the fast (above 20 Hz) part of the frequency
+/// excursion reads 33.6 cents at its 99th percentile with a fixed 192-sample
+/// fade and 10.5 cents when the fade spans the gap; at 120 Hz, 23.7 and 9.4.
+/// The slow (below 20 Hz) part reads 13 cents in every one of those cells --
+/// that is the minimum-phase trajectory itself, and no fade can touch it.
+/// Delivered magnitude, out-of-band leak and HF splatter are unchanged, and
+/// every swap lands at both rates.
+///
+/// So the fade is chosen per swap, on the audio thread: the samples since the
+/// previous swap landed, floored at this constant and capped at
+/// kIrCrossfadeCapSeconds. The floor is the zoom's arithmetic floor measured
+/// above. The cap bounds two things a frame stall would otherwise inflate --
+/// how long the NEXT swap can be refused, and how long a large step's
+/// mid-fade dip lasts -- at about one painted frame: after a 150 ms stall an
+/// 18 ms cap still lands every swap, where a 32 ms cap refuses a quarter of
+/// them and holds the dip for twice as long.
 ///
 /// The value is meaningful ONLY against a convolver that shares one input
 /// history across its IRs. Against one that installs each incoming impulse
@@ -260,6 +286,27 @@ constexpr double kTrackingEdgeQuantumBins = 0.0;
 /// change, never two. The guard below is what makes that ordering structural
 /// rather than remembered.
 constexpr std::size_t kIrCrossfadeSamples = 192;
+
+/// The longest fade a swap is given: one painted frame at 60 Hz plus one
+/// render block of jitter. Expressed in seconds because the gap it has to
+/// cover is a display's, not a sample rate's. See kIrCrossfadeSamples.
+constexpr double kIrCrossfadeCapSeconds = 0.018;
+
+/// Structural guard for the SPAN rule, duplicated on purpose.
+///
+/// The asserts below this one belong to the commit that introduced a non-zero
+/// `kIrCrossfadeSamples`. This one is a deliberate copy, and it is here so the
+/// guard cannot be separated from the rule it protects: the span rule above is
+/// what makes a fade cover the whole gap, and a fade of any length is safe only
+/// against a convolver that carries ONE input history across its IRs. Rebased
+/// on its own, without the commit that pins an SDK providing that, this file
+/// would otherwise still compile -- and ship a fade that replays recent input
+/// for about the length of the impulse. Measured, that is worse than no fade at
+/// all, so this has to fail closed at compile time rather than in someone's ears.
+static_assert(sizeof(pulp::signal::ConvolverInputHistoryT<float>) > 0,
+              "spanning the publish interval requires a convolver that shares "
+              "one input history across its IRs; against one that installs each "
+              "IR cold, a longer fade replays MORE stale input, not less");
 
 /// Structural guard for the value above.
 ///
@@ -312,6 +359,21 @@ bool swap_plants_history_reset() {
     static const bool planted = [] {
         const char* value = std::getenv("SPECTR_SWAP_PLANT");
         return value != nullptr && std::string_view(value) == "history-reset";
+    }();
+    return planted;
+}
+
+/// Test seam for the fade rule's negative control.
+///
+/// `fixed-fade` holds every swap at kIrCrossfadeSamples whatever the gap
+/// before it -- exactly the configuration that shipped before the fade
+/// followed the gap, so the control reinstates a real prior state of the
+/// shipping binary rather than a contrived one. Read once per process and
+/// unset in every shipping run.
+bool swap_plants_fixed_fade() {
+    static const bool planted = [] {
+        const char* value = std::getenv("SPECTR_SWAP_PLANT");
+        return value != nullptr && std::string_view(value) == "fixed-fade";
     }();
     return planted;
 }
@@ -476,6 +538,12 @@ public:
             convolvers_[static_cast<std::size_t>(ch)].set_crossfade(
                 kIrCrossfadeSamples);
         }
+        crossfade_samples_ = kIrCrossfadeSamples;
+        crossfade_cap_samples_ = std::max(
+            kIrCrossfadeSamples,
+            static_cast<std::size_t>(std::llround(
+                config.sample_rate * kIrCrossfadeCapSeconds)));
+        blocks_since_swap_ = 0;
 
         pending_generation_.store(0, std::memory_order_release);
         active_generation_.store(0, std::memory_order_release);
@@ -574,6 +642,33 @@ public:
 
 private:
     void render_block_() noexcept {
+        // The fade a swap landing now is given is the gap it closes: the
+        // samples since the previous swap landed, clamped. Saturate the count
+        // so an idle renderer cannot overflow it. See kIrCrossfadeSamples.
+        if (blocks_since_swap_ < kBlocksSinceSwapCeiling) ++blocks_since_swap_;
+        std::size_t fade = std::clamp(
+            static_cast<std::size_t>(blocks_since_swap_)
+                * static_cast<std::size_t>(kRenderBlock),
+            kIrCrossfadeSamples, crossfade_cap_samples_);
+        // Negative control only -- see swap_plants_fixed_fade().
+        if (plant_fixed_fade_) fade = kIrCrossfadeSamples;
+        if (fade != crossfade_samples_) {
+            bool pending = false;
+            for (int ch = 0; ch < channels_; ++ch)
+                pending = pending
+                    || swappers_[static_cast<std::size_t>(ch)]->has_pending();
+            if (pending) {
+                // Audio-thread call. set_crossfade only stores the length and
+                // re-zeroes a scratch that prepare() already sized to one
+                // render block, so nothing here allocates; the length is
+                // re-applied only when it changes and a swap is waiting, so
+                // a still viewport pays one pending check per block.
+                for (int ch = 0; ch < channels_; ++ch)
+                    convolvers_[static_cast<std::size_t>(ch)].set_crossfade(fade);
+                crossfade_samples_ = fade;
+            }
+        }
+
         bool swapped = false;
         for (int ch = 0; ch < channels_; ++ch) {
             auto& conv = convolvers_[static_cast<std::size_t>(ch)];
@@ -585,10 +680,12 @@ private:
             conv.process(in_ptrs_[static_cast<std::size_t>(ch)],
                          out_ptrs_[static_cast<std::size_t>(ch)], kRenderBlock);
         }
-        if (swapped)
+        if (swapped) {
+            blocks_since_swap_ = 0;
             active_generation_.store(
                 pending_generation_.load(std::memory_order_acquire),
                 std::memory_order_release);
+        }
     }
     // SPECTR-RENDER-PATH END
 
@@ -598,6 +695,7 @@ public:
         std::fill(in_fifo_.begin(), in_fifo_.end(), 0.0f);
         std::fill(out_fifo_.begin(), out_fifo_.end(), 0.0f);
         fill_ = 0;
+        blocks_since_swap_ = 0;
         for (auto& conv : convolvers_) conv.reset();
         mixer_.reset();
     }
@@ -702,6 +800,15 @@ private:
     // Cached once at construction so the audio thread never reads the
     // environment. False in every shipping run.
     const bool         plant_history_reset_ = swap_plants_history_reset();
+    const bool         plant_fixed_fade_    = swap_plants_fixed_fade();
+
+    // Audio-thread only. The fade currently configured on every convolver,
+    // the cap it is clamped to (kIrCrossfadeCapSeconds at this sample rate),
+    // and the render blocks since a swap last landed.
+    std::size_t        crossfade_samples_     = kIrCrossfadeSamples;
+    std::size_t        crossfade_cap_samples_ = kIrCrossfadeSamples;
+    int                blocks_since_swap_     = 0;
+    static constexpr int kBlocksSinceSwapCeiling = 1 << 20;
 
     std::vector<pulp::signal::PartitionedConvolver>                     convolvers_;
     std::vector<std::unique_ptr<pulp::signal::ConvolverIrSwapper>>      swappers_;
