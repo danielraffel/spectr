@@ -22,6 +22,13 @@ def main():
     helper = source.replace("export function ", "function ")
     path = Path(__file__).resolve().parents[1] / "native-ui/materialized/runtime.js"
     text = path.read_text()
+    marker = "  // Shared Pulp dynamic-state geometry, source revision "
+    end = "  function applyMaterializedImportMetadata(metadata) {"
+    if marker in text:
+        assert text.count(marker) == 1 and text.count(end) == 1
+        start = text.index(marker)
+        finish = text.index(end, start)
+        text = text[:start] + text[finish:]
     edits = [
         ("shared geometry helpers", "  function applyMaterializedImportMetadata(metadata) {",
          "  // Shared Pulp dynamic-state geometry, source revision " + args.revision + "\n"
@@ -61,6 +68,8 @@ def main():
          "      const node = materializedNodeAtPath(binding, values, true, pathIndex);\n      if (dynamicNodes.has(node)) continue;\n      const id = node"),
         ("text skip", "      const node = materializedNodeAtPath(binding, values, true, pathIndex) || (optional ? materializedOptionalTextNode(binding, values) : null);",
          "      const node = materializedNodeAtPath(binding, values, true, pathIndex) || (optional ? materializedOptionalTextNode(binding, values) : null);\n      if (dynamicNodes.has(node)) continue;"),
+        ("text geometry tracking", "        binding.basis.resolved_face,\n        false\n      );\n      ++applied;",
+         "        binding.basis.resolved_face,\n        false\n      );\n      capturedGeometryNodes.add(node);\n      ++applied;"),
     ]
     for label, old, new in edits:
         if text.count(new) == 1:

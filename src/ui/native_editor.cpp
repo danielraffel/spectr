@@ -2387,7 +2387,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                    << spectr_menu_probe::json_escape(label->text())
                                    << "\",\"rect\":[" << lx << "," << ly << ","
                                    << box.width << "," << box.height << "]"
-                                   << ",\"pressable\":" << (own != nullptr
+                                   << ",\"pressable\":" << (own != nullptr && own->enabled()
                                                               ? "true" : "false")
                                    << ",\"owns_own_centre\":"
                                    << (self ? "true" : "false") << "}";
@@ -2408,6 +2408,20 @@ bool Spectr::tick_native_analyzer_(float dt) {
                    << ",\"gain_db\":[";
                 for (std::uint32_t i = 0; i < n; ++i)
                     js << (i ? "," : "") << snap.field.bands[i].gain_db;
+                js << "],\"undo_depth\":" << editor_authority().undo_depth()
+                   << ",\"redo_depth\":" << editor_authority().redo_depth()
+                   << ",\"macros\":[";
+                for (std::size_t m = 0; m < kMacroCount; ++m) {
+                    js << (m ? "," : "") << "[";
+                    const auto members = macro_members(m);
+                    bool first = true;
+                    for (std::uint32_t i = 0; i < n; ++i) {
+                        if (!members.test(i)) continue;
+                        js << (first ? "" : ",") << i;
+                        first = false;
+                    }
+                    js << "]";
+                }
                 js << "],\"muted\":[";
                 for (std::uint32_t i = 0; i < n; ++i)
                     js << (i ? "," : "")

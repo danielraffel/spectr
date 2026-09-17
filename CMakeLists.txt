@@ -1037,17 +1037,16 @@ set_tests_properties(Spectr-band-menu-keyboard-and-dismissal-negative-control
 # bugs, and collapsing them into one pass is how this surface stayed green
 # while being unusable.
 #
-# It also pins what the menu does while a SELECTION is live, which is the state
-# the user reported: the container does not grow past 376px, the overflowing
-# rows restack over the first ones, and a press aimed at "Mute / Unmute"
-# reaches Boost, at "Reset to 0 dB" reaches Glide, at "Solo" reaches the VIEW
-# divider (nothing happens and the menu stays open) and at "Select all"
-# reaches Fit full range. Four consecutive reopens are measured, because
-# closing and reopening was reported to help and does not.
+# Repeated opens and resizes with a selection must keep every enabled row
+# reachable. History and macro actions are judged from the processor's state,
+# including one-step gesture undo and the largest assigned-macro menu.
 #
 # Runs headless and asserts the run reported opening no audio device.
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(APPLE AND Python3_Interpreter_FOUND)
+add_test(NAME Spectr-materialized-native-services-sync
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/sync_materialized_native_services.py --check)
 add_test(NAME Spectr-standalone-band-menu-rows
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/menu_scenario_check.py

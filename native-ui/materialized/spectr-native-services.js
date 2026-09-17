@@ -13,6 +13,27 @@
   globalThis.__spectrNativeDispatchTrace = [];
   if (typeof window !== 'undefined')
     window.__spectrTestHooks = globalThis.__spectrTestHooks;
+  const parseNativeMacros = (payload, n) => {
+    // Absent is not malformed. A payload written by a build without macros
+    // must still parse, so this returns null rather than failing the whole
+    // state read -- the render treats null as "no macros assigned".
+    const raw = payload && payload.macros;
+    if (!Array.isArray(raw)) return null;
+    const macros = [];
+    for (const entry of raw) {
+      const db = entry && Number(entry.value_db);
+      const slots = entry && entry.slots;
+      if (!Number.isFinite(db) || !Array.isArray(slots)) return null;
+      const members = [];
+      for (const slot of slots) {
+        if (!Number.isFinite(slot) || Math.floor(slot) !== slot
+            || slot < 0 || slot >= n) return null;
+        members.push(slot);
+      }
+      macros.push({ valueDb: db, slots: members });
+    }
+    return macros;
+  };
   const parseNativeState = payload => {
     // The Latency control is not a host parameter and rides the hydration
     // payload only, so a live automation frame omits it. Update on PRESENCE,
@@ -72,6 +93,8 @@
         ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
       minHz, maxHz, snapshots: { A, B },
       revision: Number(payload.revision) || 0,
+      macros: parseNativeMacros(payload, n),
+      canUndo: payload.can_undo === true, canRedo: payload.can_redo === true,
       patternsJson: typeof payload.patterns_json === 'string'
         ? payload.patterns_json : null,
     };
@@ -107,6 +130,8 @@
         ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
       minHz, maxHz, revision,
       motionMode, analyzerMode, editMode, visualizationMode,
+      macros: parseNativeMacros(payload, n),
+      canUndo: payload.can_undo === true, canRedo: payload.can_redo === true,
     };
   };
   const parseNativePatterns = patternsJson => {
@@ -139,7 +164,7 @@
       };
     } catch { return null; }
   };
-  const nativeState = { parse: parseNativeState, parseLive: parseNativeLiveState };
+  const nativeState = { parse: parseNativeState, parseLive: parseNativeLiveState, parseMacros: parseNativeMacros };
   const nativePatterns = { parse: parseNativePatterns };
   globalThis.SpectrNativeState = nativeState;
   globalThis.SpectrNativePatterns = nativePatterns;
@@ -301,6 +326,12 @@
     if (type === 'spectral_resolution_request') {
       return dispatch(type, payload, id).then(result => {
         if (result.ok) emit('spectral_resolution', result.payload, 'spectr-spectral-resolution');
+        return result;
+      });
+    }
+    if (['undo', 'redo', 'undo_gesture_end', 'macro_set_members'].includes(type)) {
+      return dispatch(type, payload, id).then(result => {
+        if (result.ok) emit('processing_state_live', result.payload, id);
         return result;
       });
     }

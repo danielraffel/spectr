@@ -343,3 +343,5 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # Native output readout decay and overload latch.
 ^Spectr-native-output-meter-ballistics$
 ^Spectr-latency-rail-effect$
+^Spectr-materialized-native-services-sync$
+^live publication carries macro membership and current undo availability$
