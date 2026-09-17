@@ -296,10 +296,76 @@ bool embedded_package_is_current(const std::filesystem::path& path) {
 // invalidates it; the per-file size check then catches a partial or interrupted
 // previous write. Anything unexpected falls through to the full write, so the
 // worst case is the old behaviour rather than a stale editor.
+// Negative-control plant for the group-drag mute contract.
+//
+// A test that asserts "a group drag leaves mute alone" is worth nothing until
+// it has been shown FAILING against the defect, and the only honest way to
+// show that is to put the defect back in the shipping asset rather than to
+// simulate its symptom. This reverts exactly the load-bearing line of the fix
+// -- the group branch's commit -- in the materialized document as it is
+// written to the package the editor loads, which restores the real pre-fix
+// path: an offset committed through the DRAW commit, which reads a finite
+// gain over a muted band as "unmute it".
+//
+// It aborts rather than continuing when the anchor is not found exactly once.
+// A plant that silently failed to apply would leave the control measuring a
+// healthy app and reporting a clean pass, which is the one outcome a negative
+// control must never produce.
+bool plant_once(std::string& document, const char* from, const char* to,
+                const char* what) {
+    const std::string needle{from};
+    const std::size_t at = document.find(needle);
+    if (at == std::string::npos) {
+        std::fprintf(stderr, "[plant] FATAL: anchor %s absent; the control "
+                             "would measure a healthy app\n", from);
+        return false;
+    }
+    if (document.find(needle, at + needle.size()) != std::string::npos) {
+        std::fprintf(stderr, "[plant] FATAL: anchor %s occurs more than once\n",
+                     from);
+        return false;
+    }
+    document.replace(at, needle.size(), to);
+    std::fprintf(stderr, "[plant] %s\n", what);
+    return true;
+}
+
+// The two ways a group drag can be wrong, each plantable on its own.
+//
+// UNMUTE is the defect the user reported: the offset goes through the DRAW
+// commit, which reads a finite gain over a muted band as "unmute it".
+//
+// FREEZE is the other wrong answer, and the reason the mute assertion alone is
+// not enough. It holds the mute and discards the offset, so the muted bands
+// stay silent and stay put while the rest of the selection moves -- which is
+// what the draw path does with `unmuteOnDraw` off, and which is invisible in
+// any screenshot because a muted band draws no bar to be in the wrong place.
+bool plant_group_drag_unmute(std::string& document) {
+    return plant_once(document, "commitGroupOffset(map);",
+                      "commitDrawnGains(map);",
+                      "group drag routed back through the draw commit "
+                      "(pre-fix behaviour)");
+}
+
+bool plant_group_drag_freeze(std::string& document) {
+    return plant_once(document,
+                      "mutedGainDbRef.current[index] = clamp(value, -1, 1) * 24;",
+                      "mutedGainDbRef.current[index] = "
+                      "mutedGainDbRef.current[index];",
+                      "group drag holds mute but discards the offset "
+                      "(frozen-member behaviour)");
+}
+
 bool write_embedded_package(const std::filesystem::path& path) {
     std::error_code ec;
     std::filesystem::create_directories(path / "assets", ec);
     if (ec) return false;
+
+    const bool plant_unmute =
+        std::getenv("SPECTR_GROUP_DRAG_UNMUTE_PLANT") != nullptr;
+    const bool plant_freeze =
+        std::getenv("SPECTR_GROUP_DRAG_FREEZE_PLANT") != nullptr;
+    const bool plant = plant_unmute || plant_freeze;
 
     std::size_t total = 0;
     for (const auto& file : kEmbeddedFiles) total += file.size;
@@ -307,7 +373,10 @@ bool write_embedded_package(const std::filesystem::path& path) {
                        + std::to_string(total);
     const auto stamp_path = path / ".package-stamp";
 
-    {
+    // A planted package must never be served from the stamp fast path: its
+    // bytes differ from the build's by construction, so the stamp describes a
+    // package that is not the one on disk.
+    if (!plant) {
         std::ifstream existing(stamp_path, std::ios::binary);
         std::string found;
         if (existing && std::getline(existing, found) && found == stamp
@@ -317,12 +386,28 @@ bool write_embedded_package(const std::filesystem::path& path) {
     }
 
     for (const auto& file : kEmbeddedFiles) {
+        std::string body(reinterpret_cast<const char*>(file.data), file.size);
+        if (plant
+            && std::string_view{file.relative_path}
+                   == "materialized-document.runtime.json") {
+            if (plant_unmute && !plant_group_drag_unmute(body)) return false;
+            if (plant_freeze && !plant_group_drag_freeze(body)) return false;
+        }
         std::ofstream stream(path / file.relative_path,
                              std::ios::binary | std::ios::trunc);
         if (!stream) return false;
-        stream.write(reinterpret_cast<const char*>(file.data),
-                     static_cast<std::streamsize>(file.size));
+        stream.write(body.data(),
+                     static_cast<std::streamsize>(body.size()));
         if (!stream.good()) return false;
+    }
+
+    // A planted package's bytes do not match the stamp this build would write,
+    // so it gets none: the next ordinary open rewrites the real asset instead
+    // of inheriting the plant.
+    if (plant) {
+        std::error_code remove_ec;
+        std::filesystem::remove(stamp_path, remove_ec);
+        return true;
     }
 
     // Written last: a stamp is only meaningful once every file it describes is
@@ -1787,6 +1872,13 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // through the host's own verbs and reads the plugin's processing state
     // after EVERY delivered sample.
     //
+    // SPECTR_GESTURES is a `;`-separated list of
+    //     name=[mods:]x0,y0>x1,y1[@steps]
+    // in root coordinates, where mods is `-`-joined from
+    // none|shift|cmd|alt|ctrl. Gestures run in order against one live editor,
+    // with the runtime settled between them, so a sequence that depends on
+    // what the previous gesture selected or muted is expressible.
+    //
     // deliver_mouse_down / deliver_mouse_drag / deliver_mouse_up with a
     // ViewCapture is the exact sequence PulpMetalView runs (window_host_mac.mm
     // mouseDown:/mouseDragged:/mouseUp:), so a target that claims the drag
@@ -1834,6 +1926,9 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 out << "]}";
             };
 
+            int gesture_probe_settle_frames = 8;
+            if (const auto* frames = std::getenv("SPECTR_GESTURES_SETTLE"))
+                gesture_probe_settle_frames = std::max(1, std::atoi(frames));
             bool first_gesture = true;
             std::string_view rest{gesture_spec};
             while (!rest.empty()) {
@@ -1852,6 +1947,46 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     coords = coords.substr(0, at);
                 }
                 if (steps < 1) steps = 1;
+                // Optional modifier prefix: `name=mods:x0,y0>x1,y1@steps`.
+                // Without it this probe delivered every press with
+                // modifierFlags 0, which expresses a band drag and nothing
+                // else -- a Shift-held mute brush and a Command-held marquee
+                // are separate branches of the editor's pointer handler, not
+                // variants of the drag, so no amount of driving the drag
+                // reaches them. Coordinates carry commas and never a colon,
+                // so the split is unambiguous.
+                std::uint16_t mods = 0;
+                bool mods_ok = true;
+                if (const auto colon = coords.find(':');
+                    colon != std::string::npos) {
+                    // Copied, not viewed: reassigning `coords` below frees
+                    // the buffer a string_view into it would still point at.
+                    const std::string mod_names = coords.substr(0, colon);
+                    coords = coords.substr(colon + 1);
+                    std::string_view names{mod_names};
+                    while (!names.empty() && mods_ok) {
+                        const auto dash = names.find('-');
+                        const auto one = names.substr(0, dash);
+                        names = dash == std::string_view::npos
+                            ? std::string_view{} : names.substr(dash + 1);
+                        if (one == "none") continue;
+                        else if (one == "shift") mods |= pulp::view::kModShift;
+                        else if (one == "cmd") mods |= pulp::view::kModCmd;
+                        else if (one == "alt") mods |= pulp::view::kModAlt;
+                        else if (one == "ctrl") mods |= pulp::view::kModCtrl;
+                        else mods_ok = false;
+                    }
+                }
+                // Refuse rather than guess. A typo'd modifier silently
+                // delivered as mods=0 would drive the PLAIN branch and
+                // produce a well-formed sample list in which the gesture
+                // under test never ran -- which reads exactly like a control.
+                if (!mods_ok) {
+                    std::fprintf(stderr,
+                                 "[gesture-probe] refusing unknown modifier in "
+                                 "'%s'\n", std::string(spec).c_str());
+                    continue;
+                }
                 const auto gt = coords.find('>');
                 if (gt == std::string::npos) continue;
                 const auto parse_point = [](const std::string& text,
@@ -1871,7 +2006,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     << "\n  {\"name\":\"" << name << "\""
                     << ",\"from\":{\"x\":" << a.x << ",\"y\":" << a.y << "}"
                     << ",\"to\":{\"x\":" << b.x << ",\"y\":" << b.y << "}"
-                    << ",\"steps\":" << steps;
+                    << ",\"steps\":" << steps
+                    << ",\"mods\":" << static_cast<unsigned>(mods);
                 first_gesture = false;
 
                 pulp::view::ViewCapture capture;
@@ -1890,7 +2026,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     continue;
                 }
                 emit_sample("pre", a);
-                pulp::view::deliver_mouse_down(root, target, a, 0, 1);
+                pulp::view::deliver_mouse_down(root, target, a, mods, 1);
                 out << ",";
                 emit_sample("down", a);
                 for (int i = 1; i <= steps; ++i) {
@@ -1900,16 +2036,28 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                                a.y + (b.y - a.y) * t};
                     auto* live = capture.live_in(root);
                     if (live == nullptr) break;
-                    pulp::view::deliver_mouse_drag(root, live, pt, 0, 1);
+                    pulp::view::deliver_mouse_drag(root, live, pt, mods, 1);
                     out << ",";
                     emit_sample("move", pt);
                 }
                 if (auto* live = capture.live_in(root)) {
                     pulp::view::MouseUpHost up_host;
-                    pulp::view::deliver_mouse_up(root, live, b, 0, 1, up_host);
+                    pulp::view::deliver_mouse_up(root, live, b, mods, 1, up_host);
                 }
                 out << ",";
                 emit_sample("up", b);
+                // A gesture SEQUENCE needs the runtime to settle between its
+                // members, for two independent reasons. The editor's press
+                // handler reads `selection` out of a React closure, so a
+                // marquee's `setSelection` reaches the NEXT press only after a
+                // commit re-binds the handler. And the field these samples
+                // read is published through a queue, so the last sample of a
+                // gesture is read before its own commit lands. Settling and
+                // then taking one more sample makes the post-gesture reading
+                // authoritative instead of one frame stale.
+                settle_native_runtime_(gesture_probe_settle_frames);
+                out << ",";
+                emit_sample("settled", b);
                 out << "]}";
             }
             out << "\n ]}\n";

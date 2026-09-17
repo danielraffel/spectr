@@ -1207,6 +1207,63 @@ if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalon
             RESOURCE_LOCK spectr_native_materialized_editor)
 endif()
 
+# A group gain drag moves every selected band's LEVEL and no band's MUTE.
+#
+# Reported by the user: select all, Shift-drag a few bands to mute them, drag
+# the selection up, and the muted bands unmute and come back. Mute and gain are
+# separate axes -- a muted band keeps the level it will return to -- so the
+# offset has to land UNDERNEATH the mute.
+#
+# This is the one gate in the suite that could see it. A band silently unmuted
+# at the level the drag moved it to draws EXACTLY the bar of a band still muted
+# with its stashed level moved, so every capture, pixel diff and layout row in
+# this file passes on both; only `muted[]` beside `gain_db[]` separates them.
+# All four gestures are driven by real press, including the Shift-held brush
+# and the Command-held marquee.
+if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
+    add_test(NAME Spectr-group-drag-preserves-mute
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/group_drag_preserves_mute.py
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-group-drag-preserves-mute)
+    set_tests_properties(Spectr-group-drag-preserves-mute PROPERTIES
+        TIMEOUT 600
+        RESOURCE_LOCK spectr_native_materialized_editor)
+
+    # The reported defect, planted back into the shipping asset: the group
+    # branch routed through the DRAW commit, which reads a finite gain over a
+    # muted band as "unmute it". The inversion lives in the app rather than in
+    # WILL_FAIL because WILL_FAIL accepts any non-zero exit, so an unproven
+    # premise would satisfy it while measuring nothing.
+    add_test(NAME Spectr-group-drag-preserves-mute-negative-control-unmute
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/group_drag_preserves_mute.py
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-group-drag-negctl-unmute
+            --negative-control unmute)
+    set_tests_properties(Spectr-group-drag-preserves-mute-negative-control-unmute
+        PROPERTIES
+            TIMEOUT 600
+            RESOURCE_LOCK spectr_native_materialized_editor)
+
+    # The OTHER wrong answer, and the reason the mute assertion alone is not
+    # enough: hold the mute and discard the offset, so the muted members stay
+    # silent and stay put while the rest of the selection moves. A muted band
+    # draws no bar, so there is nothing on screen to be in the wrong place --
+    # this is invisible to every capture-based row in the suite, and it is what
+    # the draw path does with `unmuteOnDraw` off.
+    add_test(NAME Spectr-group-drag-preserves-mute-negative-control-freeze
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/group_drag_preserves_mute.py
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-group-drag-negctl-freeze
+            --negative-control freeze)
+    set_tests_properties(Spectr-group-drag-preserves-mute-negative-control-freeze
+        PROPERTIES
+            TIMEOUT 600
+            RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
 # Arrow stepping in a dropdown must move exactly one row. The affordance test
 # above asserts a destination (three ArrowDowns then Return land on a named
 # caption), which a handler that steps two rows can also satisfy; this reads the

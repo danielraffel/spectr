@@ -336,3 +336,6 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # flag-based assertion here stays green. Confirmed failing: dropping mute on
 # restore reddens that row and only that row.
 ^"?undo:
+
+# Selection gain movement preserves mute and updates underlying gain.
+^Spectr-group-drag-preserves-mute
