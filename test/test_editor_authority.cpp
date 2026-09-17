@@ -242,3 +242,257 @@ TEST_CASE("editor authority treats a re-published identical state as no change",
     CHECK_FALSE(stale.accepted);
     CHECK(stale.revision == 5);
 }
+
+// ── Undo / redo ────────────────────────────────────────────────────────
+//
+// The rule these cases exist to hold is the user's own workflow rule: ONE
+// drag across many bands is ONE undo step. It is asserted on band VALUES
+// after undo, never on a depth alone, because a stack of the right height
+// carrying the wrong states would satisfy a count and still lose the work.
+
+namespace {
+
+// A drag as this editor actually issues it: the complete processing state
+// republished once per pointer sample. `samples` is what makes the bracket
+// load-bearing -- with one sample per drag, bracketed and unbracketed are
+// indistinguishable.
+void publish_band_sweep_(spectr::EditorAuthority& authority,
+                         spectr::Spectr& processor, std::size_t bands,
+                         float target_db, int samples) {
+    for (int s = 1; s <= samples; ++s) {
+        auto field = processor.field();
+        const float t = static_cast<float>(s) / static_cast<float>(samples);
+        for (std::size_t i = 0; i < bands; ++i) field.bands[i].gain_db = target_db * t;
+        REQUIRE(authority.replace_processing_state(
+            field, processor.viewport(), processor.layout()).accepted);
+    }
+}
+
+} // namespace
+
+TEST_CASE("undo: one drag across many bands is one undo step",
+          "[editor-authority][undo]") {
+    AuthorityRig r;
+    auto& authority = r.processor.editor_authority();
+
+    const auto before = r.processor.field();
+    REQUIRE(before.bands[0].gain_db == Approx(0.0f));
+    REQUIRE(authority.undo_depth() == 0);
+
+    authority.begin_undo_gesture("Edit bands");
+    publish_band_sweep_(authority, r.processor, 32, -12.0f, /*samples=*/20);
+    authority.end_undo_gesture();
+
+    // ONE step for the whole drag -- not one per pointer sample, and not one
+    // per band. Twenty publications over thirty-two bands went in.
+    REQUIRE(authority.undo_depth() == 1);
+    REQUIRE(authority.can_undo());
+    REQUIRE_FALSE(authority.can_redo());
+    REQUIRE(r.processor.field().bands[0].gain_db == Approx(-12.0f));
+    REQUIRE(r.processor.field().bands[31].gain_db == Approx(-12.0f));
+
+    // One press returns every band, not just the last one written.
+    REQUIRE(authority.undo().accepted);
+    for (std::size_t i = 0; i < 32; ++i)
+        REQUIRE(r.processor.field().bands[i].gain_db == Approx(0.0f));
+    REQUIRE(authority.undo_depth() == 0);
+    REQUIRE(authority.can_redo());
+
+    // And redo returns the drag's END state, not an intermediate sample.
+    REQUIRE(authority.redo().accepted);
+    for (std::size_t i = 0; i < 32; ++i)
+        REQUIRE(r.processor.field().bands[i].gain_db == Approx(-12.0f));
+}
+
+TEST_CASE("undo: the unbracketed shape is what the gesture replaces",
+          "[editor-authority][undo]") {
+    // The POSITIVE CONTROL for the case above. Without it "one undo step" is
+    // a number with no scale: a reader cannot tell whether the bracket did
+    // anything or whether this editor only ever produced one step anyway.
+    // The identical sweep, with no gesture open, is the shape that shipped
+    // before -- and it is what a user would have had to press undo through.
+    AuthorityRig r;
+    auto& authority = r.processor.editor_authority();
+
+    publish_band_sweep_(authority, r.processor, 32, -12.0f, /*samples=*/20);
+
+    REQUIRE(authority.undo_depth() == 20);
+    // One press walks back a single pointer sample, leaving the bands very
+    // nearly where the drag left them.
+    REQUIRE(authority.undo().accepted);
+    REQUIRE(r.processor.field().bands[0].gain_db == Approx(-11.4f));
+}
+
+TEST_CASE("undo: gain and mute are restored together",
+          "[editor-authority][undo]") {
+    // Two axes of one band. An undo that restored the level without the mute
+    // it was authored under -- or the reverse -- would be worse than none,
+    // and it is the exact failure a per-parameter undo produces. An entry is
+    // a whole BandField, so this holds by construction; the case proves it
+    // rather than trusting the construction.
+    AuthorityRig r;
+    auto& authority = r.processor.editor_authority();
+
+    auto field = r.processor.field();
+    field.bands[5].gain_db = -6.0f;
+    field.bands[5].muted = false;
+    field.bands[7].gain_db = 9.0f;
+    field.bands[7].muted = true;
+    REQUIRE(authority.replace_processing_state(
+        field, r.processor.viewport(), r.processor.layout()).accepted);
+
+    const auto authored = r.processor.field();
+    REQUIRE(authored.bands[5].gain_db == Approx(-6.0f));
+    REQUIRE_FALSE(authored.bands[5].muted);
+    REQUIRE(authored.bands[7].muted);
+
+    // Now move BOTH axes on both bands in one gesture: band 5 gets muted at a
+    // new level, band 7 gets unmuted at a new level. This is the group-drag
+    // shape where gain and mute move together.
+    authority.begin_undo_gesture("Edit bands");
+    auto next = r.processor.field();
+    next.bands[5].gain_db = 3.0f;
+    next.bands[5].muted = true;
+    next.bands[7].gain_db = -15.0f;
+    next.bands[7].muted = false;
+    REQUIRE(authority.replace_processing_state(
+        next, r.processor.viewport(), r.processor.layout()).accepted);
+    authority.end_undo_gesture();
+
+    REQUIRE(authority.undo().accepted);
+    const auto restored = r.processor.field();
+    // Both fields of both bands, coherent with each other.
+    REQUIRE(restored.bands[5].gain_db == Approx(-6.0f));
+    REQUIRE_FALSE(restored.bands[5].muted);
+    REQUIRE(restored.bands[7].gain_db == Approx(9.0f));
+    REQUIRE(restored.bands[7].muted);
+}
+
+TEST_CASE("undo: the viewport rides the same entry as the bands",
+          "[editor-authority][undo]") {
+    // The viewport is sound-defining state in Spectr (snapshot.hpp says so:
+    // it sets the band-to-frequency mapping the mask is built from), so an
+    // undo that restored bands into a different viewport would restore a
+    // sound the user never had.
+    AuthorityRig r;
+    auto& authority = r.processor.editor_authority();
+
+    auto field = r.processor.field();
+    field.bands[2].gain_db = 4.0f;
+    REQUIRE(authority.replace_processing_state(
+        field, {200.0f, 4000.0f}, spectr::Layout::Bands32).accepted);
+    REQUIRE(authority.undo().accepted);
+
+    REQUIRE(r.processor.field().bands[2].gain_db == Approx(0.0f));
+    REQUIRE(r.processor.viewport().min_hz == Approx(20.0f));
+    REQUIRE(r.processor.viewport().max_hz == Approx(20000.0f));
+}
+
+TEST_CASE("undo: a gesture that changed nothing records no step",
+          "[editor-authority][undo]") {
+    // A press that only opens a menu, or a drag returned to where it began,
+    // must not leave a step that appears to do nothing when pressed.
+    AuthorityRig r;
+    auto& authority = r.processor.editor_authority();
+
+    authority.begin_undo_gesture("Edit bands");
+    authority.end_undo_gesture();
+    REQUIRE(authority.undo_depth() == 0);
+    REQUIRE_FALSE(authority.can_undo());
+
+    // A drag that moves out and comes back is also a no-op overall.
+    const auto start = r.processor.field();
+    authority.begin_undo_gesture("Edit bands");
+    auto moved = start;
+    moved.bands[1].gain_db = 8.0f;
+    REQUIRE(authority.replace_processing_state(
+        moved, r.processor.viewport(), r.processor.layout()).accepted);
+    REQUIRE(authority.replace_processing_state(
+        start, r.processor.viewport(), r.processor.layout()).accepted);
+    authority.end_undo_gesture();
+    REQUIRE(authority.undo_depth() == 0);
+}
+
+TEST_CASE("undo: nothing to undo is reported, never silently accepted",
+          "[editor-authority][undo]") {
+    AuthorityRig r;
+    auto& authority = r.processor.editor_authority();
+
+    const auto empty = authority.undo();
+    REQUIRE_FALSE(empty.accepted);
+    REQUIRE(empty.error == "nothing to undo");
+
+    const auto no_redo = authority.redo();
+    REQUIRE_FALSE(no_redo.accepted);
+    REQUIRE(no_redo.error == "nothing to redo");
+}
+
+TEST_CASE("undo: a fresh edit after an undo drops the redo branch",
+          "[editor-authority][undo]") {
+    AuthorityRig r;
+    auto& authority = r.processor.editor_authority();
+
+    auto field = r.processor.field();
+    field.bands[0].gain_db = -3.0f;
+    REQUIRE(authority.replace_processing_state(
+        field, r.processor.viewport(), r.processor.layout()).accepted);
+    REQUIRE(authority.undo().accepted);
+    REQUIRE(authority.can_redo());
+
+    auto other = r.processor.field();
+    other.bands[10].gain_db = 7.0f;
+    REQUIRE(authority.replace_processing_state(
+        other, r.processor.viewport(), r.processor.layout()).accepted);
+
+    // Redoing onto a branch the user has already left would resurrect work
+    // they replaced.
+    REQUIRE_FALSE(authority.can_redo());
+}
+
+TEST_CASE("undo: an undo is not itself recorded as a new edit",
+          "[editor-authority][undo]") {
+    // The loop where undo pushes its own inverse makes undo and redo the
+    // same button: press undo twice and the second press redoes the first.
+    AuthorityRig r;
+    auto& authority = r.processor.editor_authority();
+
+    auto field = r.processor.field();
+    field.bands[4].gain_db = -18.0f;
+    REQUIRE(authority.replace_processing_state(
+        field, r.processor.viewport(), r.processor.layout()).accepted);
+    REQUIRE(authority.undo_depth() == 1);
+
+    REQUIRE(authority.undo().accepted);
+    REQUIRE(authority.undo_depth() == 0);
+    REQUIRE(r.processor.field().bands[4].gain_db == Approx(0.0f));
+
+    // A second press has nothing left to do -- it must not walk forward.
+    REQUIRE_FALSE(authority.undo().accepted);
+    REQUIRE(r.processor.field().bands[4].gain_db == Approx(0.0f));
+}
+
+TEST_CASE("undo: a band drag through the paint protocol is one step",
+          "[editor-authority][undo]") {
+    // The paint triad brackets itself, so a caller using paint_start/paint/
+    // paint_end gets the same one-step granularity without issuing the undo
+    // gesture verbs at all.
+    AuthorityRig r;
+    auto& authority = r.processor.editor_authority();
+
+    REQUIRE(authority.begin_band_edit().accepted);
+    for (int s = 0; s < 12; ++s) {
+        spectr::DragGesture g;
+        g.start_band = 4;
+        g.start_value = 0.0f;
+        g.current_band = static_cast<std::size_t>(4 + s);
+        g.current_value = -10.0f;
+        g.n_visible = spectr::visible_count(r.processor.layout());
+        REQUIRE(authority.update_band_edit(spectr::EditMode::Sculpt, g).accepted);
+    }
+    REQUIRE(authority.end_band_edit().accepted);
+
+    REQUIRE(authority.undo_depth() == 1);
+    REQUIRE(authority.undo().accepted);
+    for (std::size_t i = 0; i < spectr::visible_count(r.processor.layout()); ++i)
+        REQUIRE(r.processor.field().bands[i].gain_db == Approx(0.0f));
+}
