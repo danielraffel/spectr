@@ -310,7 +310,7 @@ REQUIRED_AFTER = (
     '"data-spectr-output-over": over ? "true" : "false",',
     '(over ? "OVER " : "PEAK ") + peakText',
     '"data-spectr-output-trim-label": true,',
-    "React.createElement(SpectrOutputMeter, null));",
+    "React.createElement(SpectrOutputMeter, null)",
 )
 
 # The rising-only hold, in either of its two spellings: the shipped one and
@@ -321,6 +321,7 @@ FORBIDDEN_AFTER = (
 )
 
 REQUIRED_COUNTS = {
+    "React.createElement(SpectrOutputMeter, null)": 1,
     "function SpectrOutputMeter() {": 1,
     "const PEAK_HOLD_MS = 2000;": 1,
     "const shownDb = (hold, nowMs) => {": 1,

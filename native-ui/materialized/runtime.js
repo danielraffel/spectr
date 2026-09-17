@@ -9733,7 +9733,7 @@ function createWidget(type, id, parentId, props) {
     });
     return matches.length === 1 ? matches[0] : null;
   }
-  // Shared Pulp dynamic-state geometry, source revision f8e603712
+  // Shared Pulp dynamic-state geometry, source revision f8e6037125aa79517a61dfe07a075cfbf7353e42
 // A captured state describes one DOM shape. Added or removed children invalidate
 // its positional geometry, including the parent's captured intrinsic size.
 function materializedDynamicLayoutScope(scope, bindings, values, pathIndex,
@@ -11636,7 +11636,15 @@ function restoreMaterializedLayout(node, bridge) {
         return result;
       });
     }
-    if (['undo', 'redo', 'undo_gesture_end', 'macro_set_members'].includes(type)) {
+    if (['processing_state_set', 'undo_gesture_end'].includes(type)) {
+      return dispatch(type, payload, id).then(result => {
+        // A gesture may finish before its final React publication. Replaying
+        // that older field here would overwrite the local pointer result.
+        if (result.ok) emit('history_state', result.payload, id);
+        return result;
+      });
+    }
+    if (['undo', 'redo', 'macro_set_members'].includes(type)) {
       return dispatch(type, payload, id).then(result => {
         if (result.ok) emit('processing_state_live', result.payload, id);
         return result;

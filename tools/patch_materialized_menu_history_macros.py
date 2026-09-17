@@ -11,14 +11,41 @@ ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / 'native-ui/materialized/materialized-document.runtime.json'
 
 HISTORY = 'canUndo: payload.can_undo === true, canRedo: payload.can_redo === true,'
+OLD_PUBLICATION = '''    if (['undo', 'redo', 'undo_gesture_end', 'macro_set_members'].includes(type)) {
+      return dispatch(type, payload, id).then(result => {
+        if (result.ok) emit('processing_state_live', result.payload, id);
+        return result;
+      });
+    }
+    return dispatch(type, payload, id);'''
 EDITS = [
-    ('command state publication', '    return dispatch(type, payload, id);', '''    if (['undo', 'redo', 'undo_gesture_end', 'macro_set_members'].includes(type)) {
+    ('command state publication', '    return dispatch(type, payload, id);', '''    if (['processing_state_set', 'undo_gesture_end'].includes(type)) {
+      return dispatch(type, payload, id).then(result => {
+        // A gesture may finish before its final React publication. Replaying
+        // that older field here would overwrite the local pointer result.
+        if (result.ok) emit('history_state', result.payload, id);
+        return result;
+      });
+    }
+    if (['undo', 'redo', 'macro_set_members'].includes(type)) {
       return dispatch(type, payload, id).then(result => {
         if (result.ok) emit('processing_state_live', result.payload, id);
         return result;
       });
     }
     return dispatch(type, payload, id);'''),
+    ('bank history method', '    sharedState.current = {',
+     '    sharedState.current = {\n      updateHistoryAvailability,'),
+    ('history subscription', '    const unsubscribeModulation = window.pulp.on("modulation_frame", (message) => {', '''    const unsubscribeHistory = window.pulp.on("history_state", (message) => {
+      const payload = message && message.payload;
+      const bank = bankRef.current;
+      if (payload && bank && typeof bank.updateHistoryAvailability === "function")
+        bank.updateHistoryAvailability({ canUndo: payload.can_undo === true,
+                                         canRedo: payload.can_redo === true });
+    });
+    const unsubscribeModulation = window.pulp.on("modulation_frame", (message) => {'''),
+    ('history unsubscribe', '      if (typeof unsubscribeModulation === "function") unsubscribeModulation();',
+     '      if (typeof unsubscribeHistory === "function") unsubscribeHistory();\n      if (typeof unsubscribeModulation === "function") unsubscribeModulation();'),
     ('hydrated history', '      revision: Number(payload.revision) || 0,',
      '      ' + HISTORY + '\n      revision: Number(payload.revision) || 0,'),
     ('live history', '      motionMode, analyzerMode, editMode, visualizationMode,',
@@ -87,6 +114,10 @@ window.ContextMenu'''),
 def main():
     raw = PATH.read_text()
     original = json.loads(raw)
+    old = json.dumps(OLD_PUBLICATION)[1:-1]
+    if old in raw:
+        assert raw.count(old) == 1
+        raw = raw.replace(old, '    return dispatch(type, payload, id);', 1)
     for label, old, new in EDITS:
         old, new = json.dumps(old)[1:-1], json.dumps(new)[1:-1]
         if raw.count(new) == 1:

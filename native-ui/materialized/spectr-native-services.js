@@ -329,7 +329,15 @@
         return result;
       });
     }
-    if (['undo', 'redo', 'undo_gesture_end', 'macro_set_members'].includes(type)) {
+    if (['processing_state_set', 'undo_gesture_end'].includes(type)) {
+      return dispatch(type, payload, id).then(result => {
+        // A gesture may finish before its final React publication. Replaying
+        // that older field here would overwrite the local pointer result.
+        if (result.ok) emit('history_state', result.payload, id);
+        return result;
+      });
+    }
+    if (['undo', 'redo', 'macro_set_members'].includes(type)) {
       return dispatch(type, payload, id).then(result => {
         if (result.ok) emit('processing_state_live', result.payload, id);
         return result;
