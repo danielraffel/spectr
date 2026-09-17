@@ -1260,6 +1260,14 @@ if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalon
             --out-dir ${CMAKE_CURRENT_BINARY_DIR}/spectr-latency-rail-effect)
     set_tests_properties(Spectr-latency-rail-effect PROPERTIES
         TIMEOUT 600 RESOURCE_LOCK spectr_native_materialized_editor)
+    add_test(NAME Spectr-latency-rail-effect-disabled-write-control
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/latency_rail_effect.py
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out-dir ${CMAKE_CURRENT_BINARY_DIR}/spectr-latency-rail-disabled
+            --negative-control)
+    set_tests_properties(Spectr-latency-rail-effect-disabled-write-control PROPERTIES
+        TIMEOUT 600 RESOURCE_LOCK spectr_native_materialized_editor)
 endif()
 
 # A group gain drag moves every selected band's LEVEL and no band's MUTE.

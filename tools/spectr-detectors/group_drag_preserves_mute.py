@@ -94,11 +94,19 @@ def run(app, out_dir, plant):
         PULP_SCREENSHOT=os.path.join(out_dir, "shot.png"),
         SPECTR_GESTURES=GESTURES,
         SPECTR_GESTURE_OUT=os.path.join(out_dir, "gestures.json"),
+        SPECTR_MENU_SCENARIO=(
+            "after_group=wait;open_undo=rpress:813,438;undo=row:Undo;"
+            "after_undo=wait;open_redo=rpress:813,438;redo=row:Redo;after_redo=wait"),
+        SPECTR_MENU_SCENARIO_OUT=os.path.join(out_dir, "history.json"),
     )
     for var in PLANT_ENV.values():
         env.pop(var, None)
     if plant:
         env[PLANT_ENV[plant]] = "1"
+    for name in ('gestures.json', 'history.json'):
+        path = os.path.join(out_dir, name)
+        if os.path.exists(path):
+            os.remove(path)
     log = os.path.join(out_dir, "app.log")
     with open(log, "wb") as fh:
         proc = subprocess.run([app], env=env, stdout=fh, stderr=subprocess.STDOUT,
@@ -263,12 +271,38 @@ def main():
               "measurement cannot see the bug it claims to watch for")
         return 1
 
+    history_path = os.path.join(out_dir, 'history.json')
+    if not os.path.exists(history_path):
+        print('INCONCLUSIVE: the integrated undo/redo scenario did not finish')
+        return 3
+    with open(history_path) as handle:
+        history = {s['step']: s for s in json.load(handle)['steps']}
+    if not all(name in history for name in ('after_group', 'after_undo', 'after_redo')):
+        print('INCONCLUSIVE: the integrated undo/redo readings are incomplete')
+        return 3
+    original_depth = history['after_group']['undo_depth']
+    for name, expected, depth in (
+            ('after_undo', before, original_depth - 1),
+            ('after_redo', after, original_depth)):
+        actual = history[name]
+        if actual['muted'] != expected['muted']:
+            problems.append(name + ' did not restore the mute field')
+        if (len(actual['gain_db']) != len(expected['gain_db'])
+                or any(abs(a - b) > 0.01 for a, b in
+                       zip(actual['gain_db'], expected['gain_db']))):
+            problems.append(name + ' did not restore every underlying band gain')
+        if actual['undo_depth'] != depth:
+            problems.append('%s history depth was %d, expected %d'
+                            % (name, actual['undo_depth'], depth))
+    if history['after_undo']['redo_depth'] != 1 or history['after_redo']['redo_depth'] != 0:
+        problems.append('undo/redo did not transfer exactly one group gesture')
+
     if problems:
         for p in problems:
             print("FAIL:", p)
         return 1
     print("PASS: the group drag preserved every mute and moved every selected "
-          "band's level by one shared offset")
+          "band's level by one shared offset; one undo/redo restored both fields")
     return 0
 
 

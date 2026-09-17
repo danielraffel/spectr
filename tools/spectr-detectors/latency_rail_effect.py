@@ -58,6 +58,23 @@ CHIP_TEXT = re.compile(r"^(MIXING|TRACKING) \u00b7 [0-9.]+ ms$")
 # the right token but a wrong number is still a failure.
 SAMPLES = {"linear_phase": 10240, "zero_latency": 64}
 
+# Leave the optimistic display update intact while disabling only the write.
+# A text-only detector would still pass this deliberately inert control.
+DISABLE_WRITE = """(() => {
+  const service = window.pulp;
+  if (!service || typeof service.postMessage !== 'function')
+    throw new Error('latency control requires the native bridge');
+  const post = service.postMessage;
+  service.postMessage = function (type, payload, id) {
+    if (type === 'render_mode_set') {
+      console.log('[latency-control] blocked mode write');
+      return Promise.resolve({ok: true});
+    }
+    return post.call(this, type, payload, id);
+  };
+  console.log('[latency-control] installed');
+})();"""
+
 
 def launch(app, out_dir, name, env_extra, timeout=300):
     """One headless run. Returns (returncode, log text)."""
@@ -128,14 +145,23 @@ def chip_box(dump):
     return text, (best[1] if best else text_rect)
 
 
-def trial(app, out_dir, name, env_extra, expect):
+def trial(app, out_dir, name, env_extra, expect, negative_control=False):
     """Run one input and report what the processor confirmed."""
+    env_extra = dict(env_extra)
+    if negative_control:
+        env_extra['SPECTR_EVAL'] = DISABLE_WRITE
     code, text, dump = launch(app, out_dir, name, env_extra)
     if code is None:
         return dict(name=name, ok=False, inconclusive=True, detail=text, box=None)
     if code != 0:
         return dict(name=name, ok=False, inconclusive=True, box=None,
                     detail="standalone exited %d" % code)
+    if negative_control and (
+            '[latency-control] installed' not in text
+            or (expect is not None and
+                '[latency-control] blocked mode write' not in text)):
+        return dict(name=name, ok=False, inconclusive=True, box=None,
+                    detail="disabled-write control did not intercept the handler")
     if dump is None:
         return dict(name=name, ok=False, inconclusive=True, box=None,
                     detail="no layout dump produced")
@@ -178,6 +204,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--app", required=True, help="the standalone binary")
     ap.add_argument("--out-dir", required=True)
+    ap.add_argument("--negative-control", action="store_true",
+                    help="disable native mode writes and require all three "
+                         "effect trials to fail while neutral inputs stay inert")
     ap.add_argument("--expect-fail", action="store_true",
                     help="invert the verdict, for a negative control whose "
                          "plant is applied to the document by the caller")
@@ -188,31 +217,35 @@ def main():
         return 2
     os.makedirs(args.out_dir, exist_ok=True)
 
+    def run_trial(name, env_extra, expect):
+        return trial(args.app, args.out_dir, name, env_extra, expect,
+                     negative_control=args.negative_control)
+
     # A fresh instance starts in linear_phase, so every trial below toggles
     # TO zero_latency. That direction is deliberate: 64 samples is a number
     # only the zero-latency renderer produces, while 10240 is also what an
     # un-toggled instance would report.
     trials = [
         # The two real entry points.
-        trial(args.app, args.out_dir, "key-t",
+        run_trial("key-t",
               {"SPECTR_KEY": "t"}, "zero_latency"),
-        trial(args.app, args.out_dir, "press-chip",
+        run_trial("press-chip",
               {"SPECTR_MENU_SCENARIO": "toggle=press:1137,832",
                "SPECTR_MENU_SCENARIO_OUT": os.path.join(args.out_dir, "press-chip.json")}, "zero_latency"),
         # CONTROL: an unbound key must change nothing. Without this, a handler
         # that fired on every keystroke would pass the trial above.
-        trial(args.app, args.out_dir, "control-unbound-key",
+        run_trial("control-unbound-key",
               {"SPECTR_KEY": "y"}, None),
         # CONTROL: pressing a DIFFERENT rail control must change nothing.
         # Without this, an ancestor handler that toggled on any rail press
         # would pass the press trial above.
-        trial(args.app, args.out_dir, "control-other-press",
+        run_trial("control-other-press",
               {"SPECTR_MENU_SCENARIO": "gap=press:1000,832",
                "SPECTR_MENU_SCENARIO_OUT": os.path.join(args.out_dir, "control-press.json")}, None),
         # CONTROL: no input at all must change nothing, which is what proves
         # the confirmation is caused by the input rather than emitted at mount.
-        trial(args.app, args.out_dir, "control-no-input", {}, None),
-        trial(args.app, args.out_dir, "roundtrip",
+        run_trial("control-no-input", {}, None),
+        run_trial("roundtrip",
               {"SPECTR_MENU_SCENARIO": "track=press:1137,832;settle=wait;mix=press:1137,832;settle2=wait",
                "SPECTR_MENU_SCENARIO_OUT": os.path.join(args.out_dir, "roundtrip.json")},
               "linear_phase"),
@@ -260,6 +293,16 @@ def main():
                   "trials, so invariance was not exercised)")
 
     failed = [t for t in trials if not t["ok"]]
+    if args.negative_control:
+        names = {t['name'] for t in failed}
+        expected = {'key-t', 'press-chip', 'roundtrip'}
+        if names == expected:
+            print('negative control OK: every mode write was detected as inert; '
+                  'all neutral inputs remained inert')
+            return 0
+        print('NEGATIVE CONTROL FAILED: expected failures %s, got %s'
+              % (sorted(expected), sorted(names)), file=sys.stderr)
+        return 1
     if args.expect_fail:
         if failed:
             print("negative control OK: %d trial(s) failed as intended"
