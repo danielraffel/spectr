@@ -5409,6 +5409,12 @@
   // ../pulp-spectr-live-materialized-import-20260812/packages/pulp-react/src/synthetic-event.ts
   var g = () => globalThis;
   function makeStyleProxy(id) {
+    // Keep the last JS-visible value as well as forwarding it to the native
+    // view.  The materialized runtime's reachability probes inspect
+    // `element.style.display` while the native bridge owns the actual Yoga
+    // visibility; returning `undefined` here made a display:none ancestor
+    // look reachable even though setVisible() had hidden it natively.
+    const values = Object.create(null);
     const setters = {
       background: (v) => callBridge("setBackground", id, String(v)),
       backgroundColor: (v) => callBridge("setBackground", id, String(v)),
@@ -5438,10 +5444,10 @@
         configurable: true,
         enumerable: true,
         get() {
-          return void 0;
+          return values[key];
         },
-        // reads not supported — by design
         set(v) {
+          values[key] = v;
           setters[key](v);
         }
       });
@@ -7572,6 +7578,20 @@
       if (key === "x1" || key === "y1" || key === "x2" || key === "y2") {
         if (props) emitSvgLineGeometry(id, props);
         return;
+      }
+    }
+    if (key === "display") {
+      // Keep the DOM shim's CSS-facing value in sync with the native bridge.
+      // The native view is the source of layout truth, but reachability and
+      // accessibility probes walk `parentElement.style.display`.
+      const dom = domRegistry().get(id);
+      if (dom && dom.style) {
+        try {
+          Object.defineProperty(dom.style, "display", {
+            configurable: true, enumerable: true, writable: true,
+            value: String(value)
+          });
+        } catch (_) { /* native host may expose a non-configurable style */ }
       }
     }
     if (applyLayoutProp(id, key, value, props)) return;
