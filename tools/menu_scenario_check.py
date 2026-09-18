@@ -97,7 +97,13 @@ SCENARIO_64 = ";".join([
     "grow=resize:1500,980", "o_re4=rpress:378,400", "esc_re4=escape",
     "shrink=resize:1320,860", "o_re5=rpress:378,400",
     "modulation=row:Modulation", "modulation_settled=wait",
+    "lfo1_toggle=row:LFO 1", "lfo1_settled=wait",
+    "lfo2_toggle=row:LFO 2", "lfo2_settled=wait",
     "back=row:< Back", "back_settled=wait",
+    "target_open=row:Modulation", "target_open_settled=wait",
+    "target_b=row:Snapshot B", "target_settled=wait",
+    "target_reopen=rpress:378,400", "target_panel=row:Modulation",
+    "target_reopened=wait", "target_back=row:< Back", "target_back_settled=wait",
     "outside=outside:60,60",
     "o_final=rpress:378,400", "esc_final=escape",
 ])
@@ -184,7 +190,8 @@ def verify_64(steps):
                  "Assign selection to Macro 1", "Assign selection to Macro 4", "Modulation"}
                 <= labels(snapshot), name + ":selection-actions")
         require("Selection · 64" in labels(snapshot), name + ":exact-selection")
-    for name in ["select", "modulation", "back"]:
+    for name in ["select", "modulation", "lfo1_toggle", "lfo2_toggle", "back",
+                 "target_open", "target_b", "target_panel", "target_back"]:
         snapshot = step(steps, name) or {}
         require(snapshot.get("attributable") is True and
                 snapshot.get("result", "").startswith("overlay-routed:click=") and
@@ -195,6 +202,26 @@ def verify_64(steps):
     require({"LFO 1", "LFO 2", "SHARED TARGET", "Bank", "Snapshot A", "Snapshot B", "Morph"}
             <= labels(panel), "modulation-panel:actions")
     require("Select all" not in labels(panel), "main-panel-hidden")
+    lfo1 = step(steps, "lfo1_settled") or {}
+    lfo2 = step(steps, "lfo2_settled") or {}
+    require(isinstance(panel.get("lfo1_enabled"), bool) and
+            lfo1.get("lfo1_enabled") is (not panel.get("lfo1_enabled")) and
+            lfo1.get("lfo2_enabled") is panel.get("lfo2_enabled") and
+            lfo1.get("menu_mounted") is True, "lfo1:independent-toggle")
+    require(isinstance(lfo1.get("lfo2_enabled"), bool) and
+            lfo2.get("lfo2_enabled") is (not lfo1.get("lfo2_enabled")) and
+            lfo2.get("lfo1_enabled") is lfo1.get("lfo1_enabled") and
+            lfo2.get("menu_mounted") is True, "lfo2:independent-toggle")
+    target = step(steps, "target_settled") or {}
+    target_before = step(steps, "target_open_settled") or {}
+    reopened = step(steps, "target_reopened") or {}
+    require(target_before.get("lfo_target") in (0, 1, 3) and
+            target.get("lfo_target") == 2 and target.get("lfo_target_mask") == 4 and
+            target.get("menu_mounted") is False, "target:processor-effect-and-close")
+    require(reopened.get("lfo_target") == 2 and reopened.get("lfo_target_mask") == 4 and
+            reopened.get("lfo1_enabled") is lfo2.get("lfo1_enabled") and
+            reopened.get("lfo2_enabled") is lfo2.get("lfo2_enabled") and
+            layout_reading(reopened)[0], "target:reopen-state")
     for name in ["esc_re1", "esc_re2", "esc_re3", "esc_re4", "esc_final"]:
         snapshot = step(steps, name) or {}
         require(snapshot.get("result") == "overlay" and

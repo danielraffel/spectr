@@ -2401,7 +2401,12 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     walk(*scope);
                     js << "]";
                 }
-                js << ",\"n_visible\":" << n
+                const auto modulation = modulation_settings();
+                js << ",\"lfo1_enabled\":" << (modulation.enabled ? "true" : "false")
+                   << ",\"lfo2_enabled\":" << (modulation.lfo2_enabled ? "true" : "false")
+                   << ",\"lfo_target\":" << static_cast<int>(modulation.target)
+                   << ",\"lfo_target_mask\":" << static_cast<int>(resolve_modulation_target_mask(modulation))
+                   << ",\"n_visible\":" << n
                    << ",\"edit_mode\":"
                    << (param_store_ != nullptr
                            ? param_store_->get_value(kParamEditMode) : -1.0f)
