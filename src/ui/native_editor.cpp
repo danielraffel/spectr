@@ -49,12 +49,13 @@ void root_origin_of(const pulp::view::View& view, float& x, float& y) {
 const pulp::view::Label* find_label_if(
         const pulp::view::View& view,
         bool (*match)(const std::string&, const std::string&),
-        const std::string& needle) {
+        const std::string& needle, bool include_hidden = false) {
+    if (!include_hidden && !view.visible()) return nullptr;
     if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
         label != nullptr && match(label->text(), needle))
         return label;
     for (std::size_t i = 0; i < view.child_count(); ++i)
-        if (const auto* hit = find_label_if(*view.child_at(i), match, needle))
+        if (const auto* hit = find_label_if(*view.child_at(i), match, needle, include_hidden))
             return hit;
     return nullptr;
 }
@@ -76,12 +77,12 @@ bool is_band_header(const std::string& text, const std::string&) {
 
 pulp::view::View* menu_container(pulp::view::View& root, int& band_number) {
     band_number = -1;
-    const auto* header = find_label_if(root, is_band_header, std::string{});
+    const auto* header = find_label_if(root, is_band_header, std::string{}, true);
     if (header == nullptr) return nullptr;
     band_number = std::atoi(header->text().c_str() + 5);
     for (auto* node = const_cast<pulp::view::Label*>(header)->parent();
          node != nullptr; node = node->parent())
-        if (node->child_count() >= 8) return node;
+        if (node == root.interaction().active_overlay) return node;
     return nullptr;
 }
 
@@ -2365,6 +2366,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     std::vector<pulp::view::View*> seen;
                     std::function<void(pulp::view::View&)> walk =
                         [&](pulp::view::View& v) {
+                            if (!v.visible()) return;
                             if (const auto* label =
                                     dynamic_cast<const pulp::view::Label*>(&v);
                                 label != nullptr && !label->text().empty()) {

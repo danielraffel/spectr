@@ -1070,6 +1070,15 @@ add_test(NAME Spectr-standalone-band-menu-rows
 set_tests_properties(Spectr-standalone-band-menu-rows PROPERTIES
     TIMEOUT 900
     RESOURCE_LOCK spectr_native_materialized_editor)
+add_test(NAME Spectr-standalone-band-menu-64
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/menu_scenario_check.py
+        --binary ${CMAKE_CURRENT_BINARY_DIR}/Spectr.app/Contents/MacOS/Spectr
+        --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-standalone-band-menu-64
+        --bands64)
+set_tests_properties(Spectr-standalone-band-menu-64 PROPERTIES
+    TIMEOUT 900
+    RESOURCE_LOCK spectr_native_materialized_editor)
 
 # Its negative control: every measured row press becomes a no-op wait and
 # nothing else changes -- the menu still opens, the arrangement drags still
@@ -1668,6 +1677,10 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulation_grouping.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
     set_tests_properties(Spectr-materialized-modulation-grouping PROPERTIES TIMEOUT 60)
+    add_test(NAME Spectr-context-modulation-behavior
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_context_modulation_behavior.mjs)
+    set_tests_properties(Spectr-context-modulation-behavior PROPERTIES TIMEOUT 60)
     # Negative controls, one per gate. Each reinstates a real defect and inverts
     # the verdict inside the script, so the row is green only when the suite
     # REJECTS it. The inversion is deliberately not WILL_FAIL: WILL_FAIL accepts
