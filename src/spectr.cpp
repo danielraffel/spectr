@@ -65,6 +65,30 @@ Spectr::Spectr() : editor_authority_(*this) {
     settings.default_modifiers = pulp::view::kModCtrl;
 #endif
     native_command_registry_.register_command(settings);
+
+    pulp::view::CommandInfo undo;
+    undo.id = kUndoCommand;
+    undo.name = "Undo";
+    undo.category = "Edit";
+    undo.default_key = pulp::view::KeyCode::z;
+#if defined(__APPLE__)
+    undo.default_modifiers = pulp::view::kModCmd;
+#else
+    undo.default_modifiers = pulp::view::kModCtrl;
+#endif
+    native_command_registry_.register_command(undo);
+
+    pulp::view::CommandInfo redo;
+    redo.id = kRedoCommand;
+    redo.name = "Redo";
+    redo.category = "Edit";
+    redo.default_key = pulp::view::KeyCode::z;
+#if defined(__APPLE__)
+    redo.default_modifiers = pulp::view::kModCmd | pulp::view::kModShift;
+#else
+    redo.default_modifiers = pulp::view::kModCtrl | pulp::view::kModShift;
+#endif
+    native_command_registry_.register_command(redo);
     native_command_registry_.add_handler(this);
 #endif
 }

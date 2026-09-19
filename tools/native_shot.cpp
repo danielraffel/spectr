@@ -5482,6 +5482,15 @@ int main(int argc, char** argv) {
 
         rig.activate("[data-spectr-settings-open]");
         rig.require_reachable("[data-spectr-settings-panel]");
+        // Establish the precondition for the collapsed-state probe. The host
+        // scenario may have left either LFO enabled before Settings mounts;
+        // an assertion about both being off must drive them off explicitly.
+        if (rig.store.get_value(spectr::kParamLfo2Enabled) >= 0.5f)
+            rig.activate_modulation_toggle(1, "LFO 2");
+        if (rig.store.get_value(spectr::kParamLfoEnabled) >= 0.5f)
+            rig.activate_modulation_toggle(0, "LFO");
+        settle(rig.clock, 16);
+        rig.root->layout_children();
         rig.print_layout_receipt();
         capture(rig, dir, prefix + "02-settings-SHIPPING", backend, scale);
 
@@ -5526,6 +5535,13 @@ int main(int argc, char** argv) {
                     wrong += mounted ? " (reachable while both LFOs are off)"
                                      : " (not mounted)";
                 }
+            }
+            if (const auto* probe = find_label(*rig.root, "ALL")) {
+                std::printf("destination native visibility ALL:");
+                for (const auto* node = static_cast<const pulp::view::View*>(probe);
+                     node != nullptr; node = node->parent())
+                    std::printf(" %s", node->visible() ? "visible" : "HIDDEN");
+                std::printf("\n");
             }
             if (!wrong.empty())
                 throw std::runtime_error(

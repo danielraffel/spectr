@@ -49,12 +49,13 @@ void root_origin_of(const pulp::view::View& view, float& x, float& y) {
 const pulp::view::Label* find_label_if(
         const pulp::view::View& view,
         bool (*match)(const std::string&, const std::string&),
-        const std::string& needle) {
+        const std::string& needle, bool include_hidden = false) {
+    if (!include_hidden && !view.visible()) return nullptr;
     if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
         label != nullptr && match(label->text(), needle))
         return label;
     for (std::size_t i = 0; i < view.child_count(); ++i)
-        if (const auto* hit = find_label_if(*view.child_at(i), match, needle))
+        if (const auto* hit = find_label_if(*view.child_at(i), match, needle, include_hidden))
             return hit;
     return nullptr;
 }
@@ -76,13 +77,12 @@ bool is_band_header(const std::string& text, const std::string&) {
 
 pulp::view::View* menu_container(pulp::view::View& root, int& band_number) {
     band_number = -1;
-    const auto* header = find_label_if(root, is_band_header, std::string{});
+    auto* overlay = root.interaction().active_overlay;
+    if (overlay == nullptr) return nullptr;
+    const auto* header = find_label_if(*overlay, is_band_header, std::string{}, true);
     if (header == nullptr) return nullptr;
     band_number = std::atoi(header->text().c_str() + 5);
-    for (auto* node = const_cast<pulp::view::Label*>(header)->parent();
-         node != nullptr; node = node->parent())
-        if (node->child_count() >= 8) return node;
-    return nullptr;
+    return overlay;
 }
 
 struct RowAim {
@@ -565,15 +565,25 @@ void collect_settings_scroll_views(pulp::view::View& view,
 } // namespace
 
 std::vector<pulp::view::CommandID> Spectr::commands() const {
-    return {kOpenSettingsCommand};
+    return {kOpenSettingsCommand, kUndoCommand, kRedoCommand};
 }
 
 bool Spectr::perform_command(pulp::view::CommandID id) {
-    if (id != kOpenSettingsCommand || !native_scripted_ui_
-        || !native_scripted_ui_->bridge()) {
+    if ((id != kOpenSettingsCommand && id != kUndoCommand && id != kRedoCommand)
+        || !native_scripted_ui_ || !native_scripted_ui_->bridge()) {
         return false;
     }
     try {
+        if (id == kUndoCommand || id == kRedoCommand) {
+            // Reuse the same EditorBridge handlers as the menu rows. The
+            // command is consumed even when history is empty so the host
+            // never treats Cmd/Ctrl+Z as its own project removal command.
+            native_editor_bridge_.dispatch_json(
+                id == kUndoCommand
+                    ? R"({"type":"undo","payload":{}})"
+                    : R"({"type":"redo","payload":{}})");
+            return true;
+        }
         native_scripted_ui_->bridge()->load_script(
             "(() => { if (!globalThis.__pulpActivateMaterializedElement__("
             "'[data-spectr-settings-open]', 'click', null)) "
@@ -2365,6 +2375,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     std::vector<pulp::view::View*> seen;
                     std::function<void(pulp::view::View&)> walk =
                         [&](pulp::view::View& v) {
+                            if (!v.visible()) return;
                             if (const auto* label =
                                     dynamic_cast<const pulp::view::Label*>(&v);
                                 label != nullptr && !label->text().empty()) {
@@ -2399,7 +2410,12 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     walk(*scope);
                     js << "]";
                 }
-                js << ",\"n_visible\":" << n
+                const auto modulation = modulation_settings();
+                js << ",\"lfo1_enabled\":" << (modulation.enabled ? "true" : "false")
+                   << ",\"lfo2_enabled\":" << (modulation.lfo2_enabled ? "true" : "false")
+                   << ",\"lfo_target\":" << static_cast<int>(modulation.target)
+                   << ",\"lfo_target_mask\":" << static_cast<int>(resolve_modulation_target_mask(modulation))
+                   << ",\"n_visible\":" << n
                    << ",\"edit_mode\":"
                    << (param_store_ != nullptr
                            ? param_store_->get_value(kParamEditMode) : -1.0f)

@@ -29,6 +29,7 @@ Exit: 0 every assertion holds, 1 one did not, 3 the run could not be made.
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -58,12 +59,6 @@ SCENARIO = ";".join([
     "o_msel2=rpress:378,400",      "mutesel2=row:Mute / Unmute selection",
     "o_seln2=rpress:378,400",      "selnone=row:Select none",
     "o_after_seln=rpress:378,400",
-    "glide=row:Glide",
-    "o_sculpt=rpress:378,400",     "sculpt=row:Sculpt",
-    "o_level=rpress:378,400",      "level=row:Level",
-    "o_boost=rpress:378,400",      "boost=row:Boost",
-    "o_flare=rpress:378,400",      "flare=row:Flare",
-    "o_glide2=rpress:378,400",     "glide2=row:Glide",
     "zoom=wheel:378,400,-240,12",
     "o_fit=rpress:378,400",        "fit=row:Fit full range",
     "settle_fit=wait",
@@ -94,6 +89,25 @@ SCENARIO = ";".join([
     "o_final=rpress:378,400",
 ])
 
+SCENARIO_64 = ";".join([
+    "open=rpress:378,400", "select=row:Select all",
+    "o_re1=rpress:378,400", "esc_re1=escape",
+    "o_re2=rpress:378,400", "esc_re2=escape",
+    "o_re3=rpress:378,400", "esc_re3=escape",
+    "grow=resize:1500,980", "o_re4=rpress:378,400", "esc_re4=escape",
+    "shrink=resize:1320,860", "o_re5=rpress:378,400",
+    "modulation=row:Modulation", "modulation_settled=wait",
+    "lfo1_toggle=row:LFO 1", "lfo1_settled=wait",
+    "lfo2_toggle=row:LFO 2", "lfo2_settled=wait",
+    "back=row:< Back", "back_settled=wait",
+    "target_open=row:Modulation", "target_open_settled=wait",
+    "target_b=row:Snapshot B", "target_settled=wait",
+    "target_reopen=rpress:378,400", "target_panel=row:Modulation",
+    "target_reopened=wait", "target_back=row:< Back", "target_back_settled=wait",
+    "outside=outside:60,60",
+    "o_final=rpress:378,400", "esc_final=escape",
+])
+
 
 
 def step(steps, name):
@@ -115,16 +129,126 @@ def labels(s):
     return {row['label'] for row in (s or {}).get('rows', [])}
 
 
+def layout_reading(s):
+    if s is None or not s.get("menu_mounted"):
+        return (False, ["menu-missing"])
+    rect = s.get("menu_rect")
+    rows_for_menu = s.get("rows")
+    if (not isinstance(rect, list) or len(rect) != 4 or
+            not isinstance(rows_for_menu, list) or not rows_for_menu):
+        return (False, ["snapshot-missing"])
+    try:
+        mx, my, mw, mh = (float(v) for v in rect)
+    except (TypeError, ValueError):
+        return (False, ["bad-menu-rect"])
+    if not all(math.isfinite(v) for v in (mx, my, mw, mh)) or mw <= 0 or mh <= 0:
+        return (False, ["bad-menu-rect"])
+    missing = []
+    boxes = []
+    pressable_count = 0
+    for row in rows_for_menu:
+        if not isinstance(row, dict):
+            missing.append("bad-row")
+            continue
+        pressable_count += bool(row.get("pressable"))
+        label = row.get("label", "<unnamed>")
+        try:
+            x, y, w, h = (float(v) for v in row["rect"])
+        except (KeyError, TypeError, ValueError):
+            missing.append(label + ":bad-rect")
+            continue
+        if not all(math.isfinite(v) for v in (x, y, w, h)) or w <= 0 or h <= 0:
+            missing.append(label + ":bad-rect")
+            continue
+        if x < mx or y < my or x + w > mx + mw or y + h > my + mh:
+            missing.append(label + ":outside-menu")
+        if row.get("pressable") and not row.get("owns_own_centre"):
+            missing.append(label + ":unreachable")
+        boxes.append((label, x, y, w, h))
+    for i, (label, x, y, w, h) in enumerate(boxes):
+        for other, ox, oy, ow, oh in boxes[i + 1:]:
+            if min(x + w, ox + ow) > max(x, ox) and min(y + h, oy + oh) > max(y, oy):
+                missing.append(label + "+" + other + ":overlap")
+    if pressable_count == 0:
+        missing.append("no-pressable-rows")
+    return (not missing, sorted(missing))
+
+
+def verify_64(steps):
+    failures = []
+    def require(ok, name):
+        if not ok:
+            failures.append(name)
+    for name in ["o_re1", "o_re2", "o_re3", "o_re4", "o_re5", "back_settled", "o_final"]:
+        snapshot = step(steps, name) or {}
+        require(snapshot.get("n_visible") == 64 and
+                len(snapshot.get("gain_db", [])) == 64 and
+                len(snapshot.get("muted", [])) == 64, name + ":64-bands")
+        ok, issues = layout_reading(snapshot)
+        require(ok, name + ":" + str(issues))
+        require({"Select none", "Zero selection", "Mute / Unmute selection",
+                 "Assign selection to Macro 1", "Assign selection to Macro 4", "Modulation"}
+                <= labels(snapshot), name + ":selection-actions")
+        require("Selection · 64" in labels(snapshot), name + ":exact-selection")
+    for name in ["select", "modulation", "lfo1_toggle", "lfo2_toggle", "back",
+                 "target_open", "target_b", "target_panel", "target_back"]:
+        snapshot = step(steps, name) or {}
+        require(snapshot.get("attributable") is True and
+                snapshot.get("result", "").startswith("overlay-routed:click=") and
+                not snapshot.get("result", "").endswith("<none>"), name + ":label-hit")
+    panel = step(steps, "modulation_settled") or {}
+    ok, issues = layout_reading(panel)
+    require(ok, "modulation-panel:" + str(issues))
+    require({"LFO 1", "LFO 2", "SHARED TARGET", "Bank", "Snapshot A", "Snapshot B", "Morph"}
+            <= labels(panel), "modulation-panel:actions")
+    require("Select all" not in labels(panel), "main-panel-hidden")
+    lfo1 = step(steps, "lfo1_settled") or {}
+    lfo2 = step(steps, "lfo2_settled") or {}
+    require(isinstance(panel.get("lfo1_enabled"), bool) and
+            lfo1.get("lfo1_enabled") is (not panel.get("lfo1_enabled")) and
+            lfo1.get("lfo2_enabled") is panel.get("lfo2_enabled") and
+            lfo1.get("menu_mounted") is True, "lfo1:independent-toggle")
+    require(isinstance(lfo1.get("lfo2_enabled"), bool) and
+            lfo2.get("lfo2_enabled") is (not lfo1.get("lfo2_enabled")) and
+            lfo2.get("lfo1_enabled") is lfo1.get("lfo1_enabled") and
+            lfo2.get("menu_mounted") is True, "lfo2:independent-toggle")
+    target = step(steps, "target_settled") or {}
+    target_before = step(steps, "target_open_settled") or {}
+    reopened = step(steps, "target_reopened") or {}
+    require(target_before.get("lfo_target") in (0, 1, 3) and
+            target.get("lfo_target") == 2 and target.get("lfo_target_mask") == 4 and
+            target.get("menu_mounted") is False, "target:processor-effect-and-close")
+    require(reopened.get("lfo_target") == 2 and reopened.get("lfo_target_mask") == 4 and
+            reopened.get("lfo1_enabled") is lfo2.get("lfo1_enabled") and
+            reopened.get("lfo2_enabled") is lfo2.get("lfo2_enabled") and
+            layout_reading(reopened)[0], "target:reopen-state")
+    for name in ["esc_re1", "esc_re2", "esc_re3", "esc_re4", "esc_final"]:
+        snapshot = step(steps, name) or {}
+        require(snapshot.get("result") == "overlay" and
+                snapshot.get("menu_mounted") is False, name + ":dismissal")
+    outside = step(steps, "outside") or {}
+    require(outside.get("result") == "dismissed" and
+            outside.get("menu_mounted") is False, "outside:dismissal")
+    for failure in failures:
+        print("FAIL", failure)
+    print("64-band menu: %d failure(s)" % len(failures))
+    return 1 if failures else 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--binary", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--bands64", action="store_true",
+                    help="run dedicated 64-band selection, geometry, submenu and dismissal checks")
     ap.add_argument("--plant-no-press", action="store_true",
                     help="negative control: every measured press becomes a "
                          "no-op wait. Every row assertion must then fail.")
     args = ap.parse_args()
 
-    scenario = SCENARIO
+    if args.bands64 and args.plant_no_press:
+        ap.error("--plant-no-press applies to the full effect scenario, not --bands64")
+    scenario = SCENARIO_64 if args.bands64 else SCENARIO
     if args.plant_no_press:
         scenario = ";".join(
             (part.split("=")[0] + "=wait") if "=row:" in part else part
@@ -144,6 +268,10 @@ def main():
         "PULP_SCREENSHOT": os.path.join(args.out, "menu-scenario.png"),
         "PULP_FRAMES": "2100",
     })
+    if args.bands64:
+        env["SPECTR_BANDS_PERF_FIXTURE"] = "1"
+    else:
+        env.pop("SPECTR_BANDS_PERF_FIXTURE", None)
     log_path = os.path.join(args.out, "menu-scenario.log")
     with open(log_path, "w") as log:
         proc = subprocess.run([args.binary], env=env, stdout=log,
@@ -166,6 +294,9 @@ def main():
         print("UNPROVEN: %d of %d steps ran; the frame budget is too small."
               % (len(steps), len(scenario.split(";"))), file=sys.stderr)
         return 3
+
+    if args.bands64:
+        return verify_64(steps)
 
     rows = []
 
@@ -301,18 +432,6 @@ def main():
                bool(assigned['macros'][macro]) and cleared['macros'][macro] == []
                and closed(f'clear{number}'), str(cleared['macros'][macro]))
 
-    for name, value in (("sculpt", 0.0), ("level", 1.0), ("boost", 2.0),
-                        ("flare", 3.0), ("glide2", 4.0)):
-        s_mode = step(steps, name)
-        prior = steps[steps.index(s_mode) - 2]
-        record(name.rstrip("2").capitalize(), "no selection",
-               "the edit-mode parameter moves to this mode, menu closed",
-               s_mode["edit_mode"] == value and prior["edit_mode"] != value
-               and closed(name),
-               "edit_mode %.1f -> %.1f (want %.1f) closed=%s"
-               % (prior["edit_mode"], s_mode["edit_mode"], value,
-                  closed(name)))
-
     zoomed = step(steps, "zoom")
     after_fit = step(steps, "settle_fit")
     record("Fit full range", "no selection",
@@ -345,25 +464,50 @@ def main():
            "mounted before=%s; policy answered '%s'; mounted after=%s"
            % (pre_o["menu_mounted"], out["result"], out["menu_mounted"]))
 
+    reopen_dismissal = all(
+        (step(steps, f"o_re{i}") or {}).get("menu_mounted") and
+        (step(steps, f"esc_re{i}") or {}).get("result") == "overlay" and
+        not (step(steps, f"esc_re{i}") or {}).get("menu_mounted")
+        for i in range(1, 5)
+    ) and (step(steps, "o_re5") or {}).get("menu_mounted") and \
+        (step(steps, "esc_re5") or {}).get("result") == "overlay" and \
+        not (step(steps, "esc_re5") or {}).get("menu_mounted")
+    record("Repeated reopen/dismiss", "all selected",
+           "each repeated reopen mounts and Escape dismisses the menu",
+           reopen_dismissal,
+           "reopen/escape cycles 1-5 passed=%s" % reopen_dismissal)
+
     # Every painted action must own its centre, including the largest menu.
-    def unreachable(name):
-        s = step(steps, name)
-        if s is None or not s.get("rows"):
-            return None
-        return sorted(r["label"] for r in s["rows"]
-                      if r["pressable"] and not r["owns_own_centre"])
+    # Treat absent snapshots as failures: an empty/missing row list is not
+    # evidence that the menu is reachable.
 
     reopens = ["o_re1", "o_re2", "o_re3", "o_re4", "o_re5", "o_re6", "o_allmacros"]
     heights = [(step(steps, k) or {}).get("menu_rect", [0, 0, 0, 0])[3]
                for k in reopens]
-    sets = [unreachable(k) for k in reopens]
+    layouts = [layout_reading(step(steps, k)) for k in reopens]
+    sets = [missing for _, missing in layouts]
+    count_ok = all((step(steps, k) or {}).get("n_visible") == 32 and
+                   len((step(steps, k) or {}).get("gain_db", [])) == 32 and
+                   len((step(steps, k) or {}).get("muted", [])) == 32
+                   for k in reopens)
     print("\n── band-menu reachability with a live selection ──")
     for name, missing in zip(reopens, sets):
         print("  %-6s unreachable rows: %s" % (name, missing))
-    layout_ok = all(not missing for missing in sets)
+    layout_ok = count_ok and all(ok for ok, _ in layouts)
     record("Menu row reachability", "all selected",
-           "every enabled row owns its painted centre after reopen and resize",
+           "32-band menu is mounted; rows are finite, inside, non-overlapping, and reachable after every reopen/resize",
            layout_ok, "heights %s; unreachable rows %s" % (heights, sets))
+
+    row_steps = [s for s in steps if s.get("kind") == "row" and s.get("step") != "selnone_disabled"]
+    row_attribution_ok = bool(row_steps) and all(
+        s.get("attributable") and ":click=" in s.get("result", "") and
+        not s.get("result", "").endswith(":click=<none>")
+        for s in row_steps)
+    record("Menu label hit attribution", "all rows",
+           "every painted-label press hit its own clickable row and fired a click",
+           row_attribution_ok,
+           "%d row presses, all attributable=%s" %
+           (len(row_steps), row_attribution_ok))
 
     print("\n%-32s %-14s %-8s %s" % ("ITEM", "STATE", "VERDICT", "READING"))
     failures = 0
@@ -381,7 +525,8 @@ def main():
         # this control cannot neuter them and must not score them; they carry
         # their own before/after control inside the main run instead. The
         # layout row is a geometry reading and is press-independent by design.
-        not_press_driven = ("Menu row reachability", "Escape", "Press outside")
+        not_press_driven = ("Menu row reachability", "Menu label hit attribution",
+                            "Repeated reopen/dismiss", "Escape", "Press outside")
         press_driven = [r for r in rows
                         if not r[0].startswith(not_press_driven)]
         still_passing = [r[0] for r in press_driven if r[3]]

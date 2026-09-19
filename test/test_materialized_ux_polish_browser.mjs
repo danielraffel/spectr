@@ -558,6 +558,9 @@ window.pulp = {
   try {
     return spawnSync(chromePath, [
       '--headless=new', '--disable-gpu', '--disable-web-security',
+      // Headless macOS may have no CVDisplayLink. Keep rAF advancing without
+      // display vsync; otherwise the scroll assertion never resumes.
+      '--disable-frame-rate-limit',
       '--disable-background-networking', '--disable-component-update',
       '--disable-domain-reliability', '--disable-sync', '--incognito',
       '--allow-file-access-from-files', '--no-first-run',
