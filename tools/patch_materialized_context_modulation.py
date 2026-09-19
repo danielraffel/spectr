@@ -15,6 +15,15 @@ def make_adjacent_modulation_submenu(html):
     if 'data-spectr-modulation-anchor' in html:
         assert html.count('data-spectr-modulation-anchor') == 1
         assert html.count('sub: "›"') == 1
+        # A full-window portal host can be treated as an opaque native View
+        # by an AU compositor and eclipse the bottom rail. Keep the host as a
+        # zero-sized stacking anchor; the fixed menu remains topmost.
+        html = html.replace(
+            'position: "absolute", inset: 0, zIndex: 2147483000,\n'
+            '    overflow: "visible", pointerEvents: "none"',
+            'position: "absolute", left: 0, top: 0, width: 0, height: 0,\n'
+            '    zIndex: 2147483000,\n'
+            '    overflow: "visible", pointerEvents: "none"', 1)
         # Keep the bottom rail visible when a tall context menu is opened
         # near the lower edge. The menu remains topmost, but its scroll
         # viewport ends above the rail instead of painting over it.
@@ -258,7 +267,13 @@ function spectrBandMenuPortal(menu) {
 }
 function spectrBandMenuLayerStyle() {
   return {
-    position: "absolute", inset: 0, zIndex: 2147483000,
+    // Keep the portal host out of the native compositor's full-surface
+    // layout. A full-window transparent View can still eclipse later
+    // siblings (notably the bottom rail) in an AU host even with
+    // pointerEvents disabled. The menu itself is fixed and owns the high
+    // z-index, so the host only needs to be a zero-sized stacking anchor.
+    position: "absolute", left: 0, top: 0, width: 0, height: 0,
+    zIndex: 2147483000,
     overflow: "visible", pointerEvents: "none"
   };
 }
