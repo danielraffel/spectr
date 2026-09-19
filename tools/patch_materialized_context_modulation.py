@@ -30,6 +30,15 @@ def make_adjacent_modulation_submenu(html):
                         '          backdropFilter: "blur(12px)", zIndex: 2147483002,\n'
                         '          maxHeight: menuMaxHeight, overflowY: "auto",\n'
                         '          overscrollBehavior: "contain", pointerEvents: "auto"')
+        if 'const submenuTop = ' not in html:
+            html = once(html, '  const submenuOnLeft = left + W * 2 + 6 > vw - 8;\n',
+                        '  const submenuOnLeft = left + W * 2 + 6 > vw - 8;\n'
+                        '  const submenuHeight = Math.min(440, menuMaxHeight);\n'
+                        '  const submenuTop = Math.max(8, Math.min(top + 108 + (hasSel ? 100 : 0), vh - submenuHeight - 8));\n')
+            html = once(html, 'position: "absolute",\n          left: submenuOnLeft ? -(W + 6) : W + 6, top: 0, width: W,',
+                        'position: "fixed",\n'
+                        '          left: submenuOnLeft ? Math.max(8, left - W - 6) : Math.min(vw - W - 8, left + W + 6),\n'
+                        '          top: submenuTop, width: W,')
         return html
 
     start = html.index('function ContextMenu(')
@@ -59,7 +68,9 @@ def make_adjacent_modulation_submenu(html):
         '  const top = Math.max(8, Math.min(y, vh - H - 8));',
         '  const left = Math.max(8, Math.min(x, vw - W - 8));\n'
         '  const top = Math.max(8, Math.min(y, vh - H - 8));\n'
-        '  const submenuOnLeft = left + W * 2 + 6 > vw - 8;')
+        '  const submenuOnLeft = left + W * 2 + 6 > vw - 8;\n'
+        '  const submenuHeight = Math.min(440, menuMaxHeight);\n'
+        '  const submenuTop = Math.max(8, Math.min(top + 108 + (hasSel ? 100 : 0), vh - submenuHeight - 8));')
     menu = once(
         menu,
         '  const Item = ({ action, label, hint, onClick, disabled, danger, sub, keepOpen, checked })',
@@ -120,8 +131,9 @@ def make_adjacent_modulation_submenu(html):
         role: "menu",
         "aria-label": "Modulation",
         style: {
-          display: "flex", flexDirection: "column", position: "absolute",
-          left: submenuOnLeft ? -(W + 6) : W + 6, top: 0, width: W,
+          display: "flex", flexDirection: "column", position: "fixed",
+          left: submenuOnLeft ? Math.max(8, left - W - 6) : Math.min(vw - W - 8, left + W + 6),
+          top: submenuTop, width: W,
           background: "rgba(12,16,22,0.97)",
           border: "1px solid rgba(255,255,255,0.12)", borderRadius: 5,
           padding: "6px 0", boxShadow: "0 14px 40px rgba(0,0,0,0.6)",
