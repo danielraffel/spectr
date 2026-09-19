@@ -809,6 +809,10 @@ private:
     // Keeping the consumer on the existing registry surface lets the current
     // SDK prove Spectr's handler before the host-side Cmd/Ctrl+, fallback lands.
     static constexpr pulp::view::CommandID kOpenSettingsCommand = 0x504C5354;
+    // Spectr owns document history, so these chords must be claimed by the
+    // plugin before a DAW interprets Cmd/Ctrl+Z as its own project command.
+    static constexpr pulp::view::CommandID kUndoCommand = 0x5350554E; // 'SPUN'
+    static constexpr pulp::view::CommandID kRedoCommand = 0x53505244; // 'SPRD'
     std::vector<pulp::view::CommandID> commands() const override;
     bool perform_command(pulp::view::CommandID id) override;
 

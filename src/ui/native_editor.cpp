@@ -565,15 +565,25 @@ void collect_settings_scroll_views(pulp::view::View& view,
 } // namespace
 
 std::vector<pulp::view::CommandID> Spectr::commands() const {
-    return {kOpenSettingsCommand};
+    return {kOpenSettingsCommand, kUndoCommand, kRedoCommand};
 }
 
 bool Spectr::perform_command(pulp::view::CommandID id) {
-    if (id != kOpenSettingsCommand || !native_scripted_ui_
-        || !native_scripted_ui_->bridge()) {
+    if ((id != kOpenSettingsCommand && id != kUndoCommand && id != kRedoCommand)
+        || !native_scripted_ui_ || !native_scripted_ui_->bridge()) {
         return false;
     }
     try {
+        if (id == kUndoCommand || id == kRedoCommand) {
+            // Reuse the same EditorBridge handlers as the menu rows. The
+            // command is consumed even when history is empty so the host
+            // never treats Cmd/Ctrl+Z as its own project removal command.
+            native_editor_bridge_.dispatch_json(
+                id == kUndoCommand
+                    ? R"({"type":"undo","payload":{}})"
+                    : R"({"type":"redo","payload":{}})");
+            return true;
+        }
         native_scripted_ui_->bridge()->load_script(
             "(() => { if (!globalThis.__pulpActivateMaterializedElement__("
             "'[data-spectr-settings-open]', 'click', null)) "
