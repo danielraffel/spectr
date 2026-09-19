@@ -9,6 +9,7 @@ function extract(start, end) {
 }
 const hook = extract('function useSpectrModulationState()', 'function SpectrModulationSettings()');
 let component = extract('function ContextMenu(', 'window.ContextMenu');
+assert.equal(component.includes('sub: "›"'), true);
 if (process.argv.includes('--plant-inverted-toggle')) {
   const before = 'publishModulation("enabled", 4000, !modulation.enabled)';
   assert.equal(component.split(before).length - 1, 1);
@@ -94,9 +95,15 @@ function mount(initial) {
     assert(result, `visible button ${action}`);
     return result;
   };
+  const menu = () => nodes(tree).find(node => node.props['data-spectr-band-context-menu']);
+  const submenu = () => nodes(tree).find(node => node.props['data-spectr-modulation-panel']);
   const click = action => { button(action).props.onClick(); render(); };
   render();
+  assert.equal(menu().props.style.zIndex, 2147483001);
+  assert.equal(menu().props.style.overflowY, 'auto');
+  assert.equal(menu().props.style.maxHeight, 844);
   return { button, click, calls, native, listeners, get closed() { return closed; },
+    menu, submenu,
     async settle() { await Promise.resolve(); await Promise.resolve(); render(); },
     external(value) { Object.assign(native, value); emit(); render(); },
     unmount() { effects.forEach(effect => effect?.cleanup?.()); },
@@ -107,6 +114,10 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   const test = mount({ enabled, lfo2_enabled });
   test.click('modulation-toggle');
   assert.equal(test.closed, 0);
+  assert.equal(test.button('modulation-toggle').props['aria-haspopup'], 'menu');
+  assert.equal(test.button('modulation-toggle').props['aria-expanded'], true);
+  assert.equal(test.submenu().props.style.maxHeight, 844);
+  assert.equal(test.submenu().props.style.overflowY, 'auto');
   assert.equal(test.button('lfo1-enable').props.disabled, true);
   test.click('lfo1-enable');
   assert.equal(test.calls.filter(call => call.type === 'param_set').length, 0);
@@ -128,7 +139,12 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   test.click('modulation-toggle');
   test.click('modulation-target-morph');
   assert.deepEqual(test.calls.at(-1), { type: 'param_set', payload: { id: 4004, value: 3 } });
-  assert.equal(test.closed, 1);
+  // Target writes are deliberately non dismissive: Spotify-style submenu
+  // navigation lets a user audition several targets without reopening it.
+  assert.equal(test.closed, 0);
+  assert.equal(test.button('modulation-target-morph').props['aria-checked'], true);
+  test.click('modulation-back');
+  assert.equal(test.closed, 0);
   test.unmount();
   assert([...test.listeners.values()].every(set => set.size === 0));
   const reopened = mount(test.native);
