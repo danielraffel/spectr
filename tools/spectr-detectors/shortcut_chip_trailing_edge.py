@@ -34,7 +34,7 @@ PRESET_TRIGGER = '[data-spectr-menu-root="pattern"] button'
 EDIT_TRIGGER = '[data-spectr-menu-root="edit"] [data-spectr-menu-trigger]'
 
 # The chip glyphs each menu is expected to publish.
-PRESET_CHIPS = ("⇧⌘P",)
+PRESET_CHIPS = ("Cmd+Shift+P",)
 EDIT_CHIPS = ("S", "L", "B", "F", "G")
 # Captions that must be measurable in the same dump.  They are the POSITIVE
 # CONTROL: if these are missing the menu never opened, and "no chips found"
