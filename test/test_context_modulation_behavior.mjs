@@ -16,7 +16,7 @@ if (process.argv.includes('--plant-inverted-toggle')) {
   component = component.replace(before, 'publishModulation("enabled", 4000, modulation.enabled)');
 }
 
-function mount(initial) {
+function mount(initial, height = 860) {
   const slots = [], effects = [], pending = [], calls = [], listeners = new Map();
   let cursor = 0, tree, closed = 0;
   const native = { enabled: false, lfo2_enabled: false, target: 0, target_mask: 1, ...initial };
@@ -70,7 +70,7 @@ function mount(initial) {
   } };
   const ContextMenu = new Function('React', 'window', 'document', 'spectrShortcutChipStyle',
     hook + '\n' + component + '\nreturn ContextMenu;')(React, window,
-      { getElementById: () => ({ clientWidth: 1320, clientHeight: 860 }) }, () => ({}));
+      { getElementById: () => ({ clientWidth: 1320, clientHeight: height }) }, () => ({}));
   const noop = () => {};
   const props = { x: 300, y: 300, band: 8, N: 64, selection: new Set(), macros: [],
     onClose: () => closed++, onMuteBand: noop, onZeroBand: noop, onSoloBand: noop,
@@ -101,7 +101,7 @@ function mount(initial) {
   render();
   assert.equal(menu().props.style.zIndex, 2147483001);
   assert.equal(menu().props.style.overflowY, 'auto');
-  assert.equal(menu().props.style.maxHeight, 844);
+  assert.equal(menu().props.style.maxHeight, Math.max(120, Math.max(24, height - 64) - 16));
   return { button, click, calls, native, listeners, get closed() { return closed; },
     menu, submenu,
     async settle() { await Promise.resolve(); await Promise.resolve(); render(); },
@@ -116,7 +116,7 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.equal(test.closed, 0);
   assert.equal(test.button('modulation-toggle').props['aria-haspopup'], 'menu');
   assert.equal(test.button('modulation-toggle').props['aria-expanded'], true);
-  assert.equal(test.submenu().props.style.maxHeight, 844);
+  assert.equal(test.submenu().props.style.maxHeight, 780);
   assert.equal(test.submenu().props.style.overflowY, 'auto');
   assert.equal(test.button('lfo1-enable').props.disabled, true);
   test.click('lfo1-enable');
@@ -153,4 +153,6 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.equal(reopened.button('modulation-target-morph').props['aria-checked'], true);
   reopened.unmount();
 }
+const compact = mount({ enabled: false, lfo2_enabled: false }, 240);
+assert.equal(compact.menu().props.style.maxHeight, 160);
 console.log('PASS: actual shared hook and button handlers; four initial states, disabled hydration, both toggles, live updates, navigation, targets, reopen, cleanup');

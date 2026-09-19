@@ -37,4 +37,12 @@ assert.match(menu, /Cmd\+Z/);
 assert.match(menu, /Cmd\+Shift\+Z/);
 assert.match(html, /Cmd\+Shift\+P/);
 
-console.log('PASS: band context menu has one edit-mode owner, readable shortcuts, and explicit section/disabled styling');
+// A menu opened at the lower edge must scroll within the content viewport,
+// leaving the 56 px bottom rail visible. The menu and submenu still use fixed
+// topmost layers; only their bottom clamp changes.
+assert.match(menu, /const menuBottom = Math\.max\(24, vh - 64\)/);
+assert.match(menu, /Math\.min\(y, menuBottom - H - 8\)/);
+assert.match(menu, /menuBottom - submenuHeight - 8/);
+assert.match(html, /"data-spectr-bottom-rail": true/);
+
+console.log('PASS: band context menu has one edit-mode owner, readable shortcuts, explicit section/disabled styling, and preserves the bottom rail');
