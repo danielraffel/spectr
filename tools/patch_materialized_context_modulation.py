@@ -17,11 +17,18 @@ def make_adjacent_modulation_submenu(html):
         assert html.count('sub: "›"') == 1
         # A full-window portal host can be treated as an opaque native View
         # by an AU compositor and eclipse the bottom rail. Keep the host as a
-        # zero-sized stacking anchor; the fixed menu remains topmost.
+        # one-pixel stacking anchor; the fixed menu remains topmost.
         html = html.replace(
             'position: "absolute", inset: 0, zIndex: 2147483000,\n'
             '    overflow: "visible", pointerEvents: "none"',
+            'position: "absolute", left: 0, top: 0, width: 1, height: 1,\n'
+            '    zIndex: 2147483000,\n'
+            '    overflow: "visible", pointerEvents: "none"', 1)
+        html = html.replace(
             'position: "absolute", left: 0, top: 0, width: 0, height: 0,\n'
+            '    zIndex: 2147483000,\n'
+            '    overflow: "visible", pointerEvents: "none"',
+            'position: "absolute", left: 0, top: 0, width: 1, height: 1,\n'
             '    zIndex: 2147483000,\n'
             '    overflow: "visible", pointerEvents: "none"', 1)
         # Keep the bottom rail visible when a tall context menu is opened
@@ -271,8 +278,8 @@ function spectrBandMenuLayerStyle() {
     // layout. A full-window transparent View can still eclipse later
     // siblings (notably the bottom rail) in an AU host even with
     // pointerEvents disabled. The menu itself is fixed and owns the high
-    // z-index, so the host only needs to be a zero-sized stacking anchor.
-    position: "absolute", left: 0, top: 0, width: 0, height: 0,
+    // z-index, so the host only needs to be a one-pixel stacking anchor.
+    position: "absolute", left: 0, top: 0, width: 1, height: 1,
     zIndex: 2147483000,
     overflow: "visible", pointerEvents: "none"
   };
