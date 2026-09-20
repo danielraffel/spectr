@@ -349,8 +349,12 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # Selection gain movement preserves mute and updates underlying gain.
 ^Spectr-group-drag-preserves-mute
 
-# Native output readout decay and overload latch.
+# Native output readout decay, auto-clearing overload, and the OVER latch
+# setting that restores the hold -- plus the two RED arms that prove each
+# contract is asserted in the mode that owns it.
 ^Spectr-native-output-meter-ballistics$
+^Spectr-native-output-meter-ballistics-autoclear-negative-control$
+^Spectr-native-output-meter-ballistics-latch-negative-control$
 ^Spectr-latency-rail-effect$
 ^Spectr-latency-rail-effect-disabled-write-control$
 ^Spectr-materialized-native-services-sync$

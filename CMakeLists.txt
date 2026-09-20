@@ -901,6 +901,13 @@ set_tests_properties(Spectr-band-menu-unmute-restores-negative-control
 
 # THE OUTPUT READOUT'S BALLISTICS, ON THE SHIPPING NATIVE SURFACE.
 #
+# The number holds and falls; the overload gets a hold of its own and goes out
+# by itself, and the `OVER latch` row in the FEEDBACK settings group restores
+# the hold-until-cleared reading. Both contracts are asserted here, each in the
+# mode that owns it, with the mode selected by activating that settings row --
+# so a row the panel cannot present, or one wired to nothing, fails this test
+# rather than being discovered by somebody who wanted the setting.
+#
 # The JS suite beside this proves the arithmetic in a vm. A vm cannot say
 # whether this runtime pumps the frame callback the fall rides on, whether the
 # glyphs land where the arithmetic says, or whether a HOST-OWNED press at the
@@ -915,7 +922,7 @@ set_tests_properties(Spectr-band-menu-unmute-restores-negative-control
 # drained makes a correct fall look frozen), the hit owner over the header gap
 # (an open modal dims the header and the captures photograph nothing), the
 # chip's presence, and a negative press in the empty gap that must leave the
-# latch standing.
+# latched chip standing.
 #
 # Exit: 0 pass, 1 a finding, 3 the premise is unproven -- the loop never
 # sampled inside the 800 ms glance interval, so whether the transient was
@@ -928,6 +935,41 @@ add_test(NAME Spectr-native-output-meter-ballistics
 set_tests_properties(Spectr-native-output-meter-ballistics PROPERTIES
     TIMEOUT 300
     RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Its two RED arms, one per contract. Each plants the OTHER mode -- through the
+# real `OVER latch` settings row, leaving every control live -- while its arm's
+# contract is asserted unchanged, and requires the gate to redden THAT arm and
+# only that arm.
+#
+# Both halves are load-bearing. An assertion that cannot fail proves nothing
+# when it is green; an assertion that reddens whichever mode the surface is in
+# is not telling the modes apart, and a probe that cannot tell a mode from a
+# defect reports its own staleness as a product bug the moment a default moves.
+#
+# The inversion lives inside the binary rather than in WILL_FAIL, which accepts
+# any non-zero exit -- the exit-3 "premise unproven" path, a usage error, a
+# missing asset -- and would pass while measuring nothing.
+add_test(NAME Spectr-native-output-meter-ballistics-autoclear-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_METER_SHOT=1
+        SPECTR_METER_SHOT_PLANT=auto
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-output-meter-negctl-auto
+        --backend=skia)
+set_tests_properties(Spectr-native-output-meter-ballistics-autoclear-negative-control
+    PROPERTIES
+        TIMEOUT 300
+        RESOURCE_LOCK spectr_native_materialized_editor)
+
+add_test(NAME Spectr-native-output-meter-ballistics-latch-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_METER_SHOT=1
+        SPECTR_METER_SHOT_PLANT=latch
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-output-meter-negctl-latch
+        --backend=skia)
+set_tests_properties(Spectr-native-output-meter-ballistics-latch-negative-control
+    PROPERTIES
+        TIMEOUT 300
+        RESOURCE_LOCK spectr_native_materialized_editor)
 
 # PRESET OPERATIONS. Every action the preset manager offers, driven in the real
 # native editor and judged by a count or an identity taken before and after.
