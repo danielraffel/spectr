@@ -90,11 +90,14 @@ def make_adjacent_modulation_submenu(html):
   };''')
     menu = once(
         menu,
-        '  const H = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;\n',
-        '  const estimatedHeight = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;\n'
+        '  const estimatedH = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;\n'
+        '  const H = measuredH === null ? estimatedH : measuredH;\n',
+        '  const estimatedH = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;\n'
         '  const menuBottom = Math.max(24, vh - 64);\n'
         '  const menuMaxHeight = Math.max(120, menuBottom - 16);\n'
-        '  const H = Math.min(estimatedHeight, menuMaxHeight);\n')
+        # The MEASURED height survives: #172 proved the 420+... estimate is
+        # wrong by +25/-15/-27px, and this branch had reverted to it.
+        '  const H = measuredH === null ? estimatedH : measuredH;\n')
     menu = once(
         menu,
         '  const left = Math.max(8, Math.min(x, vw - W - 8));\n'

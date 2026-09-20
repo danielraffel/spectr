@@ -4,22 +4,20 @@ import json
 from pathlib import Path
 P=Path(__file__).resolve().parents[1]/'native-ui/materialized/materialized-document.runtime.json'
 s=json.loads(P.read_text()); h=s['html']
-if 'fontSize: 9.5' in h and 'Cmd+Shift+P' in h and 'label: \"EDIT MODE\"' not in h[h.find('function ContextMenu'):h.find('window.ContextMenu')]:
+if 'fontSize: 9.5' in h and 'Cmd+Shift+P' in h:
     print('context menu compaction already applied')
     raise SystemExit(0)
-old='''    /* @__PURE__ */ React.createElement(Divider, { label: "EDIT MODE" }),
-    modes.map((m) => /* @__PURE__ */ React.createElement(
-      Item,
-      {
-        key: m.k,
-        label: (editMode === m.k ? "\\u25CF " : "   ") + m.label,
-        hint: m.hint,
-        onClick: () => onEditMode(m.k)
-      }
-    )),
-'''
-assert h.count(old)==1, h.count(old)
-h=h.replace(old,'',1)
+# EDIT MODE IS NOT COMPACTED AWAY.
+#
+# This block used to delete the `EDIT MODE` Divider and all five mode rows.
+# That is a content change, not compaction: the shipped build shows that
+# section with the `\u25CF` active-mode dot against the current mode, and
+# removing it takes band-level mode switching out of the menu entirely.
+# Nothing in the commit subjects said so. The chip-legibility half below is
+# kept, which is what "compact" was actually about.
+#
+# Restore the deletion here only on an explicit decision to drop the section.
+
 oldstyle='''    fontSize: 8.5,
     letterSpacing: 0.5,
     opacity: 0.5,
