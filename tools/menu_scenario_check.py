@@ -115,6 +115,73 @@ def labels(s):
     return {row['label'] for row in (s or {}).get('rows', [])}
 
 
+def refuse_reason(text, steps):
+    """Why this run cannot be reported on at all, or None if it can be.
+
+    Three ways the INSTRUMENT dies while every row assertion still produces a
+    confident-looking verdict. They are separated from the per-row checks
+    because a dead instrument does not fail some rows -- it fails whichever
+    rows the scenario happens to contain, and the count reads as a product
+    finding. On 2026-09-19 a run of this scenario reported 42 failing
+    assertions and every one of them was this function's first case.
+
+    Pure, so `test_menu_scenario_check.py` can drive it from recorded runs.
+    Being able to fire is not the same as firing on the real thing, so that
+    test replays the actual dead run's artifacts rather than crafted ones.
+    """
+    # 1. A JS exception while the scenario was driving.
+    #
+    # The editor's rows, its menu and every handler behind them are JS. When a
+    # throw kills the subtree owning the context handler, the native tree is
+    # still there and still takes presses -- so `rpress` keeps answering
+    # "handled", no menu ever mounts, and every row assertion fails for a
+    # reason that has nothing to do with the row.
+    #
+    # Two `script-ui[error]` lines are emitted before the first frame on every
+    # healthy run (the build-info probe), and the fatal one is byte-identical
+    # to the benign one (`{}`), so the text cannot discriminate. The position
+    # can: anything after the first frame fired while the scenario drove.
+    first_frame = text.find("first frame")
+    if first_frame >= 0 and "script-ui[error]" in text[first_frame:]:
+        after = [ln.strip() for ln in text[first_frame:].splitlines()
+                 if "script-ui[error]" in ln]
+        return ("UNPROVEN: %d JS error(s) fired after the first frame, so the "
+                "editor was broken while the scenario drove it and every "
+                "assertion would be measuring the breakage, not the product:"
+                "\n  %s" % (len(after), "\n  ".join(after)))
+
+    # 2. A verb the standalone does not implement.
+    #
+    # It changes nothing and records `unknown-step`, so the scenario silently
+    # measures less than it reads as measuring. `resize` was emitted by the
+    # scenario in this file and unimplemented for its whole life: both steps
+    # did nothing, and the two reopens after them were reported as
+    # post-resize readings of a window that had never been resized.
+    unknown = [s for s in steps if s["result"] == "unknown-step"]
+    if unknown:
+        return ("UNPROVEN: the standalone does not implement %d step(s) this "
+                "scenario emits, so they changed nothing: %s"
+                % (len(unknown),
+                   ", ".join("%s=%s" % (s["step"], s["kind"])
+                             for s in unknown)))
+
+    # 3. A context press that did not open the menu.
+    #
+    # The per-row premise checks one press; this checks all of them, because a
+    # scenario that opens the menu once and then stops is the same dead
+    # instrument reported as a long list of product failures.
+    presses = [s for s in steps if s["kind"] == "rpress"]
+    dead = [s for s in presses if not s["menu_mounted"]]
+    if dead:
+        return ("UNPROVEN: %d of %d context presses did not open the menu "
+                "(%s), so the rows behind them were never reachable and no "
+                "assertion about them means anything."
+                % (len(dead), len(presses),
+                   ", ".join("%s:%s" % (s["step"], s["result"])
+                             for s in dead[:6])))
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--binary", required=True)
@@ -165,6 +232,12 @@ def main():
     if len(steps) != len(scenario.split(";")):
         print("UNPROVEN: %d of %d steps ran; the frame budget is too small."
               % (len(steps), len(scenario.split(";"))), file=sys.stderr)
+        return 3
+
+    # Is this run readable at all? See `refuse_reason`.
+    reason = refuse_reason(text, steps)
+    if reason is not None:
+        print("%s\nSee %s" % (reason, log_path), file=sys.stderr)
         return 3
 
     rows = []
