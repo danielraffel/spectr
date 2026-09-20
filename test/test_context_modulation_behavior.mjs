@@ -33,6 +33,11 @@ function mount(initial, height = 860) {
       return slots[i] || (slots[i] = { current: value });
     },
     useCallback(fn) { cursor++; return fn; },
+    // The menu measures its own height in a layout effect. A hook that is
+    // absent from this stub does not degrade -- it throws, before a single
+    // assertion runs -- and it must still take a slot, or every hook declared
+    // after it reads another hook's state.
+    useLayoutEffect(fn) { cursor++; fn(); },
     useEffect(fn, deps) {
       const i = cursor++, old = effects[i];
       if (!old || deps.some((dep, index) => dep !== old.deps[index])) {
