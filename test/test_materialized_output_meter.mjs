@@ -33,6 +33,14 @@
 //            param_set; and an externally published trim must move the
 //            control.
 //
+// THIS SUITE DRIVES THE LEAF WITH `latchOver: true`. The overload half is a
+// mode now: by default the chip goes out on its own window, and `overLatch`
+// keeps the hold-until-clicked behaviour every runtime check below was
+// written against. Pinning the latch here keeps those checks measuring the
+// thing they describe; the DEFAULT, the mode split and the settings wiring
+// are the subject of `test_materialized_over_auto_clear.mjs`, which is the
+// suite that would notice if auto-clear stopped clearing.
+//
 // THE SPLIT THIS SUITE EXISTS TO HOLD. The number and the overload used to be
 // one welded value, held forever. A level that only ever rises cannot show
 // that the signal is alive -- a held reading and a frozen plug-in look
@@ -164,11 +172,13 @@ function plant(label, from, to) {
 
 const ONE_CLOCK_READ = "    const now = Date.now();\n"
   + "    commitReading(now);\n"
-  + "    if (falling(holdRef.current, now)) schedulePump();\n";
+  + "    if (falling(holdRef.current, now)\n"
+  + "        || overExpiring(holdRef.current)) schedulePump();\n";
 if (plantTwoClockReads) {
   plant("a pump that reads the clock twice", ONE_CLOCK_READ,
     "    commitReading(Date.now());\n"
-    + "    if (falling(holdRef.current, Date.now())) schedulePump();\n");
+    + "    if (falling(holdRef.current, Date.now())\n"
+    + "        || overExpiring(holdRef.current)) schedulePump();\n");
 }
 if (plantNoDecay) {
   plant("a number that never falls", FALL,
@@ -263,10 +273,12 @@ if (blind.length) {
 
 // S1. One leaf, rendered by Chrome. A component nothing renders is a component
 // no user can see, and nothing else in this suite would notice.
-if (html.split("function SpectrOutputMeter() {").length - 1 !== 1) {
+if (html.split("function SpectrOutputMeter({ latchOver = false } = {}) {")
+    .length - 1 !== 1) {
   fail("the document does not declare exactly one SpectrOutputMeter");
 }
-if (!chromeBody.includes("React.createElement(SpectrOutputMeter, null)")) {
+if (!chromeBody.includes("React.createElement(SpectrOutputMeter, "
+    + "{ latchOver: settings.overLatch === true })")) {
   fail("Chrome() does not render SpectrOutputMeter, so the readout exists in "
     + "the document and nowhere on screen");
 }
@@ -278,7 +290,8 @@ if (!chromeBody.includes("React.createElement(SpectrOutputMeter, null)")) {
 // shrinking its hit box. Only `native buttons are tappable across their whole
 // painted bounds` can see that, so pin the shape that avoids it here.
 if (!chromeBody.includes(
-    "React.createElement(SpectrOutputMeter, null), /* @__PURE__ */ "
+    "React.createElement(SpectrOutputMeter, "
+    + "{ latchOver: settings.overLatch === true }), /* @__PURE__ */ "
     + "React.createElement(SpectrLatencyRail, null));")) {
   fail("SpectrOutputMeter and SpectrLatencyRail are not appended in order "
     + "after Chrome's captured children; moving them earlier renumbers "
@@ -362,7 +375,7 @@ if (!/requestAnimationFrame\(pump\)/.test(meterBody)) {
     + "the native side publishes -- and it publishes nothing while a reading "
     + "is unchanged");
 }
-if (!/if \(falling\(holdRef\.current, now\)\) schedulePump\(\);/
+if (!/if \(falling\(holdRef\.current, now\)\s*\|\| overExpiring\(holdRef\.current\)\) schedulePump\(\);/
     .test(meterBody)) {
   fail("the fall pump does not reschedule itself conditionally, so it is "
     + "either a one-shot or a permanent per-frame animation in the header");
@@ -703,10 +716,14 @@ if (!leafBlock) {
         + "script block -- it was declared in another scope");
     } else {
       let element = null;
+      // LATCHED, explicitly. Every runtime check below measures the hold-
+      // until-clicked half, which is now what `overLatch` selects rather than
+      // what the component always does. Rendering the default here would make
+      // R3's tail assert that an auto-clearing chip does not clear.
       const render = () => {
         hooks.index = 0;
         hooks.effects = [];
-        element = Meter();
+        element = Meter({ latchOver: true });
         return element;
       };
       rerender = () => { render(); };
@@ -1059,8 +1076,8 @@ const passed = failures.length === 0;
 for (const f of failures) console.log("FAIL:", f);
 if (passed) {
   console.log("PASS: the readout holds its peak long enough to read and then "
-    + "falls to the live level, the overload latches until a person clears "
-    + "it, and the trim reaches kOutputTrim.");
+    + "falls to the live level, the overload holds until a person clears it "
+    + "with `overLatch` on, and the trim reaches kOutputTrim.");
 }
 
 if (expectFail) {

@@ -27,8 +27,9 @@
 //   node test_materialized_modulation.mjs <materialized-document.runtime.json>
 //        [--plant-smoothing] [--plant-oneshot] [--expect-fail]
 //
-// --plant-smoothing restores the unguarded `rg[i] = smooth(rg[i], target, ...)`
-// (the exact pre-fix line). --plant-oneshot deletes the live/hydrate
+// --plant-smoothing removes the modulationActiveRef guard, so the canonical
+// smoothing runs again while the overlay owns the paint refs -- the exact
+// pre-fix behaviour. --plant-oneshot deletes the live/hydrate
 // subscription effect (the exact pre-fix shape). --expect-fail inverts the
 // verdict, so a control row is green only when the planted defect is REJECTED,
 // and a missing file, usage error, or thrown extractor still fails it.
@@ -96,11 +97,15 @@ function blockAt(source, anchor, label) {
   throw new Error(`${label}: unbalanced block`);
 }
 
-const PRE_FIX_SMOOTH = "rg[i] = smooth(rg[i], target, dt * k);";
-const GUARDED_SMOOTH = `if (!modulationActiveRef.current) ${PRE_FIX_SMOOTH}`;
+// The GUARD is what this control removes, not the smoothing call: the loop
+// also reads the settled distance to the target inside this branch, and
+// deleting the whole branch would leave the plant failing on a missing busy
+// flag rather than on the excursion this control exists to measure.
+const SMOOTH_GUARD = "          if (!modulationActiveRef.current) {";
+const UNGUARDED = "          if (true) {";
 
 if (plantSmoothing) {
-  html = replaceExactlyOnce(html, GUARDED_SMOOTH, PRE_FIX_SMOOTH, "--plant-smoothing");
+  html = replaceExactlyOnce(html, SMOOTH_GUARD, UNGUARDED, "--plant-smoothing");
   notes.push("planted the unguarded canonical smoothing (pre-fix rAF loop)");
 }
 
@@ -151,6 +156,25 @@ function measureExcursion() {
       const renderAll = () => {};
       const updateLiveHoverStatus = () => {};
       const requestAnimationFrame = () => 0;
+      // The loop parks itself when nothing is moving, and applyModulationFrame
+      // re-arms it because it writes the paint refs with no state setter
+      // behind it. This rig drives the loop by hand and measures
+      // EXCURSION, so
+      // the idle machinery is supplied inert: a settled analyzer it can
+      // identify, no gesture in flight, and a wake that arms nothing.
+      const pointerRef = { current: { mode: null } };
+      // These two names are read by the loop AFTER it paints, and both must
+      // match the document exactly: an undefined name here does not degrade
+      // the measurement, it throws out of it, and the suite then reports a
+      // dead instrument as a finding about the DSP.
+      const spectrumSettledRef = { current: true };
+      const bandEnergyRef = { current: null };
+      const idleFramesRef = { current: 0 };
+      const analyzerFrameRef = { current: void 0 };
+      const IDLE_TAIL_FRAMES = 12;
+      const wakeDraw = () => {};
+      const window = { SpectrAnalyzer: {
+        native: true, debugSnapshot: () => null } };
       let last = 0;
       ${drawSrc};
       const bank = { ${amfSrc} };
@@ -295,8 +319,17 @@ function measureExcursion() {
 // -------------------------------------------------- 2. live settings readback
 
 function measureLiveSettings() {
+  // The hook normalises every native frame through a sibling top-level
+  // function, deliberately so the band menu can normalise one without
+  // mounting a component. Extracting the hook without it leaves the mount
+  // hydration throwing inside the effect, where the throw is swallowed and
+  // reported as "modulation state unavailable" -- a dead rig that reads as a
+  // finding about the panel.
   const componentSrc = blockAt(html, "function useSpectrModulationState() {",
-    "shared modulation hook") + "\n" + blockAt(html, "function SpectrModulationSettings() {",
+    "shared modulation hook") + "\n" + blockAt(html,
+    "function spectrModulationFromNative(modulation) {",
+    "native modulation frame normaliser") + "\n"
+    + blockAt(html, "function SpectrModulationSettings() {",
     "SpectrModulationSettings");
 
   // A minimal ordered-hook runtime. Enough to mount one function component,

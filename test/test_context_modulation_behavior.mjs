@@ -16,7 +16,13 @@ if (process.argv.includes('--plant-inverted-toggle')) {
   component = component.replace(before, 'publishModulation("enabled", 4000, modulation.enabled)');
 }
 
-function mount(initial, height = 860) {
+function mount(initial, height = 860, keepSeed = false) {
+  // The last native frame is remembered process-wide, so a consumer that
+  // mounts later starts live instead of stale. Every case below is a COLD
+  // consumer unless it says otherwise -- without this, each case after the
+  // first would quietly be exercising the warm path and the disabled-until-
+  // hydrated assertions would stop meaning anything.
+  if (!keepSeed) delete globalThis.__spectrModulationLast;
   const slots = [], effects = [], pending = [], calls = [], listeners = new Map();
   let cursor = 0, tree, closed = 0;
   const native = { enabled: false, lfo2_enabled: false, target: 0, target_mask: 1, ...initial };
@@ -25,7 +31,12 @@ function mount(initial, height = 860) {
     createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
     useState(initialValue) {
       const i = cursor++;
-      if (!(i in slots)) slots[i] = initialValue;
+      // React calls a function initializer instead of storing it. Storing it
+      // does not throw -- the state becomes a FUNCTION, which is truthy, so a
+      // `ready`-style flag reads as set and a gated row comes up enabled for
+      // entirely the wrong reason.
+      if (!(i in slots))
+        slots[i] = typeof initialValue === 'function' ? initialValue() : initialValue;
       return [slots[i], value => { slots[i] = typeof value === 'function' ? value(slots[i]) : value; }];
     },
     useRef(value) {
@@ -178,6 +189,30 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
 // asserting here specifically and not only at 860. Same #8602 condition as
 // above: when scrolling lands, this becomes
 // `Math.max(120, Math.max(24, 240 - 64) - 16)` again.
+// The defect this guards, reported from Logic: the band menu mounts a FRESH
+// hook instance every time it opens, so it came up `ready: false` holding a
+// default value and its six gated rows stayed disabled until its own round
+// trip landed. Tapping LFO 1 straight after opening the menu did nothing,
+// while the Settings panel -- same hook, never reads `ready` -- worked.
+// Once any frame has been seen, a later consumer must come up live AND
+// toggle from the value native last reported, not from a default.
+{
+  const seen = mount({ enabled: true, lfo2_enabled: false });
+  await seen.settle();
+  const reopened = mount({ enabled: true, lfo2_enabled: false }, 860, true);
+  reopened.click('modulation-toggle');
+  assert.equal(reopened.button('lfo1-enable').props.disabled, false);
+  assert.equal(reopened.button('lfo1-enable').props['aria-checked'], true);
+  reopened.click('lfo1-enable');
+  const writes = reopened.calls.filter(call => call.type === 'param_set'
+                                            && call.payload.id === 4000);
+  assert.equal(writes.length, 1);
+  // Toggled from the reported value, not from the default `false`.
+  assert.equal(writes[0].payload.value, 0);
+  seen.unmount();
+  reopened.unmount();
+}
+
 const compact = mount({ enabled: false, lfo2_enabled: false }, 240);
 assert.equal(compact.menu().props.style.maxHeight, undefined);
 assert.equal(compact.menu().props.style.overflowY, undefined);

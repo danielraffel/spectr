@@ -55,6 +55,15 @@ Spectr editor
 # like an editor that got faster.
 ^Spectr-materialized-marquee-render-cost
 
+# The idle draw loop and its fourteen plants. Same reason: `materialized`
+# matches them but can never report their absence -- and this whole suite
+# measures frames on which NOTHING changed, which no capture, layout
+# assertion or result check anywhere in this gate can see. Eleven of the
+# fourteen are the WAKE side: a loop that parks and fails to wake is a worse
+# bug than one that never parks, and each path that changes the canvas
+# without moving React state can only be caught by its own row.
+^Spectr-materialized-idle-draw-loop
+
 # The SHORTCUTS panel's no-wrap gates. The budget half needs no binary; the
 # rendered half opens the panel in the shipping native editor. Both are named
 # outside the `materialized` pattern above, so without this line they register
@@ -340,8 +349,12 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # Selection gain movement preserves mute and updates underlying gain.
 ^Spectr-group-drag-preserves-mute
 
-# Native output readout decay and overload latch.
+# Native output readout decay, auto-clearing overload, and the OVER latch
+# setting that restores the hold -- plus the two RED arms that prove each
+# contract is asserted in the mode that owns it.
 ^Spectr-native-output-meter-ballistics$
+^Spectr-native-output-meter-ballistics-autoclear-negative-control$
+^Spectr-native-output-meter-ballistics-latch-negative-control$
 ^Spectr-latency-rail-effect$
 ^Spectr-latency-rail-effect-disabled-write-control$
 ^Spectr-materialized-native-services-sync$

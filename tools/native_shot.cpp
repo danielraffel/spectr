@@ -5656,8 +5656,11 @@ int main(int argc, char** argv) {
         // not only off the layout dump.
         // THE OUTPUT READOUT'S TWO BALLISTICS, ON THE SHIPPING SURFACE.
         //
-        // The number holds then falls; the OVER state latches until a person
-        // presses the chip. Both halves need the REAL surface: the JS suite
+        // The number holds then falls. The overload gets a hold of its own
+        // and goes out by itself, and the `OVER latch` setting restores the
+        // hold-until-cleared reading -- so the probe drives that setting and
+        // asserts each contract in the mode that owns it, rather than knowing
+        // only one of them. Every half needs the REAL surface: the JS suite
         // proves the arithmetic in a vm, and a vm cannot say whether the
         // runtime pumps the frame callback the fall rides on, whether the
         // glyphs land where the arithmetic says, or whether a HOST-OWNED
@@ -5805,43 +5808,38 @@ int main(int argc, char** argv) {
                             "native tree. Report nothing from this probe.\n");
                 ++g_failures;
             } else {
-                // THE REPORTED SCENARIO, sampled as a timeline rather than
-                // at three chosen instants: a transient over full scale, then
-                // the Output trim pulled down so the live level sits well
-                // under it -- which is the exact state somebody was looking at
-                // when they asked whether the readout was stuck.
-                publish("peak_db:5.8,over:true,trim_db:0");
-                run_ms(100);
-                publish("peak_db:-11.5,over:false,trim_db:-11.5");
-                const auto t0 = std::chrono::steady_clock::now();
-                struct Sample { int ms; std::string text; };
-                std::vector<Sample> timeline;
-                // The frame-callback census has served its purpose; leaving
-                // it running re-renders on every frame and the capture below
-                // lands on a half-composited one -- measured as a header with
-                // 0.13 edge energy against 2.22 for the same strip in the
-                // baseline capture, i.e. a photograph of nothing.
-                rig.eval("globalThis.__spectrMeterStop = true;",
-                         "spectr-meter-shot-raf-stop");
-                for (int i = 0; i < 26; ++i) {
-                    run_ms(250);
-                    const int ms = static_cast<int>(
-                        std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::steady_clock::now() - t0).count());
-                    timeline.push_back({ms, chip_text()});
-                    // Inside the hold, and again once the fall has landed.
-                    // A capture taken only at the end cannot show the state
-                    // somebody actually complained about.
-                    if (i == 2 || i == 20) {
-                        settle(rig.clock, 24);
-                        capture(rig, dir, prefix + (i == 2
-                            ? "meter-over-held" : "meter-over-settled"),
-                            backend, scale);
-                    }
-                }
-                for (const auto& sample : timeline)
-                    std::printf("[meter] t+%5dms  %s\n", sample.ms,
-                                sample.text.c_str());
+                // TWO MODES, TWO CONTRACTS -- AND THE SETTING THAT SELECTS
+                // THEM, DRIVEN THE WAY A PERSON DRIVES IT.
+                //
+                // The overload used to latch unconditionally, and this probe
+                // asserted exactly that, sample by sample, over the whole
+                // fall. It is now a CHOICE: by default the red is a statement
+                // about NOW and goes out by itself once the overload stops,
+                // and `OVER latch` in the FEEDBACK settings group restores the
+                // hold-until-cleared reading for somebody who walked away from
+                // a render. A probe that knows only one of those cannot tell a
+                // MODE from a DEFECT -- when the default moved, this row went
+                // red while the surface behaved exactly as designed, which is
+                // a gate reporting its own staleness as a product bug.
+                //
+                // So each contract is asserted in the mode that owns it, and
+                // the mode is selected by activating the settings row rather
+                // than by reaching into the component. That is not incidental:
+                // it is the only thing here that can fail when the row is
+                // unreachable in the panel, wired to nothing, or read by the
+                // meter as its mount-time value -- and the row's reachability
+                // is checked before it is used, because a setting the panel
+                // cannot present is a setting nobody can turn on.
+                struct Trial {
+                    bool held = false;          // number still on the transient
+                    bool over_at_glance = false; // ... and still reading OVER
+                    bool held_sampled = false;
+                    bool fell = false;
+                    bool over_every_sample = true;
+                    bool went_out_by_itself = false;
+                    int went_out_at_ms = -1;
+                    double lowest = 1e9;
+                };
 
                 const auto value_of = [](const std::string& text) {
                     const auto space = text.find(' ');
@@ -5852,48 +5850,228 @@ int main(int argc, char** argv) {
                 const auto word_of = [](const std::string& text) {
                     return text.substr(0, text.find(' '));
                 };
-                // HELD: still reading the transient 800ms after it, which is
-                // the interval a glance needs. Not derived from PEAK_HOLD_MS:
-                // timing the stimulus off the constant under test makes this
-                // blind to that constant shrinking.
-                bool held = false;
-                bool held_sampled = false;
-                bool fell = false;
-                bool latched = true;
-                double lowest = 1e9;
-                for (const auto& sample : timeline) {
-                    if (word_of(sample.text) != "OVER") latched = false;
-                    const double db = value_of(sample.text);
-                    if (db > 1e8) continue;
-                    // The glance interval, fixed at 800 ms and deliberately
-                    // not derived from the component's own PEAK_HOLD_MS.
-                    // Every verdict here is "some sample satisfies it", so a
-                    // loaded machine stretching the loop cannot turn a pass
-                    // into a failure -- it can only fail to SAMPLE the hold,
-                    // which is reported separately as an unproven premise
-                    // rather than as a defect.
-                    if (sample.ms <= 800) {
-                        held_sampled = true;
-                        held = db > 5.0;
+
+                // Re-resolve the chip's view after a re-render. The id belongs
+                // to the runtime, not to the document, and opening Settings
+                // commits the tree again -- a stale id resolves nothing while
+                // reading exactly like a chip that vanished, which is the one
+                // reading this probe must never produce by accident.
+                const auto reresolve_chip = [&rig, &chip_id]() {
+                    try {
+                        rig.eval("(() => { const el = document.querySelector("
+                                 "'[data-spectr-output-peak]');"
+                                 " throw new Error('PULPVALUE:' + (el ? (el.id || "
+                                 "el.__pulpId || '(no id)') : '(absent)')); })();",
+                                 "spectr-meter-shot-id");
+                    } catch (const std::exception& error) {
+                        const std::string message = error.what();
+                        const auto at = message.find("PULPVALUE:");
+                        if (at == std::string::npos) return;
+                        std::string found = message.substr(at + 10);
+                        const auto end = found.find_first_of(" \n\"'");
+                        if (end != std::string::npos)
+                            found = found.substr(0, end);
+                        if (!found.empty() && found[0] != '(') chip_id = found;
                     }
-                    lowest = std::min(lowest, db);
-                    // Landed on the live level and did not sail past it.
-                    if (sample.ms >= 3000 && std::abs(db + 11.5) <= 0.6)
-                        fell = true;
+                };
+
+                // Read the setting's own state out of the shipping runtime
+                // rather than remembering what we clicked: a click that
+                // toggled nothing and a click that toggled twice are the same
+                // gesture from out here and opposite states in there.
+                const auto latch_state_is = [&rig](const char* want) {
+                    return rig.truth(
+                        std::string("(document.querySelector("
+                                    "'[data-spectr-over-latch-toggle]') "
+                                    "|| { getAttribute: () => null })"
+                                    ".getAttribute('data-spectr-over-latch-state')"
+                                    " === '") + want + "'");
+                };
+
+                // Put the surface in a named mode through its own row, then
+                // close the panel again: an open modal DIMS the header behind
+                // it, and the captures below photograph the cluster through
+                // that dimming without anything in the numbers saying so.
+                const auto set_over_latch = [&](bool on) {
+                    const char* want = on ? "on" : "off";
+                    rig.activate("[data-spectr-settings-open]");
+                    rig.require_reachable("[data-spectr-settings-panel]");
+                    rig.require_reachable("[data-spectr-over-latch-toggle]");
+                    if (!latch_state_is(want))
+                        rig.activate("[data-spectr-over-latch-toggle]");
+                    const bool ok = latch_state_is(want);
+                    std::printf("[meter] OVER latch setting -> %s : %s\n",
+                                want, ok ? "engaged" : "DID NOT TAKE");
+                    if (!ok) {
+                        std::printf("[meter] CONTROL FAILED: the OVER latch row "
+                                    "is reachable but activating it did not "
+                                    "change its state, so the arm below would "
+                                    "measure the wrong mode and report it as a "
+                                    "defect.\n");
+                        ++g_failures;
+                    }
+                    root.simulate_click(pulp::view::Point{675.0f, 22.0f});
+                    settle(rig.clock, 24);
+                    reresolve_chip();
+                    if (chip_text().empty()) {
+                        std::printf("[meter] CONTROL FAILED: the chip is "
+                                    "unreadable after the settings round trip, "
+                                    "so nothing below is a statement about the "
+                                    "readout.\n");
+                        ++g_failures;
+                    }
+                    return ok;
+                };
+
+                // ONE TRANSIENT, SAMPLED AS A TIMELINE rather than at three
+                // chosen instants: a transient over full scale, then the
+                // Output trim pulled down so the live level sits well under it
+                // -- the exact state somebody was looking at when they asked
+                // whether the readout was stuck.
+                const auto run_trial = [&](const char* label,
+                                           const char* held_shot,
+                                           const char* settled_shot) {
+                    Trial trial;
+                    std::printf("[meter] --- arm: %s ---\n", label);
+                    // Quiet it first. The second arm would otherwise open on
+                    // the first arm's state, and "still reading the transient"
+                    // would be satisfied by a number that never moved.
+                    publish("peak_db:-60.0,over:false,trim_db:0");
+                    run_ms(500);
+                    publish("peak_db:5.8,over:true,trim_db:0");
+                    run_ms(100);
+                    publish("peak_db:-11.5,over:false,trim_db:-11.5");
+                    const auto t0 = std::chrono::steady_clock::now();
+                    struct Sample { int ms; std::string text; };
+                    std::vector<Sample> timeline;
+                    // The frame-callback census has served its purpose; leaving
+                    // it running re-renders on every frame and the capture below
+                    // lands on a half-composited one -- measured as a header with
+                    // 0.13 edge energy against 2.22 for the same strip in the
+                    // baseline capture, i.e. a photograph of nothing.
+                    rig.eval("globalThis.__spectrMeterStop = true;",
+                             "spectr-meter-shot-raf-stop");
+                    for (int i = 0; i < 26; ++i) {
+                        run_ms(250);
+                        const int ms = static_cast<int>(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - t0).count());
+                        timeline.push_back({ms, chip_text()});
+                        // Inside the hold, and again once the fall has landed.
+                        // A capture taken only at the end cannot show the state
+                        // somebody actually complained about.
+                        if (i == 2 && held_shot != nullptr) {
+                            settle(rig.clock, 24);
+                            capture(rig, dir, prefix + held_shot, backend, scale);
+                        }
+                        if (i == 20 && settled_shot != nullptr) {
+                            settle(rig.clock, 24);
+                            capture(rig, dir, prefix + settled_shot, backend, scale);
+                        }
+                    }
+                    for (const auto& sample : timeline)
+                        std::printf("[meter] %-6s t+%5dms  %s\n", label,
+                                    sample.ms, sample.text.c_str());
+
+                    bool saw_over = false;
+                    for (const auto& sample : timeline) {
+                        const std::string word = word_of(sample.text);
+                        if (word == "OVER") {
+                            saw_over = true;
+                        } else {
+                            trial.over_every_sample = false;
+                            // Went out with nobody touching it. The press trial
+                            // runs only after this loop, so there is no other
+                            // way for the report to have ended here.
+                            if (saw_over && !trial.went_out_by_itself) {
+                                trial.went_out_by_itself = true;
+                                trial.went_out_at_ms = sample.ms;
+                            }
+                        }
+                        const double db = value_of(sample.text);
+                        if (db > 1e8) continue;
+                        // The glance interval, fixed at 800 ms and deliberately
+                        // not derived from the component's own PEAK_HOLD_MS.
+                        // Every verdict here is "some sample satisfies it", so a
+                        // loaded machine stretching the loop cannot turn a pass
+                        // into a failure -- it can only fail to SAMPLE the hold,
+                        // which is reported separately as an unproven premise
+                        // rather than as a defect.
+                        if (sample.ms <= 800) {
+                            trial.held_sampled = true;
+                            trial.held = db > 5.0;
+                            trial.over_at_glance = word == "OVER";
+                        }
+                        trial.lowest = std::min(trial.lowest, db);
+                        // Landed on the live level and did not sail past it.
+                        if (sample.ms >= 3000 && std::abs(db + 11.5) <= 0.6)
+                            trial.fell = true;
+                    }
+                    if (!trial.held_sampled)
+                        std::printf("[meter] %s PREMISE UNPROVEN: no sample "
+                                    "landed inside the 800ms glance interval, "
+                                    "so whether the transient was readable was "
+                                    "never measured\n", label);
+                    std::printf("[meter] %s lowest reading %.1f dBFS against a "
+                                "live level of -11.5\n", label, trial.lowest);
+                    if (trial.lowest < -12.1) {
+                        std::printf("[meter] %s the fall undercut the signal, "
+                                    "which reports a level that is not "
+                                    "there\n", label);
+                        trial.fell = false;
+                    }
+                    return trial;
+                };
+
+                // THE PLANTS. Each puts the surface in the OTHER mode while
+                // the arm's contract is asserted unchanged -- which is exactly
+                // the regression this probe could not see: the behaviour moved
+                // behind a setting and the gate went on asserting the retired
+                // contract. A plant that skipped a step would prove nothing
+                // about the assertion; these leave every control live and
+                // change only the mode, so a red arm can only mean the
+                // assertion is load-bearing.
+                const char* plant_env = std::getenv("SPECTR_METER_SHOT_PLANT");
+                const std::string plant = plant_env == nullptr ? "" : plant_env;
+                if (!plant.empty())
+                    std::printf("[meter] PLANT=%s -- this run is a negative "
+                                "control and MUST fail\n", plant.c_str());
+
+                // ARM 1 -- THE DEFAULT. The transient must be READABLE (still
+                // reading OVER at the glance, not a ~33ms flash) and must then
+                // go out BY ITSELF, with nobody pressing anything. Both halves
+                // matter: a lamp that clears on the next published frame hides
+                // the event most worth reporting, and a lamp that never clears
+                // is the decoration this default replaced.
+                if (plant == "auto") set_over_latch(true);
+                const Trial autoclear = run_trial(
+                    "auto", "meter-over-held", "meter-over-settled");
+                const bool auto_readable =
+                    autoclear.held && autoclear.over_at_glance;
+                const bool auto_cleared_itself =
+                    autoclear.went_out_by_itself && autoclear.went_out_at_ms > 800;
+                std::printf("[meter] VERDICT auto: held=%s over-at-glance=%s "
+                            "fell=%s cleared-itself=%s (at %dms)\n",
+                            autoclear.held ? "yes" : "NO",
+                            autoclear.over_at_glance ? "yes" : "NO",
+                            autoclear.fell ? "yes" : "NO",
+                            auto_cleared_itself ? "yes" : "NO",
+                            autoclear.went_out_at_ms);
+
+                // ARM 2 -- THE SETTING. Turned on through its own row, the old
+                // contract has to hold whole: OVER through every sample of the
+                // fall, a press in the empty gap leaves it standing, and a
+                // press on the chip ends it.
+                if (plant == "auto") set_over_latch(false);
+                set_over_latch(true);
+                if (plant == "latch") {
+                    std::printf("[meter] PLANT: putting the surface back in "
+                                "auto-clear while the latch contract below is "
+                                "asserted unchanged\n");
+                    set_over_latch(false);
                 }
-                if (!held_sampled)
-                    std::printf("[meter] PREMISE UNPROVEN: no sample landed "
-                                "inside the 800ms glance interval, so whether "
-                                "the transient was readable was never "
-                                "measured\n");
-                std::printf("[meter] lowest reading %.1f dBFS against a live "
-                            "level of -11.5\n", lowest);
-                if (lowest < -12.1) {
-                    std::printf("[meter] the fall undercut the signal, which "
-                                "reports a level that is not there\n");
-                    fell = false;
-                }
-                const std::string settled = timeline.back().text;
+                const Trial latched = run_trial(
+                    "latch", nullptr, "meter-latched-settled");
 
                 const auto chip = measure_hit(root, chip_id);
                 print_hit("output peak chip", chip);
@@ -5931,19 +6109,90 @@ int main(int argc, char** argv) {
                             scale);
 
                     const bool latched_through =
-                        latched && after_gap.rfind("OVER ", 0) == 0;
+                        latched.over_every_sample
+                        && after_gap.rfind("OVER ", 0) == 0;
                     const bool cleared = after_press.rfind("PEAK ", 0) == 0;
-                    std::printf("[meter] VERDICT held=%s fell=%s "
+                    std::printf("[meter] VERDICT latch: held=%s fell=%s "
                                 "latched-through-the-fall=%s "
-                                "cleared-by-press=%s : %s\n",
-                                held ? "yes" : "NO", fell ? "yes" : "NO",
+                                "cleared-by-press=%s\n",
+                                latched.held ? "yes" : "NO",
+                                latched.fell ? "yes" : "NO",
+                                latched_through ? "yes" : "NO",
+                                cleared ? "yes" : "NO");
+                    const bool auto_ok = auto_readable && autoclear.fell
+                        && auto_cleared_itself;
+                    const bool latch_ok = latched.held && latched.fell
+                        && latched_through && cleared;
+                    const bool pass = auto_ok && latch_ok;
+                    std::printf("[meter] VERDICT auto-clears-by-default=%s "
+                                "latches-when-set=%s cleared-by-press=%s : %s\n",
+                                auto_cleared_itself ? "yes" : "NO",
                                 latched_through ? "yes" : "NO",
                                 cleared ? "yes" : "NO",
-                                (held && fell && latched_through && cleared)
-                                    ? "PASS" : "FAIL");
-                    if (!(held && fell && latched_through && cleared))
-                        ++g_failures;
-                    if (!held_sampled) return 3;
+                                pass ? "PASS" : "FAIL");
+                    // The premise gate comes FIRST and outranks everything
+                    // below, including a plant: a run that never sampled the
+                    // glance interval measured nothing, and "measured nothing"
+                    // must not be spendable as either a pass or a caught
+                    // plant.
+                    if (!autoclear.held_sampled || !latched.held_sampled)
+                        return 3;
+                    if (!plant.empty()) {
+                        // INVERTED HERE, IN THE BINARY, rather than in
+                        // WILL_FAIL: WILL_FAIL accepts ANY non-zero exit --
+                        // the exit-3 above, a usage error, a missing asset --
+                        // so a control registered that way passes while
+                        // measuring nothing.
+                        //
+                        // Green demands BOTH halves. The targeted arm has to
+                        // go red, and the other arm has to stay green: an
+                        // assertion that reddens whichever mode the surface is
+                        // in is not discriminating between the modes, and
+                        // failing to discriminate is the entire defect being
+                        // guarded against. A control that only asked for "some
+                        // failure" would be satisfied by exactly that.
+                        const bool targeted_red =
+                            plant == "auto" ? !auto_ok : !latch_ok;
+                        const bool other_green =
+                            plant == "auto" ? latch_ok : auto_ok;
+                        if (plant != "auto" && plant != "latch") {
+                            std::fprintf(stderr,
+                                         "FAIL: SPECTR_METER_SHOT_PLANT=%s is "
+                                         "not a plant this probe knows; use "
+                                         "'auto' or 'latch'.\n", plant.c_str());
+                            return 1;
+                        }
+                        if (g_failures != 0) {
+                            std::fprintf(stderr,
+                                         "FAIL: a control failed during the "
+                                         "planted run, so whether the gate "
+                                         "caught the plant was never "
+                                         "measured.\n");
+                            return 1;
+                        }
+                        if (!targeted_red) {
+                            std::fprintf(stderr,
+                                         "FAIL: the planted '%s' mode was NOT "
+                                         "caught. That arm cannot fail, so its "
+                                         "clean run in the real test proves "
+                                         "nothing.\n", plant.c_str());
+                            return 1;
+                        }
+                        if (!other_green) {
+                            std::fprintf(stderr,
+                                         "FAIL: the planted '%s' mode reddened "
+                                         "the OTHER arm too, so the two "
+                                         "contracts are not being told apart "
+                                         "-- which is the defect, not the "
+                                         "proof.\n", plant.c_str());
+                            return 1;
+                        }
+                        std::printf("[meter] NEGATIVE CONTROL: the planted "
+                                    "'%s' mode was caught, and only its own "
+                                    "arm reddened\n", plant.c_str());
+                        return 0;
+                    }
+                    if (!pass) ++g_failures;
                 }
             }
             return g_failures == 0 ? 0 : 1;

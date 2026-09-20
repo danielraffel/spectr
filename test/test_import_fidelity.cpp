@@ -527,7 +527,7 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
 
     SECTION("the status banner replaces one message at a time") {
         CHECK(count_occurrences(document, "const generationRef = useRefChrome(0);") == 1);
-        CHECK(count_occurrences(document, "const statusRefreshAtRef = useRef(0);") == 1);
+        CHECK(count_occurrences(document, "const liveStatusLabelRef = useRef(\\\"\\\");") == 1);
         CHECK(count_occurrences(
                   document,
                   "const t = setTimeout(() => {\\n      setVisible(false);\\n"
@@ -540,10 +540,32 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(document.find("const arm = (delay) => {\\n      cancel();")
               != document.npos);
         CHECK(document.find("arm(160);") != document.npos);
-        // The live-status refresh is throttled off the paint cadence.
-        CHECK(document.find("now - statusRefreshAtRef.current >= 700")
+        // The per-frame status writer is rate-limited by the READING, not by
+        // a clock, and it writes the banner directly instead of publishing it.
+        // The 700 ms `statusRefreshAtRef` throttle this replaced called
+        // `onStatus` -- the PARENT'S state, over a captured import -- so every
+        // refresh re-applied the whole document: 42 of them on a
+        // pointer-resting arm against zero on an idle one. Pin what is
+        // load-bearing now. An unchanged reading returns before it touches
+        // anything, and a changed one records itself so the next frame is a
+        // no-op; without either half every frame is a write again.
+        CHECK(document.find("if (liveStatusLabelRef.current === label) return;")
               != document.npos);
-        CHECK(document.find("statusRefreshAtRef.current = now;") != document.npos);
+        CHECK(document.find("liveStatusLabelRef.current = label;") != document.npos);
+        // The write itself. This is what refreshes the readout while a drag
+        // moves the value under the pointer, so nothing else has to.
+        CHECK(count_occurrences(document, "text.textContent = label;") == 1);
+        // The throttle may not come back. A clock-driven refresh on this path
+        // is a whole-document commit roughly twice a second for as long as a
+        // pointer rests on a band, which is the cost that was removed.
+        CHECK(count_occurrences(document, "statusRefreshAtRef") == 0);
+        // Exactly one React publication of a hover reading survives, and it is
+        // the band-CROSSING effect -- which is what re-shows a banner that has
+        // already dismissed itself, and is the reason the per-frame path can
+        // stop publishing at all. A second occurrence means the per-frame
+        // writer started publishing again.
+        CHECK(count_occurrences(document, "onStatus(label);") == 1);
+        CHECK(count_occurrences(document, "}, [hoverBand, N, onStatus]);") == 1);
         // No 150 ms interval survives. The status-dismiss timer is armed
         // from a ref, and the zoom readout is a leaf that subscribes to the
         // viewport, so neither samples on a clock. An interval here is an
@@ -826,7 +848,18 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"live-hover-publication", "updateLiveHoverStatus();", 2},
         ContractMarker{"guide-only-hover", "if (!currentHover || currentHover.mini) return;"},
         ContractMarker{"generation-safe-status", "const generationRef = useRefChrome(0);"},
-        ContractMarker{"active-status-renewal", "now - statusRefreshAtRef.current >= 700"},
+        // The per-frame writer's rate limit is the reading, not a clock: an
+        // unchanged label returns before it touches the DOM. This is what the
+        // retired 700 ms React throttle was replaced by, and severing it puts
+        // every frame back on the write path.
+        ContractMarker{"changed-reading-only-status-write",
+                       "if (liveStatusLabelRef.current === label) return;"},
+        // The one React publication of a hover reading that survives. It fires
+        // on a band CROSSING, which is what re-shows a banner that has already
+        // dismissed itself -- without it the per-frame direct write reaches a
+        // text node nobody can see.
+        ContractMarker{"band-crossing-status-publication",
+                       "}, [hoverBand, N, onStatus]);"},
         ContractMarker{"inactivity-status-clear", "arm(160);"},
         ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
         ContractMarker{"content-sized-banner", "const bannerWidth = spectrStatusBannerWidth(text);"},
@@ -894,7 +927,11 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"build-info-default-on", "\\\"showBuildInfo\\\": true"},
         ContractMarker{"build-info-optional", "settings.showBuildInfo !== false", 2},
         ContractMarker{"build-info-toggle", "data-spectr-build-info-toggle"},
-        ContractMarker{"build-info-toggle-parameter", "function SpectrSettingsToggle({ value, onChange, statusInfo = false, buildInfo = false }) {"},
+        // The flag, not the whole parameter list. Pinning the closing
+        // `}) {` froze the signature: adding the OVER-latch setting
+        // appended one more parameter and severed a marker about a
+        // different setting entirely, which is a false report either way.
+        ContractMarker{"build-info-toggle-parameter", "function SpectrSettingsToggle({ value, onChange, statusInfo = false, buildInfo = false"},
         ContractMarker{"build-info-product-sha", "[\\\"SPECTR SHA\\\", info.product_sha || \\\"UNKNOWN\\\"]"},
         ContractMarker{"build-info-product-dirty", "info.product_provenance_known ? info.product_dirty ? \\\"DIRTY\\\" : \\\"CLEAN\\\" : \\\"UNKNOWN\\\""},
         ContractMarker{"build-info-sdk-dirty", "[\\\"SDK SOURCE\\\", info.sdk_provenance_exact ? info.sdk_dirty ? \\\"DIRTY\\\" : \\\"CLEAN\\\" : \\\"UNKNOWN\\\"]"},
@@ -957,7 +994,10 @@ TEST_CASE("status overlay and settings polish contracts detect every severed fix
         reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
         spectr_native::materialized_document_runtime_json_size};
     constexpr std::array markers{
-        ContractMarker{"drag-status-refresh", "now - statusRefreshAtRef.current >= 700"},
+        // The readout follows a drag because the per-frame writer puts the new
+        // string straight into the banner's own text node. Nothing publishes
+        // it to React on this path any more, so this write IS the refresh.
+        ContractMarker{"drag-status-refresh", "text.textContent = label;"},
         ContractMarker{"status-clear-grace", "arm(160);"},
         ContractMarker{"status-readable-dwell", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
         ContractMarker{"status-below-ruler",

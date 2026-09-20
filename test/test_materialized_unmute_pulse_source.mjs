@@ -170,6 +170,10 @@ function commitRig() {
     let publications = 0;
     const queueNativeProcessingStatePublication = () => { publications += 1; };
     const setGains = () => {};
+    // commitMany re-arms the editor's draw loop, because its deferReact path
+    // changes every painted gain with no render behind it. This rig has no
+    // loop to arm; what it measures is the mute bookkeeping.
+    const wakeDraw = () => {};
     ${commitGainSrc};
     ${commitManySrc};
     return {

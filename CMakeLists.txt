@@ -901,6 +901,13 @@ set_tests_properties(Spectr-band-menu-unmute-restores-negative-control
 
 # THE OUTPUT READOUT'S BALLISTICS, ON THE SHIPPING NATIVE SURFACE.
 #
+# The number holds and falls; the overload gets a hold of its own and goes out
+# by itself, and the `OVER latch` row in the FEEDBACK settings group restores
+# the hold-until-cleared reading. Both contracts are asserted here, each in the
+# mode that owns it, with the mode selected by activating that settings row --
+# so a row the panel cannot present, or one wired to nothing, fails this test
+# rather than being discovered by somebody who wanted the setting.
+#
 # The JS suite beside this proves the arithmetic in a vm. A vm cannot say
 # whether this runtime pumps the frame callback the fall rides on, whether the
 # glyphs land where the arithmetic says, or whether a HOST-OWNED press at the
@@ -915,7 +922,7 @@ set_tests_properties(Spectr-band-menu-unmute-restores-negative-control
 # drained makes a correct fall look frozen), the hit owner over the header gap
 # (an open modal dims the header and the captures photograph nothing), the
 # chip's presence, and a negative press in the empty gap that must leave the
-# latch standing.
+# latched chip standing.
 #
 # Exit: 0 pass, 1 a finding, 3 the premise is unproven -- the loop never
 # sampled inside the 800 ms glance interval, so whether the transient was
@@ -928,6 +935,41 @@ add_test(NAME Spectr-native-output-meter-ballistics
 set_tests_properties(Spectr-native-output-meter-ballistics PROPERTIES
     TIMEOUT 300
     RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Its two RED arms, one per contract. Each plants the OTHER mode -- through the
+# real `OVER latch` settings row, leaving every control live -- while its arm's
+# contract is asserted unchanged, and requires the gate to redden THAT arm and
+# only that arm.
+#
+# Both halves are load-bearing. An assertion that cannot fail proves nothing
+# when it is green; an assertion that reddens whichever mode the surface is in
+# is not telling the modes apart, and a probe that cannot tell a mode from a
+# defect reports its own staleness as a product bug the moment a default moves.
+#
+# The inversion lives inside the binary rather than in WILL_FAIL, which accepts
+# any non-zero exit -- the exit-3 "premise unproven" path, a usage error, a
+# missing asset -- and would pass while measuring nothing.
+add_test(NAME Spectr-native-output-meter-ballistics-autoclear-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_METER_SHOT=1
+        SPECTR_METER_SHOT_PLANT=auto
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-output-meter-negctl-auto
+        --backend=skia)
+set_tests_properties(Spectr-native-output-meter-ballistics-autoclear-negative-control
+    PROPERTIES
+        TIMEOUT 300
+        RESOURCE_LOCK spectr_native_materialized_editor)
+
+add_test(NAME Spectr-native-output-meter-ballistics-latch-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_METER_SHOT=1
+        SPECTR_METER_SHOT_PLANT=latch
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-output-meter-negctl-latch
+        --backend=skia)
+set_tests_properties(Spectr-native-output-meter-ballistics-latch-negative-control
+    PROPERTIES
+        TIMEOUT 300
+        RESOURCE_LOCK spectr_native_materialized_editor)
 
 # PRESET OPERATIONS. Every action the preset manager offers, driven in the real
 # native editor and judged by a count or an identity taken before and after.
@@ -1512,6 +1554,39 @@ if(SPECTR_NODE_EXECUTABLE)
             PROPERTIES TIMEOUT 30)
     endforeach()
 
+    # The BOTTOM-BAR half of the same control. `SpectrLatencyRail` is a
+    # different component from the Settings group above -- its own reader, its
+    # own formatter, its own press path -- and nothing executed any of them
+    # until this suite existed. It also holds the property neither component
+    # can hold alone: the two surfaces share one store, and a writer that
+    # updates it without waking its listeners leaves the OTHER surface naming
+    # the mode it used to be in. The rail is the surface that loses, because it
+    # keeps no state of its own and re-renders only when woken.
+    add_test(NAME Spectr-materialized-latency-rail
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_latency_rail.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-latency-rail PROPERTIES TIMEOUT 30)
+
+    # Seven plants, each a different wrong implementation. --plant-top-level-ms
+    # is the subtle one: the payload carries a top-level `ms` beside the
+    # per-option figures, and they disagree the instant the mode is switched
+    # optimistically, so a chip reading it shows the OLD latency next to the
+    # NEW label -- right at rest and wrong exactly when the user pressed it.
+    # --plant-settings-no-notify is the defect this suite actually found in the
+    # shipping document, and --plant-toggle-no-notify is its mirror image, so
+    # the two surfaces are held in BOTH directions rather than one.
+    foreach(_latency_rail_plant top-level-ms typed-ms post-index no-subscribe
+            toggle-no-notify settings-no-notify render-unhydrated)
+        add_test(NAME Spectr-materialized-latency-rail-control-${_latency_rail_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_latency_rail.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_latency_rail_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-latency-rail-control-${_latency_rail_plant}
+            PROPERTIES TIMEOUT 30)
+    endforeach()
+
     # A child's AUTHORED index must be its NATIVE index, including for a
     # subtree that mounts late into a parent that kept its other children.
     # Every native createX APPENDS, so the renderer has to move a non-last
@@ -2005,6 +2080,127 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-short-track --expect-fail)
     set_tests_properties(Spectr-materialized-output-meter-trim-track-control
         PROPERTIES TIMEOUT 30)
+
+    # THE OVERLOAD CHIP GOES OUT BY ITSELF, and latching it is a setting.
+    #
+    # The suite above pins the LATCHED half, which is why it now drives the
+    # leaf with `latchOver: true`. This one owns the default, the mode split
+    # and the settings wiring that carries one to the other. Each control
+    # below is a distinct mechanism: they are separate rows because a single
+    # row would go green on whichever half still worked.
+    add_test(NAME Spectr-materialized-over-auto-clear
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-over-auto-clear
+        PROPERTIES TIMEOUT 30)
+    # The shipped behaviour: the report never expires, so one transient
+    # leaves the chip red for the session. This is the defect.
+    add_test(NAME Spectr-materialized-over-auto-clear-always-latch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-always-latch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-always-latch-control
+        PROPERTIES TIMEOUT 30)
+    # The mirror: an expiry that ignores the setting, so the opt-in latch
+    # quietly behaves like the default and is not a setting at all.
+    add_test(NAME Spectr-materialized-over-auto-clear-never-latch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-never-latch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-never-latch-control
+        PROPERTIES TIMEOUT 30)
+    # The DECLARED default, flipped. A separate row from the wiring below
+    # because either one alone decides which mode the editor opens in.
+    add_test(NAME Spectr-materialized-over-auto-clear-default-latch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-default-latch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-default-latch-control
+        PROPERTIES TIMEOUT 30)
+    # ...and the wiring that READS it, as `!== false`. The declared
+    # default still says false, so the row above cannot see this: a
+    # settings blob stored before the key existed would latch.
+    add_test(NAME Spectr-materialized-over-auto-clear-wiring-default-latch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-wiring-default-latch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-wiring-default-latch-control
+        PROPERTIES TIMEOUT 30)
+    # The manual clear, dropped. Auto-clear shortens the wait; it must
+    # not take away the way a person ends the report early. Visible only
+    # to a frame published AFTER the click, because `resetHold` commits
+    # `over: false` directly and the stale hold re-asserts itself later.
+    add_test(NAME Spectr-materialized-over-auto-clear-click-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-click-clear --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-click-control
+        PROPERTIES TIMEOUT 30)
+    # A window of zero -- the chip is technically red only while over,
+    # and for one ~16ms frame, which reports nothing to anybody. This is
+    # the row that makes 'clears itself' mean something a person can see.
+    add_test(NAME Spectr-materialized-over-auto-clear-blink-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-blink --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-blink-control
+        PROPERTIES TIMEOUT 30)
+    # The lamp expires and the worst overshoot stays behind, so the
+    # tooltip and `data-spectr-output-over-peak` keep asserting an
+    # overload the chip says is not happening.
+    add_test(NAME Spectr-materialized-over-auto-clear-stale-overpeak-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-stale-overpeak --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-stale-overpeak-control
+        PROPERTIES TIMEOUT 30)
+    # Only the FIRST over of a run stamps the window, so a sustained
+    # overload goes dark while it is still going on. A different failure
+    # from the blink above: the window is right and is never renewed.
+    add_test(NAME Spectr-materialized-over-auto-clear-refresh-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-refresh --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-refresh-control
+        PROPERTIES TIMEOUT 30)
+    # The settings row bound to another key: the switch moves, the meter
+    # never hears about it, and every screenshot looks correct.
+    add_test(NAME Spectr-materialized-over-auto-clear-setting-route-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-misrouted-setting --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-setting-route-control
+        PROPERTIES TIMEOUT 30)
+    # The switch's own marker, stripped. Without it nothing driving the
+    # shipping app can find the control or read which mode it is in, and
+    # every assertion about its state would be reading nothing.
+    add_test(NAME Spectr-materialized-over-auto-clear-switch-marker-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-dead-switch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-switch-marker-control
+        PROPERTIES TIMEOUT 30)
+    # A switch that renders correctly and calls nothing. Indistinguishable
+    # from a working one in any screenshot, and it is why the row is driven
+    # rather than merely matched in the source.
+    add_test(NAME Spectr-materialized-over-auto-clear-switch-inert-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-inert-switch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-switch-inert-control
+        PROPERTIES TIMEOUT 30)
 endif()
 
 # Morph moves the viewport, not just the bands.
@@ -2199,25 +2395,61 @@ if(SPECTR_NODE_EXECUTABLE)
     # is exactly where the mute chip's speaker glyph is drawn. Reported as "a
     # small bright box around an icon sitting inside a larger unhighlighted
     # button". Measured against the chip's own box, so a mark that merely grew
-    # without covering the button still fails.
+    # without covering the button still fails. It also holds the mark's
+    # SALIENCE: an edge is only visible where it meets a contrast and a run of
+    # adjacent selected bands has none between its members, so a selected band
+    # must carry an interior tint and not only an outline.
     add_test(NAME Spectr-materialized-mute-selection-highlight
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_mute_selection_highlight.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
     set_tests_properties(Spectr-materialized-mute-selection-highlight PROPERTIES
         TIMEOUT 60)
-    # Four controls, separate rows so it is visible which check is load
+    # Five controls, separate rows so it is visible which check is load
     # bearing. `sliver` is the one that separates "the code grew a branch" from
-    # "the mark covers the button", and `transparent` covers this suite's own
+    # "the mark covers the button", `transparent` covers this suite's own
     # blind spot: it records drawing commands, so it cannot see an alpha-0
-    # stroke without being told to look.
-    foreach(_mutehl_plant body-rect sliver unconditional-ring transparent)
+    # stroke without being told to look, and `no-tint` is the regression that
+    # would put the mark back to a hairline edge -- the one every other row
+    # here stays green through.
+    foreach(_mutehl_plant body-rect sliver unconditional-ring transparent no-tint)
         add_test(NAME Spectr-materialized-mute-selection-highlight-control-${_mutehl_plant}
             COMMAND ${SPECTR_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_mute_selection_highlight.mjs
                 ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
                 --plant-${_mutehl_plant} --expect-fail)
         set_tests_properties(Spectr-materialized-mute-selection-highlight-control-${_mutehl_plant}
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+
+    # Dragging the gain of a SELECTION moves every member's level and leaves
+    # every member's mute exactly as it was. The gesture is an OFFSET, not a
+    # draw: it says nothing about mute, so a muted member keeps its sentinel
+    # while the level stashed underneath it moves by the same shared delta --
+    # which is what makes unmuting afterwards return the band to where the
+    # group moved it rather than to where it was when it was muted.
+    add_test(NAME Spectr-materialized-group-gain-preserves-mute
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_group_gain_preserves_mute.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-group-gain-preserves-mute PROPERTIES
+        TIMEOUT 60)
+    # Five controls, separate rows so it is visible which check is load
+    # bearing. Every assertion drives a MIXED selection, because all five wrong
+    # implementations agree with the right one on an unmuted band -- a suite
+    # that selected only unmuted bands is green under all of them.
+    # `draw-commit` is the reported bug and the only row that trips the "still
+    # muted" check; `draw-commit-held` is the same wrong route with
+    # unmuteOnDraw off, where mute survives and the offset is discarded, so it
+    # is caught only by the stash assertions; `live-base` is the accumulation a
+    # single-sample drag cannot see.
+    foreach(_groupgain_plant draw-commit draw-commit-held live-base raw-base drop-stash)
+        add_test(NAME Spectr-materialized-group-gain-preserves-mute-control-${_groupgain_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_group_gain_preserves_mute.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_groupgain_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-group-gain-preserves-mute-control-${_groupgain_plant}
             PROPERTIES TIMEOUT 60)
     endforeach()
 
@@ -2667,6 +2899,159 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --plant-marquee-state --expect-fail)
     set_tests_properties(Spectr-materialized-marquee-render-cost-rectangle-control
+        PROPERTIES TIMEOUT 60)
+
+    # THE EDITOR STOPS PAINTING WHEN NOTHING CHANGED -- and wakes for every
+    # path that can change the canvas. Measured on a genuinely idle editor
+    # (nothing hovered, nothing playing, nothing animating) the draw loop
+    # re-armed unconditionally and repainted the whole canvas forever: 826
+    # canvas bridge calls and 2.82 ms of JS per frame at 60 Hz, which in a
+    # DAW is a continuous CPU floor next to the audio thread. The same loop
+    # also republished each changed hover reading to the PARENT through
+    # onStatus every 700 ms, and on a captured import that re-applies the
+    # whole document -- 42 of them on a session arm with the pointer parked
+    # on a band, against zero on an idle arm. Nothing else here can see
+    # either one: every other suite measures a RESULT, and these are about
+    # frames on which the result did not move.
+    add_test(NAME Spectr-materialized-idle-draw-loop
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-idle-draw-loop
+        PROPERTIES TIMEOUT 60)
+    # THE LOOP MUST PARK. This plant restores the unconditional re-arm as
+    # it shipped, so the editor asks for a frame forever. A single
+    # captured frame looks identical either way; only elapsed time with
+    # nothing happening under it can tell them apart.
+    add_test(NAME Spectr-materialized-idle-draw-loop-unconditional-raf-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-unconditional-raf --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-unconditional-raf-control
+        PROPERTIES TIMEOUT 60)
+    # ...AND MUST NOT ALLOCATE TO DO IT. drawSpectrum built a fresh
+    # Float32Array(321) every frame while the two hoisted buffers on the
+    # next lines did not. Pure GC churn on a runtime whose collector
+    # shares a thread with the UI, and invisible to any paint assertion.
+    add_test(NAME Spectr-materialized-idle-draw-loop-per-frame-alloc-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-per-frame-alloc --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-per-frame-alloc-control
+        PROPERTIES TIMEOUT 60)
+    # ...AND THE BANNER MUST NOT BE A WHOLE-DOCUMENT EVENT. The commit is
+    # geometric -- the pill's width is a function of the string it paints
+    # -- so no paint-only exemption can ever cover it; it has to stop
+    # being published at all. This plant restores the 700 ms publication.
+    add_test(NAME Spectr-materialized-idle-draw-loop-status-republish-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-status-republish --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-status-republish-control
+        PROPERTIES TIMEOUT 60)
+    # THE WAKE SIDE, one row per path, because a parked loop that fails
+    # to wake is a worse bug than a busy one and each of these is a
+    # separate mechanism. Every one of them changes the canvas WITHOUT
+    # moving React state, which is exactly why none of them is covered
+    # by any other row.
+    # a React state change no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-render-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-render-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-render-wake-control
+        PROPERTIES TIMEOUT 60)
+    # pointer, wheel and key input no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-input-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-input-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-input-wake-control
+        PROPERTIES TIMEOUT 60)
+    # a deferReact gain commit no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-commit-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-commit-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-commit-wake-control
+        PROPERTIES TIMEOUT 60)
+    # the modulation overlay no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-modulation-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-modulation-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-modulation-wake-control
+        PROPERTIES TIMEOUT 60)
+    # host automation no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-automation-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-automation-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-automation-wake-control
+        PROPERTIES TIMEOUT 60)
+    # a window resize no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-resize-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-resize-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-resize-wake-control
+        PROPERTIES TIMEOUT 60)
+    # an incoming analyzer frame no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-analyzer-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-analyzer-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-analyzer-wake-control
+        PROPERTIES TIMEOUT 60)
+    # ...AND THE STAY-AWAKE SIDE. Parking one frame too early freezes an
+    # animation part-way through, which reads as the editor hanging.
+    # the loop parks while the peak hold and the per-band energy glow still
+    # decaying after the last analyzer frame is still under way.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-settle-check-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-settle-check --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-settle-check-control
+        PROPERTIES TIMEOUT 60)
+    # the loop parks while a band still travelling to its new level is still under way.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-smoothing-check-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-smoothing-check --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-smoothing-check-control
+        PROPERTIES TIMEOUT 60)
+    # the loop parks while an analyzer whose frames it cannot identify, which
+    # a synthetic time-sampling analyzer is is still under way.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-analyzer-guard-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-analyzer-guard --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-analyzer-guard-control
+        PROPERTIES TIMEOUT 60)
+    # The in-loop analyzer frame-identity comparison, asserted
+    # STATICALLY and labelled as such in the suite: with the
+    # analyzer_frame subscription in place every accepted frame
+    # already wakes the loop, so no stimulus distinguishes the two.
+    # It is belt and braces for a host that installs no dispatcher.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-analyzer-frame-check-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-analyzer-frame-check --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-analyzer-frame-check-control
         PROPERTIES TIMEOUT 60)
 endif()
 
