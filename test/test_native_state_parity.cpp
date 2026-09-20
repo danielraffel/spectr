@@ -1407,6 +1407,30 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     settle(rig.clock, 4);
 }
 
+TEST_CASE("native history commands consume Logic undo and redo chords",
+          "[native-n1][state-parity][commands][history]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    REQUIRE(static_cast<bool>(rig.root->on_global_key));
+#if defined(__APPLE__)
+    constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+    constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+    CHECK(rig.root->on_global_key({
+        .key = pulp::view::KeyCode::z,
+        .modifiers = primary_modifier,
+        .is_down = true,
+    }));
+    CHECK(rig.root->on_global_key({
+        .key = pulp::view::KeyCode::z,
+        .modifiers = static_cast<std::uint16_t>(primary_modifier
+                                                 | pulp::view::kModShift),
+        .is_down = true,
+    }));
+}
+
 TEST_CASE("native host automation projects through the compact live frame lane",
           "[native-n1][state-parity][host-automation-live]") {
     PatternStoragePoison storage;
@@ -5693,4 +5717,3 @@ TEST_CASE("dismissing a native dropdown over ordinary content still consumes",
     }
     storage.require_unchanged();
 }
-

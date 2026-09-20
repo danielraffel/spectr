@@ -169,7 +169,8 @@ const start = html.indexOf(NEEDLE);
 if (start < 0) { console.error('FAIL: SpectrModulationSettings is absent'); process.exit(2); }
 const end = html.indexOf('\nfunction SettingsModal(', start);
 if (end < 0) { console.error('FAIL: cannot find the end of SpectrModulationSettings'); process.exit(2); }
-const componentSource = html.slice(start, end);
+const hookStart = html.lastIndexOf('function useSpectrModulationState()', start);
+const componentSource = html.slice(hookStart >= 0 ? hookStart : start, end);
 
 // The whole script block the component lives in, so PARSE covers more than the
 // function this patch touched.

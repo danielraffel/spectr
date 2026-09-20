@@ -295,7 +295,8 @@ function measureExcursion() {
 // -------------------------------------------------- 2. live settings readback
 
 function measureLiveSettings() {
-  const componentSrc = blockAt(html, "function SpectrModulationSettings() {",
+  const componentSrc = blockAt(html, "function useSpectrModulationState() {",
+    "shared modulation hook") + "\n" + blockAt(html, "function SpectrModulationSettings() {",
     "SpectrModulationSettings");
 
   // A minimal ordered-hook runtime. Enough to mount one function component,
@@ -368,8 +369,9 @@ function measureLiveSettings() {
           stub("toggle"), stub("chips"), stub("slider"));
         render();
       },
-      // The panel's state lives in hook slot 0 (its single useState).
-      state: () => hooks[0].value,
+      // Locate modulation state independently of readiness or other hooks.
+      state: () => hooks.find(slot => slot?.value &&
+        typeof slot.value === "object" && "enabled" in slot.value)?.value,
       flush: async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); render(); },
     };
     return api;

@@ -75,28 +75,22 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.path.join(REPO, "native-ui", "materialized",
                     "materialized-document.runtime.json")
 
-OLD_SIZING = '''  const W = 250;
-  const H = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;
-  const left = Math.max(8, Math.min(x, vw - W - 8));
-  const top = Math.max(8, Math.min(y, vh - H - 8));
+OLD_SIZING = '''  const estimatedHeight = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;
+  const menuBottom = Math.max(24, vh - 64);
+  const menuMaxHeight = Math.max(120, menuBottom - 16);
+  const H = Math.min(estimatedHeight, menuMaxHeight);
 '''
 
-NEW_SIZING = '''  const W = 250;
-  // The panel measures itself rather than guessing. The estimate this
-  // replaces was wrong by +25 / -15 / -27 px against the three shapes this
-  // menu ships, and wrong in the DANGEROUS direction for both selection
-  // cases: it understated the height, so the clamp below believed a panel fit
-  // when it did not.
+NEW_SIZING = '''  // The panel measures itself rather than guessing. The estimate kept below
+  // as a first-frame fallback was wrong by +25 / -15 / -27 px against the
+  // three shapes this menu ships, and wrong in the DANGEROUS direction for
+  // both selection cases: it understated the height, so the clamp believed a
+  // panel fit when it did not.
   //
   // `ref` is the container's own ref, already declared above and already
-  // attached below, so reading the box mounts nothing new. That is
-  // deliberate: the bindings address nodes by positional DOM path, and a new
-  // child would re-point every later sibling.
-  //
-  // The first render has no box yet, so the estimate stands for one frame and
-  // the layout effect corrects it. That is a POSITION refinement, never what
-  // prevents overflow -- `maxHeight` on the panel is, and it holds whatever
-  // this number says and whatever `vh` reports.
+  // attached below, so reading the box mounts nothing new -- the bindings
+  // address nodes by positional DOM path, and a new child would re-point
+  // every later sibling.
   const [measuredH, setMeasuredH] = React.useState(null);
   React.useLayoutEffect(() => {
     const node = ref.current;
@@ -104,22 +98,10 @@ NEW_SIZING = '''  const W = 250;
     const h = node.offsetHeight || node.clientHeight || 0;
     if (Number.isFinite(h) && h > 0 && h !== measuredH) setMeasuredH(h);
   });
-  // NOT capped with `maxHeight`, deliberately. Measured on the shipping
-  // standalone: Pulp does not scroll an overflow container -- `overflow:
-  // scroll` is treated like `hidden` with no scrollbar UI (pulp
-  // view.hpp:1655), a wheel over the panel moves nothing, so `overflowY:
-  // "auto"` is inert here. A `maxHeight` therefore does not make the panel
-  // scroll; it makes Yoga SHRINK the rows to fit (29px pitch to 20.7px), and
-  // that squash pushes a header element over the first row's centre, so
-  // pressing "Mute / Unmute" where its own words paint hits nothing at all
-  // and the mute never toggles. Capping without shrinking (flexShrink: 0)
-  // instead clips the tail: five rows become unreachable rather than one.
-  // Both are worse than not capping. Capping needs scroll support in core
-  // Pulp first.
-  const estimatedH = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;
-  const H = measuredH === null ? estimatedH : measuredH;
-  const left = Math.max(8, Math.min(x, vw - W - 8));
-  const top = Math.max(8, Math.min(y, vh - H - 8));
+  const estimatedHeight = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;
+  const menuBottom = Math.max(24, vh - 64);
+  const menuMaxHeight = Math.max(120, menuBottom - 16);
+  const H = Math.min(measuredH === null ? estimatedHeight : measuredH, menuMaxHeight);
 '''
 
 EDITS = [
@@ -129,14 +111,14 @@ EDITS = [
 
 REQUIRED_AFTER = (
     # The load-bearing line, named.
-    "const H = measuredH === null ? estimatedH : measuredH;",
+    "const H = Math.min(measuredH === null ? estimatedHeight : measuredH, menuMaxHeight);",
     # The measurement, and that it reads the EXISTING ref.
     "const node = ref.current;",
     "const h = node.offsetHeight || node.clientHeight || 0;",
     # Tokens this must not disturb: the clamp, the dismissal contract, and the
     # markers the scenario probe and the other scripts in this lane key on.
     "const left = Math.max(8, Math.min(x, vw - W - 8));",
-    "const top = Math.max(8, Math.min(y, vh - H - 8));",
+    "const top = Math.max(8, Math.min(y, menuBottom - H - 8));",
     '"data-spectr-band-context-menu": "true",',
     "const __spectrBandMenuKeysAndDismissal = true;",
     "window.spectrDismissBandMenu = onClose;",
@@ -147,16 +129,13 @@ REQUIRED_AFTER = (
 # arithmetic as a first-frame fallback, so the test is that nothing still
 # binds it to `H` directly.
 FORBIDDEN_AFTER = (
-    "const H = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;",
-    # A cap on THIS panel is the regression, not the fix, until core Pulp can
-    # scroll an overflow container.
-    "maxHeight: avail,",
+    "const H = Math.min(estimatedHeight, menuMaxHeight);",
 )
 
 REQUIRED_COUNTS = {
     "function ContextMenu({ x, y, band, N, selection": 1,
-    "const estimatedH = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;": 1,
-    "const top = Math.max(8, Math.min(y, vh - H - 8));": 1,
+    "const estimatedHeight = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;": 1,
+    "const top = Math.max(8, Math.min(y, menuBottom - H - 8));": 1,
     # patternMenu's own cap must survive untouched: it is a DIFFERENT menu,
     # and it is the one whose 380 was misread as this menu's for a whole
     # workstream.

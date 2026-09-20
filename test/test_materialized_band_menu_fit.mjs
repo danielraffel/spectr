@@ -123,7 +123,27 @@ function render(source, { vh, vw = 1320, x = 378, y = 400,
   const root = { clientWidth: vw, clientHeight: vh };
   const sandbox = {
     React,
-    window: { innerWidth: vw, innerHeight: vh, spectrDismissBandMenu: null },
+    // The shipping component reads its modulation state from a host-provided
+    // hook. The sandbox stands in for the app environment, so it has to supply
+    // it: without the stub the component throws at module scope and the test
+    // fails for a missing global rather than for anything it asserts.
+    window: {
+      innerWidth: vw,
+      innerHeight: vh,
+      spectrDismissBandMenu: null,
+      // Every field the component actually reads. A stub that omits one
+      // does not throw -- it yields `undefined` and the panel renders a
+      // shape no user can get -- so the list is exhaustive on purpose.
+      useSpectrModulationState: () => ({
+        value: {
+          enabled: false, shape: 0, rate: 0, depth: 0,
+          lfo2Enabled: false, lfo2Shape: 0, lfo2Rate: 0, lfo2Depth: 0,
+          targetMask: 0,
+        },
+        ready: true,
+        publish() {},
+      }),
+    },
     document: { getElementById: (id) => (id === "root" ? root : null) },
     clamp: (v, lo, hi) => Math.max(lo, Math.min(hi, v)),
     spectrShortcutChipStyle: () => ({}),
@@ -153,14 +173,60 @@ function render(source, { vh, vw = 1320, x = 378, y = 400,
     hooks.layout = [];
     dirty = false;
     el = Menu(props);
-    // The container's own ref is slot 0; give it a box the way a real layout
-    // would, so the measured path is exercised rather than only the estimate.
-    if (measuredPx !== null && hooks.slots[0] && typeof hooks.slots[0] === "object")
-      hooks.slots[0].current = { offsetHeight: measuredPx, clientHeight: measuredPx };
+    // Give the container the box a real layout would, so the MEASURED path is
+    // exercised rather than only the estimate.
+    //
+    // Reach the ref through the element the component attached it to, never
+    // through a hook slot index. This used to poke `hooks.slots[0]`, which
+    // stopped being the container's ref the moment a `useState` was added
+    // above it -- three were -- and the guard `slots[0] &&` then saw
+    // `modulationOpen === false` and skipped the injection ENTIRELY. Every
+    // clamp case still printed a confident number; they were all the estimate.
+    if (measuredPx !== null) {
+      const container = menuContainer(el);
+      const box = container && container.props && container.props.ref;
+      if (!box || typeof box !== "object")
+        throw new Error("the container's ref was not reachable, so the "
+                        + "measured height would never be applied and every "
+                        + "clamp case would silently measure the estimate");
+      box.current = { offsetHeight: measuredPx, clientHeight: measuredPx };
+    }
     hooks.layout.forEach((fn) => fn());
     if (!dirty) break;
   }
-  return el.props.style;
+  // The component used to return the menu container itself, so `el.props.style`
+  // WAS the style under test. Since the submenus became SIBLINGS of that
+  // container -- which is what moved them into viewport space instead of their
+  // trigger's -- it returns a Fragment wrapping the container and those panels,
+  // and the root no longer has a style at all.
+  const found = menuContainer(el);
+  const style = found && found.props ? found.props.style : undefined;
+  if (style === undefined)
+    throw new Error("the band menu container was not found in the render; "
+                    + "every assertion below would have read `undefined` and "
+                    + "passed vacuously");
+  return style;
+}
+
+// Key on the container's OWN marker. Two nearby choices are both wrong and
+// both fail quietly:
+//
+//   * "the first element with `position: fixed`" -- the submenu panels are
+//     fixed too, so this measures a submenu instead of the menu; and
+//   * `data-spectr-main-menu-panel` -- that is the inner flex column, which
+//     carries no positioned style, so `top`/`maxHeight` read `undefined` and
+//     `maxHeight === undefined` PASSES for the wrong reason.
+//
+// Only the container carries the geometry this file asserts on.
+function menuContainer(node) {
+  if (!node || typeof node !== "object") return undefined;
+  const props = node.props || {};
+  if (props["data-spectr-band-context-menu"] !== undefined) return node;
+  for (const child of (node.children || []).flat(Infinity)) {
+    const found = menuContainer(child);
+    if (found !== undefined) return found;
+  }
+  return undefined;
 }
 
 // ── cases ────────────────────────────────────────────────────────────────
@@ -183,6 +249,19 @@ const VIEWPORTS = [575, 860];
 
 const shipped = menuSource();
 
+// Where the clamp is allowed to put the panel's top.
+//
+// The menu reserves the bottom rail: `menuBottom = max(24, vh - 64)`, so the
+// panel is clamped to sit ABOVE the transport row rather than across it. This
+// expectation used to be `vh - H - 8`, which was right before the rail was
+// reserved and is why every clamp case here read 64px low. It is derived
+// independently of the component -- and the plant at the bottom of this file
+// is what proves these assertions can still fail.
+const RAIL = 64;
+function expectedTop(vh, h) {
+  return Math.max(8, Math.min(400, Math.max(24, vh - RAIL) - h - 8));
+}
+
 console.log("== NO CAP: the panel must not ask to be capped ==");
 // Measured on the shipping standalone: Pulp does not scroll an overflow
 // container (`overflow: scroll` is treated like `hidden`, pulp
@@ -201,7 +280,7 @@ console.log("\n== CLAMP: it positions from the measured height ==");
 for (const vh of VIEWPORTS) {
   for (const [name, shape, measured] of SHAPES) {
     const s = render(shipped, { vh, ...shape, measuredPx: measured });
-    const want = Math.max(8, Math.min(400, vh - measured - 8));
+    const want = expectedTop(vh, measured);
     check(`vh=${vh} ${name}`, s.top === want,
           `top=${s.top} expected=${want} (measured H=${measured})`);
   }
@@ -211,30 +290,38 @@ console.log("\n== MEASURED: the real height beats the estimate ==");
 {
   // The estimate for this shape is 784; the real panel measures 811. The
   // viewport has to be chosen so the HEIGHT actually drives `top`: with the
-  // anchor at y=400, `top` only follows the height while vh - H - 8 < 400,
-  // i.e. vh < 1192. At 4000 both heights clamp to the anchor and the case
-  // cannot fail — it was written that way first, and said so.
+  // anchor at y=400, `top` only follows the height while
+  // (vh - 64) - H - 8 < 400, i.e. vh < 1283. At 4000 both heights clamp to
+  // the anchor and the case cannot fail — it was written that way first,
+  // and said so.
   const big = 1000;
   const est = render(shipped, { vh: big, ...SHAPES[2][1], measuredPx: null });
   const mes = render(shipped, { vh: big, ...SHAPES[2][1], measuredPx: 811 });
   check("an unmeasured first frame falls back to the estimate",
-        est.top === Math.max(8, Math.min(400, big - 784 - 8)),
+        est.top === expectedTop(big, 784),
         `top=${est.top} (estimate 784)`);
   check("a measured panel positions from 811, not 784",
-        mes.top === Math.max(8, Math.min(400, big - 811 - 8))
+        mes.top === expectedTop(big, 811)
         && mes.top !== est.top,
         `estimate top=${est.top} measured top=${mes.top}`);
 }
 
 console.log("\n== NEGATIVE CONTROL: the guessed height must break the clamp ==");
 {
-  const guessed = PLANT_GUESSED_H(shipped);
+  // Compare two real RENDERS, never a render against a hand-computed number.
+  // This used to recompute `honest` from a formula of its own, which drifted
+  // the moment the clamp reserved the rail: it was asserting 144 !== 181 when
+  // the honest render was actually 117, so the control would have passed even
+  // if the plant had done nothing at all. A control whose baseline can be
+  // wrong is not a control.
   const vh = 1000;
-  const s = render(guessed, { vh, ...SHAPES[2][1], measuredPx: 811 });
-  const honest = Math.max(8, Math.min(400, vh - 811 - 8));
+  const planted = render(PLANT_GUESSED_H(shipped),
+                         { vh, ...SHAPES[2][1], measuredPx: 811 });
+  const honest = render(shipped, { vh, ...SHAPES[2][1], measuredPx: 811 });
   check("PLANT guessed-H: the clamp positions from 784, not 811",
-        s.top !== honest,
-        `planted top=${s.top} honest top=${honest} — off by ${Math.abs(s.top - honest)}px`);
+        planted.top !== honest.top,
+        `planted top=${planted.top} honest top=${honest.top} — `
+        + `off by ${Math.abs(planted.top - honest.top)}px`);
 }
 
 console.log();

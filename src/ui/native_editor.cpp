@@ -49,12 +49,13 @@ void root_origin_of(const pulp::view::View& view, float& x, float& y) {
 const pulp::view::Label* find_label_if(
         const pulp::view::View& view,
         bool (*match)(const std::string&, const std::string&),
-        const std::string& needle) {
+        const std::string& needle, bool include_hidden = false) {
+    if (!include_hidden && !view.visible()) return nullptr;
     if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
         label != nullptr && match(label->text(), needle))
         return label;
     for (std::size_t i = 0; i < view.child_count(); ++i)
-        if (const auto* hit = find_label_if(*view.child_at(i), match, needle))
+        if (const auto* hit = find_label_if(*view.child_at(i), match, needle, include_hidden))
             return hit;
     return nullptr;
 }
@@ -74,14 +75,39 @@ bool is_band_header(const std::string& text, const std::string&) {
     return true;
 }
 
+// Parent hops from the active overlay to the node whose subtree carries the
+// band menu's header, or -1 when the menu is not up. Reported per step so a
+// scoping miss is visible instead of reading as a closed menu.
+inline int menu_scope_depth = -1;
+
 pulp::view::View* menu_container(pulp::view::View& root, int& band_number) {
     band_number = -1;
-    const auto* header = find_label_if(root, is_band_header, std::string{});
-    if (header == nullptr) return nullptr;
-    band_number = std::atoi(header->text().c_str() + 5);
-    for (auto* node = const_cast<pulp::view::Label*>(header)->parent();
-         node != nullptr; node = node->parent())
-        if (node->child_count() >= 8) return node;
+    menu_scope_depth = -1;
+    auto* overlay = root.interaction().active_overlay;
+    if (overlay == nullptr) return nullptr;
+    // A submenu panel (`Macros`, `Modulation`) takes the active-overlay slot
+    // while the band menu stays mounted underneath it -- Escape has to be
+    // pressed twice to get back to the editor, which is how you can tell the
+    // menu is still there. So the header that identifies the menu is NOT in
+    // the top overlay; it is in an ancestor. Reading only the top overlay
+    // made every row behind a submenu report `menu-absent`, which is
+    // indistinguishable from the menu having closed, and it blinded this
+    // probe to both submenus.
+    //
+    // The scope returned stays the TOP overlay: that is where a press lands
+    // and where the submenu's own rows are. Only the identification walks up.
+    // Requiring an active overlay first is what keeps the walk honest -- a
+    // closed menu returns before it, so a stray hidden "BAND n" label
+    // elsewhere in the editor can never make a closed menu read as open.
+    int depth = 0;
+    for (auto* node = overlay; node != nullptr; node = node->parent(), ++depth) {
+        const auto* header =
+            find_label_if(*node, is_band_header, std::string{}, true);
+        if (header == nullptr) continue;
+        band_number = std::atoi(header->text().c_str() + 5);
+        menu_scope_depth = depth;
+        return overlay;
+    }
     return nullptr;
 }
 
@@ -565,15 +591,25 @@ void collect_settings_scroll_views(pulp::view::View& view,
 } // namespace
 
 std::vector<pulp::view::CommandID> Spectr::commands() const {
-    return {kOpenSettingsCommand};
+    return {kOpenSettingsCommand, kUndoCommand, kRedoCommand};
 }
 
 bool Spectr::perform_command(pulp::view::CommandID id) {
-    if (id != kOpenSettingsCommand || !native_scripted_ui_
-        || !native_scripted_ui_->bridge()) {
+    if ((id != kOpenSettingsCommand && id != kUndoCommand && id != kRedoCommand)
+        || !native_scripted_ui_ || !native_scripted_ui_->bridge()) {
         return false;
     }
     try {
+        if (id == kUndoCommand || id == kRedoCommand) {
+            // Reuse the same EditorBridge handlers as the menu rows. The
+            // command is consumed even when history is empty so the host
+            // never treats Cmd/Ctrl+Z as its own project removal command.
+            native_editor_bridge_.dispatch_json(
+                id == kUndoCommand
+                    ? R"({"type":"undo","payload":{}})"
+                    : R"({"type":"redo","payload":{}})");
+            return true;
+        }
         native_scripted_ui_->bridge()->load_script(
             "(() => { if (!globalThis.__pulpActivateMaterializedElement__("
             "'[data-spectr-settings-open]', 'click', null)) "
@@ -776,6 +812,49 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
             // ...), so a native event delivered to the View tree is simply not
             // where the handler is -- dispatching one and reading handled=false
             // measured the wrong thing rather than the app.
+            // Make `console.error` say what went wrong.
+            //
+            // An Error's own properties are NON-ENUMERABLE, so whatever the
+            // bridge does to serialise one collapses to `{}` -- which is what
+            // `script-ui[error] {}` has been printing for every JS failure in
+            // this editor. The payload is byte-identical for a benign probe
+            // and for a throw that kills the whole editor subtree, so the log
+            // could not tell them apart and three separate root causes were
+            // found only by re-deriving them from behaviour.
+            //
+            // Flattening the arguments HERE, before they reach the bridge,
+            // makes the message and the stack survive. It is installed
+            // unconditionally and before any fixture script, because the
+            // errors worth reading are the ones nobody set out to catch.
+            static constexpr const char* kErrorShim = R"JS(
+(() => {
+  if (typeof console === 'undefined' || console.__spectrErrorShim) return;
+  const orig = console.error ? console.error.bind(console) : null;
+  const fmt = (v) => {
+    try {
+      if (v instanceof Error)
+        return (v.name || 'Error') + ': ' + (v.message || '')
+             + (v.stack ? '\n' + v.stack : '');
+      if (typeof v === 'string') return v;
+      if (v && typeof v === 'object') {
+        const own = Object.getOwnPropertyNames(v);
+        if (own.length) return '{' + own.map((k) => {
+          let s; try { s = String(v[k]); } catch (e) { s = '<throws>'; }
+          return k + ': ' + s;
+        }).join(', ') + '}';
+      }
+      return String(v);
+    } catch (e) { return '<unformattable>'; }
+  };
+  console.__spectrErrorShim = true;
+  console.error = function () {
+    const text = Array.prototype.map.call(arguments, fmt).join(' ');
+    if (orig) orig(text);
+  };
+})();
+)JS";
+            bridge->load_script(kErrorShim, "spectr-console-error-shim");
+
             // A raw eval hook. Distinguishing "the reconciler never handed
             // the style over" from "the style was handed over and did not take
             // effect" needs one direct write from JS, and guessing between
@@ -2410,7 +2489,9 @@ bool Spectr::tick_native_analyzer_(float dt) {
                    << "\",\"press\":[" << press_x << "," << press_y << "]"
                    << ",\"attributable\":" << (attributable ? "true" : "false")
                    << ",\"menu_mounted\":" << (scope != nullptr ? "true" : "false")
-                   << ",\"menu_band\":" << band_number;
+                   << ",\"menu_band\":" << band_number
+                   << ",\"menu_scope_depth\":"
+                   << spectr_menu_probe::menu_scope_depth;
                 if (scope != nullptr) {
                     float mx = 0.0f, my = 0.0f;
                     spectr_menu_probe::root_origin_of(*scope, mx, my);
@@ -2422,6 +2503,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     std::vector<pulp::view::View*> seen;
                     std::function<void(pulp::view::View&)> walk =
                         [&](pulp::view::View& v) {
+                            if (!v.visible()) return;
                             if (const auto* label =
                                     dynamic_cast<const pulp::view::Label*>(&v);
                                 label != nullptr && !label->text().empty()) {
@@ -2431,13 +2513,35 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                 auto* own = spectr_menu_probe::nearest_clickable(
                                     const_cast<pulp::view::View*>(&v));
                                 bool self = false;
+                                std::string covered_by;
                                 if (own != nullptr && box.width > 0.0f
                                     && box.height > 0.0f) {
                                     auto* hit = root.hit_test(pulp::view::Point{
                                         lx + box.width * 0.5f,
                                         ly + box.height * 0.5f});
-                                    self = spectr_menu_probe::nearest_clickable(hit)
-                                        == own;
+                                    auto* winner =
+                                        spectr_menu_probe::nearest_clickable(hit);
+                                    self = winner == own;
+                                    // NAME what wins the row's own centre. A
+                                    // bare `owns_own_centre:false` says a row
+                                    // is unreachable but not what is over it,
+                                    // and guessing that from y-bands has
+                                    // already produced two wrong theories.
+                                    if (!self) {
+                                        const auto* who =
+                                            winner == nullptr ? nullptr
+                                            : spectr_menu_probe::find_label_if(
+                                                  *winner,
+                                                  [](const std::string& t,
+                                                     const std::string&) {
+                                                      return !t.empty();
+                                                  },
+                                                  std::string{}, true);
+                                        covered_by = winner == nullptr
+                                            ? "<nothing-clickable>"
+                                            : (who == nullptr ? "<unlabelled>"
+                                                              : who->text());
+                                    }
                                 }
                                 js << (first_row ? "" : ",")
                                    << "{\"label\":\""
@@ -2447,7 +2551,10 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                    << ",\"pressable\":" << (own != nullptr && own->enabled()
                                                               ? "true" : "false")
                                    << ",\"owns_own_centre\":"
-                                   << (self ? "true" : "false") << "}";
+                                   << (self ? "true" : "false")
+                                   << ",\"covered_by\":\""
+                                   << spectr_menu_probe::json_escape(covered_by)
+                                   << "\"}";
                                 first_row = false;
                             }
                             for (std::size_t i = 0; i < v.child_count(); ++i)
@@ -2456,7 +2563,12 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     walk(*scope);
                     js << "]";
                 }
-                js << ",\"n_visible\":" << n
+                const auto modulation = modulation_settings();
+                js << ",\"lfo1_enabled\":" << (modulation.enabled ? "true" : "false")
+                   << ",\"lfo2_enabled\":" << (modulation.lfo2_enabled ? "true" : "false")
+                   << ",\"lfo_target\":" << static_cast<int>(modulation.target)
+                   << ",\"lfo_target_mask\":" << static_cast<int>(resolve_modulation_target_mask(modulation))
+                   << ",\"n_visible\":" << n
                    << ",\"edit_mode\":"
                    << (param_store_ != nullptr
                            ? param_store_->get_value(kParamEditMode) : -1.0f)
