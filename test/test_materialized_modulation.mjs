@@ -163,7 +163,12 @@ function measureExcursion() {
       // the idle machinery is supplied inert: a settled analyzer it can
       // identify, no gesture in flight, and a wake that arms nothing.
       const pointerRef = { current: { mode: null } };
-      const analyzerPaintSettledRef = { current: true };
+      // These two names are read by the loop AFTER it paints, and both must
+      // match the document exactly: an undefined name here does not degrade
+      // the measurement, it throws out of it, and the suite then reports a
+      // dead instrument as a finding about the DSP.
+      const spectrumSettledRef = { current: true };
+      const bandEnergyRef = { current: null };
       const idleFramesRef = { current: 0 };
       const analyzerFrameRef = { current: void 0 };
       const IDLE_TAIL_FRAMES = 12;
@@ -314,8 +319,17 @@ function measureExcursion() {
 // -------------------------------------------------- 2. live settings readback
 
 function measureLiveSettings() {
+  // The hook normalises every native frame through a sibling top-level
+  // function, deliberately so the band menu can normalise one without
+  // mounting a component. Extracting the hook without it leaves the mount
+  // hydration throwing inside the effect, where the throw is swallowed and
+  // reported as "modulation state unavailable" -- a dead rig that reads as a
+  // finding about the panel.
   const componentSrc = blockAt(html, "function useSpectrModulationState() {",
-    "shared modulation hook") + "\n" + blockAt(html, "function SpectrModulationSettings() {",
+    "shared modulation hook") + "\n" + blockAt(html,
+    "function spectrModulationFromNative(modulation) {",
+    "native modulation frame normaliser") + "\n"
+    + blockAt(html, "function SpectrModulationSettings() {",
     "SpectrModulationSettings");
 
   // A minimal ordered-hook runtime. Enough to mount one function component,
