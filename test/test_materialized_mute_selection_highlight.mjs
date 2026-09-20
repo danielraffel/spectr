@@ -18,7 +18,13 @@
 // 5px sliver lands on the zero line, which is exactly where the mute chip is
 // centred and exactly where its speaker glyph is drawn.
 //
-// THE FOUR THINGS THIS MEASURES, all against the real painter:
+// The mark itself is no longer a hairline outline. An outline is only visible
+// where it meets a contrast, and a RUN of adjacent selected bands has none
+// between its members -- the reported "I do see it but it is not the most
+// obvious". So `paintSelection` now lays a TINT across the interior as well as
+// a 2px edge, and the interior is what carries the reading at a glance.
+//
+// THE FIVE THINGS THIS MEASURES, all against the real painter:
 //
 //   A  a selected muted band's mark CONTAINS its mute chip. Not "is taller
 //      than 5px" -- containment, so a mark that grew but sat somewhere else
@@ -30,6 +36,11 @@
 //      geometry. The branch must not have eaten the ordinary case.
 //   D  the mark is painted in a VISIBLE colour, asserted from the document's
 //      own source rather than assumed.
+//   E  a selected UNMUTED band is TINTED across its body, not only outlined.
+//      This is the salience ask itself. The previous painter tinted only the
+//      muted chip, so nothing covered the ordinary band, and a regression
+//      that dropped the interior fill and kept the edge would have read as
+//      green everywhere else in this file.
 //
 // D is not padding. The instrument below records DRAWING COMMANDS, so its
 // geometric detection floor is 0px -- it cannot miss a coordinate change of
@@ -41,7 +52,7 @@
 // Usage:
 //   node test_materialized_mute_selection_highlight.mjs <runtime.json>
 //        [--plant-body-rect | --plant-sliver | --plant-unconditional-ring
-//         | --plant-transparent] [--expect-fail] [--report]
+//         | --plant-transparent | --plant-no-tint] [--expect-fail] [--report]
 //
 // Each plant installs a DIFFERENT wrong painter, so a failing control names
 // which check is load bearing. --expect-fail inverts the verdict: the row is
@@ -58,6 +69,7 @@ const plantBodyRect = args.includes("--plant-body-rect");
 const plantSliver = args.includes("--plant-sliver");
 const plantUnconditional = args.includes("--plant-unconditional-ring");
 const plantTransparent = args.includes("--plant-transparent");
+const plantNoTint = args.includes("--plant-no-tint");
 const expectFail = args.includes("--expect-fail");
 const report = args.includes("--report");
 const documentPath = args.find((a) => !a.startsWith("--"));
@@ -87,36 +99,41 @@ const plant = (label, from, to, expected = 1) => {
   console.log(`planted   ${label}`);
 };
 
-const SEL_BRANCH_OPEN =
+// The plants are expressed against the CURRENT painter, which routes every
+// selection mark through the shared `paintSelection` helper. A plant that no
+// longer string-matches aborts with "found 0 sites" and proves nothing, so
+// these are re-derived whenever the painter moves rather than left to rot.
+
+const SEL_CHIP_BRANCH =
   '        if (G.targetMuted && muteStyle === "cutout") {\n'
-  + '          const sel = muteChipRect(i, g);\n'
-  + '          ctx.fillStyle = "rgba(255,255,255,0.12)";\n'
-  + '          roundRect(ctx, sel.x, sel.y, sel.w, sel.h, 3);\n'
-  + '          ctx.fill();\n'
-  + '          roundRect(ctx, sel.x - 2.5, sel.y - 2.5, sel.w + 5, sel.h + 5, 5);\n'
-  + '          ctx.stroke();\n'
-  + '        } else {\n';
-const BODY_RECT_INDENTED =
-  '          ctx.strokeRect(\n'
-  + '            Math.round(G.cx - G.innerW / 2) - 2.5,\n'
-  + '            Math.round(Math.min(G.topY, G.botY)) - 2.5,\n'
-  + '            Math.round(G.innerW) + 5,\n'
-  + '            Math.round(Math.abs(G.botY - G.topY)) + 5\n'
-  + '          );\n'
-  + '        }\n';
-const BODY_RECT_FLAT =
-  '        ctx.strokeRect(\n'
-  + '          Math.round(G.cx - G.innerW / 2) - 2.5,\n'
-  + '          Math.round(Math.min(G.topY, G.botY)) - 2.5,\n'
-  + '          Math.round(G.innerW) + 5,\n'
-  + '          Math.round(Math.abs(G.botY - G.topY)) + 5\n'
-  + '        );\n';
+  + "          const sel = muteChipRect(i, g);\n"
+  + "          paintSelection(ctx, sel.x - 2.5, sel.y - 2.5,\n"
+  + "                         sel.w + 5, sel.h + 5, 5);\n"
+  + "        } else {\n";
+const BODY_CALL_INDENTED =
+  "          paintSelection(ctx,\n"
+  + "            Math.round(G.cx - G.innerW / 2) - 2.5,\n"
+  + "            Math.round(Math.min(G.topY, G.botY)) - 2.5,\n"
+  + "            Math.round(G.innerW) + 5,\n"
+  + "            Math.round(Math.abs(G.botY - G.topY)) + 5,\n"
+  + "            0\n"
+  + "          );\n"
+  + "        }\n";
+const BODY_CALL_FLAT =
+  "        paintSelection(ctx,\n"
+  + "          Math.round(G.cx - G.innerW / 2) - 2.5,\n"
+  + "          Math.round(Math.min(G.topY, G.botY)) - 2.5,\n"
+  + "          Math.round(G.innerW) + 5,\n"
+  + "          Math.round(Math.abs(G.botY - G.topY)) + 5,\n"
+  + "          0\n"
+  + "        );\n";
 
 if (plantBodyRect) {
   // The shipped defect, exactly: one unconditional body rect, which on a muted
-  // band is the 5px sliver over the speaker glyph.
+  // band is the 5px sliver over the speaker glyph. The chip branch is deleted
+  // and the body call de-indented into its place.
   plant("the selection goes back to outlining the (absent) band body",
-    SEL_BRANCH_OPEN + BODY_RECT_INDENTED, BODY_RECT_FLAT);
+    SEL_CHIP_BRANCH + BODY_CALL_INDENTED, BODY_CALL_FLAT);
 }
 
 if (plantSliver) {
@@ -124,29 +141,63 @@ if (plantSliver) {
   // "the code has an if" from "the mark covers the button" -- a suite that
   // only looked for the branch would pass this.
   plant("the ring keeps the branch but stays the size of the glyph",
-    "          roundRect(ctx, sel.x - 2.5, sel.y - 2.5, sel.w + 5, sel.h + 5, 5);",
-    "          roundRect(ctx, sel.x - 2.5, g.zeroY - 2.5, sel.w + 5, 5, 5);");
+    "          paintSelection(ctx, sel.x - 2.5, sel.y - 2.5,\n"
+    + "                         sel.w + 5, sel.h + 5, 5);",
+    "          paintSelection(ctx, sel.x - 2.5, g.zeroY - 2.5,\n"
+    + "                         sel.w + 5, 5, 5);");
 }
 
 if (plantUnconditional) {
-  // The plausible over-fix: style every mute button, so an unselected muted
-  // neighbour is indistinguishable from a selected one.
-  plant("every muted band gets the ring, selected or not",
-    "      if (G.isSel) {\n"
-    + '        ctx.strokeStyle = "rgba(255,255,255,0.85)";',
-    "      if (G.isSel || (G.targetMuted && muteStyle === \"cutout\")) {\n"
-    + '        ctx.strokeStyle = "rgba(255,255,255,0.85)";');
+  // The plausible over-fix: mark every mute button, so an unselected muted
+  // neighbour is indistinguishable from a selected one. The condition is the
+  // whole match now -- the old plant carried the inline strokeStyle that used
+  // to sit under it, and that line moved into `paintSelection`.
+  plant("every muted band gets the mark, selected or not",
+    "      if (G.isSel) {\n",
+    '      if (G.isSel || (G.targetMuted && muteStyle === "cutout")) {\n');
 }
 
 if (plantTransparent) {
   // Geometry identical, ink absent. The check that rejects this is the only
-  // one standing between this suite and its own blind spot.
-  plant("the mark is painted in a fully transparent white",
-    '      if (G.isSel) {\n        ctx.strokeStyle = "rgba(255,255,255,0.85)";',
-    '      if (G.isSel) {\n        ctx.strokeStyle = "rgba(255,255,255,0)";');
-  plant("the tint is fully transparent too",
-    '          ctx.fillStyle = "rgba(255,255,255,0.12)";',
-    '          ctx.fillStyle = "rgba(255,255,255,0)";');
+  // one standing between this suite and its own blind spot. Both halves of the
+  // mark are zeroed: an edge-only or tint-only version of this plant would
+  // leave the other half visible and prove only half the assertion.
+  plant("the mark's edge is painted in a fully transparent blue",
+    '    ctx.strokeStyle = "rgba(190,232,255,0.98)";',
+    '    ctx.strokeStyle = "rgba(190,232,255,0)";');
+  plant("the mark's interior tint is fully transparent too",
+    '    ctx.fillStyle = "rgba(150,210,255,0.14)";',
+    '    ctx.fillStyle = "rgba(150,210,255,0)";');
+}
+
+if (plantNoTint) {
+  // The regression this restyle exists to prevent: the interior fill is
+  // dropped and the edge kept, which is precisely the hairline the user
+  // reported as "not the most obvious". Checks A-D all still pass under it --
+  // E is the only thing standing in its way.
+  //
+  // The `fillStyle` DECLARATION is deliberately left in place while the fill
+  // CALLS are removed. This suite reads its colours out of `paintSelection`
+  // and hard-aborts when a read comes back null, so a plant that deleted the
+  // declaration too would exit 2 with "no fillStyle" instead of rendering a
+  // verdict, and would prove nothing about check E. A real regression that
+  // removed both still gets rejected, by that abort rather than by E.
+  plant("the mark keeps its edge and loses its interior tint",
+    "    if (r > 0) {\n"
+    + "      roundRect(ctx, x, y, w, h, r);\n"
+    + "      ctx.fill();\n"
+    + "      roundRect(ctx, x, y, w, h, r);\n"
+    + "      ctx.stroke();\n"
+    + "    } else {\n"
+    + "      ctx.fillRect(x, y, w, h);\n"
+    + "      ctx.strokeRect(x, y, w, h);\n"
+    + "    }\n",
+    "    if (r > 0) {\n"
+    + "      roundRect(ctx, x, y, w, h, r);\n"
+    + "      ctx.stroke();\n"
+    + "    } else {\n"
+    + "      ctx.strokeRect(x, y, w, h);\n"
+    + "    }\n");
 }
 
 const failures = [];
@@ -173,6 +224,9 @@ const controls = {
   // read zero on the planted document and abort with NO VERDICT before the
   // check the plant exists to exercise ever ran.
   "selection branch": html.split("if (G.isSel").length - 1,
+  // The shared painter every selection mark now routes through. It owns the
+  // colours, so if it is gone this suite has nothing to read them out of.
+  "selection painter": html.split("function paintSelection(ctx").length - 1,
   // Matched WITHOUT the ramp's target value. This control keyed on
   // `smooth(rg[i], -1.02, ...)` and went blind the day that target changed:
   // a muting band now collapses toward 0 rather than travelling to the -1.02
@@ -197,21 +251,37 @@ if (blind.length || !bankBlock) {
 // The colours are lifted from the document rather than restated here, so a
 // restyle cannot leave this suite measuring a mark that no longer exists while
 // reporting the one it remembers.
-const styleAfter = (anchor, prop) => {
+const styleAfter = (anchor, prop, span = 4000) => {
   const at = html.indexOf(anchor);
   if (at < 0) return null;
-  const m = html.slice(at, at + 4000).match(
+  const m = html.slice(at, at + span).match(
     new RegExp(`ctx\\.${prop}\\s*=\\s*"([^"]+)"`));
   return m ? m[1] : null;
 };
-const SELECTION_STROKE = styleAfter("      if (G.isSel", "strokeStyle");
+//
+// ANCHOR THE READ ON THE PAINTER THAT OWNS THE COLOUR, NOT ON THE CALL SITE.
+// This scanned forward from `if (G.isSel` while the styles sat inline under
+// that branch. When they moved into the shared `paintSelection` helper the
+// scan ran straight past the block and latched onto `rgba(210,225,245,0.70)`
+// -- a colour belonging to something else entirely -- so the suite counted
+// zero marks and reported four failures that misdescribed the defect. The
+// window is deliberately tight enough to stay inside the helper's own body:
+// a read that escapes it is measuring somebody else's paint.
+const PAINTER = "  function paintSelection(ctx, x, y, w, h, r) {";
+const SELECTION_STROKE = styleAfter(PAINTER, "strokeStyle", 600);
+const SELECTION_TINT = styleAfter(PAINTER, "fillStyle", 600);
 const CHIP_FILL = "rgba(18,22,28,0.92)";
-if (!SELECTION_STROKE) {
-  console.error("FAIL: the selection branch declares no strokeStyle, so this "
-    + "suite cannot tell its mark from any other stroke on the canvas");
+if (!SELECTION_STROKE || !SELECTION_TINT) {
+  console.error("FAIL: paintSelection declares no "
+    + (!SELECTION_STROKE ? "strokeStyle" : "fillStyle")
+    + ", so this suite cannot tell its mark from any other paint on the "
+    + "canvas. If the interior fill was deliberately removed, that IS the "
+    + "regression check E exists to catch -- it is being reported here "
+    + "instead because the suite lost the colour it measures with.");
   process.exit(2);
 }
 console.log("control   %s %s", "selection stroke".padEnd(22), SELECTION_STROKE);
+console.log("control   %s %s", "selection tint".padEnd(22), SELECTION_TINT);
 
 // A colour with no ink. `rgba(r,g,b,0)`, `transparent`, and anything the
 // painter could issue that paints nothing.
@@ -588,8 +658,10 @@ const selMarks = main.groups.filter((g) => g.style === SELECTION_STROKE
 const chipFills = main.groups.filter((g) => g.style === CHIP_FILL);
 const markFor = (i) => selMarks.filter((m) => overlaps(m, expectedChip(i)));
 
-console.log("reading   selection marks=%d, chip fills=%d",
-  selMarks.length, chipFills.length);
+const selTints = main.groups.filter((g) => g.style === SELECTION_TINT
+  && (g.kind === "fill" || g.kind === "fillRect"));
+console.log("reading   selection marks=%d, selection tints=%d, chip fills=%d",
+  selMarks.length, selTints.length, chipFills.length);
 
 // The chip painter is the control for every chip-relative reading below.
 check(`the painter drew a chip for each of the ${MUTED.length} muted bands`,
@@ -609,11 +681,14 @@ if (report) {
   for (const i of [...SELECT, ...MUTED].sort((a, b) => a - b)) {
     const c = expectedChip(i);
     const m = markFor(i)[0];
+    const t = selTints.find((gp) =>
+      Math.abs(gp.x + gp.w / 2 - centre(i)) < bandW / 2);
     const fmt = (b) => `${b.w.toFixed(3)}x${b.h.toFixed(3)}@(${b.x.toFixed(3)},${b.y.toFixed(3)})`;
     console.log(`  band ${String(i).padStart(2)}  `
       + `muted=${String(mutedSet.has(i)).padEnd(5)} `
       + `selected=${String(selected.includes(i)).padEnd(5)} `
-      + `chip=${fmt(c).padEnd(34)} mark=${m ? fmt(m) : "NONE"}`);
+      + `chip=${fmt(c).padEnd(34)} mark=${(m ? fmt(m) : "NONE").padEnd(34)} `
+      + `tint=${t ? fmt(t) : "NONE"}`);
   }
 }
 
@@ -640,11 +715,21 @@ for (const i of selectedMuted) {
   check(`band ${i}: the mark is painted in a visible colour`,
     !invisible(m.style), `stroke style is ${m.style}`);
   // The tint that makes the button read lifted rather than merely outlined.
-  const tint = main.groups.find((gp) => gp.kind === "fill"
-    && gp.style !== CHIP_FILL && !invisible(gp.style)
-    && Math.abs(gp.x - chip.x) < 0.01 && Math.abs(gp.h - chip.h) < 0.01);
+  // It is laid on the OUTSET rect the edge follows -- `chip.x - 2.5`,
+  // `chip.h + 5` -- not on the chip box itself, so a predicate keyed on the
+  // chip's own geometry misses the fill that is actually there. Matched by
+  // the painter's declared colour rather than by "any fill that is not the
+  // chip", so a stray fill from a neighbouring stage cannot stand in for it.
+  const outset = { x: chip.x - 2.5, y: chip.y - 2.5,
+                   w: chip.w + 5, h: chip.h + 5 };
+  const tint = main.groups.find((gp) =>
+    (gp.kind === "fill" || gp.kind === "fillRect")
+    && gp.style === SELECTION_TINT
+    && Math.abs(gp.x - outset.x) < 0.01 && Math.abs(gp.h - outset.h) < 0.01);
   check(`band ${i}: the selected button is tinted, not only outlined`,
-    !!tint, "no visible fill covering the chip box");
+    !!tint, `no ${SELECTION_TINT} fill on the chip's outset rect `
+    + `${outset.w.toFixed(3)}x${outset.h.toFixed(3)}@`
+    + `(${outset.x.toFixed(3)},${outset.y.toFixed(3)})`);
 }
 
 // B. An unselected muted neighbour carries no mark. The user's second ask.
@@ -675,13 +760,48 @@ for (const i of selectedUnmuted) {
     marks[0].kind === "strokeRect" && marks[0].h > expectedChip(i).h + 5,
     `mark is ${marks[0].kind} ${marks[0].h.toFixed(3)} tall; a body rect over a `
     + "real gain must be taller than the chip");
+
+  // E. THE SALIENCE ASK ITSELF. An edge is only visible where it meets a
+  //    contrast, and a run of adjacent selected bands has none between its
+  //    members -- which is the reported "I do see it but it is not the most
+  //    obvious". So the body must carry a TINT across its interior, not just
+  //    a line around it. Nothing else in this file covers this: the previous
+  //    painter tinted only the muted chip, so an ordinary selected band got
+  //    an outline and nothing else, and every other check here would stay
+  //    green if the interior fill were dropped tomorrow.
+  const bodyTints = main.groups.filter((gp) =>
+    (gp.kind === "fillRect" || gp.kind === "fill")
+    && gp.style === SELECTION_TINT
+    && Math.abs(gp.x + gp.w / 2 - centre(i)) < bandW / 2);
+  if (bodyTints.length !== 1) {
+    fail(`band ${i} is selected and unmuted but carries ${bodyTints.length} `
+      + `interior tint(s) in ${SELECTION_TINT}, expected exactly 1 -- a `
+      + "selected band that is only outlined is the salience defect");
+    continue;
+  }
+  const bt = bodyTints[0];
+  check(`band ${i}: the selected body is tinted across its interior, not only `
+    + "outlined",
+    contains(bt, marks[0]) && bt.h > expectedChip(i).h + 5,
+    `tint ${bt.w.toFixed(3)}x${bt.h.toFixed(3)}@(${bt.x.toFixed(3)},`
+    + `${bt.y.toFixed(3)}) does not cover the outlined body `
+    + `${marks[0].w.toFixed(3)}x${marks[0].h.toFixed(3)}@`
+    + `(${marks[0].x.toFixed(3)},${marks[0].y.toFixed(3)}) -- a tint smaller `
+    + "than its own outline is a sliver, not a highlight");
 }
 
-// D. Every mark the suite counted is ink.
+// D. Every mark the suite counted is ink, and so are the two colours it
+//    counted them by.
 check("no selection mark is painted in a transparent colour",
   selMarks.every((m) => !invisible(m.style)),
   "a mark was recorded with zero alpha -- the geometry is right and nothing is "
   + "on screen, which is the one thing a command recorder cannot see by itself");
+// Both halves, at the source. Every geometric reading above matches groups by
+// these two strings, so a zero-alpha colour would satisfy all of them while
+// painting nothing; this is the assertion that will not.
+check("the painter's own edge and tint colours both carry ink",
+  !invisible(SELECTION_STROKE) && !invisible(SELECTION_TINT),
+  `edge ${SELECTION_STROKE}, tint ${SELECTION_TINT}`);
 
 // ---------------------------------------------------------------- verdict
 
@@ -702,5 +822,5 @@ if (expectFail) {
 if (!ok) process.exit(1);
 console.log("\nOK: a selected muted band outlines and tints its mute button, an "
   + "unselected muted neighbour carries no mark, and a selected unmuted band "
-  + "still outlines its body");
+  + "is both outlined and tinted across its body");
 process.exit(0);

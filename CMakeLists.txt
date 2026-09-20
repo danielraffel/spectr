@@ -2199,19 +2199,24 @@ if(SPECTR_NODE_EXECUTABLE)
     # is exactly where the mute chip's speaker glyph is drawn. Reported as "a
     # small bright box around an icon sitting inside a larger unhighlighted
     # button". Measured against the chip's own box, so a mark that merely grew
-    # without covering the button still fails.
+    # without covering the button still fails. It also holds the mark's
+    # SALIENCE: an edge is only visible where it meets a contrast and a run of
+    # adjacent selected bands has none between its members, so a selected band
+    # must carry an interior tint and not only an outline.
     add_test(NAME Spectr-materialized-mute-selection-highlight
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_mute_selection_highlight.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
     set_tests_properties(Spectr-materialized-mute-selection-highlight PROPERTIES
         TIMEOUT 60)
-    # Four controls, separate rows so it is visible which check is load
+    # Five controls, separate rows so it is visible which check is load
     # bearing. `sliver` is the one that separates "the code grew a branch" from
-    # "the mark covers the button", and `transparent` covers this suite's own
+    # "the mark covers the button", `transparent` covers this suite's own
     # blind spot: it records drawing commands, so it cannot see an alpha-0
-    # stroke without being told to look.
-    foreach(_mutehl_plant body-rect sliver unconditional-ring transparent)
+    # stroke without being told to look, and `no-tint` is the regression that
+    # would put the mark back to a hairline edge -- the one every other row
+    # here stays green through.
+    foreach(_mutehl_plant body-rect sliver unconditional-ring transparent no-tint)
         add_test(NAME Spectr-materialized-mute-selection-highlight-control-${_mutehl_plant}
             COMMAND ${SPECTR_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_mute_selection_highlight.mjs
