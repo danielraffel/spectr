@@ -67,6 +67,41 @@ SCENARIO = ";".join([
     "o_esc0=rpress:378,400",       "selall2=row:Select all",
     "o_esc=rpress:378,400",        "pre_esc=wait", "esc=escape",
     "o_out=rpress:378,400",        "pre_out=wait", "outside=outside:60,60",
+    # The same two things again, but delivered as a KEY through the script
+    # fan-out, which is the first thing the macOS standalone's `keyDown:`
+    # does and the only route by which a key reaches the document's own
+    # listeners. The `escape` step above calls the native overlay policy
+    # directly and never puts a key into JS at all, so an editor whose own
+    # Escape handling is dead passes it -- which is how a menu that would not
+    # close for a user stayed green here.
+    "o_kesc=rpress:378,400",       "pre_kesc=wait",
+    "kesc=key:escape",             "after_kesc=wait",
+    # THE POSITIVE CONTROL for this whole lane. Cmd+Shift+A / Cmd+A are the
+    # App's own selection chords, they travel the identical dispatch, and
+    # neither they nor the rows that report them were touched by any change
+    # here -- so if these two go red, key delivery or the instrument is dead
+    # and nothing else in this block is evidence about the product. They are
+    # read from the menu's own rows: the selection rows exist only when a
+    # selection does.
+    "kseln=key:cmd+shift+a",       "after_kseln=wait",   "o_kseln=rpress:378,400",
+    "kselall=key:cmd+a",           "after_kselall=wait", "o_kselall=rpress:378,400",
+    # Cmd+Z end to end: the chord goes into JS, JS asks the authority, and the
+    # band field is read back. Paired with the drag that made something to
+    # undo, so "nothing changed" cannot pass for "undo worked".
+    "kesc2=key:escape",            "pre_keydrag=wait",
+    "d_keyundo=drag:660,400>660,330@12", "pre_kundo=wait",
+    # Read the editor once BEFORE the chord as well. A drag clears the redo
+    # stack, so Redo must be disabled here and enabled after the undo -- a
+    # PAIR, because "Undo is enabled" says nothing when earlier history
+    # exists, which it does by this point in the run.
+    "o_prekundo=rpress:378,400",   "kesc4=key:escape",
+    "kundo=key:cmd+z",             "after_kundo=wait",
+    # Reopened so the EDITOR can be read, not just the processor. The
+    # processor's field is restored either way -- the authority always did
+    # its job -- so a field comparison alone does not see this defect at all.
+    # What a user sees is the menu, and the menu's Undo/Redo rows are drawn
+    # from `canUndo`/`canRedo`, which only move when the editor is TOLD.
+    "o_kundo=rpress:378,400",      "kesc3=key:escape",
     # The reopen sequence the user described as "gets better once closed and
     # reopened". Four opens with the selection live, measured.
     "o_re1=rpress:378,400",        "esc_re1=escape",
@@ -554,6 +589,62 @@ def main():
            "mounted before=%s; policy answered '%s'; mounted after=%s"
            % (pre_o["menu_mounted"], out["result"], out["menu_mounted"]))
 
+    # Delivered as a key, not by calling the policy. Same before/after control
+    # as the two rows above: the menu has to be up with nothing happening, so
+    # the unmount is attributable to the keystroke.
+    pre_k = step(steps, "pre_kesc")
+    after_k = step(steps, "after_kesc")
+    record("Escape key", "all selected",
+           "menu up beforehand, then a dispatched Escape unmounts it",
+           bool(pre_k and pre_k["menu_mounted"])
+           and bool(after_k) and not after_k["menu_mounted"],
+           "mounted before=%s; mounted after=%s"
+           % ((pre_k or {}).get("menu_mounted"),
+              (after_k or {}).get("menu_mounted")))
+
+    # Key delivery itself, proved on rows this change did not touch. Read
+    # FIRST: every other key row below is only interpretable if this passed.
+    seln_labels = labels(step(steps, "o_kseln"))
+    selall_labels = labels(step(steps, "o_kselall"))
+    record("Selection keys", "all selected",
+           "Cmd+Shift+A drops the selection rows and Cmd+A brings them back",
+           "Zero selection" not in seln_labels and "Zero selection" in selall_labels,
+           "after Cmd+Shift+A selection rows=%s; after Cmd+A selection rows=%s"
+           % ("Zero selection" in seln_labels, "Zero selection" in selall_labels))
+
+    # The control is the drag: if the field did not move, "it matches the
+    # pre-drag field" is true for the wrong reason and says nothing about undo.
+    before_drag = step(steps, "pre_keydrag") or {}
+    after_drag = step(steps, "pre_kundo") or {}
+    after_chord = step(steps, "after_kundo") or {}
+    drag_moved = (before_drag.get("gain_db") is not None
+                  and after_drag.get("gain_db") != before_drag.get("gain_db"))
+    chord_undid = (drag_moved
+                   and after_chord.get("gain_db") == before_drag.get("gain_db"))
+    # Two halves, and only the second one ever failed. The authority always
+    # undid the edit; what did not happen was the editor finding out, because
+    # the chord is claimed by the native command path (`route=root` below)
+    # and the document's `postMessage` wrapper -- the only thing that emits
+    # `processing_state_live` for a history verb -- never ran. Measured on
+    # the direct-dispatch build: the field WAS restored and the reopened menu
+    # still read Undo enabled / Redo disabled, so nothing on screen moved.
+    def history_row(name, label):
+        for row in ((step(steps, name) or {}).get("rows") or []):
+            if row["label"] == label:
+                return row.get("pressable")
+        return None
+    redo_before = history_row("o_prekundo", "Redo")
+    redo_after = history_row("o_kundo", "Redo")
+    editor_told = redo_before is False and redo_after is True
+    record("Cmd+Z key", "all selected",
+           "a dispatched Cmd+Z restores the field AND the editor is told",
+           chord_undid and editor_told,
+           "route=%s; drag moved the field=%s; field restored=%s; "
+           "editor Redo before=%s after=%s"
+           % ((step(steps, "kundo") or {}).get("result"), drag_moved,
+              after_chord.get("gain_db") == before_drag.get("gain_db"),
+              redo_before, redo_after))
+
     reopen_dismissal = all(
         (step(steps, f"o_re{i}") or {}).get("menu_mounted") and
         (step(steps, f"esc_re{i}") or {}).get("result") == "overlay" and
@@ -628,8 +719,14 @@ def main():
         # this control cannot neuter them and must not score them; they carry
         # their own before/after control inside the main run instead. The
         # layout row is a geometry reading and is press-independent by design.
+        # "Escape" also prefix-matches "Escape key", which is intended: like
+        # the others here, the two key rows are not driven by a `row:` press,
+        # so this control cannot neuter them and must not score them. "Cmd+Z
+        # key" is listed for the same reason -- its own control is the drag
+        # recorded immediately before it, inside the main run.
         not_press_driven = ("Menu row reachability", "Menu label hit attribution",
-                            "Repeated reopen/dismiss", "Escape", "Press outside")
+                            "Repeated reopen/dismiss", "Escape", "Press outside",
+                            "Cmd+Z key", "Selection keys")
         press_driven = [r for r in rows
                         if not r[0].startswith(not_press_driven)]
         still_passing = [r[0] for r in press_driven if r[3]]
