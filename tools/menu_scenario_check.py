@@ -115,11 +115,11 @@ SCENARIO_64 = ";".join([
     "modulation=row:Modulation", "modulation_settled=wait",
     "lfo1_toggle=row:LFO 1", "lfo1_settled=wait",
     "lfo2_toggle=row:LFO 2", "lfo2_settled=wait",
-    "back=row:< Back", "back_settled=wait",
+    "back=row:‹ Back", "back_settled=wait",
     "target_open=row:Modulation", "target_open_settled=wait",
     "target_b=row:Snapshot B", "target_settled=wait",
     "target_reopen=rpress:378,400", "target_panel=row:Modulation",
-    "target_reopened=wait", "target_back=row:< Back", "target_back_settled=wait",
+    "target_reopened=wait", "target_back=row:‹ Back", "target_back_settled=wait",
     "outside=outside:60,60",
     "o_final=rpress:378,400", "esc_final=escape",
 ])
