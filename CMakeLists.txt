@@ -1859,6 +1859,26 @@ endif()
 # latches until a person clicks it. Between them: a number that moves proves
 # the readout is live, and a word that stays proves something happened.
 if(SPECTR_NODE_EXECUTABLE)
+    # THE BAND CONTEXT MENU FITS ITS VIEWPORT. It is a `position: fixed` panel
+    # that carried no cap and positioned itself from a hardcoded height
+    # estimate wrong by +25/-15/-27px against the three shapes it ships --
+    # wrong in the direction that made the clamp believe a panel fit when it
+    # did not, so its trailing rows were laid out, hit-tested and painted
+    # outside it, over the app behind.
+    #
+    # Its two negative controls run INSIDE the same invocation rather than as
+    # separate rows: each reverses one half of the fix in the extracted source
+    # and the run is green only when the matching FIT assertion goes red, and
+    # a plant that fails to apply throws. That way a control cannot be
+    # silently dropped by failing to register, which is the failure mode the
+    # separate-row convention elsewhere in this file guards against.
+    #
+    # Needs no binary and no Chrome -- the component is evaluated in a vm with
+    # a hook runtime -- so it holds on a host with no free build capacity.
+    add_test(NAME Spectr-materialized-band-menu-fit
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_menu_fit.mjs)
+    set_tests_properties(Spectr-materialized-band-menu-fit PROPERTIES TIMEOUT 30)
     add_test(NAME Spectr-materialized-output-meter
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
