@@ -78,14 +78,30 @@ SCENARIO = ";".join([
     # whole tree, so whether it repairs the menu's stale box is measurable.
     "grow=resize:1500,980",        "o_re5=rpress:378,400", "esc_re5=escape",
     "shrink=resize:1320,860",      "o_re6=rpress:378,400",
+    # The macro rows live behind the `Macros \u203a` entry, so each of them is
+    # two presses from a fresh open: the toggle, then the row. The toggle is
+    # pressed by its painted label like any other row, so it is scored by the
+    # same attribution assertion -- a submenu whose own entry cannot be hit is
+    # exactly as unusable as a row that falls off the end. Each macro press
+    # closes the whole menu, and the reopen remounts the panel closed, so the
+    # toggle is pressed once per reopen and never twice (a second press would
+    # collapse it again).
+    "macros_a1=row:Macros", "macros_a1_settled=wait",
     "assign1=row:Assign selection to Macro 1", "after_assign1=wait",
-    "o_assign2=rpress:378,400", "assign2=row:Assign selection to Macro 2", "after_assign2=wait",
-    "o_assign3=rpress:378,400", "assign3=row:Assign selection to Macro 3", "after_assign3=wait",
-    "o_assign4=rpress:378,400", "assign4=row:Assign selection to Macro 4", "after_assign4=wait",
-    "o_allmacros=rpress:378,400", "clear1=row:Clear Macro 1", "after_clear1=wait",
-    "o_clear2=rpress:378,400", "clear2=row:Clear Macro 2", "after_clear2=wait",
-    "o_clear3=rpress:378,400", "clear3=row:Clear Macro 3", "after_clear3=wait",
-    "o_clear4=rpress:378,400", "clear4=row:Clear Macro 4", "after_clear4=wait",
+    "o_assign2=rpress:378,400", "macros_a2=row:Macros", "macros_a2_settled=wait",
+    "assign2=row:Assign selection to Macro 2", "after_assign2=wait",
+    "o_assign3=rpress:378,400", "macros_a3=row:Macros", "macros_a3_settled=wait",
+    "assign3=row:Assign selection to Macro 3", "after_assign3=wait",
+    "o_assign4=rpress:378,400", "macros_a4=row:Macros", "macros_a4_settled=wait",
+    "assign4=row:Assign selection to Macro 4", "after_assign4=wait",
+    "o_allmacros=rpress:378,400", "macros_c1=row:Macros", "macros_c1_settled=wait",
+    "clear1=row:Clear Macro 1", "after_clear1=wait",
+    "o_clear2=rpress:378,400", "macros_c2=row:Macros", "macros_c2_settled=wait",
+    "clear2=row:Clear Macro 2", "after_clear2=wait",
+    "o_clear3=rpress:378,400", "macros_c3=row:Macros", "macros_c3_settled=wait",
+    "clear3=row:Clear Macro 3", "after_clear3=wait",
+    "o_clear4=rpress:378,400", "macros_c4=row:Macros", "macros_c4_settled=wait",
+    "clear4=row:Clear Macro 4", "after_clear4=wait",
     "o_final=rpress:378,400",
 ])
 
@@ -577,11 +593,24 @@ def main():
         s.get("attributable") and ":click=" in s.get("result", "") and
         not s.get("result", "").endswith(":click=<none>")
         for s in row_steps)
+    # NAME the presses that missed. The old reading interpolated the
+    # CONJUNCTION as "all attributable=%s", which reads as a claim about every
+    # press in the population: a single missing row printed "21 row presses,
+    # all attributable=False" and was taken to mean all 21 had failed, sending
+    # a session after a regression that did not exist. The eight that were
+    # actually absent were the eight this scenario had stopped being able to
+    # reach.
+    unattributed = [
+        "%s:%s" % (s["step"], s.get("result") or "<no-result>")
+        for s in row_steps
+        if not (s.get("attributable") and ":click=" in s.get("result", "")
+                and not s.get("result", "").endswith(":click=<none>"))]
     record("Menu label hit attribution", "all rows",
            "every painted-label press hit its own clickable row and fired a click",
            row_attribution_ok,
-           "%d row presses, all attributable=%s" %
-           (len(row_steps), row_attribution_ok))
+           "%d row presses, %d missed%s"
+           % (len(row_steps), len(unattributed),
+              (": " + ", ".join(unattributed)) if unattributed else ""))
 
     print("\n%-32s %-14s %-8s %s" % ("ITEM", "STATE", "VERDICT", "READING"))
     failures = 0
