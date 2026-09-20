@@ -2005,6 +2005,127 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-short-track --expect-fail)
     set_tests_properties(Spectr-materialized-output-meter-trim-track-control
         PROPERTIES TIMEOUT 30)
+
+    # THE OVERLOAD CHIP GOES OUT BY ITSELF, and latching it is a setting.
+    #
+    # The suite above pins the LATCHED half, which is why it now drives the
+    # leaf with `latchOver: true`. This one owns the default, the mode split
+    # and the settings wiring that carries one to the other. Each control
+    # below is a distinct mechanism: they are separate rows because a single
+    # row would go green on whichever half still worked.
+    add_test(NAME Spectr-materialized-over-auto-clear
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-over-auto-clear
+        PROPERTIES TIMEOUT 30)
+    # The shipped behaviour: the report never expires, so one transient
+    # leaves the chip red for the session. This is the defect.
+    add_test(NAME Spectr-materialized-over-auto-clear-always-latch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-always-latch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-always-latch-control
+        PROPERTIES TIMEOUT 30)
+    # The mirror: an expiry that ignores the setting, so the opt-in latch
+    # quietly behaves like the default and is not a setting at all.
+    add_test(NAME Spectr-materialized-over-auto-clear-never-latch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-never-latch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-never-latch-control
+        PROPERTIES TIMEOUT 30)
+    # The DECLARED default, flipped. A separate row from the wiring below
+    # because either one alone decides which mode the editor opens in.
+    add_test(NAME Spectr-materialized-over-auto-clear-default-latch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-default-latch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-default-latch-control
+        PROPERTIES TIMEOUT 30)
+    # ...and the wiring that READS it, as `!== false`. The declared
+    # default still says false, so the row above cannot see this: a
+    # settings blob stored before the key existed would latch.
+    add_test(NAME Spectr-materialized-over-auto-clear-wiring-default-latch-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-wiring-default-latch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-wiring-default-latch-control
+        PROPERTIES TIMEOUT 30)
+    # The manual clear, dropped. Auto-clear shortens the wait; it must
+    # not take away the way a person ends the report early. Visible only
+    # to a frame published AFTER the click, because `resetHold` commits
+    # `over: false` directly and the stale hold re-asserts itself later.
+    add_test(NAME Spectr-materialized-over-auto-clear-click-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-click-clear --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-click-control
+        PROPERTIES TIMEOUT 30)
+    # A window of zero -- the chip is technically red only while over,
+    # and for one ~16ms frame, which reports nothing to anybody. This is
+    # the row that makes 'clears itself' mean something a person can see.
+    add_test(NAME Spectr-materialized-over-auto-clear-blink-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-blink --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-blink-control
+        PROPERTIES TIMEOUT 30)
+    # The lamp expires and the worst overshoot stays behind, so the
+    # tooltip and `data-spectr-output-over-peak` keep asserting an
+    # overload the chip says is not happening.
+    add_test(NAME Spectr-materialized-over-auto-clear-stale-overpeak-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-stale-overpeak --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-stale-overpeak-control
+        PROPERTIES TIMEOUT 30)
+    # Only the FIRST over of a run stamps the window, so a sustained
+    # overload goes dark while it is still going on. A different failure
+    # from the blink above: the window is right and is never renewed.
+    add_test(NAME Spectr-materialized-over-auto-clear-refresh-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-refresh --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-refresh-control
+        PROPERTIES TIMEOUT 30)
+    # The settings row bound to another key: the switch moves, the meter
+    # never hears about it, and every screenshot looks correct.
+    add_test(NAME Spectr-materialized-over-auto-clear-setting-route-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-misrouted-setting --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-setting-route-control
+        PROPERTIES TIMEOUT 30)
+    # The switch's own marker, stripped. Without it nothing driving the
+    # shipping app can find the control or read which mode it is in, and
+    # every assertion about its state would be reading nothing.
+    add_test(NAME Spectr-materialized-over-auto-clear-switch-marker-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-dead-switch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-switch-marker-control
+        PROPERTIES TIMEOUT 30)
+    # A switch that renders correctly and calls nothing. Indistinguishable
+    # from a working one in any screenshot, and it is why the row is driven
+    # rather than merely matched in the source.
+    add_test(NAME Spectr-materialized-over-auto-clear-switch-inert-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_over_auto_clear.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-inert-switch --expect-fail)
+    set_tests_properties(Spectr-materialized-over-auto-clear-switch-inert-control
+        PROPERTIES TIMEOUT 30)
 endif()
 
 # Morph moves the viewport, not just the bands.
