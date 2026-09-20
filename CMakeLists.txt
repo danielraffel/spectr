@@ -1512,6 +1512,39 @@ if(SPECTR_NODE_EXECUTABLE)
             PROPERTIES TIMEOUT 30)
     endforeach()
 
+    # The BOTTOM-BAR half of the same control. `SpectrLatencyRail` is a
+    # different component from the Settings group above -- its own reader, its
+    # own formatter, its own press path -- and nothing executed any of them
+    # until this suite existed. It also holds the property neither component
+    # can hold alone: the two surfaces share one store, and a writer that
+    # updates it without waking its listeners leaves the OTHER surface naming
+    # the mode it used to be in. The rail is the surface that loses, because it
+    # keeps no state of its own and re-renders only when woken.
+    add_test(NAME Spectr-materialized-latency-rail
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_latency_rail.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-latency-rail PROPERTIES TIMEOUT 30)
+
+    # Seven plants, each a different wrong implementation. --plant-top-level-ms
+    # is the subtle one: the payload carries a top-level `ms` beside the
+    # per-option figures, and they disagree the instant the mode is switched
+    # optimistically, so a chip reading it shows the OLD latency next to the
+    # NEW label -- right at rest and wrong exactly when the user pressed it.
+    # --plant-settings-no-notify is the defect this suite actually found in the
+    # shipping document, and --plant-toggle-no-notify is its mirror image, so
+    # the two surfaces are held in BOTH directions rather than one.
+    foreach(_latency_rail_plant top-level-ms typed-ms post-index no-subscribe
+            toggle-no-notify settings-no-notify render-unhydrated)
+        add_test(NAME Spectr-materialized-latency-rail-control-${_latency_rail_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_latency_rail.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_latency_rail_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-latency-rail-control-${_latency_rail_plant}
+            PROPERTIES TIMEOUT 30)
+    endforeach()
+
     # A child's AUTHORED index must be its NATIVE index, including for a
     # subtree that mounts late into a parent that kept its other children.
     # Every native createX APPENDS, so the renderer has to move a non-last
@@ -2344,6 +2377,37 @@ if(SPECTR_NODE_EXECUTABLE)
                 ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
                 --plant-${_mutehl_plant} --expect-fail)
         set_tests_properties(Spectr-materialized-mute-selection-highlight-control-${_mutehl_plant}
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+
+    # Dragging the gain of a SELECTION moves every member's level and leaves
+    # every member's mute exactly as it was. The gesture is an OFFSET, not a
+    # draw: it says nothing about mute, so a muted member keeps its sentinel
+    # while the level stashed underneath it moves by the same shared delta --
+    # which is what makes unmuting afterwards return the band to where the
+    # group moved it rather than to where it was when it was muted.
+    add_test(NAME Spectr-materialized-group-gain-preserves-mute
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_group_gain_preserves_mute.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-group-gain-preserves-mute PROPERTIES
+        TIMEOUT 60)
+    # Five controls, separate rows so it is visible which check is load
+    # bearing. Every assertion drives a MIXED selection, because all five wrong
+    # implementations agree with the right one on an unmuted band -- a suite
+    # that selected only unmuted bands is green under all of them.
+    # `draw-commit` is the reported bug and the only row that trips the "still
+    # muted" check; `draw-commit-held` is the same wrong route with
+    # unmuteOnDraw off, where mute survives and the offset is discarded, so it
+    # is caught only by the stash assertions; `live-base` is the accumulation a
+    # single-sample drag cannot see.
+    foreach(_groupgain_plant draw-commit draw-commit-held live-base raw-base drop-stash)
+        add_test(NAME Spectr-materialized-group-gain-preserves-mute-control-${_groupgain_plant}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_group_gain_preserves_mute.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_groupgain_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-group-gain-preserves-mute-control-${_groupgain_plant}
             PROPERTIES TIMEOUT 60)
     endforeach()
 
