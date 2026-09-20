@@ -346,3 +346,13 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 ^Spectr-latency-rail-effect-disabled-write-control$
 ^Spectr-materialized-native-services-sync$
 ^live publication carries macro membership and current undo availability$
+
+# The band-menu harness's own refusal guards, replayed over the recorded
+# 2026-09-19 dead run and a healthy one. Nothing above matches the name, and
+# the failure it guards is the one that reads most like a product finding: a
+# dead instrument reporting a long list of confident assertion failures.
+^Spectr-menu-scenario-refusal-guards$
+
+# The band context menu fitting its viewport, and its two in-run plants.
+# Nothing above matches the name.
+^Spectr-materialized-band-menu-fit$

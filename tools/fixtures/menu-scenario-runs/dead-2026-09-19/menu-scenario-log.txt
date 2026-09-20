@@ -1,0 +1,22 @@
+[pulp:info]  Standalone: starting 'Spectr'
+[pulp:info]  Standalone: screenshot capture — no audio device created, opened, or started (set PULP_SCREENSHOT_KEEP_AUDIO=1 to keep audio live)
+[pulp:info]  script-ui[error] [Spectr] build info unavailable
+[pulp:info]  script-ui[error] {}
+[pulp:info]  GpuSurface: created Metal surface from CAMetalLayer
+[pulp:info]  GpuSurface: adapter offers timestamp-query but GPU timing was not requested — keeping full device validation
+[pulp:info]  GpuSurface: enabling indirect-first-instance (Three.js / non-zero firstInstance draws)
+[pulp:info]  GpuSurface: present mode Fifo(vsync-blocking) (vsync requested: true)
+[pulp:info]  GpuSurface: configured surface (format: 27, mode: 1)
+[pulp:info]  GpuSurface: Dawn initialized (surface: presentable)
+[pulp:info]  GpuSurface: backend_type=Metal
+[pulp:info]  SkiaSurface: Graphite initialized on shared Dawn device (presentable: yes, gpu-render-time: unavailable)
+[pulp:info]  Standalone: editor window open (990x645, gpu=true, mode=scripted, chrome=editor-only, inspector=ready)
+[pulp:info]  Standalone: screenshot mode armed — will capture to /tmp/spectr-menu-64-sdk865-20260919/menu-scenario.png after 2100 frames
+[gpu-host] first frame: logical=990x645 gpu=1980x1290 scale=2.0
+[pulp:info]  script-ui[error] {}
+[pulp:info]  Spectr: band-menu scenario complete (33 steps) -> /tmp/spectr-menu-64-sdk865-20260919/menu-scenario.json
+[pulp:info]  GpuSurface: adapter offers timestamp-query but GPU timing was not requested — keeping full device validation
+[pulp:info]  GpuSurface: enabling indirect-first-instance (Three.js / non-zero firstInstance draws)
+[pulp:info]  GpuSurface: Dawn initialized (surface: offscreen-only)
+[pulp:info]  GpuSurface: backend_type=Metal
+[pulp:info]  SkiaSurface: Graphite initialized on shared Dawn device (presentable: no, gpu-render-time: unavailable)

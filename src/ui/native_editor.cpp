@@ -2104,8 +2104,20 @@ bool Spectr::tick_native_analyzer_(float dt) {
     //                  the user is reading actually are.
     //   escape         the host's own Escape route for an active overlay
     //   outside:x,y    the host's own outside-press route
-    //   param:ID=V     a host parameter write (arrangement, never a verdict)
+    //   param:ID=V     a host parameter write (arrangement, never a verdict).
+    //                  NOTE: parameters the processor applies on the audio
+    //                  thread (band gain/mute, band count) do NOT land in a
+    //                  headless run -- no audio device means `process()` never
+    //                  runs. The step still records "written", so use `drag`
+    //                  to arrange a level and read `n_visible` before trusting
+    //                  a layout change.
+    //   resize:w,h     a host window resize, through `on_view_resized`
     //   wait           nothing at all -- the ambient control
+    //
+    // An unrecognised verb records `unknown-step` and changes nothing. A
+    // scenario that emits one is measuring less than it claims, so
+    // `tools/menu_scenario_check.py` refuses to report a verdict when any
+    // step comes back that way.
     if (settings_fixture_scrolled_ && !menu_scenario_done_
         && native_editor_root_ != nullptr) {
         const auto* spec = std::getenv("SPECTR_MENU_SCENARIO");
@@ -2343,6 +2355,51 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         }
                         detail = "neutralised";
                     } else detail = "no-store";
+                } else if (kind == "resize") {
+                    // A host window resize, through the same entry point the
+                    // platform host calls -- `on_view_resized` -- so the whole
+                    // tree re-solves exactly as it does when a person drags the
+                    // window corner. arg is "w,h".
+                    //
+                    // The scenario has emitted this verb since the reopen
+                    // sequence was written, to answer the other half of the
+                    // field report ("i can't tell if it's fixed after resizing
+                    // explicitly or not"). Nothing implemented it, so both
+                    // steps recorded `unknown-step`, the window never moved,
+                    // and the two reopens after them measured the unresized
+                    // window while reading as though a resize had happened.
+                    pulp::view::Point size{};
+                    if (point_of(arg, size) && size.x > 0.0f && size.y > 0.0f) {
+                        // BOTH axes, before and after. "resized" on its own is a
+                        // claim about the CALL, and the two outcomes a reader
+                        // has to tell apart look identical from the verb name:
+                        // a resize that never arrived, and a resize the pinned
+                        // design viewport deliberately absorbs.
+                        //
+                        // It is the second one here. Under the pin the HOST
+                        // owns the scale and `on_view_resized` holds the root
+                        // at the authored box at every host size, so the host
+                        // figure moves and the root figure does not. That is
+                        // why these two steps cannot answer "is the menu
+                        // repaired by resizing" -- under a pin the menu's
+                        // design-space geometry is resize-invariant by
+                        // construction, so there is nothing for a resize to
+                        // repair or to break.
+                        const auto before = root.bounds();
+                        const auto host_before_w = native_host_width_;
+                        const auto host_before_h = native_host_height_;
+                        on_view_resized(root,
+                                        static_cast<std::uint32_t>(size.x),
+                                        static_cast<std::uint32_t>(size.y));
+                        const auto after = root.bounds();
+                        std::ostringstream note;
+                        note << "resized host " << host_before_w << "x"
+                             << host_before_h << "->" << native_host_width_
+                             << "x" << native_host_height_ << " root "
+                             << before.width << "x" << before.height << "->"
+                             << after.width << "x" << after.height;
+                        detail = note.str();
+                    } else detail = "bad-arg";
                 } else if (kind == "wait" || kind.empty()) {
                     detail = "ambient";
                 } else {
