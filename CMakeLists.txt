@@ -2794,6 +2794,159 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-marquee-state --expect-fail)
     set_tests_properties(Spectr-materialized-marquee-render-cost-rectangle-control
         PROPERTIES TIMEOUT 60)
+
+    # THE EDITOR STOPS PAINTING WHEN NOTHING CHANGED -- and wakes for every
+    # path that can change the canvas. Measured on a genuinely idle editor
+    # (nothing hovered, nothing playing, nothing animating) the draw loop
+    # re-armed unconditionally and repainted the whole canvas forever: 826
+    # canvas bridge calls and 2.82 ms of JS per frame at 60 Hz, which in a
+    # DAW is a continuous CPU floor next to the audio thread. The same loop
+    # also republished each changed hover reading to the PARENT through
+    # onStatus every 700 ms, and on a captured import that re-applies the
+    # whole document -- 42 of them on a session arm with the pointer parked
+    # on a band, against zero on an idle arm. Nothing else here can see
+    # either one: every other suite measures a RESULT, and these are about
+    # frames on which the result did not move.
+    add_test(NAME Spectr-materialized-idle-draw-loop
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-idle-draw-loop
+        PROPERTIES TIMEOUT 60)
+    # THE LOOP MUST PARK. This plant restores the unconditional re-arm as
+    # it shipped, so the editor asks for a frame forever. A single
+    # captured frame looks identical either way; only elapsed time with
+    # nothing happening under it can tell them apart.
+    add_test(NAME Spectr-materialized-idle-draw-loop-unconditional-raf-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-unconditional-raf --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-unconditional-raf-control
+        PROPERTIES TIMEOUT 60)
+    # ...AND MUST NOT ALLOCATE TO DO IT. drawSpectrum built a fresh
+    # Float32Array(321) every frame while the two hoisted buffers on the
+    # next lines did not. Pure GC churn on a runtime whose collector
+    # shares a thread with the UI, and invisible to any paint assertion.
+    add_test(NAME Spectr-materialized-idle-draw-loop-per-frame-alloc-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-per-frame-alloc --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-per-frame-alloc-control
+        PROPERTIES TIMEOUT 60)
+    # ...AND THE BANNER MUST NOT BE A WHOLE-DOCUMENT EVENT. The commit is
+    # geometric -- the pill's width is a function of the string it paints
+    # -- so no paint-only exemption can ever cover it; it has to stop
+    # being published at all. This plant restores the 700 ms publication.
+    add_test(NAME Spectr-materialized-idle-draw-loop-status-republish-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-status-republish --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-status-republish-control
+        PROPERTIES TIMEOUT 60)
+    # THE WAKE SIDE, one row per path, because a parked loop that fails
+    # to wake is a worse bug than a busy one and each of these is a
+    # separate mechanism. Every one of them changes the canvas WITHOUT
+    # moving React state, which is exactly why none of them is covered
+    # by any other row.
+    # a React state change no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-render-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-render-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-render-wake-control
+        PROPERTIES TIMEOUT 60)
+    # pointer, wheel and key input no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-input-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-input-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-input-wake-control
+        PROPERTIES TIMEOUT 60)
+    # a deferReact gain commit no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-commit-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-commit-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-commit-wake-control
+        PROPERTIES TIMEOUT 60)
+    # the modulation overlay no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-modulation-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-modulation-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-modulation-wake-control
+        PROPERTIES TIMEOUT 60)
+    # host automation no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-automation-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-automation-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-automation-wake-control
+        PROPERTIES TIMEOUT 60)
+    # a window resize no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-resize-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-resize-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-resize-wake-control
+        PROPERTIES TIMEOUT 60)
+    # an incoming analyzer frame no longer re-arms a parked loop.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-analyzer-wake-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-analyzer-wake --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-analyzer-wake-control
+        PROPERTIES TIMEOUT 60)
+    # ...AND THE STAY-AWAKE SIDE. Parking one frame too early freezes an
+    # animation part-way through, which reads as the editor hanging.
+    # the loop parks while the peak hold and the per-band energy glow still
+    # decaying after the last analyzer frame is still under way.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-settle-check-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-settle-check --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-settle-check-control
+        PROPERTIES TIMEOUT 60)
+    # the loop parks while a band still travelling to its new level is still under way.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-smoothing-check-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-smoothing-check --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-smoothing-check-control
+        PROPERTIES TIMEOUT 60)
+    # the loop parks while an analyzer whose frames it cannot identify, which
+    # a synthetic time-sampling analyzer is is still under way.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-analyzer-guard-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-analyzer-guard --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-analyzer-guard-control
+        PROPERTIES TIMEOUT 60)
+    # The in-loop analyzer frame-identity comparison, asserted
+    # STATICALLY and labelled as such in the suite: with the
+    # analyzer_frame subscription in place every accepted frame
+    # already wakes the loop, so no stimulus distinguishes the two.
+    # It is belt and braces for a host that installs no dispatcher.
+    add_test(NAME Spectr-materialized-idle-draw-loop-no-analyzer-frame-check-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_idle_draw_loop.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-analyzer-frame-check --expect-fail)
+    set_tests_properties(Spectr-materialized-idle-draw-loop-no-analyzer-frame-check-control
+        PROPERTIES TIMEOUT 60)
 endif()
 
 # No SHORTCUTS row may wrap, and none may be ABLE to. The budget half reads

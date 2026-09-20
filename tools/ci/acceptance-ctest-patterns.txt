@@ -55,6 +55,15 @@ Spectr editor
 # like an editor that got faster.
 ^Spectr-materialized-marquee-render-cost
 
+# The idle draw loop and its fourteen plants. Same reason: `materialized`
+# matches them but can never report their absence -- and this whole suite
+# measures frames on which NOTHING changed, which no capture, layout
+# assertion or result check anywhere in this gate can see. Eleven of the
+# fourteen are the WAKE side: a loop that parks and fails to wake is a worse
+# bug than one that never parks, and each path that changes the canvas
+# without moving React state can only be caught by its own row.
+^Spectr-materialized-idle-draw-loop
+
 # The SHORTCUTS panel's no-wrap gates. The budget half needs no binary; the
 # rendered half opens the panel in the shipping native editor. Both are named
 # outside the `materialized` pattern above, so without this line they register
