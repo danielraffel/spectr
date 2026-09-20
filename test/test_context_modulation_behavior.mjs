@@ -105,8 +105,20 @@ function mount(initial, height = 860) {
   const click = action => { button(action).props.onClick(); render(); };
   render();
   assert.equal(menu().props.style.zIndex, 2147483001);
-  assert.equal(menu().props.style.overflowY, 'auto');
-  assert.equal(menu().props.style.maxHeight, Math.max(120, Math.max(24, height - 64) - 16));
+  // The menu container is deliberately NOT capped. Pulp does not scroll an
+  // overflow container -- `overflow: scroll` is treated like `hidden` with no
+  // scrollbar -- so a `maxHeight` does not scroll the rows, it makes Yoga
+  // SHRINK them until a section header sits on top of a button and the first
+  // row stops being pressable. `tools/patch_materialized_band_menu_no_cap.py`
+  // removed the cap for that measured reason, and
+  // `test_materialized_band_menu_fit.mjs` holds the same contract; these two
+  // lines asserted the opposite and had never once passed.
+  //
+  // Flip them back to `overflowY: 'auto'` and the menuMaxHeight expression
+  // below once Generous-Corp/pulp#8602 lands real scrolling for an overflow
+  // container -- at which point capping this panel becomes correct again.
+  assert.equal(menu().props.style.overflowY, undefined);
+  assert.equal(menu().props.style.maxHeight, undefined);
   return { button, click, calls, native, listeners, get closed() { return closed; },
     menu, submenu,
     async settle() { await Promise.resolve(); await Promise.resolve(); render(); },
@@ -121,7 +133,10 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.equal(test.closed, 0);
   assert.equal(test.button('modulation-toggle').props['aria-haspopup'], 'menu');
   assert.equal(test.button('modulation-toggle').props['aria-expanded'], true);
-  assert.equal(test.submenu().props.style.maxHeight, 780);
+  // The submenu IS capped, and short enough that the shrink does not bite.
+  // Derived, not the literal 780, so it follows the mount's viewport.
+  assert.equal(test.submenu().props.style.maxHeight,
+               Math.max(120, Math.max(24, 860 - 64) - 16));
   assert.equal(test.submenu().props.style.overflowY, 'auto');
   assert.equal(test.button('lfo1-enable').props.disabled, true);
   test.click('lfo1-enable');
@@ -158,6 +173,12 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.equal(reopened.button('modulation-target-morph').props['aria-checked'], true);
   reopened.unmount();
 }
+// A viewport small enough that a cap would certainly bite is where a
+// reintroduced one would show up first, so the no-cap contract is worth
+// asserting here specifically and not only at 860. Same #8602 condition as
+// above: when scrolling lands, this becomes
+// `Math.max(120, Math.max(24, 240 - 64) - 16)` again.
 const compact = mount({ enabled: false, lfo2_enabled: false }, 240);
-assert.equal(compact.menu().props.style.maxHeight, 160);
+assert.equal(compact.menu().props.style.maxHeight, undefined);
+assert.equal(compact.menu().props.style.overflowY, undefined);
 console.log('PASS: actual shared hook and button handlers; four initial states, disabled hydration, both toggles, live updates, navigation, targets, reopen, cleanup');
