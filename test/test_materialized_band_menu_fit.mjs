@@ -1,5 +1,16 @@
 #!/usr/bin/env node
-// THE BAND CONTEXT MENU FITS ITS VIEWPORT, WHATEVER IT BELIEVES ABOUT ITS SIZE.
+// THE BAND CONTEXT MENU POSITIONS FROM ITS MEASURED HEIGHT, NOT A GUESS.
+//
+// NECESSARY, NOT SUFFICIENT -- AND THAT IS NOT HYPOTHETICAL. An earlier
+// version of this file passed every case while the real standalone FAILED
+// `Spectr-standalone-band-menu-rows`: a `maxHeight` on the panel made Yoga
+// shrink the rows (29px pitch to 20.7px), the squash put a header element
+// over the first row's centre, and pressing "Mute / Unmute" where its own
+// words paint hit nothing and never toggled the mute. Nothing modelled here
+// can see that: this file renders the component with a hook shim, so it knows
+// what style the component ASKS for and nothing about what Yoga, paint or
+// hit-testing then do with it. The gate that can see it drives the shipping
+// binary. Keep both.
 //
 // The menu is a `position: fixed` panel. It used to carry no `maxHeight` and
 // no `overflowY`, and it positioned itself from a hardcoded height estimate:
@@ -72,17 +83,11 @@ function plant(source, from, to, what) {
   return source.replace(from, to);
 }
 
-const PLANT_NO_CAP = (s) => plant(
-  s,
-  "        maxHeight: avail,\n        overflowY: \"auto\",\n",
-  "",
-  "no cap: the panel carries neither maxHeight nor overflowY (pre-fix)");
-
 const PLANT_GUESSED_H = (s) => plant(
   s,
-  "const H = Math.min(measuredH === null ? estimatedH : measuredH, avail);",
+  "const H = measuredH === null ? estimatedH : measuredH;",
   "const H = estimatedH;",
-  "guessed height: the clamp uses the estimate, uncapped (pre-fix)");
+  "guessed height: the clamp positions from the estimate (pre-fix)");
 
 // ── render it ────────────────────────────────────────────────────────────
 function render(source, { vh, vw = 1320, x = 378, y = 400,
@@ -178,24 +183,28 @@ const VIEWPORTS = [575, 860];
 
 const shipped = menuSource();
 
-console.log("== FIT: the panel never extends past the viewport ==");
+console.log("== NO CAP: the panel must not ask to be capped ==");
+// Measured on the shipping standalone: Pulp does not scroll an overflow
+// container (`overflow: scroll` is treated like `hidden`, pulp
+// view.hpp:1655; a wheel over the panel moves nothing), so `maxHeight` does
+// not scroll the rows -- it shrinks them, and the squash breaks the first
+// row's hit target. Capping this panel needs scroll support in core Pulp.
+for (const vh of VIEWPORTS) {
+  const s = render(shipped, { vh, ...SHAPES[2][1], measuredPx: 811 });
+  check(`vh=${vh} no maxHeight is declared`, s.maxHeight === undefined,
+        `maxHeight=${s.maxHeight}`);
+  check(`vh=${vh} no overflowY is declared`, s.overflowY === undefined,
+        `overflowY=${JSON.stringify(s.overflowY)}`);
+}
+
+console.log("\n== CLAMP: it positions from the measured height ==");
 for (const vh of VIEWPORTS) {
   for (const [name, shape, measured] of SHAPES) {
     const s = render(shipped, { vh, ...shape, measuredPx: measured });
-    const effective = Math.min(measured, s.maxHeight);
-    const bottom = s.top + effective;
-    check(`vh=${vh} ${name}`, bottom <= vh,
-          `top=${s.top} maxHeight=${s.maxHeight} effective=${effective} bottom=${bottom} vh=${vh}`);
+    const want = Math.max(8, Math.min(400, vh - measured - 8));
+    check(`vh=${vh} ${name}`, s.top === want,
+          `top=${s.top} expected=${want} (measured H=${measured})`);
   }
-}
-
-console.log("\n== CAP: the panel declares a cap and scrolls ==");
-for (const vh of VIEWPORTS) {
-  const s = render(shipped, { vh, ...SHAPES[2][1], measuredPx: 811 });
-  check(`vh=${vh} maxHeight == max(120, vh-16)`,
-        s.maxHeight === Math.max(120, vh - 16), `maxHeight=${s.maxHeight}`);
-  check(`vh=${vh} overflowY is auto`, s.overflowY === "auto",
-        `overflowY=${JSON.stringify(s.overflowY)}`);
 }
 
 console.log("\n== MEASURED: the real height beats the estimate ==");
@@ -217,22 +226,15 @@ console.log("\n== MEASURED: the real height beats the estimate ==");
         `estimate top=${est.top} measured top=${mes.top}`);
 }
 
-console.log("\n== NEGATIVE CONTROLS: each half reversed must break FIT ==");
+console.log("\n== NEGATIVE CONTROL: the guessed height must break the clamp ==");
 {
-  const noCap = PLANT_NO_CAP(shipped);
-  const s = render(noCap, { vh: 575, ...SHAPES[2][1], measuredPx: 811 });
-  const bottom = s.top + 811;
-  check("PLANT no-cap: the panel overflows vh=575",
-        s.maxHeight === undefined && bottom > 575,
-        `maxHeight=${s.maxHeight} top=${s.top} bottom=${bottom} — ${bottom - 575}px past`);
-}
-{
-  const guessed = PLANT_GUESSED_H(PLANT_NO_CAP(shipped));
-  const s = render(guessed, { vh: 575, ...SHAPES[2][1], measuredPx: 811 });
-  const bottom = s.top + 811;
-  check("PLANT guessed-H + no-cap: the clamp understates and overflows",
-        bottom > 575,
-        `top=${s.top} (clamped against the 784 guess) real bottom=${bottom} — ${bottom - 575}px past`);
+  const guessed = PLANT_GUESSED_H(shipped);
+  const vh = 1000;
+  const s = render(guessed, { vh, ...SHAPES[2][1], measuredPx: 811 });
+  const honest = Math.max(8, Math.min(400, vh - 811 - 8));
+  check("PLANT guessed-H: the clamp positions from 784, not 811",
+        s.top !== honest,
+        `planted top=${s.top} honest top=${honest} — off by ${Math.abs(s.top - honest)}px`);
 }
 
 console.log();

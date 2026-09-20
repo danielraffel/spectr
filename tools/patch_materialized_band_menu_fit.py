@@ -104,48 +104,32 @@ NEW_SIZING = '''  const W = 250;
     const h = node.offsetHeight || node.clientHeight || 0;
     if (Number.isFinite(h) && h > 0 && h !== measuredH) setMeasuredH(h);
   });
-  // The invariant: never taller than the viewport, keeping the same 8px
-  // margin the clamp uses at both edges.
-  const avail = Math.max(120, vh - 16);
+  // NOT capped with `maxHeight`, deliberately. Measured on the shipping
+  // standalone: Pulp does not scroll an overflow container -- `overflow:
+  // scroll` is treated like `hidden` with no scrollbar UI (pulp
+  // view.hpp:1655), a wheel over the panel moves nothing, so `overflowY:
+  // "auto"` is inert here. A `maxHeight` therefore does not make the panel
+  // scroll; it makes Yoga SHRINK the rows to fit (29px pitch to 20.7px), and
+  // that squash pushes a header element over the first row's centre, so
+  // pressing "Mute / Unmute" where its own words paint hits nothing at all
+  // and the mute never toggles. Capping without shrinking (flexShrink: 0)
+  // instead clips the tail: five rows become unreachable rather than one.
+  // Both are worse than not capping. Capping needs scroll support in core
+  // Pulp first.
   const estimatedH = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;
-  const H = Math.min(measuredH === null ? estimatedH : measuredH, avail);
+  const H = measuredH === null ? estimatedH : measuredH;
   const left = Math.max(8, Math.min(x, vw - W - 8));
   const top = Math.max(8, Math.min(y, vh - H - 8));
 '''
 
-OLD_STYLE = '''        boxShadow: "0 14px 40px rgba(0,0,0,0.6)",
-        backdropFilter: "blur(12px)",
-        zIndex: 40,
-        pointerEvents: "auto"
-'''
-
-NEW_STYLE = '''        boxShadow: "0 14px 40px rgba(0,0,0,0.6)",
-        backdropFilter: "blur(12px)",
-        // The invariant that makes overflow impossible. Whatever the height
-        // arithmetic believes and whatever `vh` reports, the panel caps here
-        // and scrolls its rows instead of extending past the viewport.
-        // Without it, a panel taller than the viewport is pinned to the top
-        // edge by the clamp above and its trailing rows are laid out,
-        // hit-tested and painted outside it, over the app behind.
-        maxHeight: avail,
-        overflowY: "auto",
-        zIndex: 40,
-        pointerEvents: "auto"
-'''
-
 EDITS = [
-    ("the panel measures itself and can never exceed the viewport",
+    ("the panel positions from its measured height, not a guess",
      OLD_SIZING, NEW_SIZING),
-    ("the container caps its height and scrolls its rows",
-     OLD_STYLE, NEW_STYLE),
 ]
 
 REQUIRED_AFTER = (
-    # The two load-bearing lines, named.
-    "maxHeight: avail,",
-    'overflowY: "auto",',
-    "const avail = Math.max(120, vh - 16);",
-    "const H = Math.min(measuredH === null ? estimatedH : measuredH, avail);",
+    # The load-bearing line, named.
+    "const H = measuredH === null ? estimatedH : measuredH;",
     # The measurement, and that it reads the EXISTING ref.
     "const node = ref.current;",
     "const h = node.offsetHeight || node.clientHeight || 0;",
@@ -164,12 +148,13 @@ REQUIRED_AFTER = (
 # binds it to `H` directly.
 FORBIDDEN_AFTER = (
     "const H = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;",
+    # A cap on THIS panel is the regression, not the fix, until core Pulp can
+    # scroll an overflow container.
+    "maxHeight: avail,",
 )
 
 REQUIRED_COUNTS = {
     "function ContextMenu({ x, y, band, N, selection": 1,
-    "maxHeight: avail,": 1,
-    "const avail = Math.max(120, vh - 16);": 1,
     "const estimatedH = 420 + (hasBand ? 100 : 0) + (hasSel ? 160 : 0) + assigned.length * 26;": 1,
     "const top = Math.max(8, Math.min(y, vh - H - 8));": 1,
     # patternMenu's own cap must survive untouched: it is a DIFFERENT menu,
