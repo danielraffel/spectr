@@ -1087,6 +1087,23 @@ set_tests_properties(Spectr-standalone-band-menu-rows-negative-control
     PROPERTIES
         TIMEOUT 900
         RESOURCE_LOCK spectr_native_materialized_editor)
+
+# The harness's own refusal guards, replayed over two RECORDED runs: the
+# 2026-09-19 run whose menu never opened, and a healthy one.
+#
+# The plant control above proves the row assertions can fail. It cannot prove
+# anything about a run where the instrument itself was dead -- and that is the
+# failure that actually cost a session: a JS exception killed the editor, no
+# context press ever mounted the menu, and the check reported 42 failing
+# assertions that read as product defects. Nothing in the suite could tell
+# that apart from 42 real ones.
+#
+# Needs no binary: it drives the pure guard over committed artifacts, so it is
+# fast and cannot be skipped by a machine that cannot launch the app.
+add_test(NAME Spectr-menu-scenario-refusal-guards
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_menu_scenario_check.py)
+set_tests_properties(Spectr-menu-scenario-refusal-guards PROPERTIES TIMEOUT 120)
 else()
     message(STATUS "Spectr: Spectr-standalone-band-menu-rows not registered "
                    "(needs APPLE + Python3)")
