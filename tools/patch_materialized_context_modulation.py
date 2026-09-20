@@ -362,9 +362,31 @@ function SpectrModulationSettings() {
   const [modulationOpen, setModulationOpen] = React.useState(false);
   const { value: modulation, ready: modulationReady, publish: publishModulation } = window.useSpectrModulationState();
 ''' + menu[brace:]
-    modes_start = menu.index('  const modes = [')
-    modes_end = menu.index('  const Item =', modes_start)
-    menu = menu[:modes_start] + menu[modes_end:]
+    # `const modes = [...]` is the EDIT MODE section's data. This used to
+    # delete it unconditionally, which silently depended on
+    # patch_materialized_context_compact.py having already removed the section
+    # that USES it. With EDIT MODE preserved, that left `modes.map(` referring
+    # to a declaration this script had eaten, and the menu died at render with
+    # "'modes' is not defined" -- after mounting nothing, so every context
+    # press read as not-handled and the failure looked like the portal bug.
+    #
+    # A patch script must assert the state it requires rather than assume a
+    # sibling ran: an anchor that only matches because another script happened
+    # to run first is a false control. So the declaration is removed ONLY when
+    # nothing still uses it, and the two cases are stated explicitly.
+    modes_used = menu.count('modes.map(')
+    modes_declared = menu.count('  const modes = [')
+    if modes_declared != 1:
+        raise AssertionError(
+            'expected exactly one `const modes = [` declaration, found %d'
+            % modes_declared)
+    if modes_used == 0:
+        # EDIT MODE was compacted away by a sibling script; the data is dead.
+        modes_start = menu.index('  const modes = [')
+        modes_end = menu.index('  const Item =', modes_start)
+        menu = menu[:modes_start] + menu[modes_end:]
+    # else: EDIT MODE is present and uses `modes`; leaving it is required for
+    # the component to evaluate at all.
     menu = once(menu, 'danger, sub })', 'danger, sub, keepOpen, checked })')
     menu = once(menu, '      role: "menuitem",',
                 '      role: checked === undefined ? "menuitem" : "menuitemcheckbox",\n      "aria-checked": checked,')
