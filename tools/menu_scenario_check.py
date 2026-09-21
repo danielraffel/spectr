@@ -225,6 +225,25 @@ def layout_reading(s):
     return (not missing, sorted(missing))
 
 
+# What the ROOT panel must offer while a selection is live. Every entry here
+# is a row the root actually draws: the macro assigns moved behind a single
+# `Macros \u203a` entry and the LFO/target rows behind `Modulation \u203a`, so
+# naming the leaf rows here asserted a layout the menu stopped having and the
+# whole set went red on rows that were simply one press further in. The two
+# submenu ENTRIES stand in for what they lead to, which keeps the claim
+# ("every selection action is reachable from this reopen") true and still
+# fails if either entry disappears. The leaf rows behind them are pressed --
+# and their effects read from the processor -- by the full effect scenario,
+# which opens each submenu first.
+ROOT_SELECTION_ROWS = frozenset({
+    "Select none",
+    "Zero selection",
+    "Mute / Unmute selection",
+    "Macros",
+    "Modulation",
+})
+
+
 def verify_64(steps):
     failures = []
     def require(ok, name):
@@ -237,10 +256,22 @@ def verify_64(steps):
                 len(snapshot.get("muted", [])) == 64, name + ":64-bands")
         ok, issues = layout_reading(snapshot)
         require(ok, name + ":" + str(issues))
-        require({"Select none", "Zero selection", "Mute / Unmute selection",
-                 "Assign selection to Macro 1", "Assign selection to Macro 4", "Modulation"}
-                <= labels(snapshot), name + ":selection-actions")
+        require(ROOT_SELECTION_ROWS <= labels(snapshot),
+                name + ":selection-actions")
         require("Selection · 64" in labels(snapshot), name + ":exact-selection")
+    # The submenu rows below fail today, and the cause is upstream of this
+    # document. `macrosPanel` and `modulationPanel` are `position: fixed` and
+    # therefore SIBLINGS of the menu in the returned fragment, not descendants
+    # of its box. Pulp auto-claims any `role="menu"` node as a dismissable
+    # overlay, and `View::claim_overlay()` only STACKS a claim that descends
+    # from the open overlay -- any other claim is "a different menu", so the
+    # band menu is popped and its `on_overlay_dismissed` fires, which is
+    # `onDismiss: onClose`. The whole menu therefore tears down the instant its
+    # own submenu is opened, taking the submenu with it. There is no API for an
+    # author to declare the parent overlay, so the app cannot express the
+    # relationship; the fix belongs in core Pulp. Do NOT work around it here by
+    # dropping the ARIA role, the overlay declaration or the assertions: this
+    # measurement is the thing that will show the upstream fix landing.
     for name in ["select", "modulation", "lfo1_toggle", "lfo2_toggle", "back",
                  "target_open", "target_b", "target_panel", "target_back"]:
         snapshot = step(steps, name) or {}

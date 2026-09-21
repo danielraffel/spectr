@@ -49,7 +49,7 @@ CAPTURE_DOCUMENT_PATHS = [
     # marker is separate state and is deliberately untouched.
     ('preset list arrow keys walk the selection',
      '  usePE(() => {\n    if (!open) return;\n    const onKey = (event) => {\n      if (event.key === "Escape") {\n        event.preventDefault();\n        event.stopPropagation();\n        onClose();\n      }\n    };\n    document.addEventListener("keydown", onKey, true);\n    return () => document.removeEventListener("keydown", onKey, true);\n  }, [open, onClose]);',
-     '  usePE(() => {\n    if (!open) return;\n    const rows = () => Array.prototype.slice.call(\n      document.querySelectorAll("[data-spectr-pattern-list] [data-spectr-pattern-id]"));\n    const editingText = () => {\n      const focused = document.activeElement;\n      const tag = focused && focused.tagName ? String(focused.tagName).toLowerCase() : "";\n      return tag === "input" || tag === "textarea";\n    };\n    const step = (delta) => {\n      const list = rows();\n      if (!list.length) return false;\n      let index = -1;\n      for (let i = 0; i < list.length; i++) {\n        if (list[i].getAttribute("data-spectr-pattern-selected") === "true") index = i;\n      }\n      const next = index < 0\n        ? (delta > 0 ? 0 : list.length - 1)\n        : (index + delta + list.length) % list.length;\n      const id = list[next].getAttribute("data-spectr-pattern-id");\n      if (!id) return false;\n      setSelectedId(id);\n      return true;\n    };\n    const onKey = (event) => {\n      if (event.key === "Escape") {\n        event.preventDefault();\n        event.stopPropagation();\n        onClose();\n        return;\n      }\n      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;\n      // An open Pulp popup owns the keyboard, and a text field owns its own\n      // caret. Consuming the key here would freeze the popup highlight the\n      // same way a second menu keyboard owner once did.\n      if (document.querySelector(\'[data-pulp-popup-active="true"]\')) return;\n      if (editingText()) return;\n      if (!step(event.key === "ArrowDown" ? 1 : -1)) return;\n      event.preventDefault();\n      event.stopPropagation();\n    };\n    document.addEventListener("keydown", onKey, true);\n    return () => document.removeEventListener("keydown", onKey, true);\n  }, [open, onClose, setSelectedId]);'),
+     '  usePE(() => {\n    if (!open) return;\n    const rows = () => Array.prototype.slice.call(\n      document.querySelectorAll("[data-spectr-pattern-list] [data-spectr-pattern-id]"));\n    const editingText = () => {\n      const focused = document.activeElement;\n      const tag = focused && focused.tagName ? String(focused.tagName).toLowerCase() : "";\n      return tag === "input" || tag === "textarea";\n    };\n    const step = (delta) => {\n      const list = rows();\n      if (!list.length) return false;\n      let index = -1;\n      for (let i = 0; i < list.length; i++) {\n        if (list[i].getAttribute("data-spectr-pattern-selected") === "true") index = i;\n      }\n      const next = index < 0\n        ? (delta > 0 ? 0 : list.length - 1)\n        : (index + delta + list.length) % list.length;\n      const id = list[next].getAttribute("data-spectr-pattern-id");\n      if (!id) return false;\n      setSelectedId(id);\n      return true;\n    };\n    const onKey = (event) => {\n      if (event.key === "Escape") {\n        event.preventDefault();\n        event.stopPropagation();\n        onClose();\n        return;\n      }\n      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;\n      // An open Pulp popup owns the keyboard, and a text field owns its own\n      // caret. Consuming the key here would freeze the popup highlight the\n      // same way a second menu keyboard owner once did.\n      if (document.querySelector(\'[data-pulp-popup-active]\')) return;\n      if (editingText()) return;\n      if (!step(event.key === "ArrowDown" ? 1 : -1)) return;\n      event.preventDefault();\n      event.stopPropagation();\n    };\n    document.addEventListener("keydown", onKey, true);\n    return () => document.removeEventListener("keydown", onKey, true);\n  }, [open, onClose, setSelectedId]);'),
 ]
 
 EDITS = [
@@ -98,9 +98,18 @@ EDITS = [
      '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-overlay": "true", overlay: true, onDismiss: onClose,',
      '"data-spectr-settings-panel": true, "data-spectr-settings-tab": "general", "data-spectr-settings-live": "true", "data-spectr-overlay": "true", overlay: true, onDismiss: onClose,'),
 
+    # The selector is the ATTRIBUTE, never the value "true". Pulp's popup owner
+    # writes `data-pulp-popup-active` on every option of a popup it owns and
+    # removes it when it lets go, so presence answers "is a dropdown open".
+    # `="true"` marks only the row the keyboard cursor is drawn on, and a
+    # pointer-opened popup draws no cursor until the user reveals it -- so a
+    # value-matching guard reads an open dropdown as closed, and this listener
+    # (on `document`, capture phase, mounted for the whole session) then
+    # answered Escape itself. The popup owner is offered an event only while it
+    # is not already defaultPrevented, so the dropdown could not be dismissed.
     ('settings Escape ignores only an actually open popup',
      'event.key === "Escape" && !document.querySelector(\'[role="listbox"]\')',
-     'event.key === "Escape" && !document.querySelector(\'[data-pulp-popup-active="true"]\')'),
+     'event.key === "Escape" && !document.querySelector(\'[data-pulp-popup-active]\')'),
 
     ('settings dismissal listener commits with the modal mount',
      'function SettingsModal({ settings, setSettings, onClose }) {\n'

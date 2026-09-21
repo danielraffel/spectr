@@ -369,3 +369,26 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # The band context menu fitting its viewport, and its two in-run plants.
 # Nothing above matches the name.
 ^Spectr-materialized-band-menu-fit$
+
+# The dropdown's affordances and its two negative controls. This surface had no
+# gate entry at all, which is how a keyboard regression on it could land and sit
+# unnoticed: the detectors were green against the pre-f249963e79 framework and
+# nothing re-ran them afterwards. `-negative-control` catches a second keyboard
+# owner; `-negative-control-escape` re-plants the value-form ownership guard and
+# reproduces the shipped defect exactly, because the double-owner control cannot
+# fail Escape (Escape is idempotent) and so left that defect uncovered.
+^Spectr-menu-dropdown-affordances$
+^Spectr-menu-dropdown-affordances-negative-control$
+^Spectr-menu-dropdown-affordances-negative-control-escape$
+
+# Arrow stepping, its selftest, and its two negative controls. The contract is
+# framework behaviour, not a Spectr choice: the first arrow on a popup whose
+# cursor is hidden and whose seed came from an edge REVEALS the cursor on that
+# edge; seeded from a marked selection it steps off it. `-negative-control`
+# catches a second keyboard owner; `-negative-control-eager-cursor` paints the
+# cursor at open and reproduces the eager-cursor-era signature, so a detector
+# that drifts back to the old expectation is visible rather than silent.
+^Spectr-menu-arrow-step$
+^Spectr-menu-arrow-step-selftest$
+^Spectr-menu-arrow-step-negative-control$
+^Spectr-menu-arrow-step-negative-control-eager-cursor$

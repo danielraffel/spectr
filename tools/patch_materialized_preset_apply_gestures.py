@@ -158,7 +158,7 @@ EDITS = [
      '        // The same two guards the arrows use below: an open Pulp popup\n'
      '        // owns the keyboard, and a text field owns its own Return --\n'
      '        // the search and rename inputs both submit with it.\n'
-     '        if (document.querySelector(\'[data-pulp-popup-active="true"]\')) return;\n'
+     '        if (document.querySelector(\'[data-pulp-popup-active]\')) return;\n'
      '        if (editingText()) return;\n'
      '        // Read through the ref, not a closure: this listener is\n'
      '        // registered once per open, so a captured `selected` would\n'

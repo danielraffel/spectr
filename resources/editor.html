@@ -1850,7 +1850,11 @@ function App() {`,
 function SettingsModal({ settings, setSettings, onClose }) {
   React.useLayoutEffect(() => {
     const onKey = (event) => {
-      if (event.key === 'Escape' && !document.querySelector('[data-pulp-popup-active="true"]')) {
+      // Presence, not the value "true": Pulp's popup owner marks every option
+      // of a popup it owns and clears the attribute when it lets go, while
+      // "true" is only the row the keyboard cursor is painted on -- and a
+      // pointer-opened popup paints no cursor until the user reveals it.
+      if (event.key === 'Escape' && !document.querySelector('[data-pulp-popup-active]')) {
         event.preventDefault(); event.stopPropagation(); onClose();
       }
     };
