@@ -4224,19 +4224,40 @@ int main(int argc, char** argv) {
                               ? 0 : 1)), reading);
             }
 
-            // ── 11-15. The five edit modes ──────────────────────────────────
-            // Each is arranged to a DIFFERENT mode first, through the keyboard
-            // path, so "changed" and "unchanged" are distinguishable values
-            // rather than the same one read twice.
+            // ── 11-15. The five edit modes ──────────────────
+            // Driven by the ADVERTISED SHORTCUT, not by a menu row. The band
+            // menu no longer lists the edit modes: they had three surfaces
+            // (the menu, the S/L/B/F/G keys, the bottom-bar SCULPT control)
+            // for five values, and the menu rows were the ones removed. The
+            // capability is not dropped from this gate along with them --
+            // it moves to the surface that still owns it, which is also the
+            // stronger evidence, because the shortcut is what a user reaches
+            // for once the rows are gone.
+            //
+            // Each mode is arranged to a DIFFERENT mode first, through the
+            // same keyboard path, so "changed" and "unchanged" are
+            // distinguishable values rather than the same one read twice.
+            //
+            // The measured press honours the `nopress` plant exactly as a row
+            // press does. Without that these five would be the only
+            // assertions in this report that survive the negative control,
+            // and an assertion that cannot go red under the control is
+            // exactly what this gate exists to refuse.
             {
                 struct Mode { const char* label; float value;
-                              pulp::view::KeyCode away; };
+                              pulp::view::KeyCode away;
+                              pulp::view::KeyCode key; };
                 const Mode modes[] = {
-                    {"Sculpt", 0.0f, pulp::view::KeyCode::g},
-                    {"Level",  1.0f, pulp::view::KeyCode::s},
-                    {"Boost",  2.0f, pulp::view::KeyCode::s},
-                    {"Flare",  3.0f, pulp::view::KeyCode::s},
-                    {"Glide",  4.0f, pulp::view::KeyCode::s},
+                    {"Sculpt", 0.0f, pulp::view::KeyCode::g,
+                     static_cast<pulp::view::KeyCode>('s')},
+                    {"Level",  1.0f, pulp::view::KeyCode::s,
+                     static_cast<pulp::view::KeyCode>('l')},
+                    {"Boost",  2.0f, pulp::view::KeyCode::s,
+                     static_cast<pulp::view::KeyCode>('b')},
+                    {"Flare",  3.0f, pulp::view::KeyCode::s,
+                     static_cast<pulp::view::KeyCode>('f')},
+                    {"Glide",  4.0f, pulp::view::KeyCode::s,
+                     static_cast<pulp::view::KeyCode>('g')},
                 };
                 for (const auto& mode : modes) {
                     close_menu();
@@ -4244,26 +4265,22 @@ int main(int argc, char** argv) {
                     settle_round();
                     const float before = edit_mode();
                     if (before == mode.value) {
-                        record(mode.label, "no-sel", "real press",
+                        record(mode.label, "no-sel", "shortcut key",
                                "edit-mode parameter moves to this mode", 3,
                                fmt("arrangement failed: already at %.1f",
                                    before));
                         continue;
                     }
-                    if (!open_menu()) return 3;
-                    const auto aim = press_row(mode.label);
+                    if (!no_press) press_key(mode.key);
                     settle_round();
                     const float after = edit_mode();
-                    const bool closed = !menu_open();
                     const std::string reading = fmt(
-                        "kParamEditMode %.1f -> %.1f (want %.1f), menu "
-                        "closed=%s", before, after, mode.value,
-                        closed ? "yes" : "no");
-                    record(mode.label, "no-sel", "real press",
+                        "kParamEditMode %.1f -> %.1f (want %.1f)%s",
+                        before, after, mode.value,
+                        no_press ? "  [PLANT: press skipped]" : "");
+                    record(mode.label, "no-sel", "shortcut key",
                            "edit-mode parameter moves to this mode",
-                           !aim.resolved ? 3 : (!aim.attributable ? 2
-                               : ((after == mode.value && closed) ? 0 : 1)),
-                           reading);
+                           after == mode.value ? 0 : 1, reading);
                 }
             }
 

@@ -1773,6 +1773,50 @@ if(SPECTR_NODE_EXECUTABLE)
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_context_modulation_behavior.mjs)
     set_tests_properties(Spectr-context-modulation-behavior PROPERTIES TIMEOUT 60)
+
+    # The band menu's own Escape and outside-press dismissal, its
+    # one-submenu-at-a-time rule, and the absence of the EDIT MODE rows --
+    # executed, not grepped. The defect these guard is a listener on the wrong
+    # OBJECT: `document` receives keydown but never receives a pointer press,
+    # because a press bubbles the element `_parentElement` chain and that
+    # chain ends at `document.body`. A text search for the listener is
+    # satisfied by both, and the wrong one is what shipped.
+    add_test(NAME Spectr-materialized-band-menu-dismissal
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_menu_dismissal.mjs)
+    set_tests_properties(Spectr-materialized-band-menu-dismissal PROPERTIES TIMEOUT 60)
+    # One control per rule. Each reinstates a real defect and inverts the
+    # verdict inside the script, so the row is green only when an ASSERTION
+    # rejected the plant -- not WILL_FAIL, which accepts the exits that mean
+    # the control never reached the rule it was meant to break.
+    foreach(plant
+            document-outside
+            menu-only-containment
+            stacking-submenus
+            escape-closes-all
+            no-escape
+            unanswerable-dismisses)
+        add_test(NAME Spectr-materialized-band-menu-dismissal-${plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_menu_dismissal.mjs
+                --plant-${plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-band-menu-dismissal-${plant}-control
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+
+    # The static band-menu contract. This file existed and was never
+    # registered, so it had never run and had been red for its whole recorded
+    # history while the menu it described shipped unchallenged.
+    add_test(NAME Spectr-materialized-context-menu-contract
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_context_menu.mjs)
+    set_tests_properties(Spectr-materialized-context-menu-contract PROPERTIES TIMEOUT 60)
+    add_test(NAME Spectr-materialized-context-menu-contract-edit-mode-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_context_menu.mjs
+            --plant-edit-mode --expect-fail)
+    set_tests_properties(Spectr-materialized-context-menu-contract-edit-mode-control
+        PROPERTIES TIMEOUT 60)
     # Negative controls, one per gate. Each reinstates a real defect and inverts
     # the verdict inside the script, so the row is green only when the suite
     # REJECTS it. The inversion is deliberately not WILL_FAIL: WILL_FAIL accepts

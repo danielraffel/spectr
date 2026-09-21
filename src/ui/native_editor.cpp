@@ -601,13 +601,41 @@ bool Spectr::perform_command(pulp::view::CommandID id) {
     }
     try {
         if (id == kUndoCommand || id == kRedoCommand) {
-            // Reuse the same EditorBridge handlers as the menu rows. The
-            // command is consumed even when history is empty so the host
-            // never treats Cmd/Ctrl+Z as its own project removal command.
-            native_editor_bridge_.dispatch_json(
+            // Routed through the DOCUMENT's own bridge wrapper, not straight
+            // at the EditorBridge handler.
+            //
+            // Measured on the shipping standalone: `performKeyEquivalent:`
+            // offers a Command chord to `rootView->on_global_key` first and
+            // returns without any script fan-out when that claims it, so
+            // Cmd+Z is answered HERE and the document's keydown listener --
+            // and with it the `window.pulp.postMessage('undo')` wrapper --
+            // never runs. That wrapper is the only thing that turns an undo
+            // response into `emit('processing_state_live', ...)`, and a
+            // history replay lands via `replace_processing_state`, which does
+            // not advance `host_automation_revision_`, so the editor's own
+            // live-publication tick does not fire for it either. Calling the
+            // handler directly therefore undid the authority's state and left
+            // the screen exactly as it was, which is indistinguishable from
+            // Cmd+Z doing nothing -- and is what was reported. Clicking the
+            // menu's own Undo row worked the whole time, because that row
+            // goes through the wrapper.
+            //
+            // Going through the wrapper means the chord and the row are one
+            // path rather than two that have to be kept in agreement.
+            //
+            // The command is consumed either way, even when history is empty,
+            // so the host never treats Cmd/Ctrl+Z as its own project-removal
+            // command.
+            native_scripted_ui_->bridge()->load_script(
                 id == kUndoCommand
-                    ? R"({"type":"undo","payload":{}})"
-                    : R"({"type":"redo","payload":{}})");
+                    ? "(() => { window.pulp.postMessage('undo', {}); "
+                      "if (typeof globalThis.__pulpRuntimeSettle__ === "
+                      "'function') globalThis.__pulpRuntimeSettle__(8); })();"
+                    : "(() => { window.pulp.postMessage('redo', {}); "
+                      "if (typeof globalThis.__pulpRuntimeSettle__ === "
+                      "'function') globalThis.__pulpRuntimeSettle__(8); })();",
+                id == kUndoCommand ? "spectr-undo-command"
+                                   : "spectr-redo-command");
             return true;
         }
         native_scripted_ui_->bridge()->load_script(
@@ -2171,6 +2199,20 @@ bool Spectr::tick_native_analyzer_(float dt) {
     //                  label ENDS WITH LABEL, resolved from the live tree at
     //                  that moment. The honest driver: it is where the words
     //                  the user is reading actually are.
+    //   key:SPEC       a KEY PRESS, delivered to script the way the macOS
+    //                  standalone delivers one: `[mod+]*key`, e.g. `escape`
+    //                  or `cmd+z`. This is NOT the `escape` step below. That
+    //                  one calls `route_escape_to_active_overlay` directly,
+    //                  so it exercises the native overlay slot and NOTHING
+    //                  in JS -- an editor whose own key handling is dead
+    //                  passes it. This step calls
+    //                  `script_events::dispatch_global_key`, which is the
+    //                  first thing `window_host_mac.mm`'s `keyDown:` does
+    //                  (and, for a Command chord, what its
+    //                  `performKeyEquivalent:` does), and is the only route
+    //                  by which a key reaches the document's own listeners.
+    //                  It deliberately does not then run the native Escape
+    //                  policy, so a dismissal it observes is the document's.
     //   escape         the host's own Escape route for an active overlay
     //   outside:x,y    the host's own outside-press route
     //   param:ID=V     a host parameter write (arrangement, never a verdict).
@@ -2314,6 +2356,61 @@ bool Spectr::tick_native_analyzer_(float dt) {
                             detail = click_at(
                                 pulp::view::Point{aim.cx, aim.cy});
                         }
+                    }
+                } else if (kind == "key") {
+                    // Same spec grammar as the SPECTR_KEY fixture above.
+                    std::string spec = arg;
+                    uint16_t key_mods = 0;
+                    bool bad_mod = false;
+                    for (;;) {
+                        const auto plus = spec.find('+');
+                        if (plus == std::string::npos || plus + 1 >= spec.size())
+                            break;
+                        const std::string mod = spec.substr(0, plus);
+                        if (mod == "cmd")        key_mods |= pulp::view::kModCmd;
+                        else if (mod == "meta")  key_mods |= pulp::view::kModMeta;
+                        else if (mod == "ctrl")  key_mods |= pulp::view::kModCtrl;
+                        else if (mod == "alt")   key_mods |= pulp::view::kModAlt;
+                        else if (mod == "shift") key_mods |= pulp::view::kModShift;
+                        else { bad_mod = true; break; }
+                        spec.erase(0, plus + 1);
+                    }
+                    pulp::view::KeyCode code = pulp::view::KeyCode::unknown;
+                    if (spec == "escape") code = pulp::view::KeyCode::escape;
+                    else if (spec == "enter") code = pulp::view::KeyCode::enter;
+                    else if (spec == "tab") code = pulp::view::KeyCode::tab;
+                    else if (spec.size() == 1) {
+                        char c = spec[0];
+                        if (c >= 'A' && c <= 'Z')
+                            c = static_cast<char>(c - 'A' + 'a');
+                        code = static_cast<pulp::view::KeyCode>(c);
+                    }
+                    if (bad_mod || code == pulp::view::KeyCode::unknown) {
+                        detail = "bad-arg";
+                    } else {
+                        // The macOS standalone's order, not a convenient one.
+                        // `performKeyEquivalent:` offers the chord to the
+                        // root hook FIRST and, when that claims it, returns
+                        // without any script fan-out -- so a chord the native
+                        // CommandRegistry owns never reaches the document's
+                        // own keydown listener at all. Reproducing that order
+                        // is the whole point: it is what decides which half
+                        // of a key path is answering.
+                        pulp::view::KeyEvent down;
+                        down.key = code;
+                        down.modifiers = key_mods;
+                        down.is_down = true;
+                        const bool root_claimed =
+                            root.on_global_key && root.on_global_key(down);
+                        if (!root_claimed) {
+                            pulp::view::script_events::dispatch_global_key(
+                                static_cast<int>(code), key_mods,
+                                /*is_down=*/true);
+                            pulp::view::script_events::dispatch_global_key(
+                                static_cast<int>(code), key_mods,
+                                /*is_down=*/false);
+                        }
+                        detail = root_claimed ? "root" : "script";
                     }
                 } else if (kind == "escape") {
                     const auto res =
