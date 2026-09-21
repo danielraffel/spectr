@@ -1472,13 +1472,34 @@ TEST_CASE("native host automation projects through the compact live frame lane",
       if (Math.abs(state.targetGains[0] - expected) > 1e-9
           || state.targetGains[7] !== -Infinity)
         throw new Error('compact live-state did not update target gains');
-      // Muting remains categorical in target state, while the render projection
-      // deliberately places the muted band on the 0 dB line. The finite band
-      // must never be eased.
+      // Muting remains categorical in target state, and the render projection
+      // carries it as the SAME categorical sentinel rather than as a finite
+      // gain. The finite band must never be eased.
+      //
+      // `renderState().gains` is `renderGainsRef`, which is one layer BEFORE
+      // the painter's normalisation. The live-state projection writes
+      // `state.muted[i] ? -Infinity : clamp(value, -1.02, 1.02)`, and it is
+      // `drawBands` that turns a non-finite render gain into the 0 dB line
+      // (`Number.isFinite(v) ? clamp(macroAdjustedGain(v, i), -1.02, 1.02)
+      // : 0`). Reading the ref and expecting the painter's 0 compared two
+      // different layers, and the sentinel is load-bearing at this one: the
+      // ease loop keys the mute-collapse animation off `isMuted(rg[i])`, so a
+      // 0 here would read as an UNMUTED render gain and re-enter the collapse
+      // on the next frame.
       if (Math.abs(state.gains[0] - expected) > 1e-9
-          || state.gains[7] !== 0)
+          || state.gains[7] !== -Infinity)
         throw new Error('compact live-state did not draw current values directly: gain0=' +
           state.gains[0] + ', gain7=' + state.gains[7] + ', expected=' + expected);
+      // The half the sentinel check cannot make on its own: a projection that
+      // simply dropped the muted band -- or handed back an unpopulated array --
+      // would also not be a finite eased gain. The pre-mute dB has to survive
+      // alongside it, because that is what an unmute restores.
+      if (state.mutedGainDb.length !== state.gains.length)
+        throw new Error('compact live-state truncated the muted-gain record: '
+          + state.mutedGainDb.length + ' vs ' + state.gains.length);
+      if (!Number.isFinite(state.mutedGainDb[7]))
+        throw new Error('compact live-state lost band 7 pre-mute dB: '
+          + state.mutedGainDb[7]);
       if (Math.abs(state.view.lmin - Math.log10(220)) > 1e-5
           || Math.abs(state.view.lmax - Math.log10(8800)) > 1e-5)
         throw new Error('compact live-state did not update the viewport');
@@ -1488,6 +1509,29 @@ TEST_CASE("native host automation projects through the compact live frame lane",
           || state.reactView.lmax !== before.view.lmax)
         throw new Error('compact live-state reconciled the React viewport');
     })();)js", "spectr-native-host-automation-live-contract");
+
+    // The control for the sentinel assertion above, executed through the
+    // product rather than asserted about it.
+    //
+    // `gains[7] !== -Infinity` is only evidence that the projection honours
+    // `state.muted` if the SAME band, through the SAME path, reads finite when
+    // it is not muted. A projection that had stopped reading `muted` and
+    // hard-wired the sentinel -- or one that produced `-Infinity` for some
+    // unrelated reason, an unpopulated array being the obvious one -- passes
+    // the assertion above and fails here.
+    rig.store.set_value(spectr::band_mute_param_id(7), 0.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 4);
+    rig.bridge().load_script(R"js((() => {
+      const state = globalThis.__spectrTestHooks?.renderState?.();
+      if (!state) throw new Error('native live-state receipt missing');
+      if (!Number.isFinite(state.gains[7]))
+        throw new Error('unmuted band 7 still projects the mute sentinel: gain7='
+          + state.gains[7]);
+      if (state.targetGains[7] !== -9 / 24)
+        throw new Error('unmuted band 7 did not restore its target gain: target7='
+          + state.targetGains[7]);
+    })();)js", "spectr-native-host-automation-live-unmuted-control");
     storage.require_unchanged();
 }
 
@@ -4428,7 +4472,7 @@ TEST_CASE("the settings copy button centres its feedback and answers a press",
 
     // Measure the word against the BUTTON, not against its own label slot: the
     // button is the box a person sees.
-    const auto require_centred = [&](const pulp::view::Label& label) {
+    const auto require_centred = [&](const pulp::view::Label& label) -> float {
         auto* button = find_button(label);
         REQUIRE(button != nullptr);
         const auto button_box = pulp::view::ViewInspector::absolute_bounds(*button);
@@ -4440,11 +4484,32 @@ TEST_CASE("the settings copy button centres its feedback and answers a press",
         // by construction and would pass this assertion while measuring
         // nothing.
         const auto extents = label.painted_text_extents(label_box.width);
-        // Positive control on the instrument: an unmeasured or box-wide span is
-        // that degenerate case wearing a different name.
+        // Positive control on the instrument: an unmeasured span is that
+        // degenerate case wearing a different name.
         REQUIRE(extents.measured);
         REQUIRE(extents.ink.width > 0.0f);
-        REQUIRE(extents.ink.width < label_box.width - 1.0f);
+        // The degenerate span is measured against the BUTTON, not against the
+        // label's own slot.
+        //
+        // `ink_rect` really does hand back the whole box when
+        // `intrinsic_width()` reports 0, which is why it is rejected above --
+        // but `painted_text_extents` has no such arm. It runs the shaper and
+        // reports `ink.width` from the shaped line, so it can never return the
+        // box it was handed; the only degenerate outcome it has is
+        // `measured == false`, already required.
+        //
+        // Carrying `ink < label_box.width - 1` over to it asserted something
+        // else entirely, and something this layout can never satisfy: this
+        // label is shrink-to-fit, so Yoga sizes its box to `ceil(shaped
+        // width)` and the box EQUALS the ink by construction (measured: a
+        // 26.0f ink in a 26.0f box). The word was never overrunning anything
+        // -- the button around it is 136pt wide.
+        //
+        // So compare against the box a person actually sees. A span that
+        // filled the button would still be caught, the real product failure
+        // (a feedback word wider than the control it sits in) is caught for
+        // the first time, and a correctly hugged label passes.
+        REQUIRE(extents.ink.width < button_box.width - 1.0f);
         const float ink_centre
             = label_box.x + extents.ink.x + extents.ink.width * 0.5f;
         const float button_centre = button_box.x + button_box.width * 0.5f;
@@ -4460,10 +4525,11 @@ TEST_CASE("the settings copy button centres its feedback and answers a press",
                         << " delta=" << (ink_centre - button_centre));
         CHECK(button_box.width == Catch::Approx(136.0f).margin(0.5f));
         CHECK(ink_centre == Catch::Approx(button_centre).margin(1.5f));
+        return extents.ink.width;
     };
 
     const std::string resting_state{copy->text()};
-    require_centred(*copy);
+    const float resting_ink = require_centred(*copy);
 
     // Second half of the line. Scroll the button into the viewport first: the
     // ABOUT group sits far below the settings fold, and a press outside the
@@ -4523,7 +4589,19 @@ TEST_CASE("the settings copy button centres its feedback and answers a press",
     // different length from the resting one.
     const auto* settled = find_copy_label();
     REQUIRE(settled != nullptr);
-    require_centred(*settled);
+    const float settled_ink = require_centred(*settled);
+
+    // The control for the span measurement itself, and the one the old
+    // `ink < label_box.width - 1` was reaching for. The degenerate outcome
+    // worth excluding is a width that describes the BOX rather than the word:
+    // such a reading is constant across states, because the button does not
+    // resize. These two states are different words -- the press above already
+    // REQUIREs that -- so their ink has to differ. If it does not, the number
+    // both `require_centred` calls just asserted on is not a measurement of
+    // any text and neither verdict means anything.
+    INFO("resting \"" << resting_state << "\" ink=" << resting_ink
+         << "; settled \"" << after_centre << "\" ink=" << settled_ink);
+    REQUIRE(resting_ink != settled_ink);
 }
 
 // Line 711 of the UX burndown — "Status Info is not truncated and unnecessary
