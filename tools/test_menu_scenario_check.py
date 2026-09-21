@@ -21,6 +21,21 @@ The two fixtures under `fixtures/menu-scenario-runs/`:
                     most: a guard that refuses everything would pass the dead
                     case and is useless.
 
+  bands64-2026-09-21/
+                    The `--bands64` scenario against the current document. It
+                    is NOT a green run -- everything from the `Modulation`
+                    press onward fails, because a lifted submenu claiming the
+                    native overlay dismisses the menu underneath it -- but its
+                    ROOT snapshots are healthy, and they are what the
+                    root-row case below reads. Recorded here because
+                    `ROOT_SELECTION_ROWS` is a claim about rows the menu draws
+                    at the root, and the only way to be wrong about that
+                    silently is to have no recording of the root to check
+                    against. That is exactly what happened: the set named
+                    `Assign selection to Macro 1/4`, those rows moved behind a
+                    `Macros \u203a` entry, and six reopen assertions went red
+                    on rows that were one press further in.
+
 Exit: 0 all cases hold, 1 one did not.
 """
 
@@ -31,7 +46,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from menu_scenario_check import refuse_reason  # noqa: E402
+from menu_scenario_check import (  # noqa: E402
+    ROOT_SELECTION_ROWS, labels, refuse_reason, step)
 
 RUNS = os.path.join(HERE, "fixtures", "menu-scenario-runs")
 
@@ -124,11 +140,38 @@ def main():
           reason is not None and "did not open the menu" in reason,
           repr(reason)[:96])
 
+    # ── ROOT_SELECTION_ROWS names rows the ROOT panel actually draws ──
+    #
+    # Positive first, and on a recorded root snapshot rather than a crafted
+    # one: the drift that this catches produced perfectly well-formed rows,
+    # just not the ones the set asked for.
+    _, b64_steps = load("bands64-2026-09-21")
+    root = step(b64_steps, "o_re1") or {}
+    root_labels = labels(root)
+    missing = sorted(ROOT_SELECTION_ROWS - root_labels)
+    check("every ROOT_SELECTION_ROWS row is drawn at the root",
+          bool(root_labels) and not missing,
+          "%d root rows recorded; missing %r" % (len(root_labels), missing))
+
+    # And the negative: drop one required row from the recorded snapshot and
+    # the subset test must go red. Without this the check above passes just as
+    # well on an empty set, which would assert nothing at all.
+    for dropped in sorted(ROOT_SELECTION_ROWS):
+        thinned = {label for label in root_labels if label != dropped}
+        if ROOT_SELECTION_ROWS <= thinned:
+            check("a missing root row is caught (%s)" % dropped, False,
+                  "the subset test still held without it")
+            break
+    else:
+        check("a missing root row is caught",
+              True, "each of the %d required rows fails the subset test when "
+              "removed" % len(ROOT_SELECTION_ROWS))
+
     print()
     if failures:
         print("%d failure(s): %s" % (len(failures), "; ".join(failures)))
         return 1
-    print("all %d cases hold" % 8)
+    print("all %d cases hold" % 10)
     return 0
 
 

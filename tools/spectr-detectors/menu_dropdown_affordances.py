@@ -5,6 +5,28 @@ The three affordances are asserted directly, each paired with a control that
 must return non-zero on the same instrument and the same target, so a silent
 harness cannot read as a passing dropdown.
 
+TWO READINGS THAT ARE NOT THE SAME READING. Pulp's popup owner writes
+`data-pulp-popup-active` on every option of a popup it holds and removes the
+attribute when it lets go, so PRESENCE is ownership. The value `"true"` marks
+only the row the keyboard cursor is painted on, and a popup opened with the
+POINTER paints no cursor at all until the user asks for one -- an arrow, a row
+hover, or an arrow that opened the menu. Conflating the two is not academic: it
+is the defect the `stale-ownership-sentinel` control below reproduces.
+
+The first arrow follows from the same rule. On a popup whose cursor is hidden
+and whose seed came from an edge because the author marked no selection, that
+press reveals the cursor ON the edge rather than stepping past the row the user
+was aiming at; seeded from a marked selection it steps off that row as a combo
+box does. The probe decides which case it is from the markup, never from the
+owner's own seeding flag.
+
+Two negative controls, each required to make the assertion it targets go red:
+  * `second-keyboard-owner` (the default) applies one arrow press twice, the
+    user-reported "arrow keys skip a row";
+  * `stale-ownership-sentinel` restores the document keydown guard that keyed
+    on the painted cursor instead of ownership, which consumed Escape before
+    the popup owner was ever offered it.
+
 Exit 0 pass, 1 fail (the affordance is missing), 2 inconclusive (a control
 came back empty, so the measurement proves nothing either way).
 """
@@ -35,8 +57,38 @@ ACTIVATE = r"""
   var idx = function(){ var s = popupState(); return s ? s.activeIndex : -999; };
   var containers = function(){
     return document.querySelectorAll("[data-spectr-menu-options]").length; };
+  // Ownership is the ATTRIBUTE -- the owner writes it on every row of a popup
+  // it holds and removes it when it lets go. Its VALUE "true" is the painted
+  // keyboard cursor, which a pointer-opened popup does not show until the user
+  // asks for one. Two readings, two selectors.
+  var owned = function(){
+    return document.querySelectorAll('[data-pulp-popup-active]').length; };
   var highlighted = function(){
     return document.querySelectorAll('[data-pulp-popup-active="true"]').length; };
+  // Answered from the markup, never from the popup's own seeding flag: reading
+  // the owner's bookkeeping to build the expectation would let a seeding bug
+  // agree with itself.
+  var authorMarkedSelection = function(popup, options){
+    var holders = [trigger, popup];
+    for (var h = 0; h < holders.length; ++h) {
+      var pointer = holders[h] && holders[h].getAttribute
+        ? holders[h].getAttribute("aria-activedescendant") : null;
+      if (pointer) {
+        for (var p = 0; p < options.length; ++p)
+          if (options[p].id === pointer) return true;
+      }
+    }
+    for (var i = 0; i < options.length; ++i) {
+      var o = options[i];
+      if (!o.getAttribute) continue;
+      if (o.getAttribute("aria-selected") === "true") return true;
+      if (o.getAttribute("aria-checked") === "true") return true;
+      if (o.checked === true) return true;
+      var current = o.getAttribute("aria-current");
+      if (current && current !== "false") return true;
+    }
+    return false;
+  };
   var sendKey = function(key){
     document.dispatchEvent({ type:"keydown", key:key, code:key,
       bubbles:true, cancelable:true,
@@ -60,6 +112,26 @@ SECOND_OWNER = r"""
   });
   L("second_keyboard_owner=installed");
 """
+
+# The second plant, for the Escape assertion. This is the defect that shipped,
+# reproduced exactly: a document-level capture listener that answers Escape
+# itself unless it can see `[data-pulp-popup-active="true"]`. That selector is
+# the PAINTED keyboard cursor, not popup ownership, and a pointer-opened popup
+# paints no cursor -- so the guard misses an open dropdown, consumes the key,
+# and `document.dispatchEvent` then never offers the event to the popup owner
+# (it offers only while `!event.defaultPrevented`). The Escape assertion must
+# go red against this or it is not watching anything.
+STALE_OWNERSHIP_SENTINEL = r"""
+  document.addEventListener("keydown", function(e){
+    if (!e || e.key !== "Escape") return;
+    if (document.querySelector('[data-pulp-popup-active="true"]')) return;
+    if (typeof e.preventDefault === "function") e.preventDefault();
+    if (typeof e.stopPropagation === "function") e.stopPropagation();
+  }, true);
+  L("stale_ownership_sentinel=installed");
+"""
+
+CONTROLS = ("second-keyboard-owner", "stale-ownership-sentinel")
 
 ESCAPE_PROBE = r"""
 (function(){
@@ -97,6 +169,7 @@ KEY_SEQUENCE_PROBE = r"""
 __ACTIVATE__
 __SECOND_OWNER__
   var phase = 0, count = 0, bad = 0, badHighlight = 0, seen = [], committed = "";
+  var marked = false, revealed = false;
   var step = function(){
     phase++;
     if (phase === 1) {
@@ -106,21 +179,36 @@ __SECOND_OWNER__
       if (!s) { L("RESULT inconclusive reason=no_popup_state"); return; }
       count = s.options.length;
       if (!count) { L("RESULT inconclusive reason=zero_options"); return; }
+      marked = authorMarkedSelection(s.popup, s.options);
       L("CONTROL options=" + count + " activeIndex=" + idx() +
-        " highlighted=" + highlighted());
+        " owned=" + owned() + " highlighted=" + highlighted() +
+        " marked=" + marked);
+      if (owned() !== count) badHighlight++;
+      // A pointer open reveals no cursor, so nothing is painted yet.
+      if (highlighted() !== 0) badHighlight++;
       seen.push(idx());
     } else if (phase - 2 <= __PRESSES__) {
       var before = idx();
       // Stepping is circular. `(i + 1) % count` is a correct wrap, not a skip;
       // asserting a raw delta of 1 would score the wrap as the very defect this
       // detector exists to catch.
-      var want = (before + 1) % count;
+      //
+      // And the FIRST arrow is not always a step. On a popup whose cursor is
+      // still hidden and whose seed came from an edge because the author marked
+      // no selection, that press REVEALS the cursor on the edge instead of
+      // moving it -- otherwise it would skip the row the user was aiming at.
+      // Seeded from a marked selection, it steps off that row as a combo box
+      // does.
+      var landOnSeed = !revealed && !marked;
+      var want = landOnSeed ? 0 : (before + 1) % count;
       sendKey("ArrowDown");
+      revealed = true;
       var after = idx();
       seen.push(after);
       if (after !== want) bad++;
-      if (highlighted() !== 1) badHighlight++;
+      if (highlighted() !== 1 || owned() !== count) badHighlight++;
       L("PRESS ArrowDown " + before + " -> " + after + " want=" + want +
+        (landOnSeed ? " (reveal)" : "") +
         (after === want ? "" : " MISSTEP"));
     } else if (phase - 2 === __PRESSES__ + 1) {
       var s2 = popupState();
@@ -154,9 +242,11 @@ __SECOND_OWNER__
 
 
 def build_probe(template, negative_control):
+    plants = {"second-keyboard-owner": SECOND_OWNER,
+              "stale-ownership-sentinel": STALE_OWNERSHIP_SENTINEL}
     return (template
             .replace("__ACTIVATE__", ACTIVATE.replace("__TRIGGER__", TRIGGER))
-            .replace("__SECOND_OWNER__", SECOND_OWNER if negative_control else "")
+            .replace("__SECOND_OWNER__", plants.get(negative_control, ""))
             .replace("__PRESSES__", str(ARROW_PRESSES)))
 
 
@@ -269,12 +359,37 @@ def self_test():
     bogus = pathlib.Path("/")
     if all((bogus / m).exists() for m in ROOT_MARKERS):
         failures.append("the marker set accepts '/', so it gates nothing.")
+    # Each plant must actually change the probe, or its required failure could
+    # never be produced, and the two must differ from each other or one of the
+    # registered controls is measuring the other's defect.
+    plain = build_probe(ESCAPE_PROBE, None)
+    for control in CONTROLS:
+        if build_probe(ESCAPE_PROBE, control) == plain:
+            failures.append(f"--negative-control {control} does not change "
+                            "the probe.")
+    if (build_probe(ESCAPE_PROBE, CONTROLS[0])
+            == build_probe(ESCAPE_PROBE, CONTROLS[1])):
+        failures.append("the two negative controls plant the same thing.")
+    # The ownership and paint readings must be different selectors. One probe
+    # using the value-matching selector for both would read an owned but
+    # unrevealed popup as unowned -- the confusion the shipped guard made.
+    keys = build_probe(KEY_SEQUENCE_PROBE, None)
+    for token in ("landOnSeed", "authorMarkedSelection",
+                  "'[data-pulp-popup-active]'",
+                  "'[data-pulp-popup-active=\"true\"]'"):
+        if token not in keys:
+            failures.append(f"the arrow probe no longer reads {token!r}.")
     for line in failures:
         print("FAIL: " + line)
     if failures:
         return 1
     print(f"PASS: --root defaults to this checkout ({REPO_ROOT}).")
     print(f"PASS: the marker set {ROOT_MARKERS} rejects a foreign root.")
+    print(f"PASS: each of --negative-control {CONTROLS} produces a different "
+          "probe.")
+    print("PASS: the arrow probe derives the reveal-vs-step expectation from "
+          "the markup and reads ownership and paint through different "
+          "selectors.")
     return 0
 
 
@@ -288,9 +403,12 @@ def _parser():
     # measuring nothing.
     ap.add_argument("--app", default=APP,
                     help=f"Spectr binary, relative to --root (default: {APP}).")
-    ap.add_argument("--negative-control", action="store_true",
-                    help="install a second keyboard owner; the detector MUST "
-                         "fail, or it is not measuring.")
+    ap.add_argument("--negative-control", nargs="?", const=CONTROLS[0],
+                    choices=CONTROLS, default=None,
+                    help="plant a defect; the assertion it targets MUST then "
+                         f"fail. {CONTROLS[0]} (the default) applies one arrow "
+                         f"press twice; {CONTROLS[1]} restores the guard that "
+                         "kept Escape from reaching the popup owner.")
     ap.add_argument("--self-test", action="store_true",
                     help="check the default root, then exit.")
     return ap
@@ -352,7 +470,22 @@ def main():
                          "SPECTR_EVAL": build_probe(ESCAPE_PROBE, args.negative_control)},
                         args.app)
     verdict, detail = probe_result(esc_log, "d2esc")
-    if args.negative_control:
+    if args.negative_control == "stale-ownership-sentinel":
+        # Inverted: the restored guard MUST keep Escape from reaching the popup
+        # owner. A green Escape assertion here means this detector cannot see
+        # the defect that shipped, so every green run of it proves nothing.
+        if verdict == "fail":
+            print("PASS (negative control stale-ownership-sentinel): the "
+                  f"restored guard was caught ({detail}).")
+        elif verdict == "inconclusive":
+            inconclusive.append(f"negative control proved nothing ({detail}).")
+        else:
+            failures.append(
+                "negative control PASSED; the Escape assertion cannot see a "
+                "document listener consuming the key before the popup owner "
+                "is offered it, so a green run of this detector proves "
+                "nothing.")
+    elif args.negative_control:
         # The injected owner re-enters with Escape too, and Escape is
         # idempotent, so this run says nothing about it either way.
         print(f"(negative control) Escape: {verdict} {detail}")
@@ -374,7 +507,12 @@ def main():
     verdict, detail = probe_result(arrow_log, "d2keys")
     committed = re.search(r'committed="([^"]*)"', detail or "")
     captions = caption_texts(arrow_layout) if arrow_layout.exists() else []
-    if args.negative_control:
+    if args.negative_control == "stale-ownership-sentinel":
+        # That plant touches Escape only, so the arrow reading is not evidence
+        # about it either way.
+        print(f"(negative control stale-ownership-sentinel) arrows: {verdict} "
+              f"{detail}")
+    elif args.negative_control:
         # Inverted: the injected double-stepping owner MUST be caught. A green
         # arrow assertion here means the measurement is blind, and every green
         # run of this detector would then prove nothing.

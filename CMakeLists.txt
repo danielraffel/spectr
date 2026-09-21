@@ -1314,6 +1314,25 @@ if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalon
         PROPERTIES
             TIMEOUT 600
             RESOURCE_LOCK spectr_native_materialized_editor)
+
+    # The Escape half needs its own control, because the double-owner above
+    # cannot produce a failing Escape: Escape is idempotent, so the injected
+    # owner re-applying it changes nothing and that run says nothing either
+    # way. This plants the guard that actually shipped -- a document keydown
+    # listener keyed on the PAINTED cursor rather than on popup ownership,
+    # which consumed the key before `document.dispatchEvent` could offer it to
+    # the popup owner -- and REQUIRES the Escape assertion to catch it.
+    add_test(NAME Spectr-menu-dropdown-affordances-negative-control-escape
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_dropdown_affordances.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-dropdown-affordances-negctl-escape
+            --negative-control stale-ownership-sentinel)
+    set_tests_properties(Spectr-menu-dropdown-affordances-negative-control-escape
+        PROPERTIES
+            TIMEOUT 600
+            RESOURCE_LOCK spectr_native_materialized_editor)
 endif()
 
 # The rail and native key path must change the processor's render mode.
@@ -1428,6 +1447,25 @@ if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalon
     set_tests_properties(Spectr-menu-arrow-step-negative-control PROPERTIES
         TIMEOUT 300
         RESOURCE_LOCK spectr_native_materialized_editor)
+
+    # The other half of the same detector, and the one the paint readings
+    # exist for: an owner that paints its keyboard cursor the instant the
+    # popup opens, before the user has asked for one. While the dropdowns did
+    # that, "Pulp owns this popup" and "a row is highlighted" were the same
+    # reading, which is how three ownership guards in the shipping document
+    # came to be keyed on the highlight. Planted so the "nothing is painted at
+    # a pointer open" assertion is one somebody has watched fail.
+    add_test(NAME Spectr-menu-arrow-step-negative-control-eager-cursor
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/menu_arrow_step_exactly_one.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}
+            --app $<TARGET_FILE:${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone>
+            --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-arrowstep-negctl-eager
+            --negative-control eager-cursor)
+    set_tests_properties(Spectr-menu-arrow-step-negative-control-eager-cursor
+        PROPERTIES
+            TIMEOUT 300
+            RESOURCE_LOCK spectr_native_materialized_editor)
 endif()
 
 if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone)
