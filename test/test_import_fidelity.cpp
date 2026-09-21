@@ -25,8 +25,13 @@ constexpr std::string_view kAssetSetDigest =
     "6215ee5a9f65ade3626e63c4f973e579f123625239ba57c8f5db61121ccc5e0a";
 constexpr std::string_view kTemplateDigest =
     "0cdb964975467a0f93ebe83bcdfe821bcd84055518e5b57233e7829e2c73172c";
+// The adapter is the FIRST <script> block of resources/editor.html -- the
+// browser-source mirror that every editor fix is mirrored into. So any change
+// to that mirror re-mints this digest, and nothing else reports it: the pin
+// goes stale silently and surfaces ~9 minutes into the M5 acceptance gate as a
+// bare hash mismatch. The failure below names the remedy for that reason.
 constexpr std::string_view kAdapterDigest =
-    "cb16da17db4ea910d7b9892ad71dd8eeb0e1739406c472372ab7a6dd1f56cfa6";
+    "de9f3f6dd81639c29e79a29bfd6c87efc17f13c9e49c844ca5cc9d0728947770";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -260,7 +265,13 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
 
     const auto adapter = outer_adapter(html);
     REQUIRE_FALSE(adapter.empty());
-    CHECK(pulp::runtime::sha256_hex(adapter) == kAdapterDigest);
+    const auto adapter_digest = pulp::runtime::sha256_hex(adapter);
+    INFO("resources/editor.html's first <script> block hashes to "
+         << adapter_digest << ", pinned kAdapterDigest is " << kAdapterDigest
+         << ". If you changed that mirror deliberately, re-mint the pin to the "
+            "first value; the mutation control below proves the oracle still "
+            "detects an accidental change.");
+    CHECK(adapter_digest == kAdapterDigest);
     auto mutated_adapter = adapter;
     mutated_adapter.front() ^= 1;
     CHECK(pulp::runtime::sha256_hex(mutated_adapter) != kAdapterDigest);
