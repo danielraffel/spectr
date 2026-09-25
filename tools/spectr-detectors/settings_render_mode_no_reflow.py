@@ -540,7 +540,10 @@ def main():
         return verdict(adjudicate(mixing, tracking, note), args.expect_fail)
 
     os.makedirs(args.out_dir, exist_ok=True)
-    mixing = compact(capture(args.app, "mixing", args.out_dir, None))
+    # Each capture SELECTS its mode rather than trusting the new-instance
+    # default to be one of them; the default is a product ruling that moves.
+    mixing = compact(capture(args.app, "mixing", args.out_dir,
+                             CHIP_SELECTOR % "linear_phase"))
     tracking = compact(capture(args.app, "tracking", args.out_dir,
                                CHIP_SELECTOR % "zero_latency"))
     rc = adjudicate(mixing, tracking, "live: %s" % args.app)

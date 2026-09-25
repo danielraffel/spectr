@@ -12,8 +12,21 @@
 
 using Catch::Approx;
 
+namespace {
+// Every test in this file measures the Mixing renderer (the linear-phase WOLA
+// path): its latency, its settling, its reconstruction. So each one ASKS for
+// that renderer rather than inheriting it from the new-instance default, which
+// is a product ruling in render_mode.hpp and is Tracking.
+std::unique_ptr<pulp::format::Processor> create_mixing_spectr() {
+    auto processor = spectr::create_spectr();
+    auto* plugin = static_cast<spectr::Spectr*>(processor.get());
+    REQUIRE(plugin->set_render_mode(spectr::MaskRenderMode::linear_phase));
+    return processor;
+}
+}  // namespace
+
 TEST_CASE("Spectr processes audio") {
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.prepare(48000, 512);
 
     pulp::audio::Buffer<float> in(2, 512), out(2, 512);
@@ -49,7 +62,7 @@ TEST_CASE("Spectr renders scheduled band automation without control-worker laten
           "[automation][spectral][rt]") {
     constexpr std::size_t block_size = 512;
     constexpr double sample_rate = 48000.0;
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.prepare(sample_rate, block_size);
 
     pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
@@ -111,7 +124,7 @@ TEST_CASE("Spectr applies internal modulation on the audio owner",
     constexpr std::size_t block_size = 512;
     constexpr double sample_rate = 48000.0;
     const auto render_peak = [](bool enabled) {
-        pulp::format::HeadlessHost host(spectr::create_spectr);
+        pulp::format::HeadlessHost host(create_mixing_spectr);
         host.prepare(sample_rate, block_size);
         pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
         const float* input_channels[] = {
@@ -174,7 +187,7 @@ TEST_CASE("Spectr keeps the modulation target lane audible under host automation
     // this render can only have come from the automated enum.
     const auto render_peak = [](bool select_snapshot_a,
                                 spectr::ModulationTarget automated_target) {
-        pulp::format::HeadlessHost host(spectr::create_spectr);
+        pulp::format::HeadlessHost host(create_mixing_spectr);
         host.prepare(sample_rate, block_size);
         auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
         REQUIRE(plugin != nullptr);
@@ -268,7 +281,7 @@ TEST_CASE("Spectr keeps host band automation and internal modulation both audibl
     constexpr std::size_t block_size = 512;
     constexpr double sample_rate = 48000.0;
     const auto render_peak = [](bool modulation_enabled, float band_db) {
-        pulp::format::HeadlessHost host(spectr::create_spectr);
+        pulp::format::HeadlessHost host(create_mixing_spectr);
         host.prepare(sample_rate, block_size);
         pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
         const float* input_channels[] = {
@@ -341,7 +354,7 @@ TEST_CASE("scheduled processor playback changes gain on the exact sample across 
     constexpr float input_value = 0.5f;
     constexpr float automated_db = -12.0f;
     const auto render = [=](std::size_t block_size) {
-        pulp::format::HeadlessHost host(spectr::create_spectr);
+        pulp::format::HeadlessHost host(create_mixing_spectr);
         host.state().set_value(spectr::kMix, 0.0f);
         host.state().set_value(spectr::kOutputTrim, 0.0f);
         host.prepare(48000.0, 512);
@@ -399,7 +412,7 @@ TEST_CASE("scheduled processor playback changes gain on the exact sample across 
 }
 
 TEST_CASE("Spectr has correct descriptor") {
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     auto desc = host.descriptor();
 
     REQUIRE(desc.name == "Spectr");
@@ -408,7 +421,7 @@ TEST_CASE("Spectr has correct descriptor") {
 }
 
 TEST_CASE("Spectr reports production WOLA latency for host PDC") {
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     CHECK(host.processor()->latency_samples() == spectr::kSpectralLatency);
     host.prepare(48000, 512);
     CHECK(host.processor()->latency_samples() == spectr::kSpectralLatency);
@@ -451,7 +464,7 @@ TEST_CASE("Spectr reports honest resolution for current product geometry") {
         return 0u;
     }();
 
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.prepare(48000, 512);
 
     auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
@@ -494,7 +507,7 @@ TEST_CASE("Spectr reports honest resolution for current product geometry") {
 }
 
 TEST_CASE("Spectr zero-percent mix is delayed by the reported wet latency") {
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.state().set_value(spectr::kMix, 0.0f);
     host.prepare(48000, 512);
 
@@ -526,7 +539,7 @@ TEST_CASE("Spectr zero-percent mix is delayed by the reported wet latency") {
 }
 
 TEST_CASE("Pulp ValidationHarness proves Spectr pass and exact mute audio") {
-    pulp::format::ValidationHarness harness(spectr::create_spectr);
+    pulp::format::ValidationHarness harness(create_mixing_spectr);
     harness.configure({.sample_rate = 48000.0,
                        .buffer_size = 512,
                        .input_channels = 2,
@@ -585,7 +598,7 @@ TEST_CASE("Spectr isolates three nonadjacent stereo frequency islands") {
         return static_cast<double>(bin) * sample_rate / analysis_size;
     };
 
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.prepare(sample_rate, block_size);
     auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
     REQUIRE(plugin != nullptr);
@@ -671,7 +684,7 @@ TEST_CASE("Spectr isolates three nonadjacent stereo frequency islands") {
 }
 
 TEST_CASE("Spectr flat wet path reconstructs after documented startup taper") {
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.prepare(48000, 512);
 
     constexpr std::size_t block_size = 512;
@@ -724,7 +737,7 @@ TEST_CASE("Spectr flat wet path reconstructs after documented startup taper") {
 
 TEST_CASE("Spectr output automation is smoothed and block-partition invariant") {
     const auto render_ramp = [](std::size_t block_size) {
-        pulp::format::HeadlessHost host(spectr::create_spectr);
+        pulp::format::HeadlessHost host(create_mixing_spectr);
         host.state().set_value(spectr::kMix, 0.0f);
         host.state().set_value(spectr::kOutputTrim, 0.0f);
         host.prepare(48000, 512);
@@ -780,7 +793,7 @@ TEST_CASE("Spectr clears delayed audio history at a host reset boundary") {
     const auto peak_after_impulse = [](bool request_reset,
                                        bool request_transport_jump,
                                        bool ordinary_loop_wrap) {
-        pulp::format::HeadlessHost host(spectr::create_spectr);
+        pulp::format::HeadlessHost host(create_mixing_spectr);
         host.state().set_value(spectr::kMix, 0.0f);
         host.state().set_value(spectr::kOutputTrim, 0.0f);
         host.prepare(48000, static_cast<int>(block_size));
@@ -841,8 +854,8 @@ TEST_CASE("Spectr ordinary loop wrap preserves exact continuous source time") {
     constexpr std::size_t num_blocks = 64;
     constexpr std::size_t wrap_block = 40;
 
-    pulp::format::HeadlessHost uninterrupted(spectr::create_spectr);
-    pulp::format::HeadlessHost looped(spectr::create_spectr);
+    pulp::format::HeadlessHost uninterrupted(create_mixing_spectr);
+    pulp::format::HeadlessHost looped(create_mixing_spectr);
     uninterrupted.state().set_value(spectr::kMix, 100.0f);
     looped.state().set_value(spectr::kMix, 100.0f);
     uninterrupted.prepare(48000, static_cast<int>(block_size));
@@ -904,7 +917,7 @@ TEST_CASE("Spectr imported editor has bounded proportional sizing") {
 }
 
 TEST_CASE("Spectr state round-trip") {
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.prepare(48000, 512);
 
     // Change a parameter
@@ -937,7 +950,7 @@ TEST_CASE("Spectr reports the display overlay inactive when depth is zero",
 
     const auto render = [](bool lfo1_enabled, float lfo1_depth,
                            bool lfo2_enabled, float lfo2_depth) {
-        pulp::format::HeadlessHost host(spectr::create_spectr);
+        pulp::format::HeadlessHost host(create_mixing_spectr);
         host.prepare(sample_rate, block_size);
         auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
         REQUIRE(plugin != nullptr);
@@ -1034,7 +1047,7 @@ TEST_CASE("Spectr publishes LFO inputs the editor can evaluate at frame time",
     constexpr std::size_t block_size = 512;
     constexpr double sample_rate = 48000.0;
 
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.prepare(sample_rate, block_size);
     auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
     REQUIRE(plugin != nullptr);
@@ -1126,7 +1139,7 @@ TEST_CASE("Spectr releases the modulation overlay without a parameter event",
     constexpr std::size_t block_size = 256;
     constexpr double sample_rate = 48000.0;
 
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.prepare(sample_rate, block_size);
     auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
     REQUIRE(plugin != nullptr);
@@ -1174,7 +1187,7 @@ TEST_CASE("a band muted after both snapshots were captured stays silent under "
     constexpr std::size_t block_size = 512;
     constexpr double sample_rate = 48000.0;
 
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.prepare(sample_rate, block_size);
     auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
     REQUIRE(plugin != nullptr);
@@ -1227,7 +1240,7 @@ TEST_CASE("a derived morph still reaches the audible field",
     constexpr std::size_t block_size = 512;
     constexpr double sample_rate = 48000.0;
 
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.prepare(sample_rate, block_size);
     auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
     REQUIRE(plugin != nullptr);
@@ -1297,7 +1310,7 @@ TEST_CASE("a band muted after a derived morph outranks the re-derivation",
     constexpr std::size_t block_size = 512;
     constexpr double sample_rate = 48000.0;
 
-    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::HeadlessHost host(create_mixing_spectr);
     host.prepare(sample_rate, block_size);
     auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
     REQUIRE(plugin != nullptr);

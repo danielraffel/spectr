@@ -4,10 +4,12 @@ The bottom-right mode chip shows **MIXING** or **TRACKING** and the current
 latency in milliseconds. Click it, or press **T** while editing bands, to
 switch modes. The same control remains in Settings; **⌘,** opens Settings.
 
-Mixing uses linear-phase processing and remains the default, including for
-projects saved before the mode control existed. Tracking reduces monitoring
-latency while recording. Choose the mode before a take because switching
-changes the latency reported to your DAW.
+A new instance starts in Tracking, which reduces monitoring latency so the
+plugin plays in time with you. Mixing uses linear-phase processing for the
+deepest cuts; projects saved before the mode control existed still reopen in
+Mixing, and every project reopens in the mode it was saved with. Choose the
+mode before a take because switching changes the latency reported to your
+DAW.
 
 The latency display follows the current sample rate. At 48 kHz, Mixing reports
 10,240 samples (about 213 ms) and Tracking reports 64 samples (about 1.3 ms).

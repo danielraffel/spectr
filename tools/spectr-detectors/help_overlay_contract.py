@@ -56,7 +56,7 @@ DOC = os.path.join(REPO, "native-ui", "materialized",
                    "materialized-document.runtime.json")
 ASSET = os.path.join(REPO, "native-ui", "materialized", "help-content.js")
 CMAKELISTS = os.path.join(REPO, "CMakeLists.txt")
-MASK_RENDERER = os.path.join(REPO, "src", "mask_renderer.cpp")
+MASK_RENDERER_HEADER = os.path.join(REPO, "include", "spectr", "mask_renderer.hpp")
 
 
 def _derive_latency_figures():
@@ -75,13 +75,15 @@ def _derive_latency_figures():
         cmake = handle.read()
     fft = re.search(r'set\(SPECTR_FFT_SIZE\s+"?(\d+)', cmake)
     hop = re.search(r'set\(SPECTR_ANALYSIS_HOP\s+"?(\d+)', cmake)
-    with open(MASK_RENDERER, encoding="utf-8") as handle:
+    # The Tracking block is defined once, in the renderer's public header
+    # (`kZeroLatencyRenderBlock`); the renderer's own `kRenderBlock` aliases it.
+    with open(MASK_RENDERER_HEADER, encoding="utf-8") as handle:
         renderer = handle.read()
-    block = re.search(r'constexpr int kRenderBlock\s*=\s*(\d+)', renderer)
+    block = re.search(r'constexpr int kZeroLatencyRenderBlock\s*=\s*(\d+)', renderer)
     if not (fft and hop and block):
         raise RuntimeError(
             "cannot derive the latency figures from source "
-            "(SPECTR_FFT_SIZE / SPECTR_ANALYSIS_HOP / kRenderBlock)")
+            "(SPECTR_FFT_SIZE / SPECTR_ANALYSIS_HOP / kZeroLatencyRenderBlock)")
     mixing_ms = (int(fft.group(1)) + int(hop.group(1))) * 1000.0 / 48000.0
     tracking_ms = int(block.group(1)) * 1000.0 / 48000.0
     # Match how the copy writes them: whole ms once past 10, one decimal below.

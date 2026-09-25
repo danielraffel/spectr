@@ -31,7 +31,7 @@
 // check can go stale unwatched.
 //
 // The copy states the current default in exactly one sentence ("New instances
-// start in Mixing") and nowhere argues FROM the default, so changing which mode
+// start in Tracking") and nowhere argues FROM the default, so changing which mode
 // ships as the default is a one-line edit here rather than a rewrite.
 globalThis.SPECTR_HELP_TEXT = `# About Spectr
 
@@ -160,6 +160,6 @@ Most of the time you will never hear it. It only becomes audible when you cut a 
 
 Neither one is an upgrade on the other. Use **Tracking** for drums and other percussive material when you are cutting a narrow low band, and whenever you are playing or recording through Spectr. Use **Mixing** everywhere else: it is dramatically deeper on mutes, and on most material that backward spread sits far too quiet to notice.
 
-New instances start in Mixing. The chip at the bottom right, beside the gear, always shows which mode you are in and what it currently costs. Click it to switch. The same control is in Settings under Latency, with a line of guidance for each mode.
+New instances start in Tracking. The chip at the bottom right, beside the gear, always shows which mode you are in and what it currently costs. Click it to switch. The same control is in Settings under Latency, with a line of guidance for each mode.
 
 Switching rebuilds the processor and tells your DAW that its delay compensation has moved, so it is a setup choice rather than something to reach for in the middle of a take. A project always reopens in the mode it was saved in, so an older session keeps sounding and lining up exactly as it did.`;
