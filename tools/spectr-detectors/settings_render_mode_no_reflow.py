@@ -158,17 +158,27 @@ def shaped_height(node):
 def settings_subtree(dump):
     """Indices of the Settings panel's subtree, and the panel's own index.
 
-    The panel is found from its scroll viewport, which is the only scrolling
-    node on this surface -- the same landmark the scroll-track detector uses.
+    The panel is found from its scroll viewport, which is the only scroll
+    ROOT on this surface -- the same landmark the scroll-track detector uses.
     Ancestry comes from the depths sidecar; rect containment cannot be used,
     because a scrolled row routinely escapes its parent's bounds.
+
+    A scroll root, not a scrolling node: since Pulp v0.873.0 a scrollable
+    container is a viewport (the visible 486x531 box) wrapping the authored
+    element, which now takes its full content height and also reports scroll
+    overflow. Those two are one chain, not two surfaces, so the outermost is
+    the panel. Two scrollers that do NOT nest are still refused: that is a
+    second scrolling surface, and this instrument cannot say which it means.
     """
     scrollers = [i for i, n in enumerate(dump.nodes)
                  if (n.get("overflow") or "") in layout_common.SCROLL_OVERFLOWS]
-    if len(scrollers) != 1:
-        fail_instrument("expected exactly one scrolling node, found %d -- the "
-                        "Settings panel is probably not open" % len(scrollers))
-    root = scrollers[0]
+    roots = [i for i in scrollers
+             if not any(other in dump.ancestors(i) for other in scrollers)]
+    if len(roots) != 1:
+        fail_instrument("expected exactly one scroll root, found %d (of %d "
+                        "scrolling nodes) -- the Settings panel is probably not "
+                        "open" % (len(roots), len(scrollers)))
+    root = roots[0]
     idx = [root]
     for i in range(len(dump.nodes)):
         if i != root and root in dump.ancestors(i):
