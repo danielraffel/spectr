@@ -1135,6 +1135,18 @@ add_test(NAME Spectr-standalone-band-menu-keyboard
 set_tests_properties(Spectr-standalone-band-menu-keyboard PROPERTIES
     TIMEOUT 900
     RESOURCE_LOCK spectr_native_materialized_editor)
+# A two-finger trackpad scroll over Settings carries a sideways component;
+# the panel must scroll vertically and never move sideways. The vertical half
+# is the positive control that the wheel reached the panel at all.
+add_test(NAME Spectr-standalone-settings-wheel
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/menu_scenario_check.py
+        --binary ${CMAKE_CURRENT_BINARY_DIR}/Spectr.app/Contents/MacOS/Spectr
+        --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-standalone-settings-wheel
+        --settings-wheel)
+set_tests_properties(Spectr-standalone-settings-wheel PROPERTIES
+    TIMEOUT 900
+    RESOURCE_LOCK spectr_native_materialized_editor)
 add_test(NAME Spectr-standalone-band-menu-keyboard-negative-control
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/menu_scenario_check.py

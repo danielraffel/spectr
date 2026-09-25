@@ -151,7 +151,9 @@ function mount() {
     useLayoutEffect(fn) { cursor++; fn(); },
     useEffect(fn, deps) {
       const i = cursor++, old = effects[i];
-      if (!old || deps.some((dep, index) => dep !== old.deps[index])) {
+      // No dependency array means "after every render", as in React.
+      if (!old || !deps || !old.deps
+          || deps.some((dep, index) => dep !== old.deps[index])) {
         old?.cleanup?.();
         effects[i] = { deps };
         pending.push(() => { effects[i].cleanup = fn(); });
@@ -172,8 +174,21 @@ function mount() {
     },
   } };
   delete globalThis.__spectrModulationLast;
+  // Timers the test advances itself. A hover onto another entry while a
+  // submenu is open switches after a grace period; `hover()` models the
+  // pointer staying there by running what is due, so the rule under test is
+  // the switch itself rather than wall-clock timing.
+  const timers = new Map();
+  let nextTimer = 1;
+  const fakeSetTimeout = (fn) => { const id = nextTimer++; timers.set(id, fn); return id; };
+  const fakeClearTimeout = (id) => { timers.delete(id); };
+  const flushTimers = () => {
+    for (const [id, fn] of [...timers]) { timers.delete(id); fn(); }
+  };
   const ContextMenu = new Function('React', 'window', 'document', 'spectrShortcutChipStyle',
-    hook + '\n' + component + '\nreturn ContextMenu;')(React, window, dom.document, () => ({}));
+    'setTimeout', 'clearTimeout',
+    hook + '\n' + component + '\nreturn ContextMenu;')(
+      React, window, dom.document, () => ({}), fakeSetTimeout, fakeClearTimeout);
   const noop = () => {};
   const props = { x: 300, y: 300, band: 8, N: 64, selection: new Set([1, 2]),
     macros: [], editMode: 'sculpt', onClose: () => closed++, onEditMode: noop,
@@ -228,7 +243,14 @@ function mount() {
     // `onHover` belongs to the Item component; what survives into the tree
     // is the button's own onMouseEnter, which is what a real hover fires.
     hover(action) {
-      button(action).props.onMouseEnter({ currentTarget: { style: {} } });
+      // The hovered node sits inside the band menu, as a real row does: the
+      // menu decides what a hover means from which panel contains the row.
+      const inside = panel('data-spectr-band-context-menu')?.props?.ref?.current
+        ?.children?.[0] ?? { style: {} };
+      if (!inside.style) inside.style = {};
+      button(action).props.onMouseEnter({ currentTarget: inside });
+      render();
+      flushTimers();
       render();
     },
     refOf(marker) { return panel(marker)?.props?.ref?.current ?? null; },
