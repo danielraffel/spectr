@@ -51,7 +51,9 @@ function mount(initial, height = 860, keepSeed = false) {
     useLayoutEffect(fn) { cursor++; fn(); },
     useEffect(fn, deps) {
       const i = cursor++, old = effects[i];
-      if (!old || deps.some((dep, index) => dep !== old.deps[index])) {
+      // No dependency array means "after every render", as in React.
+      if (!old || !deps || !old.deps
+          || deps.some((dep, index) => dep !== old.deps[index])) {
         old?.cleanup?.();
         effects[i] = { deps };
         pending.push(() => { effects[i].cleanup = fn(); });

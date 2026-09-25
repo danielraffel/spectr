@@ -169,12 +169,12 @@ SCENARIO_64 = ";".join([
 # submenus have rows). `key:` replays the standalone window's -keyDown: order;
 # `pkey:` replays the embedded plugin editor's, which is the one that decides
 # whether a DAW receives the key -- so every rule that matters in a host is
-# asserted through `pkey` as well. The two `hover:` points are the Macros and
-# Modulation entries of the band menu; the verifier checks each point against
-# that row's measured rect rather than trusting the constants.
-MACROS_ENTRY = "450,506"
-MODULATION_ENTRY = "450,355"
+# asserted through `pkey` as well. `hroot:`/`proot:` aim at a band-menu row by
+# its painted label even while a submenu is the top overlay.
 SCENARIO_KEYS = ";".join([
+    # An empty Macros submenu explains itself (no selection, nothing assigned).
+    "m_open=rpress:378,400", "m_macros=row:Macros", "m_macros_settled=wait",
+    "m_close=key:escape", "m_close2=key:escape",
     "open=rpress:378,400", "select=row:Select all",
     # Up/Down move one highlight; the first press lands ON the first row.
     "k_open=rpress:378,400",
@@ -192,6 +192,11 @@ SCENARIO_KEYS = ";".join([
     "e_open=rpress:378,400", "e_end=key:end", "e_right=key:right",
     "e_right_settled=wait", "e_down=key:down", "e_enter=key:enter",
     "e_settled=wait",
+    # Return on a row that keeps the menu open keeps its highlight, and the
+    # row shows its new value.
+    "t_open=rpress:378,400", "t_mod=proot:Modulation", "t_mod_settled=wait",
+    "t_down1=key:down", "t_down2=key:down", "t_enter=key:enter",
+    "t_enter_settled=wait", "t_esc1=key:escape", "t_esc2=key:escape",
     # The same through the plugin editor's key path.
     "p_open=rpress:378,400", "p_down=pkey:down", "p_end=pkey:end",
     "p_right=pkey:right", "p_right_settled=wait",
@@ -202,12 +207,32 @@ SCENARIO_KEYS = ";".join([
     # Hover: POSITIVE CONTROL for the highlight reading first -- a hovered
     # enabled row must read lit, or "nothing lit" below proves nothing.
     "h_open=rpress:378,400", "h_row=hrow:Select all", "h_key=key:down",
-    "h_macros=hover:" + MACROS_ENTRY, "h_macros_settled=wait",
-    "h_modulation=hover:" + MODULATION_ENTRY, "h_modulation_settled=wait",
+    "h_macros=hroot:Macros", "h_macros_settled=wait",
+    "h_modulation=hroot:Modulation", "h_modulation_1=wait", "h_modulation_2=wait",
+    "h_modulation_3=wait",
     # A real click is always preceded by its hover; it must not undo it.
-    "h_click_macros=press:" + MACROS_ENTRY, "h_click_settled=wait",
+    "h_click_macros=proot:Macros", "h_click_settled=wait",
+    # Hover intent: moving onto another band-menu row closes the submenu after
+    # a short grace, and reaching the submenu within it keeps it open.
+    "i_away=hroot:Zero selection", "i_away_0=wait", "i_away_1=wait",
+    "i_away_2=wait", "i_away_3=wait",
+    "i_mod=hroot:Modulation", "i_mod_settled=wait",
+    "i_graze=hroot:Zero selection", "i_into=hrow:LFO 1", "i_into_1=wait",
+    "i_into_2=wait", "i_into_3=wait",
     # A press outside the whole nest closes all of it.
     "outside=outside:60,60", "outside_settled=wait",
+])
+
+# Settings scrolls vertically only: a two-finger trackpad scroll carries a
+# sideways component, and nothing in the panel may move sideways with it. The
+# vertical half is the POSITIVE CONTROL -- a wheel that reaches nothing would
+# also leave every horizontal reading at zero.
+SETTINGS_POINT = "640,420"
+SCENARIO_SETTINGS_WHEEL = ";".join([
+    "w_start=wait",
+    "w_down=wheel2:" + SETTINGS_POINT + ",0,120,3", "w_down_settled=wait",
+    "w_side=wheel2:" + SETTINGS_POINT + ",60,20,4", "w_side_settled=wait",
+    "w_back=wheel2:" + SETTINGS_POINT + ",-60,5,2", "w_back_settled=wait",
 ])
 
 
@@ -377,20 +402,11 @@ def lit(snapshot):
             if r.get("bg") not in (None, "") and float(r["bg"]) > 0.01}
 
 
-def inside_rect(point, snapshot, label):
-    x, y = (float(v) for v in point.split(","))
-    for r in snapshot.get("rows", []):
-        if r["label"] == label:
-            rx, ry, rw, rh = r["rect"]
-            return rx <= x <= rx + rw and ry <= y <= ry + rh
-    return False
-
-
 # Assertions the --plant-no-keys control cannot neuter, because no key drives
 # them. They are scored in the main run and excluded from the control's
 # population.
 KEY_INDEPENDENT = ("baseline:", "hover:", "outside:", "negative-control:",
-                   "hover-aim:")
+                   "placement:")
 
 
 def verify_keys(steps, plant_no_keys=False):
@@ -442,16 +458,39 @@ def verify_keys(steps, plant_no_keys=False):
         require(st(name).get("menu_mounted") is False
                 and st(name).get("result") == "forward-to-host",
                 "negative-control:" + name + "-reaches-the-daw")
-    require(inside_rect(MACROS_ENTRY, st("h_open"), "Macros")
-            and inside_rect(MODULATION_ENTRY, st("h_open"), "Modulation"),
-            "hover-aim:points-are-the-two-entries")
     require(lit(st("h_row")) == {"Select all"}, "hover:hovered-row-is-lit")
     require(lit(st("h_key")) == {"Select none"}, "keys:arrow-continues-from-hover")
     require("MACROS" in labels(st("h_macros_settled")), "hover:entry-opens-macros")
-    mod = st("h_modulation_settled")
+    mod = st("h_modulation_3")
     require(mod.get("menu_mounted") is True and "MODULATION" in labels(mod)
             and "MACROS" not in labels(mod), "hover:entry-switches-to-modulation")
     require("MACROS" in labels(st("h_click_settled")), "hover:click-after-hover-keeps-it-open")
+    # Hover intent. The grace period is real time, so the reading is taken
+    # after it has certainly elapsed, and the close must NOT have happened on
+    # the hover itself (that would be no grace at all).
+    require("MACROS" in labels(st("i_away")) and st("i_away_3").get("menu_mounted") is True
+            and "MACROS" not in labels(st("i_away_3"))
+            and "Zero selection" in lit(st("i_away_3")),
+            "hover:leaving-for-another-row-closes-the-submenu")
+    require("MODULATION" in labels(st("i_into_3")) and "LFO 1" in lit(st("i_into_3")),
+            "hover:reaching-the-submenu-keeps-it-open")
+    # Placement: the submenu opens on the side its `›` points to when there is
+    # room -- measured against the band menu's own rows.
+    band_x = min((r["rect"][0] for r in st("k_open").get("rows", [])
+                  if r["label"] == "Macros"), default=None)
+    sub_x = min((r["rect"][0] for r in st("k_right_settled").get("rows", [])
+                 if r["label"] == "\u2039 Back"), default=None)
+    require(band_x is not None and sub_x is not None and sub_x > band_x + 200,
+            "placement:submenu-opens-to-the-right")
+    # Return on a keep-open toggle keeps the cursor and shows the new value.
+    before = st("t_down2")
+    after = st("t_enter_settled")
+    require(lit(before) >= {"LFO 1"} and after.get("menu_mounted") is True
+            and "LFO 1" in lit(after) and lit(before) != lit(after),
+            "keys:return-on-a-toggle-keeps-its-highlight")
+    # An empty Macros submenu explains itself.
+    require("Select bands to assign a macro" in labels(st("m_macros_settled")),
+            "baseline:empty-macros-submenu-has-a-hint")
     require(st("outside").get("result") == "dismissed"
             and st("outside_settled").get("menu_mounted") is False,
             "outside:press-outside-the-nest-closes-all")
@@ -470,6 +509,34 @@ def verify_keys(steps, plant_no_keys=False):
         return 0
     failures = [n for n, ok in checks if not ok]
     print("keyboard menu: %d checks, %d failure(s)" % (len(checks), len(failures)))
+    return 1 if failures else 0
+
+
+def verify_settings_wheel(steps):
+    checks = []
+
+    def require(ok, name):
+        checks.append((name, bool(ok)))
+
+    def st(name):
+        return step(steps, name) or {}
+
+    def y(name):
+        v = st(name).get("settings_scroll")
+        return v[1] if v else None
+
+    require(st("w_start").get("settings_scroll") is not None, "settings:scroller-present")
+    require(y("w_start") == 0 and (y("w_down_settled") or 0) > 0,
+            "settings:vertical-wheel-scrolls (positive control)")
+    for name in ("w_down_settled", "w_side_settled", "w_back_settled"):
+        sv = st(name).get("settings_scroll") or [None]
+        require(sv[0] == 0 and st(name).get("settings_hscroll", None) is not None
+                and all(h[1] == 0 for h in st(name)["settings_hscroll"]),
+                "settings:nothing-moved-sideways@" + name)
+    for name, ok in checks:
+        print("%-4s %s" % ("PASS" if ok else "FAIL", name))
+    failures = [n for n, ok in checks if not ok]
+    print("settings wheel: %d checks, %d failure(s)" % (len(checks), len(failures)))
     return 1 if failures else 0
 
 
@@ -548,6 +615,8 @@ def main():
                     help="run dedicated 64-band selection, geometry, submenu and dismissal checks")
     ap.add_argument("--keyboard", action="store_true",
                     help="run the keyboard, hover and outside-press navigation checks")
+    ap.add_argument("--settings-wheel", action="store_true",
+                    help="open Settings and check a two-axis wheel scrolls it vertically only")
     ap.add_argument("--plant-no-keys", action="store_true",
                     help="negative control for --keyboard: every key step becomes "
                          "a no-op wait. Every key-driven assertion must then fail.")
@@ -560,7 +629,8 @@ def main():
         ap.error("--plant-no-press applies to the full effect scenario, not --bands64")
     if args.plant_no_keys and not args.keyboard:
         ap.error("--plant-no-keys applies to --keyboard")
-    scenario = SCENARIO_64 if args.bands64 else SCENARIO_KEYS if args.keyboard else SCENARIO
+    scenario = (SCENARIO_64 if args.bands64 else SCENARIO_KEYS if args.keyboard
+                else SCENARIO_SETTINGS_WHEEL if args.settings_wheel else SCENARIO)
     if args.plant_no_keys:
         scenario = ";".join(
             (part.split("=")[0] + "=wait")
@@ -585,6 +655,10 @@ def main():
         "PULP_SCREENSHOT": os.path.join(args.out, "menu-scenario.png"),
         "PULP_FRAMES": "2100",
     })
+    if args.settings_wheel:
+        env["SPECTR_OPEN_SETTINGS"] = "1"
+    else:
+        env.pop("SPECTR_OPEN_SETTINGS", None)
     if args.bands64:
         env["SPECTR_BANDS_PERF_FIXTURE"] = "1"
     else:
@@ -624,6 +698,8 @@ def main():
         return verify_64(steps)
     if args.keyboard:
         return verify_keys(steps, args.plant_no_keys)
+    if args.settings_wheel:
+        return verify_settings_wheel(steps)
 
     rows = []
 

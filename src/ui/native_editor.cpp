@@ -80,10 +80,15 @@ bool is_band_header(const std::string& text, const std::string&) {
 // band menu's header, or -1 when the menu is not up. Reported per step so a
 // scoping miss is visible instead of reading as a closed menu.
 inline int menu_scope_depth = -1;
+// The node the band header was found under: it contains the band menu even
+// while a submenu is the top overlay, so rows of the band menu itself can be
+// aimed at by label.
+inline pulp::view::View* menu_band_scope = nullptr;
 
 pulp::view::View* menu_container(pulp::view::View& root, int& band_number) {
     band_number = -1;
     menu_scope_depth = -1;
+    menu_band_scope = nullptr;
     auto* overlay = root.interaction().active_overlay;
     if (overlay == nullptr) return nullptr;
     // A submenu panel (`Macros`, `Modulation`) takes the active-overlay slot
@@ -107,6 +112,7 @@ pulp::view::View* menu_container(pulp::view::View& root, int& band_number) {
         if (header == nullptr) continue;
         band_number = std::atoi(header->text().c_str() + 5);
         menu_scope_depth = depth;
+        menu_band_scope = node;
         return overlay;
     }
     return nullptr;
@@ -2358,6 +2364,28 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                 pulp::view::Point{aim.cx, aim.cy});
                         }
                     }
+                } else if (kind == "hroot" || kind == "proot") {
+                    // A row of the BAND menu by its painted label, whatever
+                    // overlay is on top: hover it (-mouseMoved:) or press it
+                    // through the host's own overlay routing.
+                    int number = -1;
+                    if (spectr_menu_probe::menu_container(root, number) == nullptr
+                        || spectr_menu_probe::menu_band_scope == nullptr)
+                        detail = "menu-absent";
+                    else {
+                        const auto aim = spectr_menu_probe::aim_row(
+                            *spectr_menu_probe::menu_band_scope, arg);
+                        if (!aim.found || aim.row == nullptr) detail = "row-absent";
+                        else {
+                            press_x = aim.cx; press_y = aim.cy;
+                            if (kind == "hroot") {
+                                pulp::view::deliver_hover_move(root, {aim.cx, aim.cy});
+                                detail = "hovered";
+                            } else {
+                                detail = click_at(pulp::view::Point{aim.cx, aim.cy});
+                            }
+                        }
+                    }
                 } else if (kind == "hover" || kind == "hrow") {
                     // Pointer movement with no button down -- the host's
                     // -mouseMoved: path -- aimed at a point or at a row by its
@@ -2584,6 +2612,25 @@ bool Spectr::tick_native_analyzer_(float dt) {
                             detail = "wheeled";
                         } else detail = "bad-arg";
                     }
+                } else if (kind == "wheel2") {
+                    // A two-axis wheel, as a trackpad delivers one: most
+                    // two-finger scrolls carry some horizontal component.
+                    // arg is "x,y,dx,dy[,count]".
+                    std::vector<float> v;
+                    std::string cur;
+                    for (char c : arg + ",") {
+                        if (c == ',') { v.push_back(std::strtof(cur.c_str(), nullptr)); cur.clear(); }
+                        else cur.push_back(c);
+                    }
+                    if (v.size() >= 4) {
+                        const int count = v.size() >= 5 ? std::max(1, static_cast<int>(v[4])) : 1;
+                        pulp::view::WheelHost wheel_host;
+                        for (int i = 0; i < count; ++i)
+                            pulp::view::deliver_mouse_wheel(
+                                root, {v[0], v[1]}, v[2], v[3], wheel_host);
+                        press_x = v[0]; press_y = v[1];
+                        detail = "wheeled";
+                    } else detail = "bad-arg";
                 } else if (kind == "neutral") {
                     // Arrangement primitive: every band back to 0 dB and
                     // unmuted, through the host parameters. Never a verdict.
@@ -2752,6 +2799,50 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 if (const auto* keep = std::getenv("SPECTR_SCREENSHOT_KEEPS_AUDIO");
                     keep == nullptr || std::string_view{keep} != "1")
                     (void)apply_surface_params(/*apply_morph=*/true);
+                {
+                    // Where the Settings scroller sits, if one is open: a
+                    // vertical panel must never have moved sideways.
+                    std::vector<pulp::view::ScrollView*> scrollers;
+                    collect_settings_scroll_views(root, scrollers);
+                    if (!scrollers.empty()) {
+                        auto* sv = scrollers.front();
+                        js << ",\"settings_scroll\":[" << sv->scroll_x() << ","
+                           << sv->scroll_y() << ","
+                           << (sv->content_size().width - sv->bounds().width) << ","
+                           << (sv->content_size().height - sv->bounds().height) << ","
+                           << (sv->wants_wheel_scroll() ? 1 : 0) << ","
+                           << scrollers.size() << "]";
+                    {
+                        // Any view under Settings that can move sideways.
+                        js << ",\"settings_hscroll\":[";
+                        bool first = true;
+                        std::function<void(pulp::view::View&)> walk_h =
+                            [&](pulp::view::View& v) {
+                                if (v.max_scroll_offset_x() > 0.0f || v.scroll_offset_x() != 0.0f) {
+                                    js << (first ? "" : ",") << "[\""
+                                       << spectr_menu_probe::json_escape(v.id()) << "\","
+                                       << v.scroll_offset_x() << "," << v.max_scroll_offset_x()
+                                       << "," << v.scroll_offset_y() << "," << v.max_scroll_offset_y() << "]";
+                                    first = false;
+                                }
+                                for (std::size_t i = 0; i < v.child_count(); ++i)
+                                    walk_h(*v.child_at(i));
+                            };
+                        walk_h(*sv);
+                        js << "]";
+                    }
+                    if (press_x >= 0.0f) {
+                        auto* hit = root.hit_test(pulp::view::Point{press_x, press_y});
+                        bool under = false;
+                        for (auto* a = hit; a; a = a->parent()) if (a == sv) under = true;
+                        float ox = 0.0f, oy = 0.0f;
+                        spectr_menu_probe::root_origin_of(*sv, ox, oy);
+                        js << ",\"wheel_probe\":[\"" << (hit ? spectr_menu_probe::json_escape(hit->id()) : std::string("<none>"))
+                           << "\"," << (under ? 1 : 0) << "," << ox << "," << oy << ","
+                           << sv->bounds().width << "," << sv->bounds().height << "]";
+                    }
+                    }
+                }
                 const auto modulation = modulation_settings();
                 js << ",\"lfo1_enabled\":" << (modulation.enabled ? "true" : "false")
                    << ",\"lfo2_enabled\":" << (modulation.lfo2_enabled ? "true" : "false")
