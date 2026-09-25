@@ -808,6 +808,9 @@ TEST_CASE("native ScriptEngine calls the same Spectr field contract") {
 
 TEST_CASE("CLI proof: JS field dispatch reaches C++ DSP and produces digital silence") {
     Rig r;
+    // Measured through the Mixing renderer, whose WOLA latency the energy
+    // window below skips; the new-instance default is Tracking.
+    REQUIRE(r.proc->set_render_mode(spectr::MaskRenderMode::linear_phase));
     pulp::format::PrepareContext prepare;
     prepare.sample_rate = 48000.0;
     prepare.max_buffer_size = 512;

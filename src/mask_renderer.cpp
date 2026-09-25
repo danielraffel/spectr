@@ -32,7 +32,7 @@ namespace {
 /// tying it to the host's buffer size would make the same saved project report
 /// a different latency on a different machine, which is the recall hazard the
 /// contract exists to prevent. 64 samples is 1.33 ms at 48 kHz.
-constexpr int kRenderBlock = 64;
+constexpr int kRenderBlock = kZeroLatencyRenderBlock;
 
 /// Magnitudes below this are floored before the logarithm that the cepstral
 /// reconstruction takes. A muted band therefore realises at -120 dB rather

@@ -30,7 +30,10 @@ namespace spectr {
 /// project: a pre-parameter project pins `linear_phase`, and a project saved
 /// since carries its authored mode explicitly. Changing this value therefore
 /// cannot change how any existing session sounds or what latency it reports.
-inline constexpr MaskRenderMode kDefaultRenderMode = MaskRenderMode::linear_phase;
+/// Tracking: it plays in time with the user, and the latency Mixing reports
+/// (about 213 ms at 48 kHz) makes the editor and monitoring feel sluggish for
+/// a first session. Mixing remains one click or `T` away for the deepest cuts.
+inline constexpr MaskRenderMode kDefaultRenderMode = MaskRenderMode::zero_latency;
 
 /// Whether the mode is exposed to the host as an automatable parameter.
 ///

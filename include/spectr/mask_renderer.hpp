@@ -238,6 +238,12 @@ TrackingTransitionGeometry shape_tracking_transitions(
     int outside_pct,
     double edge_quantum_bins) noexcept;
 
+/// The zero-latency (Tracking) renderer's fixed block, which is also the whole
+/// of its reported latency. Named here so a caller outside the renderer -- a
+/// built-artifact test reading what a host is told -- derives the figure
+/// instead of retyping it.
+inline constexpr int kZeroLatencyRenderBlock = 64;
+
 /// Latency of a mode, before anything is prepared.
 ///
 /// The one function every caller — the processor, its tests, and the host

@@ -58,6 +58,19 @@ CHIP_TEXT = re.compile(r"^(MIXING|TRACKING) \u00b7 [0-9.]+ ms$")
 # the right token but a wrong number is still a failure.
 SAMPLES = {"linear_phase": 10240, "zero_latency": 64}
 
+
+def default_render_mode():
+    """The new-instance render mode, as render_mode.hpp rules it."""
+    header = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "include", "spectr", "render_mode.hpp")
+    match = re.search(r"kDefaultRenderMode\s*=\s*MaskRenderMode::(\w+)",
+                      open(header).read())
+    if not match or match.group(1) not in SAMPLES:
+        print("FAIL usage: cannot read kDefaultRenderMode from %s" % header,
+              file=sys.stderr)
+        sys.exit(2)
+    return match.group(1)
+
 # Leave the optimistic display update intact while disabling only the write.
 # A text-only detector would still pass this deliberately inert control.
 DISABLE_WRITE = """(() => {
@@ -221,17 +234,20 @@ def main():
         return trial(args.app, args.out_dir, name, env_extra, expect,
                      negative_control=args.negative_control)
 
-    # A fresh instance starts in linear_phase, so every trial below toggles
-    # TO zero_latency. That direction is deliberate: 64 samples is a number
-    # only the zero-latency renderer produces, while 10240 is also what an
-    # un-toggled instance would report.
+    # A fresh instance starts in the new-instance default render_mode.hpp
+    # rules, read from that header rather than assumed here, so every toggle
+    # trial below expects the OTHER mode. That keeps the toggles honest either
+    # way the ruling goes: the expected latency is one an un-toggled instance
+    # cannot report.
+    start = default_render_mode()
+    toggled = "zero_latency" if start == "linear_phase" else "linear_phase"
     trials = [
         # The two real entry points.
         run_trial("key-t",
-              {"SPECTR_KEY": "t"}, "zero_latency"),
+              {"SPECTR_KEY": "t"}, toggled),
         run_trial("press-chip",
               {"SPECTR_MENU_SCENARIO": "toggle=press:1137,832",
-               "SPECTR_MENU_SCENARIO_OUT": os.path.join(args.out_dir, "press-chip.json")}, "zero_latency"),
+               "SPECTR_MENU_SCENARIO_OUT": os.path.join(args.out_dir, "press-chip.json")}, toggled),
         # CONTROL: an unbound key must change nothing. Without this, a handler
         # that fired on every keystroke would pass the trial above.
         run_trial("control-unbound-key",
@@ -248,7 +264,7 @@ def main():
         run_trial("roundtrip",
               {"SPECTR_MENU_SCENARIO": "track=press:1137,832;settle=wait;mix=press:1137,832;settle2=wait",
                "SPECTR_MENU_SCENARIO_OUT": os.path.join(args.out_dir, "roundtrip.json")},
-              "linear_phase"),
+              start),
     ]
 
     inconclusive = [t for t in trials if t["inconclusive"]]

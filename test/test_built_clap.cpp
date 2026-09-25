@@ -124,6 +124,10 @@ std::vector<std::uint8_t> make_all_muted_state() {
     author.prepare(48000.0, 512);
     auto* processor = dynamic_cast<spectr::Spectr*>(author.processor());
     REQUIRE(processor != nullptr);
+    // Authored in Mixing: the island and exact-mute readings below are the
+    // linear-phase renderer's guarantees, and restoring this state is also
+    // what carries that mode across the real format boundary.
+    REQUIRE(processor->set_render_mode(spectr::MaskRenderMode::linear_phase));
     spectr::BandField muted;
     for (auto& band : muted.bands) band.muted = true;
     processor->replace_field(muted);
@@ -137,6 +141,10 @@ std::vector<std::uint8_t> make_three_island_state() {
     author.prepare(48000.0, 512);
     auto* processor = dynamic_cast<spectr::Spectr*>(author.processor());
     REQUIRE(processor != nullptr);
+    // Authored in Mixing: the island and exact-mute readings below are the
+    // linear-phase renderer's guarantees, and restoring this state is also
+    // what carries that mode across the real format boundary.
+    REQUIRE(processor->set_render_mode(spectr::MaskRenderMode::linear_phase));
     spectr::BandField islands;
     for (auto& band : islands.bands) band.muted = true;
     for (const float hz : {304.6875f, 1201.171875f, 3498.046875f})
@@ -242,6 +250,14 @@ void check_three_islands(pulp::host::PluginSlot& slot) {
 // rather than the transition that precedes it. Valid for Live, Balanced, and
 // Maximum builds because both terms come from the configured profile.
 constexpr int kBlockSize = 512;
+
+// What a freshly loaded artifact tells its host. A new instance starts in the
+// render mode render_mode.hpp rules is the default, so the expected figure is
+// derived from that ruling, never assumed to be Mixing's WOLA latency.
+constexpr int kExpectedDefaultLatency =
+    spectr::kDefaultRenderMode == spectr::MaskRenderMode::zero_latency
+        ? spectr::kZeroLatencyRenderBlock
+        : SPECTR_EXPECTED_LATENCY;
 constexpr int kSettleSamples = SPECTR_EXPECTED_LATENCY + SPECTR_FFT_SIZE;
 constexpr int kSettleBlocks = (kSettleSamples + kBlockSize - 1) / kBlockSize;
 static_assert(kSettleBlocks > 0,
@@ -325,7 +341,7 @@ void check_built_artifact(const std::filesystem::path& bundle,
     REQUIRE(slot != nullptr);
     REQUIRE(slot->is_loaded());
     REQUIRE(slot->prepare(48000.0, 512));
-    CHECK(slot->latency_samples() == SPECTR_EXPECTED_LATENCY);
+    CHECK(slot->latency_samples() == kExpectedDefaultLatency);
 
     check_loaded_artifact_surface(*slot, /*loader_reports_bypass_flag=*/true);
 
@@ -525,7 +541,7 @@ TEST_CASE("Pulp host loads and processes the built Spectr AU artifact") {
     // AU reports latency in SECONDS, so the sample count makes a float round
     // trip out of the plugin and back. The one sample of slack is that round
     // trip, not room for a wrong answer.
-    CHECK(std::abs(slot->latency_samples() - SPECTR_EXPECTED_LATENCY) <= 1);
+    CHECK(std::abs(slot->latency_samples() - kExpectedDefaultLatency) <= 1);
 
     check_loaded_artifact_surface(*slot, /*loader_reports_bypass_flag=*/false);
 
@@ -542,7 +558,14 @@ TEST_CASE("Pulp host loads and processes the built Spectr AU artifact") {
     // has to take the output to exact zero.
     for (std::size_t band = 0; band < spectr::kMaxBands; ++band)
         slot->set_parameter(spectr::band_mute_param_id(band), 1.0f);
-    CHECK(render_tone_peak(*slot, kSettleBlocks, 2 * kSettleBlocks) == 0.0f);
+    // A fresh AU instance runs the default render mode. Mixing (linear phase)
+    // mutes to exact zero; Tracking's minimum-phase renderer leaves a residue
+    // measured at a 4e-7 peak (about -128 dBFS), so there the requirement is a
+    // floor well below audibility rather than bit-exact silence.
+    const float mute_ceiling =
+        spectr::kDefaultRenderMode == spectr::MaskRenderMode::linear_phase
+            ? 0.0f : 1.0e-5f;  // -100 dBFS
+    CHECK(render_tone_peak(*slot, kSettleBlocks, 2 * kSettleBlocks) <= mute_ceiling);
 
     // Positive control for that zero. Silence has to be something the plugin
     // DID, not something a dead parameter path always produces, so unmuting
