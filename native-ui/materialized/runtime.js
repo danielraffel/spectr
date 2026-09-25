@@ -7217,7 +7217,23 @@
   }
 
   // ../pulp-spectr-live-materialized-import-20260812/packages/pulp-react/src/prop-applier-events.ts
-  function applyEventProp(id, key, value) {
+  function applyEventProp(id, key, value, props) {
+    // The overlay this view DECLARES it stacks on, read from the whole prop
+    // bag so JSX key order cannot decide whether it reaches the claim. A
+    // lifted submenu is a sibling of its menu, so without the name its claim
+    // reads as a rival and dismisses the menu underneath.
+    // A submenu that names its parent does NOT consume its outside press: the
+    // dismissal walk stops at the first consuming entry, so a consuming
+    // submenu would spend a press outside the whole nest on closing itself and
+    // leave its menu open. Deferring lets the walk reach the parent, which
+    // consumes a press outside it and routes one that lands on its own rows.
+    const emitOverlayClaim = () => {
+      const parent = props && props.overlayParent;
+      if (typeof parent === "string" && parent !== "")
+        call("claimOverlay", id, false, parent);
+      else
+        call("claimOverlay", id, true);
+    };
     switch (key) {
       // Generalized overlay-click routing. `overlay={true}` claims the
       // view as the active click-eligible overlay so React popovers built
@@ -7253,7 +7269,7 @@
             });
             return true;
           }
-          call("claimOverlay", id, true);
+          emitOverlayClaim();
           return true;
         }
         call("releaseOverlay", id);
@@ -7292,7 +7308,7 @@
             call("releaseOverlay", id);
             return true;
           }
-          call("claimOverlay", id, true);
+          emitOverlayClaim();
           return true;
         }
         return true;
@@ -7300,11 +7316,17 @@
       case "aria-modal": {
         const truthy = value === true || value === "true" || value === "";
         if (truthy) {
-          call("claimOverlay", id, true);
+          emitOverlayClaim();
           return true;
         }
         return true;
       }
+      // Qualifies the claim the arms above make and is read from the prop bag
+      // by all of them, so it emits nothing of its own. The update path, where
+      // the declaration moves without a claiming key moving with it, is in
+      // applyChangedProps.
+      case "overlayParent":
+        return true;
       // `aria-haspopup` is the counterpart of the two arms above: they say
       // "this element IS a dismissable overlay", this one says "this control
       // OPENS one".  The overlay-dismissal policy needs both.  Without the
@@ -7598,7 +7620,7 @@
     if (applyPaintProp(id, key, value)) return;
     if (applyTypographyProp(id, key, value, props)) return;
     if (applyTransformProp(id, key, value)) return;
-    if (applyEventProp(id, key, value)) return;
+    if (applyEventProp(id, key, value, props)) return;
     if ((type === "img" || type === "Image") && key === "src") {
       call("setImageSource", id, String(value));
       return;
@@ -7789,6 +7811,27 @@
     if (svgPathStrokeChanged) {
       applySvgPathStrokeState(id, newProps, true);
       mutated = true;
+    }
+    // An overlay's declared parent and the props that claim it are one
+    // compound state. When only the declaration moved, no claiming arm runs,
+    // so re-emit here; when a claiming key moved too, its own arm already
+    // re-claimed with the current declaration.
+    if (oldProps.overlayParent !== newProps.overlayParent &&
+        oldProps.overlay === newProps.overlay &&
+        oldProps.role === newProps.role &&
+        oldProps["aria-modal"] === newProps["aria-modal"]) {
+      const role = typeof newProps.role === "string" ? newProps.role.toLowerCase() : "";
+      const modal = newProps["aria-modal"];
+      if (newProps.overlay || role === "dialog" || role === "alertdialog" ||
+          role === "menu" || role === "listbox" ||
+          modal === true || modal === "true" || modal === "") {
+        const parent = newProps.overlayParent;
+        if (typeof parent === "string" && parent !== "")
+          call("claimOverlay", id, false, parent);
+        else
+          call("claimOverlay", id, true);
+        mutated = true;
+      }
     }
     // Visual props hoisted out of `style`/`className` are DERIVED, not authored.
     // When a render arrives without its style source the derived keys are absent

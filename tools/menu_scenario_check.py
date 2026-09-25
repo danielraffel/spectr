@@ -153,12 +153,62 @@ SCENARIO_64 = ";".join([
     "back=row:‹ Back", "back_settled=wait",
     "target_open=row:Modulation", "target_open_settled=wait",
     "target_b=row:Snapshot B", "target_settled=wait",
+    # The target rows are `keepOpen` -- the same checkbox shape as the LFO
+    # toggles -- so the menu is still open here. Close it the way a user does,
+    # one layer per Escape, before reopening.
+    "target_esc1=escape", "target_esc2=escape",
     "target_reopen=rpress:378,400", "target_panel=row:Modulation",
     "target_reopened=wait", "target_back=row:‹ Back", "target_back_settled=wait",
     "outside=outside:60,60",
     "o_final=rpress:378,400", "esc_final=escape",
 ])
 
+
+# Keyboard, hover and outside-press navigation through the band menu and its
+# two submenus, on the 32-band fixture with every band selected (so both
+# submenus have rows). `key:` replays the standalone window's -keyDown: order;
+# `pkey:` replays the embedded plugin editor's, which is the one that decides
+# whether a DAW receives the key -- so every rule that matters in a host is
+# asserted through `pkey` as well. The two `hover:` points are the Macros and
+# Modulation entries of the band menu; the verifier checks each point against
+# that row's measured rect rather than trusting the constants.
+MACROS_ENTRY = "450,506"
+MODULATION_ENTRY = "450,355"
+SCENARIO_KEYS = ";".join([
+    "open=rpress:378,400", "select=row:Select all",
+    # Up/Down move one highlight; the first press lands ON the first row.
+    "k_open=rpress:378,400",
+    "k_down1=key:down", "k_down2=key:down", "k_up1=key:up",
+    # End reaches the last row, Right opens that submenu on its first row.
+    "k_end=key:end", "k_right=key:right", "k_right_settled=wait",
+    "k_sub_down=key:down",
+    # Left returns to the band menu, onto the entry that opened the submenu.
+    "k_left=key:left", "k_left_settled=wait",
+    # Escape retires one layer per press.
+    "k_right2=key:right", "k_right2_settled=wait",
+    "k_esc1=key:escape", "k_esc1_settled=wait",
+    "k_esc2=key:escape", "k_esc2_settled=wait",
+    # Return activates the highlighted row, exactly as a click would.
+    "e_open=rpress:378,400", "e_end=key:end", "e_right=key:right",
+    "e_right_settled=wait", "e_down=key:down", "e_enter=key:enter",
+    "e_settled=wait",
+    # The same through the plugin editor's key path.
+    "p_open=rpress:378,400", "p_down=pkey:down", "p_end=pkey:end",
+    "p_right=pkey:right", "p_right_settled=wait",
+    "p_esc1=pkey:escape", "p_esc1_settled=wait",
+    "p_esc2=pkey:escape", "p_esc2_settled=wait",
+    # NEGATIVE CONTROL: with no menu open the keys are the DAW's.
+    "p_neg_down=pkey:down", "p_neg_up=pkey:up", "p_neg_enter=pkey:enter",
+    # Hover: POSITIVE CONTROL for the highlight reading first -- a hovered
+    # enabled row must read lit, or "nothing lit" below proves nothing.
+    "h_open=rpress:378,400", "h_row=hrow:Select all", "h_key=key:down",
+    "h_macros=hover:" + MACROS_ENTRY, "h_macros_settled=wait",
+    "h_modulation=hover:" + MODULATION_ENTRY, "h_modulation_settled=wait",
+    # A real click is always preceded by its hover; it must not undo it.
+    "h_click_macros=press:" + MACROS_ENTRY, "h_click_settled=wait",
+    # A press outside the whole nest closes all of it.
+    "outside=outside:60,60", "outside_settled=wait",
+])
 
 
 def step(steps, name):
@@ -299,7 +349,12 @@ def verify_64(steps):
     reopened = step(steps, "target_reopened") or {}
     require(target_before.get("lfo_target") in (0, 1, 3) and
             target.get("lfo_target") == 2 and target.get("lfo_target_mask") == 4 and
-            target.get("menu_mounted") is False, "target:processor-effect-and-close")
+            target.get("menu_mounted") is True, "target:processor-effect-and-stays-open")
+    esc1 = step(steps, "target_esc1") or {}
+    esc2 = step(steps, "target_esc2") or {}
+    require(esc1.get("result") == "overlay" and esc1.get("menu_mounted") is True and
+            esc2.get("result") == "overlay" and esc2.get("menu_mounted") is False,
+            "target:escape-one-layer-per-press")
     require(reopened.get("lfo_target") == 2 and reopened.get("lfo_target_mask") == 4 and
             reopened.get("lfo1_enabled") is lfo2.get("lfo1_enabled") and
             reopened.get("lfo2_enabled") is lfo2.get("lfo2_enabled") and
@@ -315,6 +370,108 @@ def verify_64(steps):
         print("FAIL", failure)
     print("64-band menu: %d failure(s)" % len(failures))
     return 1 if failures else 0
+
+def lit(snapshot):
+    """Labels of the rows whose painted fill is visible (a cursor or hover)."""
+    return {r["label"] for r in snapshot.get("rows", [])
+            if r.get("bg") not in (None, "") and float(r["bg"]) > 0.01}
+
+
+def inside_rect(point, snapshot, label):
+    x, y = (float(v) for v in point.split(","))
+    for r in snapshot.get("rows", []):
+        if r["label"] == label:
+            rx, ry, rw, rh = r["rect"]
+            return rx <= x <= rx + rw and ry <= y <= ry + rh
+    return False
+
+
+# Assertions the --plant-no-keys control cannot neuter, because no key drives
+# them. They are scored in the main run and excluded from the control's
+# population.
+KEY_INDEPENDENT = ("baseline:", "hover:", "outside:", "negative-control:",
+                   "hover-aim:")
+
+
+def verify_keys(steps, plant_no_keys=False):
+    checks = []
+
+    def require(ok, name):
+        checks.append((name, bool(ok)))
+
+    def st(name):
+        return step(steps, name) or {}
+
+    require(lit(st("k_open")) == set(), "baseline:no-cursor-until-asked")
+    require(lit(st("k_down1")) == {"Mute / Unmute"}, "keys:first-down-lands-on-first-row")
+    require(lit(st("k_down2")) == {"Reset to 0 dB"}, "keys:down-steps-one-row")
+    require(lit(st("k_up1")) == {"Mute / Unmute"}, "keys:up-steps-back")
+    require(lit(st("k_end")) == {"Macros", "\u203a"}, "keys:end-reaches-last-row")
+    right = st("k_right_settled")
+    require({"MACROS", "Assign selection to Macro 1"} <= labels(right)
+            and lit(right) == {"\u2039 Back"}, "keys:right-opens-submenu-on-first-row")
+    require(lit(st("k_sub_down")) == {"Assign selection to Macro 1"},
+            "keys:down-moves-inside-submenu")
+    left = st("k_left_settled")
+    require(left.get("menu_mounted") is True and "Select all" in labels(left)
+            and lit(left) == {"Macros", "\u203a"}, "keys:left-returns-to-its-entry")
+    esc1 = st("k_esc1_settled")
+    require(st("k_right2_settled").get("menu_mounted") is True
+            and "MACROS" in labels(st("k_right2_settled"))
+            and esc1.get("menu_mounted") is True and "MACROS" not in labels(esc1)
+            and "Select all" in labels(esc1), "keys:escape-closes-only-the-submenu")
+    require(st("k_esc2_settled").get("menu_mounted") is False,
+            "keys:second-escape-closes-the-menu")
+    enter = st("e_settled")
+    require(st("e_down").get("menu_mounted") is True
+            and lit(st("e_down")) == {"Assign selection to Macro 1"}
+            and enter.get("menu_mounted") is False
+            and enter.get("macros", [[]])[0] == list(range(enter.get("n_visible", -1))),
+            "keys:return-activates-the-highlighted-row")
+    require(st("p_down").get("result") == "script-consumed"
+            and lit(st("p_down")) == {"Mute / Unmute"}, "plugin:down-is-the-menu's")
+    require(st("p_right").get("result") == "script-consumed"
+            and "MACROS" in labels(st("p_right_settled")), "plugin:right-opens-submenu")
+    require(st("p_esc1").get("result") == "plugin-consumed"
+            and st("p_esc1_settled").get("menu_mounted") is True
+            and "MACROS" not in labels(st("p_esc1_settled")),
+            "plugin:escape-closes-only-the-submenu")
+    require(st("p_esc2_settled").get("menu_mounted") is False,
+            "plugin:second-escape-closes-the-menu")
+    for name in ("p_neg_down", "p_neg_up", "p_neg_enter"):
+        require(st(name).get("menu_mounted") is False
+                and st(name).get("result") == "forward-to-host",
+                "negative-control:" + name + "-reaches-the-daw")
+    require(inside_rect(MACROS_ENTRY, st("h_open"), "Macros")
+            and inside_rect(MODULATION_ENTRY, st("h_open"), "Modulation"),
+            "hover-aim:points-are-the-two-entries")
+    require(lit(st("h_row")) == {"Select all"}, "hover:hovered-row-is-lit")
+    require(lit(st("h_key")) == {"Select none"}, "keys:arrow-continues-from-hover")
+    require("MACROS" in labels(st("h_macros_settled")), "hover:entry-opens-macros")
+    mod = st("h_modulation_settled")
+    require(mod.get("menu_mounted") is True and "MODULATION" in labels(mod)
+            and "MACROS" not in labels(mod), "hover:entry-switches-to-modulation")
+    require("MACROS" in labels(st("h_click_settled")), "hover:click-after-hover-keeps-it-open")
+    require(st("outside").get("result") == "dismissed"
+            and st("outside_settled").get("menu_mounted") is False,
+            "outside:press-outside-the-nest-closes-all")
+
+    for name, ok in checks:
+        print("%-4s %s" % ("PASS" if ok else "FAIL", name))
+    if plant_no_keys:
+        key_driven = [(n, ok) for n, ok in checks if not n.startswith(KEY_INDEPENDENT)]
+        still = [n for n, ok in key_driven if ok]
+        if still:
+            print("NEGATIVE CONTROL FAILED: %d key-driven assertion(s) pass with "
+                  "every key skipped: %s" % (len(still), still), file=sys.stderr)
+            return 1
+        print("negative control: all %d key-driven assertions went red with the "
+              "keys skipped, as they must" % len(key_driven))
+        return 0
+    failures = [n for n, ok in checks if not ok]
+    print("keyboard menu: %d checks, %d failure(s)" % (len(checks), len(failures)))
+    return 1 if failures else 0
+
 
 def refuse_reason(text, steps):
     """Why this run cannot be reported on at all, or None if it can be.
@@ -389,6 +546,11 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--bands64", action="store_true",
                     help="run dedicated 64-band selection, geometry, submenu and dismissal checks")
+    ap.add_argument("--keyboard", action="store_true",
+                    help="run the keyboard, hover and outside-press navigation checks")
+    ap.add_argument("--plant-no-keys", action="store_true",
+                    help="negative control for --keyboard: every key step becomes "
+                         "a no-op wait. Every key-driven assertion must then fail.")
     ap.add_argument("--plant-no-press", action="store_true",
                     help="negative control: every measured press becomes a "
                          "no-op wait. Every row assertion must then fail.")
@@ -396,7 +558,14 @@ def main():
 
     if args.bands64 and args.plant_no_press:
         ap.error("--plant-no-press applies to the full effect scenario, not --bands64")
-    scenario = SCENARIO_64 if args.bands64 else SCENARIO
+    if args.plant_no_keys and not args.keyboard:
+        ap.error("--plant-no-keys applies to --keyboard")
+    scenario = SCENARIO_64 if args.bands64 else SCENARIO_KEYS if args.keyboard else SCENARIO
+    if args.plant_no_keys:
+        scenario = ";".join(
+            (part.split("=")[0] + "=wait")
+            if ("=key:" in part or "=pkey:" in part) else part
+            for part in SCENARIO_KEYS.split(";"))
     if args.plant_no_press:
         scenario = ";".join(
             (part.split("=")[0] + "=wait") if "=row:" in part else part
@@ -453,6 +622,8 @@ def main():
 
     if args.bands64:
         return verify_64(steps)
+    if args.keyboard:
+        return verify_keys(steps, args.plant_no_keys)
 
     rows = []
 

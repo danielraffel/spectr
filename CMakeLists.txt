@@ -1121,6 +1121,30 @@ add_test(NAME Spectr-standalone-band-menu-64
 set_tests_properties(Spectr-standalone-band-menu-64 PROPERTIES
     TIMEOUT 900
     RESOURCE_LOCK spectr_native_materialized_editor)
+# Keyboard, hover and outside-press navigation through the band menu and its
+# submenus, through both the standalone and the plugin-editor key paths. Its
+# negative control skips every key step and requires every key-driven
+# assertion to fail; the in-DAW control (an arrow with no menu open reaches the
+# host) is asserted inside the main run.
+add_test(NAME Spectr-standalone-band-menu-keyboard
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/menu_scenario_check.py
+        --binary ${CMAKE_CURRENT_BINARY_DIR}/Spectr.app/Contents/MacOS/Spectr
+        --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-standalone-band-menu-keyboard
+        --keyboard)
+set_tests_properties(Spectr-standalone-band-menu-keyboard PROPERTIES
+    TIMEOUT 900
+    RESOURCE_LOCK spectr_native_materialized_editor)
+add_test(NAME Spectr-standalone-band-menu-keyboard-negative-control
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/menu_scenario_check.py
+        --binary ${CMAKE_CURRENT_BINARY_DIR}/Spectr.app/Contents/MacOS/Spectr
+        --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-standalone-band-menu-keyboard-negctl
+        --keyboard --plant-no-keys)
+set_tests_properties(Spectr-standalone-band-menu-keyboard-negative-control
+    PROPERTIES
+        TIMEOUT 900
+        RESOURCE_LOCK spectr_native_materialized_editor)
 
 # Its negative control: every measured row press becomes a no-op wait and
 # nothing else changes -- the menu still opens, the arrangement drags still
