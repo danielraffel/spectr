@@ -68,7 +68,11 @@ if (plant === '--plant-stacking-submenus')
   replaceOnce('    setModulationOpen(open);\n    if (open) setMacrosOpen(false);',
               '    setModulationOpen(open);');
 if (plant === '--plant-escape-closes-all')
-  replaceOnce('      if (macrosOpen || modulationOpen) {', '      if (false) {');
+  // The shape that shipped: script ALSO closes the open submenu, so the
+  // standalone's overlay route then pops the menu that has become the top and
+  // one press retires both layers.
+  replaceOnce('        if (!submenu) onClose();',
+              '        if (submenu) closeSubmenus(); else onClose();');
 if (plant === '--plant-no-escape')
   replaceOnce('doc.addEventListener("keydown", onEscapeKey, true);', '');
 
@@ -228,6 +232,22 @@ function mount() {
       render();
     },
     refOf(marker) { return panel(marker)?.props?.ref?.current ?? null; },
+    // Escape as each host delivers it. Both route it to the overlay stack,
+    // which pops the TOP claim and fires that claim's onDismiss; an open
+    // submenu stacks on the menu, so it is the top. The standalone offers the
+    // key to script FIRST (-keyDown: fans out, then routes Escape), and a
+    // script state change commits before the route runs; the plugin editor
+    // routes Escape to the stack INSTEAD of script.
+    escape(host) {
+      let event = null;
+      if (host === 'standalone') { event = dom.key('Escape'); render(); }
+      const top = panel('data-spectr-modulation-panel')
+        || panel('data-spectr-macros-panel')
+        || panel('data-spectr-band-context-menu');
+      if (top && typeof top.props.onDismiss === 'function') top.props.onDismiss();
+      render();
+      return event;
+    },
     unmount() { effects.forEach(effect => effect?.cleanup?.()); },
   };
 }
@@ -286,23 +306,34 @@ function check() {
     menu.unmount();
   }
 
-  // ── Escape retires one layer per press ─────────────────────────────────
-  {
-    const menu = mount();
-    menu.click('modulation-toggle');
-    assert(menu.panel('data-spectr-modulation-panel'), 'submenu open');
-    const first = menu.dom.key('Escape');
-    menu.render();
-    assert.equal(first.defaultPrevented, true, 'Escape is consumed');
-    assert.equal(menu.closed, 0, 'the first Escape closes the submenu, not the menu');
-    assert.equal(menu.panel('data-spectr-modulation-panel'), undefined,
-                 'the submenu is gone after one Escape');
-    menu.dom.key('Escape');
-    assert.equal(menu.closed, 1, 'the second Escape closes the menu');
-    menu.unmount();
+  // ── Escape retires one layer per press, in both hosts ──────────────────
+  for (const host of ['standalone', 'plugin']) {
+    for (const toggle of ['modulation-toggle', 'macros-toggle']) {
+      const menu = mount();
+      const marker = toggle === 'macros-toggle'
+        ? 'data-spectr-macros-panel' : 'data-spectr-modulation-panel';
+      menu.click(toggle);
+      assert(menu.panel(marker), 'submenu open');
+      // Every submenu must own its dismissal: the stack pops its claim, and a
+      // panel with no onDismiss would stay painted with nothing behind it.
+      assert.equal(typeof menu.panel(marker).props.onDismiss, 'function',
+                   host + ': the submenu handles its own dismissal');
+      const first = menu.escape(host);
+      if (first) assert.equal(first.defaultPrevented, true, 'Escape is consumed');
+      assert.equal(menu.closed, 0,
+                   host + ': the first Escape closes the submenu, not the menu');
+      assert.equal(menu.panel(marker), undefined,
+                   host + ': the submenu is gone after one Escape');
+      assert(menu.panel('data-spectr-band-context-menu'),
+             host + ': the band menu is still open');
+      menu.escape(host);
+      assert(menu.closed >= 1, host + ': the second Escape closes the menu');
+      menu.unmount();
+    }
   }
   {
-    // With no submenu open, one Escape is enough.
+    // With no submenu open, one Escape is enough -- from script alone, which
+    // is what an Escape that never reaches the overlay stack still needs.
     const menu = mount();
     menu.dom.key('Escape');
     assert.equal(menu.closed, 1, 'Escape closes a menu with no submenu open');

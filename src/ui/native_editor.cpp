@@ -13,6 +13,7 @@
 #include <pulp/view/input_events.hpp>
 #include <pulp/view/layout_snapshot.hpp>
 #include <pulp/view/overlay_dismissal.hpp>
+#include <pulp/view/plugin_key_routing.hpp>
 #include <pulp/view/pointer_dispatch.hpp>
 #include <pulp/view/ui_components.hpp>
 #include <pulp/view/view.hpp>
@@ -2357,8 +2358,35 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                 pulp::view::Point{aim.cx, aim.cy});
                         }
                     }
-                } else if (kind == "key") {
+                } else if (kind == "hover" || kind == "hrow") {
+                    // Pointer movement with no button down -- the host's
+                    // -mouseMoved: path -- aimed at a point or at a row by its
+                    // painted label, like `row`.
+                    pulp::view::Point pt{};
+                    bool aimed = false;
+                    if (kind == "hover") {
+                        aimed = point_of(arg, pt);
+                        if (!aimed) detail = "bad-arg";
+                    } else {
+                        int number = -1;
+                        auto* scope = spectr_menu_probe::menu_container(root, number);
+                        if (scope == nullptr) detail = "menu-absent";
+                        else {
+                            const auto aim = spectr_menu_probe::aim_row(*scope, arg);
+                            if (!aim.found || aim.row == nullptr) detail = "row-absent";
+                            else { pt = {aim.cx, aim.cy}; aimed = true; }
+                        }
+                    }
+                    if (aimed) {
+                        press_x = pt.x; press_y = pt.y;
+                        pulp::view::deliver_hover_move(root, pt);
+                        detail = "hovered";
+                    }
+                } else if (kind == "key" || kind == "pkey") {
                     // Same spec grammar as the SPECTR_KEY fixture above.
+                    // `key` replays the standalone window's -keyDown: order;
+                    // `pkey` replays the embedded plugin editor's, which is the
+                    // one that decides whether a DAW receives the key.
                     std::string spec = arg;
                     uint16_t key_mods = 0;
                     bool bad_mod = false;
@@ -2379,6 +2407,12 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     if (spec == "escape") code = pulp::view::KeyCode::escape;
                     else if (spec == "enter") code = pulp::view::KeyCode::enter;
                     else if (spec == "tab") code = pulp::view::KeyCode::tab;
+                    else if (spec == "up") code = pulp::view::KeyCode::up;
+                    else if (spec == "down") code = pulp::view::KeyCode::down;
+                    else if (spec == "left") code = pulp::view::KeyCode::left;
+                    else if (spec == "right") code = pulp::view::KeyCode::right;
+                    else if (spec == "home") code = pulp::view::KeyCode::home;
+                    else if (spec == "end") code = pulp::view::KeyCode::end_;
                     else if (spec.size() == 1) {
                         char c = spec[0];
                         if (c >= 'A' && c <= 'Z')
@@ -2387,6 +2421,28 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     }
                     if (bad_mod || code == pulp::view::KeyCode::unknown) {
                         detail = "bad-arg";
+                    } else if (kind == "pkey") {
+                        // PluginViewHost -keyDown: -- route_plugin_key, then
+                        // the root-scoped script delivery, and whatever
+                        // neither consumed is handed to the host. A key the
+                        // editor wrongly keeps is a key the DAW never sees.
+                        pulp::view::PluginKeyOffer offer;
+                        offer.key.key = code;
+                        offer.key.modifiers = key_mods;
+                        offer.key.is_down = true;
+                        offer.is_function_key = true;
+                        const auto disposition =
+                            pulp::view::route_plugin_key(root, offer);
+                        if (disposition
+                            != pulp::view::PluginKeyDisposition::forward_to_host) {
+                            detail = "plugin-consumed";
+                        } else if (pulp::view::script_events::dispatch_key_for_root(
+                                       root, static_cast<int>(code), key_mods,
+                                       /*is_down=*/true)) {
+                            detail = "script-consumed";
+                        } else {
+                            detail = "forward-to-host";
+                        }
                     } else {
                         // The macOS standalone's order, not a convenient one.
                         // `performKeyEquivalent:` offers the chord to the
@@ -2400,17 +2456,34 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         down.key = code;
                         down.modifiers = key_mods;
                         down.is_down = true;
+                        //
+                        // After the root hook, -keyDown: offers the key to a
+                        // root that holds a bounded navigation claim (an open
+                        // popup Pulp owns), then fans it out to script, then
+                        // routes Escape to the overlay stack. The stage that
+                        // answered is named; "script" means no native stage
+                        // took the key.
                         const bool root_claimed =
                             root.on_global_key && root.on_global_key(down);
-                        if (!root_claimed) {
+                        bool navigation_claimed = false;
+                        bool overlay_escaped = false;
+                        if (!root_claimed && root.accepts_navigation_input()
+                            && root.on_navigation_key)
+                            navigation_claimed = root.on_navigation_key(down);
+                        if (!root_claimed && !navigation_claimed) {
                             pulp::view::script_events::dispatch_global_key(
                                 static_cast<int>(code), key_mods,
                                 /*is_down=*/true);
-                            pulp::view::script_events::dispatch_global_key(
-                                static_cast<int>(code), key_mods,
-                                /*is_down=*/false);
+                            if (code == pulp::view::KeyCode::escape)
+                                overlay_escaped =
+                                    pulp::view::route_escape_to_active_overlay(
+                                        root, key_mods, false)
+                                    != pulp::view::OverlayEscapeResult::none;
                         }
-                        detail = root_claimed ? "root" : "script";
+                        detail = root_claimed ? "root"
+                            : navigation_claimed ? "navigation"
+                            : overlay_escaped ? "script+overlay"
+                            : "script";
                     }
                 } else if (kind == "escape") {
                     const auto res =
@@ -2649,6 +2722,13 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                                               ? "true" : "false")
                                    << ",\"owns_own_centre\":"
                                    << (self ? "true" : "false")
+                                   // The row's painted fill: a keyboard or
+                                   // hover cursor is only real if it shows.
+                                   << ",\"bg\":\""
+                                   << (own != nullptr && own->has_background_color()
+                                           ? std::to_string(own->background_color().a)
+                                           : std::string{})
+                                   << "\""
                                    << ",\"covered_by\":\""
                                    << spectr_menu_probe::json_escape(covered_by)
                                    << "\"}";
@@ -2660,6 +2740,18 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     walk(*scope);
                     js << "]";
                 }
+                // With no audio device (the screenshot launch), nothing runs
+                // the parameter-sync worker that process() spawns, so an LFO
+                // lane written through `param_set` never reaches
+                // ModulationSettings and the reading below would measure the
+                // missing audio thread. Run the worker's own apply step
+                // instead. Gated on the same switch native_main.cpp reads to
+                // keep audio in a screenshot launch: with it set the real
+                // worker runs, and this must not race it. (Being prepared is
+                // not the signal -- the standalone prepares without a device.)
+                if (const auto* keep = std::getenv("SPECTR_SCREENSHOT_KEEPS_AUDIO");
+                    keep == nullptr || std::string_view{keep} != "1")
+                    (void)apply_surface_params(/*apply_morph=*/true);
                 const auto modulation = modulation_settings();
                 js << ",\"lfo1_enabled\":" << (modulation.enabled ? "true" : "false")
                    << ",\"lfo2_enabled\":" << (modulation.lfo2_enabled ? "true" : "false")
