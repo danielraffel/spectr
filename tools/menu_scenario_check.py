@@ -233,6 +233,19 @@ SCENARIO_KEYS = ";".join([
     "i_into_2=wait", "i_into_3=wait",
     # A press outside the whole nest closes all of it.
     "outside=outside:60,60", "outside_settled=wait",
+    # Leaving a selection. A Cmd-drag marquee selects some bands; a press on
+    # a band OUTSIDE it only clears the selection (it used to mute that band
+    # too). POSITIVE CONTROL: the same press with nothing selected does mute,
+    # so the press is known to land on a band.
+    "s_mark=drag:cmd+100,150>400,700", "s_open=rpress:378,400", "s_close=escape",
+    "s_out=press:1100,400", "s_out_settled=wait",
+    "s_open2=rpress:378,400", "s_close2=escape",
+    "s_ctl=press:1100,400", "s_ctl_settled=wait", "s_ctl_undo=press:1100,400",
+    # Escape clears a selection -- through the plugin editor's key path -- and
+    # an Escape with nothing to clear still reaches the DAW.
+    "s_mark2=drag:cmd+100,150>400,700", "s_esc=pkey:escape", "s_esc_settled=wait",
+    "s_open3=rpress:378,400", "s_close3=escape",
+    "s_idle=pkey:escape",
 ])
 
 # Settings scrolls vertically only: a two-finger trackpad scroll carries a
@@ -409,16 +422,21 @@ def verify_64(steps):
     return 1 if failures else 0
 
 def lit(snapshot):
-    """Labels of the rows whose painted fill is visible (a cursor or hover)."""
+    """Labels of the rows whose painted fill is visible (a cursor or hover).
+
+    Shortcut chips ("Cmd+A") sit on the row they belong to and light with it;
+    they name the key, not the row, so they are left out of the reading.
+    """
     return {r["label"] for r in snapshot.get("rows", [])
-            if r.get("bg") not in (None, "") and float(r["bg"]) > 0.01}
+            if r.get("bg") not in (None, "") and float(r["bg"]) > 0.01
+            and not r["label"].startswith("Cmd+")}
 
 
 # Assertions the --plant-no-keys control cannot neuter, because no key drives
 # them. They are scored in the main run and excluded from the control's
 # population.
 KEY_INDEPENDENT = ("baseline:", "hover:", "outside:", "negative-control:",
-                   "placement:")
+                   "placement:", "selection:")
 
 
 def verify_keys(steps, plant_no_keys=False):
@@ -451,6 +469,20 @@ def verify_keys(steps, plant_no_keys=False):
     want = [expected[i % len(expected)] for i in range(8)] if expected else []
     require(len(expected) >= 4 and visited == want,
             "keys:down-visits-enabled-rows-in-painted-order")
+    def selected(name):
+        return [l for l in labels(st(name)) if l.startswith("Selection")]
+    def muted_count(name):
+        return sum(1 for m in st(name).get("muted", []) if m)
+    require(selected("s_open") and {"Cmd+A", "Cmd+Shift+A"} <= labels(st("s_open")),
+            "selection:marquee-selects-and-menu-shows-shortcuts")
+    require(not selected("s_open2") and muted_count("s_out_settled") == muted_count("s_close"),
+            "selection:press-outside-only-deselects")
+    require(muted_count("s_ctl_settled") == muted_count("s_close2") + 1,
+            "selection:control-a-press-with-no-selection-mutes")
+    require(st("s_esc").get("result") == "script-consumed" and not selected("s_open3"),
+            "keys:escape-clears-a-selection")
+    require(st("s_idle").get("result") == "forward-to-host",
+            "negative-control:idle-escape-reaches-the-daw")
     require("LFO 1 PARAMETERS" in labels(st("l_mod_settled"))
             and "LFO 2 PARAMETERS" in labels(st("l_settled"))
             and st("l_settled").get("menu_mounted") is True,
