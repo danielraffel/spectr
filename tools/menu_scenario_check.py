@@ -175,6 +175,18 @@ SCENARIO_KEYS = ";".join([
     # An empty Macros submenu explains itself (no selection, nothing assigned).
     "m_open=rpress:378,400", "m_macros=row:Macros", "m_macros_settled=wait",
     "m_close=key:escape", "m_close2=key:escape",
+    # With nothing selected, ↓ must visit every ENABLED row in the order they
+    # paint -- no disabled stops (Select none, Undo, Redo) and no jumps.
+    "o_open=rpress:378,400",
+    "o_d1=key:down", "o_d2=key:down", "o_d3=key:down", "o_d4=key:down",
+    "o_d5=key:down", "o_d6=key:down", "o_d7=key:down", "o_d8=key:down",
+    "o_esc=key:escape",
+    # The EDIT LFO tabs are cursor stops right after LFO 2, where they paint:
+    # Back, LFO 1, LFO 2, EDIT LFO 1, EDIT LFO 2 -- and Return switches tabs.
+    "l_open=rpress:378,400", "l_mod=proot:Modulation", "l_mod_settled=wait",
+    "l_d1=key:down", "l_d2=key:down", "l_d3=key:down", "l_d4=key:down",
+    "l_d5=key:down", "l_enter=key:enter", "l_settled=wait",
+    "l_esc1=key:escape", "l_esc2=key:escape",
     "open=rpress:378,400", "select=row:Select all",
     # Up/Down move one highlight; the first press lands ON the first row.
     "k_open=rpress:378,400",
@@ -419,6 +431,32 @@ def verify_keys(steps, plant_no_keys=False):
         return step(steps, name) or {}
 
     require(lit(st("k_open")) == set(), "baseline:no-cursor-until-asked")
+    # Expected order from NATIVE state, independent of the script's list: each
+    # enabled row's leading label, top to bottom. The cursor must visit
+    # exactly those, in that order, wrapping at the end.
+    # A row's labels (the name and any hint such as "mute others") sit within
+    # a few pixels of one another vertically, so they are one row.
+    groups = []
+    for r in sorted((r for r in st("o_open").get("rows", []) if r.get("pressable")),
+                    key=lambda r: r["rect"][1]):
+        if groups and abs(r["rect"][1] - groups[-1][0]["rect"][1]) < 6:
+            groups[-1].append(r)
+        else:
+            groups.append([r])
+    expected = [min(g, key=lambda r: r["rect"][0])["label"] for g in groups]
+    visited = []
+    for i in range(1, 9):
+        got = sorted(lit(st("o_d%d" % i)) & set(expected))
+        visited.append(got[0] if len(got) == 1 else "?" + ",".join(got))
+    want = [expected[i % len(expected)] for i in range(8)] if expected else []
+    require(len(expected) >= 4 and visited == want,
+            "keys:down-visits-enabled-rows-in-painted-order")
+    require("LFO 1 PARAMETERS" in labels(st("l_mod_settled"))
+            and "LFO 2 PARAMETERS" in labels(st("l_settled"))
+            and st("l_settled").get("menu_mounted") is True,
+            "keys:edit-lfo-tabs-are-stops-after-lfo2")
+    if visited != want:
+        print("     expected %s\n     visited  %s" % (want, visited))
     require(lit(st("k_down1")) == {"Mute / Unmute"}, "keys:first-down-lands-on-first-row")
     require(lit(st("k_down2")) == {"Reset to 0 dB"}, "keys:down-steps-one-row")
     require(lit(st("k_up1")) == {"Mute / Unmute"}, "keys:up-steps-back")
