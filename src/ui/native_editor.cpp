@@ -2548,9 +2548,17 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     // run opens no audio device, so process() never runs and
                     // the write is invisible. Arranging through the editor is
                     // also the more faithful arrangement.
-                    const auto gt = arg.find('>');
+                    // An optional leading "cmd+" holds Command for the whole
+                    // gesture, which is how a marquee selection is drawn.
+                    std::uint16_t drag_mods = 0;
+                    std::string drag_arg = arg;
+                    if (drag_arg.rfind("cmd+", 0) == 0) {
+                        drag_mods = pulp::view::kModCmd;
+                        drag_arg = drag_arg.substr(4);
+                    }
+                    const auto gt = drag_arg.find('>');
                     int dsteps = 16;
-                    std::string coords = arg;
+                    std::string coords = drag_arg;
                     if (const auto at = coords.find('@'); at != std::string::npos) {
                         dsteps = std::max(1, std::atoi(coords.substr(at + 1).c_str()));
                         coords = coords.substr(0, at);
@@ -2566,7 +2574,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         auto* target = capture.live_in(root);
                         if (target == nullptr) detail = "no-target";
                         else {
-                            pulp::view::deliver_mouse_down(root, target, a, 0, 1);
+                            pulp::view::deliver_mouse_down(root, target, a, drag_mods, 1);
                             for (int i = 1; i <= dsteps; ++i) {
                                 const float t = static_cast<float>(i)
                                               / static_cast<float>(dsteps);
@@ -2576,11 +2584,11 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                     root, live,
                                     pulp::view::Point{a.x + (b.x - a.x) * t,
                                                       a.y + (b.y - a.y) * t},
-                                    0, 1);
+                                    drag_mods, 1);
                             }
                             if (auto* live = capture.live_in(root)) {
                                 pulp::view::MouseUpHost up_host;
-                                pulp::view::deliver_mouse_up(root, live, b, 0, 1,
+                                pulp::view::deliver_mouse_up(root, live, b, drag_mods, 1,
                                                              up_host);
                             }
                             detail = "dragged";
