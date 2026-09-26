@@ -2639,6 +2639,61 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         press_x = v[0]; press_y = v[1];
                         detail = "wheeled";
                     } else detail = "bad-arg";
+                } else if (kind == "modframe" || kind == "modstop") {
+                    // A modulation frame through the real native->JS message
+                    // the audio owner's publication path sends, with every
+                    // visible band at `arg` dB. Drives the editor's animation
+                    // without an audio device, which a screenshot launch has
+                    // none of.
+                    const auto visible = visible_count(layout());
+                    auto gains = choc::value::createEmptyArray();
+                    auto muted = choc::value::createEmptyArray();
+                    // `wave<phase>` sends a sine across the bands instead of
+                    // one level, so a look can be judged on shaped motion.
+                    const bool wave = arg.rfind("wave", 0) == 0;
+                    const double db = kind == "modframe" && !wave
+                        ? std::strtod(arg.c_str(), nullptr) : 0.0;
+                    const double phase = wave ? std::strtod(arg.c_str() + 4, nullptr) : 0.0;
+                    for (std::size_t band = 0; band < visible; ++band) {
+                        const double value = wave
+                            ? 10.0 * std::sin(6.283185307179586 * (static_cast<double>(band)
+                                  / static_cast<double>(visible)) + phase)
+                            : db;
+                        gains.addArrayElement(kind == "modframe" ? value : 0.0);
+                        muted.addArrayElement(false);
+                    }
+                    auto payload = choc::value::createObject("SpectrModulationFrame");
+                    payload.addMember("active", kind == "modframe");
+                    payload.addMember("sequence",
+                                      static_cast<std::int64_t>(++scenario_mod_sequence_));
+                    payload.addMember("n_visible", static_cast<std::int32_t>(visible));
+                    payload.addMember("gain_db", gains);
+                    payload.addMember("muted", muted);
+                    try {
+                        native_scripted_ui_->bridge()->dispatch_native_message(
+                            "__spectrPublishNativeMessage", "modulation_frame", payload,
+                            "spectr-modulation-frame", "spectr-native-modulation-frame");
+                        detail = "dispatched";
+                    } catch (const std::exception&) { detail = "rejected"; }
+                } else if (kind == "rgprobe") {
+                    // The editor's PAINTED band heights (normalised, first
+                    // four), read back through a throw -- load_script returns
+                    // nothing, so the value rides the exception text.
+                    try {
+                        native_scripted_ui_->bridge()->load_script(
+                            "(() => { const s = globalThis.__spectrTestHooks && "
+                            "globalThis.__spectrTestHooks.renderState ? "
+                            "globalThis.__spectrTestHooks.renderState() : null; "
+                            "throw new Error('PULPVALUE:' + (s ? s.gains.slice(0, 4).map((v) => "
+                            "Number.isFinite(v) ? v.toFixed(4) : String(v)).join('|') : 'none')); })();",
+                            "spectr-scenario-render-probe");
+                        detail = "no-value";
+                    } catch (const std::exception& e) {
+                        const std::string msg = e.what();
+                        const auto at = msg.find("PULPVALUE:");
+                        detail = at == std::string::npos ? "probe-error"
+                            : "rg=" + msg.substr(at + 10, msg.find_first_of("\n\"", at + 10) - (at + 10));
+                    }
                 } else if (kind == "neutral") {
                     // Arrangement primitive: every band back to 0 dB and
                     // unmuted, through the host parameters. Never a verdict.

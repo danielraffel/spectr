@@ -820,6 +820,7 @@ private:
     pulp::view::EditorBridge native_editor_bridge_{};
     bool native_editor_handlers_registered_ = false;
     std::unique_ptr<pulp::view::ScriptedUiSession> native_scripted_ui_{};
+    std::int64_t scenario_mod_sequence_ = 1000000;  // menu-scenario modframe steps
     std::filesystem::path native_package_path_{};
     pulp::view::View* native_editor_root_ = nullptr;
     // Latches once the SPECTR_SETTINGS_SCROLL fixture has positioned the
