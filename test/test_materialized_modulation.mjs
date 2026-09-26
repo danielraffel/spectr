@@ -148,6 +148,14 @@ function measureExcursion() {
       const targetGainsRef = { current: new Array(N).fill(0) };
       const renderGainsRef = { current: new Array(N).fill(0) };
       const modulationActiveRef = { current: false };
+      // The modulation-look state the loop and applyModulationFrame read.
+      // Classic is what this rig measures: heights follow each frame.
+      const modulationLookRef = { current: "classic" };
+      const modTargetRef = { current: null };
+      const modEasedRef = { current: [] };
+      const modVelRef = { current: [] };
+      const trailRef = { current: [] };
+      const trailClockRef = { current: 0 };
       const timeRef = { current: 0 };
       const unmutePulseRef = { current: new Float32Array(N) };
       const edgeGlowRef = { current: { left: 0, right: 0, top: 0, bottom: 0 } };

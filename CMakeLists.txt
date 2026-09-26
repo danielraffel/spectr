@@ -1147,6 +1147,16 @@ add_test(NAME Spectr-standalone-settings-wheel
 set_tests_properties(Spectr-standalone-settings-wheel PROPERTIES
     TIMEOUT 900
     RESOURCE_LOCK spectr_native_materialized_editor)
+# Each modulation look moves the painted bands the way it claims to, driven by
+# injected modulation frames with the look chosen through its Settings chip.
+add_test(NAME Spectr-standalone-modulation-looks
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/modulation_looks_check.py
+        --app ${CMAKE_CURRENT_BINARY_DIR}/Spectr.app/Contents/MacOS/Spectr
+        --out-dir ${CMAKE_CURRENT_BINARY_DIR}/spectr-modulation-looks)
+set_tests_properties(Spectr-standalone-modulation-looks PROPERTIES
+    TIMEOUT 900
+    RESOURCE_LOCK spectr_native_materialized_editor)
 add_test(NAME Spectr-standalone-band-menu-keyboard-negative-control
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/menu_scenario_check.py

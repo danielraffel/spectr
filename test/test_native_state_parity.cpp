@@ -1029,9 +1029,10 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // the contract.
         //
         // THE NUMBER TRACKS THE SETTINGS GROUP COUNT. It moved 1500.98 ->
-        // 1660.98 when the LATENCY group was added -- exactly one group's
-        // 160px, with the authored box, scroll reachability and skin all
-        // unchanged. If you add a group and this fails, that is the window
+        // 1660.98 when the LATENCY group was added, and 1660.98 -> 1820.58
+        // when Appearance gained the Modulation look row -- each exactly one
+        // group's 160px, with the authored box, scroll reachability and skin
+        // all unchanged. If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1041,7 +1042,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1580 && s.content_height < 1740"
+        " && s.content_height > 1740 && s.content_height < 1900"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
