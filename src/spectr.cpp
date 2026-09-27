@@ -105,9 +105,10 @@ Spectr::~Spectr() {
 pulp::format::PluginDescriptor Spectr::descriptor() const {
     auto descriptor=make_descriptor();
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
-    const auto config=renderer_config_();
-    descriptor.tail_samples=processor_prepared_ && renderer_
-        ?renderer_->maximum_tail_samples():latency_samples()+config.design_grid_size;
+    // Descriptor queries may overlap control-side mode replacement. A fixed
+    // conservative bound covers either mode without touching renderer ownership.
+    descriptor.tail_samples=2*kSpectralFftSize+kSpectralAnalysisHop
+        +(kSpectralAnalysisHop/2)*5;
 #endif
     return descriptor;
 }

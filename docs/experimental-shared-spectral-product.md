@@ -29,8 +29,9 @@ At product geometry the extra delay is about 106.7 ms. This is a substantial
 tradeoff to evaluate, not negligible overhead. It may be unsuitable for live
 monitoring even if it enables useful shared GPU delivery. Before prepare the
 product reports the same total PDC that the prepared wrapper reports. In this
-experimental build the descriptor also reports the conservative renderer tail,
-including the additional delay. Default builds retain their existing behavior.
+experimental build the descriptor reports a fixed conservative tail covering
+both modes, including the additional delay. It reads only compile-time geometry,
+so it does not dereference a renderer during concurrent mode replacement. Default builds retain their existing behavior.
 
 ## Ownership and fallback
 
@@ -123,3 +124,26 @@ the latest field before audio publication; the existing audio epoch still protec
 an old callback reader. Constructing a private replacement no longer rewrites the
 live publication cache. Full plugin/host stress coverage of this control handoff
 remains required before changing defaults.
+
+The actual product's construction loop only pumps silence when generation is
+zero. The bridge's initial CPU publication already advances generation, so this
+wrapper skips that loop and performs the product's immediate reset. The probe
+asserts nonzero generation and repeats that reset before first audio, as well as
+its later midstream reset. This checks startup chronology without claiming a
+full plugin-host invocation of the construction path.
+
+Repeating the probe with the immediate product-style startup reset kept both
+bounded normal cases shared-ready (FFT 256: 203 GPU / 44 CPU; FFT 8192: 55 GPU /
+0 CPU). The small-FFT burst case fenced before any GPU delivery and returned
+247 exact CPU outputs. This is an actual startup/burst limitation while the
+worker rebuilds its epoch, not a successful sustained GPU run. The burst test
+checks continuity and records the outcome; only the separate healthy segments
+require nonzero GPU delivery and shared-ready state. The preserved raw runs show
+the difference rather than hiding it behind aggregate correctness.
+
+The renderer oracle does not yet cover Spectr's post-render output-trim smoother
+or the complete host parameter-event path. Trim still runs on the product's
+output timeline. A full-processor comparison must establish the intended
+chronology before describing the entire plugin output as the CPU product output
+shifted by the additional delay. No second trim ramp or hidden timing rewrite
+is introduced here.

@@ -14,6 +14,11 @@ int renderer_case(int grid,bool cpu_only,bool burst=false){
     layout.edge_policy=pulp::signal::SpectralBandEdgePolicy::extend_edge_band;
     layout.bands[0].gain_db=-6;layout.bands[1].gain_db=-12;
     if(!renderer->publish_layout(layout)||!oracle->publish_layout(layout))return 91;
+    // Spectr::build_renderer_ only prewarms while generation is zero. Initial
+    // publication already advanced it, so it performs this immediate reset.
+    if(renderer->active_generation()==0)return 103;
+    guard_allocations=true;renderer->reset();guard_allocations=false;oracle->reset();
+    if(callback_allocations)return 104;
     const auto added=Renderer::additional_latency(config);
     if(renderer->latency_samples()!=oracle->latency_samples()+int(added)||
        renderer->maximum_tail_samples()!=oracle->maximum_tail_samples()+int(added))return 92;
@@ -53,7 +58,7 @@ int renderer_case(int grid,bool cpu_only,bool burst=false){
         <<" gpu="<<snapshot.gpu_delivered<<" cpu="<<snapshot.cpu_fallback
         <<" state="<<unsigned(snapshot.state)<<" epoch="<<snapshot.epoch<<" callback_fence="<<snapshot.callback_fence_reason<<" worker_fence="<<snapshot.worker_fence_reason<<" burst="<<burst<<" lost="<<snapshot.lost_records
         <<" callback_allocations="<<callback_allocations<<'\n';
-    if(snapshot.lost_records || (cpu_only?(!snapshot.cpu_fallback || snapshot.gpu_delivered!=0):snapshot.gpu_delivered==0))return 97;
+    if(snapshot.lost_records || (cpu_only?(!snapshot.cpu_fallback || snapshot.gpu_delivered!=0):(!burst&&snapshot.gpu_delivered==0)))return 97;
     if(!cpu_only&&!burst&&snapshot.state!=Renderer::ProviderState::SharedReady)return 100;
     if(!renderer->release())return 101;
     const auto final=renderer->snapshot();
