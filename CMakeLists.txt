@@ -272,7 +272,46 @@ pulp_add_binary_data(spectr_native_assets
 option(SPECTR_ENABLE_PERF_FIXTURES
        "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
 
+option(SPECTR_EXPERIMENTAL_SHARED_RENDERER
+       "Use experimental shared GPU linear renderer in native Spectr (adds fixed geometry latency)" OFF)
+
+option(SPECTR_SHARED_PRODUCT_ACCEPTANCE
+       "Build default-off actual-processor shared renderer acceptance diagnostics" OFF)
+if(SPECTR_SHARED_PRODUCT_ACCEPTANCE AND NOT SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    message(FATAL_ERROR "Shared product acceptance requires experimental shared renderer")
+endif()
+
+option(SPECTR_SHARED_NATIVE_HOST_PROBE
+       "Build diagnostic-only CLAP shared renderer export and binary host test" OFF)
+if(SPECTR_SHARED_NATIVE_HOST_PROBE AND NOT SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+    message(FATAL_ERROR "Shared native host probe requires shared product acceptance")
+endif()
+
+option(SPECTR_SHARED_SPECTRAL_FIXTURE
+       "Build opt-in real shared spectral callback/worker consumer (new SDK required)" OFF)
+
+option(SPECTR_GPU_AUDIO_PERF_FIXTURE
+       "Register opt-in staged GPU STFT baseline and lifecycle receipt checks" OFF)
+
 function(spectr_configure_native_target target)
+    if(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+        if(NOT TARGET Pulp::gpu-audio)
+            message(FATAL_ERROR "Experimental shared renderer requires Pulp::gpu-audio")
+        endif()
+        get_target_property(_spectr_target_sources ${target} SOURCES)
+        if("${_spectr_target_sources}" MATCHES "mask_renderer\\.cpp")
+            target_sources(${target} PRIVATE
+                src/experimental/shared_spectral_bridge.cpp
+                src/experimental/shared_spectral_partition_adapter.cpp
+                src/experimental/shared_spectral_renderer.cpp)
+            target_compile_definitions(${target} PRIVATE
+                SPECTR_EXPERIMENTAL_SHARED_RENDERER=1 SPECTR_ENABLE_EFFECTIVE_FRAME_OBSERVER=1)
+            target_link_libraries(${target} PUBLIC Pulp::gpu-audio)
+        endif()
+    endif()
+    if(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+        target_compile_definitions(${target} PRIVATE SPECTR_SHARED_PRODUCT_ACCEPTANCE=1)
+    endif()
     target_include_directories(${target} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
@@ -526,6 +565,81 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
+
+if(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+    add_executable(Spectr-shared-product-acceptance EXCLUDE_FROM_ALL
+        test/test_shared_product_acceptance.cpp ${SPECTR_NATIVE_SOURCES})
+    target_link_libraries(Spectr-shared-product-acceptance PRIVATE
+        Pulp::format Pulp::view Pulp::audio-analysis Catch2::Catch2WithMain spectr_native_assets)
+    spectr_configure_native_target(Spectr-shared-product-acceptance)
+    target_compile_definitions(Spectr-shared-product-acceptance PRIVATE SPECTR_NATIVE_ASSETS=1)
+    add_test(NAME Spectr-shared-product-acceptance COMMAND Spectr-shared-product-acceptance)
+    set_tests_properties(Spectr-shared-product-acceptance PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+endif()
+
+
+# Opt-in offline STFT baseline and receipt validation. Neither establishes
+# shared-memory execution or realtime deadlines. The executable is excluded
+# from the default build and must be built explicitly before running its test.
+if(SPECTR_GPU_AUDIO_PERF_FIXTURE)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(NOT Python3_Interpreter_FOUND)
+        message(FATAL_ERROR
+            "SPECTR_GPU_AUDIO_PERF_FIXTURE requires a Python3 interpreter")
+    endif()
+    add_executable(Spectr-gpu-stft-baseline EXCLUDE_FROM_ALL
+        test/gpu_stft_baseline.cpp)
+    target_link_libraries(Spectr-gpu-stft-baseline PRIVATE Pulp::gpu-audio)
+    add_test(NAME Spectr-gpu-stft-baseline COMMAND Spectr-gpu-stft-baseline)
+    add_test(NAME Spectr-gpu-stft-rejection-controls
+        COMMAND Spectr-gpu-stft-baseline --rejection-controls)
+    set_tests_properties(Spectr-gpu-stft-baseline PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 60)
+    add_test(NAME Spectr-gpu-audio-contention-contract
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_audio_contention_trace.py)
+    set_tests_properties(Spectr-gpu-audio-contention-contract PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        TIMEOUT 30)
+endif()
+
+if(SPECTR_SHARED_SPECTRAL_FIXTURE)
+    add_library(SpectrSharedSpectralBridge STATIC EXCLUDE_FROM_ALL
+        src/experimental/shared_spectral_bridge.cpp
+        src/experimental/shared_spectral_partition_adapter.cpp
+        src/experimental/shared_spectral_renderer.cpp src/mask_renderer.cpp)
+    target_include_directories(SpectrSharedSpectralBridge PUBLIC include)
+    target_compile_definitions(SpectrSharedSpectralBridge PRIVATE SPECTR_ENABLE_EFFECTIVE_FRAME_OBSERVER=1)
+    target_link_libraries(SpectrSharedSpectralBridge PUBLIC Pulp::gpu-audio Pulp::format)
+    add_executable(Spectr-shared-spectral-fixture EXCLUDE_FROM_ALL
+        test/test_shared_spectral_fixture.cpp)
+    target_link_libraries(Spectr-shared-spectral-fixture PRIVATE SpectrSharedSpectralBridge)
+    add_test(NAME Spectr-shared-spectral-fixture COMMAND Spectr-shared-spectral-fixture)
+    set_tests_properties(Spectr-shared-spectral-fixture PROPERTIES TIMEOUT 60 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-partitions EXCLUDE_FROM_ALL
+        test/test_shared_spectral_partitions.cpp)
+    target_link_libraries(Spectr-shared-spectral-partitions PRIVATE
+        SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-partitions COMMAND Spectr-shared-spectral-partitions)
+    set_tests_properties(Spectr-shared-spectral-partitions PROPERTIES TIMEOUT 120 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-controls EXCLUDE_FROM_ALL test/test_shared_spectral_controls.cpp)
+    target_link_libraries(Spectr-shared-spectral-controls PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-controls COMMAND Spectr-shared-spectral-controls)
+    set_tests_properties(Spectr-shared-spectral-controls PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-renderer EXCLUDE_FROM_ALL test/test_shared_spectral_renderer.cpp)
+    target_link_libraries(Spectr-shared-spectral-renderer PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-renderer COMMAND Spectr-shared-spectral-renderer)
+    set_tests_properties(Spectr-shared-spectral-renderer PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-mix EXCLUDE_FROM_ALL test/test_shared_spectral_mix.cpp)
+    target_link_libraries(Spectr-shared-spectral-mix PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-mix COMMAND Spectr-shared-spectral-mix)
+    set_tests_properties(Spectr-shared-spectral-mix PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-reset EXCLUDE_FROM_ALL test/test_shared_spectral_reset.cpp)
+    target_link_libraries(Spectr-shared-spectral-reset PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-reset COMMAND Spectr-shared-spectral-reset)
+    set_tests_properties(Spectr-shared-spectral-reset PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+
+endif()
 
 # The recall rule's negative controls.
 #
@@ -3624,4 +3738,28 @@ else()
     message(STATUS
         "Spectr: Python3 interpreter not found; "
         "Spectr-materialized-merge-driver is NOT registered")
+endif()
+
+# Only the CLAP entry owns this diagnostic factory/export. Embedded CPU state
+# authors in Spectr-artifact-test retain their ordinary compilation contract.
+if(SPECTR_SHARED_NATIVE_HOST_PROBE)
+    if(NOT APPLE OR NOT TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+        message(FATAL_ERROR "Shared native host probe requires macOS CLAP")
+    endif()
+    target_compile_definitions(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE SPECTR_SHARED_NATIVE_HOST_PROBE=1)
+    target_link_options(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE "LINKER:-exported_symbol,_spectr_shared_host_probe_v1")
+    add_executable(Spectr-shared-clap-host EXCLUDE_FROM_ALL test/test_shared_clap_host.cpp)
+    target_include_directories(Spectr-shared-clap-host PRIVATE include "${PULP_CLAP_INCLUDE_DIR}")
+    target_compile_definitions(Spectr-shared-clap-host PRIVATE
+        SPECTR_HOST_EXPECTED_NAME="${SPECTR_NATIVE_PLUGIN_NAME}"
+        SPECTR_HOST_EXPECTED_ID="${SPECTR_NATIVE_BUNDLE_ID}"
+        SPECTR_HOST_FFT=${SPECTR_FFT_SIZE} SPECTR_HOST_HOP=${SPECTR_ANALYSIS_HOP})
+    target_link_libraries(Spectr-shared-clap-host PRIVATE Pulp::audio-analysis ${CMAKE_DL_LIBS})
+    add_dependencies(Spectr-shared-clap-host ${SPECTR_NATIVE_CLAP_TARGET})
+    add_test(NAME Spectr-shared-clap-host
+        COMMAND Spectr-shared-clap-host $<TARGET_FILE:${SPECTR_NATIVE_CLAP_TARGET}>)
+    set_tests_properties(Spectr-shared-clap-host PROPERTIES TIMEOUT 120 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-host-contract EXCLUDE_FROM_ALL test/test_shared_host_contract.cpp)
+    target_include_directories(Spectr-shared-host-contract PRIVATE include)
+    add_test(NAME Spectr-shared-host-contract COMMAND Spectr-shared-host-contract)
 endif()

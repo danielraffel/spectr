@@ -61,6 +61,13 @@ public:
 
     virtual ~MaskRenderer() = default;
 
+    using EffectiveFrameObserver = void (*)(void*, const Table&, std::uint64_t) noexcept;
+    // Experimental capture, installed while stopped. Only the linear renderer
+    // built with the shared fixture supports it; the table is callback-borrowed.
+    virtual bool set_effective_frame_observer(void*, EffectiveFrameObserver) noexcept {
+        return false;
+    }
+
     /// Build a complete replacement state. Allocates. Control thread only.
     /// A failed prepare leaves the renderer unprepared; it never half-applies.
     [[nodiscard]] virtual bool prepare(const MaskRendererConfig& config) = 0;

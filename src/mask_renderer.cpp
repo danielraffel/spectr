@@ -396,6 +396,11 @@ bool valid_config(const MaskRendererConfig& config) noexcept {
 /// the compiled table.
 class LinearPhaseMaskRenderer final : public MaskRenderer {
 public:
+#if defined(SPECTR_ENABLE_EFFECTIVE_FRAME_OBSERVER)
+    bool set_effective_frame_observer(void* context, EffectiveFrameObserver observer) noexcept override {
+        return processor_.set_effective_frame_observer(context, observer);
+    }
+#endif
     [[nodiscard]] bool prepare(const MaskRendererConfig& config) override {
         if (!valid_config(config)) return false;
         if (config.analysis_hop <= 0

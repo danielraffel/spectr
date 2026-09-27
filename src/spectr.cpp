@@ -1,3 +1,6 @@
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+#include <spectr/experimental/shared_spectral_renderer.hpp>
+#endif
 #include "spectr/spectr.hpp"
 
 #include <pulp/runtime/trace.hpp>
@@ -100,7 +103,14 @@ Spectr::~Spectr() {
 }
 
 pulp::format::PluginDescriptor Spectr::descriptor() const {
-    return make_descriptor();
+    auto descriptor=make_descriptor();
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    // Descriptor queries may overlap control-side mode replacement. A fixed
+    // conservative bound covers either mode without touching renderer ownership.
+    descriptor.tail_samples=2*kSpectralFftSize+kSpectralAnalysisHop
+        +(kSpectralAnalysisHop/2)*5;
+#endif
+    return descriptor;
 }
 
 namespace {
@@ -437,8 +447,43 @@ MaskRendererConfig Spectr::renderer_config_() const noexcept {
     return config;
 }
 
+#if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+Spectr::SharedProductSnapshot Spectr::shared_product_snapshot() const noexcept {
+    const auto* shared = dynamic_cast<const experimental::SharedSpectralMaskRenderer*>(renderer_.get());
+    if (!shared) return {};
+    const auto s = shared->snapshot();
+    return {true, unsigned(s.state), s.epoch, s.gpu_delivered, s.cpu_fallback,
+            s.cancelled, s.lost_records};
+}
+bool Spectr::finalize_shared_product_snapshot(SharedProductSnapshot& out) noexcept {
+    param_sync_lane_.stop();
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    auto* shared = dynamic_cast<experimental::SharedSpectralMaskRenderer*>(renderer_.get());
+    if (!shared) { out = {}; return false; }
+    const bool confirmed = shared->release();
+    out = shared_product_snapshot();
+    return confirmed;
+}
+bool Spectr::set_shared_product_force_cpu(bool force) noexcept {
+    if (processor_prepared_) return false;
+    shared_product_force_cpu_ = force;
+    return true;
+}
+#endif
+
 std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    std::unique_ptr<MaskRenderer> renderer;
+    if(mode==MaskRenderMode::linear_phase)
+        renderer=std::make_unique<experimental::SharedSpectralMaskRenderer>(
+#if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+            shared_product_force_cpu_
+#endif
+        );
+    else renderer=make_mask_renderer(mode);
+#else
     auto renderer = make_mask_renderer(mode);
+#endif
     if (!renderer) return nullptr;
     if (!renderer->prepare(renderer_config_())) return nullptr;
     // Hand the new renderer the magnitude that is already drawn, so a switch
@@ -459,8 +504,10 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
     if (!renderer->publish_layout(layout)) return nullptr;
     // Record what the renderer is now realising, so neither the control nor
     // the audio path restages this same mask and pays a crossfade for it.
+#if !defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     last_published_layout_ = layout;
     last_published_layout_valid_ = true;
+#endif
     renderer->set_mix(std::clamp(state().get_value(kMix) / 100.0f, 0.0f, 1.0f));
 
     // Publishing a layout only STAGES it; a renderer adopts at its own block
@@ -522,9 +569,24 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
     if (!replacement) return false;
 
     MaskRenderer* incoming = replacement.get();
-    std::unique_ptr<MaskRenderer> outgoing = std::move(renderer_);
-    renderer_ = std::move(replacement);
-    render_mode_ = mode;
+    std::unique_ptr<MaskRenderer> outgoing;
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    {
+        // Control publication uses this mutex too. Swap ownership only after
+        // an old publisher has finished, then publish the latest field to the
+        // new renderer before the audio pointer becomes reachable.
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        outgoing=std::move(renderer_);
+        renderer_=std::move(replacement);
+        render_mode_=mode;
+        last_published_layout_valid_=false;
+        publish_processing_state_();
+    }
+#else
+    outgoing=std::move(renderer_);
+    renderer_=std::move(replacement);
+    render_mode_=mode;
+#endif
 
     // Publish to the audio thread. From here process() renders through the new
     // mode; the old object is still alive and still valid for any call already
@@ -584,6 +646,13 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
 
     if (channels_ <= static_cast<int>(kMaximumChannels))
         renderer_ = build_renderer_(render_mode_);
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        last_published_layout_=make_mask_layout_();
+        last_published_layout_valid_=false;
+    }
+#endif
     // The renderer arrives realising the layout build_renderer_ published, so
     // seed the audio thread's cache with it rather than leaving it empty --
     // an empty cache makes the first block restage a mask that is already live.
@@ -782,7 +851,13 @@ int Spectr::latency_samples() const {
     // early. Both paths are the same number for the same mode, which is what
     // makes a project recall with the same delay compensation everywhere.
     if (processor_prepared_ && renderer_) return renderer_->latency_samples();
-    return mask_render_latency_samples(render_mode_, renderer_config_());
+    const auto config=renderer_config_();
+    auto latency=mask_render_latency_samples(render_mode_,config);
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    if(render_mode_==MaskRenderMode::linear_phase)
+        latency+=int(experimental::SharedSpectralMaskRenderer::additional_latency(config));
+#endif
+    return latency;
 }
 
 void Spectr::set_layout(Layout L) {

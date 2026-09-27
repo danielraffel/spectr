@@ -264,6 +264,22 @@ class Spectr : public pulp::format::Processor
 #endif
 {
 public:
+#if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+    // Stopped/control lane only; never race prepare/release/mode replacement.
+    // Quantum output selections before product mix/trim, not GPU completions.
+    struct SharedProductSnapshot {
+        bool shared_renderer = false;
+        unsigned state = 0;
+        std::uint64_t epoch = 0, gpu_selected = 0, cpu_selected = 0,
+                      cancelled = 0, lost_records = 0;
+    };
+    SharedProductSnapshot shared_product_snapshot() const noexcept;
+    // Destructive diagnostic seal: caller has stopped processing. Stops the
+    // control publisher and renderer worker, checks release, then snapshots.
+    // No further process() until ordinary release()/prepare().
+    bool finalize_shared_product_snapshot(SharedProductSnapshot& out) noexcept;
+    bool set_shared_product_force_cpu(bool force) noexcept;
+#endif
     Spectr();
     ~Spectr() override;
 
@@ -603,6 +619,9 @@ private:
     // The mask renderer behind the mode. Owned through the seam rather than
     // held concretely, so which realisation is live is a value this class
     // stores instead of a type it is compiled against.
+#if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+    bool shared_product_force_cpu_ = false;
+#endif
     std::unique_ptr<MaskRenderer>          renderer_{};
     // The mode `renderer_` was built for. Authoritative for what this instance
     // sounds like and what latency it reports; written by the control thread
