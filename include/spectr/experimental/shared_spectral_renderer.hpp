@@ -31,6 +31,8 @@ public:
     void reset() noexcept override;
     unsigned long long active_generation() const noexcept override;
     Snapshot snapshot() const noexcept;
+    // Owning stopped/control lane; immutable between prepare and release.
+    std::uint64_t trace_run_id_stopped() const noexcept { return prepared_?trace_run_.id():0; }
     // Optional observer of the same non-RT emitted records. Install only before
     // prepare; its context must outlive the renderer and its final stop.
     struct TraceObserver {

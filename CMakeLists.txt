@@ -636,6 +636,8 @@ if(SPECTR_SHARED_SPECTRAL_FIXTURE)
     set_tests_properties(Spectr-shared-spectral-mix PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME Spectr-shared-spectral-host-inventory
+            COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/test/test_shared_spectral_host_inventory.py)
         add_test(NAME Spectr-shared-spectral-trace-validator
             COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/test/test_shared_spectral_trace_accounting.py)
     endif()
@@ -3756,7 +3758,8 @@ if(SPECTR_SHARED_NATIVE_HOST_PROBE)
         message(FATAL_ERROR "Shared native host probe requires macOS CLAP")
     endif()
     target_compile_definitions(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE SPECTR_SHARED_NATIVE_HOST_PROBE=1)
-    target_link_options(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE "LINKER:-exported_symbol,_spectr_shared_host_probe_v1")
+    target_link_options(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE "LINKER:-exported_symbol,_spectr_shared_host_probe_v1"
+        "LINKER:-exported_symbol,_spectr_shared_host_probe_v2")
     add_executable(Spectr-shared-clap-host EXCLUDE_FROM_ALL test/test_shared_clap_host.cpp)
     target_include_directories(Spectr-shared-clap-host PRIVATE include "${PULP_CLAP_INCLUDE_DIR}")
     target_compile_definitions(Spectr-shared-clap-host PRIVATE
