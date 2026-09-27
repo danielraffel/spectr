@@ -233,6 +233,17 @@ SCENARIO_KEYS = ";".join([
     "i_into_2=wait", "i_into_3=wait",
     # A press outside the whole nest closes all of it.
     "outside=outside:60,60", "outside_settled=wait",
+    # Value rows are sliders. A press sets the value where it lands (Depth is
+    # continuous, Rate snaps to its musical list), and with the keyboard
+    # cursor on a slider row Left/Right adjust it without leaving the submenu.
+    "v_open=rpress:378,400", "v_mod=proot:Modulation", "v_mod_settled=wait",
+    "v_depth=slider:Depth@0.25", "v_depth_settled=wait",
+    "v_rate=slider:Rate@0.0", "v_rate_settled=wait",
+    "v_k1=key:down", "v_k2=key:down", "v_k3=key:down", "v_k4=key:down",
+    "v_k5=key:down", "v_k6=key:down", "v_k7=key:down", "v_k8=key:down",
+    "v_right=key:right", "v_right_settled=wait",
+    "v_left=key:left", "v_left_settled=wait",
+    "v_esc1=escape", "v_esc2=escape",
     # Leaving a selection. A Cmd-drag marquee selects some bands; a press on
     # a band OUTSIDE it only clears the selection (it used to mute that band
     # too). POSITIVE CONTROL: the same press with nothing selected does mute,
@@ -436,7 +447,7 @@ def lit(snapshot):
 # them. They are scored in the main run and excluded from the control's
 # population.
 KEY_INDEPENDENT = ("baseline:", "hover:", "outside:", "negative-control:",
-                   "placement:", "selection:")
+                   "placement:", "selection:", "slider:")
 
 
 def verify_keys(steps, plant_no_keys=False):
@@ -469,6 +480,20 @@ def verify_keys(steps, plant_no_keys=False):
     want = [expected[i % len(expected)] for i in range(8)] if expected else []
     require(len(expected) >= 4 and visited == want,
             "keys:down-visits-enabled-rows-in-painted-order")
+    def depth(name):
+        return st(name).get("lfo1_depth")
+    require(depth("v_mod_settled") is not None and depth("v_depth_settled") is not None
+            and abs(depth("v_depth_settled") - 0.25) <= 0.02
+            and abs(depth("v_mod_settled") - 0.25) > 0.05,
+            "slider:press-sets-depth-where-it-lands")
+    require(st("v_rate_settled").get("lfo1_rate") == 0.25
+            and st("v_mod_settled").get("lfo1_rate") != 0.25,
+            "slider:rate-snaps-to-its-musical-list")
+    require(depth("v_right_settled") is not None
+            and abs(depth("v_right_settled") - depth("v_depth_settled") - 0.01) < 0.004
+            and abs(depth("v_left_settled") - depth("v_depth_settled")) < 0.004
+            and "MODULATION" in labels(st("v_left_settled")),
+            "keys:left-right-adjust-a-slider-row-and-stay")
     def selected(name):
         return [l for l in labels(st(name)) if l.startswith("Selection")]
     def muted_count(name):
