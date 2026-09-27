@@ -447,6 +447,21 @@ MaskRendererConfig Spectr::renderer_config_() const noexcept {
     return config;
 }
 
+GpuAudioStatus Spectr::gpu_audio_status() const {
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    std::lock_guard<std::mutex> lock(renderer_observation_mutex_);
+    if(!renderer_)return {GpuAudioStatus::Availability::NotPrepared,{}};
+    const auto* shared=dynamic_cast<const experimental::SharedSpectralMaskRenderer*>(renderer_.get());
+    if(!shared)return {GpuAudioStatus::Availability::NonSharedRenderer,{}};
+    const auto s=shared->snapshot();
+    return {GpuAudioStatus::Availability::Available,
+        GpuAudioStatus::Delivery{unsigned(s.state),s.epoch,s.gpu_delivered,
+            s.cpu_fallback,s.cancelled,s.lost_records}};
+#else
+    return {};
+#endif
+}
+
 #if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
 Spectr::SharedProductSnapshot Spectr::shared_product_snapshot() const noexcept {
     const auto* shared = dynamic_cast<const experimental::SharedSpectralMaskRenderer*>(renderer_.get());
@@ -576,15 +591,21 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
         // an old publisher has finished, then publish the latest field to the
         // new renderer before the audio pointer becomes reachable.
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
-        outgoing=std::move(renderer_);
-        renderer_=std::move(replacement);
+        {
+            std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
+            outgoing=std::move(renderer_);
+            renderer_=std::move(replacement);
+        }
         render_mode_=mode;
         last_published_layout_valid_=false;
         publish_processing_state_();
     }
 #else
-    outgoing=std::move(renderer_);
-    renderer_=std::move(replacement);
+    {
+        std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
+        outgoing=std::move(renderer_);
+        renderer_=std::move(replacement);
+    }
     render_mode_=mode;
 #endif
 
@@ -641,11 +662,19 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // No audio thread can be running across a prepare, so the previous
     // renderer and anything a mode switch parked are free to go now.
     active_renderer_.store(nullptr, std::memory_order_release);
-    renderer_.reset();
+    std::unique_ptr<MaskRenderer> outgoing;
+    {
+        std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
+        outgoing=std::move(renderer_);
+    }
+    outgoing.reset();
     drain_retired_renderers_();
 
-    if (channels_ <= static_cast<int>(kMaximumChannels))
-        renderer_ = build_renderer_(render_mode_);
+    if (channels_ <= static_cast<int>(kMaximumChannels)) {
+        auto replacement=build_renderer_(render_mode_);
+        std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
+        renderer_=std::move(replacement);
+    }
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
@@ -837,7 +866,12 @@ void Spectr::release() {
     // apply publishes into it.
     param_sync_lane_.stop();
     active_renderer_.store(nullptr, std::memory_order_release);
-    renderer_.reset();
+    std::unique_ptr<MaskRenderer> outgoing;
+    {
+        std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
+        outgoing=std::move(renderer_);
+    }
+    outgoing.reset();
     drain_retired_renderers_();
     processor_prepared_ = false;
     bridge_.reset();

@@ -3763,3 +3763,12 @@ if(SPECTR_SHARED_NATIVE_HOST_PROBE)
     target_include_directories(Spectr-shared-host-contract PRIVATE include)
     add_test(NAME Spectr-shared-host-contract COMMAND Spectr-shared-host-contract)
 endif()
+
+# Public diagnostics must work in a probe-OFF native consumer as well as tests.
+add_executable(Spectr-gpu-audio-status-test EXCLUDE_FROM_ALL test/test_gpu_audio_status.cpp)
+spectr_configure_native_target(Spectr-gpu-audio-status-test)
+target_compile_definitions(Spectr-gpu-audio-status-test PRIVATE
+    $<$<BOOL:${SPECTR_EXPERIMENTAL_SHARED_RENDERER}>:SPECTR_EXPERIMENTAL_SHARED_RENDERER=1>)
+target_link_libraries(Spectr-gpu-audio-status-test PRIVATE ${SPECTR_NATIVE_CORE_TARGET})
+add_test(NAME Spectr-gpu-audio-status COMMAND Spectr-gpu-audio-status-test)
+set_tests_properties(Spectr-gpu-audio-status PROPERTIES TIMEOUT 120 RESOURCE_LOCK pulp_gpu)

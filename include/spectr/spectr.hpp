@@ -36,6 +36,7 @@
 #endif
 
 #include "spectr/band_state.hpp"
+#include "spectr/gpu_audio_status.hpp"
 #include "spectr/edit_modes.hpp"
 #include "spectr/editor_authority.hpp"
 #include "spectr/param_surface.hpp"
@@ -264,6 +265,8 @@ class Spectr : public pulp::format::Processor
 #endif
 {
 public:
+    // UI/control thread only. Never stops processing or changes engine selection.
+    [[nodiscard]] GpuAudioStatus gpu_audio_status() const;
 #if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
     // Stopped/control lane only; never race prepare/release/mode replacement.
     // Quantum output selections before product mix/trim, not GPU completions.
@@ -622,6 +625,10 @@ private:
 #if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
     bool shared_product_force_cpu_ = false;
 #endif
+    // Only pointer publication/removal and the public observer take this lock.
+    // Build/join/destruction happen outside it; process() never acquires it.
+    // When nested, processing_state_mutex_ precedes this observation mutex.
+    mutable std::mutex renderer_observation_mutex_;
     std::unique_ptr<MaskRenderer>          renderer_{};
     // The mode `renderer_` was built for. Authoritative for what this instance
     // sounds like and what latency it reports; written by the control thread
