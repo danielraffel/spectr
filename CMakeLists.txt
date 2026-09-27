@@ -1280,6 +1280,17 @@ add_test(NAME Spectr-standalone-modulation-looks
 set_tests_properties(Spectr-standalone-modulation-looks PROPERTIES
     TIMEOUT 900
     RESOURCE_LOCK spectr_native_materialized_editor)
+# A running LFO holds still under a band being drawn (Settings > Hold while
+# editing, default on) and resumes on release. The same run with the setting
+# off is the control that the frames reach the editor at all.
+add_test(NAME Spectr-standalone-modulation-hold-while-editing
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/modulation_hold_check.py
+        --app ${CMAKE_CURRENT_BINARY_DIR}/Spectr.app/Contents/MacOS/Spectr
+        --out-dir ${CMAKE_CURRENT_BINARY_DIR}/spectr-modulation-hold)
+set_tests_properties(Spectr-standalone-modulation-hold-while-editing PROPERTIES
+    TIMEOUT 900
+    RESOURCE_LOCK spectr_native_materialized_editor)
 add_test(NAME Spectr-standalone-band-menu-keyboard-negative-control
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/menu_scenario_check.py
