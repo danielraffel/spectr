@@ -463,6 +463,11 @@ GpuAudioStatus Spectr::gpu_audio_status() const {
 }
 
 #if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+std::uint64_t Spectr::shared_product_trace_run_id_stopped() const noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    const auto* shared=dynamic_cast<const experimental::SharedSpectralMaskRenderer*>(renderer_.get());
+    return shared?shared->trace_run_id_stopped():0;
+}
 Spectr::SharedProductSnapshot Spectr::shared_product_snapshot() const noexcept {
     const auto* shared = dynamic_cast<const experimental::SharedSpectralMaskRenderer*>(renderer_.get());
     if (!shared) return {};

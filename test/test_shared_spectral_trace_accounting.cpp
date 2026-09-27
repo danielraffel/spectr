@@ -69,17 +69,22 @@ void renderer_controls(){
     {
         SharedSpectralMaskRenderer renderer(true);renderer.set_trace_observer(capture.observer());
         for(unsigned run=0;run<2;++run){
+            REQUIRE_TRACE(renderer.trace_run_id_stopped()==0);
             REQUIRE_TRACE(renderer.prepare(trace_config()));
+            const auto expected_id=renderer.trace_run_id_stopped();
+            REQUIRE_TRACE(expected_id!=0);
             std::array<float,256> in{},out{};
             const float* src[]={in.data(),in.data()+128};float* dst[]={out.data(),out.data()+128};
             // Partial input does not become an admitted fixed quantum.
             REQUIRE_TRACE(renderer.process(src,dst,31));renderer.reset();renderer.reset();
             for(unsigned i=0;i<8;++i){guard_allocations=true;auto ok=renderer.process(src,dst,32);guard_allocations=false;REQUIRE_TRACE(ok);}
-            renderer.reset();REQUIRE_TRACE(renderer.process(src,dst,32));
+            renderer.reset();REQUIRE_TRACE(renderer.trace_run_id_stopped()==expected_id);REQUIRE_TRACE(renderer.process(src,dst,32));
             REQUIRE_TRACE(renderer.process(src,dst,3));
             REQUIRE_TRACE(renderer.release());REQUIRE_TRACE(renderer.release());
             REQUIRE_TRACE(capture.final_count==run+1);
             const auto& f=capture.finals[run];
+            REQUIRE_TRACE(f.renderer_run_id==expected_id);
+            REQUIRE_TRACE(renderer.trace_run_id_stopped()==0);
             REQUIRE_TRACE(f.accounting.input_quanta==9);REQUIRE_TRACE(f.accounting.terminal_attempts==9);
             REQUIRE_TRACE(f.accounting.terminal_enqueued==9);REQUIRE_TRACE(f.accounting.terminal_popped==9);
             std::uint64_t observed_admissions=0;

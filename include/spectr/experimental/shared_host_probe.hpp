@@ -19,3 +19,13 @@ struct SpectrSharedHostRequest {
 using SpectrSharedHostQuery=int(*)(SpectrSharedHostRequest*);
 // 0 success; 1 malformed; 2 invalid phase; 3 absent/ambiguous instance;
 // 4 stale/missing token; 5 checked renderer release failed.
+
+// Additive diagnostic identity query. v1 remains byte-for-byte unchanged.
+// Snapshot only, after activate/before start_processing or after stop_processing.
+// The actual CLAP lifecycle gate rejects queries while processing is started.
+struct SpectrSharedHostRequestV2 {
+    std::uint32_t size=sizeof(SpectrSharedHostRequestV2),version=2;
+    SpectrSharedHostRequest snapshot;
+    std::uint64_t renderer_run_id=0;
+};
+using SpectrSharedHostQueryV2=int(*)(SpectrSharedHostRequestV2*);

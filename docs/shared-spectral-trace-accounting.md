@@ -62,3 +62,60 @@ machine. That retry control does not simulate a physical GPU failure. The Python
 controls exercise the actual export SQL plus missing/duplicate/malformed records,
 loss, wrong process/run identities and misleading GPU-use claims. A real installed
 plugin capture remains a separate gate.
+
+
+## Bind expected runs from the diagnostic native host
+
+The diagnostic CLAP build exports `spectr_shared_host_probe_v2` alongside the
+unchanged v1 probe. Its Snapshot-only request contains the v1 snapshot payload
+and a stable `renderer_run_id`. A nonzero, current v1 instance token is required.
+Query after successful activation, before `start_processing`, or after a matching
+`stop_processing`. Activation means prepared, not processing. Deactivation means
+unprepared, and its identity query fails. Reset changes stream epoch, not the
+saved run identity; the next activation gets a new run ID.
+
+The diagnostic factory forwards CLAP creation/destruction and ordinary processing
+to the SDK. It wraps only start/stop processing. A lock-free per-instance gate
+excludes identity queries while processing is started and refuses start if a
+query is active. Failed delegated starts roll back; stop marks the gate stopped
+only after the delegated stop returns. Duplicate starts fail, and stray repeated
+stops cannot unlock an active query. The host must still serialize activation,
+deactivation and destruction as required by CLAP. No registry lock is held while
+forwarding these lifecycle callbacks. No callback lock or Dawn call is added.
+
+Run the diagnostic host with optional PCM prefix and a new inventory path:
+
+```sh
+PULP_TRACE_PATH=/absolute/new/native.pftrace PULP_TRACE_RING_KB=81920   Spectr-shared-clap-host /absolute/Spectr.clap/Contents/MacOS/Spectr   /absolute/new/audio /absolute/new/host-inventory.jsonl
+```
+
+Unset `PULP_TRACE_SECONDS`; capture should flush after module teardown. This
+command is for an accepted tracing-enabled development SDK and diagnostic plugin,
+never a packaged plugin. Keep the executable, plugin, SDK, host PID, inventory,
+trace and raw audio hashes in the external launch receipt, and require exit zero.
+The native host links audio-analysis, not another tracing runtime.
+
+Every successful prepare is recorded and flushed before processing starts. The
+host records its independent prepare ordinal, instance token, assigned run ID
+and whether that scenario requires GPU delivery. The final inventory row appears
+only after module teardown and declares the prepare count. These IDs come from
+the stopped control query, not the trace under test. The current host exercises
+four prepares: GPU/forced-CPU wet controls and two dry PDC controls. Only the
+first must contain positive GPU selection; all four must conserve records.
+
+After exporting raw typed rows with `shared_spectral_trace.sql`, validate with:
+
+```sh
+python3 tools/validate_shared_spectral_host_inventory.py export.json   --host-inventory /absolute/new/host-inventory.jsonl --expected-pid HOST_PID
+```
+
+This catches a completely missing run as well as missing individual records.
+It never fills its expectation from observed trace IDs. The explicit
+`--allow-cpu-only` option is for a separately declared lifecycle control, not a
+positive GPU-use acceptance result.
+
+Ordinary REAPER Lua cannot query this diagnostic export. REAPER wet/PDC/lifecycle
+captures remain useful, but without an independent prepare/run inventory their
+whole-capture completeness is unproven. Do not feed observed IDs back into the
+validator and claim independent coverage. Keep complete unload/reload out of a
+single capture process because run IDs are unique within loaded-module lifetime.

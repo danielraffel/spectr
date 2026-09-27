@@ -26,6 +26,19 @@ public:
         request->instance_token=token;
         return p->query(*request);
     }
+    int query_v2(SpectrSharedHostRequestV2* request) {
+        if(!request)return 1;
+        if(request->size!=sizeof(*request))return 1;
+        request->renderer_run_id=0;
+        const auto& r=request->snapshot;
+        if(request->version!=2||
+           r.size!=sizeof(r)||r.version!=1||r.command!=SpectrSharedHostRequest::Snapshot||r.force_cpu>1)return 1;
+        std::lock_guard lock(mutex_);
+        if(live_.size()!=1)return 3;
+        const auto& [token,p]=*live_.begin();
+        if(!r.instance_token||r.instance_token!=token)return 4;
+        return p->query_v2(*request);
+    }
 private:
     std::mutex mutex_;
     std::map<std::uint64_t,Instance*> live_;

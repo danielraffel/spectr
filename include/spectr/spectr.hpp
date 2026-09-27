@@ -277,6 +277,7 @@ public:
                       cancelled = 0, lost_records = 0;
     };
     SharedProductSnapshot shared_product_snapshot() const noexcept;
+    std::uint64_t shared_product_trace_run_id_stopped() const noexcept;
     // Destructive diagnostic seal: caller has stopped processing. Stops the
     // control publisher and renderer worker, checks release, then snapshots.
     // No further process() until ordinary release()/prepare().
