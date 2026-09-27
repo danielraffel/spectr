@@ -162,6 +162,12 @@ samples through mix, output-trim and band-gain events, requires nonzero normal
 GPU selections and zero forced-CPU GPU selections, checks lost records and PDC,
 and repeats prepare/process/release before switching to zero-latency CPU mode.
 It uses ordinary-thread pacing and establishes no realtime deadline guarantee.
+A separate fully dry impulse case measures actual input-to-output delay in both
+normal and forced-CPU modes. It uses asymmetric stereo markers at frames13 and29,
+compares every output sample to the independently delayed input, and applies the
+audio-harness marker policy with a pinned expected delay. A deliberately wrong
+reported delay must fail. Mix, trim and band events in the main test also occur
+at offsets17,29 and31 inside callbacks.
 
 The snapshot describes selected spectral quantums before product mix and trim,
 not submissions, completions, callback counts or proof of audible GPU contribution

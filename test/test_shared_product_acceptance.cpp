@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <pulp/audio/analysis/audio_assertions.hpp>
+#include <pulp/audio/analysis/latency_evidence.hpp>
 #include <pulp/format/headless.hpp>
 #include <spectr/spectr.hpp>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -42,9 +44,12 @@ TEST_CASE("Spectr actual processor selects shared output with matching fallback 
                 input.channel(1)[i] = 0.15f * std::sin(6.283185307179586 * 431 * n / 48000);
             }
             pulp::state::ParameterEventQueue events;
-            REQUIRE(events.push({spectr::kMix, 0, b >= 96 ? 40.0f : 100.0f, 0}));
-            REQUIRE(events.push({spectr::kOutputTrim, 0, b >= 160 ? -6.0f : 0.0f, 0}));
-            REQUIRE(events.push({spectr::band_gain_param_id(0), 0, b >= 64 ? -3.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::kMix, 0, b > 96 ? 40.0f : 100.0f, 0}));
+            REQUIRE(events.push({spectr::kOutputTrim, 0, b > 160 ? -6.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::band_gain_param_id(0), 0, b > 64 ? -3.0f : 0.0f, 0}));
+            if (b == 96) REQUIRE(events.push({spectr::kMix, 17, 40.0f, 0}));
+            if (b == 160) REQUIRE(events.push({spectr::kOutputTrim, 29, -6.0f, 0}));
+            if (b == 64) REQUIRE(events.push({spectr::band_gain_param_id(0), 31, -3.0f, 0}));
             gpu.process(out, in, events);
             cpu.process(ref, in, events);
             const auto match = pulp::test::audio::assert_null_near(actual, reference, -90.0);
@@ -74,4 +79,63 @@ TEST_CASE("Spectr actual processor selects shared output with matching fallback 
     CHECK(g->latency_samples() == 0);
     CHECK_FALSE(g->shared_product_snapshot().shared_renderer);
     gpu.release();
+}
+
+TEST_CASE("Spectr actual output delay equals its pinned shared PDC",
+          "[shared-product][installed-sdk][latency]") {
+    using namespace pulp::test::audio;
+    constexpr unsigned block = 512;
+    constexpr int expected = spectr::kSpectralLatency + (spectr::kSpectralAnalysisHop / 2) * 5;
+    const unsigned frames = ((expected + 1024 + block - 1) / block) * block;
+    for (bool force_cpu : {false, true}) {
+        pulp::format::HeadlessHost host(spectr::create_spectr);
+        auto* processor = static_cast<spectr::Spectr*>(host.processor());
+        REQUIRE(processor->set_shared_product_force_cpu(force_cpu));
+        REQUIRE(processor->set_render_mode(spectr::MaskRenderMode::linear_phase));
+        host.state().set_value(spectr::kMix, 0.0f);
+        host.state().set_value(spectr::kOutputTrim, 0.0f);
+        host.prepare(48000, block);
+        const int reported = processor->latency_samples();
+        pulp::audio::Buffer<float> input(2, block), output(2, block);
+        pulp::audio::Buffer<float> stimulus(2, frames), rendered(2, frames), delayed(2, frames);
+        stimulus.clear(); rendered.clear(); delayed.clear();
+        constexpr unsigned marker[2]{13, 29};
+        constexpr float level[2]{0.5f, -0.3f};
+        for (unsigned ch = 0; ch < 2; ++ch) {
+            stimulus.channel(ch)[marker[ch]] = level[ch];
+            delayed.channel(ch)[marker[ch] + expected] = level[ch];
+        }
+        const float* ptrs[]{input.channel(0).data(), input.channel(1).data()};
+        pulp::audio::BufferView<const float> in(ptrs, 2, block);
+        auto out = output.view();
+        for (unsigned offset = 0; offset < frames; offset += block) {
+            for (unsigned ch = 0; ch < 2; ++ch)
+                std::copy_n(stimulus.channel(ch).data() + offset, block, input.channel(ch).data());
+            host.process(out, in);
+            CHECK(processor->latency_samples() == reported);
+            for (unsigned ch = 0; ch < 2; ++ch)
+                std::copy_n(output.channel(ch).data(), block, rendered.channel(ch).data() + offset);
+        }
+        const auto null = assert_null_near(rendered, delayed, -100.0);
+        INFO(null.message);
+        CHECK(null.passed);
+        for (unsigned ch = 0; ch < 2; ++ch) {
+            pulp::audio::Buffer<float> mono_in(1, frames), mono_out(1, frames);
+            std::copy_n(stimulus.channel(ch).data(), frames, mono_in.channel(0).data());
+            std::copy_n(rendered.channel(ch).data(), frames, mono_out.channel(0).data());
+            auto evidence = measure_marker_offset(mono_in, mono_out, reported,
+                {.input_marker_frame = marker[ch], .onset_threshold = 0.1});
+            apply_expected_samples(evidence, expected);
+            INFO(latency_evidence_summary(evidence));
+            std::printf("force_cpu=%u channel=%u latency=%s\n", unsigned(force_cpu), ch,
+                        latency_evidence_to_json(evidence).c_str());
+            CHECK(evidence.contract_outcome == LatencyContractOutcome::satisfied);
+            // A wrong report must fail the same measurement, never be accepted
+            // because both implementations returned the same wrong number.
+            const auto wrong = measure_marker_offset(mono_in, mono_out, reported + 1,
+                {.input_marker_frame = marker[ch], .onset_threshold = 0.1});
+            CHECK(wrong.contract_outcome == LatencyContractOutcome::violated);
+        }
+        host.release();
+    }
 }
