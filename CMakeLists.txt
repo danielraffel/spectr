@@ -560,14 +560,22 @@ endif()
 
 if(SPECTR_SHARED_SPECTRAL_FIXTURE)
     add_library(SpectrSharedSpectralBridge STATIC EXCLUDE_FROM_ALL
-        src/experimental/shared_spectral_bridge.cpp src/mask_renderer.cpp)
+        src/experimental/shared_spectral_bridge.cpp
+        src/experimental/shared_spectral_partition_adapter.cpp src/mask_renderer.cpp)
     target_include_directories(SpectrSharedSpectralBridge PUBLIC include)
     target_link_libraries(SpectrSharedSpectralBridge PUBLIC Pulp::gpu-audio Pulp::format)
     add_executable(Spectr-shared-spectral-fixture EXCLUDE_FROM_ALL
         test/test_shared_spectral_fixture.cpp)
     target_link_libraries(Spectr-shared-spectral-fixture PRIVATE SpectrSharedSpectralBridge)
     add_test(NAME Spectr-shared-spectral-fixture COMMAND Spectr-shared-spectral-fixture)
-    set_tests_properties(Spectr-shared-spectral-fixture PROPERTIES TIMEOUT 60)
+    set_tests_properties(Spectr-shared-spectral-fixture PROPERTIES TIMEOUT 60 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-partitions EXCLUDE_FROM_ALL
+        test/test_shared_spectral_partitions.cpp)
+    target_link_libraries(Spectr-shared-spectral-partitions PRIVATE
+        SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-partitions COMMAND Spectr-shared-spectral-partitions)
+    set_tests_properties(Spectr-shared-spectral-partitions PROPERTIES TIMEOUT 120 RESOURCE_LOCK pulp_gpu)
+
 endif()
 
 # The recall rule's negative controls.

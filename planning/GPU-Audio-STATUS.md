@@ -82,3 +82,29 @@ produced4096 retained records plus4 explicitly lost records; loss survives reset
 and invalidates trace completeness. Repeated release produced no duplicates.
 Lead1/2/4/8 parity remained5.96046e-08; delivery counts36/72/144/148 are not timing
 measurements. Overflow path remained exact CPU parity. Runtime exit0.
+
+## Variable callback partition slice (active)
+
+Owner sdk_buildtree_probe, worktree `/tmp/spectr-shared-partitions-20260927`,
+base789419d. SharedSpectralPartitionAdapter owns the existing bridge and two
+preallocated quantum buffers; no second DSP/stateful transport implementation.
+Additional latency is explicit samples: one quantum for input assembly/output
+serialization plus L fixed bridge quantums. Total FFT+hop+(L+1)*Q, independent
+of host callback partitions. Supported additional delay is2Q..9Q in multiples
+ofQ. Immutable experimental mode/default unchanged. Tests and receipts pending.
+
+Provisional Release partition run passed all18 cases. Fixed partitions
+1/31/32/63/64/127/128 each passed masked-noise CPU parity and identity impulse
+latency; irregular splits passed out-of-place/in-place with serviced and stopped
+workers. All measured identity delays were480 samples (FFT256+hop64+160 explicit
+additional samples). Reporting481 instead was rejected by the existing Pulp
+latency helper. Maximum masked residual5.21541e-08; identity residual2.23569e-09;
+stopped-worker residual0. Callback C++ new/new[]/aligned-new calls were0.
+Every run retained128 ordered internal-quantum outcomes with4 cancellations on
+release and no trace loss. No GPU/CPU speed or paced deadline claim.
+
+Evidence: `/tmp/spectr-shared-partitions-provisional-20260927/{build.log,runtime.log}`.
+This provisional link reuses unchanged789419d bridge/provider objects and old SDK
+archives. Authentic installed-SDK consumer remains a separate gate. Callback
+allocation instrumentation covers C++ allocation operators, not arbitrary C
+allocator interposition. Source has no callback wait or GPU API call.

@@ -45,3 +45,42 @@ were zero. CPU copies into and out of shared slots remain. A canonical installed
 SDK consumer, paced performance, rendering contention, host integration and
 control publication are still open gates. Do not change the default on this
 result.
+
+## Variable host callback partitions
+
+`SharedSpectralPartitionAdapter` wraps the same bridge with one input and one
+output quantum buffer. `internal_quantum` Q is fixed at prepare time; it is not
+selected from the incoming callback length. `additional_latency_samples` A is a
+persisted sample count, supported initially as multiples of Q from 2Q through
+9Q. The adapter computes the bridge lead as L=A/Q-1.
+
+The adapter emits the previous quantum while assembling the next one. The first
+quantum's bridge output therefore begins at host sample Q, independent of how
+many host callbacks assembled it. Total latency is:
+
+    FFT size + analysis hop + L*Q + Q = FFT size + analysis hop + A
+
+This is one full Q, not Q-1: copying the quantum's last input sample does not
+replace the output sample already emitted at that position. The bridge is called
+after the copy, and its first output sample is emitted at the next host sample.
+
+Callback sizes from zero through `max_callback_frames` are accepted. Zero is a
+no-op. Per-channel in-place processing works; different channels must not alias.
+Input/output pointers are validated before any state change. Process uses no
+resizing, allocation, wait or GPU API. The existing non-RT service owner still
+owns submission. Prepare/reset/release still require joined callers; live masks
+and RT reset remain outside this slice.
+
+Tests compare partitions 1,31,32,63,64,127,128 and irregular splits against the
+actual CPU renderer at the same explicit latency, with zero-fed tails, a paused
+worker, all-CPU fallback and in-place buffers. The identity impulse uses Pulp's
+latency measurement helper; a report deliberately wrong by one sample must
+fail. A C++ allocation-operator guard covers the complete adapter/CPU fallback path;
+it does not interpose arbitrary C allocator calls.
+
+Terminal identities remain **internal bridge quantums**, not host callbacks.
+`GpuDelivered` means the bridge accepted that quantum into the adapter's output
+buffer. It must not be relabeled as a hardware-played host block, particularly
+when a stop discards a partly consumed output quantum. Physical-device playback
+is a separate endpoint. Release cancels outstanding bridge inputs; an unfinished
+input quantum was never admitted into that bridge.
