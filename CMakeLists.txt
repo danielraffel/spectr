@@ -281,6 +281,12 @@ if(SPECTR_SHARED_PRODUCT_ACCEPTANCE AND NOT SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     message(FATAL_ERROR "Shared product acceptance requires experimental shared renderer")
 endif()
 
+option(SPECTR_SHARED_NATIVE_HOST_PROBE
+       "Build diagnostic-only CLAP shared renderer export and binary host test" OFF)
+if(SPECTR_SHARED_NATIVE_HOST_PROBE AND NOT SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+    message(FATAL_ERROR "Shared native host probe requires shared product acceptance")
+endif()
+
 option(SPECTR_SHARED_SPECTRAL_FIXTURE
        "Build opt-in real shared spectral callback/worker consumer (new SDK required)" OFF)
 
@@ -3732,4 +3738,28 @@ else()
     message(STATUS
         "Spectr: Python3 interpreter not found; "
         "Spectr-materialized-merge-driver is NOT registered")
+endif()
+
+# Only the CLAP entry owns this diagnostic factory/export. Embedded CPU state
+# authors in Spectr-artifact-test retain their ordinary compilation contract.
+if(SPECTR_SHARED_NATIVE_HOST_PROBE)
+    if(NOT APPLE OR NOT TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+        message(FATAL_ERROR "Shared native host probe requires macOS CLAP")
+    endif()
+    target_compile_definitions(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE SPECTR_SHARED_NATIVE_HOST_PROBE=1)
+    target_link_options(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE "LINKER:-exported_symbol,_spectr_shared_host_probe_v1")
+    add_executable(Spectr-shared-clap-host EXCLUDE_FROM_ALL test/test_shared_clap_host.cpp)
+    target_include_directories(Spectr-shared-clap-host PRIVATE include "${PULP_CLAP_INCLUDE_DIR}")
+    target_compile_definitions(Spectr-shared-clap-host PRIVATE
+        SPECTR_HOST_EXPECTED_NAME="${SPECTR_NATIVE_PLUGIN_NAME}"
+        SPECTR_HOST_EXPECTED_ID="${SPECTR_NATIVE_BUNDLE_ID}"
+        SPECTR_HOST_FFT=${SPECTR_FFT_SIZE} SPECTR_HOST_HOP=${SPECTR_ANALYSIS_HOP})
+    target_link_libraries(Spectr-shared-clap-host PRIVATE Pulp::audio-analysis ${CMAKE_DL_LIBS})
+    add_dependencies(Spectr-shared-clap-host ${SPECTR_NATIVE_CLAP_TARGET})
+    add_test(NAME Spectr-shared-clap-host
+        COMMAND Spectr-shared-clap-host $<TARGET_FILE:${SPECTR_NATIVE_CLAP_TARGET}>)
+    set_tests_properties(Spectr-shared-clap-host PROPERTIES TIMEOUT 120 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-host-contract EXCLUDE_FROM_ALL test/test_shared_host_contract.cpp)
+    target_include_directories(Spectr-shared-host-contract PRIVATE include)
+    add_test(NAME Spectr-shared-host-contract COMMAND Spectr-shared-host-contract)
 endif()

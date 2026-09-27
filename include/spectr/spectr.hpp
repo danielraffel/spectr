@@ -274,6 +274,10 @@ public:
                       cancelled = 0, lost_records = 0;
     };
     SharedProductSnapshot shared_product_snapshot() const noexcept;
+    // Destructive diagnostic seal: caller has stopped processing. Stops the
+    // control publisher and renderer worker, checks release, then snapshots.
+    // No further process() until ordinary release()/prepare().
+    bool finalize_shared_product_snapshot(SharedProductSnapshot& out) noexcept;
     bool set_shared_product_force_cpu(bool force) noexcept;
 #endif
     Spectr();

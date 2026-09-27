@@ -455,6 +455,15 @@ Spectr::SharedProductSnapshot Spectr::shared_product_snapshot() const noexcept {
     return {true, unsigned(s.state), s.epoch, s.gpu_delivered, s.cpu_fallback,
             s.cancelled, s.lost_records};
 }
+bool Spectr::finalize_shared_product_snapshot(SharedProductSnapshot& out) noexcept {
+    param_sync_lane_.stop();
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    auto* shared = dynamic_cast<experimental::SharedSpectralMaskRenderer*>(renderer_.get());
+    if (!shared) { out = {}; return false; }
+    const bool confirmed = shared->release();
+    out = shared_product_snapshot();
+    return confirmed;
+}
 bool Spectr::set_shared_product_force_cpu(bool force) noexcept {
     if (processor_prepared_) return false;
     shared_product_force_cpu_ = force;
