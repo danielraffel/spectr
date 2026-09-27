@@ -12,10 +12,12 @@ join both callers before `reset()`, `release()`, destruction or inspecting
 provider diagnostics from another thread. That quiescent reset is not audio-thread safe; use the separate experimental
 `reset_realtime()` protocol described below from the callback.
 
-The supported slice is linear-phase, fully wet processing without mix
-ramps. Live layout publication and audio-owner staging use the existing CPU
-authority; `set_mix()` still refuses changes. The host block divides the spectral hop. Pipeline lead is 1 through
-8 **host blocks**, added to the renderer's intrinsic FFT-plus-hop latency.
+The bridge processes linear-phase fully wet audio. The partition adapter adds
+latency-aligned dry/wet automation with the existing CPU mixer. Live layout
+publication and audio-owner staging use the existing CPU authority. The bridge
+quantum divides the spectral hop. Its pipeline lead is 1 through 8 internal
+quantums, added to the renderer's intrinsic FFT-plus-hop latency; the partition
+adapter adds one more assembly quantum.
 Adapters must report that total to the host before activating the path.
 
 The CPU renderer advances on every callback, even when the GPU output is used.
@@ -170,10 +172,10 @@ C++ allocation count and runtime WebGPU transfer calls are zero. Existing reset,
 
 Dependencies are exact Pulp gain transport `116ee043a7` and frame observer
 `6adbdbcb57`; the focused build reuses previously validated provider objects and
-older SDK archives. It is not an installed-SDK or plugin-host proof. Fully wet
-mode remains mandatory. Dry/wet automation timing, real worker pacing, rendering
-contention, maximum-size capture/reset cost and product factory integration remain
-open. This validation path still computes the full CPU fallback continuously.
+older SDK archives. It is not an installed-SDK or plugin-host proof. The bridge remains fully wet;
+the partition adapter now owns dry/wet mixing as described below. Real worker
+pacing, rendering contention, maximum-size capture/reset cost and product
+factory integration remain open. This validation path still computes the full CPU fallback continuously.
 
 
 The separate stale-table implementation control deliberately keeps the worker's
@@ -183,3 +185,51 @@ shows that GPU-delivery counts alone would not catch the control-history defect.
 One control publisher may publish concurrently with the callback; preparation,
 release and destruction require that publisher, callback and worker to stop.
 The callback's `set_layout_rt` remains separate from the control publisher.
+
+
+## Dry/wet timing in the partition adapter
+
+The adapter mixes once, after selecting the wet GPU result or matching CPU
+fallback. It uses the existing Pulp `DryWetMixer`, including its linear curve
+and sample ramp. The inner CPU renderer stays fully wet. The dry delay equals
+reported total latency: FFT size plus hop plus additional pipeline latency.
+
+`set_mix` is a callback-owner operation at the current input-sample position.
+With extra latency `A`, a request at source sample `t` reaches the output mixer
+at `t + A`. This preserves the existing CPU renderer's automation envelope with
+its entire output delayed by `A`; applying the request immediately, or at the
+next assembled quantum, would move the envelope relative to the audio. Mask
+controls continue to come from the CPU frame observer independently of this mix.
+
+A prepared queue holds `A + 2` events. Repeated setters at the same sample
+position coalesce to the latest request, including calls separated by zero-frame
+process calls. One event per input sample bounds the live queue to at most
+`A + 1`. A defensive full-queue refusal leaves the accepted target unchanged;
+normal single-owner use cannot reach it. Invalid nonfinite values are refused,
+finite values clamp to `[0, 1]`, and cursor overflow is refused. No callback
+allocation or worker synchronization is added. Callers must serialize mix
+setters, processing and realtime reset on the callback owner.
+
+Realtime reset clears dry history and queued envelopes and settles the latest
+source-requested mix target, including a request whose delayed event has not
+played yet. A prepare/reprepare instead uses the supplied configuration's
+initial mix. Fixed and irregular host partitions, in-place buffers and worker
+fallback use the same mixer and chronology. This remains an opt-in experimental
+consumer, not a change to the shipping processor factory or default backend.
+
+The source-linked mix probe passes 22 runs covering instantaneous and 93-sample
+ramps, interrupted requests inside quantums, dense one-sample automation,
+1000 same-position requests separated by zero-frame calls, a pending request
+immediately before reset, fixed/irregular partitions, in-place processing and
+worker overflow. Maximum CPU-oracle residual is 1.78814e-07. Fully dry output is
+sample-identical to input delayed by the declared 480 samples, and forced
+fallback is exact. Callback C++ allocations and runtime WebGPU transfer calls
+are zero. The earlier control, reset, partition and bridge regressions also pass.
+These are provisional source-linked correctness results, with continuously
+executed CPU DSP and a serviced test worker; they establish no speedup or
+realtime scheduling envelope.
+
+The early-envelope mutation applies a mix request at `t` instead of `t + A`.
+It still reports 110 GPU deliveries but fails sample parity with residual
+0.259197 and exit 83. This detects the actual output-timing error independently
+of delivery counts and the absence of transport copies.

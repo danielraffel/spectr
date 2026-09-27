@@ -1,5 +1,6 @@
 #pragma once
 #include <spectr/experimental/shared_spectral_bridge.hpp>
+#include <pulp/signal/dry_wet_mixer.hpp>
 
 namespace spectr::experimental {
 // Adapts arbitrary host partitions to one fixed bridge quantum. The two local
@@ -26,7 +27,9 @@ public:
     void service() noexcept { bridge_.service(); }
     bool publish_layout(const MaskRenderer::Layout& layout) { return bridge_.publish_layout(layout); }
     bool set_layout_rt(const MaskRenderer::Layout& layout) noexcept { return bridge_.set_layout_rt(layout); }
-    bool set_mix(float) noexcept { return false; }
+    // Callback-owner request at the current input-sample position. Its envelope
+    // is delayed by additional_latency_samples to match the CPU reference.
+    bool set_mix(float mix) noexcept;
     bool pop_terminal(SharedSpectralBridge::Terminal& t) noexcept { return bridge_.pop_terminal(t); }
     std::uint64_t quantum_count() const noexcept { return quantums_.load(std::memory_order_acquire); }
     std::uint64_t serviced_quantums() const noexcept { return bridge_.serviced_blocks(); }
@@ -39,7 +42,16 @@ public:
         bridge_.set_service_observer(fn,context);
     }
 private:
+    bool process_wet(const float* const*,float* const*,unsigned frames) noexcept;
+    struct MixEvent { std::uint64_t sample=0; float target=1.f; };
     Config config_;
+    pulp::signal::DryWetMixer mixer_;
+    std::vector<MixEvent> mix_events_;
+    std::vector<const float*> mix_input_;
+    std::vector<float*> mix_output_;
+    std::size_t mix_read_=0,mix_write_=0,mix_count_=0;
+    std::uint64_t sample_cursor_=0;
+    float latest_mix_=1.f;
     SharedSpectralBridge bridge_;
     std::vector<float> input_,output_;
     std::vector<const float*> input_ptrs_;
