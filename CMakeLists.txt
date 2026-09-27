@@ -543,6 +543,8 @@ if(SPECTR_GPU_AUDIO_PERF_FIXTURE)
         test/gpu_stft_baseline.cpp)
     target_link_libraries(Spectr-gpu-stft-baseline PRIVATE Pulp::gpu-audio)
     add_test(NAME Spectr-gpu-stft-baseline COMMAND Spectr-gpu-stft-baseline)
+    add_test(NAME Spectr-gpu-stft-rejection-controls
+        COMMAND Spectr-gpu-stft-baseline --rejection-controls)
     set_tests_properties(Spectr-gpu-stft-baseline PROPERTIES
         SKIP_RETURN_CODE 77 TIMEOUT 60)
     add_test(NAME Spectr-gpu-audio-contention-contract
