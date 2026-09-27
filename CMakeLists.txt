@@ -272,6 +272,9 @@ pulp_add_binary_data(spectr_native_assets
 option(SPECTR_ENABLE_PERF_FIXTURES
        "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
 
+option(SPECTR_EXPERIMENTAL_SHARED_RENDERER
+       "Use experimental shared GPU linear renderer in native Spectr (adds fixed geometry latency)" OFF)
+
 option(SPECTR_SHARED_SPECTRAL_FIXTURE
        "Build opt-in real shared spectral callback/worker consumer (new SDK required)" OFF)
 
@@ -279,6 +282,21 @@ option(SPECTR_GPU_AUDIO_PERF_FIXTURE
        "Register opt-in staged GPU STFT baseline and lifecycle receipt checks" OFF)
 
 function(spectr_configure_native_target target)
+    if(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+        if(NOT TARGET Pulp::gpu-audio)
+            message(FATAL_ERROR "Experimental shared renderer requires Pulp::gpu-audio")
+        endif()
+        get_target_property(_spectr_target_sources ${target} SOURCES)
+        if("${_spectr_target_sources}" MATCHES "mask_renderer\\.cpp")
+            target_sources(${target} PRIVATE
+                src/experimental/shared_spectral_bridge.cpp
+                src/experimental/shared_spectral_partition_adapter.cpp
+                src/experimental/shared_spectral_renderer.cpp)
+            target_compile_definitions(${target} PRIVATE
+                SPECTR_EXPERIMENTAL_SHARED_RENDERER=1 SPECTR_ENABLE_EFFECTIVE_FRAME_OBSERVER=1)
+            target_link_libraries(${target} PUBLIC Pulp::gpu-audio)
+        endif()
+    endif()
     target_include_directories(${target} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
@@ -561,7 +579,8 @@ endif()
 if(SPECTR_SHARED_SPECTRAL_FIXTURE)
     add_library(SpectrSharedSpectralBridge STATIC EXCLUDE_FROM_ALL
         src/experimental/shared_spectral_bridge.cpp
-        src/experimental/shared_spectral_partition_adapter.cpp src/mask_renderer.cpp)
+        src/experimental/shared_spectral_partition_adapter.cpp
+        src/experimental/shared_spectral_renderer.cpp src/mask_renderer.cpp)
     target_include_directories(SpectrSharedSpectralBridge PUBLIC include)
     target_compile_definitions(SpectrSharedSpectralBridge PRIVATE SPECTR_ENABLE_EFFECTIVE_FRAME_OBSERVER=1)
     target_link_libraries(SpectrSharedSpectralBridge PUBLIC Pulp::gpu-audio Pulp::format)
@@ -580,6 +599,10 @@ if(SPECTR_SHARED_SPECTRAL_FIXTURE)
     target_link_libraries(Spectr-shared-spectral-controls PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-controls COMMAND Spectr-shared-spectral-controls)
     set_tests_properties(Spectr-shared-spectral-controls PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-renderer EXCLUDE_FROM_ALL test/test_shared_spectral_renderer.cpp)
+    target_link_libraries(Spectr-shared-spectral-renderer PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-renderer COMMAND Spectr-shared-spectral-renderer)
+    set_tests_properties(Spectr-shared-spectral-renderer PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
     add_executable(Spectr-shared-spectral-mix EXCLUDE_FROM_ALL test/test_shared_spectral_mix.cpp)
     target_link_libraries(Spectr-shared-spectral-mix PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-mix COMMAND Spectr-shared-spectral-mix)

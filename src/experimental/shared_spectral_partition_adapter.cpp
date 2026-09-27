@@ -19,7 +19,7 @@ bool SharedSpectralPartitionAdapter::prepare(const Config& c) {
     renderer.max_block=std::max(renderer.max_block,int(c.internal_quantum));
     renderer.initial_mix=1.f;renderer.mix_ramp_samples=0;
     SharedSpectralBridge::Config bridge_config{renderer,c.internal_quantum,
-        c.additional_latency_samples/c.internal_quantum-1,c.immutable_layout};
+        c.additional_latency_samples/c.internal_quantum-1,c.immutable_layout,c.allow_cpu_only,c.force_cpu_only};
     if(!bridge_.prepare(bridge_config))return false;
     config_=c;
     input_.assign(std::size_t(c.internal_quantum)*c.renderer.channels,0.f);

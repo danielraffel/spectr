@@ -17,10 +17,18 @@ public:
         MaskRendererConfig renderer;
         unsigned host_block=64, lead_host_blocks=4;
         MaskRenderer::Layout immutable_layout;
+        bool allow_cpu_only=false;
+        bool force_cpu_only=false;
+    };
+    enum class FenceReason : unsigned {
+        None, CpuProcess, InputJournal, ControlJournal, MissingControl,
+        ControlSequence, ProviderPrepare, ProviderRelease, ProviderResult,
+        ProviderSubmit, InputSequence, ForcedCpu
     };
     struct Terminal {
         std::uint64_t stream_epoch=0, block_sequence=0;
         bool ingress_admitted=false;
+        FenceReason callback_reason=FenceReason::None,worker_reason=FenceReason::None;
         pulp::gpu_audio::GpuAudioTerminalDisposition disposition;
     };
     // Preparation, quiescent reset and release require stopped and joined callers.
@@ -30,6 +38,10 @@ public:
     bool reset_realtime() noexcept;
     bool release();
     unsigned latency_samples() const noexcept;
+    unsigned maximum_tail_samples() const noexcept { return prepared_?unsigned(cpu_->maximum_tail_samples())+config_.host_block*config_.lead_host_blocks:0; }
+    unsigned long long active_generation() const noexcept { return prepared_?cpu_->active_generation():0; }
+    // Service owner or quiescent only.
+    bool provider_prepared() const noexcept { return gpu_ && gpu_->prepared(); }
     // Planar, fixed prepared block. false marks end-of-input draining; input
     // still feeds the CPU renderer, but no new GPU block is admitted.
     bool process(const float* const*, float* const*, bool admit=true) noexcept;
@@ -43,6 +55,12 @@ public:
         const auto e=requested_epoch_.load(std::memory_order_acquire);
         return callback_failed_epoch_.load(std::memory_order_acquire)==e ||
                worker_failed_epoch_.load(std::memory_order_acquire)==e;
+    }
+    FenceReason callback_fence_reason() const noexcept {
+        return callback_failed_epoch_.load(std::memory_order_acquire)==epoch()?callback_reason_.load():FenceReason::None;
+    }
+    FenceReason worker_fence_reason() const noexcept {
+        return worker_failed_epoch_.load(std::memory_order_acquire)==epoch()?worker_reason_.load():FenceReason::None;
     }
     std::uint64_t epoch() const noexcept { return requested_epoch_.load(std::memory_order_acquire); }
     std::uint64_t serviced_blocks() const noexcept {
@@ -66,6 +84,8 @@ private:
         std::uint64_t epoch=0, sequence=0;
         std::vector<float> samples;
     };
+    void fail_callback(FenceReason why) noexcept { callback_reason_=why;callback_failed_epoch_.store(epoch_,std::memory_order_release); }
+    void fail_worker(FenceReason why,std::uint64_t epoch) noexcept {worker_reason_=why;worker_failed_epoch_.store(epoch,std::memory_order_release);}
     void collect_completed() noexcept;
     void capture_frame(const MaskRenderer::Table&,std::uint64_t ordinal) noexcept;
     bool load_hop_gains() noexcept;
@@ -88,6 +108,7 @@ private:
     std::atomic<std::uint64_t> requested_epoch_{0},ready_epoch_{0},progress_epoch_{0};
     // One writer per fence: a late old-worker report cannot clear a new callback fence.
     std::atomic<std::uint64_t> callback_failed_epoch_{0},worker_failed_epoch_{0};
+    std::atomic<FenceReason> callback_reason_{FenceReason::None},worker_reason_{FenceReason::None};
     std::uint64_t epoch_limit_=0,worker_epoch_=0,physical_epoch_=0;
     ServiceObserver observer_=nullptr;
     void* observer_context_=nullptr;
