@@ -2639,6 +2639,37 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         press_x = v[0]; press_y = v[1];
                         detail = "wheeled";
                     } else detail = "bad-arg";
+                } else if (kind == "slider") {
+                    // `slider:<Label>@<fraction>`: a press at `fraction` of
+                    // the track in the menu row whose label paints <Label>.
+                    // The row is [label, track, value]; the track is found
+                    // from the label's row, never from fixed coordinates.
+                    const auto at = arg.rfind('@');
+                    int number = -1;
+                    auto* scope = spectr_menu_probe::menu_container(root, number);
+                    if (at == std::string::npos) detail = "bad-arg";
+                    else if (scope == nullptr) detail = "menu-absent";
+                    else {
+                        const auto* label = spectr_menu_probe::find_label_if(
+                            *scope, spectr_menu_probe::ends_with, arg.substr(0, at));
+                        // Walk up from the label to the first node holding the
+                        // three parts, rather than assuming how deep the span
+                        // that paints the label sits.
+                        const pulp::view::View* row_view = label;
+                        while (row_view != nullptr && row_view->child_count() < 3)
+                            row_view = row_view->parent();
+                        if (row_view == nullptr || row_view == scope) detail = "row-absent";
+                        else {
+                            const auto* track = row_view->child_at(1);
+                            float tx = 0.0f, ty = 0.0f;
+                            spectr_menu_probe::root_origin_of(*track, tx, ty);
+                            const float f = std::clamp(std::strtof(arg.c_str() + at + 1, nullptr), 0.0f, 1.0f);
+                            const pulp::view::Point pt{tx + track->bounds().width * f,
+                                                       ty + track->bounds().height * 0.5f};
+                            press_x = pt.x; press_y = pt.y;
+                            detail = click_at(pt);
+                        }
+                    }
                 } else if (kind == "modframe" || kind == "modstop") {
                     // A modulation frame through the real native->JS message
                     // the audio owner's publication path sends, with every
@@ -2909,6 +2940,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 const auto modulation = modulation_settings();
                 js << ",\"lfo1_enabled\":" << (modulation.enabled ? "true" : "false")
                    << ",\"lfo2_enabled\":" << (modulation.lfo2_enabled ? "true" : "false")
+                   << ",\"lfo1_depth\":" << modulation.depth
+                   << ",\"lfo1_rate\":" << modulation.beats_per_cycle
                    << ",\"lfo_target\":" << static_cast<int>(modulation.target)
                    << ",\"lfo_target_mask\":" << static_cast<int>(resolve_modulation_target_mask(modulation))
                    << ",\"n_visible\":" << n
