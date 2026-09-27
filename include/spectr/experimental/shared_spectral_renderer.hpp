@@ -31,6 +31,14 @@ public:
     void reset() noexcept override;
     unsigned long long active_generation() const noexcept override;
     Snapshot snapshot() const noexcept;
+    // Optional observer of the same non-RT emitted records. Install only before
+    // prepare; its context must outlive the renderer and its final stop.
+    struct TraceObserver {
+        void* context=nullptr;
+        void (*delivery)(void*,std::uint64_t,const SharedSpectralBridge::Terminal&) noexcept=nullptr;
+        void (*final)(void*,const SharedSpectralTraceFinal&) noexcept=nullptr;
+    };
+    void set_trace_observer(TraceObserver observer) noexcept { trace_observer_=observer; }
     static unsigned additional_latency(const MaskRendererConfig& c) noexcept {
         return c.analysis_hop>0?unsigned(c.analysis_hop/2)*5:0;
     }
@@ -38,6 +46,8 @@ private:
     bool stop() noexcept;
     void service() noexcept;
     void drain_terminals() noexcept;
+    SharedSpectralTraceRun trace_run_;
+    TraceObserver trace_observer_;
     MaskRendererConfig config_{};
     std::unique_ptr<SharedSpectralPartitionAdapter> adapter_=std::make_unique<SharedSpectralPartitionAdapter>();
     std::jthread worker_;

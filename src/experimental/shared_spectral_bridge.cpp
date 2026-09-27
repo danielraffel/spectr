@@ -17,6 +17,22 @@ std::uint64_t reserve_epochs() noexcept {
     return 0;
 }
 }
+void SharedSpectralBridge::count_quanta(std::uint64_t& counter) noexcept {
+    if(counter==std::numeric_limits<std::uint64_t>::max())accounting_overflow_=true;
+    else ++counter;
+}
+SharedSpectralStoppedAccounting SharedSpectralBridge::stopped_accounting() const noexcept {
+    SharedSpectralStoppedAccounting result;
+    result.input_quanta=lifetime_input_quanta_;
+    result.ingress_admitted_quanta=lifetime_ingress_admitted_quanta_;
+    result.terminal_enqueued=trace_write_.load(std::memory_order_relaxed);
+    result.terminal_popped=trace_read_.load(std::memory_order_relaxed);
+    result.lost_records=trace_lost_.load(std::memory_order_relaxed);
+    result.counter_overflow=accounting_overflow_ ||
+        result.lost_records>std::numeric_limits<std::uint64_t>::max()-result.terminal_enqueued;
+    if(!result.counter_overflow)result.terminal_attempts=result.terminal_enqueued+result.lost_records;
+    return result;
+}
 bool SharedSpectralBridge::prepare(const Config& c) {
     if(!release())return false;
     if(!c.host_block || c.host_block>8192 || c.lead_host_blocks<1 || c.lead_host_blocks>8 ||
@@ -89,11 +105,12 @@ bool SharedSpectralBridge::process(const float* const* input,float* const* outpu
     std::copy(cpu_block_.begin(),cpu_block_.end(),fallback_.begin()+(q%slots)*samples);
     admitted_[q%slots]=false;
     if(admit){
-        ++input_count_;auto& slot=inputs_[q%slots];
+        ++input_count_;count_quanta(lifetime_input_quanta_);auto& slot=inputs_[q%slots];
         if(!fenced() && claim_empty_or_obsolete(slot,epoch_)){
             slot.epoch=epoch_;slot.sequence=q;
             for(unsigned ch=0;ch<channels;++ch)std::copy_n(input[ch],b,slot.samples.data()+ch*b);
             slot.state.store(ready,std::memory_order_release);admitted_[q%slots]=true;
+            count_quanta(lifetime_ingress_admitted_quanta_);
         }else if(!fenced())fail_callback(FenceReason::InputJournal);
     }
     if(q<config_.lead_host_blocks){
@@ -120,10 +137,16 @@ bool SharedSpectralBridge::process(const float* const* input,float* const* outpu
 void SharedSpectralBridge::terminal(std::uint64_t sequence,
                                     pulp::gpu_audio::GpuAudioTerminalDisposition disposition) noexcept {
     const auto write=trace_write_.load(std::memory_order_relaxed);
-    if(write-trace_read_.load(std::memory_order_acquire)<trace_slots){
+    if(write<std::numeric_limits<std::uint64_t>::max() &&
+       write-trace_read_.load(std::memory_order_acquire)<trace_slots){
         trace_[write%trace_slots]={epoch_,sequence,admitted_[sequence%slots],callback_fence_reason(),worker_fence_reason(),disposition};
         trace_write_.store(write+1,std::memory_order_release);
-    }else trace_lost_.fetch_add(1);
+    }else {
+        const auto lost=trace_lost_.load(std::memory_order_relaxed);
+        if(lost==std::numeric_limits<std::uint64_t>::max())accounting_overflow_=true;
+        else trace_lost_.store(lost+1,std::memory_order_release);
+        if(write==std::numeric_limits<std::uint64_t>::max())accounting_overflow_=true;
+    }
     next_terminal_=sequence+1;
 }
 bool SharedSpectralBridge::prepare_worker(std::uint64_t requested) noexcept {

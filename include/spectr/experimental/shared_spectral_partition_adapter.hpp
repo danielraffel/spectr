@@ -43,6 +43,7 @@ public:
     auto worker_fence_reason() const noexcept { return bridge_.worker_fence_reason(); }
     bool fenced() const noexcept { return bridge_.fenced(); }
     std::uint64_t lost_trace_records() const noexcept { return bridge_.lost_trace_records(); }
+    auto stopped_accounting() const noexcept { return bridge_.stopped_accounting(); }
     auto diagnostics() const { return bridge_.diagnostics(); }
     std::uint64_t epoch() const noexcept { return bridge_.epoch(); }
     void set_service_observer(SharedSpectralBridge::ServiceObserver fn,void* context) noexcept {

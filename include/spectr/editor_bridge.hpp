@@ -45,6 +45,8 @@
 //  type="build_info_get"   — payload: {}
 //                             effect: return product + exact SDK provenance
 //  type="clipboard_write"  — payload: { text: string }
+//  The build-info response includes versioned gpu_audio delivery observations;
+//  unavailable counters are absent, and live values are not an accounting seal.
 //  type="build_info_copy"  — payload: {}
 //                             effect: copy canonical diagnostic text; report
 //                                     native clipboard success honestly

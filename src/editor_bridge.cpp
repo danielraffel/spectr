@@ -1,6 +1,7 @@
 #include "spectr/editor_bridge.hpp"
 
 #include "spectr/spectr.hpp"
+#include "spectr/detail/gpu_audio_status_projection.hpp"
 #include "spectr/edit_engine.hpp"
 #include "spectr/edit_modes.hpp"
 #include "spectr/pattern.hpp"
@@ -140,7 +141,7 @@ choc::value::Value pattern_library_projection_(const PatternLibrary& library) {
     return result;
 }
 
-std::string build_info_copy_text_(const Spectr& plugin) {
+std::string build_info_copy_text_(const Spectr& plugin, const GpuAudioStatus& gpu_status) {
     std::string result;
     const auto append = [&result](std::string_view label, std::string_view value) {
         if (value.empty()) return;
@@ -166,7 +167,7 @@ std::string build_info_copy_text_(const Spectr& plugin) {
                                   : std::string_view{"clean"});
     append("Build", pulp::runtime::kBuildType);
     append("Built", pulp::runtime::kBuildIso8601);
-    if (!result.empty()) result.pop_back();
+    result.append(detail::gpu_audio_status_copy_text(gpu_status));
     return result;
 }
 
@@ -190,7 +191,9 @@ choc::value::Value build_info_projection_(const Spectr& plugin) {
     if (!pulp::runtime::kBuildIso8601.empty())
         result.addMember("build_time", std::string{pulp::runtime::kBuildIso8601});
     result.addMember("sdk_dirty", pulp::runtime::kGitDirty);
-    result.addMember("copy_text", build_info_copy_text_(plugin));
+    const auto gpu_status=plugin.gpu_audio_status();
+    result.addMember("gpu_audio", detail::gpu_audio_status_projection(gpu_status));
+    result.addMember("copy_text", build_info_copy_text_(plugin,gpu_status));
     return result;
 }
 
@@ -452,7 +455,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     bridge.add_handler("build_info_copy",
         [&plugin, clipboard_writer](
             const choc::value::ValueView&) {
-            const auto text = build_info_copy_text_(plugin);
+            const auto text = build_info_copy_text_(plugin,plugin.gpu_audio_status());
             if (!clipboard_writer(text))
                 return EditorBridge::err_response("clipboard unavailable");
             return EditorBridge::ok_response();

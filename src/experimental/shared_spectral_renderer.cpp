@@ -13,6 +13,21 @@ bool SharedSpectralMaskRenderer::stop() noexcept {
     if(worker_.joinable()){worker_.request_stop();worker_.join();}
     prepared_=false;
     const bool released=adapter_->release();drain_terminals();
+    if(auto final=trace_run_.finish(released,adapter_->stopped_accounting(),adapter_->epoch(),
+                                   gpu_delivered_.load(),cpu_fallback_.load(),cancelled_.load())){
+        const auto& a=final->accounting;
+        PULP_TRACE_INSTANT_ARGS("gpu","spectr.shared_audio.final",
+            "schema_version",1,"renderer_run_id",final->renderer_run_id,
+            "first_epoch",final->first_epoch,"last_epoch",final->last_epoch,
+            "input_quanta",a.input_quanta,"ingress_admitted_quanta",a.ingress_admitted_quanta,
+            "terminal_attempts",a.terminal_attempts,"terminal_enqueued",a.terminal_enqueued,
+            "terminal_popped",a.terminal_popped,"lost_records",a.lost_records,
+            "counter_overflow",a.counter_overflow,"gpu_delivered",final->gpu_delivered,
+            "cpu_fallback",final->cpu_fallback,"cancelled",final->cancelled,
+            "physical_release_confirmed",final->physical_release_confirmed,
+            "quantum_frames",final->quantum_frames,"lead_quanta",final->lead_quanta);
+        if(trace_observer_.final)trace_observer_.final(trace_observer_.context,*final);
+    }
     state_.store(released?ProviderState::Unprepared:ProviderState::ReleaseUnconfirmed,std::memory_order_release);
     return released;
 }
@@ -26,6 +41,8 @@ bool SharedSpectralMaskRenderer::prepare(const MaskRendererConfig& c){
     a.allow_cpu_only=true;a.force_cpu_only=force_cpu_only_;
     if(!adapter_->prepare(a))return false;
     config_=c;prepared_=true;
+    trace_run_.begin(adapter_->stopped_accounting(),adapter_->epoch(),a.internal_quantum,
+                     a.additional_latency_samples/a.internal_quantum-1);
     gpu_delivered_=0;cpu_fallback_=0;cancelled_=0;lost_records_=0;
     state_.store(adapter_->provider_prepared()?ProviderState::SharedReady:ProviderState::CpuOnly,std::memory_order_release);
     try{
@@ -53,9 +70,11 @@ void SharedSpectralMaskRenderer::drain_terminals() noexcept {
     SharedSpectralBridge::Terminal terminal;
     while(adapter_->pop_terminal(terminal)){
         PULP_TRACE_INSTANT_ARGS("gpu","spectr.shared_audio.delivery",
+            "schema_version",1,"renderer_run_id",trace_run_.id(),
             "stream_epoch",terminal.stream_epoch,"block_sequence",terminal.block_sequence,
             "ingress_admitted",terminal.ingress_admitted,"disposition",unsigned(terminal.disposition),
             "callback_fence_reason",unsigned(terminal.callback_reason),"worker_fence_reason",unsigned(terminal.worker_reason));
+        if(trace_observer_.delivery)trace_observer_.delivery(trace_observer_.context,trace_run_.id(),terminal);
         switch(terminal.disposition){
         case pulp::gpu_audio::GpuAudioTerminalDisposition::GpuDelivered:++gpu_delivered_;break;
         case pulp::gpu_audio::GpuAudioTerminalDisposition::CpuFallback:++cpu_fallback_;break;
