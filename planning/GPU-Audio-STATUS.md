@@ -30,3 +30,14 @@ lead from spectral-hop lead. No shared-memory or realtime benefit claimed now.
 
 Verification: governed explicit build and focused CTest results are recorded
 under `/tmp/spectr-stft-baseline-evidence-20260927/hardening-*`.
+
+## Pulp implementation now in progress
+
+The prerequisite has an isolated implementation at
+`/tmp/pulp-shared-spectral-sdk-20260927`, branch
+`feat/shared-spectral-sdk-20260927`, initial commit `8fc7c916c8`.
+It supplies `GpuSpectralMaskSession` with persistent GPU history/OLA and imported
+slots. Provisional new-source CPU-oracle parity passed on real Metal; production
+SDK rebuild/install and expanded lifecycle acceptance are still open. The
+installed c17fc3 prefix used by this Spectr branch does not yet include that API.
+Do not switch Spectr to shared mode until the new installed consumer is proved.
