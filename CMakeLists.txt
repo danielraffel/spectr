@@ -272,6 +272,9 @@ pulp_add_binary_data(spectr_native_assets
 option(SPECTR_ENABLE_PERF_FIXTURES
        "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
 
+option(SPECTR_GPU_AUDIO_PERF_FIXTURE
+       "Register the opt-in GPU-audio lifecycle/lead receipt fixture (no GPU workload)" OFF)
+
 function(spectr_configure_native_target target)
     target_include_directories(${target} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -526,6 +529,24 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
+
+# This is deliberately opt-in and receipt-only. It validates the lifecycle
+# identity contract that a future shared Pulp provider will export from the
+# traced host process. Keeping it out of default and shipping builds prevents
+# a contract check from being mistaken for realtime GPU evidence.
+if(SPECTR_GPU_AUDIO_PERF_FIXTURE)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(NOT Python3_Interpreter_FOUND)
+        message(FATAL_ERROR
+            "SPECTR_GPU_AUDIO_PERF_FIXTURE requires a Python3 interpreter")
+    endif()
+    add_test(NAME Spectr-gpu-audio-contention-contract
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_audio_contention_trace.py)
+    set_tests_properties(Spectr-gpu-audio-contention-contract PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        TIMEOUT 30)
+endif()
 
 # The recall rule's negative controls.
 #

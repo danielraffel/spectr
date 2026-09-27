@@ -3,7 +3,9 @@
 
 This is a receipt-side fixture. It does not run a GPU workload. A future
 provider can export Perfetto rows as JSONL and use this to prove that every
-admitted block has one terminal disposition.
+admitted block has one terminal disposition. Every lifecycle row also carries
+the explicit pipeline lead (currently 1, 2, 4, or 8 blocks), so a receipt
+cannot silently mix measurements from different pipeline depths.
 """
 
 from __future__ import annotations
@@ -23,6 +25,18 @@ TERMINAL_DISPOSITIONS = frozenset({
     "gpu_delivered", "cpu_fallback", "silence", "stale_rejected",
     "late_rejected", "device_lost", "cancelled",
 })
+LEAD_BLOCKS = frozenset({1, 2, 4, 8})
+
+
+def _lead(row: dict[str, Any], index: int) -> int:
+    """Read the fixture's explicit pipeline lead from every lifecycle row."""
+    lead = row.get("lead_blocks")
+    if (isinstance(lead, bool) or not isinstance(lead, int)
+            or lead not in LEAD_BLOCKS):
+        allowed = ", ".join(str(value) for value in sorted(LEAD_BLOCKS))
+        raise ValueError(
+            f"row {index}: lead_blocks must be one of {{{allowed}}}")
+    return lead
 
 
 def _identity(row: dict[str, Any], index: int) -> tuple[int, int]:
@@ -43,6 +57,8 @@ def validate_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Validate lifecycle ordering and return a compact receipt summary."""
     admitted: set[tuple[int, int]] = set()
     terminal: dict[tuple[int, int], str] = {}
+    leads: dict[tuple[int, int], int] = {}
+    stages: dict[tuple[int, int], set[str]] = {}
     counts: Counter[str] = Counter()
     total = 0
     for index, row in enumerate(rows):
@@ -52,21 +68,36 @@ def validate_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
         if name not in EVENTS:
             raise ValueError(f"row {index}: unknown event {name!r}")
         identity = _identity(row, index)
+        lead = _lead(row, index)
         total += 1
         counts[str(name)] += 1
         if name == "gpu_audio_admission":
             if identity in admitted:
                 raise ValueError(f"row {index}: duplicate admission for {identity}")
             admitted.add(identity)
+            leads[identity] = lead
+            stages[identity] = {name}
         elif identity not in admitted:
             raise ValueError(f"row {index}: {name} precedes admission for {identity}")
+        elif leads[identity] != lead:
+            raise ValueError(
+                f"row {index}: lead_blocks changed for {identity} "
+                f"({leads[identity]} -> {lead})")
+        elif name in stages[identity]:
+            raise ValueError(f"row {index}: duplicate {name} for {identity}")
+        else:
+            stages[identity].add(name)
+        if name == "gpu_audio_completion" and "gpu_audio_submit" not in stages[identity]:
+            raise ValueError(f"row {index}: completion precedes submit for {identity}")
+        if name == "gpu_audio_terminal" and row.get("terminal_disposition") == "gpu_delivered":
+            if "gpu_audio_completion" not in stages[identity]:
+                raise ValueError(
+                    f"row {index}: gpu_delivered precedes completion for {identity}")
         if name == "gpu_audio_terminal":
             disposition = row.get("terminal_disposition")
             if disposition not in TERMINAL_DISPOSITIONS:
                 raise ValueError(
                     f"row {index}: unknown terminal disposition {disposition!r}")
-            if identity in terminal:
-                raise ValueError(f"row {index}: duplicate terminal for {identity}")
             terminal[identity] = str(disposition)
     orphaned = sorted(set(admitted) - set(terminal))
     if orphaned:
@@ -75,6 +106,7 @@ def validate_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "admitted_blocks": len(admitted),
         "terminal_blocks": len(terminal),
         "event_counts": dict(sorted(counts.items())),
+        "lead_blocks": dict(sorted(Counter(leads.values()).items())),
         "terminal_dispositions": dict(sorted(Counter(terminal.values()).items())),
         "rows": total,
     }
