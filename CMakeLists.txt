@@ -272,6 +272,9 @@ pulp_add_binary_data(spectr_native_assets
 option(SPECTR_ENABLE_PERF_FIXTURES
        "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
 
+option(SPECTR_SHARED_SPECTRAL_FIXTURE
+       "Build opt-in real shared spectral callback/worker consumer (new SDK required)" OFF)
+
 option(SPECTR_GPU_AUDIO_PERF_FIXTURE
        "Register opt-in staged GPU STFT baseline and lifecycle receipt checks" OFF)
 
@@ -553,6 +556,18 @@ if(SPECTR_GPU_AUDIO_PERF_FIXTURE)
     set_tests_properties(Spectr-gpu-audio-contention-contract PROPERTIES
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         TIMEOUT 30)
+endif()
+
+if(SPECTR_SHARED_SPECTRAL_FIXTURE)
+    add_library(SpectrSharedSpectralBridge STATIC EXCLUDE_FROM_ALL
+        src/experimental/shared_spectral_bridge.cpp src/mask_renderer.cpp)
+    target_include_directories(SpectrSharedSpectralBridge PUBLIC include)
+    target_link_libraries(SpectrSharedSpectralBridge PUBLIC Pulp::gpu-audio Pulp::format)
+    add_executable(Spectr-shared-spectral-fixture EXCLUDE_FROM_ALL
+        test/test_shared_spectral_fixture.cpp)
+    target_link_libraries(Spectr-shared-spectral-fixture PRIVATE SpectrSharedSpectralBridge)
+    add_test(NAME Spectr-shared-spectral-fixture COMMAND Spectr-shared-spectral-fixture)
+    set_tests_properties(Spectr-shared-spectral-fixture PROPERTIES TIMEOUT 60)
 endif()
 
 # The recall rule's negative controls.
