@@ -1,5 +1,6 @@
 #pragma once
 #include <spectr/mask_renderer.hpp>
+#include <spectr/experimental/shared_spectral_trace.hpp>
 #include <pulp/gpu_audio/gpu_spectral_mask.hpp>
 #include <pulp/gpu_audio/gpu_audio_program.hpp>
 #include <array>
@@ -70,6 +71,8 @@ public:
         return progress_epoch_.load(std::memory_order_acquire)==epoch()?completed_.load(std::memory_order_acquire):0;
     }
     std::uint64_t lost_trace_records() const noexcept { return trace_lost_.load(); }
+    // Callback, worker and trace reader must all be stopped. No live-reader contract.
+    SharedSpectralStoppedAccounting stopped_accounting() const noexcept;
     // Read only on the service owner, or after callback and worker have joined.
     pulp::gpu_audio::GpuSpectralMaskSession::Diagnostics diagnostics() const;
     enum class ServicePoint { BeforeInputClaim, InputClaimed, BeforeSubmit, BeforeOutputPublish, BeforeRelease, BeforePrepare };
@@ -77,6 +80,7 @@ public:
     // Optional non-RT instrumentation; install only while callers are stopped.
     void set_service_observer(ServiceObserver fn,void* context) noexcept { observer_=fn;observer_context_=context; }
 private:
+    friend struct SharedSpectralBridgeTestAccess;
     static constexpr unsigned slots=64, trace_slots=4096;
     enum : unsigned { empty, ready, busy };
     struct Slot {
@@ -109,6 +113,9 @@ private:
     // One writer per fence: a late old-worker report cannot clear a new callback fence.
     std::atomic<std::uint64_t> callback_failed_epoch_{0},worker_failed_epoch_{0};
     std::atomic<FenceReason> callback_reason_{FenceReason::None},worker_reason_{FenceReason::None};
+    std::uint64_t lifetime_input_quanta_=0,lifetime_ingress_admitted_quanta_=0;
+    bool accounting_overflow_=false;
+    void count_quanta(std::uint64_t& counter) noexcept;
     std::uint64_t epoch_limit_=0,worker_epoch_=0,physical_epoch_=0;
     ServiceObserver observer_=nullptr;
     void* observer_context_=nullptr;
