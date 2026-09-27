@@ -101,7 +101,7 @@ function blockAt(source, anchor, label) {
 // also reads the settled distance to the target inside this branch, and
 // deleting the whole branch would leave the plant failing on a missing busy
 // flag rather than on the excursion this control exists to measure.
-const SMOOTH_GUARD = "          if (!modulationActiveRef.current) {";
+const SMOOTH_GUARD = "          if (!modulationActiveRef.current || modulationHeld()) {";
 const UNGUARDED = "          if (true) {";
 
 if (plantSmoothing) {
@@ -128,6 +128,9 @@ for (const n of notes) console.log(n);
 function measureExcursion() {
   const drawSrc = blockAt(html, "const draw = (now) => {", "draw loop");
   const amfSrc = blockAt(html, "applyModulationFrame: (state) => {", "applyModulationFrame");
+  // The hold-while-editing predicate both of those read. With no gesture in
+  // flight it is false, so the rig measures the running-LFO path.
+  const heldSrc = blockAt(html, "const modulationHeld = () => {", "modulationHeld");
   const clampSrc = "const clamp = (v, a, b) => Math.max(a, Math.min(b, v));";
   const smoothSrc = "const smooth = (a, b, t) => a + (b - a) * (1 - Math.exp(-t));";
   const isMutedSrc = "function isMuted(g) { return g === -Infinity; }";
@@ -184,6 +187,8 @@ function measureExcursion() {
       const window = { SpectrAnalyzer: {
         native: true, debugSnapshot: () => null } };
       let last = 0;
+      const modulationHoldRef = { current: true };
+      ${heldSrc};
       ${drawSrc};
       const bank = { ${amfSrc} };
       return {

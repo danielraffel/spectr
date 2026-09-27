@@ -2552,6 +2552,14 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     // gesture, which is how a marquee selection is drawn.
                     std::uint16_t drag_mods = 0;
                     std::string drag_arg = arg;
+                    // A trailing "!hold" leaves the button down, so later
+                    // steps run mid-gesture; a `release` step lets go.
+                    bool drag_hold = false;
+                    if (drag_arg.size() > 5
+                        && drag_arg.compare(drag_arg.size() - 5, 5, "!hold") == 0) {
+                        drag_hold = true;
+                        drag_arg.resize(drag_arg.size() - 5);
+                    }
                     if (drag_arg.rfind("cmd+", 0) == 0) {
                         drag_mods = pulp::view::kModCmd;
                         drag_arg = drag_arg.substr(4);
@@ -2586,13 +2594,32 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                                       a.y + (b.y - a.y) * t},
                                     drag_mods, 1);
                             }
-                            if (auto* live = capture.live_in(root)) {
-                                pulp::view::MouseUpHost up_host;
-                                pulp::view::deliver_mouse_up(root, live, b, drag_mods, 1,
-                                                             up_host);
+                            if (drag_hold) {
+                                scenario_held_point_ = b;
+                                scenario_held_mods_ = drag_mods;
+                                scenario_drag_held_ = true;
+                                detail = "held";
+                            } else {
+                                if (auto* live = capture.live_in(root)) {
+                                    pulp::view::MouseUpHost up_host;
+                                    pulp::view::deliver_mouse_up(root, live, b, drag_mods, 1,
+                                                                 up_host);
+                                }
+                                detail = "dragged";
                             }
-                            detail = "dragged";
                         }
+                    }
+                } else if (kind == "release") {
+                    // Ends a `drag:...!hold` gesture where it was left.
+                    if (!scenario_drag_held_) detail = "not-held";
+                    else {
+                        scenario_drag_held_ = false;
+                        if (auto* target = root.hit_test(scenario_held_point_)) {
+                            pulp::view::MouseUpHost up_host;
+                            pulp::view::deliver_mouse_up(root, target, scenario_held_point_,
+                                                         scenario_held_mods_, 1, up_host);
+                            detail = "released";
+                        } else detail = "no-target";
                     }
                 } else if (kind == "wheel") {
                     // The real zoom gesture, through the host's own wheel verb.
@@ -2707,15 +2734,19 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         detail = "dispatched";
                     } catch (const std::exception&) { detail = "rejected"; }
                 } else if (kind == "rgprobe") {
-                    // The editor's PAINTED band heights (normalised, first
-                    // four), read back through a throw -- load_script returns
-                    // nothing, so the value rides the exception text.
+                    // The editor's PAINTED band heights (normalised, four
+                    // from band `arg`, default 0), read back through a throw
+                    // -- load_script returns nothing, so the value rides the
+                    // exception text.
+                    const int first_band = std::max(0, std::atoi(arg.c_str()));
                     try {
                         native_scripted_ui_->bridge()->load_script(
                             "(() => { const s = globalThis.__spectrTestHooks && "
                             "globalThis.__spectrTestHooks.renderState ? "
                             "globalThis.__spectrTestHooks.renderState() : null; "
-                            "throw new Error('PULPVALUE:' + (s ? s.gains.slice(0, 4).map((v) => "
+                            "throw new Error('PULPVALUE:' + (s ? s.gains.slice("
+                            + std::to_string(first_band) + ", " + std::to_string(first_band + 4)
+                            + ").map((v) => "
                             "Number.isFinite(v) ? v.toFixed(4) : String(v)).join('|') : 'none')); })();",
                             "spectr-scenario-render-probe");
                         detail = "no-value";
@@ -2942,6 +2973,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                    << ",\"lfo2_enabled\":" << (modulation.lfo2_enabled ? "true" : "false")
                    << ",\"lfo1_depth\":" << modulation.depth
                    << ",\"lfo1_rate\":" << modulation.beats_per_cycle
+                   << ",\"lfo1_shape\":" << static_cast<int>(modulation.shape)
                    << ",\"lfo_target\":" << static_cast<int>(modulation.target)
                    << ",\"lfo_target_mask\":" << static_cast<int>(resolve_modulation_target_mask(modulation))
                    << ",\"n_visible\":" << n

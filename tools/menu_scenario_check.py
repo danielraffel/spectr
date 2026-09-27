@@ -243,6 +243,11 @@ SCENARIO_KEYS = ";".join([
     "v_k5=key:down", "v_k6=key:down", "v_k7=key:down", "v_k8=key:down",
     "v_right=key:right", "v_right_settled=wait",
     "v_left=key:left", "v_left_settled=wait",
+    # Shape shows every waveform: a press on a glyph picks it, and with the
+    # cursor on the row Left/Right step through the shapes, wrapping.
+    "v_shape=slider:Shape@0.625", "v_shape_settled=wait",
+    "v_su=key:up", "v_su2=key:up", "v_shape_right=key:right", "v_shape_right_settled=wait",
+    "v_shape_wrap=key:right", "v_shape_wrap_settled=wait",
     "v_esc1=escape", "v_esc2=escape",
     # Leaving a selection. A Cmd-drag marquee selects some bands; a press on
     # a band OUTSIDE it only clears the selection (it used to mute that band
@@ -447,7 +452,7 @@ def lit(snapshot):
 # them. They are scored in the main run and excluded from the control's
 # population.
 KEY_INDEPENDENT = ("baseline:", "hover:", "outside:", "negative-control:",
-                   "placement:", "selection:", "slider:")
+                   "placement:", "selection:", "slider:", "shape:")
 
 
 def verify_keys(steps, plant_no_keys=False):
@@ -494,6 +499,13 @@ def verify_keys(steps, plant_no_keys=False):
             and abs(depth("v_left_settled") - depth("v_depth_settled")) < 0.004
             and "MODULATION" in labels(st("v_left_settled")),
             "keys:left-right-adjust-a-slider-row-and-stay")
+    def shape(name):
+        return st(name).get("lfo1_shape")
+    require(shape("v_left_settled") == 0 and shape("v_shape_settled") == 2,
+            "shape:a-press-on-a-waveform-picks-it")
+    require(shape("v_shape_right_settled") == 3 and shape("v_shape_wrap_settled") == 0
+            and "MODULATION" in labels(st("v_shape_wrap_settled")),
+            "keys:left-right-cycle-shapes-and-wrap")
     def selected(name):
         return [l for l in labels(st(name)) if l.startswith("Selection")]
     def muted_count(name):
