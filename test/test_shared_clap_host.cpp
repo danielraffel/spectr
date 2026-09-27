@@ -1,4 +1,5 @@
 #include <spectr/experimental/shared_host_probe.hpp>
+#include "shared_host_accounting.hpp"
 #include <clap/clap.h>
 #include <pulp/audio/analysis/audio_assertions.hpp>
 #include <pulp/audio/analysis/latency_evidence.hpp>
@@ -39,7 +40,7 @@ struct Module {
     bool initialized=false,active=false,processing=false;
     ~Module(){if(plugin){if(processing){audio_thread=true;plugin->stop_processing(plugin);audio_thread=false;}if(active)plugin->deactivate(plugin);plugin->destroy(plugin);}if(initialized)entry->deinit();if(library)dlclose(library);}
 };
-constexpr unsigned block=512, blocks=256;
+constexpr unsigned block=512, blocks=256, reset_block=128;
 constexpr int quantum=SPECTR_HOST_HOP/2;
 constexpr int expected_latency=SPECTR_HOST_FFT+SPECTR_HOST_HOP+5*quantum;
 constexpr int expected_tail=2*SPECTR_HOST_FFT+SPECTR_HOST_HOP+5*quantum;
@@ -101,7 +102,7 @@ int main(int argc,char** argv){
             const auto start=std::chrono::steady_clock::now();
             for(unsigned b=0;b<blocks;++b){
                 std::this_thread::sleep_until(start+std::chrono::nanoseconds(std::uint64_t(b)*block*1000000000/48000));
-                if(b==128){m.plugin->stop_processing(m.plugin);m.processing=false;m.plugin->reset(m.plugin);require(m.plugin->start_processing(m.plugin),"reset restart failed");m.processing=true;}
+                if(b==reset_block){m.plugin->stop_processing(m.plugin);m.processing=false;m.plugin->reset(m.plugin);require(m.plugin->start_processing(m.plugin),"reset restart failed");m.processing=true;}
                 for(unsigned i=0;i<block;++i){input[0][i]=.2f*std::sin(6.283185307179586*997*(b*block+i)/48000);input[1][i]=.15f*std::sin(6.283185307179586*431*(b*block+i)/48000);}
                 Events events;events.add(mix,b>96?40:100);events.add(trim,b>160?-6:0);events.add(band,b>64?-3:0);
                 if(b==64)events.add(band,-3,31);if(b==96)events.add(mix,40,17);if(b==160)events.add(trim,-6,29);
@@ -114,7 +115,14 @@ int main(int argc,char** argv){
             request.command=SpectrSharedHostRequest::Finalize;require(query(&request)==0&&request.release_confirmed,"checked renderer release failed");
             std::cout<<"mode="<<(mode?"forced_cpu":"normal")<<" gpu="<<request.gpu_selected<<" cpu="<<request.cpu_selected<<" cancelled="<<request.cancelled<<" lost="<<request.lost_records<<" processed_frames="<<request.processed_frames<<" release_confirmed="<<request.release_confirmed<<'\n';
             require(request.processed_frames==blocks*block&&request.rejected_process_calls==0,"callback accounting wrong");
-            require(request.gpu_selected+request.cpu_selected+request.cancelled==blocks*block/quantum&&request.lost_records==0,"terminal accounting incomplete");
+            const auto before_reset=spectr::host_probe::epoch_accounting(reset_block*block,quantum);
+            const auto after_reset=spectr::host_probe::epoch_accounting((blocks-reset_block)*block,quantum);
+            std::cout<<" admitted_quantums="<<before_reset.admitted_quantums+after_reset.admitted_quantums
+                     <<" reset_partial_frames="<<before_reset.partial_frames
+                     <<" final_partial_frames="<<after_reset.partial_frames<<'\n';
+            require(request.gpu_selected+request.cpu_selected+request.cancelled==
+                    before_reset.admitted_quantums+after_reset.admitted_quantums &&
+                    request.lost_records==0,"terminal accounting incomplete");
             require(mode?request.gpu_selected==0&&request.cpu_selected>0:request.gpu_selected>0,"GPU positive/forcedCPU control failed");
             require(query(&request)==2,"duplicate finalize accepted");request.command=SpectrSharedHostRequest::Configure;require(query(&request)==2,"finalized reconfigure accepted");
             // Deliberately try a callback after finalization: the diagnostic

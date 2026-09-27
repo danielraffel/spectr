@@ -1,5 +1,6 @@
 #include <spectr/experimental/shared_host_registry.hpp>
 #include <iostream>
+#include "shared_host_accounting.hpp"
 struct Fake {
     unsigned phase=0;
     int query(SpectrSharedHostRequest& r){
@@ -29,5 +30,18 @@ int main(){
     registry.remove(ta);const auto tc=registry.add(&b);
     r.command=SpectrSharedHostRequest::Snapshot;if(!check(registry.query(&r)==4))return 1;
     r.instance_token=0;if(!check(registry.query(&r)==0)||!check(r.instance_token==tc))return 1;
-    std::cout<<checks<<" registry checks passed; fake phase checks are not renderer lifecycle proof\n";
+    // Valid 1024-frame quantum, reset deliberately inside its fourth input.
+    // The old whole-render floor gives 8, but only 3 + 4 were admitted.
+    const auto left=spectr::host_probe::epoch_accounting(4093,1024);
+    const auto right=spectr::host_probe::epoch_accounting(8192-4093,1024);
+    if(!check(left.admitted_quantums==3)||!check(left.partial_frames==1021)||
+       !check(right.admitted_quantums==4)||!check(right.partial_frames==3)||
+       !check(left.admitted_quantums+right.admitted_quantums==7)||
+       !check(left.partial_frames+right.partial_frames==1024))return 1;
+    const auto aligned=spectr::host_probe::epoch_accounting(128*512,1024);
+    if(!check(aligned.admitted_quantums==64)||!check(aligned.partial_frames==0))return 1;
+    bool refused=false;try{(void)spectr::host_probe::epoch_accounting(1,0);}
+    catch(const std::invalid_argument&){refused=true;}
+    if(!check(refused))return 1;
+    std::cout<<checks<<" registry/accounting checks passed; fake phase checks are not renderer lifecycle proof\n";
 }

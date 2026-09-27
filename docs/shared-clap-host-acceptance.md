@@ -69,3 +69,23 @@ checked finalization. Binary absence of the diagnostic export in default builds
 requires a linked-symbol check; preprocessing alone is narrower evidence.
 Physical callback scheduling, DAW automation/PDC, editor contention, device loss,
 package installation, and performance comparisons remain separate gates.
+
+## Reset and comparison interpretation
+
+Renderer delivery counters accumulate until the next prepare, across reset
+boundaries. Reset first cancels pending bridge inputs in the old epoch, then
+advances its epoch and clears DSP history. Finalize cancels remaining inputs in
+the final epoch. Expected terminals are the sum of complete input quantums in
+each epoch, not the floor of total frames divided by the quantum. An incomplete
+quantum discarded at reset or shutdown was never admitted; the host prints those
+partial frame counts separately. Default geometry has no partial input here.
+The pure accounting regression uses quantum 1024 and reset at frame 4093 to
+ensure the two partial inputs cannot be mistaken for one admitted quantum.
+
+Normal mode may choose CPU fallback for any deadline. It needs at least one GPU
+selection, not a 100% GPU delivery rate. The CPU shadow runs continuously, and
+both selection paths use the same effective spectral controls and fixed delay.
+The comparison checks the peak absolute residual below -90 dBFS across both
+entire stereo captures, including startup, reset, automation and fallback. It
+does not align, crop, omit late blocks or change the reference based on timing.
+Scheduling can change selection counts; it must not change the audio contract.
