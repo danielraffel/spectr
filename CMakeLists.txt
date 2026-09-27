@@ -273,7 +273,7 @@ option(SPECTR_ENABLE_PERF_FIXTURES
        "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
 
 option(SPECTR_GPU_AUDIO_PERF_FIXTURE
-       "Register the opt-in GPU-audio lifecycle/lead receipt fixture (no GPU workload)" OFF)
+       "Register opt-in staged GPU STFT baseline and lifecycle receipt checks" OFF)
 
 function(spectr_configure_native_target target)
     target_include_directories(${target} PRIVATE
@@ -530,16 +530,21 @@ target_compile_definitions(Spectr-test PRIVATE
 )
 catch_discover_tests(Spectr-test)
 
-# This is deliberately opt-in and receipt-only. It validates the lifecycle
-# identity contract that a future shared Pulp provider will export from the
-# traced host process. Keeping it out of default and shipping builds prevents
-# a contract check from being mistaken for realtime GPU evidence.
+# Opt-in offline STFT baseline and receipt validation. Neither establishes
+# shared-memory execution or realtime deadlines. The executable is excluded
+# from the default build and must be built explicitly before running its test.
 if(SPECTR_GPU_AUDIO_PERF_FIXTURE)
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(NOT Python3_Interpreter_FOUND)
         message(FATAL_ERROR
             "SPECTR_GPU_AUDIO_PERF_FIXTURE requires a Python3 interpreter")
     endif()
+    add_executable(Spectr-gpu-stft-baseline EXCLUDE_FROM_ALL
+        test/gpu_stft_baseline.cpp)
+    target_link_libraries(Spectr-gpu-stft-baseline PRIVATE Pulp::gpu-audio)
+    add_test(NAME Spectr-gpu-stft-baseline COMMAND Spectr-gpu-stft-baseline)
+    set_tests_properties(Spectr-gpu-stft-baseline PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 60)
     add_test(NAME Spectr-gpu-audio-contention-contract
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_audio_contention_trace.py)
