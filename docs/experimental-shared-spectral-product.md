@@ -147,3 +147,56 @@ output timeline. A full-processor comparison must establish the intended
 chronology before describing the entire plugin output as the CPU product output
 shifted by the additional delay. No second trim ramp or hidden timing rewrite
 is introduced here.
+
+## Installed-SDK processor acceptance readiness
+
+`SPECTR_SHARED_PRODUCT_ACCEPTANCE=ON` adds a dedicated
+`Spectr-shared-product-acceptance` executable and stopped-lane diagnostics. The
+option is OFF by default and requires the experimental renderer. It does not
+change saved state or normal backend selection. Its forced-CPU control must be
+set before preparation and cannot change a prepared instance.
+
+The test constructs the real Spectr processor twice, with normal and forced-CPU
+shared wrappers. Both have identical declared latency. It compares emitted
+samples through mix, output-trim and band-gain events, requires nonzero normal
+GPU selections and zero forced-CPU GPU selections, checks lost records and PDC,
+and repeats prepare/process/release before switching to zero-latency CPU mode.
+It uses ordinary-thread pacing and establishes no realtime deadline guarantee.
+
+The snapshot describes selected spectral quantums before product mix and trim,
+not submissions, completions, callback counts or proof of audible GPU contribution
+at zero wet mix. It is separate from Pulp's transport `DeliverySnapshot`, since
+Spectr uses its stamped spectral bridge directly. Reads require the stopped
+control lane, with no concurrent prepare/release/mode replacement. Worker
+counters may still advance independently.
+
+Build against an exact, complete installed SDK, with no source-overlay libraries:
+
+```sh
+cmake -S . -B ../spectr-shared-product-installed-build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$SPECTR_ACCEPTANCE_SDK" \
+  -DSPECTR_EXPECTED_PULP_SDK_SHA="$SPECTR_ACCEPTANCE_SDK_SHA" \
+  -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$SPECTR_ACCEPTANCE_SOURCE_SHA" \
+  -DSPECTR_NATIVE_PREVIEW_IDENTITY=ON \
+  -DSPECTR_EXPERIMENTAL_SHARED_RENDERER=ON \
+  -DSPECTR_SHARED_PRODUCT_ACCEPTANCE=ON
+cmake --build ../spectr-shared-product-installed-build \
+  --target Spectr-shared-product-acceptance -j 2
+ctest --test-dir ../spectr-shared-product-installed-build \
+  -R '^Spectr-shared-product-acceptance$' --output-on-failure
+```
+
+This processor executable does not cross a plugin binary boundary. The existing
+`Spectr-artifact-test` target loads built CLAP/VST3/AU binaries via `Pulp::host`;
+run its format-specific cases separately against the same preview build. Existing
+CPU-centric expectations must be audited for the experimental extra PDC before
+calling that suite an acceptance gate. On a tracing-enabled SDK, preserve the
+actual plugin's `spectr.shared_audio.delivery` records with output/PDC/control
+receipts; a host that merely produces correct fallback audio does not prove GPU
+selection. AU registration/install and interactive DAW lifecycle remain separate
+from both executable tests.
+
+Readiness is not acceptance: source syntax is checked, but complete installed-SDK
+linking, this processor runtime, native-plugin host execution, default-binary
+symbol absence, and actual-plugin trace capture are still open until their
+receipts exist. The earlier source-linked renderer results remain separate.

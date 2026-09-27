@@ -275,6 +275,12 @@ option(SPECTR_ENABLE_PERF_FIXTURES
 option(SPECTR_EXPERIMENTAL_SHARED_RENDERER
        "Use experimental shared GPU linear renderer in native Spectr (adds fixed geometry latency)" OFF)
 
+option(SPECTR_SHARED_PRODUCT_ACCEPTANCE
+       "Build default-off actual-processor shared renderer acceptance diagnostics" OFF)
+if(SPECTR_SHARED_PRODUCT_ACCEPTANCE AND NOT SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    message(FATAL_ERROR "Shared product acceptance requires experimental shared renderer")
+endif()
+
 option(SPECTR_SHARED_SPECTRAL_FIXTURE
        "Build opt-in real shared spectral callback/worker consumer (new SDK required)" OFF)
 
@@ -296,6 +302,9 @@ function(spectr_configure_native_target target)
                 SPECTR_EXPERIMENTAL_SHARED_RENDERER=1 SPECTR_ENABLE_EFFECTIVE_FRAME_OBSERVER=1)
             target_link_libraries(${target} PUBLIC Pulp::gpu-audio)
         endif()
+    endif()
+    if(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+        target_compile_definitions(${target} PRIVATE SPECTR_SHARED_PRODUCT_ACCEPTANCE=1)
     endif()
     target_include_directories(${target} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -550,6 +559,18 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
+
+if(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+    add_executable(Spectr-shared-product-acceptance EXCLUDE_FROM_ALL
+        test/test_shared_product_acceptance.cpp ${SPECTR_NATIVE_SOURCES})
+    target_link_libraries(Spectr-shared-product-acceptance PRIVATE
+        Pulp::format Pulp::view Pulp::audio-analysis Catch2::Catch2WithMain spectr_native_assets)
+    spectr_configure_native_target(Spectr-shared-product-acceptance)
+    target_compile_definitions(Spectr-shared-product-acceptance PRIVATE SPECTR_NATIVE_ASSETS=1)
+    add_test(NAME Spectr-shared-product-acceptance COMMAND Spectr-shared-product-acceptance)
+    set_tests_properties(Spectr-shared-product-acceptance PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+endif()
+
 
 # Opt-in offline STFT baseline and receipt validation. Neither establishes
 # shared-memory execution or realtime deadlines. The executable is excluded

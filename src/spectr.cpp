@@ -447,11 +447,30 @@ MaskRendererConfig Spectr::renderer_config_() const noexcept {
     return config;
 }
 
+#if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+Spectr::SharedProductSnapshot Spectr::shared_product_snapshot() const noexcept {
+    const auto* shared = dynamic_cast<const experimental::SharedSpectralMaskRenderer*>(renderer_.get());
+    if (!shared) return {};
+    const auto s = shared->snapshot();
+    return {true, unsigned(s.state), s.epoch, s.gpu_delivered, s.cpu_fallback,
+            s.cancelled, s.lost_records};
+}
+bool Spectr::set_shared_product_force_cpu(bool force) noexcept {
+    if (processor_prepared_) return false;
+    shared_product_force_cpu_ = force;
+    return true;
+}
+#endif
+
 std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     std::unique_ptr<MaskRenderer> renderer;
     if(mode==MaskRenderMode::linear_phase)
-        renderer=std::make_unique<experimental::SharedSpectralMaskRenderer>();
+        renderer=std::make_unique<experimental::SharedSpectralMaskRenderer>(
+#if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
+            shared_product_force_cpu_
+#endif
+        );
     else renderer=make_mask_renderer(mode);
 #else
     auto renderer = make_mask_renderer(mode);
