@@ -156,6 +156,17 @@ args=(
   --plugin clap "$CLAP"
   --app "Standalone app" "$APP"
 )
+# Optional "Spectr Diagnostics" helper for test builds: a DiagnosticKit app
+# (https://github.com/danielraffel/pulp-diagnostickit) built with
+# tools/ship/diagnostics.env. It installs to /Applications as its own
+# Customize-pane component, and a tester who hits "it won't load" runs it to
+# save a report ZIP on the Desktop. Unset DIAG_APP to build without it; a set
+# DIAG_APP that does not exist is an error, never a silent omission.
+if [[ -n "${DIAG_APP:-}" ]]; then
+  [[ -d "$DIAG_APP" ]] || { echo "DIAG_APP does not exist: $DIAG_APP" >&2; exit 2; }
+  [[ -f "${DIAG_ENT:-}" ]] || { echo "DIAG_ENT must name DiagnosticKit.entitlements" >&2; exit 2; }
+  args+=(--app "Diagnostics helper" "$DIAG_APP" "$DIAG_ENT")
+fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
 
 exec "$PULP_ROOT/tools/scripts/build_combined_installer.sh" "${args[@]}"
