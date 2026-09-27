@@ -22,8 +22,7 @@ bool SharedSpectralBridge::prepare(const Config& c) {
     if(!c.host_block || c.host_block>8192 || c.lead_host_blocks<1 || c.lead_host_blocks>8 ||
        c.renderer.analysis_hop<int(c.host_block) || c.renderer.analysis_hop%c.host_block ||
        c.renderer.max_block<int(c.host_block) || c.renderer.channels<1 || c.renderer.channels>8 ||
-       c.renderer.initial_mix!=1.f || c.renderer.mix_ramp_samples!=0 ||
-       c.immutable_layout.transition_frames!=0)return false;
+       c.renderer.initial_mix!=1.f || c.renderer.mix_ramp_samples!=0)return false;
     auto cpu=make_mask_renderer(MaskRenderMode::linear_phase);
     if(!cpu || !cpu->prepare(c.renderer) || !cpu->publish_layout(c.immutable_layout))return false;
     const auto base=reserve_epochs();if(!base)return false;
@@ -32,11 +31,17 @@ bool SharedSpectralBridge::prepare(const Config& c) {
     cpu_block_.assign(samples,0);fallback_.assign(slots*samples,0);
     hop_input_.assign(c.renderer.analysis_hop*c.renderer.channels,0);
     hop_output_.assign(hop_input_.size(),0);cpu_ptrs_.resize(c.renderer.channels);
+    hop_gains_.assign(c.renderer.design_grid_size/2+1,1.f);
     for(int ch=0;ch<c.renderer.channels;++ch)cpu_ptrs_[ch]=cpu_block_.data()+ch*c.host_block;
     for(unsigned i=0;i<slots;++i){
         inputs_[i].samples.assign(samples,0);outputs_[i].samples.assign(samples,0);
-        inputs_[i].state.store(empty);outputs_[i].state.store(empty);
+        controls_[i].samples.assign(hop_gains_.size(),0.f);
+        inputs_[i].state.store(empty);outputs_[i].state.store(empty);controls_[i].state.store(empty);
     }
+    if(!cpu_->set_effective_frame_observer(this,
+        [](void* context,const MaskRenderer::Table& table,std::uint64_t ordinal) noexcept {
+            static_cast<SharedSpectralBridge*>(context)->capture_frame(table,ordinal);
+        }))return false;
     reset_callback_state();requested_epoch_.store(epoch_,std::memory_order_release);
     if(!prepare_worker(epoch_))return false;
     prepared_=true;return true;
@@ -125,7 +130,7 @@ bool SharedSpectralBridge::prepare_worker(std::uint64_t requested) noexcept {
     observe(ServicePoint::BeforeRelease);
     if(gpu_ && !gpu_->release()){worker_failed_epoch_=requested;return false;}
     gpu_.reset();worker_epoch_=requested;
-    worker_sequence_=hop_sequence_=0;accumulated_=0;hop_pending_=false;serviced_=0;completed_=0;
+    worker_sequence_=hop_sequence_=0;accumulated_=0;hop_pending_=false;hop_gains_loaded_=false;serviced_=0;completed_=0;
     progress_epoch_.store(requested,std::memory_order_release);
     if(requested_epoch_.load(std::memory_order_acquire)!=requested)return false;
     MaskRenderer::Table table;
@@ -133,8 +138,9 @@ bool SharedSpectralBridge::prepare_worker(std::uint64_t requested) noexcept {
                                         float(config_.renderer.sample_rate),table)){
         worker_failed_epoch_=requested;return false;
     }
+    std::copy_n(table.gain_linear.data(),table.num_bins,hop_gains_.data());
     observe(ServicePoint::BeforePrepare);
-    auto made=pulp::gpu_audio::GpuSpectralMaskSession::create({
+    auto made=pulp::gpu_audio::GpuSpectralMaskSession::create_with_per_hop_gains({
         unsigned(config_.renderer.design_grid_size),unsigned(config_.renderer.analysis_hop),
         unsigned(config_.renderer.channels),unsigned(config_.renderer.sample_rate),4,
         std::span<const float>(table.gain_linear.data(),table.num_bins)});
@@ -142,6 +148,35 @@ bool SharedSpectralBridge::prepare_worker(std::uint64_t requested) noexcept {
     gpu_=std::move(made.session);
     if(!made_ok){worker_failed_epoch_=requested;return false;}
     physical_epoch_=gpu_->epoch();return true;
+}
+void SharedSpectralBridge::capture_frame(const MaskRenderer::Table& table,std::uint64_t ordinal) noexcept {
+    if(fenced())return;
+    auto& slot=controls_[ordinal%slots];
+    if(table.num_bins!=int(slot.samples.size()) || !claim_empty_or_obsolete(slot,epoch_)){
+        callback_failed_epoch_.store(epoch_,std::memory_order_release);return;
+    }
+    slot.epoch=epoch_;slot.sequence=ordinal;
+    std::copy_n(table.gain_linear.data(),table.num_bins,slot.samples.data());
+    slot.state.store(ready,std::memory_order_release);
+}
+bool SharedSpectralBridge::load_hop_gains() noexcept {
+    const auto first_frame=std::uint64_t(config_.renderer.design_grid_size/config_.renderer.analysis_hop-1);
+    if(hop_sequence_<first_frame){hop_gains_loaded_=true;return true;}
+    const auto frame=hop_sequence_-first_frame;
+    auto& slot=controls_[frame%slots];unsigned expected=ready;
+    if(!slot.state.compare_exchange_strong(expected,busy,std::memory_order_acquire)){
+        worker_failed_epoch_=worker_epoch_;return false;
+    }
+    const auto latest=requested_epoch_.load(std::memory_order_acquire);
+    if(latest!=worker_epoch_ || slot.epoch!=worker_epoch_){
+        slot.state.store(slot.epoch==latest?ready:empty,std::memory_order_release);return false;
+    }
+    if(slot.sequence!=frame){
+        slot.state.store(empty,std::memory_order_release);worker_failed_epoch_=worker_epoch_;return false;
+    }
+    std::copy(slot.samples.begin(),slot.samples.end(),hop_gains_.begin());
+    slot.state.store(empty,std::memory_order_release);
+    hop_gains_loaded_=true;return true;
 }
 void SharedSpectralBridge::collect_completed() noexcept {
     while(auto result=gpu_->receive(hop_output_)){
@@ -181,13 +216,14 @@ void SharedSpectralBridge::service() noexcept {
     for(unsigned budget=0;budget<slots;++budget){
         if(requested_epoch_.load(std::memory_order_acquire)!=worker_epoch_)return;
         if(hop_pending_){
+            if(!hop_gains_loaded_ && !load_hop_gains())return;
             observe(ServicePoint::BeforeSubmit);
             if(requested_epoch_.load(std::memory_order_acquire)!=worker_epoch_)return;
-            if(!gpu_->submit_hop(hop_input_,hop_sequence_)){
+            if(!gpu_->submit_hop_with_gains(hop_input_,hop_sequence_,hop_gains_)){
                 if(!gpu_->prepared())worker_failed_epoch_=worker_epoch_;
                 return;
             }
-            ++hop_sequence_;accumulated_=0;hop_pending_=false;
+            ++hop_sequence_;accumulated_=0;hop_pending_=false;hop_gains_loaded_=false;
         }
         auto& slot=inputs_[worker_sequence_%slots];unsigned expected=ready;
         observe(ServicePoint::BeforeInputClaim);

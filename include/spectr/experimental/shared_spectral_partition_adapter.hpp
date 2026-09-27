@@ -24,6 +24,9 @@ public:
     // In-place per-channel buffers are supported; distinct channels may not alias.
     bool process(const float* const*,float* const*,unsigned frames) noexcept;
     void service() noexcept { bridge_.service(); }
+    bool publish_layout(const MaskRenderer::Layout& layout) { return bridge_.publish_layout(layout); }
+    bool set_layout_rt(const MaskRenderer::Layout& layout) noexcept { return bridge_.set_layout_rt(layout); }
+    bool set_mix(float) noexcept { return false; }
     bool pop_terminal(SharedSpectralBridge::Terminal& t) noexcept { return bridge_.pop_terminal(t); }
     std::uint64_t quantum_count() const noexcept { return quantums_.load(std::memory_order_acquire); }
     std::uint64_t serviced_quantums() const noexcept { return bridge_.serviced_blocks(); }

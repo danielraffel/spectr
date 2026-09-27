@@ -35,7 +35,9 @@ public:
     bool process(const float* const*, float* const*, bool admit=true) noexcept;
     void service() noexcept;
     bool pop_terminal(Terminal&) noexcept;
-    bool publish_layout(const MaskRenderer::Layout&) noexcept { return false; }
+    // Existing CPU renderer remains the only layout/transition authority.
+    bool publish_layout(const MaskRenderer::Layout& layout) { return prepared_ && cpu_->publish_layout(layout); }
+    bool set_layout_rt(const MaskRenderer::Layout& layout) noexcept { return prepared_ && cpu_->set_layout_rt(layout); }
     bool set_mix(float) noexcept { return false; }
     bool fenced() const noexcept {
         const auto e=requested_epoch_.load(std::memory_order_acquire);
@@ -65,6 +67,8 @@ private:
         std::vector<float> samples;
     };
     void collect_completed() noexcept;
+    void capture_frame(const MaskRenderer::Table&,std::uint64_t ordinal) noexcept;
+    bool load_hop_gains() noexcept;
     bool claim_empty_or_obsolete(Slot&,std::uint64_t epoch) noexcept;
     void reset_callback_state() noexcept;
     bool prepare_worker(std::uint64_t epoch) noexcept;
@@ -73,8 +77,8 @@ private:
     Config config_;
     std::unique_ptr<MaskRenderer> cpu_;
     std::unique_ptr<pulp::gpu_audio::GpuSpectralMaskSession> gpu_;
-    std::array<Slot, slots> inputs_, outputs_;
-    std::vector<float> cpu_block_, fallback_, hop_input_, hop_output_;
+    std::array<Slot, slots> inputs_, outputs_, controls_;
+    std::vector<float> cpu_block_, fallback_, hop_input_, hop_output_, hop_gains_;
     std::vector<float*> cpu_ptrs_;
     std::array<bool, slots> admitted_{};
     std::array<Terminal, trace_slots> trace_{};
@@ -89,6 +93,6 @@ private:
     void* observer_context_=nullptr;
     std::uint64_t epoch_=0, callback_sequence_=0, worker_sequence_=0, hop_sequence_=0, input_count_=0, next_terminal_=0;
     unsigned accumulated_=0;
-    bool prepared_=false, finishing_=false, hop_pending_=false;
+    bool prepared_=false, finishing_=false, hop_pending_=false, hop_gains_loaded_=false;
 };
 }

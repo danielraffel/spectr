@@ -12,9 +12,9 @@ join both callers before `reset()`, `release()`, destruction or inspecting
 provider diagnostics from another thread. That quiescent reset is not audio-thread safe; use the separate experimental
 `reset_realtime()` protocol described below from the callback.
 
-The supported initial slice is linear-phase, fully wet processing without mix
-ramps or layout transitions. `publish_layout()` and `set_mix()` explicitly refuse
-live changes. The host block divides the spectral hop. Pipeline lead is 1 through
+The supported slice is linear-phase, fully wet processing without mix
+ramps. Live layout publication and audio-owner staging use the existing CPU
+authority; `set_mix()` still refuses changes. The host block divides the spectral hop. Pipeline lead is 1 through
 8 **host blocks**, added to the renderer's intrinsic FFT-plus-hop latency.
 Adapters must report that total to the host before activating the path.
 
@@ -70,7 +70,7 @@ no-op. Per-channel in-place processing works; different channels must not alias.
 Input/output pointers are validated before any state change. Process uses no
 resizing, allocation, wait or GPU API. The existing non-RT service owner still
 owns submission. Prepare/quiescent reset/release still require joined callers.
-Live masks remain outside this slice; callback reset is described below.
+Live masks use the capture protocol described below; callback reset is described below.
 
 Tests compare partitions 1,31,32,63,64,127,128 and irregular splits against the
 actual CPU renderer at the same explicit latency, with zero-fed tails, a paused
@@ -127,3 +127,59 @@ These are source-linked correctness tests using reused provisional provider
 objects, not installed-SDK or paced host tests. Device-loss/physical-retirement
 failure injection, epoch exhaustion, maximum-geometry reset timing, live control
 publication, and authentic SDK/host integration remain open.
+
+
+## Capturing live effective masks
+
+The experimental build enables the linear renderer's effective-frame observer.
+Other renderers return unsupported, and the shipping renderer factory selection
+is unchanged. The bridge's `publish_layout` and `set_layout_rt` delegate to the
+existing CPU renderer. Its publication adoption and transition interpolation are
+the only control authority; the GPU worker never recomputes a ramp or compiles
+an independently selected latest layout. The configuration field
+`immutable_layout` is retained for source compatibility and now means initial
+layout. Only the experimental target defines the observer compile flag, so
+ordinary renderer builds do not require this new SDK method yet.
+
+Each applied coherent spectral frame copies its exact effective gains into a
+prepared64-slot control journal. Entries carry logical epoch and frame ordinal.
+The existing ingress quantum journal carries the matching samples. A control
+entry is published before the corresponding input quantum becomes Ready. Worker
+hop `q` requires frame `q - (FFT/hop - 1)` after initial FFT fill; it checks exact
+epoch and ordinal, copies that table into prepared worker scratch, and submits
+it through the SDK's per-hop shared-slot path. Retry retains the same table.
+Missing or colliding entries fence GPU acceptance for the epoch. All ordered
+contributing frames must be present, which is stronger than checking only a
+current-generation label on WOLA output.
+
+Reset preserves the observer, restarts frame order and tags subsequent tables
+with the new logical epoch. The worker replays the new input/control history
+from the beginning. Prepared initial gains are only used during initial FFT fill,
+when no analysis frame exists. Thus reset after automation follows the CPU's
+settled adopted mask even though the worker recreates its physical session.
+Input/output/control slots obey exclusive ownership before metadata reads.
+
+The provisional control suite passes17 cases: host partitions1/31/32/63/64/127/128,
+with and without a partial-quantum reset, two irregular-partition cases and one
+forced ingress overflow. It interrupts mask transitions, mixes control-thread
+publication with audio-owner staging, stalls the worker and verifies all output
+against the existing CPU renderer at the declared480-sample total latency.
+Maximum residual is2.08616e-07; overflow falls back with exact parity. Callback
+C++ allocation count and runtime WebGPU transfer calls are zero. Existing reset,
+18-partition and bridge lifecycle regressions pass against this implementation.
+
+Dependencies are exact Pulp gain transport `116ee043a7` and frame observer
+`6adbdbcb57`; the focused build reuses previously validated provider objects and
+older SDK archives. It is not an installed-SDK or plugin-host proof. Fully wet
+mode remains mandatory. Dry/wet automation timing, real worker pacing, rendering
+contention, maximum-size capture/reset cost and product factory integration remain
+open. This validation path still computes the full CPU fallback continuously.
+
+
+The separate stale-table implementation control deliberately keeps the worker's
+previous gains while still consuming every control slot. It fails actual sample
+parity with residual0.496724 and exit83 while reporting115 GPU outcomes. This
+shows that GPU-delivery counts alone would not catch the control-history defect.
+One control publisher may publish concurrently with the callback; preparation,
+release and destruction require that publisher, callback and worker to stop.
+The callback's `set_layout_rt` remains separate from the control publisher.

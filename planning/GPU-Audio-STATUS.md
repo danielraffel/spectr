@@ -152,3 +152,23 @@ Provider objects reused from 1ad61b59b0; this excludes the newer Pulp lifecycle
 fix b8d7ffd516. Authentic installed SDK, host integration, live automation,
 device-loss/failed-retirement injection, epoch exhaustion and maximum-geometry
 reset timing remain open. `performance_verdict: unassigned`.
+
+
+## Effective control capture successor (positive tests passed)
+
+Owner sdk_buildtree_probe, fresh `/tmp/spectr-shared-control-capture-20260927`
+based323a176. Exact dependency receipts116ee043a7 per-hop gain transport and
+6adbdbcb57 CPU effective-frame observer. Shipping selection unchanged, fullywet
+only. Linear renderer exposes observer only in experimental fixture build.
+64 prepared epoch/frame gain slots share chronology with existing input ingress;
+worker requires complete ordered gain history and fences missing/colliding tables.
+
+Provisional Release build and17 actual GPU control cases pass: all7 fixed host
+partitions with/without reset, two irregular cases, overflow. Maximum residual
+2.08616e-07; overflow residual0. Callback C++ allocations and runtime WebGPU
+transfer calls0. Existing reset+18partition and original bridge regression pass.
+Raw files `/tmp/spectr-shared-control-capture-provisional-20260927/`.
+Separate stale-table implementation mutation fails sample parity with residual
+0.496724 and exit83, despite115 GPU deliveries. Receipt will bind exact source,
+positive/mutant binaries and reused dependency objects.
+InstalledSDK, host, mix automation and performance remain open.

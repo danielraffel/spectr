@@ -26,7 +26,7 @@ int run(unsigned lead,bool force_overflow) {
     config.immutable_layout.bands[1].gain_db=-12;
     auto fixture=std::make_unique<SharedSpectralBridge>();
     if(!fixture->prepare(config))return 1;
-    if(fixture->latency_samples()!=1024+256+lead*64 || fixture->publish_layout(config.immutable_layout) || fixture->set_mix(.5))return 2;
+    if(fixture->latency_samples()!=1024+256+lead*64 || !fixture->publish_layout(config.immutable_layout) || fixture->set_mix(.5))return 2;
     const auto old_epoch=fixture->epoch();
     auto oracle=spectr::make_mask_renderer(spectr::MaskRenderMode::linear_phase);
     if(!oracle->prepare(config.renderer)||!oracle->publish_layout(config.immutable_layout))return 3;
