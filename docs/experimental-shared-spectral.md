@@ -9,7 +9,8 @@ Prepare an immutable layout while stopped, then call `process()` from one audio
 callback producer and `service()` from one non-realtime worker. All vectors,
 slots, CPU history and GPU resources are prepared ahead of processing. Stop and
 join both callers before `reset()`, `release()`, destruction or inspecting
-provider diagnostics from another thread. Reset is not audio-thread safe.
+provider diagnostics from another thread. That quiescent reset is not audio-thread safe; use the separate experimental
+`reset_realtime()` protocol described below from the callback.
 
 The supported initial slice is linear-phase, fully wet processing without mix
 ramps or layout transitions. `publish_layout()` and `set_mix()` explicitly refuse
@@ -20,7 +21,7 @@ Adapters must report that total to the host before activating the path.
 The CPU renderer advances on every callback, even when the GPU output is used.
 Missing or expired GPU outputs select the exact latency-aligned CPU output.
 This guarantees reference continuity within the validated envelope, but saves
-no CPU DSP work. An ingress gap or overflow fences GPU delivery until quiescent
+no CPU DSP work. An ingress gap or overflow fences GPU delivery until a new logical epoch through
 reset. The worker continues retiring physical GPU work.
 
 A callback only accepts output tagged with its target block sequence and epoch.
@@ -68,8 +69,8 @@ Callback sizes from zero through `max_callback_frames` are accepted. Zero is a
 no-op. Per-channel in-place processing works; different channels must not alias.
 Input/output pointers are validated before any state change. Process uses no
 resizing, allocation, wait or GPU API. The existing non-RT service owner still
-owns submission. Prepare/reset/release still require joined callers; live masks
-and RT reset remain outside this slice.
+owns submission. Prepare/quiescent reset/release still require joined callers.
+Live masks remain outside this slice; callback reset is described below.
 
 Tests compare partitions 1,31,32,63,64,127,128 and irregular splits against the
 actual CPU renderer at the same explicit latency, with zero-fed tails, a paused
@@ -84,3 +85,45 @@ buffer. It must not be relabeled as a hardware-played host block, particularly
 when a stop discards a partly consumed output quantum. Physical-device playback
 is a separate endpoint. Release cancels outstanding bridge inputs; an unfinished
 input quantum was never admitted into that bridge.
+
+## Callback reset successor (provisional correctness validated)
+
+`reset_realtime()` resets preallocated CPU fallback and adapter buffers, cancels
+pending logical outcomes, and publishes a new logical epoch. It never invokes
+the GPU service observer, provider creation/release or worker join. Quiescent
+`reset()` remains available separately. Logical identities are reserved in
+ranges during prepare; exhausting a range refuses callback reset and requires
+non-RT reprepare, without wrapping or aliasing an earlier stream.
+
+The worker retires/recreates its physical session and replays every captured
+new-epoch quantum from sequence zero. Ready output requires the new logical
+identity and exact target sequence. Input-slot collision or capacity loss fences
+GPU delivery for the entire epoch; CPU fallback remains aligned. A later reset
+can retry. The current API exposes this as `fenced()`; detailed product-facing
+failure reasons remain future diagnostic work.
+
+A service observer provides deterministic worker-side test barriers. It is
+optional, installed only while callers are stopped, and is never called by
+callback reset/process. Callback counters and terminal records use logical
+epochs; physical GPU epochs remain separate. Trace records and loss counters
+survive reset. Reset cost scales with prepared buffer geometry; allocation-free
+is not a hard realtime scheduling guarantee.
+
+The provisional reset suite passes history replay, reset storms, journal overflow,
+and six deterministic worker barriers. Successful recovery matched the CPU
+reference within 4.47035e-08 with 103 GPU and 21 fallback outcomes. Overflow
+remained entirely on CPU with exact parity. The callback C++ allocation guard
+observed zero calls. All 18 partition controls and original bridge lifecycle
+controls still pass.
+
+Three isolated faults were injected to check the tests themselves: omitting
+history replay failed with residual 0.149576; allowing old-epoch output delivered
+a stale sample and failed; discarding newly claimed current-epoch input failed
+recovery. The initial sample-only stale test missed its defect because the
+partition adapter delays accepted output another quantum. The final test checks
+both terminal acceptance and the subsequent emitted sample.
+
+These are source-linked correctness tests using reused provisional provider
+objects, not installed-SDK or paced host tests. Device-loss/physical-retirement
+failure injection, epoch exhaustion, maximum-geometry reset timing, live control
+publication, and authentic SDK/host integration remain open.

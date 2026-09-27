@@ -23,9 +23,11 @@ public:
         bool ingress_admitted=false;
         pulp::gpu_audio::GpuAudioTerminalDisposition disposition;
     };
-    // All preparation/reset/release calls require stopped and joined callers.
+    // Preparation, quiescent reset and release require stopped and joined callers.
     bool prepare(const Config&);
     bool reset();
+    // Single callback owner, between process calls. No GPU access or waiting.
+    bool reset_realtime() noexcept;
     bool release();
     unsigned latency_samples() const noexcept;
     // Planar, fixed prepared block. false marks end-of-input draining; input
@@ -35,22 +37,38 @@ public:
     bool pop_terminal(Terminal&) noexcept;
     bool publish_layout(const MaskRenderer::Layout&) noexcept { return false; }
     bool set_mix(float) noexcept { return false; }
-    bool fenced() const noexcept { return fenced_.load(std::memory_order_acquire); }
-    std::uint64_t epoch() const noexcept { return epoch_; }
-    std::uint64_t serviced_blocks() const noexcept { return serviced_.load(std::memory_order_acquire); }
-    std::uint64_t completed_hops() const noexcept { return completed_.load(std::memory_order_acquire); }
+    bool fenced() const noexcept {
+        const auto e=requested_epoch_.load(std::memory_order_acquire);
+        return callback_failed_epoch_.load(std::memory_order_acquire)==e ||
+               worker_failed_epoch_.load(std::memory_order_acquire)==e;
+    }
+    std::uint64_t epoch() const noexcept { return requested_epoch_.load(std::memory_order_acquire); }
+    std::uint64_t serviced_blocks() const noexcept {
+        return progress_epoch_.load(std::memory_order_acquire)==epoch()?serviced_.load(std::memory_order_acquire):0;
+    }
+    std::uint64_t completed_hops() const noexcept {
+        return progress_epoch_.load(std::memory_order_acquire)==epoch()?completed_.load(std::memory_order_acquire):0;
+    }
     std::uint64_t lost_trace_records() const noexcept { return trace_lost_.load(); }
     // Read only on the service owner, or after callback and worker have joined.
     pulp::gpu_audio::GpuSpectralMaskSession::Diagnostics diagnostics() const;
+    enum class ServicePoint { BeforeInputClaim, InputClaimed, BeforeSubmit, BeforeOutputPublish, BeforeRelease, BeforePrepare };
+    using ServiceObserver=void(*)(void*,ServicePoint) noexcept;
+    // Optional non-RT instrumentation; install only while callers are stopped.
+    void set_service_observer(ServiceObserver fn,void* context) noexcept { observer_=fn;observer_context_=context; }
 private:
     static constexpr unsigned slots=64, trace_slots=4096;
     enum : unsigned { empty, ready, busy };
     struct Slot {
         std::atomic<unsigned> state{empty};
-        std::uint64_t sequence=0;
+        std::uint64_t epoch=0, sequence=0;
         std::vector<float> samples;
     };
     void collect_completed() noexcept;
+    bool claim_empty_or_obsolete(Slot&,std::uint64_t epoch) noexcept;
+    void reset_callback_state() noexcept;
+    bool prepare_worker(std::uint64_t epoch) noexcept;
+    void observe(ServicePoint point) noexcept { if(observer_)observer_(observer_context_,point); }
     void terminal(std::uint64_t sequence, pulp::gpu_audio::GpuAudioTerminalDisposition) noexcept;
     Config config_;
     std::unique_ptr<MaskRenderer> cpu_;
@@ -62,7 +80,13 @@ private:
     std::array<Terminal, trace_slots> trace_{};
     std::atomic<std::uint64_t> trace_read_{0}, trace_write_{0}, trace_lost_{0};
     std::atomic<std::uint64_t> callback_count_{0}, serviced_{0}, completed_{0};
-    std::atomic<bool> fenced_{false};
+    static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
+    std::atomic<std::uint64_t> requested_epoch_{0},ready_epoch_{0},progress_epoch_{0};
+    // One writer per fence: a late old-worker report cannot clear a new callback fence.
+    std::atomic<std::uint64_t> callback_failed_epoch_{0},worker_failed_epoch_{0};
+    std::uint64_t epoch_limit_=0,worker_epoch_=0,physical_epoch_=0;
+    ServiceObserver observer_=nullptr;
+    void* observer_context_=nullptr;
     std::uint64_t epoch_=0, callback_sequence_=0, worker_sequence_=0, hop_sequence_=0, input_count_=0, next_terminal_=0;
     unsigned accumulated_=0;
     bool prepared_=false, finishing_=false, hop_pending_=false;

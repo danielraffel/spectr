@@ -120,3 +120,35 @@ If that journal loses a quantum, GPU stays fenced for the epoch; preparation alo
 cannot authorize rejoining with wrong history. Reset storms coalesce without
 callback waits; dropped telemetry remains visible. No runtime source or passing
 provisional test artifact was modified by this audit.
+
+## Callback reset implementation (provisional correctness passed)
+
+Owner sdk_buildtree_probe in `/tmp/spectr-shared-reset-20260927`, successor of
+664595a. Existing42d partition proof preserved. Implementing separate logical
+and physical epochs, callback-only CPU/reset/cancellation, epoch-tagged fixed
+slot journal, and worker-owned retirement/recreation. No shipping factory or
+live automation change. Provisional reset tests and race barriers passed.
+
+Reset review found a real ownership race: old worker could pass its epoch check,
+then claim newly published current-epoch input and discard it as an epoch
+mismatch. The fix rechecks requested epoch under slot ownership and preserves
+Ready input belonging to that current request. A new BeforeInputClaim barrier
+recreates that exact interleaving and requires journal progress after recovery.
+Initial mutation calibration also exposed a test gap: removing delivery epoch
+guards did not fail the sample-only stale test. The final test checks terminal acceptance and runs one more quantum to observe
+the emitted stale sample. All three final mutation controls fail as intended.
+
+
+Reset receipt: `/tmp/spectr-shared-reset-provisional-20260927/receipt.json`.
+Positive `runtime-v6.log` and `bridge-regression.log` exited 0. History recovery
+max residual 4.47035e-08, 103 GPU /21 fallback; journal overflow 0 GPU /124 fallback
+with exact parity. Six deterministic service barriers and all 18 variable host
+partition controls passed. Original bridge lifecycle/lead regression still passes.
+Callback C++ allocation count is zero; C allocator calls are not interposed.
+Final mutations in `/tmp/spectr-shared-reset-negative-v2-20260927/results-final.json`
+exit [39,61,63] for omitted history replay, stale sample delivery, and discarded
+current-epoch claimed ingress. Initial inadequate mutation evidence is retained.
+Provider objects reused from 1ad61b59b0; this excludes the newer Pulp lifecycle
+fix b8d7ffd516. Authentic installed SDK, host integration, live automation,
+device-loss/failed-retirement injection, epoch exhaustion and maximum-geometry
+reset timing remain open. `performance_verdict: unassigned`.

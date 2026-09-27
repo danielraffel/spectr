@@ -575,6 +575,10 @@ if(SPECTR_SHARED_SPECTRAL_FIXTURE)
         SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-partitions COMMAND Spectr-shared-spectral-partitions)
     set_tests_properties(Spectr-shared-spectral-partitions PROPERTIES TIMEOUT 120 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-reset EXCLUDE_FROM_ALL test/test_shared_spectral_reset.cpp)
+    target_link_libraries(Spectr-shared-spectral-reset PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-reset COMMAND Spectr-shared-spectral-reset)
+    set_tests_properties(Spectr-shared-spectral-reset PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
 
 endif()
 

@@ -28,6 +28,12 @@ bool SharedSpectralPartitionAdapter::prepare(const Config& c) {
     fill_=0;quantums_=0;prepared_=true;return true;
 }
 bool SharedSpectralPartitionAdapter::reset(){const auto copy=config_;return prepare(copy);}
+bool SharedSpectralPartitionAdapter::reset_realtime() noexcept {
+    if(!prepared_ || !bridge_.reset_realtime())return false;
+    std::fill(input_.begin(),input_.end(),0.f);
+    std::fill(output_.begin(),output_.end(),0.f);
+    fill_=0;quantums_=0;return true;
+}
 bool SharedSpectralPartitionAdapter::release(){prepared_=false;return bridge_.release();}
 unsigned SharedSpectralPartitionAdapter::latency_samples() const noexcept {
     return prepared_?bridge_.latency_samples()+config_.internal_quantum:0;

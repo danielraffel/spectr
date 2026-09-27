@@ -1,7 +1,9 @@
 # Proposed realtime reset for the experimental spectral adapter
 
 Read-only design against Spectr `42d0f1f` and composed Pulp `09c4b82186`.
-Not implemented. The passing provisional tests remain unchanged.
+Historical design, now implemented experimentally by the callback reset successor.
+See `experimental-shared-spectral.md` for provisional test results and remaining
+gates. The original design below is retained to preserve its reasoning.
 
 ## What can already reset safely
 

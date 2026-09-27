@@ -17,6 +17,7 @@ public:
     // Quiescent control-owner operations, never audio-thread reset/reprepare.
     bool prepare(const Config&);
     bool reset();
+    bool reset_realtime() noexcept;
     bool release();
     unsigned latency_samples() const noexcept;
     // Zero length is a no-op. Other lengths must fit the prepared maximum.
@@ -30,6 +31,10 @@ public:
     bool fenced() const noexcept { return bridge_.fenced(); }
     std::uint64_t lost_trace_records() const noexcept { return bridge_.lost_trace_records(); }
     auto diagnostics() const { return bridge_.diagnostics(); }
+    std::uint64_t epoch() const noexcept { return bridge_.epoch(); }
+    void set_service_observer(SharedSpectralBridge::ServiceObserver fn,void* context) noexcept {
+        bridge_.set_service_observer(fn,context);
+    }
 private:
     Config config_;
     SharedSpectralBridge bridge_;
