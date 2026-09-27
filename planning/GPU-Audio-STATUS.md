@@ -108,3 +108,15 @@ This provisional link reuses unchanged789419d bridge/provider objects and old SD
 archives. Authentic installed-SDK consumer remains a separate gate. Callback
 allocation instrumentation covers C++ allocation operators, not arbitrary C
 allocator interposition. Source has no callback wait or GPU API call.
+
+## Realtime reset audit (design only)
+
+`docs/experimental-shared-spectral-reset-design.md` records the minimum protocol.
+Existing CPU reset reuses allocated state; callback reset must not reuse current
+bridge reset because it recreates GPU resources. Proposed logical epoch handshake,
+epoch-tagged slots, callback-owned cancellation, worker-only physical retirement,
+and bounded post-reset input journal preserve history while CPU fallback advances.
+If that journal loses a quantum, GPU stays fenced for the epoch; preparation alone
+cannot authorize rejoining with wrong history. Reset storms coalesce without
+callback waits; dropped telemetry remains visible. No runtime source or passing
+provisional test artifact was modified by this audit.
