@@ -10960,7 +10960,9 @@ function restoreMaterializedLayout(node, bridge) {
     const bandCountReceipt = {
       trigger: centerBandText(
         nativeTextOwner(bandTrigger), liveBandCount + " bands \u25BE",
-        92, 73.03125, 22, 4.5),
+        // The caption sits inside the trigger's 1px border, so it centres
+        // in the 20px inner area, not the 22px border box.
+        92, 73.03125, 20, 3.5),
       options: []
     };
     const bandOptions = bandRoot ? Array.from(globalThis.document?.querySelectorAll?.(

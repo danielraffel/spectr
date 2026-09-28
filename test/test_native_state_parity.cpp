@@ -1099,8 +1099,8 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
 
     require_runtime_contract(
         rig,
-        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 4.5"
-        " && globalThis.__spectrBandCountCenteringReceipt__.trigger.height === 22"
+        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 3.5"
+        " && globalThis.__spectrBandCountCenteringReceipt__.trigger.height === 20"
         " && Math.abs(globalThis.__spectrBandCountCenteringReceipt__.trigger.left"
         " - 9.484375) < 0.001",
         "band trigger text was not optically centered");
@@ -1111,7 +1111,7 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
     CHECK(trigger_label->cached_line_boxes().front().left
           == Catch::Approx(9.484375f).margin(0.01f));
     CHECK(trigger_label->cached_line_boxes().front().top
-          == Catch::Approx(4.5f).margin(0.01f));
+          == Catch::Approx(3.5f).margin(0.01f));
 
     REQUIRE(static_cast<bool>(rig.root->on_global_key));
     const auto comma = static_cast<pulp::view::KeyCode>(',');
@@ -5918,7 +5918,10 @@ TEST_CASE("an open popup never shows the band plot's crosshair",
     storage.require_unchanged();
 }
 
-// THE ZOOM READOUT SITS ON THE HEADER'S LINE.
+// THE ZOOM READOUT AND THE BANDS CAPTION SIT ON THE HEADER'S LINE.
+//
+// Two separate causes, one symptom: each painted a point below the segmented
+// control's captions.
 //
 // Its layout box was always centred on the controls beside it; its glyphs were
 // not. The readout is a leaf added after the capture, so it carries no text
@@ -5928,6 +5931,10 @@ TEST_CASE("an open popup never shows the band plot's crosshair",
 // the baseline one point low. A box-only check cannot see this, so the case
 // measures three things: the layout boxes, the face metric that caused it, and
 // the painted ink itself against the segmented control's captions.
+//
+// The bands caption's line box is installed by the runtime's optical-centring
+// pass, which centred it in the trigger's 22px border box although the box sits
+// inside the 1px border; it has to centre in the 20px content box instead.
 TEST_CASE("the zoom readout's text sits on the header controls' line",
           "[native-n1][state-parity][header]") {
     PatternStoragePoison storage;
@@ -5971,7 +5978,8 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
         *rig.root, 1320, 860, kScale, &width, &height);
     REQUIRE(!rgba.empty());
     struct InkRows { float top = -1.0f; float bottom = -1.0f; };
-    const auto ink_rows = [&](const pulp::view::Label& label) {
+    const auto ink_rows = [&](const pulp::view::Label& label,
+                              const std::vector<std::uint8_t>& frame) {
         const auto origin = root_point(label, 0.0f, 0.0f);
         const auto x0 = static_cast<std::uint32_t>(origin.x * kScale);
         const auto x1 = std::min<std::uint32_t>(
@@ -5986,7 +5994,8 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
         for (std::uint32_t y = y0; y < y1; ++y) {
             bool inked = false;
             for (std::uint32_t x = x0; x < x1 && !inked; ++x) {
-                const auto* px = &rgba[(static_cast<std::size_t>(y) * width + x) * 4];
+                const auto* px =
+                    &frame[(static_cast<std::size_t>(y) * width + x) * 4];
                 inked = px[0] + px[1] + px[2] > 250;
             }
             if (!inked) continue;
@@ -5995,8 +6004,8 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
         }
         return rows;
     };
-    const auto readout_ink = ink_rows(*zoom);
-    const auto caption_ink = ink_rows(*caption);
+    const auto readout_ink = ink_rows(*zoom, rgba);
+    const auto caption_ink = ink_rows(*caption, rgba);
     CAPTURE(readout_ink.top, readout_ink.bottom,
             caption_ink.top, caption_ink.bottom);
     REQUIRE(readout_ink.top >= 0.0f);
@@ -6005,5 +6014,31 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
     // not see it.
     CHECK(readout_ink.top == Catch::Approx(caption_ink.top).margin(0.5f));
     CHECK(readout_ink.bottom == Catch::Approx(caption_ink.bottom).margin(0.5f));
+
+    // The bands trigger's caption shares the same line, both as captured and
+    // after its text changes -- a changed caption no longer matches its capture
+    // and is laid out natively, which is the state a user who picked another
+    // band count sees.
+    const auto check_bands_caption = [&](const char* text) {
+        const auto* label = find_label(*rig.root, text);
+        REQUIRE(label != nullptr);
+        const auto frame = pulp::view::render_to_rgba(
+            *rig.root, 1320, 860, kScale, &width, &height);
+        REQUIRE(!frame.empty());
+        const auto rows = ink_rows(*label, frame);
+        INFO(text);
+        CAPTURE(rows.top, rows.bottom, caption_ink.top, caption_ink.bottom);
+        REQUIRE(rows.top >= 0.0f);
+        CHECK(rows.top == Catch::Approx(caption_ink.top).margin(0.5f));
+        CHECK(rows.bottom == Catch::Approx(caption_ink.bottom).margin(0.5f));
+    };
+    check_bands_caption("32 bands ▾");
+    activate(rig, "[data-spectr-menu-root=\"bands\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-band-count=\"64\"]");
+    settle(rig.clock, 12);
+    require_app_state(rig, "s.settings.bandCount === 64",
+                      "the 64-band option was not selected");
+    check_bands_caption("64 bands ▾");
     storage.require_unchanged();
 }
+
