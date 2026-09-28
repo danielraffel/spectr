@@ -165,7 +165,7 @@ args=(
 if [[ -n "${DIAG_APP:-}" ]]; then
   [[ -d "$DIAG_APP" ]] || { echo "DIAG_APP does not exist: $DIAG_APP" >&2; exit 2; }
   [[ -f "${DIAG_ENT:-}" ]] || { echo "DIAG_ENT must name DiagnosticKit.entitlements" >&2; exit 2; }
-  args+=(--app "Diagnostics helper" "$DIAG_APP" "$DIAG_ENT")
+  args+=(--app "Diagnostics app" "$DIAG_APP" "$DIAG_ENT")
 fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
 
