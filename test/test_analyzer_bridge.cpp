@@ -380,3 +380,71 @@ TEST_CASE("output level: digital silence reads as -inf, never as 0 dBFS",
     drain_analyzer(*loud.processor);
     CHECK(std::isfinite(loud.processor->read_output_level().peak_db));
 }
+
+// THE ANALYZER KEEPS UP WITH THE AUDIO WHEN THE EDITOR TICKS SLOWLY.
+//
+// The editor drains the analyzer from its UI tick. At one 2048-frame poll per
+// tick it consumes 2048 x tick-rate frames per second, which falls under a
+// 48 kHz stream as soon as ticks slow below 23.4/s -- and they do, whenever a
+// React commit stalls the UI thread. The capture buffer then overflows, the
+// bridge drops audio and resets its analysis, and the spectrum blanks until a
+// fresh window fills. Seen as "the spectrum disappears" while editing with
+// audio playing.
+//
+// Driven at 10 ticks/s, each tick delivering the 100 ms of audio that arrived
+// during it. The control half proves the stimulus is harsh enough: the fixed
+// one-poll-per-tick policy must overflow under it, or a passing drain would
+// prove nothing.
+TEST_CASE("Analyzer bridge: a slow UI tick drains everything that arrived",
+          "[analyzer][drain]") {
+    constexpr double kTickSeconds = 0.1;
+    constexpr int kTickFrames = static_cast<int>(kSampleRate * kTickSeconds);
+    constexpr int kTicks = 40;
+
+    SECTION("fixed one poll per tick overflows (stimulus control)") {
+        PreparedSpectr plugin;
+        for (int tick = 0; tick < kTicks; ++tick) {
+            feed_sine(*plugin, 1000.0, 480, kTickFrames, 0.5f);
+            (void)plugin->bridge().poll();
+        }
+        INFO("one 2048-frame poll per 100 ms tick consumes 20,480 of 48,000 "
+             "frames/s; if nothing was dropped the stimulus is too gentle to "
+             "tell the drain policies apart");
+        CHECK(plugin->read_spectrum().dropped_frames > 0);
+    }
+
+    SECTION("elapsed-sized drain drops nothing") {
+        PreparedSpectr plugin;
+        std::uint64_t last_sequence = 0;
+        int advanced = 0;
+        for (int tick = 0; tick < kTicks; ++tick) {
+            feed_sine(*plugin, 1000.0, 480, kTickFrames, 0.5f);
+            plugin->drain_analyzer(kTickSeconds);
+            const auto& spectrum = plugin->read_spectrum();
+            // The first window needs 8,192 frames, so the opening ticks
+            // cannot publish yet.
+            if (tick >= 2 && spectrum.sequence_number != last_sequence)
+                ++advanced;
+            last_sequence = spectrum.sequence_number;
+        }
+        const auto& spectrum = plugin->read_spectrum();
+        CAPTURE(spectrum.dropped_frames, spectrum.sequence_number, advanced);
+        CHECK(spectrum.dropped_frames == 0);
+        // Every tick past the first window analyzed new audio, so the
+        // spectrum never froze.
+        CHECK(advanced == kTicks - 2);
+    }
+
+    SECTION("the poll count covers the elapsed audio, bounded") {
+        // A 60 Hz tick needs one poll; a 100 ms tick needs enough for 4,800
+        // frames plus headroom; a stalled second is capped at a full buffer.
+        CHECK(spectr::analyzer_polls_for_elapsed(1.0 / 60.0, kSampleRate) == 1);
+        CHECK(spectr::analyzer_polls_for_elapsed(0.0, kSampleRate) == 1);
+        const int slow = spectr::analyzer_polls_for_elapsed(kTickSeconds, kSampleRate);
+        CHECK(slow * spectr::kAnalyzerMaxFramesPerPoll >= kTickFrames);
+        CHECK(spectr::analyzer_polls_for_elapsed(10.0, kSampleRate)
+              == spectr::kAnalyzerMaxPollsPerTick);
+        CHECK(spectr::kAnalyzerMaxPollsPerTick * spectr::kAnalyzerMaxFramesPerPoll
+              >= spectr::kAnalyzerCaptureFrames);
+    }
+}

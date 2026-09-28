@@ -18,6 +18,7 @@
 #include <array>
 #include <atomic>
 #include <bitset>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -219,9 +220,39 @@ inline constexpr int kAnalyzerAnalysisHop =
     kAnalyzerAnalysisHopUncapped < 1 ? 1
     : (kAnalyzerAnalysisHopUncapped > kAnalyzerFftSize / 2
         ? kAnalyzerFftSize / 2 : kAnalyzerAnalysisHopUncapped);
-// At 30 UI polls/s this drains 61,440 frames/s, enough to stay ahead of a
-// 48 kHz stream while bounding each UI tick even in a refilling host.
+// One bridge poll analyzes at most this many frames, which bounds the FFT work
+// a single poll can do. A UI tick is NOT one poll: the editor asks
+// `analyzer_polls_for_elapsed` how many it owes for the time that actually
+// passed, so a slow tick drains what accumulated instead of leaving it queued.
 inline constexpr int kAnalyzerMaxFramesPerPoll = 2048;
+// VisualizationBridge's automatic capture capacity: four analyzer windows.
+// Audio arriving while this much is still unread is dropped, and the drop
+// resets the analysis -- the spectrum blanks until a fresh window fills.
+inline constexpr int kAnalyzerCaptureFrames = 4 * kAnalyzerFftSize;
+// Frames a tick drains per frame of audio that arrived during it. Above one so
+// a backlog left by an earlier slow tick is caught up rather than carried.
+inline constexpr double kAnalyzerDrainHeadroom = 1.5;
+// Enough polls to empty a full capture buffer in one tick, plus one for audio
+// that lands while it drains. Past this the buffer has already overflowed and
+// more polls only analyze audio that is already stale.
+inline constexpr int kAnalyzerMaxPollsPerTick =
+    kAnalyzerCaptureFrames / kAnalyzerMaxFramesPerPoll + 1;
+
+/// How many bridge polls a UI tick owes the analyzer after `elapsed_seconds`
+/// of audio at `sample_rate`. Sized from elapsed time rather than fixed per
+/// tick: at one 2048-frame poll per tick, a tick rate that falls under
+/// sample_rate / 2048 (23.4/s at 48 kHz) consumes less than arrives, and the
+/// capture buffer overflows within a second. At least one poll, so a tick that
+/// finds no time elapsed still picks up what is waiting.
+[[nodiscard]] inline int analyzer_polls_for_elapsed(double elapsed_seconds,
+                                                    double sample_rate) noexcept {
+    if (!(elapsed_seconds > 0.0) || !(sample_rate > 0.0)) return 1;
+    const double frames = elapsed_seconds * sample_rate * kAnalyzerDrainHeadroom;
+    const double polls = std::ceil(frames / kAnalyzerMaxFramesPerPoll);
+    if (!(polls < static_cast<double>(kAnalyzerMaxPollsPerTick)))
+        return kAnalyzerMaxPollsPerTick;
+    return polls < 1.0 ? 1 : static_cast<int>(polls);
+}
 static_assert(kSpectralFftSize >= pulp::signal::kSpectralFrameEngineMinimumFftSize
               && kSpectralFftSize
                      <= pulp::signal::kSpectralFrameEngineMaximumFftSize
@@ -580,6 +611,13 @@ public:
     // latest complete frame.
     pulp::view::VisualizationBridge& bridge() noexcept { return bridge_; }
     const pulp::view::SpectrumData& read_spectrum() { return bridge_.read_spectrum(); }
+    /// Analyze the audio captured over the last `elapsed_seconds`: as many
+    /// bridge polls as `analyzer_polls_for_elapsed` says that much audio needs.
+    /// UI thread only, like every other bridge read.
+    void drain_analyzer(double elapsed_seconds) {
+        const int polls = analyzer_polls_for_elapsed(elapsed_seconds, sample_rate_);
+        for (int poll = 0; poll < polls; ++poll) (void)bridge_.poll();
+    }
     const pulp::view::WaveformData& read_waveform() { return bridge_.read_waveform(); }
     const pulp::signal::MultiChannelMeterData& read_meter() { return bridge_.read_meter(); }
 
@@ -939,6 +977,9 @@ private:
     pulp::view::FrameClock* native_frame_clock_ = nullptr;
     int native_frame_subscription_ = -1;
     float native_analyzer_elapsed_ = 0.0f;
+    // Time since the analyzer was last drained. Unlike the publication
+    // cadence above, never wrapped: every second of it is audio to analyze.
+    double native_analyzer_drain_elapsed_ = 0.0;
     // Last PUBLISHED output-level reading, so an unchanged one costs no
     // script evaluation. peak is held at the 0.1 dB the editor prints.
     float native_output_level_peak_ = std::numeric_limits<float>::max();

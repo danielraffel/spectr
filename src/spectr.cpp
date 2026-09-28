@@ -863,6 +863,7 @@ void Spectr::configure_bridge_(int num_channels) {
     c.capture_waveform = true;
     c.waveform_length  = 1024;
     c.max_frames_per_poll = kAnalyzerMaxFramesPerPoll;
+    c.capture_buffer_frames = kAnalyzerCaptureFrames;
     bridge_.configure(c);
 }
 
