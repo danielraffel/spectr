@@ -5917,3 +5917,93 @@ TEST_CASE("an open popup never shows the band plot's crosshair",
     }
     storage.require_unchanged();
 }
+
+// THE ZOOM READOUT SITS ON THE HEADER'S LINE.
+//
+// Its layout box was always centred on the controls beside it; its glyphs were
+// not. The readout is a leaf added after the capture, so it carries no text
+// binding and resolved the stylesheet's monospace family by name, which reports
+// a point more ascent than the bound face every captured header label uses.
+// Native text centres a line as (box - ink) / 2 + ascent, so that point landed
+// the baseline one point low. A box-only check cannot see this, so the case
+// measures three things: the layout boxes, the face metric that caused it, and
+// the painted ink itself against the segmented control's captions.
+TEST_CASE("the zoom readout's text sits on the header controls' line",
+          "[native-n1][state-parity][header]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Layout boxes: the readout's box is centred on the bands trigger's.
+    rig.bridge().load_script(R"js((() => {
+      const trigger = document.querySelector(
+        '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
+      const zoom = Array.from(document.querySelectorAll('span')).find(
+        span => span.textContent.trim().endsWith('× zoom'));
+      if (!trigger || !zoom) throw new Error('header subjects missing');
+      const t = trigger.getBoundingClientRect();
+      const z = zoom.getBoundingClientRect();
+      const tc = t.top + t.height / 2, zc = z.top + z.height / 2;
+      if (Math.abs(tc - zc) > 1)
+        throw new Error('zoom readout box off the trigger line: trigger centre='
+          + tc + ' readout centre=' + zc);
+    })();)js", "spectr-native-zoom-readout-box");
+
+    const auto* zoom = find_label(*rig.root, "1.00× zoom");
+    const auto* caption = find_label(*rig.root, "BOTH");
+    const auto* bands = find_label(*rig.root, "32 bands ▾");
+    REQUIRE(zoom != nullptr);
+    REQUIRE(caption != nullptr);
+    REQUIRE(bands != nullptr);
+
+    // The face: the readout's ascent is the bound face's, the one the captured
+    // labels beside it are centred with.
+    CAPTURE(zoom->effective_font_family(), bands->effective_font_family());
+    CHECK(zoom->baseline_y() == Catch::Approx(bands->baseline_y()).margin(0.05f));
+
+    // The pixels: the readout's ink rows match the segmented captions'. Its
+    // digits and the captions' capitals share a cap height and neither has a
+    // descender, so equal top and bottom rows mean one shared line.
+    REQUIRE(pulp::view::raw_rgba_render_available());
+    constexpr float kScale = 2.0f;
+    std::uint32_t width = 0, height = 0;
+    const auto rgba = pulp::view::render_to_rgba(
+        *rig.root, 1320, 860, kScale, &width, &height);
+    REQUIRE(!rgba.empty());
+    struct InkRows { float top = -1.0f; float bottom = -1.0f; };
+    const auto ink_rows = [&](const pulp::view::Label& label) {
+        const auto origin = root_point(label, 0.0f, 0.0f);
+        const auto x0 = static_cast<std::uint32_t>(origin.x * kScale);
+        const auto x1 = std::min<std::uint32_t>(
+            width, static_cast<std::uint32_t>(
+                       (origin.x + label.bounds().width) * kScale));
+        const auto y0 = static_cast<std::uint32_t>(
+            std::max(0.0f, origin.y - 3.0f) * kScale);
+        const auto y1 = std::min<std::uint32_t>(
+            height, static_cast<std::uint32_t>(
+                        (origin.y + label.bounds().height + 3.0f) * kScale));
+        InkRows rows;
+        for (std::uint32_t y = y0; y < y1; ++y) {
+            bool inked = false;
+            for (std::uint32_t x = x0; x < x1 && !inked; ++x) {
+                const auto* px = &rgba[(static_cast<std::size_t>(y) * width + x) * 4];
+                inked = px[0] + px[1] + px[2] > 250;
+            }
+            if (!inked) continue;
+            if (rows.top < 0.0f) rows.top = static_cast<float>(y) / kScale;
+            rows.bottom = static_cast<float>(y + 1) / kScale;
+        }
+        return rows;
+    };
+    const auto readout_ink = ink_rows(*zoom);
+    const auto caption_ink = ink_rows(*caption);
+    CAPTURE(readout_ink.top, readout_ink.bottom,
+            caption_ink.top, caption_ink.bottom);
+    REQUIRE(readout_ink.top >= 0.0f);
+    REQUIRE(caption_ink.top >= 0.0f);
+    // Half a point: the defect is one point, so a one-point tolerance could
+    // not see it.
+    CHECK(readout_ink.top == Catch::Approx(caption_ink.top).margin(0.5f));
+    CHECK(readout_ink.bottom == Catch::Approx(caption_ink.bottom).margin(0.5f));
+    storage.require_unchanged();
+}
