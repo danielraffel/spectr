@@ -23,3 +23,18 @@ This validates the exact SDK consumer compile/runtime correctness and trace/cont
 contracts. It does not establish Spectr product audio integration, realtime
 scheduling, deadline reliability, p50/p99 audio timing, or a GPU speedup. The
 shipping product remains CPU-default; the shared spectral path is opt-in.
+
+## Public Pulp 0.878.0 compatibility smoke (September 28, 2026)
+
+A separate Release build used the freshly installed public Pulp `0.878.0`
+prefix from source `ed878f2a5cce38111f29df53b39b639aa72c84af`:
+
+- Pulp prefix: `/private/tmp/pulp-sdk-public-0.878.0-20260928`
+- `Spectr_Standalone`: configured and linked successfully
+- GPU-enabled Pulp/Skia/Dawn targets: resolved successfully
+- Relocatability checks: completed successfully
+
+This is a source/SDK compatibility smoke, not a replacement for the exact
+provenance-marked `0.877.2` acceptance receipt above. The public prefix was a
+local Release install and is not distribution-eligible until its provenance
+marker and package gates are produced.
