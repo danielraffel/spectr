@@ -3182,6 +3182,32 @@ if(SPECTR_NODE_EXECUTABLE)
     set_tests_properties(Spectr-materialized-marquee-render-cost-rectangle-control
         PROPERTIES TIMEOUT 60)
 
+    # PRESSING AND RELEASING A BAND DOES NOT RE-RENDER THE EDITOR. Measured
+    # with Perfetto, each press and each release of a band stroke cost
+    # 88-124 ms of React: the band reading went through the App's onStatus
+    # (a root commit plus the banner's own), and the release re-rendered the
+    # bank to refresh a gains mirror nothing on screen reads. The suite
+    # counts the renders each press/release schedules and checks the pill
+    # still gets every reading, directly. Four controls, one per mechanism:
+    # the release render, readings through onStatus, a mirror built on its
+    # stale copy (which lets a later edit undo a stroke), and a direct show
+    # that renders.
+    add_test(NAME Spectr-materialized-band-press-cost
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_press_cost.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-band-press-cost PROPERTIES TIMEOUT 60)
+    foreach(_spectr_press_plant release-render status-via-react stale-mirror banner-renders)
+        add_test(NAME Spectr-materialized-band-press-cost-${_spectr_press_plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_press_cost.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_spectr_press_plant} --expect-fail)
+        set_tests_properties(
+            Spectr-materialized-band-press-cost-${_spectr_press_plant}-control
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+
     # THE EDITOR STOPS PAINTING WHEN NOTHING CHANGED -- and wakes for every
     # path that can change the canvas. Measured on a genuinely idle editor
     # (nothing hovered, nothing playing, nothing animating) the draw loop

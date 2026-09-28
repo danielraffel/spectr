@@ -1381,9 +1381,15 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
       if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
         globalThis.__pulpRuntimeSettle__(4);
       const released = hooks.renderState();
-      if (released.reactGains.some((value, index) =>
-          Math.abs(value - released.targetGains[index]) > 1e-9))
-        throw new Error('band release did not publish final React state');
+      // The release does not re-render to refresh React's `gains`. That copy
+      // is a mirror nothing on screen reads -- the live projection leaves it
+      // stale the same way -- and every setter writes it from the ref, so a
+      // render here only re-applied the captured document. What must hold is
+      // the drawn result, and that no release render happened.
+      if (released.targetGains.every((value, index) => value === before[index]))
+        throw new Error('band release lost the drawn target');
+      if (released.reactGains.some((value, index) => value !== before[index]))
+        throw new Error('band release re-rendered React gains');
 
       // A transient leave between related drag/hover updates must not flash an
       // empty banner, and its stale clear timer must not erase the replacement.

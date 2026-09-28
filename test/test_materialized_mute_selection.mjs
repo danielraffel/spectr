@@ -322,8 +322,10 @@ for (const [key, kind] of [["s", "editMode"], ["l", "editMode"], ["b", "editMode
 // `b` spelling until the band context menu's unmute was fixed, and `b` is the
 // MENU's handler, not the click's: the check passed for the whole life of a
 // bug in the very line it was pointing at.
+// The toggle is deferred (the painters read the refs), which is why the call
+// carries its trailing `true`.
 check("CLICK still toggles a single band rather than the selection",
-  html.includes("commitGain(p.band, isMuted(cur) ? restored : -Infinity);"));
+  html.includes("commitGain(p.band, isMuted(cur) ? restored : -Infinity, true);"));
 
 // The menu's group mute WAS a one-way `map.set(i, -Infinity)` with no second
 // press that reversed it. It now defers to `toggleMuteSelection`, the owner
