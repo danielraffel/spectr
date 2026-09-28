@@ -317,7 +317,7 @@ const baseGlobals = {
   let stamp = 0;
   const pointer = (x, y, mods) => ({
     clientX: x, clientY: y, pointerId: 1, button: 0, timeStamp: ++stamp,
-    shiftKey: !!(mods && mods.shift), altKey: false, metaKey: false,
+    shiftKey: !!(mods && mods.shift), altKey: !!(mods && mods.alt), metaKey: false,
     ctrlKey: false, preventDefault() {}, stopPropagation() {},
   });
   // Renders until nothing React would schedule is left: the harness's
@@ -469,6 +469,52 @@ const baseGlobals = {
     }
     if (!Number.isFinite(after[20]) || !Number.isFinite(after[6])) {
       fail("unmute-all did not unmute the clicked and brushed bands");
+    }
+  }
+
+  // B5. A PAN (Alt + drag) moves the view on every sample without a render.
+  // Minimap drags and the wheel already publish the live viewport and settle
+  // once; a pan re-rendered the whole captured document on every move. It
+  // gets one settling commit on release, and the view must land where the
+  // drag put it.
+  if (!sharedState.current || typeof sharedState.current.zoomTo !== "function") {
+    fail("the bank handle has no zoomTo, so the pan row cannot run");
+  } else {
+    sharedState.current.zoomTo(200, 2000);
+    settle();
+    const start = { ...renderState().view };
+    const span = start.lmax - start.lmin;
+    const panDown = measure("pan press", () =>
+      surface.props.onPointerDown(pointer(centre(16), PLOT_Y, { alt: true })));
+    const moves = measure("pan moves", () => {
+      for (let i = 1; i <= 12; i++)
+        surface.props.onPointerMove(pointer(centre(16) - i * 10, PLOT_Y, { alt: true }));
+    });
+    const live = { ...renderState().view };
+    const panUp = measure("pan release", () =>
+      surface.props.onPointerUp(pointer(centre(16) - 120, PLOT_Y, { alt: true })));
+    render();
+    const settled = renderState();
+    const expected = start.lmin + (120 / inner.w) * span;
+    console.log("measured  pan: view %s..%s live, %s..%s settled (expected lmin %s)",
+      live.lmin.toFixed(6), live.lmax.toFixed(6),
+      settled.view.lmin.toFixed(6), settled.view.lmax.toFixed(6), expected.toFixed(6));
+    if (moves.commits !== 0) {
+      fail(`12 pan moves scheduled ${moves.commits} React render(s); a pan must `
+        + "publish the live viewport and settle once, like a minimap drag");
+    }
+    if (panDown.commits !== 0) fail(`the pan press scheduled ${panDown.commits} render(s)`);
+    if (panUp.commits > 1) {
+      fail(`the pan release scheduled ${panUp.commits} render(s); one settle is enough`);
+    }
+    if (Math.abs(live.lmin - expected) > 1e-9 || Math.abs(live.lmax - live.lmin - span) > 1e-9) {
+      fail(`the live view is ${live.lmin}..${live.lmax}; the drag put it at `
+        + `${expected}..${expected + span}`);
+    }
+    if (Math.abs(settled.view.lmin - expected) > 1e-9
+        || Math.abs(settled.reactView.lmin - expected) > 1e-9) {
+      fail(`after release the view is ${settled.view.lmin} (React copy `
+        + `${settled.reactView.lmin}); both must settle at ${expected}`);
     }
   }
 }

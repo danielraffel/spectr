@@ -790,12 +790,15 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   "updateLiveHoverStatus();") == 3);
         CHECK(count_occurrences(document,
                   "const commitLiveViewport = (next) => {") == 1);
+        // Live viewport writers: the minimap resize, the wheel zoom and the
+        // pan; the minimap drag and the horizontal wheel pan.
         CHECK(count_occurrences(document,
-                  "commitLiveViewport({ lmin, lmax });") == 2);
+                  "commitLiveViewport({ lmin, lmax });") == 3);
         CHECK(count_occurrences(document,
                   "commitLiveViewport({ lmin, lmax: lmin + span });") == 2);
+        // One settling commit per gesture kind: the minimap's and the pan's.
         CHECK(count_occurrences(document,
-                  "setView({ ...viewRef.current });") == 1);
+                  "setView({ ...viewRef.current });") == 2);
         CHECK(count_occurrences(document,
                   "reactView: { ...reactView }") == 1);
         CHECK(count_occurrences(document, "const editBaseGain = (value, index) => {") == 1);
