@@ -341,6 +341,63 @@ function lift(label, startMarker, endMarker, { includeEnd = false } = {}) {
   }
 }
 
+// ------------------------------------------- one path walk per binding per pass
+// The applier resolves every captured binding's node by walking its path from
+// the registry roots, and asked up to five times per binding per pass (once
+// per filter, once to apply), re-filtering each node's children on every step
+// -- a querySelector per Settings-overlay candidate. With a pass-scoped
+// children memo, each node's children are filtered once per pass however many
+// bindings walk through it.
+{
+  const walkSrc = lift("path walk", "  function materializedElementChildren(node, registrySet) {",
+    "  function ensureSpectrNativeScrollView(node, values) {");
+  if (walkSrc) {
+    let filters = 0;
+    const node = (tag, children = []) => {
+      const n = { tagName: tag, _children: children,
+        getAttribute(name) { filters += name === "aria-label" ? 1 : 0; return null; } };
+      for (const c of children) c.parentElement = n;
+      return n;
+    };
+    const leaves = Array.from({ length: 12 }, () => node("span"));
+    const row = node("div", leaves);
+    const root = node("div", [node("div", [row])]);
+    const values = [root, root._children[0], row, ...leaves];
+    const sandbox = { Set, Map, Array, String };
+    vm.runInNewContext(walkSrc + `
+      globalThis.walk = (bindings, values, memoised) => {
+        const index = materializedPathIndex(values);
+        if (memoised) index.childrenMemo = new Map();
+        for (const b of bindings) materializedNodeAtPath(b, values, true, index);
+      };`, sandbox);
+    const bindings = leaves.map((_, i) => ({ path: [
+      { tag: "div", index: 0 }, { tag: "div", index: 0 },
+      { tag: "div", index: 0 }, { tag: "span", index: i }] }));
+    filters = 0;
+    sandbox.walk(bindings, values, true);
+    const memoised = filters;
+    filters = 0;
+    sandbox.walk(bindings, values, false);
+    const unmemoised = filters;
+    console.log("measured  12 bindings through one row: %d child filters with the "
+      + "pass memo, %d without", memoised, unmemoised);
+    // Every node on the shared path is filtered once: root's, the wrapper's,
+    // the row's children -- 1 + 1 + 12 checks -- however many bindings walk it.
+    if (memoised > 14) {
+      fail(`12 bindings sharing one path re-filtered children ${memoised} times; `
+        + "a pass-scoped memo filters each node's children once");
+    }
+    if (!(unmemoised > memoised)) {
+      fail("the walk without a memo did no more work than with one, so this row "
+        + "cannot tell the two apart");
+    }
+  }
+  if (!source.includes("pathIndex.childrenMemo = ")
+      || !source.includes("const nodeAtPath = (binding) => {")) {
+    fail("the metadata applier does not share path walks across a pass");
+  }
+}
+
 // ------------------------------------------------------------------ verdict
 if (expectFail) {
   if (failures.length === 0) {

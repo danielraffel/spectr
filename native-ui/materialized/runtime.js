@@ -9364,9 +9364,14 @@ function createWidget(type, id, parentId, props) {
     const registrySet = index.registrySet;
     let siblings = index.roots;
     let node = null;
+    const memo = filterHiddenSettings && index.childrenMemo ? index.childrenMemo : null;
     for (const step of binding.path) {
       node = siblings[step.index] || null;
       if (!node || materializedNodeTag(node) !== step.tag) return null;
+      if (memo && memo.has(node)) {
+        siblings = memo.get(node);
+        continue;
+      }
       siblings = materializedElementChildren(node, registrySet);
       if (filterHiddenSettings) {
         siblings = siblings.filter((child) => {
@@ -9377,6 +9382,7 @@ function createWidget(type, id, parentId, props) {
           return panel?.getAttribute?.("data-spectr-settings-live") === "true";
         });
       }
+      if (memo) memo.set(node, siblings);
     }
     return node;
   }
@@ -9998,6 +10004,17 @@ function restoreMaterializedLayout(node, bridge) {
     const scopeSet = materializedScopeSet(scopeIds);
     const values = materializedDomRegistryValues();
     const pathIndex = materializedPathIndex(values);
+    // One pass resolves every binding's path against one registry snapshot,
+    // so each node's filtered children and each binding's node are computed
+    // once per pass rather than once per filter that asks.
+    pathIndex.childrenMemo = /* @__PURE__ */ new Map();
+    const pathMemo = /* @__PURE__ */ new Map();
+    const nodeAtPath = (binding) => {
+      if (pathMemo.has(binding)) return pathMemo.get(binding);
+      const node = materializedNodeAtPath(binding, values, true, pathIndex);
+      pathMemo.set(binding, node);
+      return node;
+    };
     // These states are live, responsive UI. Their capture metadata is useful
     // as a visual oracle, but applying its fixed boxes at runtime makes the
     // header reflow and collapses the selected-preset action layout.
@@ -10005,7 +10022,7 @@ function restoreMaterializedLayout(node, bridge) {
     const authoredManagerDetail = activeCapturedState === "pattern-manager"
       ? document.querySelector("[data-spectr-manager-detail]") : null;
     const belongsToAuthoredManagerDetail = (binding) => {
-      let node = materializedNodeAtPath(binding, values, true, pathIndex);
+      let node = nodeAtPath(binding);
       while (node) {
         if (node === authoredManagerDetail) return true;
         node = node.parentElement || node._parentElement || null;
@@ -10015,7 +10032,7 @@ function restoreMaterializedLayout(node, bridge) {
     const settingsLayoutPanel = document.querySelector(
       "[data-spectr-settings-panel]");
     const isSettingsDescendantBinding = (binding) => {
-      const node = materializedNodeAtPath(binding, values, true, pathIndex);
+      const node = nodeAtPath(binding);
       const panel = settingsLayoutPanel;
       if (!node || !panel) return false;
       let current = node;
@@ -10035,7 +10052,7 @@ function restoreMaterializedLayout(node, bridge) {
     // authored `top` and the binding are both inert against a frozen box; only
     // dropping the binding lets the authored layout apply.
     const isStatusOverlayBinding = (binding) => {
-      const node = materializedNodeAtPath(binding, values, true, pathIndex);
+      const node = nodeAtPath(binding);
       const shell = statusOverlayShell;
       if (!node || !shell) return false;
       let current = node;
@@ -10070,7 +10087,7 @@ function restoreMaterializedLayout(node, bridge) {
         // Band count is live state and now owns one non-wrapping text node.
         // Merge the old number and suffix captures into one stable line box.
         if (binding.text === "32") {
-          const node = materializedNodeAtPath(binding, values, true, pathIndex);
+          const node = nodeAtPath(binding);
           const text = String(node?.textContent || "");
           if (/^(32|40|48|56|64) BANDS \u25BE$/.test(text)) return {
             ...binding, text, basis: { ...binding.basis, width: 73.03125 },
@@ -10142,7 +10159,7 @@ function restoreMaterializedLayout(node, bridge) {
     if (typeof g5.setPosition === "function" && typeof g5.setFlex === "function") {
       for (const binding of activeLayoutBindings) {
         if (liveSettingsLayout) break;
-        const node = materializedNodeAtPath(binding, values, true, pathIndex);
+        const node = nodeAtPath(binding);
         if (dynamicNodes.has(node)) continue;
         const id = node && (node.__pulpId || node.id);
         if (!id) {
@@ -10214,7 +10231,7 @@ function restoreMaterializedLayout(node, bridge) {
     }
     for (const binding of activePaintBindings) {
       if (liveSettingsLayout) break;
-      const node = materializedNodeAtPath(binding, values, true, pathIndex);
+      const node = nodeAtPath(binding);
       if (dynamicNodes.has(node)) continue;
       const id = node && (node.__pulpId || node.id);
       if (!id) {
@@ -10263,7 +10280,7 @@ function restoreMaterializedLayout(node, bridge) {
     for (const binding of activeTextBindings) {
       if (liveSettingsLayout) break;
       const optional = binding.runtime_optional === true;
-      const node = materializedNodeAtPath(binding, values, true, pathIndex) || (optional ? materializedOptionalTextNode(binding, values) : null);
+      const node = nodeAtPath(binding) || (optional ? materializedOptionalTextNode(binding, values) : null);
       if (dynamicNodes.has(node)) continue;
       if (!node) {
         if (optional) ++diagnostics.text_optional_miss;
