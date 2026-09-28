@@ -7,6 +7,7 @@
 #include <pulp/canvas/recording_canvas.hpp>
 #include <pulp/state/store.hpp>
 #include <pulp/runtime/trace.hpp>
+#include <pulp/view/canvas_widget.hpp>
 #include <pulp/view/frame_clock.hpp>
 #include <pulp/view/tracing_badge.hpp>
 #include <pulp/view/hover_cursor.hpp>
@@ -23,6 +24,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <chrono>
 #include <cmath>
 #include <functional>
@@ -6657,5 +6659,99 @@ TEST_CASE("a host viewport change redraws the plot and settles the zoom readout"
         "the Settings panel does not show the host's LFO shape (saw)");
     rig.store.set_value(spectr::kParamLfoEnabled, 0.0f);
     REQUIRE(rig.processor.apply_surface_params(false));
+    storage.require_unchanged();
+}
+
+// The live band canvas, and its recorded command stream for the last frame.
+const pulp::view::CanvasWidget& live_band_canvas(NativeEditorRig& rig) {
+    const auto* canvas = dynamic_cast<const pulp::view::CanvasWidget*>(
+        rig.bridge().widget("__behavior_pr_1"));
+    REQUIRE(canvas != nullptr);
+    return *canvas;
+}
+
+// BLOOM GLOWS COST THEIR DRAW AND NOTHING MORE.
+//
+// Each lit band paints an elliptical glow under translate + scale. Bracketing
+// that with save()/restore() made every glow also drop the canvas shim's
+// sent-state caches, so the next draw re-sent composite, alpha and the rest. A
+// glow is recognised by its shape in the command stream -- translate, scale,
+// begin_path, a full circle at the origin, fill -- and must be neither opened by
+// a save nor closed by a restore; it closes with the inverse scale and
+// translate instead, which return the transform exactly where it was. The
+// saving is measured too: behind a bracket each glow re-sent alpha, blend and
+// four shadow settings before its fill.
+TEST_CASE("bloom glows undo their transform without a save and restore",
+          "[native-n1][state-parity][paint-cost]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    // Audio through the analyzer lights the bands, which is what paints glows.
+    for (int round = 0; round < 12; ++round) {
+        feed_audio_blocks(rig, 16);
+        pump_host_frames(rig, 2);
+    }
+    using Cmd = pulp::view::CanvasDrawCmd;
+    const auto& cmds = live_band_canvas(rig).commands();
+    int glows = 0;
+    int bracketed = 0;
+    int unbalanced = 0;
+    int resent = 0;
+    for (std::size_t k = 4; k + 3 < cmds.size(); ++k) {
+        const auto& arc = cmds[k];
+        if (arc.type != Cmd::Type::path_arc || arc.x != 0.0f || arc.y != 0.0f)
+            continue;
+        if (cmds[k - 1].type != Cmd::Type::begin_path
+            || cmds[k - 2].type != Cmd::Type::scale
+            || cmds[k - 3].type != Cmd::Type::translate)
+            continue;
+        // The fill, after any state the shim re-sends ahead of it (a
+        // save/restore bracket drops its sent-state caches, so the fill is
+        // preceded by re-sent alpha or composite).
+        std::size_t fill = k + 1;
+        while (fill < cmds.size() && fill < k + 16
+               && cmds[fill].type != Cmd::Type::fill_path) ++fill;
+        if (fill >= cmds.size() || cmds[fill].type != Cmd::Type::fill_path
+            || fill + 2 >= cmds.size())
+            continue;
+        // Sticky state re-sent ahead of this glow's fill. The first glow may
+        // follow a restore from the painter before it; every later glow runs
+        // inside the bloom loop and must find the caches intact. The radial
+        // gradient itself is this glow's own fill style, not re-sent state.
+        if (glows > 0)
+            for (std::size_t j = k + 1; j < fill; ++j) {
+                const auto type = cmds[j].type;
+                if (type == Cmd::Type::set_global_alpha
+                    || type == Cmd::Type::set_blend_mode
+                    || type == Cmd::Type::set_shadow_color
+                    || type == Cmd::Type::set_shadow_blur
+                    || type == Cmd::Type::set_shadow_offset_x
+                    || type == Cmd::Type::set_shadow_offset_y)
+                    ++resent;
+            }
+        ++glows;
+        if (cmds[k - 4].type == Cmd::Type::save
+            || cmds[fill + 1].type == Cmd::Type::restore)
+            ++bracketed;
+        // The close: the inverse scale, then the inverse translate.
+        const auto& scale = cmds[k - 2];
+        const auto& translate = cmds[k - 3];
+        const auto& undo_scale = cmds[fill + 1];
+        const auto& undo_translate = cmds[fill + 2];
+        if (undo_scale.type != Cmd::Type::scale
+            || undo_translate.type != Cmd::Type::translate
+            || std::abs(undo_scale.x * scale.x - 1.0f) > 1e-5f
+            || undo_scale.y != 1.0f
+            || undo_translate.x != -translate.x
+            || undo_translate.y != -translate.y)
+            ++unbalanced;
+    }
+    CAPTURE(cmds.size(), glows, bracketed, unbalanced, resent);
+    // Stimulus control: with no glow in the frame there is nothing to judge.
+    REQUIRE(glows > 0);
+    CHECK(bracketed == 0);
+    CHECK(unbalanced == 0);
+    // With the caches intact, no glow after the first re-sends state.
+    CHECK(resent == 0);
     storage.require_unchanged();
 }
