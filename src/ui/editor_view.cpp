@@ -255,7 +255,7 @@ bool EditorView::post_analyzer_() {
     // This is the sole adapter to Pulp's publication type. EditorView is the
     // one non-RT analyzer owner: polling is explicitly separated from the
     // cheap, snapshot-only observation that follows.
-    plugin_.bridge().poll();
+    plugin_.drain_analyzer();
     const auto& spectrum = plugin_.read_spectrum();
     if (spectrum.num_bins <= 0) return false;
     const EditorAnalyzerSnapshot snapshot{

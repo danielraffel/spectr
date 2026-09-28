@@ -853,18 +853,23 @@ void Spectr::on_view_closed(pulp::view::View& view) {
 #endif
 }
 
-void Spectr::configure_bridge_(int num_channels) {
+pulp::view::VisualizationConfig analyzer_config(double sample_rate,
+                                                int num_channels) noexcept {
     pulp::view::VisualizationConfig c;
     c.fft_size         = kAnalyzerFftSize;
     c.hop_size         = kAnalyzerAnalysisHop;
     c.window           = pulp::signal::WindowFunction::Type::hann;
     c.num_channels     = std::max(1, num_channels);
-    c.sample_rate      = static_cast<float>(sample_rate_);
+    c.sample_rate      = static_cast<float>(sample_rate);
     c.capture_waveform = true;
     c.waveform_length  = 1024;
-    c.max_frames_per_poll = kAnalyzerMaxFramesPerPoll;
     c.capture_buffer_frames = kAnalyzerCaptureFrames;
-    bridge_.configure(c);
+    c.backlog_policy = pulp::view::VisualizationBacklogPolicy::latest_window;
+    return c;
+}
+
+void Spectr::configure_bridge_(int num_channels) {
+    bridge_.configure(analyzer_config(sample_rate_, num_channels));
 }
 
 void Spectr::release() {

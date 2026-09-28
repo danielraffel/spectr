@@ -12,6 +12,8 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <tuple>
 #include <vector>
 
 using Catch::Approx;
@@ -63,7 +65,7 @@ struct PreparedSpectr {
 };
 
 void feed_sine(spectr::Spectr& plugin, double hz, int block, int total_samples,
-               float amplitude = 1.0f) {
+               float amplitude = 1.0f, std::size_t phase_start = 0) {
     std::vector<float> in0(block), in1(block);
     std::vector<float> out0(block), out1(block);
     const float* in_ptrs[2]  = {in0.data(), in1.data()};
@@ -76,7 +78,7 @@ void feed_sine(spectr::Spectr& plugin, double hz, int block, int total_samples,
     int fed = 0;
     while (fed < total_samples) {
         const int n = std::min(block, total_samples - fed);
-        fill_sine(in0, in1, hz, static_cast<std::size_t>(fed),
+        fill_sine(in0, in1, hz, phase_start + static_cast<std::size_t>(fed),
                   kSampleRate, amplitude);
         pulp::audio::BufferView<const float> iv(in_ptrs, 2, static_cast<std::size_t>(n));
         pulp::audio::BufferView<float>       ov(out_ptrs, 2, static_cast<std::size_t>(n));
@@ -383,29 +385,60 @@ TEST_CASE("output level: digital silence reads as -inf, never as 0 dBFS",
 
 // THE ANALYZER KEEPS UP WITH THE AUDIO WHEN THE EDITOR TICKS SLOWLY.
 //
-// The editor drains the analyzer from its UI tick. At one 2048-frame poll per
-// tick it consumes 2048 x tick-rate frames per second, which falls under a
-// 48 kHz stream as soon as ticks slow below 23.4/s -- and they do, whenever a
-// React commit stalls the UI thread. The capture buffer then overflows, the
-// bridge drops audio and resets its analysis, and the spectrum blanks until a
-// fresh window fills. Seen as "the spectrum disappears" while editing with
-// audio playing.
+// The editor drains the analyzer from its UI tick, and ticks slow whenever a
+// React commit stalls the UI thread. A bridge that analyzes a bounded slice
+// per poll falls behind a 48 kHz stream under such ticks; its capture buffer
+// then overflows, the bridge drops audio and resets its analysis, and the
+// spectrum blanks until a fresh window fills. Seen as "the spectrum
+// disappears" while editing with audio playing.
 //
-// Driven at 10 ticks/s, each tick delivering the 100 ms of audio that arrived
-// during it. The control half proves the stimulus is harsh enough: the fixed
-// one-poll-per-tick policy must overflow under it, or a passing drain would
-// prove nothing.
+// Spectr's bridge runs the latest_window backlog policy, so one poll per tick
+// consumes everything that arrived. The controls reconfigure the same plugin's
+// bridge with the in_order policy and a 2048-frame poll bound -- the shape
+// that dropped audio -- to prove each stimulus is harsh enough to tell the
+// policies apart.
+namespace {
+
+// Host block size for these tests. The plugin is prepared for it: a block
+// larger than the prepared maximum fails closed and renders silence.
+constexpr int kHostBlock = 480;
+
+pulp::view::VisualizationConfig bounded_in_order_config() {
+    auto config = spectr::analyzer_config(kSampleRate, 2);
+    config.backlog_policy = pulp::view::VisualizationBacklogPolicy::in_order;
+    config.max_frames_per_poll = 2048;
+    return config;
+}
+
+int tone_bin(spectr::Spectr& plugin, double hz) {
+    const double bin_hz = kSampleRate / plugin.bridge().fft_size();
+    return static_cast<int>(hz / bin_hz + 0.5);
+}
+
+} // namespace
+
+TEST_CASE("Analyzer bridge: the editor's analyzer runs the latest_window policy",
+          "[analyzer][drain]") {
+    const auto config = spectr::analyzer_config(kSampleRate, 2);
+    CHECK(config.backlog_policy
+          == pulp::view::VisualizationBacklogPolicy::latest_window);
+    CHECK(config.fft_size == spectr::kAnalyzerFftSize);
+    CHECK(config.capture_buffer_frames == spectr::kAnalyzerCaptureFrames);
+}
+
 TEST_CASE("Analyzer bridge: a slow UI tick drains everything that arrived",
           "[analyzer][drain]") {
+    // 10 ticks/s, each delivering the 100 ms of audio that arrived during it.
     constexpr double kTickSeconds = 0.1;
     constexpr int kTickFrames = static_cast<int>(kSampleRate * kTickSeconds);
     constexpr int kTicks = 40;
 
-    SECTION("fixed one poll per tick overflows (stimulus control)") {
-        PreparedSpectr plugin;
+    SECTION("a bounded in-order poll per tick overflows (stimulus control)") {
+        PreparedSpectr plugin{kHostBlock};
+        plugin->bridge().configure(bounded_in_order_config());
         for (int tick = 0; tick < kTicks; ++tick) {
-            feed_sine(*plugin, 1000.0, 480, kTickFrames, 0.5f);
-            (void)plugin->bridge().poll();
+            feed_sine(*plugin, 1000.0, kHostBlock, kTickFrames, 0.5f);
+            plugin->drain_analyzer();
         }
         INFO("one 2048-frame poll per 100 ms tick consumes 20,480 of 48,000 "
              "frames/s; if nothing was dropped the stimulus is too gentle to "
@@ -413,13 +446,13 @@ TEST_CASE("Analyzer bridge: a slow UI tick drains everything that arrived",
         CHECK(plugin->read_spectrum().dropped_frames > 0);
     }
 
-    SECTION("elapsed-sized drain drops nothing") {
-        PreparedSpectr plugin;
+    SECTION("the configured analyzer drops nothing and never freezes") {
+        PreparedSpectr plugin{kHostBlock};
         std::uint64_t last_sequence = 0;
         int advanced = 0;
         for (int tick = 0; tick < kTicks; ++tick) {
-            feed_sine(*plugin, 1000.0, 480, kTickFrames, 0.5f);
-            plugin->drain_analyzer(kTickSeconds);
+            feed_sine(*plugin, 1000.0, kHostBlock, kTickFrames, 0.5f);
+            plugin->drain_analyzer();
             const auto& spectrum = plugin->read_spectrum();
             // The first window needs 8,192 frames, so the opening ticks
             // cannot publish yet.
@@ -434,17 +467,51 @@ TEST_CASE("Analyzer bridge: a slow UI tick drains everything that arrived",
         // spectrum never froze.
         CHECK(advanced == kTicks - 2);
     }
+}
 
-    SECTION("the poll count covers the elapsed audio, bounded") {
-        // A 60 Hz tick needs one poll; a 100 ms tick needs enough for 4,800
-        // frames plus headroom; a stalled second is capped at a full buffer.
-        CHECK(spectr::analyzer_polls_for_elapsed(1.0 / 60.0, kSampleRate) == 1);
-        CHECK(spectr::analyzer_polls_for_elapsed(0.0, kSampleRate) == 1);
-        const int slow = spectr::analyzer_polls_for_elapsed(kTickSeconds, kSampleRate);
-        CHECK(slow * spectr::kAnalyzerMaxFramesPerPoll >= kTickFrames);
-        CHECK(spectr::analyzer_polls_for_elapsed(10.0, kSampleRate)
-              == spectr::kAnalyzerMaxPollsPerTick);
-        CHECK(spectr::kAnalyzerMaxPollsPerTick * spectr::kAnalyzerMaxFramesPerPoll
-              >= spectr::kAnalyzerCaptureFrames);
+TEST_CASE("Analyzer bridge: after a stalled tick the spectrum shows the newest audio",
+          "[analyzer][drain]") {
+    // Settle on 1 kHz with a steady tick, then stall one tick for 0.5 s while
+    // the input moves to 2 kHz. The plugin's latency still carries 1 kHz at
+    // the head of that half second, but its newest analyzer window is 2 kHz.
+    constexpr int kSteadyTickFrames = 1600;   // 30 ticks/s
+    constexpr int kStallFrames = 24000;       // 0.5 s, inside the capture buffer
+    static_assert(kStallFrames - spectr::kSpectralLatency
+                  > spectr::kAnalyzerFftSize);
+    static_assert(kStallFrames < spectr::kAnalyzerCaptureFrames);
+
+    const auto run = [](spectr::Spectr& plugin) {
+        std::size_t fed = 0;
+        for (; fed < static_cast<std::size_t>(settled_samples());
+             fed += kSteadyTickFrames) {
+            feed_sine(plugin, 1000.0, kHostBlock, kSteadyTickFrames, 0.5f, fed);
+            plugin.drain_analyzer();
+        }
+        feed_sine(plugin, 2000.0, kHostBlock, kStallFrames, 0.5f, fed);
+        plugin.drain_analyzer();
+        const auto& spectrum = plugin.read_spectrum();
+        return std::tuple{peak_near_bin(spectrum, tone_bin(plugin, 1000.0)),
+                          peak_near_bin(spectrum, tone_bin(plugin, 2000.0)),
+                          spectrum.dropped_frames};
+    };
+
+    SECTION("the configured analyzer publishes the newest window") {
+        PreparedSpectr plugin{kHostBlock};
+        const auto [old_db, new_db, dropped] = run(*plugin);
+        CAPTURE(old_db, new_db, dropped);
+        CHECK(dropped == 0);
+        CHECK(new_db > old_db + 20.0f);
+    }
+
+    SECTION("a bounded in-order poll still shows the stale tone (stimulus control)") {
+        PreparedSpectr plugin{kHostBlock};
+        plugin->bridge().configure(bounded_in_order_config());
+        const auto [old_db, new_db, dropped] = run(*plugin);
+        CAPTURE(old_db, new_db, dropped);
+        INFO("one 2048-frame in-order poll analyzes the head of the stall, "
+             "which still carries 1 kHz; if it shows 2 kHz the stimulus cannot "
+             "tell the policies apart");
+        CHECK(old_db > new_db + 20.0f);
     }
 }
+

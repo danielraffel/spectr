@@ -3127,20 +3127,15 @@ bool Spectr::tick_native_analyzer_(float dt) {
 
     const float tick_seconds = std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
     native_analyzer_elapsed_ += tick_seconds;
-    native_analyzer_drain_elapsed_ += tick_seconds;
     if (native_analyzer_elapsed_ < kPublishPeriodSeconds) return true;
     native_analyzer_elapsed_ = std::fmod(native_analyzer_elapsed_, kPublishPeriodSeconds);
 
-    // The publication cadence drops missed periods; the drain must not. Audio
-    // keeps arriving while a tick runs long, so the drain is sized from the
-    // time that actually passed -- a fixed poll per tick falls behind the
-    // stream whenever ticks slow under sample_rate / kAnalyzerMaxFramesPerPoll
-    // per second, and an overflowing capture buffer blanks the spectrum.
+    // One poll consumes everything captured since the last one, however long
+    // this tick took: the bridge runs the latest_window backlog policy.
     {
         PULP_TRACE_SCOPE_NAMED("state", "spectr_analyzer_drain");
-        drain_analyzer(native_analyzer_drain_elapsed_);
+        drain_analyzer();
     }
-    native_analyzer_drain_elapsed_ = 0.0;
 
     // ── Output level ────────────────────────────────────────────────────
     //
@@ -3248,7 +3243,6 @@ void Spectr::close_native_editor_() {
     native_frame_subscription_ = -1;
     native_frame_clock_ = nullptr;
     native_analyzer_elapsed_ = 0.0f;
-    native_analyzer_drain_elapsed_ = 0.0;
     native_analyzer_sequence_ = 0;
     // Forget the last published level, so reopening the editor republishes
     // rather than sitting at "--" until the reading happens to move.
