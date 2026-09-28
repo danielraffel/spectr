@@ -6,7 +6,9 @@
 
 #include <pulp/canvas/recording_canvas.hpp>
 #include <pulp/state/store.hpp>
+#include <pulp/runtime/trace.hpp>
 #include <pulp/view/frame_clock.hpp>
+#include <pulp/view/tracing_badge.hpp>
 #include <pulp/view/hover_cursor.hpp>
 #include <pulp/view/input_events.hpp>
 #include <pulp/view/overlay_dismissal.hpp>
@@ -6042,3 +6044,70 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
     storage.require_unchanged();
 }
 
+
+// THE TRACING REMINDER SITS ON THE HEADER'S LINE.
+//
+// A tracing build shows exactly one "◉ TRACING" reminder, and it is the
+// header's: Pulp's root-painted corner pill is hidden while the editor is open,
+// and the header's own sits on the line every header control shares. Measured
+// on the painted ink -- the TRACING letters against the BOTH caption, whose
+// capitals share their cap height -- because that line is what a reader sees.
+// A non-tracing build has no reminder to measure; it says so and skips.
+TEST_CASE("the tracing reminder sits on the header controls' line",
+          "[native-n1][state-parity][header][tracing]") {
+    if constexpr (!pulp::runtime::kTracingEnabled) {
+        SKIP("not a PULP_TRACING build: there is no tracing reminder to measure");
+    } else {
+        PatternStoragePoison storage;
+        NativeEditorRig rig;
+        require_home(rig);
+        CHECK_FALSE(pulp::view::tracing_badge_should_paint());
+        const auto* badge = find_label(*rig.root, "◉ TRACING");
+        const auto* caption = find_label(*rig.root, "BOTH");
+        REQUIRE(badge != nullptr);
+        REQUIRE(caption != nullptr);
+
+        constexpr float kScale = 2.0f;
+        std::uint32_t width = 0, height = 0;
+        REQUIRE(pulp::view::raw_rgba_render_available());
+        const auto frame = pulp::view::render_to_rgba(
+            *rig.root, 1320, 860, kScale, &width, &height);
+        REQUIRE(!frame.empty());
+        // Ink rows of the bright glyphs inside a label's box, from `from` of
+        // its width to its right edge.
+        const auto ink_rows = [&](const pulp::view::Label& label, float from) {
+            const auto origin = root_point(label, 0.0f, 0.0f);
+            const auto x0 = static_cast<std::uint32_t>(
+                (origin.x + label.bounds().width * from) * kScale);
+            const auto x1 = std::min<std::uint32_t>(
+                width, static_cast<std::uint32_t>(
+                           (origin.x + label.bounds().width) * kScale));
+            const auto y0 = static_cast<std::uint32_t>(
+                std::max(0.0f, origin.y - 3.0f) * kScale);
+            const auto y1 = std::min<std::uint32_t>(
+                height, static_cast<std::uint32_t>(
+                            (origin.y + label.bounds().height + 3.0f) * kScale));
+            float top = -1.0f, bottom = -1.0f;
+            for (std::uint32_t y = y0; y < y1; ++y) {
+                bool inked = false;
+                for (std::uint32_t x = x0; x < x1 && !inked; ++x) {
+                    const auto* px = &frame[(static_cast<std::size_t>(y) * width + x) * 4];
+                    inked = px[0] + px[1] + px[2] > 250;
+                }
+                if (!inked) continue;
+                if (top < 0.0f) top = static_cast<float>(y) / kScale;
+                bottom = static_cast<float>(y + 1) / kScale;
+            }
+            return std::pair{top, bottom};
+        };
+        // Skip the ◉ glyph, which is taller than the capitals.
+        const auto [badge_top, badge_bottom] = ink_rows(*badge, 0.3f);
+        const auto [caption_top, caption_bottom] = ink_rows(*caption, 0.0f);
+        CAPTURE(badge_top, badge_bottom, caption_top, caption_bottom);
+        REQUIRE(badge_top >= 0.0f);
+        REQUIRE(caption_top >= 0.0f);
+        CHECK(badge_top == Catch::Approx(caption_top).margin(0.5f));
+        CHECK(badge_bottom == Catch::Approx(caption_bottom).margin(0.5f));
+        storage.require_unchanged();
+    }
+}

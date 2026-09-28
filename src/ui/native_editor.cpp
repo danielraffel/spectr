@@ -8,6 +8,7 @@
 #include <pulp/format/plugin_descriptor.hpp>
 #include <cstdio>
 #include <pulp/view/script_event_dispatch.hpp>
+#include <pulp/view/tracing_badge.hpp>
 #include <pulp/view/buttons.hpp>
 #include <pulp/view/hover_cursor.hpp>
 #include <pulp/view/input_events.hpp>
@@ -818,6 +819,19 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                 "if (typeof globalThis.__pulpBindMaterializedCanvases__ === 'function') "
                 "globalThis.__pulpBindMaterializedCanvases__();",
                 "spectr-materialized-bind");
+            // A tracing build carries a "TRACING" reminder. Pulp paints one
+            // from the root View at a fixed corner, above the header's line;
+            // the header draws its own on that line instead, so Pulp's is
+            // hidden while this editor is open (restored on close).
+            if constexpr (pulp::runtime::kTracingEnabled) {
+                pulp::view::set_tracing_badge_visible(false);
+                bridge->load_script(
+                    "if (typeof globalThis.__spectrShowTracingBadge === 'function') "
+                    "globalThis.__spectrShowTracingBadge(); "
+                    "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+                    "globalThis.__pulpRuntimeSettle__(4);",
+                    "spectr-tracing-badge");
+            }
             // The standalone host can screenshot, but it has no way to drive a
             // control before the capture, so the Settings modal could not be
             // photographed in the shipping app at all. Settings renders empty
@@ -3238,6 +3252,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
 }
 
 void Spectr::close_native_editor_() {
+    if constexpr (pulp::runtime::kTracingEnabled)
+        pulp::view::set_tracing_badge_visible(true);
     if (native_frame_subscription_ >= 0 && native_frame_clock_)
         native_frame_clock_->unsubscribe(native_frame_subscription_);
     native_frame_subscription_ = -1;
