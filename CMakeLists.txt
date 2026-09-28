@@ -2187,6 +2187,37 @@ if(SPECTR_NODE_EXECUTABLE)
         PROPERTIES TIMEOUT 30)
 endif()
 
+# Commits re-apply captured metadata only where they changed something.
+#
+# In the vendored runtime every host commit marked the whole materialized tree
+# dirty and re-applied captured layout, text and paint bindings across the
+# entire document -- measured at 22-127 ms per commit in the shipping editor.
+# The runtime now scopes the re-apply to the subtree a commit touched, skips
+# paint-only and handler-only commits, and retains registry misses per
+# mutation epoch. The suite drives the patched host config and applier in a vm;
+# the two controls revert a key half each and must be rejected.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-runtime-commit-scope
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_runtime_commit_scope.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/runtime.js)
+    set_tests_properties(Spectr-materialized-runtime-commit-scope PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-materialized-runtime-commit-scope-paint-gate-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_runtime_commit_scope.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/runtime.js
+            --plant-no-paint-gate --expect-fail)
+    set_tests_properties(Spectr-materialized-runtime-commit-scope-paint-gate-control
+        PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-materialized-runtime-commit-scope-unscoped-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_runtime_commit_scope.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/runtime.js
+            --plant-unscoped-hook --expect-fail)
+    set_tests_properties(Spectr-materialized-runtime-commit-scope-unscoped-control
+        PROPERTIES TIMEOUT 30)
+endif()
+
 # The output level readout, and the Output trim beside it.
 #
 # `kOutputTrim` is applied post-render and proved exact by a unit test, and

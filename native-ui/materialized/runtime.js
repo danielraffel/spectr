@@ -8419,9 +8419,45 @@ function createWidget(type, id, parentId, props) {
     nonTextKeys.delete("children");
     nonTextKeys.delete("text");
     for (const key of nonTextKeys) {
+      // A re-created inline handler is not a geometry change.
+      if (isEventHandler(key)) continue;
       if (oldProps[key] !== newProps[key]) return false;
     }
     return true;
+  }
+  // Prop keys whose value can change without moving a single box. Curated by
+  // hand: a key qualifies only when its native setter repaints without
+  // invalidating layout AND no captured-import binding writes the same
+  // channel. `opacity` and `color` fail the second test -- the metadata pass
+  // drives them itself -- and the border shorthands carry a width, so neither
+  // is here. An omission costs the full re-apply; a wrong entry costs a stale
+  // layout, so when in doubt a key stays out.
+  var PAINT_ONLY_KEYS = /* @__PURE__ */ new Set([
+    "background", "backgroundColor", "backgroundGradient", "backgroundImage",
+    "backgroundAttachment", "backgroundClip", "backgroundOrigin", "backgroundRepeat",
+    "borderColor", "borderTopColor", "borderRightColor",
+    "borderBottomColor", "borderLeftColor", "borderCurve",
+    "outlineColor", "outlineStyle",
+    "boxShadow", "backdropFilter", "filter", "clipPath",
+    "mask", "maskImage", "maskSize", "mixBlendMode", "isolation",
+    "backfaceVisibility",
+    "shadowColor", "shadowOffset", "shadowOpacity", "shadowRadius",
+    "cursor", "userSelect", "pointerEvents"
+  ]);
+  // True when every key a commit changed is provably non-geometric: on the
+  // whitelist above, or an `onX` handler, whose payload is a function
+  // identity React recreates on every render. An unrecognised key means
+  // "assume geometric". A commit that changed nothing is not evidence a
+  // repaint is safe and takes the ordinary path.
+  function isPaintOnlyUpdate(oldProps, newProps) {
+    let changed = 0;
+    const keys = /* @__PURE__ */ new Set([...Object.keys(oldProps), ...Object.keys(newProps)]);
+    for (const key of keys) {
+      if (Object.is(oldProps[key], newProps[key])) continue;
+      if (!PAINT_ONLY_KEYS.has(key) && !isEventHandler(key)) return false;
+      changed += 1;
+    }
+    return changed > 0;
   }
   var PulpHostConfig = {
     // ── Renderer identity ───────────────────────────────────────────
@@ -8513,7 +8549,8 @@ function createWidget(type, id, parentId, props) {
     },
     // ── First-mount attachment ──────────────────────────────────────
     appendInitialChild(parentInstance, child) {
-      markMaterializedTreeDirty();
+      markMaterializedTreeDirty(parentInstance.id);
+      markMaterializedTreeDirty(child.id);
       attach(parentInstance, child);
     },
     finalizeInitialChildren(_instance, _type, _props, _rootContainer, _hostContext) {
@@ -8521,7 +8558,8 @@ function createWidget(type, id, parentId, props) {
     },
     // ── Mutation: append / insert / remove ──────────────────────────
     appendChild(parentInstance, child) {
-      markMaterializedTreeDirty();
+      markMaterializedTreeDirty(parentInstance.id);
+      markMaterializedTreeDirty(child.id);
       attach(parentInstance, child);
     },
     appendChildToContainer(container, child) {
@@ -8529,7 +8567,11 @@ function createWidget(type, id, parentId, props) {
       attachToRoot(container, child);
     },
     insertBefore(parentInstance, child, beforeChild) {
-      markMaterializedTreeDirty();
+      // A reorder renumbers the parent's whole child list, so the parent is the
+      // scope; the child too, because a cross-parent insert moves it out of a
+      // subtree the parent no longer contains.
+      markMaterializedTreeDirty(parentInstance.id);
+      markMaterializedTreeDirty(child.id);
       const beforeIdx = parentInstance.childIds.indexOf(beforeChild.id);
       const sameParent = child.parentId === parentInstance.id && child.onBridge;
       if (sameParent) {
@@ -8557,7 +8599,8 @@ function createWidget(type, id, parentId, props) {
       );
     },
     removeChild(parentInstance, child) {
-      markMaterializedTreeDirty();
+      // The child is leaving; its former siblings are what renumber.
+      markMaterializedTreeDirty(parentInstance.id);
       detach(parentInstance, child);
     },
     removeChildFromContainer(_container, child) {
@@ -8578,7 +8621,10 @@ function createWidget(type, id, parentId, props) {
     commitUpdate(instance, _updatePayload, type, oldProps, newProps, _internalHandle) {
       const oldN = normalizeHostProps(type, oldProps);
       const newN = normalizeHostProps(type, newProps);
-      if (!isFixedTextOnlyUpdate(type, oldN, newN)) markMaterializedTreeDirty();
+      if (!isFixedTextOnlyUpdate(type, oldN, newN)
+          && !isPaintOnlyUpdate(oldN, newN)) {
+        markMaterializedTreeDirty(instance.id);
+      }
       applyChangedProps(instance, oldN, newN);
       instance.props = { ...newN };
       if (instance._dom && typeof instance._dom === "object") {
@@ -8611,7 +8657,9 @@ function createWidget(type, id, parentId, props) {
       }
     },
     commitTextUpdate(textInstance, _oldText, newText) {
-      markMaterializedTreeDirty();
+      // A text instance has no captured node of its own; the element that
+      // owns it is the leaf whose bindings the new text can affect.
+      markMaterializedTreeDirty(textInstance && textInstance.parentId);
       // Push the new text to the native widget. This was a no-op, so live text
       // under a non-text-bearing parent NEVER updated -- the status banner
       // rendered as an empty bordered box because React, the DOM shim and the
@@ -8629,7 +8677,7 @@ function createWidget(type, id, parentId, props) {
     // <span><em>hi</em></span>. Clear stale text before the new child
     // element mounts.
     resetTextContent(instance) {
-      markMaterializedTreeDirty();
+      markMaterializedTreeDirty(instance.id);
       if (typeof g4.setText === "function") {
         call2("setText", instance.textTargetId ?? instance.id, "");
       }
@@ -8653,18 +8701,39 @@ function createWidget(type, id, parentId, props) {
         const size = g4.getRootSize();
         if (size) rootSignature = size.width + "x" + size.height;
       }
-      const shouldReapply =
-        materializedTreeDirty || rootSignature !== materializedRootSignature;
-      materializedRootSignature = rootSignature;
-      materializedTreeDirty = false;
-      if (shouldReapply) {
-        const metadataHook = g4.__pulpApplyMaterializedImportMetadata__;
-        if (typeof metadataHook === "function") metadataHook();
-      }
-      // The state hook is cheap when the state is unchanged and re-applies the
-      // metadata itself when it is not, so it stays unconditional.
+      const metadataHook = g4.__pulpApplyMaterializedImportMetadata__;
       const stateHook = g4.__pulpRefreshMaterializedState__;
-      if (typeof stateHook === "function") stateHook();
+      // Reasons OTHER than the per-node marks -- a root resize, or a hook that
+      // arrived or was swapped -- invalidate evidence the marks say nothing
+      // about, so they force the full pass. Only an ARRIVING state hook counts;
+      // one being torn down leaves nothing to refresh.
+      const unscopedReason = materializedTreeDirtyAll
+        || rootSignature !== materializedRootSignature
+        || metadataHook !== materializedHookApplied
+        || (typeof stateHook === "function"
+          && stateHook !== materializedStateHookApplied);
+      const shouldReapply = unscopedReason || materializedDirtyIds.size > 0;
+      // `null` means "no scope, re-apply everything".
+      const scope = unscopedReason ? null : Array.from(materializedDirtyIds);
+      materializedRootSignature = rootSignature;
+      materializedTreeDirtyAll = false;
+      materializedDirtyIds.clear();
+      if (shouldReapply) {
+        materializedHookApplied = metadataHook;
+        if (typeof metadataHook === "function") metadataHook(scope);
+      }
+      // Captured-state matching resolves selectors over the registry, and a
+      // commit that mutated no host node cannot have changed which selector
+      // answers, so it shares the gate. A state resolver an embedder installs
+      // is not a function of the registry, so it keeps the unconditional
+      // refresh.
+      const stateResolverInstalled =
+        typeof g4.__pulpMaterializedStateResolver__ === "function";
+      if (typeof stateHook === "function"
+          && (shouldReapply || stateResolverInstalled)) {
+        materializedStateHookApplied = stateHook;
+        stateHook();
+      }
       if (shouldReapply) {
         requestLayoutFlush(() => {
           if (typeof g4.layout === "function") call2("layout");
@@ -8708,10 +8777,34 @@ function createWidget(type, id, parentId, props) {
   // React already knows the answer. A commit that mutated no host node left the
   // native tree, and therefore the captured geometry, exactly as it was. Every
   // mutation path sets this; resetAfterCommit consumes and clears it.
-  let materializedTreeDirty = true;
+  //
+  // One level deeper: a commit that mutated ONE node left every other captured
+  // node's geometry as it was, so each mark records the subtree root whose
+  // descendants-or-self may have moved, and the re-apply is restricted to that
+  // scope. `materializedTreeDirtyAll` is the escape hatch for a mutation whose
+  // blast radius is not one subtree; it is kept separate from the id set so a
+  // later scoped mark can never narrow an earlier unscoped one.
+  let materializedTreeDirtyAll = true;
+  const materializedDirtyIds = /* @__PURE__ */ new Set();
   let materializedRootSignature = "";
-  function markMaterializedTreeDirty() {
-    materializedTreeDirty = true;
+  // Hook identities last applied, so a hook that arrives or is swapped forces
+  // the full pass rather than waiting for the next host mutation.
+  let materializedHookApplied;
+  let materializedStateHookApplied;
+  // Monotonic mutation counter, published on the first mark. The runtime keys
+  // retained registry misses by it; before the first mark it is absent and
+  // the runtime declines to retain anything.
+  let materializedTreeEpoch = 0;
+  // `scopeId` names the subtree root whose descendants-or-self may have moved;
+  // omitting it means "blast radius unknown" and forces the full re-apply.
+  function markMaterializedTreeDirty(scopeId) {
+    if (typeof scopeId === "string" && scopeId.length > 0) {
+      materializedDirtyIds.add(scopeId);
+    } else {
+      materializedTreeDirtyAll = true;
+    }
+    materializedTreeEpoch += 1;
+    g4.__pulpMaterializedTreeEpoch__ = materializedTreeEpoch;
   }
   function attach(parent, child, index) {
     const wasAttachedElsewhere = child.parentId !== void 0 && child.parentId !== parent.id;
@@ -9875,7 +9968,34 @@ function restoreMaterializedLayout(node, bridge) {
   }
 }
 
-  function applyMaterializedImportMetadata(metadata) {
+  // A commit's dirty scope is a list of native ids whose subtrees may have
+  // moved. A binding is in scope when its node is one of them or a descendant,
+  // which is a walk UP the parent chain: pure JS, where the work it avoids is
+  // bridge traffic and forced layouts.
+  function materializedScopeSet(scopeIds) {
+    if (!Array.isArray(scopeIds) || scopeIds.length === 0) return null;
+    const set = /* @__PURE__ */ new Set();
+    for (const id of scopeIds) {
+      if (id === null || id === void 0) continue;
+      const text = String(id);
+      if (text) set.add(text);
+    }
+    return set.size > 0 ? set : null;
+  }
+  function materializedNodeInScope(node, scopeSet) {
+    let current = node;
+    // Bounded, so a detached node that cycles cannot hang a commit.
+    for (let depth = 0; current && depth < 4096; ++depth) {
+      const id = current.__pulpId || current.id;
+      if (id && scopeSet.has(String(id))) return true;
+      current = current.parentElement || current._parentElement || null;
+    }
+    return false;
+  }
+  // `scopeIds` is optional; absent or empty means "apply everything". Every
+  // caller other than the per-commit hook passes nothing.
+  function applyMaterializedImportMetadata(metadata, scopeIds) {
+    const scopeSet = materializedScopeSet(scopeIds);
     const values = materializedDomRegistryValues();
     const pathIndex = materializedPathIndex(values);
     // These states are live, responsive UI. Their capture metadata is useful
@@ -9980,10 +10100,12 @@ function restoreMaterializedLayout(node, bridge) {
       layout_expected: activeLayoutBindings.length,
       layout_applied: 0,
       layout_node_miss: 0,
+      layout_out_of_scope: 0,
       layout_dynamic_nodes: dynamicNodes.size,
       text_expected: activeTextBindings.filter((binding) => !binding.runtime_optional).length,
       text_applied: 0,
       text_node_miss: 0,
+      text_out_of_scope: 0,
       text_content_mismatch: 0,
       text_mismatches: [],
       text_target_miss: 0,
@@ -9993,6 +10115,7 @@ function restoreMaterializedLayout(node, bridge) {
       paint_expected: activePaintBindings.length,
       paint_applied: 0,
       paint_node_miss: 0,
+      paint_out_of_scope: 0,
       paint_unsupported: 0,
       paint_nodes: []
     };
@@ -10024,6 +10147,10 @@ function restoreMaterializedLayout(node, bridge) {
         const id = node && (node.__pulpId || node.id);
         if (!id) {
           ++diagnostics.layout_node_miss;
+          continue;
+        }
+        if (scopeSet && !materializedNodeInScope(node, scopeSet)) {
+          ++diagnostics.layout_out_of_scope;
           continue;
         }
         const parent = node.parentElement || node._parentElement;
@@ -10094,6 +10221,10 @@ function restoreMaterializedLayout(node, bridge) {
         ++diagnostics.paint_node_miss;
         continue;
       }
+      if (scopeSet && !materializedNodeInScope(node, scopeSet)) {
+        ++diagnostics.paint_out_of_scope;
+        continue;
+      }
       diagnostics.paint_nodes.push({
         index: binding.index,
         tag: binding.tag,
@@ -10137,6 +10268,10 @@ function restoreMaterializedLayout(node, bridge) {
       if (!node) {
         if (optional) ++diagnostics.text_optional_miss;
         else ++diagnostics.text_node_miss;
+        continue;
+      }
+      if (scopeSet && !materializedNodeInScope(node, scopeSet)) {
+        ++diagnostics.text_out_of_scope;
         continue;
       }
       const anonymousTargets = Array.isArray(node.__pulpAnonymousTextTargets) ? node.__pulpAnonymousTextTargets : [];
@@ -10837,7 +10972,16 @@ function restoreMaterializedLayout(node, bridge) {
       if (title && name && title.textContent !== name)
         title.textContent = name;
     }
-    g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;
+    // A scoped pass skips most of the document by construction, so its
+    // counts are not comparable to a full pass's; the shipped key keeps the
+    // last FULL application and a scoped pass publishes beside it.
+    if (scopeSet) {
+      diagnostics.scoped = true;
+      diagnostics.scope_size = scopeSet.size;
+      g5.__pulpMaterializedScopedApplyDiagnostics__ = diagnostics;
+    } else {
+      g5.__pulpMaterializedMetadataDiagnostics__ = diagnostics;
+    }
     return applied;
   }
   function applySpectrToolbarOpticalCentering() {
@@ -11132,8 +11276,20 @@ function restoreMaterializedLayout(node, bridge) {
     g5.__spectrHeaderOpticalCenteringReceipt__ = receipt;
     return receipt.length;
   }
-  g5.__pulpApplyMaterializedImportMetadata__ = function() {
-    const applied = applyMaterializedImportMetadata(activeMaterializedMetadata);
+  g5.__pulpApplyMaterializedImportMetadata__ = function(scopeIds) {
+    const applied = applyMaterializedImportMetadata(
+      activeMaterializedMetadata, scopeIds);
+    // The responsive layout, optical centring and canvas behaviour passes
+    // correct captured geometry, line boxes and canvas bindings. A full pass
+    // always needs them; a scoped pass needs them only when it re-applied a
+    // captured binding, and one that re-applied nothing leaves them as they
+    // were.
+    g5.__spectrScopedPostApplySkipped__ =
+      (g5.__spectrScopedPostApplySkipped__ || 0);
+    if (materializedScopeSet(scopeIds) && applied === 0) {
+      ++g5.__spectrScopedPostApplySkipped__;
+      return applied;
+    }
     const prior = g5.__spectrResponsiveLayoutReceipt__;
     if (prior) applySpectrResponsiveLayout(prior.width, prior.height, false);
     // Responsive reflow can reinstall captured line boxes for text-bearing
@@ -11219,6 +11375,8 @@ function restoreMaterializedLayout(node, bridge) {
     }
     return split;
   }
+  let materializedFindMissEpoch = null;
+  const materializedFindMisses = /* @__PURE__ */ new Set();
   g5.__pulpFindMaterializedElement__ = function(selector, ancestor) {
     if (typeof selector !== "string" || selector.length === 0) return null;
     if (g5.document && typeof g5.document.querySelector === "function") {
@@ -11226,6 +11384,24 @@ function restoreMaterializedLayout(node, bridge) {
       if (browserNode && (!ancestor || materializedClosest(browserNode, ancestor))) {
         return browserNode;
       }
+    }
+    // A miss reads and match-tests every registry node, and captured-state
+    // resolution asks one selector per state on every commit. A miss cannot
+    // become a hit without a host mutation, and every host mutation bumps the
+    // published epoch, so misses are retained per epoch. Only a string
+    // ancestor is part of the key: an element ancestor has no stable key, so
+    // those lookups are not retained. With no epoch published nothing is.
+    const missEpoch = g5.__pulpMaterializedTreeEpoch__;
+    const missCacheable = typeof missEpoch === "number"
+      && (ancestor === void 0 || ancestor === null || typeof ancestor === "string");
+    let missKey = "";
+    if (missCacheable) {
+      if (missEpoch !== materializedFindMissEpoch) {
+        materializedFindMisses.clear();
+        materializedFindMissEpoch = missEpoch;
+      }
+      missKey = selector + "\u0000" + (ancestor || "");
+      if (materializedFindMisses.has(missKey)) return null;
     }
     let targetSelector = selector.trim();
     let effectiveAncestor = ancestor || "";
@@ -11252,6 +11428,7 @@ function restoreMaterializedLayout(node, bridge) {
         effectiveAncestor
       ))) return node;
     }
+    if (missCacheable) materializedFindMisses.add(missKey);
     return null;
   };
   g5.__pulpActivateMaterializedElement__ = function(selector, eventName, eventData) {
