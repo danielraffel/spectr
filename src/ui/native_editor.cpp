@@ -502,18 +502,35 @@ std::vector<float> analyzer_trace(const pulp::view::SpectrumData& spectrum,
     return result;
 }
 
-void append_trace(std::ostringstream& js,
-                  std::string_view name,
-                  float min_hz,
-                  float max_hz,
-                  std::span<const float> values) {
-    js << name << ":{min_hz:" << min_hz << ",max_hz:" << max_hz
-       << ",magnitude_db:[";
-    for (std::size_t index = 0; index < values.size(); ++index) {
-        if (index != 0) js << ',';
-        js << values[index];
-    }
-    js << "]}";
+// Payloads are built as values and handed to dispatch_native_message, which
+// invokes the page's receiver directly. Formatting them as a script instead
+// meant compiling a ~5 KB literal per frame. The object carries no class
+// name, so the receiver sees exactly these members and nothing else.
+choc::value::Value analyzer_trace_value(float min_hz,
+                                        float max_hz,
+                                        std::span<const float> values) {
+    auto magnitudes = choc::value::createEmptyArray();
+    for (const auto value : values)
+        magnitudes.addArrayElement(static_cast<double>(value));
+    auto trace = choc::value::createObject("");
+    trace.addMember("min_hz", static_cast<double>(min_hz));
+    trace.addMember("max_hz", static_cast<double>(max_hz));
+    trace.addMember("magnitude_db", magnitudes);
+    return trace;
+}
+
+// Digital silence has no level: `peak_db` is left undefined rather than 0,
+// and the receiver reads anything that is not a finite number as silence.
+choc::value::Value make_output_meter_payload(float peak_db, bool over,
+                                             float trim_db) {
+    auto payload = choc::value::createObject("");
+    payload.addMember("schema_version", static_cast<std::int32_t>(1));
+    payload.addMember("peak_db", std::isfinite(peak_db)
+        ? choc::value::createFloat64(static_cast<double>(peak_db))
+        : choc::value::Value{});
+    payload.addMember("over", over);
+    payload.addMember("trim_db", static_cast<double>(trim_db));
+    return payload;
 }
 
 } // namespace
@@ -3123,8 +3140,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
     {
         const auto level = read_output_level();
         // Publish only a CHANGED reading. A meter that republishes an
-        // unchanged one 30 times a second is another per-frame script
-        // evaluation and another React commit for a number that did not
+        // unchanged one 30 times a second is another per-frame dispatch
+        // into the page and another handler run for a number that did not
         // move -- the same cost the hover readout's 700ms throttle and the
         // zoom readout's live guard were both written to avoid. It is also
         // load bearing for the test fleet: an unconditional per-tick
@@ -3148,19 +3165,15 @@ bool Spectr::tick_native_analyzer_(float dt) {
         // Only the publication is skipped, never the rest of the tick: the
         // analyzer frame below has its own cadence and its own guard.
         if (moved) {
-            std::ostringstream meter;
-            meter << "if (typeof globalThis.__spectrPublishNativeMessage === "
-                     "'function') globalThis.__spectrPublishNativeMessage("
-                     "'output_meter',{schema_version:1,peak_db:"
-                  << (std::isfinite(level.peak_db)
-                          ? std::to_string(level.peak_db)
-                          : std::string("null"))
-                  << ",over:" << (level.over ? "true" : "false")
-                  << ",trim_db:" << level.trim_db
-                  << "},'spectr-output-meter');";
+            PULP_TRACE_SCOPE_NAMED("state", "spectr_output_meter_dispatch");
             try {
-                native_scripted_ui_->bridge()->load_script(
-                    meter.str(), "spectr-native-output-meter");
+                native_scripted_ui_->bridge()->dispatch_native_message(
+                    "__spectrPublishNativeMessage",
+                    "output_meter",
+                    make_output_meter_payload(level.peak_db, level.over,
+                                              level.trim_db),
+                    "spectr-output-meter",
+                    "spectr-native-output-meter");
             } catch (const std::exception& error) {
                 pulp::runtime::log_error(
                     "[Spectr native] output meter publication rejected: {}",
@@ -3185,23 +3198,31 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                         kVisibleAnalyzerPointCount);
     const auto overview = analyzer_trace(spectrum, overview_min, overview_max,
                                          kOverviewAnalyzerPointCount);
-    std::ostringstream js;
-    js << "if (typeof globalThis.__spectrPublishNativeMessage === 'function') "
-          "globalThis.__spectrPublishNativeMessage('analyzer_frame',{"
-          "schema_version:1,epoch:" << spectrum.epoch
-       << ",sequence_number:" << spectrum.sequence_number
-       << ",dropped_frames:" << spectrum.dropped_frames
-       << ",source_channels:" << spectrum.source_channels
-       << ",fft_size:" << spectrum.fft_size
-       << ",sample_rate:" << spectrum.sample_rate
-       << ",floor_db:" << spectrum.floor_db
-       << ",ceiling_db:" << kAnalyzerCeilingDb << ',';
-    append_trace(js, "visible", visible_min, visible_max, visible);
-    js << ',';
-    append_trace(js, "overview", overview_min, overview_max, overview);
-    js << "},'spectr-analyzer-frame');";
+    auto payload = choc::value::createObject("");
+    payload.addMember("schema_version", static_cast<std::int32_t>(1));
+    payload.addMember("epoch", static_cast<std::int64_t>(spectrum.epoch));
+    payload.addMember("sequence_number",
+                      static_cast<std::int64_t>(spectrum.sequence_number));
+    payload.addMember("dropped_frames",
+                      static_cast<std::int64_t>(spectrum.dropped_frames));
+    payload.addMember("source_channels",
+                      static_cast<std::int32_t>(spectrum.source_channels));
+    payload.addMember("fft_size", static_cast<std::int32_t>(spectrum.fft_size));
+    payload.addMember("sample_rate", static_cast<double>(spectrum.sample_rate));
+    payload.addMember("floor_db", static_cast<double>(spectrum.floor_db));
+    payload.addMember("ceiling_db", static_cast<double>(kAnalyzerCeilingDb));
+    payload.addMember("visible",
+                      analyzer_trace_value(visible_min, visible_max, visible));
+    payload.addMember("overview",
+                      analyzer_trace_value(overview_min, overview_max, overview));
     try {
-        native_scripted_ui_->bridge()->load_script(js.str(), "spectr-native-analyzer");
+        PULP_TRACE_SCOPE_NAMED("state", "spectr_analyzer_frame_dispatch");
+        native_scripted_ui_->bridge()->dispatch_native_message(
+            "__spectrPublishNativeMessage",
+            "analyzer_frame",
+            payload,
+            "spectr-analyzer-frame",
+            "spectr-native-analyzer");
     } catch (const std::exception& error) {
         pulp::runtime::log_error(
             "[Spectr native N1] analyzer publication rejected: {}", error.what());

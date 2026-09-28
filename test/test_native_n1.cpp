@@ -859,3 +859,105 @@ TEST_CASE("native analyzer migrates to a replacement editor while Logic retains 
     replacement_clock.tick(1.0f / 30.0f);
     processor.on_view_closed(*replacement);
 }
+
+// The two per-frame publications -- the spectrum and the output level -- are
+// handed to the page as values through dispatch_native_message, the way the
+// modulation overlay is. Formatted as a script instead, every frame compiled a
+// ~5 KB literal (23 times a second with audio playing) and ran the bridge's
+// out-of-frame animation flush. Two independent tells for which path ran: a
+// script load leaves its id behind as the bridge's active script, and a frame
+// published by evaluating one has that evaluation on its JS stack. The
+// observer also pins that the receiver got exactly the payload it always did.
+TEST_CASE("native analyzer and output meter frames are dispatched, not compiled",
+          "[native-n1][analyzer][publication]") {
+    spectr::Spectr processor;
+    pulp::state::StateStore store;
+    processor.set_state_store(&store);
+    processor.define_parameters(store);
+    pulp::format::PrepareContext prepare;
+    prepare.sample_rate = 48000.0;
+    prepare.max_buffer_size = 256;
+    prepare.input_channels = 2;
+    prepare.output_channels = 2;
+    processor.prepare(prepare);
+
+    auto root = processor.create_view();
+    REQUIRE(root != nullptr);
+    root->set_bounds({0, 0, 1320, 860});
+    pulp::view::FrameClock clock;
+    root->set_frame_clock(&clock);
+    root->layout_children();
+    processor.on_view_opened(*root);
+    auto* session = processor.active_scripted_ui();
+    REQUIRE(session != nullptr);
+    REQUIRE(session->bridge() != nullptr);
+    for (int frame = 0; frame < 4; ++frame)
+        clock.tick(1.0f / 60.0f);
+
+    const std::string observer_id = "spectr-native-publication-observer";
+    session->bridge()->load_script(R"js(
+      globalThis.__spectrObservedPublications = {
+        analyzer: [], meter: [], analyzerScripts: 0, meterScripts: 0 };
+      // A frame published by evaluating a script has that evaluation on its
+      // stack; one invoked directly from native has only the receiver.
+      const fromScript = () => String(new Error().stack).includes('<eval>');
+      window.pulp.on('analyzer_frame', message => {
+        globalThis.__spectrObservedPublications.analyzer.push(message.payload);
+        if (fromScript()) ++globalThis.__spectrObservedPublications.analyzerScripts;
+      });
+      window.pulp.on('output_meter', message => {
+        globalThis.__spectrObservedPublications.meter.push(message.payload);
+        if (fromScript()) ++globalThis.__spectrObservedPublications.meterScripts;
+      });
+    )js", observer_id);
+    REQUIRE(session->bridge()->active_script_id() == observer_id);
+
+    feed_tone(processor, clock);
+    REQUIRE(processor.read_spectrum().sequence_number > 0);
+
+    const auto& active = session->bridge()->active_script_id();
+    CAPTURE(active);
+    CHECK(active != "spectr-native-analyzer");
+    CHECK(active != "spectr-native-output-meter");
+
+    session->bridge()->load_script(R"js(
+      const seen = globalThis.__spectrObservedPublications;
+      if (seen.analyzerScripts || seen.meterScripts)
+        throw new Error(`frames arrived by script evaluation: analyzer `
+          + `${seen.analyzerScripts}/${seen.analyzer.length}, meter `
+          + `${seen.meterScripts}/${seen.meter.length}`);
+      if (!seen.analyzer.length)
+        throw new Error('no analyzer_frame reached the page');
+      if (!seen.meter.length)
+        throw new Error('no output_meter reached the page');
+      const keys = value => Object.keys(value).sort().join(',');
+      const frame = seen.analyzer[seen.analyzer.length - 1];
+      const frameKeys = 'ceiling_db,dropped_frames,epoch,fft_size,floor_db,'
+        + 'overview,sample_rate,schema_version,sequence_number,'
+        + 'source_channels,visible';
+      if (keys(frame) !== frameKeys)
+        throw new Error(`analyzer_frame members changed: ${keys(frame)}`);
+      if (frame.schema_version !== 1 || !Number.isSafeInteger(frame.epoch)
+          || !Number.isSafeInteger(frame.sequence_number)
+          || frame.fft_size !== 8192 || frame.sample_rate !== 48000
+          || frame.ceiling_db !== 24)
+        throw new Error(`analyzer_frame header changed: ${JSON.stringify({
+          ...frame, visible: undefined, overview: undefined })}`);
+      for (const [name, length] of [['visible', 321], ['overview', 121]]) {
+        const trace = frame[name];
+        if (keys(trace) !== 'magnitude_db,max_hz,min_hz'
+            || !Array.isArray(trace.magnitude_db)
+            || trace.magnitude_db.length !== length
+            || !trace.magnitude_db.every(Number.isFinite))
+          throw new Error(`analyzer_frame ${name} trace changed: ${keys(trace)}`);
+      }
+      const meter = seen.meter[seen.meter.length - 1];
+      if (keys(meter) !== 'over,peak_db,schema_version,trim_db')
+        throw new Error(`output_meter members changed: ${keys(meter)}`);
+      if (meter.schema_version !== 1 || typeof meter.over !== 'boolean'
+          || !Number.isFinite(meter.peak_db) || meter.trim_db !== 0)
+        throw new Error(`output_meter values changed: ${JSON.stringify(meter)}`);
+    )js", "spectr-native-publication-contract");
+
+    processor.on_view_closed(*root);
+}
