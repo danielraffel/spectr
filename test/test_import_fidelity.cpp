@@ -570,13 +570,19 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         // is a whole-document commit roughly twice a second for as long as a
         // pointer rests on a band, which is the cost that was removed.
         CHECK(count_occurrences(document, "statusRefreshAtRef") == 0);
-        // Exactly one React publication of a hover reading survives, and it is
-        // the band-CROSSING effect -- which is what re-shows a banner that has
-        // already dismissed itself, and is the reason the per-frame path can
-        // stop publishing at all. A second occurrence means the per-frame
-        // writer started publishing again.
-        CHECK(count_occurrences(document, "onStatus(label);") == 1);
-        CHECK(count_occurrences(document, "}, [hoverBand, N, onStatus]);") == 1);
+        // Plain hover publishes no reading at all: a band crossing used to
+        // publish through the root's `onStatus`, and on a dense bank nearly
+        // every pointer move crosses a band, so hovering re-applied the whole
+        // document per move. The pill reads out a band only while drawing --
+        // pressed and released through `onStatus`, written directly in
+        // between -- and each direct write restarts the pill's hide timer so
+        // it cannot dismiss mid-stroke.
+        CHECK(count_occurrences(document, "onStatus(label);") == 0);
+        CHECK(count_occurrences(document, "}, [hoverBand, N, onStatus]);") == 0);
+        CHECK(count_occurrences(document,
+                  "if (!pointer || (pointer.mode !== \\\"gain\\\" && pointer.mode !== \\\"mute-brush\\\")) return;")
+              == 1);
+        CHECK(count_occurrences(document, "window.spectrStatusBannerKeepAlive();") == 1);
         // No 150 ms interval survives. The status-dismiss timer is armed
         // from a ref, and the zoom readout is a leaf that subscribes to the
         // viewport, so neither samples on a clock. An interval here is an
@@ -865,12 +871,14 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         // every frame back on the write path.
         ContractMarker{"changed-reading-only-status-write",
                        "if (liveStatusLabelRef.current === label) return;"},
-        // The one React publication of a hover reading that survives. It fires
-        // on a band CROSSING, which is what re-shows a banner that has already
-        // dismissed itself -- without it the per-frame direct write reaches a
-        // text node nobody can see.
-        ContractMarker{"band-crossing-status-publication",
-                       "}, [hoverBand, N, onStatus]);"},
+        // The band reading is a drawing-time readout. Severing the gate puts
+        // a status write back on every hover move; severing the keepalive
+        // lets the pill dismiss mid-stroke with the direct write still
+        // filling a box nobody can see.
+        ContractMarker{"draw-only-status-reading",
+                       "if (!pointer || (pointer.mode !== \\\"gain\\\" && pointer.mode !== \\\"mute-brush\\\")) return;"},
+        ContractMarker{"drawing-keeps-status-up",
+                       "window.spectrStatusBannerKeepAlive();"},
         ContractMarker{"inactivity-status-clear", "arm(160);"},
         ContractMarker{"longer-mute-status", "const holdMs = /\\\\b(?:MUTED|UNMUTED)\\\\b/.test(display) ? 2800 : 2200;"},
         ContractMarker{"content-sized-banner", "const bannerWidth = spectrStatusBannerWidth(text);"},

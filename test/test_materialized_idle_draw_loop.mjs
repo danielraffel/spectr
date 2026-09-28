@@ -724,9 +724,12 @@ stayAwake("a gain still smoothing", () => {
 {
   render();
   settle(600);
-  // Put the pointer on a band and give it a reading that keeps moving.
+  // Press on a band and hold: the pill reads out a band only while drawing
+  // (plain hover shows nothing), so this is the gesture with a live reading.
+  // The press itself publishes once, through React, before counting starts.
   dispatchWindow("pointermove", pointerEvent(centre(12), PLOT_Y));
   surface.props.onPointerMove(pointerEvent(centre(12), PLOT_Y));
+  surface.props.onPointerDown(pointerEvent(centre(12), PLOT_Y));
   render();
   // A target the hovered band is NOT already sitting on, so the reading
   // under the pointer genuinely sweeps while it travels there.
@@ -745,6 +748,11 @@ stayAwake("a gain still smoothing", () => {
       previous = bannerText.textContent;
     }
   }
+  const heldCalls = statusCalls;
+  surface.props.onPointerUp(pointerEvent(centre(12), PLOT_Y));
+  render();
+  settle(600);
+  statusCalls = heldCalls;
   console.log("status    %d frame(s): %d direct label write(s), %d React "
     + "publication(s)", 90, labelWrites, statusCalls);
   // STIMULUS CONTROL. Zero publications is what a correct document and a
@@ -757,7 +765,7 @@ stayAwake("a gain still smoothing", () => {
     process.exit(2);
   }
   if (statusCalls !== 0) {
-    fail(`a live hover reading published ${statusCalls} status update(s) back `
+    fail(`a live drawing reading published ${statusCalls} status update(s) back `
       + "through React across 90 frames. `onStatus` is the parent's state and "
       + "this document is a captured import, so each one re-applies the whole "
       + "captured document -- and the pill's width is a function of the string "

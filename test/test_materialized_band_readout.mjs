@@ -48,10 +48,9 @@
 // --plant-no-clamp keeps the guard but removes bandCenterFreq's clamp, so the
 // belt-and-braces half is proved to be load bearing on its own -- otherwise it
 // could be deleted tomorrow with every test still green.
-// --plant-unstamped-state writes the stamp to the ref and hands the bare
-// object to setHover, which is the regression that silently deletes the
-// readout entirely rather than making it wrong. It was a real mistake made
-// while writing this change.
+// --plant-unstamped-state stamps a copy but stores the bare object in the
+// ref, which is the regression that silently deletes the readout entirely
+// rather than making it wrong: the gate refuses an unstamped reading forever.
 // --expect-fail inverts the verdict, so a control is green only when this
 // suite REJECTS that document. The inversion lives here rather than in
 // WILL_FAIL because WILL_FAIL accepts any non-zero exit -- a usage error or an
@@ -89,8 +88,7 @@ const LABEL_HEAD = "  const liveHoverLabel = (current) => {\n"
 const CENTRE_CLAMP =
   "    const a = view.lmin + (clamp(i, 0, N - 1) + 0.5) / N * (view.lmax - view.lmin);\n";
 const STAMP_PAIR = "    const stamped = next ? { ...next, n: N } : next;\n"
-  + "    hoverRef.current = stamped;\n"
-  + "    if (!pointerRef.current || !pointerRef.current.mode) setHover(stamped);\n";
+  + "    hoverRef.current = stamped;\n";
 
 // Every plant must be observed to apply. A plant whose needle has drifted
 // silently produces the CURRENT document, and the control then passes while
@@ -125,10 +123,9 @@ if (plantNoClamp) {
 }
 
 if (plantUnstamped) {
-  plant("a React copy that never carries the stamp", STAMP_PAIR,
+  plant("a hover ref that never carries the stamp", STAMP_PAIR,
     "    const stamped = next ? { ...next, n: N } : next;\n"
-    + "    hoverRef.current = stamped;\n"
-    + "    if (!pointerRef.current || !pointerRef.current.mode) setHover(next);\n");
+    + "    hoverRef.current = next;\n");
 }
 
 const failures = [];
@@ -224,9 +221,9 @@ if (!bankBody.includes("if (hoverBandOf(current) < 0) return;")) {
     + "direct DOM fast path can still paint a stale reading");
 }
 
-// S3. Both hover writers stamp, and the ref copy and the React copy are the
-// SAME stamped object. Stamping only the ref leaves the state copy without an
-// `n`, which the gate then rejects forever: the readout vanishes outright.
+// S3. Every hover writer stamps what it stores. Hover lives only in the ref
+// (a pointer move never renders), and an unstamped reading there is refused
+// by the gate forever: the readout vanishes outright.
 const stamped = bankBody.split("hoverRef.current = { band, x, y, n: N };").length - 1;
 if (stamped !== 2) {
   fail(`${stamped} of the 2 direct hover writers stamp their layout; an `
@@ -236,8 +233,13 @@ if (bankBody.split("hoverRef.current = { band, x, y };").length - 1 !== 0) {
   fail("a direct hover writer still records no layout");
 }
 if (!bankBody.includes(STAMP_PAIR)) {
-  fail("updatePointerHover does not hand the SAME stamped reading to both the "
-    + "ref and React state; the unstamped copy is refused forever");
+  fail("updatePointerHover does not store the stamped reading in the ref; "
+    + "an unstamped reading is refused forever");
+}
+// A pointer move must not render: hover is paint-only.
+if (bankBody.includes("setHover(stamped)") || bankBody.includes("setHover(next)")) {
+  fail("updatePointerHover still hands hover to React state, so every move "
+    + "re-renders the editor");
 }
 
 // S4. Both frequency helpers clamp their index into the bank.
@@ -249,11 +251,11 @@ if (!bankBody.includes("const j = clamp(i, 0, N - 1);")) {
   fail("bandFreqRange does not clamp its index");
 }
 
-// S5. The label still reads the same single N it always did. This change is
-// about which INDEX reaches the divisor, not about adding a second divisor.
-if (html.split("BAND ${hoverBand + 1}/${N}").length - 1 !== 1
+// S5. The label still reads the same single N it always did. There is one
+// label site: the reading written while drawing. Plain hover publishes none.
+if (html.split("BAND ${hoverBand + 1}/${N}").length - 1 !== 0
     || html.split('"   BAND " + (band + 1) + "/" + N').length - 1 !== 1) {
-  fail("the two band-readout label sites are not both present and singular");
+  fail("the band-readout label is not the single drawing-time site");
 }
 
 // ----------------------------------------------------------- runtime check
