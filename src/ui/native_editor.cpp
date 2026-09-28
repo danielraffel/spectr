@@ -17,6 +17,7 @@
 #include <pulp/view/pointer_dispatch.hpp>
 #include <pulp/view/ui_components.hpp>
 #include <pulp/view/view.hpp>
+#include <pulp/view/widgets.hpp>
 #include <pulp/view/window_host.hpp>
 
 #include <choc/text/choc_JSON.h>
