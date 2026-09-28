@@ -6377,3 +6377,56 @@ TEST_CASE("the status pill shows a band reading only when a gesture edits a band
     settle(rig.clock, 4);
     storage.require_unchanged();
 }
+
+// HOVERING THE SETTINGS CLOSE BUTTON RE-RENDERS THE BUTTON, NOT THE PANEL.
+//
+// The button's hover and press look is its own state. When it was state of
+// the Settings panel, each pointer-enter and pointer-leave re-rendered every
+// group, field, chip row and slider in the panel to recolour one 32px square,
+// ~18 ms of a ~25 ms hover commit headless. Counted as the panel's rows
+// rebuilt during hovers (each field is a React element created per render),
+// with a control that the same counter sees the rows when the panel renders.
+TEST_CASE("hovering the Settings close button re-renders only the button",
+          "[native-n1][state-parity][render-scope]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    activate(rig, "[data-spectr-settings-open]");
+    settle(rig.clock, 8);
+    // The Settings panel reads window.SPECTR_MODULATION_LOOKS once per render,
+    // so a counting getter on it counts panel renders.
+    rig.bridge().load_script(R"js((() => {
+      const w = typeof window !== 'undefined' ? window : globalThis;
+      let looks = w.SPECTR_MODULATION_LOOKS;
+      globalThis.__spectrPanelRenders = 0;
+      Object.defineProperty(w, 'SPECTR_MODULATION_LOOKS', { configurable: true,
+        get() { ++globalThis.__spectrPanelRenders; return looks; },
+        set(value) { looks = value; } });
+      const sel = '[data-spectr-settings-close]';
+      for (let i = 0; i < 10; ++i) {
+        globalThis.__pulpActivateMaterializedElement__(sel, i % 2 ? 'pointerleave' : 'pointerenter', null);
+        globalThis.__pulpRuntimeSettle__(2);
+      }
+      const hovered = globalThis.__spectrPanelRenders;
+      const state = document.querySelector(sel)?.getAttribute('data-spectr-close-state');
+      // Control: a real panel render (a setting changed, then changed back)
+      // must register on the same counter.
+      globalThis.__spectrPanelRenders = 0;
+      for (let i = 0; i < 2; ++i) {
+        globalThis.__pulpActivateMaterializedElement__(
+          '[data-spectr-status-info-toggle]', 'click', null);
+        globalThis.__pulpRuntimeSettle__(4);
+      }
+      const control = globalThis.__spectrPanelRenders;
+      Object.defineProperty(w, 'SPECTR_MODULATION_LOOKS', { configurable: true,
+        writable: true, value: looks });
+      if (!(control > 0))
+        throw new Error('the panel-render counter saw nothing when a setting changed');
+      if (state !== 'hover' && state !== 'idle')
+        throw new Error('the close button lost its hover state: ' + state);
+      if (hovered !== 0)
+        throw new Error('10 hovers on the close button re-rendered the Settings panel '
+          + hovered + ' times; the button must own its own hover state');
+    })();)js", "spectr-native-close-hover-render-scope");
+    storage.require_unchanged();
+}
