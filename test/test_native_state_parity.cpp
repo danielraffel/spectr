@@ -7,7 +7,9 @@
 #include <pulp/canvas/recording_canvas.hpp>
 #include <pulp/state/store.hpp>
 #include <pulp/view/frame_clock.hpp>
+#include <pulp/view/hover_cursor.hpp>
 #include <pulp/view/input_events.hpp>
+#include <pulp/view/overlay_dismissal.hpp>
 #include <pulp/view/pointer_dispatch.hpp>
 #include <pulp/view/screenshot.hpp>
 #include <pulp/view/scripted_ui.hpp>
@@ -5793,6 +5795,119 @@ TEST_CASE("dismissing a native dropdown over ordinary content still consumes",
         CHECK(press.consume_press);
         settle(rig.clock, 30);
         require_open_menu(rig, "");
+    }
+    storage.require_unchanged();
+}
+
+namespace {
+
+// Where a hover lands and which cursor it shows, sampled across an open
+// popup's own box in the order a macOS host runs a buttonless move:
+// `deliver_hover_move` (the scripted `pointermove`), then `hover_cursor_at`.
+struct PopupHoverSweep {
+    std::vector<pulp::view::Point> points;
+    int crosshair = 0;       // points showing the plot's crosshair
+    std::string first_bad;   // first offending point, for the failure message
+};
+
+PopupHoverSweep sweep_popup_hover(NativeEditorRig& rig, View& popup) {
+    auto& root = *rig.root;
+    const auto origin = pulp::view::point_to_local({0.0f, 0.0f}, &popup, &root);
+    const float left = -origin.x, top = -origin.y;
+    const auto box = popup.bounds();
+    PopupHoverSweep sweep;
+    for (float y = top + 3.0f; y < top + box.height - 2.0f; y += 11.0f) {
+        for (float x = left + 3.0f; x < left + box.width - 2.0f; x += 13.0f) {
+            const pulp::view::Point point{x, y};
+            sweep.points.push_back(point);
+            pulp::view::deliver_hover_move(root, point);
+            if (pulp::view::hover_cursor_at(root, point)
+                != View::CursorStyle::crosshair)
+                continue;
+            ++sweep.crosshair;
+            if (sweep.first_bad.empty()) {
+                // The tree hit names the view whose cursor leaked through.
+                const auto* under = root.hit_test(point);
+                std::ostringstream text;
+                text << point.x << ',' << point.y << " shows the cursor of "
+                     << (under ? under->id() : std::string("<nothing>"));
+                sweep.first_bad = text.str();
+            }
+        }
+    }
+    return sweep;
+}
+
+// The popup must actually cover plot pixels for a zero-crosshair sweep to mean
+// anything: re-read the same points with the popup closed and count the plot's
+// crosshair there.
+int crosshair_points_without_popup(NativeEditorRig& rig,
+                                   const std::vector<pulp::view::Point>& points) {
+    int crosshair = 0;
+    for (const auto& point : points) {
+        pulp::view::deliver_hover_move(*rig.root, point);
+        if (pulp::view::hover_cursor_at(*rig.root, point)
+            == View::CursorStyle::crosshair)
+            ++crosshair;
+    }
+    return crosshair;
+}
+
+void close_every_popup(NativeEditorRig& rig) {
+    while (rig.root->interaction().active_overlay != nullptr) {
+        View::dismiss_active_overlay(*rig.root);
+        settle(rig.clock, 16);
+    }
+}
+
+}  // namespace
+
+// Over an open popup the pointer shows the popup's cursor, never the crosshair
+// of the band plot it is painted over. The band menu opens inside the plot's
+// own subtree; the rail dropdowns open upward from the bottom rail, and the
+// tall edit menu reaches far enough over the plot that a tree hit test stops
+// reaching its upper rows. A press there was always routed into the menu
+// through the overlay slot; the hover has to resolve the same way.
+TEST_CASE("an open popup never shows the band plot's crosshair",
+          "[native-n1][cursor][overlay][hover]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    auto& root = *rig.root;
+    const pulp::view::Point plot{660.0f, 430.0f};
+
+    const auto check_open_popup = [&](const std::string& what) {
+        View* popup = root.interaction().active_overlay;
+        INFO(what);
+        REQUIRE(popup != nullptr);
+        const auto sweep = sweep_popup_hover(rig, *popup);
+        INFO("first offending point: " << sweep.first_bad);
+        REQUIRE(sweep.points.size() > 40);
+        CHECK(sweep.crosshair == 0);
+        close_every_popup(rig);
+        CHECK(crosshair_points_without_popup(rig, sweep.points) > 0);
+    };
+
+    // Band context menu, opened on the plot the way a right click opens it.
+    pulp::view::deliver_hover_move(root, plot);
+    REQUIRE(pulp::view::hover_cursor_at(root, plot) == View::CursorStyle::crosshair);
+    REQUIRE(pulp::view::route_context_press(root, plot).handled);
+    settle(rig.clock, 16);
+    check_open_popup("band context menu");
+
+    // Every chrome dropdown, each opened while the pointer last showed the
+    // crosshair so a stale plot cursor has every chance to survive.
+    for (const char* label : {"32 bands ▾", "SCULPT ▾", "PEAK ▾", "⋯"}) {
+        pulp::view::deliver_hover_move(root, plot);
+        REQUIRE(host_click(rig, trigger_centre(root, label)).reached_tree);
+        View* popup = root.interaction().active_overlay;
+        if (popup == nullptr) FAIL("dropdown did not open: " << label);
+        // A dropdown mounted clear of the plot has nothing to cover; only the
+        // ones painted over it can show the defect, and those must not.
+        const auto sweep = sweep_popup_hover(rig, *popup);
+        INFO(label << " first offending point: " << sweep.first_bad);
+        CHECK(sweep.crosshair == 0);
+        close_every_popup(rig);
     }
     storage.require_unchanged();
 }
