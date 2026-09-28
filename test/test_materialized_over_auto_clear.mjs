@@ -410,11 +410,45 @@ if (!leafBlock) {
         ran.set(index, { deps, cleanup: fn() });
       }
     };
+    // A node per ref, reconciled the way React does it: a render writes a
+    // node's text only when the RENDERED text changed since the last render.
+    // The chip's number is written straight into its label between renders,
+    // so the label node -- not the last returned element -- is what a person
+    // reads. Same model as test_materialized_output_meter.mjs.
+    const nodes = new Map();
+    const reconcile = (node) => {
+      if (!node || typeof node !== "object") return;
+      const p = node.props || {};
+      if (p.ref && typeof p.ref === "object") {
+        if (!nodes.has(p.ref)) {
+          const attributes = new Map();
+          nodes.set(p.ref, {
+            renderedText: undefined, textContent: "",
+            setAttribute(name, value) { attributes.set(name, String(value)); },
+            getAttribute(name) {
+              return attributes.has(name) ? attributes.get(name) : null;
+            },
+          });
+        }
+        const target = nodes.get(p.ref);
+        p.ref.current = target;
+        const children = node.children || [];
+        if (children.every((c) => typeof c !== "object")) {
+          const text = children.map(String).join("");
+          if (text !== target.renderedText) {
+            target.renderedText = text;
+            target.textContent = text;
+          }
+        }
+      }
+      for (const child of node.children || []) reconcile(child);
+    };
     const render = () => {
       hooks.index = 0;
       hooks.effectIndex = 0;
       hooks.effects = [];
       element = props === undefined ? Meter() : Meter(props);
+      reconcile(element);
       return element;
     };
     rerender = () => { render(); };
@@ -441,7 +475,11 @@ if (!leafBlock) {
       commits,
       frames,
       subscribed: () => listeners.has("output_meter"),
-      peakText: () => flatten(peakNode()),
+      peakText: () => {
+        const label = find(element, (p) => p["data-spectr-output-peak-label"]);
+        return label && label.props.ref && label.props.ref.current
+          ? label.props.ref.current.textContent : flatten(peakNode());
+      },
       overFlag: () => peakNode() && peakNode().props["data-spectr-output-over"],
       overPeak: () => peakNode().props["data-spectr-output-over-peak"],
       click: () => peakNode().props.onClick(),

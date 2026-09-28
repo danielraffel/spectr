@@ -957,6 +957,17 @@ TEST_CASE("native analyzer and output meter frames are dispatched, not compiled"
       if (meter.schema_version !== 1 || typeof meter.over !== 'boolean'
           || !Number.isFinite(meter.peak_db) || meter.trim_db !== 0)
         throw new Error(`output_meter values changed: ${JSON.stringify(meter)}`);
+      // The number reaches the chip without a render: the attribute and the
+      // label both carry the level the last frame published.
+      const chip = document.querySelector('[data-spectr-output-peak]');
+      const label = document.querySelector('[data-spectr-output-peak-label]');
+      const printed = chip && chip.getAttribute('data-spectr-output-peak-db');
+      if (!/^[-+]?\d+\.\d$/.test(String(printed)))
+        throw new Error(`the output chip prints no level: ${printed}`);
+      if (!label || !String(label.textContent).includes(
+            (Number(printed) > 0 ? '+' : '') + printed))
+        throw new Error(`the output label disagrees with its attribute: `
+          + `${label && label.textContent} / ${printed}`);
     )js", "spectr-native-publication-contract");
 
     processor.on_view_closed(*root);

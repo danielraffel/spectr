@@ -2344,6 +2344,23 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-short-track --expect-fail)
     set_tests_properties(Spectr-materialized-output-meter-trim-track-control
         PROPERTIES TIMEOUT 30)
+    # The number moves without a render. The native side publishes every
+    # 0.1 dB change, ~25 times a second with audio playing, and every React
+    # commit re-applies this captured document; measured with Perfetto, those
+    # commits were the meter's whole cost and the >100 ms stalls were runs of
+    # them. Three rows because three separate things make it cheap: no commit
+    # per reading, no faster than 10 Hz, and a label box its digits cannot
+    # resize.
+    foreach(_spectr_meter_plant meter-commits unthrottled-readout elastic-readout)
+        add_test(NAME Spectr-materialized-output-meter-${_spectr_meter_plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_spectr_meter_plant} --expect-fail)
+        set_tests_properties(
+            Spectr-materialized-output-meter-${_spectr_meter_plant}-control
+            PROPERTIES TIMEOUT 30)
+    endforeach()
 
     # THE OVERLOAD CHIP GOES OUT BY ITSELF, and latching it is a setting.
     #

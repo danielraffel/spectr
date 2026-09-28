@@ -89,6 +89,13 @@
 // --plant-unlabelled-trim removes the visible OUTPUT label, restoring the
 // state that shipped: a slider next to a meter carrying only aria-label and
 // title, neither of which a DAW ever draws.
+// --plant-meter-commits commits React on every printed level change again,
+// which is how it shipped: ~25 whole-document re-applies a second with audio
+// playing, because this document is a captured import.
+// --plant-unthrottled-readout writes every changed reading the moment it
+// arrives, so the number relays out at the publication rate rather than 10 Hz.
+// --plant-elastic-readout drops the label's fixed width, so a digit change can
+// resize the chip and relayout everything around it.
 // --plant-short-track restores the 58pt track, which under the runtime's
 // fixed ~20pt thumb resolved 0.83 dB per point -- a 0.5 dB step roughly every
 // device pixel at 2x, which is not adjustment.
@@ -110,6 +117,9 @@ const plantClipLabel = args.includes("--plant-clip-label");
 const plantUntypedReadout = args.includes("--plant-untyped-readout");
 const plantUnlabelledTrim = args.includes("--plant-unlabelled-trim");
 const plantShortTrack = args.includes("--plant-short-track");
+const plantMeterCommits = args.includes("--plant-meter-commits");
+const plantUnthrottledReadout = args.includes("--plant-unthrottled-readout");
+const plantElasticReadout = args.includes("--plant-elastic-readout");
 const expectFail = args.includes("--expect-fail");
 const documentPath = args.find((a) => !a.startsWith("--"));
 
@@ -118,7 +128,8 @@ if (!documentPath) {
     + "[--plant-no-decay|--plant-two-clock-reads|--plant-decaying-latch"
     + "|--plant-no-hold-window"
     + "|--plant-no-latch|--plant-clip-label|--plant-untyped-readout"
-    + "|--plant-unlabelled-trim|--plant-short-track] [--expect-fail]");
+    + "|--plant-unlabelled-trim|--plant-short-track|--plant-meter-commits"
+    + "|--plant-unthrottled-readout|--plant-elastic-readout] [--expect-fail]");
   process.exit(2);
 }
 
@@ -173,12 +184,28 @@ function plant(label, from, to) {
 const ONE_CLOCK_READ = "    const now = Date.now();\n"
   + "    commitReading(now);\n"
   + "    if (falling(holdRef.current, now)\n"
-  + "        || overExpiring(holdRef.current)) schedulePump();\n";
+  + "        || overExpiring(holdRef.current)\n"
+  + "        || levelRef.current.pending) schedulePump();\n";
 if (plantTwoClockReads) {
   plant("a pump that reads the clock twice", ONE_CLOCK_READ,
     "    commitReading(Date.now());\n"
     + "    if (falling(holdRef.current, Date.now())\n"
-    + "        || overExpiring(holdRef.current)) schedulePump();\n");
+    + "        || overExpiring(holdRef.current)\n"
+    + "        || levelRef.current.pending) schedulePump();\n");
+}
+if (plantMeterCommits) {
+  plant("a level change that commits React", "    writeLevel(db, nowMs);\n  };\n",
+    "    writeLevel(db, nowMs);\n    setReading({ ...chipRef.current });\n  };\n");
+}
+if (plantUnthrottledReadout) {
+  plant("a readout written at the publication rate",
+    "  const READOUT_INTERVAL_MS = 100;\n", "  const READOUT_INTERVAL_MS = 0;\n");
+}
+if (plantElasticReadout) {
+  plant("a readout whose width follows its digits",
+    "      lineHeight: 1, whiteSpace: \"nowrap\", width: 78, minWidth: 78,\n"
+    + "      flexShrink: 0, textAlign: \"center\"\n",
+    "      lineHeight: 1, whiteSpace: \"nowrap\"\n");
 }
 if (plantNoDecay) {
   plant("a number that never falls", FALL,
@@ -375,7 +402,7 @@ if (!/requestAnimationFrame\(pump\)/.test(meterBody)) {
     + "the native side publishes -- and it publishes nothing while a reading "
     + "is unchanged");
 }
-if (!/if \(falling\(holdRef\.current, now\)\s*\|\| overExpiring\(holdRef\.current\)\) schedulePump\(\);/
+if (!/if \(falling\(holdRef\.current, now\)\s*\|\| overExpiring\(holdRef\.current\)\s*\|\| levelRef\.current\.pending\) schedulePump\(\);/
     .test(meterBody)) {
   fail("the fall pump does not reschedule itself conditionally, so it is "
     + "either a one-shot or a permanent per-frame animation in the header");
@@ -392,6 +419,29 @@ if (!/const pump = \(\) => \{\s*pumpRef\.current = 0;\s*const now = Date\.now\(\
   fail("the fall pump does not take a single timestamp and use it for both "
     + "the commit and the keep-falling decision; two clock reads stop the "
     + "fall up to a frame above the live level, and it stays there");
+}
+
+// S4e. THE PRINTED NUMBER HAS A FIXED BOX. Its text is rewritten up to ten
+// times a second with no render; a box that followed its digits would resize
+// the chip on each write and relayout everything around it. The box must hold
+// the widest label the chip can print, "OVER -99.9": ten mono glyphs.
+const peakLabelStyle =
+  /"data-spectr-output-peak-label": true,[\s\S]{0,500}?style: \{([^}]*)\}/
+    .exec(meterBody);
+if (!peakLabelStyle) {
+  fail("the peak label is not a marked element with its own style, so its "
+    + "width cannot be checked");
+} else {
+  const width = /\bwidth: (\d+)/.exec(peakLabelStyle[1]);
+  const glyph = Number((/fontSize: (\d+)/.exec(meterBody) || [0, 10])[1]);
+  const widest = 10 * (glyph * 0.6 + 0.8);
+  if (!width) {
+    fail("the peak label declares no fixed width, so every change of digits "
+      + "can resize the chip");
+  } else if (Number(width[1]) < widest) {
+    fail(`the peak label's ${width[1]}pt box cannot hold "OVER -99.9" `
+      + `(~${widest.toFixed(1)}pt)`);
+  }
 }
 
 // S5. THE TRIM READOUT CARRIES ITS OWN TYPE, and it is the PEAK button's.
@@ -716,6 +766,54 @@ if (!leafBlock) {
         + "script block -- it was declared in another scope");
     } else {
       let element = null;
+      // A NODE PER REF, reconciled the way React reconciles. The readout's
+      // number is written straight into its nodes between renders, so what a
+      // person sees is the node, not the last element this component
+      // returned. A render writes a node's text or attribute only when the
+      // RENDERED value changed since the previous render -- React compares
+      // against what it last rendered, never against the live node -- so a
+      // render that disagrees with a direct write shows up here as it would
+      // on screen.
+      const nodes = new Map();
+      const labelWrites = { count: 0 };
+      const nodeFor = (ref) => {
+        if (!nodes.has(ref)) {
+          const attributes = new Map();
+          let text = "";
+          const node = {
+            rendered: { text: undefined, attributes: new Map() },
+            get textContent() { return text; },
+            set textContent(value) { text = String(value); ++labelWrites.count; },
+            setAttribute(name, value) { attributes.set(name, String(value)); },
+            getAttribute(name) {
+              return attributes.has(name) ? attributes.get(name) : null;
+            },
+          };
+          nodes.set(ref, node);
+        }
+        return nodes.get(ref);
+      };
+      const reconcile = (node) => {
+        if (!node || typeof node !== "object") return;
+        const props = node.props || {};
+        if (props.ref && typeof props.ref === "object") {
+          const target = nodeFor(props.ref);
+          props.ref.current = target;
+          const text = (node.children || []).every((c) => typeof c !== "object")
+            ? (node.children || []).map(String).join("") : undefined;
+          if (text !== undefined && text !== target.rendered.text) {
+            target.rendered.text = text;
+            target.textContent = text;
+          }
+          for (const [name, value] of Object.entries(props)) {
+            if (!name.startsWith("data-") || typeof value === "boolean") continue;
+            if (target.rendered.attributes.get(name) === value) continue;
+            target.rendered.attributes.set(name, value);
+            target.setAttribute(name, value);
+          }
+        }
+        for (const child of node.children || []) reconcile(child);
+      };
       // LATCHED, explicitly. Every runtime check below measures the hold-
       // until-clicked half, which is now what `overLatch` selects rather than
       // what the component always does. Rendering the default here would make
@@ -724,6 +822,7 @@ if (!leafBlock) {
         hooks.index = 0;
         hooks.effects = [];
         element = Meter({ latchOver: true });
+        reconcile(element);
         return element;
       };
       rerender = () => { render(); };
@@ -748,7 +847,16 @@ if (!leafBlock) {
         return (node.children || []).map(flatten).join("");
       };
       const peakNode = () => find(element, (p) => p["data-spectr-output-peak"]);
-      const peakText = () => flatten(peakNode());
+      // Read off the nodes, as a person would: the label's text and the
+      // button's attribute, whichever writer last touched them.
+      const peakLabelNode = () => {
+        const node = find(element, (p) => p["data-spectr-output-peak-label"]);
+        return node && node.props.ref ? node.props.ref.current : null;
+      };
+      const peakText = () => {
+        const node = peakLabelNode();
+        return node ? node.textContent : flatten(peakNode());
+      };
       const overFlag = () => peakNode() && peakNode().props["data-spectr-output-over"];
       const trimNode = () => find(element, (p) => p["data-spectr-output-trim"]);
       const trimText = () =>
@@ -849,6 +957,17 @@ if (!leafBlock) {
         }
       }
 
+      // The readout's write interval, read out of the component and bounded:
+      // a number rewritten faster than ~10 Hz cannot be read and costs a
+      // relayout per write; one slower than ~7 Hz visibly lags the signal.
+      const readoutMs = Number(
+        (/const READOUT_INTERVAL_MS = (\d+)/.exec(meterBody) || [])[1]);
+      if (!(readoutMs >= 50 && readoutMs <= 150)) {
+        fail(`the readout's write interval is ${readoutMs}ms; it must be `
+          + "50-150ms -- faster is unreadable and relays out per write, slower "
+          + "lags the signal");
+      }
+
       // R3. THE NUMBER IS HELD LONG ENOUGH TO READ, THEN FALLS TO THE LIVE
       //     LEVEL -- AND THE OVERLOAD SURVIVES THAT SAME ELAPSED TIME.
       //
@@ -867,7 +986,12 @@ if (!leafBlock) {
       // The attribute and the glyphs must be the SAME number. An attribute
       // that drifts from the printed text would make every probe below a
       // measurement of the attribute rather than of the readout.
-      const levelAttr = () => peakNode().props["data-spectr-output-peak-db"];
+      const levelAttr = () => {
+        const ref = peakNode().props.ref;
+        return ref && ref.current
+          ? ref.current.getAttribute("data-spectr-output-peak-db")
+          : peakNode().props["data-spectr-output-peak-db"];
+      };
       if (!peakText().includes(levelAttr())) {
         fail(`the chip prints ${JSON.stringify(peakText())} while its `
           + `attribute says ${JSON.stringify(levelAttr())}; a probe reading `
@@ -995,8 +1119,11 @@ if (!leafBlock) {
       if (peakNode().props["data-spectr-output-over-peak"] !== "") {
         fail("a click left the worst overshoot behind");
       }
-      // ...and it re-arms, or clearing would be a one-way off switch.
+      // ...and it re-arms, or clearing would be a one-way off switch. The
+      // click itself was just written, so this reading takes the next write
+      // slot rather than this instant.
       publish({ peak_db: -6.0, over: false, trim_db: 0 });
+      advance(readoutMs);
       if (!peakText().includes("-6.0")) {
         fail(`after clearing, a new frame reads ${JSON.stringify(peakText())} `
           + "-- the readout does not re-arm");
@@ -1016,6 +1143,61 @@ if (!leafBlock) {
       if (frames.size !== 0) {
         fail("the fall into silence never stopped scheduling frames");
       }
+      // R5c. A MOVING LEVEL COSTS NO RENDER, AND THE NUMBER CHANGES AT MOST
+      //      ONCE PER WRITE INTERVAL. The native side publishes every 0.1 dB
+      //      change, ~25 times a second with audio playing, and this document
+      //      is a captured import: each React commit re-applies the whole
+      //      document. So the level goes straight into the label, and no
+      //      faster than it can be read. Two seconds of programme, 30 changed
+      //      readings a second, well under full scale so the chip never
+      //      changes colour.
+      publish({ peak_db: -30.0, over: false, trim_db: 0 });
+      advance(holdMs + 5000);
+      commits.length = 0;
+      labelWrites.count = 0;
+      const STREAM_MS = 2000;
+      const STREAM_RATE = 30;
+      let lastLevel = -30.0;
+      for (let i = 0; i < (STREAM_MS / 1000) * STREAM_RATE; ++i) {
+        // Rising, so every reading re-arms the hold and changes the number.
+        lastLevel = -30.0 + (i + 1) * 0.2;
+        publish({ peak_db: lastLevel, over: false, trim_db: 0 });
+        advance(1000 / STREAM_RATE);
+      }
+      advance(readoutMs + 20);
+      const streamCommits = commits.filter((c) => typeof c === "object").length;
+      const writeBudget = Math.ceil(STREAM_MS / readoutMs) + 2;
+      console.log("measured  %d changed readings over %dms: %d React "
+        + "commit(s), %d label write(s) (budget %d)",
+        (STREAM_MS / 1000) * STREAM_RATE, STREAM_MS, streamCommits,
+        labelWrites.count, writeBudget);
+      if (streamCommits !== 0) {
+        fail(`${streamCommits} React commit(s) across ${STREAM_MS}ms of a `
+          + "moving level with no overload; each one re-applies the whole "
+          + "captured document, so the number must be written, not rendered");
+      }
+      if (labelWrites.count > writeBudget) {
+        fail(`the label was rewritten ${labelWrites.count} times in `
+          + `${STREAM_MS}ms, more than one per ${readoutMs}ms slot `
+          + `(${writeBudget}); it relays out at the publication rate`);
+      }
+      if (labelWrites.count < 2) {
+        fail(`the label was rewritten ${labelWrites.count} time(s) while the `
+          + "level moved for two seconds; the number is not following the "
+          + "signal");
+      }
+      // Throttled, never dropped: the last reading lands.
+      if (!peakText().includes(lastLevel.toFixed(1))) {
+        fail(`after the stream the readout is ${JSON.stringify(peakText())}, `
+          + `expected the last reading ${lastLevel.toFixed(1)} -- a reading `
+          + "that arrived inside a write interval was lost");
+      }
+      if (levelAttr() !== lastLevel.toFixed(1)) {
+        fail(`after the stream the level attribute is `
+          + `${JSON.stringify(levelAttr())}, expected ${lastLevel.toFixed(1)}`);
+      }
+      advance(holdMs + 10000);
+
       // R6. THE TRIM REACHES THE HOST, at the right id, with the right value.
       posted.length = 0;
       trimNode().props.onChange({ target: { value: "6" } });
