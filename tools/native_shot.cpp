@@ -61,6 +61,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <initializer_list>
 #include <thread>
 #include <vector>
 
@@ -719,6 +720,29 @@ struct Rig {
              "    + ' sw=' + n.scrollWidth); } "
              "console.log('[shot] typeprobe :: ' + probe.slice(0, 10).join('  |  ')); })();",
              "spectr-native-shot-textfit");
+    }
+
+    // A host parameter write reaches the band field through process()'s
+    // parameter-sync worker -- a real thread on the wall clock -- while
+    // settle() ticks a synthetic one. Settle rounds used to take long enough
+    // by accident (each analyzer frame was compiled as a script), so wait for
+    // the worker instead of depending on how slow the editor's tick is:
+    // bounded at ~1 s, after which the caller's premise check still judges.
+    void await_band_levels(
+        std::initializer_list<std::pair<std::size_t, float>> want,
+        bool require_unmuted = false) {
+        for (int wait = 0; wait < 100; ++wait) {
+            bool landed = true;
+            for (const auto& [band, db] : want) {
+                const auto& b = processor.field().bands[band];
+                if (std::abs(b.gain_db - db) > 0.5f
+                    || (require_unmuted && b.muted)) landed = false;
+            }
+            if (landed) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            feed_tone(2);
+            settle(clock, 4);
+        }
     }
 
     // Push a tone through the DSP so the analyzer surfaces carry real data
@@ -3715,6 +3739,7 @@ int main(int argc, char** argv) {
                 }
                 settle_round();
                 settle_round();
+                rig.await_band_levels({{0, 0.0f}, {count - 1, 0.0f}}, true);
             };
 
             // PREMISE -- the menu is reachable in this tree at all.
@@ -3898,6 +3923,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, kAuthoredDb}});
             {
                 const auto before = band_of(kBand);
                 if (std::abs(before.gain_db - kAuthoredDb) > 0.5f || before.muted) {
@@ -3963,6 +3989,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, kAuthoredDb}});
             {
                 const auto before = band_of(kBand);
                 if (!open_menu()) return 3;
@@ -4006,6 +4033,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, -6.0f}, {kOther, kOtherDb}});
             {
                 const auto self_before = band_of(kBand);
                 const auto other_before = band_of(kOther);
@@ -4123,6 +4151,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, kAuthoredDb}, {kOther, kOtherDb}});
             {
                 const auto a_before = band_of(kBand);
                 const auto b_before = band_of(kOther);
@@ -4162,6 +4191,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, kAuthoredDb}, {kOther, kOtherDb}});
             {
                 if (!open_menu()) return 3;
                 const auto aim = press_row("Mute / Unmute selection");
@@ -4452,6 +4482,7 @@ int main(int argc, char** argv) {
                 rig.store.set_value(spectr::band_gain_param_id(last), 9.0f);
                 settle_round();
                 settle_round();
+                rig.await_band_levels({{0, -9.0f}, {last, 9.0f}});
                 pulp::view::WheelHost wheel_host;
                 for (int i = 0; i < 12; ++i) {
                     pulp::view::deliver_mouse_wheel(
@@ -4683,6 +4714,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, kAuthoredDb}});
             const auto authored = report("authored");
 
             // PREMISE 2 -- the level actually took. Without this, a band that
@@ -4755,6 +4787,7 @@ int main(int argc, char** argv) {
                 rig.store.set_value(spectr::band_gain_param_id(kBand), 0.0f);
                 settle_round();
                 settle_round();
+                rig.await_band_levels({{kBand, 0.0f}});
             }
             const auto restored = report("after menu UNMUTE");
             capture(rig, dir, prefix + "unmute-2-restored", backend, scale);
@@ -4811,6 +4844,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kOther, kOtherDb}});
             const auto other_before = rig.processor.field().bands[kOther];
             std::printf("[unmute] sel: band %zu authored gain_db=%.3f\n",
                         kOther, other_before.gain_db);
