@@ -116,7 +116,14 @@ if (plantOneshot) {
   // The whole statement, deps tail included -- deleting only the block leaves
   // a dangling argument list, and the suite would then be rejecting a syntax
   // error instead of the stale panel this control exists to exercise.
-  const statement = effect + ", [spectrModulationBridge, readNativeModulation]);";
+  const deps = [", [spectrModulationBridge, readNativeModulation, listening]);",
+    ", [spectrModulationBridge, readNativeModulation]);"];
+  const tail = deps.find((d) => html.includes(effect + d));
+  if (!tail) {
+    console.error("FAIL: --plant-oneshot found no dependency tail after the live effect");
+    process.exit(2);
+  }
+  const statement = effect + tail;
   html = replaceExactlyOnce(html, statement, "", "--plant-oneshot");
   notes.push("planted the one-shot settings hydration (pre-fix panel)");
 }

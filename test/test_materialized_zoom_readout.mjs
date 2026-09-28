@@ -242,16 +242,21 @@ if (bankBody) {
   if (callsInBank < 4) {
     fail(`only ${callsInBank} of the 4 viewport writers notify subscribers`);
   }
-  // Exactly one writer may publish as live: the per-pointer-sample path. If a
-  // settle path marked itself live the readout would never repaint; if the
-  // sample path stopped marking itself live, every sample would commit, which
-  // is the regression this split exists to prevent.
+  // Exactly two writers may publish as live, each paired with a settle: the
+  // per-pointer-sample drag commit (settled on release) and the host
+  // automation projection (settled by a trailing timer once the burst
+  // pauses). If a settle path marked itself live the readout would never
+  // repaint; if either live path stopped marking itself live, every sample or
+  // host change would commit, which is the regression this split prevents.
   const liveCalls = bankBody.split("notifyViewportListeners(true);").length - 1;
   const settleCalls = bankBody.split("notifyViewportListeners(false);").length - 1;
-  if (liveCalls !== 1 || settleCalls < 3) {
+  if (liveCalls !== 2 || settleCalls < 2) {
     fail(`the publisher marks ${liveCalls} call site(s) live and ${settleCalls} `
-      + "settled; expected exactly 1 live (the per-sample drag commit) and at "
-      + "least 3 settled");
+      + "settled; expected exactly 2 live (the drag commit and the host "
+      + "projection) and at least 2 settled");
+  }
+  if (!bankBody.includes("hostViewSettleRef.current = setTimeout(settleViewport, ")) {
+    fail("the host projection publishes live but never settles the readout");
   }
   if (!bankBody.includes("notifyViewportListeners(true);\n  };")
       || !bankBody.includes("const commitLiveViewport = ")) {

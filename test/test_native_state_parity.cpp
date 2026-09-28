@@ -6430,3 +6430,123 @@ TEST_CASE("hovering the Settings close button re-renders only the button",
     })();)js", "spectr-native-close-hover-render-scope");
     storage.require_unchanged();
 }
+
+// HOST AUTOMATION MOVES THE EDITOR THROUGH ITS CHEAP PATHS.
+//
+// A host parameter change reaches the editor as one live-state projection per
+// frame. It must update what changed through the paths pointer input uses --
+// the viewport ref published live (settled once when the burst ends), the
+// paint refs, the modulation publication -- and never re-render the editor.
+// Perfetto measured spectr_host_automation_project at 22-127 ms per host
+// change while each one committed React: the modulation hook merged every
+// projection into a new object, re-rendering the (mounted, hidden) Settings
+// panel, and each viewport change settled the zoom readout. So every metadata
+// pass -- the per-commit hook, scoped or full -- is counted across a burst of
+// viewport and LFO-shape automation and must be zero, and the editor must
+// still end exactly where the host put it.
+TEST_CASE("host automation of the viewport and LFO shape re-renders nothing",
+          "[native-n1][state-parity][host-automation-cost]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.bridge().load_script(R"js((() => {
+      const log = globalThis.__spectrMetadataPasses = [];
+      // One stable wrapper per installed hook: the runtime treats a changed
+      // hook identity as a new hook and forces a full pass, so a wrapper
+      // minted per read would manufacture the very passes being counted.
+      const wrap = (fn) => typeof fn !== 'function' ? fn : (...args) => {
+        const scope = args[0];
+        log.push(Array.isArray(scope) && scope.length ? 'scoped' : 'full');
+        return fn(...args);
+      };
+      let wrapped = wrap(globalThis.__pulpApplyMaterializedImportMetadata__);
+      Object.defineProperty(globalThis, '__pulpApplyMaterializedImportMetadata__', {
+        configurable: true,
+        get() { return wrapped; },
+        set(value) { wrapped = wrap(value); },
+      });
+    })();)js", "spectr-native-metadata-pass-counter");
+    const auto reset = [&] {
+        rig.bridge().load_script("globalThis.__spectrMetadataPasses.length = 0;",
+                                 "spectr-native-metadata-pass-reset");
+    };
+    const auto require_no_pass = [&](std::string_view what) {
+        rig.bridge().load_script(
+            std::string{"(() => { const passes = __spectrMetadataPasses; "
+                        "if (passes.length) throw new Error("}
+                + js_string(what)
+                + " + ' committed React ' + passes.length + ' time(s): ' + JSON.stringify(passes)); })();",
+            "spectr-native-metadata-pass-check");
+    };
+    const auto set_view = [&](float min_hz, float max_hz) {
+        const auto [centre, width] = spectr::encode_viewport({min_hz, max_hz});
+        rig.store.set_value(spectr::kParamViewportCenter, centre);
+        rig.store.set_value(spectr::kParamViewportWidth, width);
+        REQUIRE(rig.processor.apply_surface_params(false));
+        settle(rig.clock, 2);
+    };
+
+    // Positive control on the counter: a real structural change (opening
+    // Settings) must register passes, or a zero below proves nothing.
+    reset();
+    activate(rig, "[data-spectr-settings-open]");
+    rig.bridge().load_script(
+        "if (!__spectrMetadataPasses.length) throw new Error("
+        "'the metadata-pass counter saw nothing when Settings opened');",
+        "spectr-native-metadata-pass-control");
+    activate(rig, "[data-spectr-settings-close]");
+    settle(rig.clock, 8);
+    // The first live projection after hydration settles the editor's live
+    // mode cache once; the burst below is what is measured.
+    set_view(100.0f, 5000.0f);
+    settle(rig.clock, 8);
+    rig.bridge().load_script(
+        "globalThis.__spectrReactViewBefore = JSON.stringify("
+        "globalThis.__spectrTestHooks.renderState().reactView);",
+        "spectr-native-react-view-before");
+
+    // Viewport automation: eight windows.
+    reset();
+    float last_min = 0.0f, last_max = 0.0f;
+    for (int step = 0; step < 8; ++step) {
+        set_view(120.0f + 15.0f * static_cast<float>(step),
+                 6000.0f + 400.0f * static_cast<float>(step));
+        last_min = rig.processor.viewport().min_hz;
+        last_max = rig.processor.viewport().max_hz;
+    }
+    require_no_pass("viewport automation");
+    rig.bridge().load_script(
+        std::string{"(() => { const s = globalThis.__spectrTestHooks.renderState(); "
+                    "const v = s.view; const lmin = Math.log10("} + std::to_string(last_min)
+            + "), lmax = Math.log10(" + std::to_string(last_max) + "); "
+              "if (Math.abs(v.lmin - lmin) > 1e-4 || Math.abs(v.lmax - lmax) > 1e-4) "
+              "throw new Error('the editor view ' + v.lmin + '..' + v.lmax + "
+              "' does not match the host ' + lmin + '..' + lmax); "
+              "if (JSON.stringify(s.reactView) !== globalThis.__spectrReactViewBefore) "
+              "throw new Error('the burst settled the React copy of the view mid-burst'); })();",
+        "spectr-native-host-viewport-matches");
+
+    // LFO shape automation: through every shape twice, ending on sine.
+    reset();
+    for (int step = 0; step < 8; ++step) {
+        rig.store.set_value(spectr::kParamLfoShape, static_cast<float>((step + 1) % 4));
+        REQUIRE(rig.processor.apply_surface_params(false));
+        settle(rig.clock, 2);
+    }
+    require_no_pass("LFO shape automation");
+    rig.bridge().load_script(
+        "(() => { const m = globalThis.__spectrModulationLast; "
+        "if (!m) throw new Error('the editor holds no modulation state'); "
+        "if (m.shape !== 0) throw new Error("
+        "'the editor LFO shape ' + JSON.stringify(m.shape) + ' does not match the host (sine)'); })();",
+        "spectr-native-host-lfo-matches");
+
+    // Opening Settings after the burst shows the host's LFO shape: the panel
+    // stopped following projections while hidden and catches up when shown.
+    activate(rig, "[data-spectr-settings-open]");
+    settle(rig.clock, 8);
+    require_runtime_contract(rig,
+        "globalThis.__spectrModulationLast && globalThis.__spectrModulationLast.shape === 0",
+        "the Settings panel did not catch up with the host's LFO shape");
+    storage.require_unchanged();
+}
