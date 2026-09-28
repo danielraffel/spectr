@@ -326,6 +326,21 @@ function lift(label, startMarker, endMarker, { includeEnd = false } = {}) {
   }
 }
 
+// ---------------------------------------------------- one face pass per pass
+// The applier set the Settings labels' face in a block that had been
+// appended 57 times: 171 registry scans and 171 bridge setters on every
+// pass, scoped or not. One copy does the same work.
+{
+  const block = 'for (const labelText of ["APPEARANCE", "Theme", "Bloom"]) {';
+  const copies = source.split(block).length - 1;
+  console.log("measured  Settings label face block: %d cop%s", copies,
+    copies === 1 ? "y" : "ies");
+  if (copies !== 1) {
+    fail(`the Settings label face block runs ${copies} times per metadata `
+      + "pass; each copy is a full registry scan per label for no change");
+  }
+}
+
 // ------------------------------------------------------------------ verdict
 if (expectFail) {
   if (failures.length === 0) {
