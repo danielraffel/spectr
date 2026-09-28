@@ -33,6 +33,7 @@
 #include <random>
 #include <span>
 #include <sstream>
+#include <thread>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -6496,10 +6497,13 @@ TEST_CASE("host automation of the viewport and LFO shape re-renders nothing",
         "spectr-native-metadata-pass-control");
     activate(rig, "[data-spectr-settings-close]");
     settle(rig.clock, 8);
-    // The first live projection after hydration settles the editor's live
-    // mode cache once; the burst below is what is measured.
+    // The first live projection after hydration used to re-set the motion
+    // mode into a new settings object (a whole-app re-render) because the
+    // live-mode cache starts empty; it must commit nothing either.
+    reset();
     set_view(100.0f, 5000.0f);
     settle(rig.clock, 8);
+    require_no_pass("the first projection after hydration");
     rig.bridge().load_script(
         "globalThis.__spectrReactViewBefore = JSON.stringify("
         "globalThis.__spectrTestHooks.renderState().reactView);",
@@ -6548,5 +6552,110 @@ TEST_CASE("host automation of the viewport and LFO shape re-renders nothing",
     require_runtime_contract(rig,
         "globalThis.__spectrModulationLast && globalThis.__spectrModulationLast.shape === 0",
         "the Settings panel did not catch up with the host's LFO shape");
+    storage.require_unchanged();
+}
+
+// A real host advances a frame by ticking the frame clock AND polling the
+// scripted session: the poll services JS timers and commits each canvas's
+// recorded commands to its native widget. settle() only ticks the clock, so a
+// canvas's committed command stream and every setTimeout stand still under it.
+void pump_host_frames(NativeEditorRig& rig, int frames) {
+    for (int frame = 0; frame < frames; ++frame) {
+        rig.clock.tick(1.0f / 60.0f);
+        // poll() answers "did anything change"; false is an idle frame. Only a
+        // reported error is a failure.
+        std::string error;
+        (void)rig.session->poll(&error);
+        REQUIRE(error.empty());
+    }
+}
+
+// The frequency labels the band plot's canvas last committed, with their x.
+std::vector<std::pair<std::string, float>> committed_frequency_labels(
+    NativeEditorRig& rig) {
+    const auto* canvas = dynamic_cast<const pulp::view::CanvasWidget*>(
+        rig.bridge().widget("__behavior_pr_1"));
+    REQUIRE(canvas != nullptr);
+    std::vector<std::pair<std::string, float>> labels;
+    for (const auto& command : canvas->commands())
+        if (command.type == pulp::view::CanvasDrawCmd::Type::fill_text
+            && command.text.size() > 2
+            && command.text.compare(command.text.size() - 2, 2, "Hz") == 0)
+            labels.emplace_back(command.text, command.x);
+    return labels;
+}
+
+// HOST AUTOMATION REDRAWS THE PLOT AND SETTLES THE READOUT.
+//
+// The projection writes the view into refs and publishes it live, so the only
+// proof it reached the screen is the plot's committed canvas: the frequency
+// ruler must move to the new window. The control is the same pumping with no
+// parameter change, which must leave the ruler exactly as it was. The zoom
+// readout settles from a timer once the automation pauses, so the test lets
+// real time pass and pumps the host, which services timers.
+TEST_CASE("a host viewport change redraws the plot and settles the zoom readout",
+          "[native-n1][state-parity][host-automation-cost]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    pump_host_frames(rig, 12);
+    const auto idle = committed_frequency_labels(rig);
+    REQUIRE_FALSE(idle.empty());
+
+    // Control: no parameter change, same pumping, same ruler.
+    pump_host_frames(rig, 12);
+    CHECK(committed_frequency_labels(rig) == idle);
+
+    const auto [centre, width] = spectr::encode_viewport({300.0f, 3000.0f});
+    rig.store.set_value(spectr::kParamViewportCenter, centre);
+    rig.store.set_value(spectr::kParamViewportWidth, width);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    pump_host_frames(rig, 12);
+    const auto moved = committed_frequency_labels(rig);
+    CAPTURE(idle.size(), moved.size());
+    REQUIRE(moved != idle);
+    // The 1 kHz label sits where the new window puts 1 kHz on the plot.
+    const auto viewport = rig.processor.viewport();
+    const float lmin = std::log10(viewport.min_hz);
+    const float lmax = std::log10(viewport.max_hz);
+    constexpr float kInnerX = 56.0f, kInnerW = 1320.0f - 112.0f;
+    const float expected_x = kInnerX + (3.0f - lmin) / (lmax - lmin) * kInnerW;
+    const auto one_k = std::find_if(moved.begin(), moved.end(),
+        [](const auto& label) { return label.first == "1kHz"; });
+    REQUIRE(one_k != moved.end());
+    CHECK(one_k->second == Catch::Approx(expected_x).margin(1.0f));
+
+    // The readout settles once the burst pauses: after the settle delay the
+    // React copy of the view and the printed zoom follow the host.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    pump_host_frames(rig, 6);
+    const double zoom = (std::log10(20000.0) - std::log10(20.0)) / (lmax - lmin);
+    char expected_zoom[32];
+    std::snprintf(expected_zoom, sizeof expected_zoom, "%.2f\u00d7 ZOOM", zoom);
+    require_runtime_contract(rig,
+        std::string{"(() => { const s = globalThis.__spectrTestHooks.renderState(); "
+                    "return Math.abs(s.reactView.lmin - s.view.lmin) < 1e-9 "
+                    "&& Math.abs(s.reactView.lmax - s.view.lmax) < 1e-9 "
+                    "&& Array.from(document.querySelectorAll('span')).some("
+                    "span => span.textContent === '"} + expected_zoom + "'); })()",
+        "the zoom readout did not settle to the host's window");
+
+    // LFO shape: the Settings panel shows the host's shape when it opens.
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape,
+                        static_cast<float>(spectr::LfoShape::Saw));
+    REQUIRE(rig.processor.apply_surface_params(false));
+    pump_host_frames(rig, 6);
+    activate(rig, "[data-spectr-settings-open]");
+    pump_host_frames(rig, 8);
+    require_runtime_contract(rig,
+        // A boolean aria-pressed reflects as an empty attribute here, so read
+        // the committed prop. The first Saw chip is LFO 1's shape row.
+        "(() => { const chip = Array.from(document.querySelectorAll("
+        "'[data-spectr-setting-option=\"3\"]')).find(n => n.textContent === 'Saw'); "
+        "return !!chip && chip.__pulpAuthoredLayout__?.['aria-pressed'] === true; })()",
+        "the Settings panel does not show the host's LFO shape (saw)");
+    rig.store.set_value(spectr::kParamLfoEnabled, 0.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
     storage.require_unchanged();
 }
