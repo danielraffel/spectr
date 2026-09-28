@@ -398,6 +398,43 @@ function lift(label, startMarker, endMarker, { includeEnd = false } = {}) {
   }
 }
 
+// ------------------------------------------ unread data attributes are paint
+// A commit that changes only a data-* attribute nothing reads -- a hover
+// marker -- cannot move a captured binding or change a captured-state match,
+// so it marks nothing and leaves the mutation epoch alone. An attribute the
+// runtime names, or one a selector has asked the finder about, still counts.
+{
+  const gate = lift("unread data attribute gate",
+    "  var RUNTIME_READ_DATA_ATTRIBUTES", "  var PulpHostConfig = {");
+  const handler = lift("isEventHandler (data row)", "  function isEventHandler(key) {",
+    "  function virtualListPropRank(key) {");
+  const keys = lift("paint-only keys (data row)", "  var PAINT_ONLY_KEYS",
+    "  // True when every key a commit changed");
+  if (gate && handler && keys) {
+    const g = { Set, Object, String };
+    g.g4 = g;
+    vm.runInNewContext(handler + keys + gate
+      + "\nglobalThis.paintOnly = isPaintOnlyUpdate;", g);
+    const paintOnly = (key) => g.paintOnly({ [key]: "idle" }, { [key]: "hover" });
+    const before = paintOnly("data-spectr-close-state");
+    g.__pulpMaterializedSelectorAttributes__ = new Set(["data-spectr-menu-options"]);
+    const unread = paintOnly("data-spectr-close-state");
+    const queried = paintOnly("data-spectr-menu-options");
+    const runtimeRead = paintOnly("data-spectr-settings-live");
+    const notData = paintOnly("width");
+    console.log("measured  data attribute gate: unread %s, queried %s, runtime-read %s, "
+      + "before any query %s", unread, queried, runtimeRead, before);
+    if (!unread) fail("a commit changing only an unread data attribute still counts as geometric");
+    if (queried) fail("an attribute a selector asked the finder about was treated as paint");
+    if (runtimeRead) fail("an attribute the runtime reads was treated as paint");
+    if (before) fail("a data attribute was treated as paint before the finder recorded anything");
+    if (notData) fail("the data attribute rule leaked to a non-data key");
+  }
+  if (!source.includes("recordQueriedAttributes(selector);")) {
+    fail("the registry finder does not record the attributes its selectors name");
+  }
+}
+
 // ------------------------------------------------------------------ verdict
 if (expectFail) {
   if (failures.length === 0) {

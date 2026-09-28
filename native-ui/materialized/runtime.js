@@ -8449,12 +8449,25 @@ function createWidget(type, id, parentId, props) {
   // identity React recreates on every render. An unrecognised key means
   // "assume geometric". A commit that changed nothing is not evidence a
   // repaint is safe and takes the ordinary path.
+  // data-* attributes the runtime itself reads, fixed when it was built,
+  // and every attribute a selector has asked the registry finder about.
+  // A change to any other data-* attribute cannot move a captured binding
+  // or change a captured-state match, so it is not a geometric change.
+  var RUNTIME_READ_DATA_ATTRIBUTES = /* @__PURE__ */ new Set(["data-pulp-react-root", "data-screen-label", "data-spectr-band-count", "data-spectr-filter-surface", "data-spectr-manager-action", "data-spectr-manager-detail", "data-spectr-manager-source", "data-spectr-manager-title", "data-spectr-menu-options", "data-spectr-menu-root", "data-spectr-menu-trigger", "data-spectr-overlay", "data-spectr-pattern-id", "data-spectr-pattern-manage", "data-spectr-save-current", "data-spectr-save-dialog", "data-spectr-settings-body", "data-spectr-settings-close", "data-spectr-settings-header", "data-spectr-settings-live", "data-spectr-settings-open", "data-spectr-settings-panel", "data-spectr-settings-title", "data-spectr-snapshot-action", "data-spectr-snapshot-slot", "data-spectr-snapshots-ready", "data-spectr-status-banner", "data-spectr-status-info-toggle", "data-spectr-status-shell", "data-testname"]);
+  function isUnreadDataAttribute(key) {
+    if (typeof key !== "string" || !key.startsWith("data-") || key.length <= 5)
+      return false;
+    if (RUNTIME_READ_DATA_ATTRIBUTES.has(key)) return false;
+    const queried = g4.__pulpMaterializedSelectorAttributes__;
+    return !!queried && !queried.has(key);
+  }
   function isPaintOnlyUpdate(oldProps, newProps) {
     let changed = 0;
     const keys = /* @__PURE__ */ new Set([...Object.keys(oldProps), ...Object.keys(newProps)]);
     for (const key of keys) {
       if (Object.is(oldProps[key], newProps[key])) continue;
-      if (!PAINT_ONLY_KEYS.has(key) && !isEventHandler(key)) return false;
+      if (!PAINT_ONLY_KEYS.has(key) && !isEventHandler(key)
+          && !isUnreadDataAttribute(key)) return false;
       changed += 1;
     }
     return changed > 0;
@@ -10890,8 +10903,19 @@ function restoreMaterializedLayout(node, bridge) {
   }
   let materializedFindMissEpoch = null;
   const materializedFindMisses = /* @__PURE__ */ new Set();
+  const materializedQueriedAttributes = g5.__pulpMaterializedSelectorAttributes__
+    || (g5.__pulpMaterializedSelectorAttributes__ = /* @__PURE__ */ new Set());
+  const recordQueriedAttributes = (text) => {
+    if (typeof text !== "string") return;
+    for (const match of text.matchAll(/\[\s*([A-Za-z0-9_:-]+)/g))
+      materializedQueriedAttributes.add(match[1]);
+  };
   g5.__pulpFindMaterializedElement__ = function(selector, ancestor) {
     if (typeof selector !== "string" || selector.length === 0) return null;
+    // Recorded before the miss cache is consulted: an attribute a
+    // selector names is one whose change must bump the mutation epoch.
+    recordQueriedAttributes(selector);
+    recordQueriedAttributes(ancestor);
     if (g5.document && typeof g5.document.querySelector === "function") {
       const browserNode = g5.document.querySelector(selector);
       if (browserNode && (!ancestor || materializedClosest(browserNode, ancestor))) {
