@@ -1149,6 +1149,8 @@ void Spectr::publish_modulation_frame_() {
         modulated.active && modulated.published_ns != 0;
     double phase_1 = modulated.phase;
     double phase_2 = modulated.phase_2;
+    LfoShapeFade fade_1 = modulated.shape_fade;
+    LfoShapeFade fade_2 = modulated.shape_2_fade;
     if (reconstructable) {
         const auto now_ns = std::chrono::duration_cast<
             std::chrono::nanoseconds>(
@@ -1163,6 +1165,8 @@ void Spectr::publish_modulation_frame_() {
         };
         phase_1 = advance(phase_1, modulated.phase_per_second, elapsed);
         phase_2 = advance(phase_2, modulated.phase_2_per_second, elapsed);
+        fade_1 = advance_lfo_shape(fade_1, elapsed);
+        fade_2 = advance_lfo_shape(fade_2, elapsed);
     }
     // Once the clamp above pins the phase, every further tick would rebuild
     // and dispatch byte-identical numbers. Nothing changed, so nothing is sent.
@@ -1178,7 +1182,7 @@ void Spectr::publish_modulation_frame_() {
         native_modulation_drawn_ = apply_internal_modulation(
             modulated.pre_field, modulated.snapshots, modulated.host_morph,
             modulated.settings,
-            lfo_value(modulated.settings.shape, phase_1));
+            lfo_value(fade_1, phase_1));
         if (modulated.settings.lfo2_enabled) {
             ModulationSettings second = modulated.settings;
             second.enabled = true;
@@ -1188,7 +1192,7 @@ void Spectr::publish_modulation_frame_() {
             native_modulation_drawn_ = apply_internal_modulation(
                 native_modulation_drawn_, modulated.snapshots,
                 modulated.host_morph, second,
-                lfo_value(second.shape, phase_2));
+                lfo_value(fade_2, phase_2));
         }
         drawn = &native_modulation_drawn_;
     }

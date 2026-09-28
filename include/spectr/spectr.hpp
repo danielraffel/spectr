@@ -157,6 +157,10 @@ struct ModulatedFieldSnapshot {
     double             phase_2 = 0.0; ///< LFO 2 phase at `published_ns`
     double             phase_per_second = 0.0;
     double             phase_2_per_second = 0.0;
+    /// Shape crossfades at `published_ns`; the consumer advances them by the
+    /// same elapsed time as the phases.
+    LfoShapeFade       shape_fade{};
+    LfoShapeFade       shape_2_fade{};
     /// steady_clock nanoseconds at which `phase`/`phase_2` were sampled. Zero
     /// means the publication carries no usable clock and the consumer must
     /// fall back to `field` rather than extrapolate from an unknown origin.
@@ -754,6 +758,11 @@ private:
         audio_modulation_publication_{};
     double audio_modulation_phase_ = 0.0;
     double audio_modulation_phase_2_ = 0.0;
+    // Shape crossfades, advanced with the phases. Unprimed until the first
+    // block so the initial shape is adopted without a fade.
+    LfoShapeFade audio_lfo_shape_fade_{};
+    LfoShapeFade audio_lfo_2_shape_fade_{};
+    bool         audio_lfo_shape_fade_primed_ = false;
     // Audio owner -> UI publication of the post-LFO band field, so the editor
     // can draw the modulation it is playing. Write-only on the audio thread,
     // read-only through read_modulated_field().

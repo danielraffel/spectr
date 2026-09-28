@@ -1126,6 +1126,90 @@ TEST_CASE("Spectr publishes LFO inputs the editor can evaluate at frame time",
     }
 }
 
+TEST_CASE("Spectr crossfades an LFO shape change instead of jumping",
+          "[modulation][display][rt]") {
+    // Switching shape keeps the phase, so without a fade the modulated gain
+    // steps by however far apart the two waveforms are at that phase -- a
+    // square at +1 switched to a saw near -0.7 lands most of the full swing
+    // in one block. The fade spreads that over kLfoShapeFadeSeconds, and the
+    // publication carries the fade so the editor draws the same blend.
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+    constexpr std::size_t switch_block = 8;
+    constexpr std::size_t total_blocks = 160;
+
+    pulp::format::HeadlessHost host(create_mixing_spectr);
+    host.prepare(sample_rate, block_size);
+    auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+    REQUIRE(plugin != nullptr);
+
+    pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+    const float* input_channels[] = {
+        in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> input(input_channels, 2, block_size);
+    auto output = out.view();
+
+    std::vector<float> gains;
+    bool checked_mid_fade = false;
+    for (std::size_t block = 0; block < total_blocks; ++block) {
+        const auto shape = block < switch_block ? spectr::LfoShape::Square
+                                                : spectr::LfoShape::Saw;
+        pulp::state::ParameterEventQueue events;
+        for (std::size_t band = 0; band < 32; ++band)
+            REQUIRE(events.push({
+                spectr::band_gain_param_id(band), 0, -12.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                             static_cast<float>(shape), 0}));
+        REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                             static_cast<float>(
+                                 spectr::ModulationTarget::WholeBank), 0}));
+        host.process(output, input, events);
+        const auto& snapshot = plugin->read_modulated_field();
+        REQUIRE(snapshot.active);
+        gains.push_back(snapshot.field.bands[0].gain_db);
+
+        if (block == switch_block + 2) {
+            // Mid-fade, the editor's reconstruction from the published inputs
+            // must reproduce the audible field exactly.
+            CHECK(snapshot.shape_fade.from == spectr::LfoShape::Square);
+            CHECK(snapshot.shape_fade.to == spectr::LfoShape::Saw);
+            CHECK(snapshot.shape_fade.mix > 0.0f);
+            CHECK(snapshot.shape_fade.mix < 1.0f);
+            const auto drawn = spectr::apply_internal_modulation(
+                snapshot.pre_field, snapshot.snapshots, snapshot.host_morph,
+                snapshot.settings,
+                spectr::lfo_value(snapshot.shape_fade, snapshot.phase));
+            for (std::size_t band = 0; band < spectr::kMaxBands; ++band) {
+                INFO("band " << band);
+                CHECK(drawn.bands[band].gain_db
+                      == snapshot.field.bands[band].gain_db);
+            }
+            checked_mid_fade = true;
+        }
+    }
+    REQUIRE(checked_mid_fade);
+    CHECK(plugin->read_modulated_field().shape_fade.mix == 1.0f);
+
+    const auto [lo, hi] = std::minmax_element(gains.begin(), gains.end());
+    const float swing = *hi - *lo;
+    REQUIRE(swing > 1.0f);
+
+    // Rate is one beat per cycle at 120 BPM: the switch lands near phase
+    // 0.17, and the fade finishes before the saw reaches its own wrap at 1.0,
+    // so every step in this window belongs to the switch.
+    float largest_step = 0.0f;
+    for (std::size_t block = switch_block - 1; block < switch_block + 24;
+         ++block)
+        largest_step = std::max(largest_step,
+                                std::abs(gains[block + 1] - gains[block]));
+    INFO("largest step " << largest_step << " dB of a " << swing
+         << " dB swing");
+    CHECK(largest_step < 0.15f * swing);
+}
+
 TEST_CASE("Spectr releases the modulation overlay without a parameter event",
           "[modulation][display][rt]") {
     // The falling edge is the editor's only cue to stop drawing the overlay

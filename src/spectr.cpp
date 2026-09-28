@@ -1168,14 +1168,28 @@ void Spectr::process(
                         audio_modulation_phase_2_ -=
                             std::floor(audio_modulation_phase_2_);
                     }
+                    if (!audio_lfo_shape_fade_primed_
+                        || (should_reset_stream_history
+                            && block_offset == 0)) {
+                        audio_lfo_shape_fade_ =
+                            settled_lfo_shape(modulation_settings.shape);
+                        audio_lfo_2_shape_fade_ =
+                            settled_lfo_shape(modulation_settings.lfo2_shape);
+                        audio_lfo_shape_fade_primed_ = true;
+                    }
+                    audio_lfo_shape_fade_ = retarget_lfo_shape(
+                        audio_lfo_shape_fade_, modulation_settings.shape);
+                    audio_lfo_2_shape_fade_ = retarget_lfo_shape(
+                        audio_lfo_2_shape_fade_,
+                        modulation_settings.lfo2_shape);
                     const float wave = lfo_value(
-                        modulation_settings.shape, audio_modulation_phase_);
+                        audio_lfo_shape_fade_, audio_modulation_phase_);
                     BandField audible = apply_internal_modulation(
                         host_field, audio_modulation.snapshots, host_morph,
                         modulation_settings, wave);
                     if (modulation_settings.lfo2_enabled) {
                         const float wave2 = lfo_value(
-                            modulation_settings.lfo2_shape,
+                            audio_lfo_2_shape_fade_,
                             audio_modulation_phase_2_);
                         ModulationSettings second = modulation_settings;
                         second.enabled = true;
@@ -1254,6 +1268,8 @@ void Spectr::process(
                                 slot.phase_2   = phase_2;
                                 slot.phase_per_second   = rate_1;
                                 slot.phase_2_per_second = rate_2;
+                                slot.shape_fade = audio_lfo_shape_fade_;
+                                slot.shape_2_fade = audio_lfo_2_shape_fade_;
                                 slot.published_ns = published_ns;
                             });
                     }
@@ -1374,6 +1390,13 @@ void Spectr::process(
                          * tempo / (60.0 * sample_rate)) / beats_per_cycle_2;
                     audio_modulation_phase_2_ -=
                         std::floor(audio_modulation_phase_2_);
+                    const double slice_seconds =
+                        static_cast<double>(out_slice.num_samples())
+                        / sample_rate;
+                    audio_lfo_shape_fade_ = advance_lfo_shape(
+                        audio_lfo_shape_fade_, slice_seconds);
+                    audio_lfo_2_shape_fade_ = advance_lfo_shape(
+                        audio_lfo_2_shape_fade_, slice_seconds);
                     block_offset += out_slice.num_samples();
                 });
 
