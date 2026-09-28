@@ -916,7 +916,7 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"centered-rail-button", "height: 26,\\n        display: \\\"inline-flex\\\",\\n        alignItems: \\\"center\\\",\\n        justifyContent: \\\"center\\\",\\n        lineHeight: 1"},
         ContractMarker{"aligned-rail-chevrons", "style: { marginLeft: 6, display: \\\"inline-flex\\\", alignItems: \\\"center\\\", lineHeight: 1 }", 2},
         ContractMarker{"aligned-band-binding", "\"boxes\":[{\"left\":0,\"top\":3,\"width\":13,\"height\":13,\"start\":0,\"length\":2},{\"left\":21,\"top\":3,\"width\":52.03125,\"height\":13,\"start\":3,\"length\":8}]"},
-        ContractMarker{"single-band-count-text-binding", "\"text\":\"32 bands ▾\""},
+        ContractMarker{"single-band-count-text-binding", "\"text\":\"32 BANDS ▾\""},
         // The highlight reads the band-count setting directly. FilterBank
         // derives its own N from that same setting, so a separate polled copy
         // only ever lagged it -- and the label beside these buttons always

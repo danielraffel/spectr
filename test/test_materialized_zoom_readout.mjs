@@ -390,9 +390,9 @@ if (!leafBlock) {
         fail(`the leaf subscribed ${listeners.size} times, expected 1 -- it `
           + "is not driven by the viewport publisher");
       }
-      if (text() !== "1.00\xD7 zoom") {
+      if (text() !== "1.00\xD7 ZOOM") {
         fail(`the leaf's initial readout is ${JSON.stringify(text())}, `
-          + 'expected "1.00\xD7 zoom"');
+          + 'expected "1.00\xD7 ZOOM"');
       }
 
       // A LIVE RESIZE gesture. This is the workload that regressed: the

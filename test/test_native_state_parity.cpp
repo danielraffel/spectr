@@ -1106,7 +1106,7 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
         " && Math.abs(globalThis.__spectrBandCountCenteringReceipt__.trigger.left"
         " - 9.484375) < 0.001",
         "band trigger text was not optically centered");
-    const auto* trigger_label = find_label(*rig.root, "32 bands ▾");
+    const auto* trigger_label = find_label(*rig.root, "32 BANDS ▾");
     REQUIRE(trigger_label != nullptr);
     CAPTURE(trigger_label->id(), trigger_label->parent()->id());
     REQUIRE(trigger_label->cached_line_boxes().size() == 1);
@@ -1794,7 +1794,7 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
     const auto directory = atlas_directory();
     capture(rig, directory, "band-header-closed");
 
-    const auto* band_label = find_label(*rig.root, "32 bands ▾");
+    const auto* band_label = find_label(*rig.root, "32 BANDS ▾");
     const auto* peer_label = find_label(*rig.root, "BOTH");
     REQUIRE(band_label != nullptr);
     REQUIRE(peer_label != nullptr);
@@ -1842,7 +1842,7 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
           '[data-spectr-visualization] button')).find(
           button => button.textContent.trim() === 'BOTH')?.getBoundingClientRect(),
         zoom: Array.from(document.querySelectorAll('span')).find(
-          span => span.textContent.trim().endsWith('× zoom'))?.getBoundingClientRect()
+          span => span.textContent.trim().endsWith('× ZOOM'))?.getBoundingClientRect()
       };
     })();)js", "spectr-native-band-header-before-open");
     const auto focus_and_open = [&] {
@@ -5705,7 +5705,7 @@ TEST_CASE("switching native dropdowns costs one press",
     // One top-rail trigger and three bottom-rail ones, so the pairs below
     // include a switch that crosses rails.
     const std::array<Menu, 4> menus{{
-        {"bands", "32 bands ▾"},
+        {"bands", "32 BANDS ▾"},
         {"edit", "SCULPT ▾"},
         {"analyzer", "PEAK ▾"},
         {"overflow", "⋯"},
@@ -5905,7 +5905,7 @@ TEST_CASE("an open popup never shows the band plot's crosshair",
 
     // Every chrome dropdown, each opened while the pointer last showed the
     // crosshair so a stale plot cursor has every chance to survive.
-    for (const char* label : {"32 bands ▾", "SCULPT ▾", "PEAK ▾", "⋯"}) {
+    for (const char* label : {"32 BANDS ▾", "SCULPT ▾", "PEAK ▾", "⋯"}) {
         pulp::view::deliver_hover_move(root, plot);
         REQUIRE(host_click(rig, trigger_centre(root, label)).reached_tree);
         View* popup = root.interaction().active_overlay;
@@ -5948,7 +5948,7 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
       const trigger = document.querySelector(
         '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
       const zoom = Array.from(document.querySelectorAll('span')).find(
-        span => span.textContent.trim().endsWith('× zoom'));
+        span => span.textContent.trim().endsWith('× ZOOM'));
       if (!trigger || !zoom) throw new Error('header subjects missing');
       const t = trigger.getBoundingClientRect();
       const z = zoom.getBoundingClientRect();
@@ -5958,9 +5958,9 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
           + tc + ' readout centre=' + zc);
     })();)js", "spectr-native-zoom-readout-box");
 
-    const auto* zoom = find_label(*rig.root, "1.00× zoom");
+    const auto* zoom = find_label(*rig.root, "1.00× ZOOM");
     const auto* caption = find_label(*rig.root, "BOTH");
-    const auto* bands = find_label(*rig.root, "32 bands ▾");
+    const auto* bands = find_label(*rig.root, "32 BANDS ▾");
     REQUIRE(zoom != nullptr);
     REQUIRE(caption != nullptr);
     REQUIRE(bands != nullptr);
@@ -6006,6 +6006,49 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
         }
         return rows;
     };
+    // Each WORD's ink rows, split where the ink breaks for at least 4 pt --
+    // a space, never the gap between two glyphs of one word. The whole
+    // control's rows are not enough: a lowercase word with no ascender sits
+    // on the lower part of the line, and digits beside it would still carry
+    // the control's top row up to the capitals'.
+    struct WordInk { float left = 0, right = 0, top = -1, bottom = -1; };
+    const auto word_ink = [&](const pulp::view::Label& label,
+                              const std::vector<std::uint8_t>& frame) {
+        const auto origin = root_point(label, 0.0f, 0.0f);
+        const auto x0 = static_cast<std::uint32_t>(origin.x * kScale);
+        const auto x1 = std::min<std::uint32_t>(
+            width, static_cast<std::uint32_t>(
+                       (origin.x + label.bounds().width) * kScale));
+        const auto y0 = static_cast<std::uint32_t>(
+            std::max(0.0f, origin.y - 3.0f) * kScale);
+        const auto y1 = std::min<std::uint32_t>(
+            height, static_cast<std::uint32_t>(
+                        (origin.y + label.bounds().height + 3.0f) * kScale));
+        const auto bright = [&](std::uint32_t x, std::uint32_t y) {
+            const auto* px = &frame[(static_cast<std::size_t>(y) * width + x) * 4];
+            return px[0] + px[1] + px[2] > 250;
+        };
+        std::vector<WordInk> words;
+        std::uint32_t gap = 0;
+        constexpr std::uint32_t kWordGap = static_cast<std::uint32_t>(4 * 2);
+        for (std::uint32_t x = x0; x < x1; ++x) {
+            float top = -1.0f, bottom = -1.0f;
+            for (std::uint32_t y = y0; y < y1; ++y) {
+                if (!bright(x, y)) continue;
+                if (top < 0.0f) top = static_cast<float>(y) / kScale;
+                bottom = static_cast<float>(y + 1) / kScale;
+            }
+            if (top < 0.0f) { ++gap; continue; }
+            if (words.empty() || gap >= kWordGap)
+                words.push_back({static_cast<float>(x) / kScale, 0.0f, top, bottom});
+            auto& word = words.back();
+            word.right = static_cast<float>(x + 1) / kScale;
+            word.top = std::min(word.top, top);
+            word.bottom = std::max(word.bottom, bottom);
+            gap = 0;
+        }
+        return words;
+    };
     const auto readout_ink = ink_rows(*zoom, rgba);
     const auto caption_ink = ink_rows(*caption, rgba);
     CAPTURE(readout_ink.top, readout_ink.bottom,
@@ -6016,6 +6059,22 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
     // not see it.
     CHECK(readout_ink.top == Catch::Approx(caption_ink.top).margin(0.5f));
     CHECK(readout_ink.bottom == Catch::Approx(caption_ink.bottom).margin(0.5f));
+    // Word by word: the number and ZOOM each on the captions' rows.
+    const auto check_words = [&](const pulp::view::Label& label,
+                                 const std::vector<std::uint8_t>& frame,
+                                 std::size_t words_to_check) {
+        const auto words = word_ink(label, frame);
+        INFO(label.text());
+        REQUIRE(words.size() >= words_to_check);
+        for (std::size_t index = 0; index < words_to_check; ++index) {
+            const auto& word = words[index];
+            CAPTURE(index, word.left, word.right, word.top, word.bottom,
+                    caption_ink.top, caption_ink.bottom);
+            CHECK(word.top == Catch::Approx(caption_ink.top).margin(0.5f));
+            CHECK(word.bottom == Catch::Approx(caption_ink.bottom).margin(0.5f));
+        }
+    };
+    check_words(*zoom, rgba, 2);
 
     // The bands trigger's caption shares the same line, both as captured and
     // after its text changes -- a changed caption no longer matches its capture
@@ -6033,14 +6092,16 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
         REQUIRE(rows.top >= 0.0f);
         CHECK(rows.top == Catch::Approx(caption_ink.top).margin(0.5f));
         CHECK(rows.bottom == Catch::Approx(caption_ink.bottom).margin(0.5f));
+        // The count and the word; the ▾ glyph is not a caption word.
+        check_words(*label, frame, 2);
     };
-    check_bands_caption("32 bands ▾");
+    check_bands_caption("32 BANDS ▾");
     activate(rig, "[data-spectr-menu-root=\"bands\"] [data-spectr-menu-trigger]");
     activate(rig, "[data-spectr-band-count=\"64\"]");
     settle(rig.clock, 12);
     require_app_state(rig, "s.settings.bandCount === 64",
                       "the 64-band option was not selected");
-    check_bands_caption("64 bands ▾");
+    check_bands_caption("64 BANDS ▾");
     storage.require_unchanged();
 }
 

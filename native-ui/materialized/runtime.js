@@ -9942,6 +9942,7 @@ function restoreMaterializedLayout(node, bridge) {
           && binding.text !== "SETTINGS"
           && binding.text !== "\u00D7"
           && binding.text !== "bands \u25BE"
+          && binding.text !== " BANDS \u25BE"
           && binding.text !== " bands \u25BE"
           && binding.text !== "DOWNWARD TILT"
           && !(activeCapturedState === "pattern-manager"
@@ -9951,7 +9952,7 @@ function restoreMaterializedLayout(node, bridge) {
         if (binding.text === "32") {
           const node = materializedNodeAtPath(binding, values, true, pathIndex);
           const text = String(node?.textContent || "");
-          if (/^(32|40|48|56|64) bands \u25BE$/.test(text)) return {
+          if (/^(32|40|48|56|64) BANDS \u25BE$/.test(text)) return {
             ...binding, text, basis: { ...binding.basis, width: 73.03125 },
             boxes: [{ left: 0, top: 3, width: 73.03125, height: 13,
               start: 0, length: text.length }],
@@ -10959,7 +10960,7 @@ function restoreMaterializedLayout(node, bridge) {
       globalThis.__spectrTestHooks?.appState?.()?.settings?.bandCount) || 32;
     const bandCountReceipt = {
       trigger: centerBandText(
-        nativeTextOwner(bandTrigger), liveBandCount + " bands \u25BE",
+        nativeTextOwner(bandTrigger), liveBandCount + " BANDS \u25BE",
         // The caption sits inside the trigger's 1px border, so it centres
         // in the 20px inner area, not the 22px border box.
         92, 73.03125, 20, 3.5),
