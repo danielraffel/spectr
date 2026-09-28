@@ -77,9 +77,9 @@ if (has("--plant-release-render")) {
   plant("a release that re-renders the bank",
     "      nativeProjectionRef.current = false;\n"
     + "      nativeEditPendingRef.current = false;\n"
-    + "      showStatus(liveHoverLabel(hoverRef.current));\n",
+    + "      if (p.changed && p.editedBand >= 0)\n",
     "      setGains(targetGainsRef.current.slice());\n"
-    + "      showStatus(liveHoverLabel(hoverRef.current));\n");
+    + "      if (p.changed && p.editedBand >= 0)\n");
 }
 if (has("--plant-status-via-react")) {
   plant("press and release readings through onStatus",
@@ -374,15 +374,19 @@ const baseGlobals = {
     surface.props.onPointerUp(pointer(centre(14), PLOT_Y - 60)));
   noRender(down);
   noRender(up);
-  if (!down.shown.some((m) => /BAND 13\/32/.test(m))) {
-    fail(`the press put ${JSON.stringify(down.shown)} in the pill; it must show `
-      + "the pressed band's reading, as it did through onStatus");
+  // The press changes nothing, so it shows nothing: the pill is feedback for
+  // an edit. The release ends a stroke that did change bands, so it reads out
+  // the band the stroke last edited under the pointer.
+  if (down.shown.length !== 0) {
+    fail(`the press put ${JSON.stringify(down.shown)} in the pill; a press that `
+      + "has changed no band must show nothing");
   }
-  if (!up.shown.some((m) => /BAND \d+\/32/.test(m))) {
+  if (!up.shown.some((m) => /BAND 15\/32/.test(m))) {
     fail(`the release put ${JSON.stringify(up.shown)} in the pill; it must show `
-      + "the final reading");
+      + "the reading of the band the stroke last edited (band 15)");
   }
   const drawn = renderState().targetGains;
+  const drawnAfterStroke = drawn.slice();
   if (!(drawn[13] > 0.05) || drawn[13] === before[13]) {
     fail(`the stroke did not draw band 14 (target ${drawn[13]}); the rows above `
       + "measured a gesture that did nothing");
@@ -395,6 +399,24 @@ const baseGlobals = {
   const lastSet = posted.filter((p) => p.type === "processing_state_set").pop();
   if (!lastSet || Math.abs(lastSet.payload.gain_db[13] - drawn[13] * 24) > 1e-6) {
     fail("native never received the stroke's final gains");
+  }
+
+  // B1b. THE SAME STROKE AGAIN changes nothing -- bands 14 and 15 already sit
+  // at the level it draws -- so press, moves and release show nothing.
+  const replay = measure("no-op stroke", () => {
+    surface.props.onPointerDown(pointer(centre(13), PLOT_Y - 60));
+    surface.props.onPointerMove(pointer(centre(14), PLOT_Y - 60));
+    surface.props.onPointerUp(pointer(centre(14), PLOT_Y - 60));
+  });
+  noRender(replay);
+  if (renderState().targetGains.some((value, i) => value !== drawnAfterStroke[i])) {
+    console.error("FAIL: the no-op stroke changed a band, so its empty pill is "
+      + "not evidence about anything");
+    process.exit(2);
+  }
+  if (replay.shown.length !== 0) {
+    fail(`a stroke that changed nothing put ${JSON.stringify(replay.shown)} in `
+      + "the pill; only a gesture that changes a band may show a reading");
   }
 
   // B2. A CLICK toggles one band's mute.

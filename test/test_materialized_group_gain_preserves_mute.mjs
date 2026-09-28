@@ -218,6 +218,10 @@ function dragRig() {
     const wakeDraw = () => {};
     const setGains = () => {};
     const queueNativeProcessingStatePublication = () => { publications++; };
+    // The commit paths also report which bands a drawing gesture changed;
+    // this rig drives no gesture, so the report goes nowhere.
+    const sameBandTarget = (a, b) => a === b || (isMuted(a) && isMuted(b));
+    const noteGestureEdit = () => {};
 
     ${commitManySrc}
     ${commitDrawnGainsSrc}

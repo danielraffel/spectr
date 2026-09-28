@@ -6111,3 +6111,208 @@ TEST_CASE("the tracing reminder sits on the header controls' line",
         storage.require_unchanged();
     }
 }
+
+// THE STATUS PILL IS FEEDBACK FOR AN EDIT.
+//
+// The top-centre pill ("12.3kHz   -1.3 dB   BAND 7/32") may appear or update only
+// when a pointer gesture actually changes a band's level or mute state. Not on
+// a plain hover, not on a press, not on a drag that leaves every band where it
+// was, and never because an LFO moved what is painted. Every write is counted
+// at the two doors the bank has into the pill: the direct show
+// (spectrStatusBannerShow) and the live writer's keep-alive, which accompanies
+// every direct text write. Both are wrapped through a property accessor, so a
+// banner re-render that reinstalls either function is still counted.
+TEST_CASE("the status pill shows a band reading only when a gesture edits a band",
+          "[native-n1][state-parity][status-pill]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    rig.bridge().load_script(R"js((() => {
+      const w = typeof window !== 'undefined' ? window : globalThis;
+      const log = globalThis.__spectrPillWrites = [];
+      for (const name of ['spectrStatusBannerShow', 'spectrStatusBannerKeepAlive']) {
+        let impl = w[name];
+        Object.defineProperty(w, name, {
+          configurable: true,
+          get() {
+            if (typeof impl !== 'function') return impl;
+            return (...args) => {
+              log.push({ door: name, text: String(args[0] ?? '') });
+              return impl(...args);
+            };
+          },
+          set(value) { impl = value; },
+        });
+      }
+      const selector = '[data-spectr-filter-surface]';
+      globalThis.__spectrPillFire = (type, x, y, buttons, extra) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+          clientX: x, clientY: y, pointerId: 91, button: 0, buttons,
+          ...(extra || {})
+        })) throw new Error('surface activation failed: ' + type);
+        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+          globalThis.__pulpRuntimeSettle__(2);
+      };
+      globalThis.__spectrPillMark = () => globalThis.__spectrPillWrites.length;
+      globalThis.__spectrPillSince = (mark) => globalThis.__spectrPillWrites.slice(mark);
+    })();)js", "spectr-native-pill-probe");
+
+    const auto expect_no_writes = [&](std::string_view stimulus,
+                                      std::string_view script,
+                                      int frames = 12) {
+        rig.bridge().load_script("globalThis.__spectrPillStart = __spectrPillMark();",
+                                 "spectr-native-pill-mark");
+        rig.bridge().load_script(std::string(script), "spectr-native-pill-stimulus");
+        settle(rig.clock, frames);
+        rig.bridge().load_script(
+            std::string{"(() => { const writes = __spectrPillSince(__spectrPillStart); "
+                        "if (writes.length) throw new Error("}
+                + js_string(stimulus)
+                + " + ' wrote the pill ' + writes.length + ' time(s): ' "
+                  "+ JSON.stringify(writes)); })();",
+            "spectr-native-pill-silent");
+    };
+    const auto require_js = [&](std::string_view script, std::string_view tag) {
+        rig.bridge().load_script(std::string(script), std::string(tag));
+    };
+
+    // 1. A plain hover across the bank writes nothing.
+    expect_no_writes("a plain hover", R"js((() => {
+      for (let x = 300; x <= 900; x += 40) __spectrPillFire('pointermove', x, 430, 0);
+    })();)js");
+
+    // 2. A press, and a jitter under the drag threshold, write nothing. The
+    // release of that click toggles the band's mute -- an edit -- so it is
+    // measured separately below and undone afterwards.
+    expect_no_writes("a press without a drag", R"js((() => {
+      __spectrPillFire('pointermove', 320, 430, 0);
+      __spectrPillFire('pointerdown', 320, 430, 1);
+      __spectrPillFire('pointermove', 322, 431, 1);
+    })();)js");
+    require_js(R"js((() => {
+      const mark = __spectrPillMark();
+      __spectrPillFire('pointerup', 322, 431, 0);
+      const writes = __spectrPillSince(mark);
+      if (!writes.some(w => /^BAND \d+ MUTED$/.test(w.text)))
+        throw new Error('the click that muted a band did not say so: '
+          + JSON.stringify(writes));
+      if (writes.some(w => /Hz/.test(w.text)))
+        throw new Error('the click release also showed a level reading it did '
+          + 'not change: ' + JSON.stringify(writes));
+      // Put the band back so it plays no part below.
+      __spectrPillFire('pointerdown', 322, 431, 1);
+      __spectrPillFire('pointerup', 322, 431, 0);
+    })();)js", "spectr-native-pill-click");
+    settle(rig.clock, 6);
+
+    // 3. A real stroke shows the reading of the band it edited.
+    require_js(R"js((() => {
+      const hooks = globalThis.__spectrTestHooks;
+      globalThis.__spectrPillBefore = hooks.renderState().targetGains.slice();
+      globalThis.__spectrPillStrokeStart = __spectrPillMark();
+      __spectrPillFire('pointermove', 560, 430, 0);
+      __spectrPillFire('pointerdown', 560, 430, 1);
+      __spectrPillFire('pointermove', 600, 365, 1);
+      __spectrPillFire('pointermove', 640, 365, 1);
+    })();)js", "spectr-native-pill-stroke");
+    settle(rig.clock, 6);
+    require_js(R"js((() => {
+      const hooks = globalThis.__spectrTestHooks;
+      const before = globalThis.__spectrPillBefore;
+      const after = hooks.renderState().targetGains;
+      const changed = after.map((v, i) => v !== before[i] ? i : -1).filter(i => i >= 0);
+      if (!changed.length) throw new Error('the stroke changed no band');
+      const last = Math.max(...changed);
+      const n = hooks.appState().settings.bandCount;
+      const writes = __spectrPillSince(globalThis.__spectrPillStrokeStart);
+      const expected = 'BAND ' + (last + 1) + '/' + n;
+      const db = (after[last] * 24).toFixed(1);
+      if (!writes.length)
+        throw new Error('a stroke that changed bands ' + JSON.stringify(changed)
+          + ' never wrote the pill');
+      const shown = document.querySelector('[data-spectr-status-text]')?.textContent || '';
+      if (!shown.includes(expected) || !shown.includes(db + ' dB'))
+        throw new Error('the pill reads "' + shown + '" but the stroke left band '
+          + (last + 1) + ' at ' + db + ' dB (' + expected + ')');
+      __spectrPillFire('pointerup', 640, 365, 0);
+    })();)js", "spectr-native-pill-stroke-reading");
+    settle(rig.clock, 6);
+
+    // 4. The same stroke again changes nothing: press, drag and release are
+    // all silent. The control proves it really changed nothing.
+    require_js(R"js((() => {
+      globalThis.__spectrPillBefore =
+        globalThis.__spectrTestHooks.renderState().targetGains.slice();
+    })();)js", "spectr-native-pill-noop-before");
+    expect_no_writes("a drag that changes no band", R"js((() => {
+      __spectrPillFire('pointermove', 600, 365, 0);
+      __spectrPillFire('pointerdown', 600, 365, 1);
+      __spectrPillFire('pointermove', 620, 365, 1);
+      __spectrPillFire('pointermove', 640, 365, 1);
+      __spectrPillFire('pointerup', 640, 365, 0);
+    })();)js");
+    require_js(R"js((() => {
+      const before = globalThis.__spectrPillBefore;
+      const after = globalThis.__spectrTestHooks.renderState().targetGains;
+      if (after.some((v, i) => v !== before[i]))
+        throw new Error('the no-op stroke changed a band, so its silence proves '
+          + 'nothing');
+    })();)js", "spectr-native-pill-noop-control");
+
+    // 5. An LFO moving the painted bank while the pointer is held still on a
+    // band writes nothing. The display hold is turned off so the band under
+    // the pointer really does move while it is pressed.
+    activate(rig, "[data-spectr-settings-open]");
+    activate(rig, "[data-spectr-hold-edit] [data-spectr-setting-toggle]");
+    require_app_state(rig, "s.settings.holdModulationWhileEditing === false",
+                      "the modulation hold did not turn off");
+    activate(rig, "[data-spectr-settings-close]");
+    settle(rig.clock, 6);
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape,
+                        static_cast<float>(spectr::LfoShape::Sine));
+    rig.store.set_value(spectr::kParamLfoRate, 0.25f);
+    rig.store.set_value(spectr::kParamLfoDepth, 1.0f);
+    rig.store.set_value(spectr::kParamLfoTarget,
+                        static_cast<float>(spectr::ModulationTarget::WholeBank));
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 4);
+    require_js(R"js((() => {
+      globalThis.__spectrPillStart = __spectrPillMark();
+      globalThis.__spectrPillDrawn = [];
+      __spectrPillFire('pointermove', 760, 430, 0);
+      __spectrPillFire('pointerdown', 760, 430, 1);
+    })();)js", "spectr-native-pill-lfo-press");
+    for (int sample = 0; sample < 8; ++sample) {
+        feed_audio_blocks(rig, 6);
+        settle(rig.clock, 3);
+        require_js(R"js(globalThis.__spectrPillDrawn.push(
+          globalThis.__spectrTestHooks.renderState().gains[20]);)js",
+                   "spectr-native-pill-lfo-sample");
+    }
+    require_js(R"js((() => {
+      const drawn = globalThis.__spectrPillDrawn;
+      const spread = Math.max(...drawn) - Math.min(...drawn);
+      // Stimulus control: the band under the pointer must really have moved.
+      if (!(spread > 0.05))
+        throw new Error('the LFO did not move the painted band under the pointer '
+          + '(spread ' + spread + '), so a silent pill proves nothing');
+      const writes = __spectrPillSince(globalThis.__spectrPillStart);
+      if (writes.length)
+        throw new Error('an LFO under a held pointer wrote the pill '
+          + writes.length + ' time(s): ' + JSON.stringify(writes));
+      // Releasing a press that never moved is a click, which toggles the
+      // band's mute: that edit reports itself, and no level reading rides
+      // along with it.
+      __spectrPillFire('pointerup', 760, 430, 0);
+      const released = __spectrPillSince(globalThis.__spectrPillStart);
+      if (!released.length || released.some(w => !/^BAND \d+ (UN)?MUTED$/.test(w.text)))
+        throw new Error('the click release after the held press wrote '
+          + JSON.stringify(released) + '; only its mute toggle may show');
+    })();)js", "spectr-native-pill-lfo-silent");
+    rig.store.set_value(spectr::kParamLfoEnabled, 0.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 4);
+    storage.require_unchanged();
+}

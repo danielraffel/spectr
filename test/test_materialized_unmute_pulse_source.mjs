@@ -174,6 +174,10 @@ function commitRig() {
     // changes every painted gain with no render behind it. This rig has no
     // loop to arm; what it measures is the mute bookkeeping.
     const wakeDraw = () => {};
+    // The commit paths also report which bands a drawing gesture changed;
+    // this rig drives no gesture, so the report goes nowhere.
+    const sameBandTarget = (a, b) => a === b || (isMuted(a) && isMuted(b));
+    const noteGestureEdit = () => {};
     ${commitGainSrc};
     ${commitManySrc};
     return {

@@ -529,10 +529,11 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         CHECK(count_occurrences(document,
                                 "if (!currentHover || currentHover.mini) return;")
               == 1);
-        // Two publishers, deliberately: the rAF draw loop keeps the banner in
-        // step with the animation, and the pointer-move handler writes the
-        // reading straight out so a hover reads live without waiting a frame.
-        CHECK(count_occurrences(document, "updateLiveHoverStatus();") == 2);
+        // Three publishers, deliberately: the rAF draw loop and the
+        // pointer-move handler carry a stroke's edits, and a shift press that
+        // mutes a band -- itself an edit -- reads out at once. Each publishes
+        // only a band the gesture actually changed.
+        CHECK(count_occurrences(document, "updateLiveHoverStatus();") == 3);
         CHECK(count_occurrences(document, "const tw = ctx.measureText(label).width + 18;") == 0);
     }
 
@@ -579,9 +580,11 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         // it cannot dismiss mid-stroke.
         CHECK(count_occurrences(document, "onStatus(label);") == 0);
         CHECK(count_occurrences(document, "}, [hoverBand, N, onStatus]);") == 0);
+        // The status writer and the recorder of which band a drawing gesture
+        // edited; neither acts outside a drawing gesture.
         CHECK(count_occurrences(document,
                   "if (!pointer || (pointer.mode !== \\\"gain\\\" && pointer.mode !== \\\"mute-brush\\\")) return;")
-              == 1);
+              == 2);
         CHECK(count_occurrences(document, "window.spectrStatusBannerKeepAlive();") == 1);
         // No 150 ms interval survives. The status-dismiss timer is armed
         // from a ref, and the zoom readout is a leaf that subscribes to the
@@ -780,12 +783,11 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
                   "setGains(targetGainsRef.current.slice());") == 1);
         CHECK(count_occurrences(document,
                   "reactGains: Array.from(gains)") == 1);
-        // Two publishers: the rAF draw loop and the pointer-move handler that
-        // writes the reading out directly so a hover reads live without
-        // waiting a frame. Both route through the one helper, which is the
-        // property this pins.
+        // Three publishers: the rAF draw loop, the pointer-move handler and
+        // the shift press that mutes a band. All route through the one helper,
+        // which is the property this pins.
         CHECK(count_occurrences(document,
-                  "updateLiveHoverStatus();") == 2);
+                  "updateLiveHoverStatus();") == 3);
         CHECK(count_occurrences(document,
                   "const commitLiveViewport = (next) => {") == 1);
         CHECK(count_occurrences(document,
@@ -862,7 +864,7 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"native-listbox-popup-ownership", "popupKind: \\\"listbox\\\"", 2},
         ContractMarker{"native-menu-popup-ownership", "popupKind: \\\"menu\\\"", 2},
         ContractMarker{"pointer-owned-hover", "const currentHover = hoverRef.current;"},
-        ContractMarker{"live-hover-publication", "updateLiveHoverStatus();", 2},
+        ContractMarker{"live-hover-publication", "updateLiveHoverStatus();", 3},
         ContractMarker{"guide-only-hover", "if (!currentHover || currentHover.mini) return;"},
         ContractMarker{"generation-safe-status", "const generationRef = useRefChrome(0);"},
         // The per-frame writer's rate limit is the reading, not a clock: an
@@ -875,8 +877,11 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         // a status write back on every hover move; severing the keepalive
         // lets the pill dismiss mid-stroke with the direct write still
         // filling a box nobody can see.
+        // Twice: the status writer, and the recorder that marks which band a
+        // drawing gesture edited. Neither acts outside a drawing gesture.
         ContractMarker{"draw-only-status-reading",
-                       "if (!pointer || (pointer.mode !== \\\"gain\\\" && pointer.mode !== \\\"mute-brush\\\")) return;"},
+                       "if (!pointer || (pointer.mode !== \\\"gain\\\" && pointer.mode !== \\\"mute-brush\\\")) return;",
+                       2},
         ContractMarker{"drawing-keeps-status-up",
                        "window.spectrStatusBannerKeepAlive();"},
         ContractMarker{"inactivity-status-clear", "arm(160);"},
