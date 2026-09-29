@@ -1,6 +1,21 @@
 #include "spectr/spectr.hpp"
 #include <pulp/format/vst3_entry.hpp>
 
+namespace {
+
+// VST3 republishes a tail change as restartComponent(kReloadComponent), and
+// JUCE-based hosts answer that with a full deactivate/reactivate -- an audible
+// gap on every Freeze press. This build therefore reports a constant infinite
+// tail and never flags a tail edge; see `spectr::set_constant_infinite_tail`.
+// Constant-initialized flag, so static-init order is safe (as in the AU v2
+// entry's resize-grip initializer).
+const bool g_vst3_constant_infinite_tail = [] {
+    spectr::set_constant_infinite_tail(true);
+    return true;
+}();
+
+}  // namespace
+
 #if defined(SPECTR_WEBVIEW_REFERENCE)
 PULP_VST3_PLUGIN(
     Steinberg::FUID(0xB7D7C75B, 0xBC1C4CF9, 0xA71444BA, 0x53504E31),

@@ -21,6 +21,7 @@
 #include <functional>
 #include <random>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -598,6 +599,172 @@ TEST_CASE("Freeze reports an infinite tail while frozen and says so on each edge
     // No edge, no flag: nothing moved after the release finished.
     rig.run(at(0.2), tone(1000.0, 0.3f));
     CHECK_FALSE(plugin->consume_tail_changed_flag());
+}
+
+TEST_CASE("A VST3 build reports a constant infinite tail and never flags a freeze edge",
+          "[freeze][tail][vst3]") {
+    // VST3 has no lightweight tail notification: the adapter republishes a
+    // tail change as restartComponent(kReloadComponent), which JUCE-based
+    // hosts answer with release()+prepare() -- an audible gap on every
+    // freeze press. So the VST3 entry point declares a constant infinite
+    // tail. AU and CLAP keep the dynamic tail; the control below runs the
+    // identical script under that policy and must see the flags.
+    struct Policy {
+        explicit Policy(bool constant) { spectr::set_constant_infinite_tail(constant); }
+        ~Policy() { spectr::set_constant_infinite_tail(false); }
+    };
+    const auto script = [](bool constant) {
+        Policy policy(constant);
+        Rig rig(MaskRenderMode::zero_latency);
+        auto* plugin = rig.plugin;
+        int flags = 0;
+        bool tail_always_infinite = plugin->descriptor().tail_samples == -1;
+        rig.run(at(2.0), tone(1000.0, 0.3f),
+            [&](std::size_t n, auto&, auto&) {
+                if (rig.hits(n, 0.5)) rig.set(spectr::kParamFreeze, 1.0f);
+                if (rig.hits(n, 1.0)) rig.set(spectr::kParamFreeze, 0.0f);
+                if (rig.hits(n, 1.3)) rig.set(spectr::kParamFreeze, 1.0f);
+                if (rig.hits(n, 1.6)) rig.set(spectr::kParamFreeze, 0.0f);
+            },
+            [&](std::size_t) {
+                if (plugin->consume_tail_changed_flag()) ++flags;
+                tail_always_infinite = tail_always_infinite
+                    && plugin->descriptor().tail_samples == -1;
+            });
+        // A Latency switch moves the latency, which VST3 must still hear, but
+        // under a constant tail there is no tail edge to report with it.
+        (void)plugin->consume_latency_changed_flag();
+        REQUIRE(plugin->set_render_mode(MaskRenderMode::linear_phase));
+        const bool latency_flagged = plugin->consume_latency_changed_flag();
+        if (plugin->consume_tail_changed_flag()) ++flags;
+        return std::tuple{flags, tail_always_infinite, latency_flagged};
+    };
+    const auto [vst3_flags, vst3_infinite, vst3_latency] = script(true);
+    const auto [dyn_flags, dyn_infinite, dyn_latency] = script(false);
+    INFO("VST3 flags " << vst3_flags << " dynamic flags " << dyn_flags);
+    CHECK(vst3_flags == 0);
+    CHECK(vst3_infinite);
+    CHECK(vst3_latency);
+    // Control: the dynamic policy flags each of the four freeze edges and the
+    // mode switch, and its tail is finite when nothing is held.
+    CHECK(dyn_flags >= 5);
+    CHECK_FALSE(dyn_infinite);
+    CHECK(dyn_latency);
+}
+
+namespace {
+
+/// The longest run, in samples, of 5 ms windows whose RMS sits more than
+/// 20 dB below `reference_db`, inside [from, to).
+std::size_t longest_quiet_run(const std::vector<float>& x, std::size_t from,
+                              std::size_t to, double reference_db) {
+    const std::size_t window = at(0.005);
+    std::size_t run = 0, worst = 0;
+    for (std::size_t n = from; n + window <= std::min(to, x.size()); n += window) {
+        if (rms_db(x, n, window) < reference_db - 20.0) {
+            run += window;
+            worst = std::max(worst, run);
+        } else {
+            run = 0;
+        }
+    }
+    return worst;
+}
+
+} // namespace
+
+TEST_CASE("A host reload at the same geometry keeps a playing hold",
+          "[freeze][reload]") {
+    // A host deactivate/reactivate (release()+prepare()) at the same rate and
+    // width must not throw the hold away or leave a hole longer than a
+    // crossfade. The control reloads without a freeze and must go silent, so
+    // the "after" reading can only come from the hold.
+    for (const auto mode : kModes) {
+        const auto render = [&](bool freeze) {
+            Rig rig(mode);
+            bool reloaded = false;
+            auto out = rig.run(at(3.0), tone(1000.0, 0.3f, /*stop=*/1.0),
+                [&](std::size_t n, auto&, auto&) {
+                    if (rig.hits(n, 0.5) && freeze) rig.set(spectr::kParamFreeze, 1.0f);
+                    if (rig.hits(n, 1.5)) {
+                        rig.host.release();
+                        rig.host.prepare(kSampleRate, rig.block);
+                        reloaded = true;
+                    }
+                });
+            REQUIRE(reloaded);
+            if (freeze) {
+                CHECK(rig.host.state().get_value(spectr::kParamFreeze) >= 0.5f);
+                CHECK(rig.plugin->freeze_source().phase() == FreezeSource::Phase::held);
+            }
+            return out;
+        };
+        const auto frozen = render(true);
+        const auto control = render(false);
+        const double before = fit(frozen.left, at(1.2), at(0.25), 1000.0).amplitude;
+        const double after = fit(frozen.left, at(2.4), at(0.5), 1000.0).amplitude;
+        const double silent = fit(control.left, at(2.4), at(0.5), 1000.0).amplitude;
+        const double held_db = rms_db(frozen.left, at(1.2), at(0.25));
+        // The reload lands on the block containing 1.5 s.
+        const std::size_t reload_at = (at(1.5) / 256) * 256;
+        const auto gap = longest_quiet_run(frozen.left, reload_at, at(2.4), held_db);
+        const auto crossfade = static_cast<std::size_t>(
+            std::lround(FreezeSource::kCrossfadeSeconds * kSampleRate));
+        INFO(mode_name(mode) << ": before " << before << " after " << after
+             << " unfrozen " << silent << " gap " << gap << " samples");
+        REQUIRE(before > 0.1);
+        CHECK(std::abs(20.0 * std::log10(std::max(after, 1e-9) / before)) < 1.5);
+        CHECK(gap <= crossfade);
+        CHECK(silent < 0.003);
+    }
+}
+
+TEST_CASE("A host reload at a new sample rate drops the hold and re-arms",
+          "[freeze][reload]") {
+    // A different rate (or width) invalidates the held spectrum: it must not
+    // be replayed at the wrong pitch or read through a mis-sized buffer. The
+    // Freeze parameter survives, so the source re-arms and latches the new
+    // input -- 660 Hz after the reload, never the 1000 Hz from before it.
+    for (const auto mode : kModes) {
+        Rig rig(mode);
+        constexpr double kNewRate = 44100.0;
+        rig.run(at(1.2), tone(1000.0, 0.3f),
+            [&](std::size_t n, auto&, auto&) {
+                if (rig.hits(n, 0.5)) rig.set(spectr::kParamFreeze, 1.0f);
+            });
+        REQUIRE(rig.plugin->freeze_source().phase() == FreezeSource::Phase::held);
+        rig.host.release();
+        rig.host.prepare(kNewRate, rig.block);
+        CHECK(rig.plugin->freeze_source().prepared_for(kNewRate, 2));
+        CHECK(rig.plugin->freeze_source().phase() == FreezeSource::Phase::live);
+        CHECK(rig.host.state().get_value(spectr::kParamFreeze) >= 0.5f);
+
+        const auto at_new = [&](double s) {
+            return static_cast<std::size_t>(std::llround(s * kNewRate));
+        };
+        const auto new_tone = [&](std::size_t n) {
+            const auto v = static_cast<float>(
+                0.3 * std::sin(2.0 * kPi * 660.0 * n / kNewRate));
+            return std::pair<float, float>{v, v};
+        };
+        auto out = rig.run(at_new(3.0), [&](std::size_t n) {
+            return n < at_new(1.0) ? new_tone(n) : std::pair<float, float>{0.0f, 0.0f};
+        });
+        CHECK(rig.plugin->freeze_source().phase() == FreezeSource::Phase::held);
+        // fit() assumes kSampleRate; rescale the frequencies to read the
+        // 44.1 kHz render correctly.
+        const double scale = kSampleRate / kNewRate;
+        const double new_hold = fit(out.left, at_new(2.0), at_new(0.5), 660.0 * scale).amplitude;
+        const double old_hold = fit(out.left, at_new(2.0), at_new(0.5), 1000.0 * scale).amplitude;
+        double worst = 0.0;
+        for (float v : out.left) worst = std::max(worst, static_cast<double>(std::abs(v)));
+        INFO(mode_name(mode) << ": 660 Hz hold " << new_hold << " stale 1000 Hz "
+             << old_hold << " peak " << worst);
+        CHECK(new_hold > 0.1);
+        CHECK(old_hold < 0.01);
+        CHECK(std::isfinite(worst));
+        CHECK(worst < 1.0);
+    }
 }
 
 // ── Automation, projection, settings ───────────────────────────────────────

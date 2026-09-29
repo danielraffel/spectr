@@ -41,6 +41,19 @@ bool editor_is_standalone() {
 }
 
 namespace {
+// See set_constant_infinite_tail: asserted by the VST3 entry point only.
+std::atomic<bool> g_constant_infinite_tail{false};
+}  // namespace
+
+void set_constant_infinite_tail(bool value) {
+    g_constant_infinite_tail.store(value, std::memory_order_relaxed);
+}
+
+bool constant_infinite_tail() {
+    return g_constant_infinite_tail.load(std::memory_order_relaxed);
+}
+
+namespace {
 
 /// Are these two layouts the same mask?
 ///
@@ -126,7 +139,8 @@ pulp::format::PluginDescriptor Spectr::descriptor() const {
     // A held spectrum sounds for as long as it is held, with or without
     // input, so a host must not stop processing on silence. Every format
     // adapter reads a negative tail as infinite.
-    if (freeze_tail_infinite()) descriptor.tail_samples = -1;
+    if (constant_infinite_tail() || freeze_tail_infinite())
+        descriptor.tail_samples = -1;
     return descriptor;
 }
 
@@ -137,7 +151,9 @@ void Spectr::update_freeze_tail_() noexcept {
                        || freeze_source_.hold_audible();
     if (infinite != freeze_tail_infinite_.load(std::memory_order_relaxed)) {
         freeze_tail_infinite_.store(infinite, std::memory_order_release);
-        flag_tail_changed();
+        // Under a constant infinite tail (VST3) there is no edge to report,
+        // and reporting one would ask the host to reload the component.
+        if (!constant_infinite_tail()) flag_tail_changed();
     }
 }
 
@@ -680,7 +696,7 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
     // The host's delay compensation is now wrong by the difference between the
     // two modes. This is the whole reason the switch is observable to a host.
     flag_latency_changed();
-    flag_tail_changed();
+    if (!constant_infinite_tail()) flag_tail_changed();
     return true;
 }
 
@@ -752,6 +768,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         publish_processing_state_();
     }
+    preroll_surviving_hold_();
     // Audio→worker lane for host-automation adoption (see the drift sweep
     // in process()). Restart cleanly across re-prepare.
     if (!param_sync_lane_.start(&Spectr::param_sync_trampoline_, this,
@@ -761,6 +778,38 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
             "of the band surface will not reach the DSP");
     }
     configure_bridge_(ctx.output_channels);
+}
+
+void Spectr::preroll_surviving_hold_() {
+    // A host reload at the same geometry kept the freeze source -- and with
+    // it a playing hold -- but the renderer was rebuilt empty, so its wet
+    // pipeline would open with up to a full latency of silence (a quarter
+    // second in Mixing) before the hold reached the output again. No audio
+    // thread runs across a prepare: fill the new pipeline with the hold here,
+    // off the stream, so the first block after the reload continues it.
+    if (!processor_prepared_ || !renderer_ || !freeze_source_.hold_audible())
+        return;
+    const int span = std::max(renderer_->latency_samples(),
+                              renderer_->maximum_tail_samples());
+    const int block = std::max(1, max_block_);
+    if (span <= 0 || channels_ < 1
+        || channels_ > static_cast<int>(kMaximumChannels))
+        return;
+    std::vector<float> silence(static_cast<std::size_t>(block), 0.0f);
+    std::vector<float> scratch(static_cast<std::size_t>(block * channels_), 0.0f);
+    std::array<const float*, kMaximumChannels> in{};
+    std::array<float*, kMaximumChannels> out{};
+    for (int ch = 0; ch < channels_; ++ch) {
+        in[static_cast<std::size_t>(ch)] = silence.data();
+        out[static_cast<std::size_t>(ch)] =
+            scratch.data() + static_cast<std::size_t>(ch * block);
+    }
+    renderer_->set_mix(std::clamp(state().get_value(kMix) / 100.0f, 0.0f, 1.0f));
+    freeze_source_.set_frozen(state().get_value(kParamFreeze) >= 0.5f);
+    for (int done = 0; done < span; done += block)
+        (void)renderer_->process(in.data(), out.data(), std::min(block, span - done));
+    // The pre-roll fed the source silence; keep it out of the next capture.
+    freeze_source_.clear_history();
 }
 
 std::unique_ptr<pulp::view::View> Spectr::create_view() {

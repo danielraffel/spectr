@@ -214,6 +214,21 @@ bool editor_owns_resize_grip();
 void set_editor_is_standalone(bool value);
 bool editor_is_standalone();
 
+/// Whether this image reports a constant infinite tail instead of the dynamic
+/// one Freeze drives.
+///
+/// Freeze makes the tail infinite while a hold is requested or audible, and
+/// announces each edge with `flag_tail_changed()`. AU (a property change) and
+/// CLAP (`clap_host_tail->changed()`) carry that cheaply. VST3 does not: its
+/// adapter republishes a tail change as `restartComponent(kReloadComponent)`,
+/// which JUCE-based hosts answer with a full release()+prepare() -- an audible
+/// gap on every freeze press. So the VST3 entry point asserts this, and the
+/// processor then reports -1 always and raises no tail edge at all. Default
+/// false; set from the linked entry point for the same reason as the two
+/// flags above -- Pulp exposes no wrapper-type query to a `Processor`.
+void set_constant_infinite_tail(bool value);
+bool constant_infinite_tail();
+
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
 // SpectralFrameEngine reads through a fixed causal cursor of one complete FFT
@@ -787,6 +802,7 @@ private:
     // whichever thread a host asks on.
     std::atomic<bool>                      freeze_tail_infinite_{false};
     void update_freeze_tail_() noexcept;
+    void preroll_surviving_hold_();
     std::array<const float*, kMaximumChannels> input_channels_{};
     std::array<float*, kMaximumChannels>       output_channels_{};
 
