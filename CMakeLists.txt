@@ -2218,6 +2218,21 @@ if(SPECTR_NODE_EXECUTABLE)
         PROPERTIES TIMEOUT 30)
 endif()
 
+# Two per-frame paint helpers do their work once and answer exactly as before:
+# the analyzer sample reads the trace position straight off the caller's log
+# frequency (no 10^x / log10 round trip per sample, trace bounds taken once per
+# frame), and specColor formats hue/saturation/lightness once per band and
+# theme. The suite checks identical answers against the previous code kept
+# verbatim as the oracle, and counts the per-call work.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-paint-micro
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_paint_micro.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/spectr-native-services.js)
+    set_tests_properties(Spectr-materialized-paint-micro PROPERTIES TIMEOUT 30)
+endif()
+
 # The output level readout, and the Output trim beside it.
 #
 # `kOutputTrim` is applied post-render and proved exact by a unit test, and

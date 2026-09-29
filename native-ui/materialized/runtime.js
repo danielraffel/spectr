@@ -11280,27 +11280,43 @@ function restoreMaterializedLayout(node, bridge) {
             || (payload.epoch === analyzerFrame.epoch
                 && payload.sequence_number <= analyzerFrame.sequence_number)))
       return false;
+    // A trace's log-frequency bounds are fixed for the frame, and the editor
+    // samples every trace hundreds of times a frame, so they are taken once
+    // here rather than on every sample.
+    const withLogBounds = trace => ({ ...trace,
+      magnitude_db: trace.magnitude_db.slice(),
+      log_min_hz: Math.log10(trace.min_hz),
+      log_span: Math.log10(trace.max_hz) - Math.log10(trace.min_hz) });
     analyzerFrame = {
       ...payload,
-      visible: { ...payload.visible,
-        magnitude_db: payload.visible.magnitude_db.slice() },
-      overview: { ...payload.overview,
-        magnitude_db: payload.overview.magnitude_db.slice() },
+      visible: withLogBounds(payload.visible),
+      overview: withLogBounds(payload.overview),
     };
     return true;
   };
+  // The caller already works in log frequency, so the position is read
+  // straight off it: no 10^x and log10 round trip per sample. A position that
+  // lands on a trace point -- every sample, when the view is the trace's own
+  // range and the step count matches -- reads that point directly.
   const sampleTrace = (trace, logFrequency, frame) => {
     if (!trace || !Number.isFinite(logFrequency)) return 0;
-    const frequency = Math.pow(10, logFrequency);
-    const position = Math.max(0, Math.min(1,
-      (Math.log10(frequency) - Math.log10(trace.min_hz))
-      / (Math.log10(trace.max_hz) - Math.log10(trace.min_hz))));
-    const exact = position * (trace.magnitude_db.length - 1);
-    const left = Math.floor(exact);
-    const right = Math.min(left + 1, trace.magnitude_db.length - 1);
-    const mix = exact - left;
-    const db = trace.magnitude_db[left]
-      + (trace.magnitude_db[right] - trace.magnitude_db[left]) * mix;
+    const logMin = trace.log_min_hz ?? Math.log10(trace.min_hz);
+    const logSpan = trace.log_span
+      ?? (Math.log10(trace.max_hz) - Math.log10(trace.min_hz));
+    const position = Math.max(0, Math.min(1, (logFrequency - logMin) / logSpan));
+    const last = trace.magnitude_db.length - 1;
+    const exact = position * last;
+    const nearest = Math.round(exact);
+    let db;
+    if (Math.abs(exact - nearest) < 1e-9) {
+      db = trace.magnitude_db[nearest];
+    } else {
+      const left = Math.floor(exact);
+      const right = Math.min(left + 1, last);
+      const mix = exact - left;
+      db = trace.magnitude_db[left]
+        + (trace.magnitude_db[right] - trace.magnitude_db[left]) * mix;
+    }
     return Math.max(0, Math.min(1,
       (db - frame.floor_db) / (frame.ceiling_db - frame.floor_db)));
   };
