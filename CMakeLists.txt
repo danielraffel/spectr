@@ -3254,6 +3254,28 @@ if(SPECTR_NODE_EXECUTABLE)
             PROPERTIES TIMEOUT 60)
     endforeach()
 
+    # EVERY FULL-STATE PUBLICATION NAMES THE STATE IT WAS DRAWN FROM, and
+    # carries the live viewport. Native merges a publication against that
+    # state so a stale one cannot revert host automation; the drawn revision
+    # must be the last state the bank APPLIED, and the window must be the live
+    # one after a setView that has not rendered and during host viewport
+    # automation. Each control restores one shipped omission.
+    add_test(NAME Spectr-materialized-publication-provenance
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_publication_provenance.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-publication-provenance PROPERTIES TIMEOUT 60)
+    foreach(_spectr_provenance_plant no-drawn render-view)
+        add_test(NAME Spectr-materialized-publication-provenance-${_spectr_provenance_plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_publication_provenance.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_spectr_provenance_plant} --expect-fail)
+        set_tests_properties(
+            Spectr-materialized-publication-provenance-${_spectr_provenance_plant}-control
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+
     # THE EDITOR STOPS PAINTING WHEN NOTHING CHANGED -- and wakes for every
     # path that can change the canvas. Measured on a genuinely idle editor
     # (nothing hovered, nothing playing, nothing animating) the draw loop

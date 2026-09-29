@@ -3114,10 +3114,12 @@ bool Spectr::tick_native_analyzer_(float dt) {
     if (automation_perf_fixture
         || host_revision != native_host_automation_revision_) {
         PULP_TRACE_SCOPE_NAMED("state", "spectr_host_automation_project");
+        FieldSnapshot shown;
         const auto payload = [&] {
             PULP_TRACE_SCOPE_NAMED(
                 "state", "spectr_host_automation_snapshot");
-            return make_editor_live_state_payload(*this, projection_revision);
+            return make_editor_live_state_payload(
+                *this, projection_revision, &shown);
         }();
         try {
             {
@@ -3131,6 +3133,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     "spectr-native-host-automation-live");
             }
             native_host_automation_revision_ = projection_revision;
+            editor_authority().note_editor_shown(shown, projection_revision);
         } catch (const std::exception& error) {
             pulp::runtime::log_error(
                 "[Spectr native] host automation hydration rejected: {}",
