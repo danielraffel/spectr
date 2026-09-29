@@ -96,7 +96,7 @@ The slider stays greyed out until both slots are filled.
 
 Press **LIVE** in the header, or Q, to freeze the sound coming in. Spectr holds it and keeps playing it, and everything you draw keeps working on what it holds: the bands, mutes, the morph and both LFOs. Press **FROZEN** to go back to the live sound.
 
-Below 100% **Mix** only the processed part is frozen, so the untouched part stays live and you can play over the held sound.
+Below 100% Mix only the processed part is frozen, so the untouched part stays live and you can play over the held sound.
 
 **Hold length**, in Settings, sets how much of the incoming sound a freeze takes in. A short one catches the moment you press. A longer one blends the last second or two into a smoother pad.
 

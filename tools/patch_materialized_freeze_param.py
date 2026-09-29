@@ -116,10 +116,6 @@ function spectrToggleFreeze() {
   return spectrSetFrozen(!spectrFreezeStore().frozen);
 }
 window.spectrToggleFreeze = spectrToggleFreeze;
-function spectrFreezeHoldText(seconds) {
-  if (!(typeof seconds === "number" && isFinite(seconds))) return "";
-  return seconds < 1 ? Math.round(seconds * 1000) + " ms" : seconds.toFixed(2) + " s";
-}
 function SpectrFreezeToggle() {
   // Two faces from the design's FreezeToggle, token for token. The face
   // follows the Freeze parameter through the shared store, and the store
@@ -162,12 +158,20 @@ function SpectrFreezeToggle() {
     style: { fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }
   }, frozen ? "FROZEN" : "LIVE"));
 }
-// Settings > FREEZE. Not a host parameter, so like Latency it reads the
+'''
+
+# Defined beside the Latency group, inside the Settings surface, so the
+# Settings panel's own scripts carry it.
+SETTINGS_FUNCTION = '''// Settings > FREEZE. Not a host parameter, so like Latency it reads the
 // hydration payload and renders nothing until the processor has answered.
 function SpectrFreezeSettings() {
-  const store = spectrFreezeStore();
+  // Guarded because this component is also evaluated on its own, away from
+  // the store's script: there it has no hydration and renders nothing.
+  const store = typeof spectrFreezeStore === "function"
+    ? spectrFreezeStore() : globalThis.__spectrFreeze;
   const [, setRevision] = React.useState(0);
   React.useEffect(() => {
+    if (!store || !Array.isArray(store.listeners)) return undefined;
     const sync = () => setRevision((n) => n + 1);
     store.listeners.push(sync);
     return () => {
@@ -175,7 +179,7 @@ function SpectrFreezeSettings() {
       if (at >= 0) store.listeners.splice(at, 1);
     };
   }, []);
-  const hold = store.hold;
+  const hold = store && store.hold;
   if (!hold || !(hold.max > hold.min)) return null;
   const write = (seconds) => {
     const next = Math.max(hold.min, Math.min(hold.max, seconds));
@@ -192,10 +196,11 @@ function SpectrFreezeSettings() {
     max: hold.max,
     step: 0.01,
     onChange: write,
-    fmt: spectrFreezeHoldText
+    fmt: (seconds) => seconds < 1 ? Math.round(seconds * 1000) + " ms" : seconds.toFixed(2) + " s"
   }))));
 }
 '''
+SETTINGS_FUNCTION_ANCHOR = ("// The close button owns its hover and press look, so pointer-enter and\n")
 
 SHORTCUT_OLD = ('keyboardPolicy.active && /* @__PURE__ */ React.createElement(Hrow, '
                 '{ k: "M" }, "Mute/unmute selection"), ')
@@ -252,7 +257,7 @@ def main():
     html = document["html"]
 
     if MARKER in html:
-        for marker in (SHORTCUT_NEW, KEY_NEW, SETTINGS_NEW):
+        for marker in (SHORTCUT_NEW, KEY_NEW, SETTINGS_NEW, SETTINGS_FUNCTION):
             if html.count(marker) != 1:
                 sys.exit("FAIL: the freeze store is present but %r is not; the "
                          "document is half patched" % marker[:60])
@@ -263,7 +268,8 @@ def main():
                         (TOGGLE_END, "output meter"),
                         (SHORTCUT_OLD, "SHORTCUTS M row"),
                         (KEY_OLD, "App keydown tail"),
-                        (SETTINGS_OLD, "Settings latency group")):
+                        (SETTINGS_OLD, "Settings latency group"),
+                        (SETTINGS_FUNCTION_ANCHOR, "Settings close button")):
         once(html, text, label)
 
     start = html.index(TOGGLE_START)
@@ -276,6 +282,8 @@ def main():
     html = html.replace(SHORTCUT_OLD, SHORTCUT_NEW, 1)
     html = html.replace(KEY_OLD, KEY_NEW, 1)
     html = html.replace(SETTINGS_OLD, SETTINGS_NEW, 1)
+    html = html.replace(SETTINGS_FUNCTION_ANCHOR,
+                        SETTINGS_FUNCTION + SETTINGS_FUNCTION_ANCHOR, 1)
 
     document["html"] = html
     # Keep every byte outside the html payload as it was, and encode the html
