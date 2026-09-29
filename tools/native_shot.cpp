@@ -431,6 +431,22 @@ struct Rig {
         bridge().load_script(script, name);
     }
 
+    // Service the runtime the way a host's message loop does between frames:
+    // drain Promise jobs and React commits, then run the frames that deliver
+    // what those commits scheduled (a publication rides requestAnimationFrame).
+    // The synthetic clock alone does neither, so a press driven through the
+    // host's input path would otherwise leave its consequence pending until
+    // whatever next happens to enter the runtime -- and land in the middle of
+    // the next arrangement instead of in its own.
+    void service_runtime() {
+        for (int pass = 0; pass < 2; ++pass) {
+            eval("(() => { if (typeof globalThis.__pulpRuntimeSettle__ === "
+                 "'function') globalThis.__pulpRuntimeSettle__(8); })();",
+                 "spectr-native-shot-service");
+            settle(clock, 4);
+        }
+    }
+
     // Drive a real control through the importer's semantic activation seam and
     // then drain the Promise jobs and React commits a host would service.
     void activate(std::string_view selector, std::string_view event = "click") {
@@ -3719,6 +3735,7 @@ int main(int argc, char** argv) {
                 if (!menu_open()) return;
                 pulp::view::route_escape_to_active_overlay(root);
                 settle(rig.clock, 16);
+                rig.service_runtime();
             };
             auto open_menu = [&]() {
                 close_menu();
@@ -3727,6 +3744,7 @@ int main(int argc, char** argv) {
                 settle(rig.clock, 24);
                 root.layout_children();
                 settle(rig.clock, 8);
+                rig.service_runtime();
                 return res.handled && menu_open();
             };
             auto press_key = [&root, &rig](pulp::view::KeyCode code) {
@@ -3735,6 +3753,7 @@ int main(int argc, char** argv) {
                 pulp::view::WidgetBridge::dispatch_key_for_root(
                     root, static_cast<int>(code), pulp::view::kModNone, false);
                 settle(rig.clock, 24);
+                rig.service_runtime();
             };
             // Put every band back to a known neutral through the HOST
             // PARAMETER -- the same real, user-reachable path automation uses,
@@ -3906,6 +3925,9 @@ int main(int argc, char** argv) {
                 settle(rig.clock, 24);
                 root.layout_children();
                 settle(rig.clock, 8);
+                // Serviced whether or not the plant skipped the press, so the
+                // negative control differs from the real run by the press alone.
+                rig.service_runtime();
                 return aim;
             };
 
@@ -4534,22 +4556,42 @@ int main(int argc, char** argv) {
             for (int count : {40, 48, 56, 64}) {
                 close_menu();
                 const std::string label = "count " + std::to_string(count);
-                int adopted = -1;
-                // The first write of the sweep has been observed not to take
-                // on the first round-trip, so ask twice rather than report a
-                // layout that was simply still in flight.
-                for (int attempt = 0; attempt < 2 && adopted != count; ++attempt) {
-                    rig.store.set_value(spectr::kParamBandCount,
-                                        static_cast<float>(count));
-                    for (int i = 0; i < 6; ++i) settle_round();
-                    adopted = js_int(
-                        "window.__spectrTestHooks.renderState().nVisible", 32, 64);
+                // One host write, then wait for it to land on both sides: the
+                // processor adopts it on the parameter-sync worker (a real
+                // thread), and the editor redraws at the new count only after
+                // it re-hydrates. The editor must be quiet first -- an edit it
+                // has not yet published is exactly what used to race this
+                // write and put the old count back.
+                rig.service_runtime();
+                rig.store.set_value(spectr::kParamBandCount,
+                                    static_cast<float>(count));
+                const auto want = static_cast<spectr::Layout>(count);
+                const std::string drawn =
+                    "window.__spectrTestHooks.renderState().nVisible === "
+                    + std::to_string(count);
+                // Bounded in wall-clock time, not in rounds: the worker runs
+                // on the real clock, and a loaded machine must not turn a
+                // late adoption into a failed arrangement.
+                bool landed = false;
+                const auto deadline =
+                    std::chrono::steady_clock::now() + std::chrono::seconds(3);
+                while (!landed && std::chrono::steady_clock::now() < deadline) {
+                    settle_round();
+                    rig.service_runtime();
+                    landed = rig.processor.processing_state_snapshot().layout == want
+                             && rig.truth(drawn);
+                    if (!landed)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 }
-                if (adopted != count) {
+                if (!landed) {
                     record("Select all + Mute selection", label.c_str(),
                            "real press", "acts on all N bands at this layout",
-                           3, fmt("arrangement failed: asked for %d, the editor "
-                                  "is drawing %d", count, adopted));
+                           3, fmt("arrangement failed: asked for %d; host "
+                                  "parameter %.0f, processor %d, editor drawing %d",
+                                  count, rig.store.get_value(spectr::kParamBandCount),
+                                  static_cast<int>(rig.processor.processing_state_snapshot().layout),
+                                  js_int("window.__spectrTestHooks.renderState()"
+                                         ".nVisible", 32, 64)));
                     continue;
                 }
                 neutralise(static_cast<std::size_t>(count));

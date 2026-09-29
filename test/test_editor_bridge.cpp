@@ -473,6 +473,77 @@ TEST_CASE("host automation publication is compact and revisioned") {
     CHECK(payload["modulation"].size() == 10);
 }
 
+// The editor publishes its WHOLE picture (every band, the viewport and the band
+// count) on every edit, and it does so a frame after the render it read. Host
+// automation reaches the same state from the parameter-sync worker, a real
+// thread. So an editor publication can be built before a host write and land
+// after the worker adopted it. A value the editor merely carried over from the
+// state it was last shown is not an edit, and must not revert the host's value
+// -- nor be pushed back to the host as if the user had set it.
+TEST_CASE("a stale editor publication does not revert host automation", "[automation]") {
+    Rig r;
+    const auto shown = choc::json::parse(
+        r.dispatch(R"({"type":"processing_state_get","payload":{}})"));
+    REQUIRE(shown["ok"].getBool());
+    REQUIRE(shown["n_visible"].get<int64_t>() == 32);
+    const auto min_hz = static_cast<float>(shown["min_hz"].get<double>());
+    const auto max_hz = static_cast<float>(shown["max_hz"].get<double>());
+
+    // Host automation, adopted by the sync worker before the editor hears.
+    r.store.set_value(spectr::kParamBandCount, 40.0f);
+    r.store.set_value(spectr::band_gain_param_id(3), -9.0f);
+    REQUIRE(r.proc->apply_surface_params(true));
+    REQUIRE(r.proc->layout() == spectr::Layout::Bands40);
+    REQUIRE(r.proc->field().bands[3].gain_db == Approx(-9.0f));
+
+    // The editor, still drawing the 32-band picture it was shown, publishes
+    // its one real edit: band 5 muted.
+    REQUIRE(response_ok(r.dispatch(processing_state_envelope(
+        32, min_hz, max_hz, /*special_band=*/5, 0.0f, /*muted=*/true))));
+
+    CHECK(r.proc->layout() == spectr::Layout::Bands40);
+    CHECK(r.store.get_value(spectr::kParamBandCount) == Approx(40.0f));
+    CHECK(r.proc->field().bands[3].gain_db == Approx(-9.0f));
+    CHECK(r.store.get_value(spectr::band_gain_param_id(3)) == Approx(-9.0f));
+    // Positive control on the same publication: the edit it carried lands.
+    CHECK(r.proc->field().bands[5].muted);
+    CHECK(r.store.get_value(spectr::band_mute_param_id(5)) == Approx(1.0f));
+}
+
+TEST_CASE("an editor publication that differs from what it was shown is an edit", "[automation]") {
+    Rig r;
+    REQUIRE(response_ok(
+        r.dispatch(R"({"type":"processing_state_get","payload":{}})")));
+    const auto viewport = r.proc->viewport();
+
+    // The user mutes band 2 ...
+    REQUIRE(response_ok(r.dispatch(processing_state_envelope(
+        32, viewport.min_hz, viewport.max_hz, 2, 0.0f, true))));
+    REQUIRE(r.proc->field().bands[2].muted);
+
+    // ... the host unmutes it, and the editor is SHOWN that ...
+    r.store.set_value(spectr::band_mute_param_id(2), 0.0f);
+    REQUIRE(r.proc->apply_surface_params(true));
+    REQUIRE_FALSE(r.proc->field().bands[2].muted);
+    spectr::FieldSnapshot shown_state;
+    const auto live = spectr::make_editor_live_state_message(
+        *r.proc, r.proc->host_automation_revision(), &shown_state);
+    REQUIRE(live.type == "processing_state_live");
+    r.proc->editor_authority().note_editor_shown(shown_state);
+
+    // ... so muting it again is a real edit, although it matches the state
+    // the editor published before the host moved.
+    REQUIRE(response_ok(r.dispatch(processing_state_envelope(
+        32, viewport.min_hz, viewport.max_hz, 2, 0.0f, true))));
+    CHECK(r.proc->field().bands[2].muted);
+
+    // And picking a band count the editor was not shown is an edit too.
+    REQUIRE(response_ok(r.dispatch(processing_state_envelope(
+        48, viewport.min_hz, viewport.max_hz, 2, 0.0f, true))));
+    CHECK(r.proc->layout() == spectr::Layout::Bands48);
+    CHECK(r.store.get_value(spectr::kParamBandCount) == Approx(48.0f));
+}
+
 TEST_CASE("live publication carries macro membership and current undo availability", "[undo][macros]") {
     Rig r;
     const auto initial = spectr::make_editor_live_state_payload(*r.proc, 0);

@@ -111,6 +111,55 @@ EditorReceipt EditorAuthority::replace_processing_state(
     return accept_mutation_();
 }
 
+EditorReceipt EditorAuthority::publish_editor_state(
+    const BandField& field, const Viewport& viewport, Layout layout,
+    std::optional<EditorRevision> expected) noexcept {
+    if (!matches_(expected)) return reject_("stale editor revision");
+    const auto current = processor_.processing_state_snapshot();
+    // Bands the publication does not carry keep the processor's value as of
+    // THIS read, not the caller's, so a host write adopted in between is not
+    // reverted either.
+    BandField next = current.field;
+    Viewport next_viewport = viewport;
+    Layout next_layout = layout;
+    const auto published = visible_count(layout);
+    for (std::size_t i = 0; i < published && i < next.bands.size(); ++i) {
+        next.bands[i] = field.bands[i];
+        if (!shown_) continue;
+        const auto& base = shown_->field.bands[i];
+        if (field.bands[i].gain_db == base.gain_db)
+            next.bands[i].gain_db = current.field.bands[i].gain_db;
+        if (field.bands[i].muted == base.muted)
+            next.bands[i].muted = current.field.bands[i].muted;
+    }
+    if (shown_) {
+        if (same_viewport(viewport, shown_->viewport))
+            next_viewport = current.viewport;
+        if (layout == shown_->layout) next_layout = current.layout;
+    }
+    auto receipt = replace_processing_state(
+        next, next_viewport, next_layout, expected);
+    // The editor does not apply the response to its own publication, so what
+    // it now believes is what it sent, not the merged result. The live
+    // projection the host write triggers will show it the merged state.
+    if (receipt.accepted) {
+        FieldSnapshot sent;
+        sent.field = next;
+        for (std::size_t i = 0; i < published && i < sent.field.bands.size(); ++i)
+            sent.field.bands[i] = field.bands[i];
+        sent.viewport = viewport;
+        sent.layout = layout;
+        sent.populated = true;
+        shown_ = sent;
+    }
+    return receipt;
+}
+
+void EditorAuthority::note_editor_shown(const FieldSnapshot& shown) noexcept {
+    shown_ = shown;
+    shown_->populated = true;
+}
+
 EditorReceipt EditorAuthority::begin_band_edit(
     std::optional<EditorRevision> expected) noexcept {
     if (!matches_(expected)) return reject_("stale editor revision");
@@ -338,6 +387,8 @@ void EditorAuthority::reset_transient_state() noexcept {
     // there is no longer an editor to have finished the gesture.
     gesture_base_.reset();
     gesture_depth_ = 0;
+    // A new realm has been shown nothing until it hydrates.
+    shown_.reset();
 }
 
 } // namespace spectr

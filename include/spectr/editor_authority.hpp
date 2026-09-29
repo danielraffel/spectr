@@ -50,6 +50,29 @@ public:
         const BandField& field, const Viewport& viewport, Layout layout,
         std::optional<EditorRevision> expected = std::nullopt) noexcept;
 
+    /// The editor's full-state publication: every visible band, the viewport
+    /// and the band count, as the editor currently draws them. The editor
+    /// sends its whole picture on every edit, a frame after the render it
+    /// read, while host automation reaches the same state from the
+    /// parameter-sync worker thread. So a publication can be built before a
+    /// host write and land after the worker adopted it.
+    ///
+    /// A value equal to what the editor was last SHOWN (see
+    /// `note_editor_shown`) is one it carried over, not one it set, so it
+    /// keeps the processor's current value instead of reverting the host's
+    /// write -- and instead of pushing the stale value back to the host as a
+    /// parameter change. A value that differs from what it was shown is an
+    /// edit and applies as before. With nothing shown yet, every value is an
+    /// edit.
+    [[nodiscard]] EditorReceipt publish_editor_state(
+        const BandField& field, const Viewport& viewport, Layout layout,
+        std::optional<EditorRevision> expected = std::nullopt) noexcept;
+
+    /// Record the processing state an editor has just been handed and will
+    /// draw: a hydration, a command response it applies, or a live
+    /// host-automation projection. UI thread only, like every editor call.
+    void note_editor_shown(const FieldSnapshot& shown) noexcept;
+
     [[nodiscard]] EditorReceipt begin_band_edit(
         std::optional<EditorRevision> expected = std::nullopt) noexcept;
     [[nodiscard]] EditorReceipt update_band_edit(
@@ -149,6 +172,9 @@ private:
 
     Spectr& processor_;
     std::optional<BandSnapshot> edit_snapshot_;
+    // What the editor was last handed, or last published itself: the base a
+    // full-state publication is diffed against.
+    std::optional<FieldSnapshot> shown_;
     std::atomic<EditorRevision> revision_{0};
 
     pulp::state::UndoManager history_;

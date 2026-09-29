@@ -32,11 +32,15 @@ class Spectr;
 
 /// Build the native-to-editor snapshot sent after the page reports that its
 /// React bridge listener is installed.
-pulp::view::WebViewMessage make_editor_hydration_message(const Spectr& plugin);
+/// `shown`, when given, receives the state the message carries (see
+/// `EditorAuthority::note_editor_shown`).
+pulp::view::WebViewMessage make_editor_hydration_message(
+    const Spectr& plugin, FieldSnapshot* shown = nullptr);
 
 /// One latest-value-wins automation projection per editor frame.
 pulp::view::WebViewMessage make_editor_live_state_message(
-    const Spectr& plugin, EditorRevision revision);
+    const Spectr& plugin, EditorRevision revision,
+    FieldSnapshot* shown = nullptr);
 
 bool make_editor_resolution_message(
     const Spectr& plugin, pulp::view::WebViewMessage& out_message);

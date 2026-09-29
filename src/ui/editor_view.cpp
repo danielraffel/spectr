@@ -128,8 +128,9 @@ EditorAnalyzerPublicationKey make_editor_analyzer_publication_key(
             viewport.min_hz, viewport.max_hz};
 }
 
-pulp::view::WebViewMessage make_editor_hydration_message(const Spectr& plugin) {
-    auto payload = make_editor_state_payload(plugin);
+pulp::view::WebViewMessage make_editor_hydration_message(
+    const Spectr& plugin, FieldSnapshot* shown) {
+    auto payload = make_editor_state_payload(plugin, 0, shown);
 
     return {
         .type = "processing_state_hydrate",
@@ -139,8 +140,8 @@ pulp::view::WebViewMessage make_editor_hydration_message(const Spectr& plugin) {
 }
 
 pulp::view::WebViewMessage make_editor_live_state_message(
-    const Spectr& plugin, EditorRevision revision) {
-    auto payload = make_editor_live_state_payload(plugin, revision);
+    const Spectr& plugin, EditorRevision revision, FieldSnapshot* shown) {
+    auto payload = make_editor_live_state_payload(plugin, revision, shown);
     return {
         .type = "processing_state_live",
         .payload_json = choc::json::toString(payload, false),
@@ -230,7 +231,9 @@ EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
     bridge_.add_handler("editor_ready", [this](const choc::value::ValueView&) {
         if (!panel_)
             return pulp::view::EditorBridge::err_response("editor is not attached");
-        panel_->post_message(make_editor_hydration_message(plugin_));
+        FieldSnapshot shown;
+        panel_->post_message(make_editor_hydration_message(plugin_, &shown));
+        plugin_.editor_authority().note_editor_shown(shown);
         host_automation_revision_ = plugin_.host_automation_revision();
         post_resolution_();
         document_ready_ = true;
@@ -299,7 +302,9 @@ bool EditorView::post_host_automation_() {
     const auto revision = plugin_.host_automation_revision();
     if (!panel_ || !document_ready_ || revision == host_automation_revision_)
         return false;
-    panel_->post_message(make_editor_live_state_message(plugin_, revision));
+    FieldSnapshot shown;
+    panel_->post_message(make_editor_live_state_message(plugin_, revision, &shown));
+    plugin_.editor_authority().note_editor_shown(shown);
     host_automation_revision_ = revision;
     return true;
 }

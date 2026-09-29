@@ -292,8 +292,26 @@ void add_history_and_macros_(choc::value::Value& payload, const Spectr& plugin,
 
 }
 
-std::string authority_response_(const Spectr& plugin,
+// A response the editor applies: what it carries is what the editor is shown.
+std::string shown_response_(EditorAuthority& authority, const Spectr& plugin,
+                            EditorRevision revision) {
+    FieldSnapshot shown;
+    auto payload = make_editor_state_payload(plugin, revision, &shown);
+    authority.note_editor_shown(shown);
+    return EditorBridge::ok_response(payload);
+}
+
+std::string authority_response_(EditorAuthority& authority, const Spectr& plugin,
                                 const EditorReceipt& receipt) {
+    if (!receipt.accepted) return EditorBridge::err_response(receipt.error);
+    return shown_response_(authority, plugin, receipt.revision);
+}
+
+// The response to the editor's own full-state publication. The editor does
+// not apply it (it replays only the history availability), so it is not a
+// state the editor was shown; `publish_editor_state` records what was sent.
+std::string publication_response_(const Spectr& plugin,
+                                  const EditorReceipt& receipt) {
     if (!receipt.accepted) return EditorBridge::err_response(receipt.error);
     return EditorBridge::ok_response(
         make_editor_state_payload(plugin, receipt.revision));
@@ -302,8 +320,10 @@ std::string authority_response_(const Spectr& plugin,
 } // namespace
 
 choc::value::Value make_editor_state_payload(const Spectr& plugin,
-                                             EditorRevision revision) {
+                                             EditorRevision revision,
+                                             FieldSnapshot* shown) {
     const auto state = plugin.processing_state_snapshot();
+    if (shown) *shown = {state.field, state.viewport, state.layout, true};
     const auto n = visible_count(state.layout);
     auto gains = choc::value::createEmptyArray();
     auto muted = choc::value::createEmptyArray();
@@ -382,8 +402,10 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
 }
 
 choc::value::Value make_editor_live_state_payload(const Spectr& plugin,
-                                                  EditorRevision revision) {
+                                                  EditorRevision revision,
+                                                  FieldSnapshot* shown) {
     const auto state = plugin.processing_state_snapshot();
+    if (shown) *shown = {state.field, state.viewport, state.layout, true};
     const auto n = visible_count(state.layout);
     auto gains = choc::value::createEmptyArray();
     auto muted = choc::value::createEmptyArray();
@@ -431,7 +453,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             // new gesture epoch so a reload can never resume a C++ snapshot
             // captured by callbacks from the retired realm.
             authority.reset_transient_state();
-            return authority_response_(plugin, {true, authority.revision(), {}});
+            return authority_response_(authority, plugin, {true, authority.revision(), {}});
         });
 
     bridge.add_handler("build_info_get",
@@ -508,7 +530,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 next.bands[i].muted = mutes[i].getBool();
             }
 
-            return authority_response_(plugin, authority.replace_processing_state(
+            return publication_response_(plugin, authority.publish_editor_state(
                 next, state.viewport, *layout, expected_revision_(p)));
         });
 
@@ -557,7 +579,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 return EditorBridge::err_response(
                     "min_hz and max_hz must be finite numbers");
             const Viewport viewport{*min_hz, *max_hz};
-            return authority_response_(plugin, authority.replace_processing_state(
+            return publication_response_(plugin, authority.publish_editor_state(
                 next, viewport, *layout, expected_revision_(p)));
         });
 
@@ -565,7 +587,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
 
     bridge.add_handler("paint_start",
         [&plugin, &authority](const choc::value::ValueView& p) {
-            return authority_response_(
+            return authority_response_(authority,
                 plugin, authority.begin_band_edit(expected_revision_(p)));
         });
 
@@ -600,13 +622,13 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             g.current_value = *current_value;
             g.n_visible     = n_visible;
 
-            return authority_response_(plugin, authority.update_band_edit(
+            return authority_response_(authority, plugin, authority.update_band_edit(
                 *mode, g, expected_revision_(p)));
         });
 
     bridge.add_handler("paint_end",
         [&plugin, &authority](const choc::value::ValueView&) {
-            return authority_response_(plugin, authority.end_band_edit());
+            return authority_response_(authority, plugin, authority.end_band_edit());
         });
 
     // ── Morph / snapshot / A-B ─────────────────────────────────────────
@@ -614,7 +636,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     bridge.add_handler("morph",
         [&plugin, &authority](const choc::value::ValueView& p) {
             const auto t = std::clamp(EditorBridge::get_float(p, "t", 0.0f), 0.0f, 1.0f);
-            return authority_response_(
+            return authority_response_(authority,
                 plugin, authority.apply_morph(t, expected_revision_(p)));
         });
 
@@ -622,7 +644,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));
             if (!slot) return EditorBridge::err_response("slot must be 'A' or 'B'");
-            return authority_response_(plugin, authority.capture_snapshot(
+            return authority_response_(authority, plugin, authority.capture_snapshot(
                 *slot, expected_revision_(p)));
         });
 
@@ -630,7 +652,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));
             if (!slot) return EditorBridge::err_response("slot must be 'A' or 'B'");
-            return authority_response_(plugin, authority.clear_snapshot(
+            return authority_response_(authority, plugin, authority.clear_snapshot(
                 *slot, expected_revision_(p)));
         });
 
@@ -638,7 +660,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));
             if (!slot) return EditorBridge::err_response("slot must be 'A' or 'B'");
-            return authority_response_(plugin, authority.recall_snapshot(
+            return authority_response_(authority, plugin, authority.recall_snapshot(
                 *slot, expected_revision_(p)));
         });
 
@@ -674,17 +696,17 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     bridge.add_handler("undo_gesture_end",
         [&plugin, &authority](const choc::value::ValueView&) -> std::string {
             authority.end_undo_gesture();
-            return authority_response_(plugin, {true, authority.revision(), {}});
+            return authority_response_(authority, plugin, {true, authority.revision(), {}});
         });
 
     bridge.add_handler("undo",
         [&plugin, &authority](const choc::value::ValueView&) -> std::string {
-            return authority_response_(plugin, authority.undo());
+            return authority_response_(authority, plugin, authority.undo());
         });
 
     bridge.add_handler("redo",
         [&plugin, &authority](const choc::value::ValueView&) -> std::string {
-            return authority_response_(plugin, authority.redo());
+            return authority_response_(authority, plugin, authority.redo());
         });
 
     // ── Pattern library ────────────────────────────────────────────────
@@ -884,9 +906,8 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             // so it must not be mistaken for a malformed one.
             if (!plugin.set_macro_members(macro, members))
                 return EditorBridge::err_response("macro state unavailable");
-            return EditorBridge::ok_response(
-                make_editor_state_payload(plugin,
-                                          plugin.editor_authority().revision()));
+            return shown_response_(plugin.editor_authority(), plugin,
+                                   plugin.editor_authority().revision());
         });
 
     // The macro DRAG triad. Shaped like paint_start/paint/paint_end and for
@@ -984,8 +1005,8 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             // Return the rehydrated panel state: the switch moves the reported
             // latency, and the caller needs the new figures without a second
             // round trip.
-            return EditorBridge::ok_response(
-                make_editor_state_payload(plugin, plugin.editor_authority().revision()));
+            return shown_response_(plugin.editor_authority(), plugin,
+                                   plugin.editor_authority().revision());
         });
 }
 
