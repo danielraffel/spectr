@@ -197,6 +197,28 @@ choc::value::Value build_info_projection_(const Spectr& plugin) {
     return result;
 }
 
+// The revision of the last state the editor applied when it built a
+// publication. Absent or malformed reads as absent: the publication is then
+// diffed against the latest state handed over, which is never worse than
+// taking it wholesale.
+std::optional<EditorRevision> drawn_revision_(
+    const choc::value::ValueView& payload) {
+    if (!payload.isObject() || !payload.hasObjectMember("drawn_revision"))
+        return std::nullopt;
+    const auto value = payload["drawn_revision"];
+    if (value.isInt32() && value.getInt32() >= 0)
+        return static_cast<EditorRevision>(value.getInt32());
+    if (value.isInt64() && value.getInt64() >= 0)
+        return static_cast<EditorRevision>(value.getInt64());
+    if (value.isFloat64()) {
+        const double d = value.getFloat64();
+        if (std::isfinite(d) && d >= 0.0 && d == std::floor(d)
+            && d <= static_cast<double>(kMaxEditorRevision))
+            return static_cast<EditorRevision>(d);
+    }
+    return std::nullopt;
+}
+
 std::optional<EditorRevision> expected_revision_(
     const choc::value::ValueView& payload) {
     if (!payload.isObject() || !payload.hasObjectMember("expected_revision"))
@@ -297,7 +319,7 @@ std::string shown_response_(EditorAuthority& authority, const Spectr& plugin,
                             EditorRevision revision) {
     FieldSnapshot shown;
     auto payload = make_editor_state_payload(plugin, revision, &shown);
-    authority.note_editor_shown(shown);
+    authority.note_editor_shown(shown, revision);
     return EditorBridge::ok_response(payload);
 }
 
@@ -531,7 +553,8 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             }
 
             return publication_response_(plugin, authority.publish_editor_state(
-                next, state.viewport, *layout, expected_revision_(p)));
+                next, state.viewport, *layout, drawn_revision_(p),
+                expected_revision_(p)));
         });
 
     // Atomic state publication for the imported live editor. Zoom/pan changes
@@ -580,7 +603,8 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                     "min_hz and max_hz must be finite numbers");
             const Viewport viewport{*min_hz, *max_hz};
             return publication_response_(plugin, authority.publish_editor_state(
-                next, viewport, *layout, expected_revision_(p)));
+                next, viewport, *layout, drawn_revision_(p),
+                expected_revision_(p)));
         });
 
     // ── Drag protocol ──────────────────────────────────────────────────

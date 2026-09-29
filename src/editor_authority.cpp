@@ -113,9 +113,28 @@ EditorReceipt EditorAuthority::replace_processing_state(
 
 EditorReceipt EditorAuthority::publish_editor_state(
     const BandField& field, const Viewport& viewport, Layout layout,
+    std::optional<EditorRevision> drawn,
     std::optional<EditorRevision> expected) noexcept {
     if (!matches_(expected)) return reject_("stale editor revision");
     const auto current = processor_.processing_state_snapshot();
+
+    // The state this publication was drawn from. With a drawn revision, it is
+    // the newest state the editor was handed at or before that revision --
+    // NOT simply the latest one handed over, which the editor may not have
+    // applied yet (a projection it deferred for a band-count resync, or one
+    // that arrived after it read its values). Without one, the latest.
+    ShownState* base = nullptr;
+    if (drawn) {
+        for (auto it = shown_.rbegin(); it != shown_.rend(); ++it) {
+            if (it->revision <= *drawn) { base = &*it; break; }
+        }
+        // Older than everything retained: the oldest is the closest base, and
+        // the conservative one -- more of the publication reads as carried.
+        if (!base && !shown_.empty()) base = &shown_.front();
+    } else if (!shown_.empty()) {
+        base = &shown_.back();
+    }
+
     // Bands the publication does not carry keep the processor's value as of
     // THIS read, not the caller's, so a host write adopted in between is not
     // reverted either.
@@ -125,39 +144,58 @@ EditorReceipt EditorAuthority::publish_editor_state(
     const auto published = visible_count(layout);
     for (std::size_t i = 0; i < published && i < next.bands.size(); ++i) {
         next.bands[i] = field.bands[i];
-        if (!shown_) continue;
-        const auto& base = shown_->field.bands[i];
-        if (field.bands[i].gain_db == base.gain_db)
+        if (!base) continue;
+        const auto& was = base->state.field.bands[i];
+        if (field.bands[i].gain_db == was.gain_db)
             next.bands[i].gain_db = current.field.bands[i].gain_db;
-        if (field.bands[i].muted == base.muted)
+        if (field.bands[i].muted == was.muted)
             next.bands[i].muted = current.field.bands[i].muted;
     }
-    if (shown_) {
-        if (same_viewport(viewport, shown_->viewport))
+    if (base) {
+        if (same_viewport(viewport, base->state.viewport))
             next_viewport = current.viewport;
-        if (layout == shown_->layout) next_layout = current.layout;
+        if (layout == base->state.layout) next_layout = current.layout;
     }
     auto receipt = replace_processing_state(
         next, next_viewport, next_layout, expected);
+    if (!receipt.accepted) return receipt;
+
     // The editor does not apply the response to its own publication, so what
-    // it now believes is what it sent, not the merged result. The live
-    // projection the host write triggers will show it the merged state.
-    if (receipt.accepted) {
-        FieldSnapshot sent;
-        sent.field = next;
-        for (std::size_t i = 0; i < published && i < sent.field.bands.size(); ++i)
-            sent.field.bands[i] = field.bands[i];
-        sent.viewport = viewport;
-        sent.layout = layout;
-        sent.populated = true;
-        shown_ = sent;
+    // it now believes is what it sent, not the merged result: that becomes
+    // the base its next publication from the same revision is diffed against.
+    FieldSnapshot sent;
+    sent.field = next;
+    for (std::size_t i = 0; i < published && i < sent.field.bands.size(); ++i)
+        sent.field.bands[i] = field.bands[i];
+    sent.viewport = viewport;
+    sent.layout = layout;
+    sent.populated = true;
+    if (base) {
+        base->state = sent;
+        // The editor's applied revision only moves forward, so nothing it
+        // could still draw from is older than this base.
+        if (drawn) {
+            const auto keep = base->revision;
+            while (!shown_.empty() && shown_.front().revision < keep)
+                shown_.pop_front();
+        }
+    } else {
+        remember_shown_(drawn.value_or(0), sent);
     }
     return receipt;
 }
 
-void EditorAuthority::note_editor_shown(const FieldSnapshot& shown) noexcept {
-    shown_ = shown;
-    shown_->populated = true;
+void EditorAuthority::note_editor_shown(const FieldSnapshot& shown,
+                                        EditorRevision revision) noexcept {
+    FieldSnapshot state = shown;
+    state.populated = true;
+    remember_shown_(revision, state);
+}
+
+void EditorAuthority::remember_shown_(EditorRevision revision,
+                                      const FieldSnapshot& state) noexcept {
+    shown_.push_back({revision, state});
+    while (shown_.size() > kShownHistory) shown_.pop_front();
 }
 
 EditorReceipt EditorAuthority::begin_band_edit(
@@ -388,7 +426,7 @@ void EditorAuthority::reset_transient_state() noexcept {
     gesture_base_.reset();
     gesture_depth_ = 0;
     // A new realm has been shown nothing until it hydrates.
-    shown_.reset();
+    shown_.clear();
 }
 
 } // namespace spectr

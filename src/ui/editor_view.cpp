@@ -233,7 +233,7 @@ EditorView::EditorView(Spectr& plugin) : plugin_(plugin) {
             return pulp::view::EditorBridge::err_response("editor is not attached");
         FieldSnapshot shown;
         panel_->post_message(make_editor_hydration_message(plugin_, &shown));
-        plugin_.editor_authority().note_editor_shown(shown);
+        plugin_.editor_authority().note_editor_shown(shown, 0);
         host_automation_revision_ = plugin_.host_automation_revision();
         post_resolution_();
         document_ready_ = true;
@@ -304,7 +304,7 @@ bool EditorView::post_host_automation_() {
         return false;
     FieldSnapshot shown;
     panel_->post_message(make_editor_live_state_message(plugin_, revision, &shown));
-    plugin_.editor_authority().note_editor_shown(shown);
+    plugin_.editor_authority().note_editor_shown(shown, revision);
     host_automation_revision_ = revision;
     return true;
 }

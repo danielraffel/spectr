@@ -529,7 +529,8 @@ TEST_CASE("an editor publication that differs from what it was shown is an edit"
     const auto live = spectr::make_editor_live_state_message(
         *r.proc, r.proc->host_automation_revision(), &shown_state);
     REQUIRE(live.type == "processing_state_live");
-    r.proc->editor_authority().note_editor_shown(shown_state);
+    r.proc->editor_authority().note_editor_shown(
+        shown_state, r.proc->host_automation_revision());
 
     // ... so muting it again is a real edit, although it matches the state
     // the editor published before the host moved.
@@ -542,6 +543,101 @@ TEST_CASE("an editor publication that differs from what it was shown is an edit"
         48, viewport.min_hz, viewport.max_hz, 2, 0.0f, true))));
     CHECK(r.proc->layout() == spectr::Layout::Bands48);
     CHECK(r.store.get_value(spectr::kParamBandCount) == Approx(48.0f));
+}
+
+namespace {
+
+// The same publication, stamped with the revision the editor drew it from.
+std::string drawn_from(std::string envelope, spectr::EditorRevision drawn) {
+    auto value = choc::json::parse(envelope);
+    auto payload = choc::value::Value(value["payload"]);
+    payload.addMember("drawn_revision", static_cast<std::int64_t>(drawn));
+    auto out = choc::value::createObject("Envelope");
+    out.addMember("type", value["type"].get<std::string>());
+    out.addMember("payload", payload);
+    return choc::json::toString(out, false);
+}
+
+spectr::EditorRevision hydrate(Rig& r) {
+    const auto shown = choc::json::parse(
+        r.dispatch(R"({"type":"processing_state_get","payload":{}})"));
+    REQUIRE(shown["ok"].getBool());
+    return static_cast<spectr::EditorRevision>(shown["revision"].get<int64_t>());
+}
+
+// Hand the editor the host's latest state, the way the frame tick does.
+spectr::EditorRevision project(Rig& r) {
+    const auto revision = r.proc->host_automation_revision();
+    spectr::FieldSnapshot shown;
+    (void)spectr::make_editor_live_state_message(*r.proc, revision, &shown);
+    r.proc->editor_authority().note_editor_shown(shown, revision);
+    return revision;
+}
+
+} // namespace
+
+// The order a newest-shown base cannot see: the editor is HANDED the host's
+// change but has not applied it -- a band-count change defers to a resync --
+// and a publication it built from the older state lands first. The drawn
+// revision names the state it actually drew from.
+TEST_CASE("a publication drawn before an unapplied projection does not revert it", "[automation]") {
+    Rig r;
+    const auto drawn = hydrate(r);
+    const auto viewport = r.proc->viewport();
+
+    r.store.set_value(spectr::kParamBandCount, 40.0f);
+    r.store.set_value(spectr::band_gain_param_id(3), -9.0f);
+    REQUIRE(r.proc->apply_surface_params(true));
+    const auto projected = project(r);
+    REQUIRE(projected > drawn);
+
+    REQUIRE(response_ok(r.dispatch(drawn_from(processing_state_envelope(
+        32, viewport.min_hz, viewport.max_hz, 5, 0.0f, true), drawn))));
+
+    CHECK(r.proc->layout() == spectr::Layout::Bands40);
+    CHECK(r.store.get_value(spectr::kParamBandCount) == Approx(40.0f));
+    CHECK(r.proc->field().bands[3].gain_db == Approx(-9.0f));
+    CHECK(r.store.get_value(spectr::band_gain_param_id(3)) == Approx(-9.0f));
+    // Positive control: the edit the publication carried lands.
+    CHECK(r.proc->field().bands[5].muted);
+
+    // And a second publication from the same drawn state still knows band 5
+    // is the editor's own edit, while a new edit on band 6 applies.
+    REQUIRE(response_ok(r.dispatch(drawn_from(processing_state_envelope(
+        32, viewport.min_hz, viewport.max_hz, 6, 4.0f, false), drawn))));
+    CHECK(r.proc->layout() == spectr::Layout::Bands40);
+    CHECK(r.proc->field().bands[6].gain_db == Approx(4.0f));
+}
+
+// Continuous host viewport automation: the editor has applied projection R1
+// and publishes a band edit carrying R1's window, while the worker has already
+// adopted the host's next window. The window must stay the host's, and must
+// not be written back to the host as if the user had moved it.
+TEST_CASE("a band edit during host viewport automation keeps the host viewport", "[automation]") {
+    Rig r;
+    (void)hydrate(r);
+    const auto set_view = [&](float lo, float hi) {
+        const auto [center, width] = spectr::encode_viewport({lo, hi});
+        r.store.set_value(spectr::kParamViewportCenter, center);
+        r.store.set_value(spectr::kParamViewportWidth, width);
+        REQUIRE(r.proc->apply_surface_params(true));
+        return std::pair{center, width};
+    };
+    (void)set_view(100.0f, 1000.0f);
+    const auto drawn = project(r);
+    const auto shown = r.proc->viewport();
+    const auto [center, width] = set_view(200.0f, 4000.0f);
+    const auto host = r.proc->viewport();
+    REQUIRE(host.min_hz != Approx(shown.min_hz));
+
+    REQUIRE(response_ok(r.dispatch(drawn_from(processing_state_envelope(
+        32, shown.min_hz, shown.max_hz, 7, -3.0f, false), drawn))));
+
+    CHECK(r.proc->viewport().min_hz == Approx(host.min_hz));
+    CHECK(r.proc->viewport().max_hz == Approx(host.max_hz));
+    CHECK(r.store.get_value(spectr::kParamViewportCenter) == Approx(center));
+    CHECK(r.store.get_value(spectr::kParamViewportWidth) == Approx(width));
+    CHECK(r.proc->field().bands[7].gain_db == Approx(-3.0f));
 }
 
 TEST_CASE("live publication carries macro membership and current undo availability", "[undo][macros]") {

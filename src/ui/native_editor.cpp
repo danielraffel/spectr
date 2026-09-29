@@ -3133,7 +3133,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     "spectr-native-host-automation-live");
             }
             native_host_automation_revision_ = projection_revision;
-            editor_authority().note_editor_shown(shown);
+            editor_authority().note_editor_shown(shown, projection_revision);
         } catch (const std::exception& error) {
             pulp::runtime::log_error(
                 "[Spectr native] host automation hydration rejected: {}",
