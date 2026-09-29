@@ -6244,6 +6244,282 @@ TEST_CASE("the LIVE / PRECISION control is hidden from the header, Settings and 
     storage.require_unchanged();
 }
 
+// THE HEADER READS [freeze] OUTPUT --o-- value [PEAK], ALL ON ONE LINE.
+//
+// The freeze toggle takes the place PEAK held, and PEAK sits right of the
+// trim's value at the same gap it used to keep to OUTPUT. Each word is checked
+// by its painted ink against the BOTH caption, word by word (a space-sized
+// break in the ink starts a new word), because a whole-label reading lets a
+// lower word hide behind a taller one. The toggle is then pressed and its
+// FROZEN face checked the same way, with its tokens read off the pixels: the
+// green dot and neutral box of LIVE, the amber square, amber text and warm box
+// of FROZEN, at one fixed width so nothing beside it moves.
+TEST_CASE("the header reads freeze, OUTPUT, trim, value, PEAK on the controls' line",
+          "[native-n1][state-parity][header][freeze-toggle]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Labels in the top bar only: the plot's rulers print numbers too.
+    const auto header_label = [&](std::string_view text) {
+        const pulp::view::Label* found = nullptr;
+        const std::function<void(const View&)> walk = [&](const View& view) {
+            if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+                label != nullptr && label->text() == text
+                && root_point(*label, 0.0f, 0.0f).y < 44.0f) {
+                REQUIRE(found == nullptr);
+                found = label;
+            }
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                walk(*view.child_at(index));
+        };
+        walk(*rig.root);
+        return found;
+    };
+    struct Box { float left, top, right, bottom; };
+    const auto box_of = [&](const View& view) {
+        const auto origin = root_point(view, 0.0f, 0.0f);
+        return Box{origin.x, origin.y, origin.x + view.bounds().width,
+                   origin.y + view.bounds().height};
+    };
+
+    const auto* live = header_label("LIVE");
+    const auto* output = header_label("OUTPUT");
+    const auto* value = header_label("0.0");
+    const auto* caption = header_label("BOTH");
+    REQUIRE(live != nullptr);
+    REQUIRE(output != nullptr);
+    REQUIRE(value != nullptr);
+    REQUIRE(caption != nullptr);
+    const pulp::view::Label* peak = nullptr;
+    {
+        const std::function<void(const View&)> walk = [&](const View& view) {
+            if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+                label != nullptr && label->text().rfind("PEAK ", 0) == 0
+                && root_point(*label, 0.0f, 0.0f).y < 44.0f)
+                peak = label;
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                walk(*view.child_at(index));
+        };
+        walk(*rig.root);
+    }
+    REQUIRE(peak != nullptr);
+    const View* toggle = live->parent();
+    const View* peak_button = peak->parent();
+    REQUIRE(toggle != nullptr);
+    REQUIRE(peak_button != nullptr);
+
+    // ORDER AND SPACING. The toggle now fills PEAK's old slot, so its gap to
+    // OUTPUT is the old PEAK-to-OUTPUT gap; PEAK must keep that gap to the value.
+    const auto toggle_box = box_of(*toggle);
+    const auto output_box = box_of(*output);
+    const auto value_box = box_of(*value);
+    const auto peak_box = box_of(*peak_button);
+    const auto caption_box = box_of(*caption);
+    CAPTURE(toggle_box.left, toggle_box.right, output_box.left, output_box.right,
+            value_box.left, value_box.right, peak_box.left, peak_box.right);
+    CHECK(toggle_box.right < output_box.left);
+    CHECK(output_box.right < value_box.left);
+    CHECK(value_box.right < peak_box.left);
+    CHECK(peak_box.right < caption_box.left);
+    const float old_gap = output_box.left - toggle_box.right;
+    const float peak_gap = peak_box.left - value_box.right;
+    CAPTURE(old_gap, peak_gap);
+    CHECK(old_gap == Catch::Approx(14.0f).margin(1.0f));
+    CHECK(peak_gap == Catch::Approx(old_gap).margin(1.0f));
+    CHECK(toggle_box.right - toggle_box.left == Catch::Approx(76.0f).margin(0.5f));
+
+    // THE PIXELS.
+    REQUIRE(pulp::view::raw_rgba_render_available());
+    constexpr float kScale = 2.0f;
+    std::uint32_t width = 0, height = 0;
+    const auto render = [&] {
+        auto frame = pulp::view::render_to_rgba(
+            *rig.root, 1320, 860, kScale, &width, &height);
+        REQUIRE(!frame.empty());
+        return frame;
+    };
+    const auto pixel = [&](const std::vector<std::uint8_t>& frame, float x, float y) {
+        const auto px = static_cast<std::size_t>(x * kScale);
+        const auto py = static_cast<std::size_t>(y * kScale);
+        const auto* p = &frame[(py * width + px) * 4];
+        return std::array<int, 3>{p[0], p[1], p[2]};
+    };
+    // Ink of each word inside a label's box, where a word is a run of inked
+    // columns broken by less than 4pt of blank. `bright` picks what counts as
+    // ink, so dim captions and coloured text are both measurable.
+    struct WordInk { float left = 0, right = 0, top = -1, bottom = -1; };
+    const auto word_ink = [&](const pulp::view::Label& label,
+                              const std::vector<std::uint8_t>& frame) {
+        const auto origin = root_point(label, 0.0f, 0.0f);
+        const auto x0 = static_cast<std::uint32_t>(origin.x * kScale);
+        const auto x1 = std::min<std::uint32_t>(
+            width, static_cast<std::uint32_t>(
+                       (origin.x + label.bounds().width) * kScale));
+        const auto y0 = static_cast<std::uint32_t>(
+            std::max(0.0f, origin.y - 3.0f) * kScale);
+        const auto y1 = std::min<std::uint32_t>(
+            height, static_cast<std::uint32_t>(
+                        (origin.y + label.bounds().height + 3.0f) * kScale));
+        const auto inked = [&](std::uint32_t x, std::uint32_t y) {
+            const auto* px = &frame[(static_cast<std::size_t>(y) * width + x) * 4];
+            return px[0] + px[1] + px[2] > 250;
+        };
+        std::vector<WordInk> words;
+        std::uint32_t gap = 0;
+        constexpr std::uint32_t kWordGap = static_cast<std::uint32_t>(4 * kScale);
+        for (std::uint32_t x = x0; x < x1; ++x) {
+            float top = -1.0f, bottom = -1.0f;
+            for (std::uint32_t y = y0; y < y1; ++y) {
+                if (!inked(x, y)) continue;
+                if (top < 0.0f) top = static_cast<float>(y) / kScale;
+                bottom = static_cast<float>(y + 1) / kScale;
+            }
+            if (top < 0.0f) { ++gap; continue; }
+            if (words.empty() || gap >= kWordGap)
+                words.push_back({static_cast<float>(x) / kScale, 0.0f, top, bottom});
+            auto& word = words.back();
+            word.right = static_cast<float>(x + 1) / kScale;
+            word.top = std::min(word.top, top);
+            word.bottom = std::max(word.bottom, bottom);
+            gap = 0;
+        }
+        return words;
+    };
+    auto frame = render();
+    const auto caption_words = word_ink(*caption, frame);
+    REQUIRE(caption_words.size() == 1);
+    const auto line = caption_words.front();
+    CAPTURE(line.top, line.bottom);
+    const auto on_line = [&](const pulp::view::Label& label,
+                             const std::vector<std::uint8_t>& image,
+                             std::size_t words_to_check) {
+        const auto words = word_ink(label, image);
+        INFO(label.text());
+        REQUIRE(words.size() >= words_to_check);
+        for (std::size_t index = 0; index < words_to_check; ++index) {
+            const auto& word = words[index];
+            CAPTURE(index, word.left, word.right, word.top, word.bottom);
+            // Half a point: a one-point defect is the size these drift by.
+            CHECK(word.top == Catch::Approx(line.top).margin(0.5f));
+            CHECK(word.bottom == Catch::Approx(line.bottom).margin(0.5f));
+        }
+    };
+    on_line(*live, frame, 1);
+    on_line(*output, frame, 1);
+    on_line(*value, frame, 1);
+    // "PEAK" only: the level beside it is "--" in a silent rig, which has no
+    // cap height to compare.
+    on_line(*peak, frame, 1);
+
+    // The glyph is centred on the same line as the words.
+    const float line_centre = (line.top + line.bottom) * 0.5f;
+    const auto live_box = box_of(*live);
+    const float glyph_x = live_box.left - 6.0f - 3.0f;
+    const auto glyph_rows = [&](const std::vector<std::uint8_t>& image, float x) {
+        float top = -1.0f, bottom = -1.0f;
+        for (float y = toggle_box.top + 2.0f; y < toggle_box.bottom - 2.0f; y += 0.5f) {
+            const auto c = pixel(image, x, y);
+            if (std::max({c[0], c[1], c[2]}) < 120) continue;
+            if (top < 0.0f) top = y;
+            bottom = y + 0.5f;
+        }
+        return std::pair{top, bottom};
+    };
+    {
+        const auto [top, bottom] = glyph_rows(frame, glyph_x);
+        CAPTURE(top, bottom, line_centre);
+        REQUIRE(top >= 0.0f);
+        CHECK((top + bottom) * 0.5f == Catch::Approx(line_centre).margin(1.0f));
+    }
+
+    // LIVE TOKENS: a green dot (hsl(150,75%,60%) = rgb(77,230,153)) and a
+    // box that adds no hue to the header behind it.
+    const float box_probe_x = toggle_box.right - 3.0f;
+    const float box_probe_y = (toggle_box.top + toggle_box.bottom) * 0.5f;
+    const auto behind = pixel(frame, toggle_box.left - 4.0f, box_probe_y);
+    const int behind_warmth = behind[0] - behind[2];
+    {
+        const auto dot = pixel(frame, glyph_x, line_centre);
+        CAPTURE(dot[0], dot[1], dot[2]);
+        CHECK(std::abs(dot[0] - 77) <= 20);
+        CHECK(std::abs(dot[1] - 230) <= 20);
+        CHECK(std::abs(dot[2] - 153) <= 20);
+        const auto inside = pixel(frame, box_probe_x, box_probe_y);
+        CAPTURE(inside[0], inside[1], inside[2], behind_warmth);
+        CHECK(std::abs((inside[0] - inside[2]) - behind_warmth) <= 3);
+    }
+
+    // FROZEN. The press flips only this control.
+    activate(rig, "[data-spectr-freeze-toggle]");
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-freeze-toggle]')"
+        "?.getAttribute('data-spectr-freeze-state') === 'frozen'",
+        "the freeze toggle did not take its FROZEN face");
+    CHECK(header_label("LIVE") == nullptr);
+    const auto* frozen = header_label("FROZEN");
+    REQUIRE(frozen != nullptr);
+    const auto frozen_toggle_box = box_of(*frozen->parent());
+    CHECK(frozen_toggle_box.left == Catch::Approx(toggle_box.left).margin(0.01f));
+    CHECK(frozen_toggle_box.right == Catch::Approx(toggle_box.right).margin(0.01f));
+    CHECK(box_of(*output).left == Catch::Approx(output_box.left).margin(0.01f));
+    // The word fits the fixed box it was sized for.
+    CHECK(box_of(*frozen).right <= frozen_toggle_box.right - 10.0f + 0.5f);
+    frame = render();
+    {
+        // The FROZEN text is amber, hsl(35,90%,75%) = rgb(249,201,134), so the
+        // ink threshold above still sees it.
+        on_line(*frozen, frame, 1);
+        const auto words = word_ink(*frozen, frame);
+        REQUIRE(!words.empty());
+        std::array<int, 3> brightest{0, 0, 0};
+        const auto fbox = box_of(*frozen);
+        for (float y = words[0].top; y < words[0].bottom; y += 0.5f)
+            for (float x = words[0].left; x < words[0].right; x += 0.5f) {
+                const auto c = pixel(frame, x, y);
+                if (c[0] + c[1] + c[2] > brightest[0] + brightest[1] + brightest[2])
+                    brightest = c;
+            }
+        CAPTURE(brightest[0], brightest[1], brightest[2], fbox.left);
+        CHECK(brightest[0] - brightest[2] >= 80);
+        CHECK(brightest[0] >= brightest[1]);
+        const float frozen_glyph_x = fbox.left - 6.0f - 3.0f;
+        const auto [top, bottom] = glyph_rows(frame, frozen_glyph_x);
+        CAPTURE(top, bottom);
+        REQUIRE(top >= 0.0f);
+        CHECK((top + bottom) * 0.5f == Catch::Approx(line_centre).margin(1.0f));
+        // The amber square, hsl(35,90%,65%) = rgb(246,179,85). Its corner
+        // radius is 1, so its corner is inked where the dot's is not.
+        const auto square = pixel(frame, frozen_glyph_x, line_centre);
+        CAPTURE(square[0], square[1], square[2]);
+        CHECK(std::abs(square[0] - 246) <= 20);
+        CHECK(std::abs(square[1] - 179) <= 20);
+        CHECK(std::abs(square[2] - 85) <= 20);
+        const auto corner = pixel(frame, frozen_glyph_x - 2.5f,
+                                  (top + bottom) * 0.5f - 2.5f);
+        CAPTURE(corner[0], corner[1], corner[2]);
+        CHECK(corner[0] - corner[2] >= 60);
+        // The box takes the warm tint rgba(200,140,60,0.18).
+        const auto inside = pixel(frame, box_probe_x, box_probe_y);
+        CAPTURE(inside[0], inside[1], inside[2], behind_warmth);
+        CHECK((inside[0] - inside[2]) - behind_warmth >= 12);
+    }
+    if (const char* shot = std::getenv("SPECTR_FREEZE_SHOT")) {
+        const auto png = pulp::view::render_to_png(
+            *rig.root, 1320, 860, kScale, pulp::view::ScreenshotBackend::skia);
+        std::ofstream(shot, std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()),
+                   static_cast<std::streamsize>(png.size()));
+    }
+
+    // And back.
+    activate(rig, "[data-spectr-freeze-toggle]");
+    CHECK(header_label("LIVE") != nullptr);
+    CHECK(header_label("FROZEN") == nullptr);
+    storage.require_unchanged();
+}
+
 // A SESSION THAT STORED PRECISION STILL LOADS, AND EASES AT THE LIVE RATE.
 //
 // Param 3100 stays registered and nothing rewrites it: a value the host wrote

@@ -69,6 +69,10 @@ namespace {
 
 constexpr float kDesignWidth = 1320.0f;
 constexpr float kDesignHeight = 860.0f;
+// A point in the header's empty span, between the output cluster's PEAK button
+// (which ends at x~741) and the divider before BARS (x=839.5). A press here
+// lands on no control.
+constexpr float kHeaderGapX = 790.0f;
 
 int g_failures = 0;
 
@@ -5812,7 +5816,7 @@ int main(int argc, char** argv) {
             // the same strip on the home capture) and nothing in the reading
             // said so, because the state reads are taken from the view tree
             // rather than from the pixels.
-            root.simulate_click(pulp::view::Point{675.0f, 22.0f});
+            root.simulate_click(pulp::view::Point{kHeaderGapX, 22.0f});
             settle(rig.clock, 24);
             // The control for that dismissal is the SCRIM, not a selector:
             // what ruins the captures is a modal painting over the header, and
@@ -5821,7 +5825,7 @@ int main(int argc, char** argv) {
             // would have said "panel mounted" while the pixels were fine, and
             // it is the pixels that were wrong.
             std::printf("[meter] owner over the header gap after dismissal: "
-                        "%s\n", owner_at(root, 675.0f, 22.0f).c_str());
+                        "%s\n", owner_at(root, kHeaderGapX, 22.0f).c_str());
 
             // CONTROL FIRST. If the readout is not on screen at all, every
             // reading below is a statement about nothing.
@@ -5961,7 +5965,7 @@ int main(int argc, char** argv) {
                                     "defect.\n");
                         ++g_failures;
                     }
-                    root.simulate_click(pulp::view::Point{675.0f, 22.0f});
+                    root.simulate_click(pulp::view::Point{kHeaderGapX, 22.0f});
                     settle(rig.clock, 24);
                     reresolve_chip();
                     if (chip_text().empty()) {
@@ -6142,11 +6146,11 @@ int main(int argc, char** argv) {
                     // the header's empty gap to the right of the cluster must
                     // leave OVER standing. Without it, a "clear" that fired on
                     // every press anywhere would pass the positive half alone.
-                    root.simulate_click(pulp::view::Point{675.0f, cy});
+                    root.simulate_click(pulp::view::Point{kHeaderGapX, cy});
                     run_ms(200);
                     const std::string after_gap = chip_text();
-                    std::printf("[meter] press in the empty gap (675,%.1f): "
-                                "%s (expect: still OVER)\n", cy,
+                    std::printf("[meter] press in the empty gap (%.0f,%.1f): "
+                                "%s (expect: still OVER)\n", kHeaderGapX, cy,
                                 after_gap.c_str());
 
                     // POSITIVE half: a HOST-OWNED press at the painted centre.
