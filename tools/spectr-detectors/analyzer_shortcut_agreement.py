@@ -1,42 +1,29 @@
 #!/usr/bin/env python3
-"""Assert every surface that names the analyzer-cycle key names a key that works.
+"""Assert no key cycles the analyzer, and no surface says one does.
 
 WHY THIS EXISTS
 
-    Two surfaces advertised two different keys, and only one of them was bound:
+    The analyzer had a keyboard shortcut: A (and its alias 6) cycled PEAK ->
+    AVG -> BOTH -> OFF, advertised by the ANALYZER popover's "A to cycle" and a
+    SHORTCUTS row. A is a note in Logic's Musical Typing, so playing notes from
+    the computer keyboard kept flipping the analyzer, OFF included, which
+    changes the whole display. The shortcut was removed, key and hint together.
 
-        SHORTCUTS popover   `6`  -- Cycle analyzer
-        ANALYZER popover    "ANALYZER . A to cycle"
-
-    `A` did nothing.  It was not bound in any state -- `modeKeys` is
-    s/l/b/f/g/1..5 and the analyzer branch tested `k === "6"` alone -- so the
-    popover a user reads WHILE LOOKING AT THE ANALYZER told them to press a key
-    the app ignores.
-
-    Nothing else in the suite can see this.  Both popovers render pixel for
-    pixel the same whether the key they name works or not, so every screenshot,
-    every layout assertion and every caption check passes on a dead shortcut.
-    That is the same class of defect as the EDIT MODE chips, and the same
-    reason `edit_mode_shortcut_keys.py` exists -- but that detector drives the
-    built app, so it cannot run on a fixture-only job.  This one reads the
-    checked-in artifact, so it needs no build, no GPU, no app and no
-    third-party module, and registers on every runner configuration including
-    the chrome-less acceptance one.
+    A half-removal is the failure to guard against, and it is invisible in
+    every screenshot: a hint that names a key that no longer does anything, or
+    a handler still bound to a key no surface names -- a secret shortcut that
+    still fights the host's keys. This detector reads the checked-in artifact,
+    so it needs no build, no GPU, no app and no third-party module.
 
 HOW IT MEASURES
 
-    It reads the three literals out of the shipping document and compares the
-    SETS, in both directions:
+    CONTROL first: the ANALYZER popover's header and the editor's global
+    keydown handler must both be located, or "nothing found" would read as a
+    clean pass on a document this cannot see into. Then:
 
-        advertised  = the SHORTCUTS row's keycap, split on "/",
-                      plus the ANALYZER popover header's letter
-        accepted    = every key the analyzer branch of the keydown handler
-                      compares against
-
-    Every advertised key must be accepted (or a surface lies), and every
-    accepted key must be advertised (or a working shortcut is a secret).  The
-    handler lower-cases `e.key` before comparing, so the comparison is
-    case-folded here too.
+        no "... to cycle" text anywhere in the document,
+        no SHORTCUTS row captioned "Cycle analyzer",
+        no branch of the global keydown handler that calls setAnalyzerMode.
 
 Exit codes: 0 pass, 1 fail.
 """
@@ -50,44 +37,35 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 DOC = os.path.join(REPO, "native-ui", "materialized",
                    "materialized-document.runtime.json")
 
-ROW = re.compile(r'React\.createElement\(Hrow, \{ k: "([^"]+)" \}, "Cycle analyzer"\)')
-HEADER = re.compile(r'"ANALYZER \\xB7 ([^ ]+) to cycle"')
-# The analyzer branch, located by the state machine only it contains, then read
-# backwards to its guard. Anchoring on the guard text itself would make the
-# detector agree with whatever the guard happens to say.
-#
-# The branch may carry bookkeeping between claiming the key and running the
-# state machine -- dismissing an open overlay, for one -- so zero or more bare
-# `name();` lines are tolerated there. Deliberately NOT a wildcard: the
-# tolerated shape is a single no-argument call per line at this exact indent,
-# which cannot span a brace, a guard, or a neighbouring branch, so the branch
-# this resolves to is still the one and only branch that drives
-# setAnalyzerMode. The detector's four plants all still redden, which is what
-# proves the widening did not cost it any of its reach.
-BRANCH = re.compile(
-    r'if \(([^)]*(?:\)[^)]*)?)\) \{\n        e\.preventDefault\(\);\n'
-    r'(?:        [A-Za-z_$][A-Za-z0-9_$]*\(\);\n)*'
-    r'        setAnalyzerMode\(')
-KEY_LITERAL = re.compile(r'k === "([^"]+)"')
+POPOVER = "function AnalyzerPopover({ value, onChange, onClose }) {"
+HEADER = '"ANALYZER")'
+HANDLER_START = "    const modeKeys = {"
+HANDLER_END = '    window.addEventListener("keydown", onKey);'
+
+ROW = re.compile(r'Hrow, \{ k: "[^"]+" \}, "Cycle analyzer"')
+CYCLE_TEXT = re.compile(r'to cycle"')
+
+REMOVED_NOTE = ("      // No key cycles the analyzer. A and 6 did, and A is a Musical Typing\n"
+                "      // note; the ANALYZER menu is the one way to change it.\n")
 
 PLANTS = {
-    # The shipping state before this landed: the letter two surfaces advertise
-    # is not accepted by anything.
-    "restore-lie": lambda h: h.replace(
-        'if (k === "a" || k === "6") {', 'if (k === "6") {'),
-    # The other direction. `6` stays bound but stops being advertised, so a
-    # shipped shortcut becomes undiscoverable.
-    "drop-digit-from-chip": lambda h: h.replace(
-        'Hrow, { k: "A / 6" }, "Cycle analyzer"',
-        'Hrow, { k: "A" }, "Cycle analyzer"'),
-    # A key nothing tells the user about.
-    "bind-unadvertised": lambda h: h.replace(
-        'if (k === "a" || k === "6") {',
-        'if (k === "a" || k === "6" || k === "q") {'),
-    # The ANALYZER popover drifts to a different letter. This is the exact
-    # shape of the original defect, one letter over.
-    "header-drifts": lambda h: h.replace(
-        '"ANALYZER \\xB7 A to cycle"', '"ANALYZER \\xB7 Z to cycle"'),
+    # The header names the key again.
+    "restore-header": lambda h: h.replace(
+        POPOVER + h.split(POPOVER, 1)[1].split(HEADER, 1)[0] + HEADER,
+        POPOVER + h.split(POPOVER, 1)[1].split(HEADER, 1)[0]
+        + '"ANALYZER \\xB7 A to cycle")', 1),
+    # The SHORTCUTS popover lists it again.
+    "restore-row": lambda h: h.replace(
+        'React.createElement(Hrow, { k: "M" }, "Mute/unmute selection")',
+        'React.createElement(Hrow, { k: "A / 6" }, "Cycle analyzer"), '
+        'React.createElement(Hrow, { k: "M" }, "Mute/unmute selection")', 1),
+    # The binding comes back with no surface naming it: a secret shortcut.
+    "restore-binding": lambda h: h.replace(
+        REMOVED_NOTE,
+        '      if (k === "a") {\n'
+        '        e.preventDefault();\n'
+        '        setAnalyzerMode((m) => m === "peak" ? "avg" : "peak");\n'
+        '      }\n', 1),
 }
 
 
@@ -99,18 +77,16 @@ def main():
     with open(DOC, encoding="utf-8") as handle:
         html = json.load(handle)["html"]
 
-    # CONTROL, read BEFORE any plant. Every rule below is about three specific
-    # literals; a document that does not carry all three is one this detector
-    # cannot adjudicate, and "no disagreement found" would read as a clean pass
-    # on exactly that document.
-    control = len(ROW.findall(html)) + len(HEADER.findall(html)) \
-        + len(BRANCH.findall(html))
-    print("control: %d analyzer-key surfaces located (row + header + branch)"
-          % control)
-    if control != 3:
-        print("FAIL: expected 3 surfaces, found %d -- the detector is reading "
-              "the wrong document or the analyzer branch was restructured"
-              % control, file=sys.stderr)
+    popover = html.split(POPOVER, 1)
+    handler_at = html.find(HANDLER_START)
+    control_header = len(popover) == 2 and HEADER in popover[1][:2000]
+    control_handler = handler_at >= 0 and html.find(HANDLER_END, handler_at) > handler_at
+    print("control: analyzer header located=%s, global key handler located=%s"
+          % (control_header, control_handler))
+    if not (control_header and control_handler):
+        print("FAIL: the detector cannot see the surfaces it adjudicates -- the "
+              "document or its structure is not the one it reads",
+              file=sys.stderr)
         return 1
 
     if args.plant:
@@ -122,42 +98,20 @@ def main():
         html = planted
         print("planted: %s" % args.plant)
 
-    row = ROW.findall(html)
-    header = HEADER.findall(html)
-    branch = BRANCH.findall(html)
-    if len(row) != 1 or len(header) != 1 or len(branch) != 1:
-        print("FAIL: after the plant the three surfaces no longer resolve "
-              "uniquely (row=%d header=%d branch=%d)"
-              % (len(row), len(header), len(branch)), file=sys.stderr)
-        return 1
-
-    row_keys = {part.strip().lower() for part in row[0].split("/") if part.strip()}
-    advertised = set(row_keys)
-    advertised.add(header[0].strip().lower())
-    accepted = {key.lower() for key in KEY_LITERAL.findall(branch[0])}
-
-    print("  SHORTCUTS row advertises   %s" % sorted(row_keys))
-    print("  ANALYZER header advertises %r" % header[0])
-    print("  handler accepts            %s" % sorted(accepted))
-
+    start = html.find(HANDLER_START)
+    handler = html[start:html.find(HANDLER_END, start)]
     bad = []
-    lying = sorted(advertised - accepted)
-    if lying:
-        bad.append("advertised but not bound: %s -- a surface names a key the "
-                   "app ignores, and no screenshot or layout assertion can "
-                   "see that" % lying)
-    secret = sorted(accepted - advertised)
-    if secret:
-        bad.append("bound but not advertised: %s -- a working shortcut no "
-                   "surface names" % secret)
-
+    if CYCLE_TEXT.search(html):
+        bad.append("a surface still says a key cycles something")
+    if ROW.search(html):
+        bad.append("the SHORTCUTS popover still lists a Cycle analyzer key")
+    if "setAnalyzerMode(" in handler:
+        bad.append("the global keydown handler still changes the analyzer")
     if bad:
         for line in bad:
             print("FAIL: " + line, file=sys.stderr)
         return 1
-    print("PASS: every analyzer-cycle key both surfaces advertise is accepted "
-          "by the handler, and the handler accepts nothing they do not name "
-          "(%s)" % sorted(accepted))
+    print("PASS: no key cycles the analyzer, and no surface says one does")
     return 0
 
 

@@ -201,6 +201,18 @@ static_assert(std::is_trivially_copyable_v<ModulatedFieldSnapshot>,
 void set_editor_owns_resize_grip(bool value);
 bool editor_owns_resize_grip();
 
+/// Whether this process is Spectr's standalone app rather than a plug-in host.
+///
+/// Decides the plain-key shortcut policy. A DAW owns its plain keys -- Logic's
+/// Musical Typing plays notes on A S D F G H J K L and W E T Y U O P -- so in
+/// a plug-in the editor's single-letter shortcuts are off unless the user
+/// turns on "Keyboard shortcuts in DAW"; the standalone owns its window and
+/// keeps them. Default false (hosted), asserted true by the two standalone
+/// entry points only, for the same reason as the resize grip above: the
+/// linked entry point is the one place that knows the wrapper.
+void set_editor_is_standalone(bool value);
+bool editor_is_standalone();
+
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
 // SpectralFrameEngine reads through a fixed causal cursor of one complete FFT
@@ -493,6 +505,14 @@ public:
     /// carrying a value a host should be automating.
     [[nodiscard]] bool morph_applies_viewport() const noexcept;
     void set_morph_applies_viewport(bool enabled) noexcept;
+
+    /// "Keyboard shortcuts in DAW": whether the editor's plain-key shortcuts
+    /// (S L B F G, A / 6, M, T) are live inside a plug-in host. Off by
+    /// default so the host's own keys reach it; ignored by the standalone,
+    /// where they are always live. Persisted in the supplemental plugin-state
+    /// blob like morph_applies_viewport.
+    [[nodiscard]] bool keyboard_shortcuts_in_daw() const noexcept;
+    void set_keyboard_shortcuts_in_daw(bool enabled) noexcept;
 
     /// Accessor for the StateStore-level ABCompare. Lazily constructed
     /// the first time it's requested (after define_parameters has wired
@@ -816,6 +836,9 @@ private:
     // Guarded by processing_state_mutex_ and published to the audio thread in
     // AudioModulationState, so both sides of a morph agree on what moves.
     bool morph_applies_viewport_ = true;
+    // Guarded by processing_state_mutex_. Editor-only: the audio thread
+    // never reads it.
+    bool keyboard_shortcuts_in_daw_ = false;
     // Which canonical slots each macro drives. Guarded by
     // processing_state_mutex_ and published in AudioModulationState.
     //

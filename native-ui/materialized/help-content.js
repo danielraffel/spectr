@@ -67,6 +67,10 @@ Five ways to drag, in the edit menu:
 
 Click a band to mute it. Shift and drag to mute a range.
 
+## Keyboard shortcuts
+
+In the standalone app, letter keys switch modes: S, L, B, F and G pick the edit mode, M mutes the selected bands and T switches latency. In a DAW they are off by default, so the DAW's own keys, such as Logic's Musical Typing, keep working. Turn on **Keyboard shortcuts in DAW** in Settings to use them there.
+
 ## The analyzer
 
 The colored line over the bands is your audio in real time. **Peak** shows instant level and catches transients. **Avg** is slower and shows sustained energy. **Both** shows them together so you can see the difference.

@@ -862,7 +862,8 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"bridge-message", R"(postMessage(\"mode_set\")"},
         ContractMarker{"motion", R"(spectrPublishMode(\"motion\")", 3},
         ContractMarker{"edit", R"(spectrPublishMode(\"edit\")", 3},
-        ContractMarker{"analyzer", R"(spectrPublishMode(\"analyzer\")", 2},
+        // One site: the ANALYZER menu. No key cycles the analyzer any more.
+        ContractMarker{"analyzer", R"(spectrPublishMode(\"analyzer\")", 1},
         ContractMarker{"visualization", R"(spectrPublishMode(\"visualization\")"},
         ContractMarker{"native-listbox-popup-ownership", "popupKind: \\\"listbox\\\"", 2},
         ContractMarker{"native-menu-popup-ownership", "popupKind: \\\"menu\\\"", 2},

@@ -217,6 +217,16 @@ std::optional<EditorRevision> expected_revision_(
 /// parameter, so an editor that only ever reads them at hydration shows the
 /// user a settings panel frozen at the value the session opened with while the
 /// host drives the audio somewhere else.
+// Where this editor lives and whether its plain-key shortcuts are on there.
+// "standalone" always binds them; "plugin" only when the user asked.
+choc::value::Value make_keyboard_policy_payload_(const Spectr& plugin) {
+    auto keyboard = choc::value::createObject("SpectrKeyboardPolicy");
+    keyboard.addMember("host_kind",
+                       std::string(editor_is_standalone() ? "standalone" : "plugin"));
+    keyboard.addMember("shortcuts_in_daw", plugin.keyboard_shortcuts_in_daw());
+    return keyboard;
+}
+
 choc::value::Value make_modulation_payload_(const Spectr& plugin) {
     const auto modulation_state = plugin.modulation_settings();
     auto modulation = choc::value::createObject("SpectrModulationState");
@@ -332,6 +342,9 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     // per-revision projection, which stays exactly the automatable lanes.
     modulation.addMember("morph_applies_viewport",
                          plugin.morph_applies_viewport());
+    // The plain-key shortcut policy. Hydration-only, like the switch above:
+    // it is never automated, so the live per-revision projection omits it.
+    payload.addMember("keyboard", make_keyboard_policy_payload_(plugin));
     // The Latency control. Not a host parameter and not automatable, so like
     // "Morph moves the view" it rides the hydration payload the panel reads
     // once and deliberately never appears in the live per-revision projection,
@@ -912,6 +925,27 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         [&plugin](const choc::value::ValueView&) -> std::string {
             plugin.end_param_gesture_epoch();
             return EditorBridge::ok_response();
+        });
+
+    // The plain-key shortcut policy, read synchronously by the document
+    // before its first render so a hosted editor never binds a letter the
+    // DAW owns, not even for the frames before hydration.
+    bridge.add_handler("keyboard_policy_get",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
+        });
+
+    // "Keyboard shortcuts in DAW". Shaped like morph_viewport_set: an editor
+    // preference persisted in the plugin state, never a host parameter.
+    bridge.add_handler("keyboard_shortcuts_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("enabled"))
+                return EditorBridge::err_response("enabled missing");
+            const auto& flag = p["enabled"];
+            if (!flag.isBool())
+                return EditorBridge::err_response("enabled must be a boolean");
+            plugin.set_keyboard_shortcuts_in_daw(flag.getBool());
+            return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
         });
 
     bridge.add_handler("morph_viewport_set",

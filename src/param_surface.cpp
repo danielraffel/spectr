@@ -615,6 +615,16 @@ void Spectr::set_morph_applies_viewport(bool enabled) noexcept {
     }
 }
 
+bool Spectr::keyboard_shortcuts_in_daw() const noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return keyboard_shortcuts_in_daw_;
+}
+
+void Spectr::set_keyboard_shortcuts_in_daw(bool enabled) noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    keyboard_shortcuts_in_daw_ = enabled;
+}
+
 bool Spectr::set_modulation_target_mask(std::uint8_t mask) noexcept {
     std::lock_guard<std::mutex> lock(processing_state_mutex_);
     modulation_.target_mask = static_cast<std::uint8_t>(mask & 0x0f);

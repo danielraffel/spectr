@@ -304,8 +304,7 @@ try {
 // ...and it must not have stolen a key that already meant something. These are
 // the collisions the issue asked to be proved rather than read off the source.
 for (const [key, kind] of [["s", "editMode"], ["l", "editMode"], ["b", "editMode"],
-                           ["f", "editMode"], ["g", "editMode"], ["a", "analyzer"],
-                           ["6", "analyzer"]]) {
+                           ["f", "editMode"], ["g", "editMode"]]) {
   let out;
   try { out = press(key); } catch (error) { failures.push(`onKey rig (${key}): ${error.message}`); continue; }
   check(`\`${key}\` still does what it did`,
@@ -313,6 +312,16 @@ for (const [key, kind] of [["s", "editMode"], ["l", "editMode"], ["b", "editMode
     `recorded ${JSON.stringify(out.events)}`);
   check(`\`${key}\` does not reach group mute`,
     !out.events.some((e) => e.kind === "toggle"));
+}
+
+// A and 6 cycled the analyzer until that shortcut was removed (A is a Musical
+// Typing note). They must now do nothing at all -- and in particular must not
+// have become group mute.
+for (const key of ["a", "6"]) {
+  let out;
+  try { out = press(key); } catch (error) { failures.push(`onKey rig (${key}): ${error.message}`); continue; }
+  check(`\`${key}\` does nothing`, out.events.length === 0 && !out.prevented,
+    `recorded ${JSON.stringify(out.events)}`);
 }
 
 // The tap-one variant is deliberately NOT implemented: a plain CLICK must keep

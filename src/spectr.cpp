@@ -28,6 +28,19 @@
 namespace spectr {
 
 namespace {
+// See set_editor_is_standalone: asserted by the standalone entry points only.
+std::atomic<bool> g_editor_is_standalone{false};
+}  // namespace
+
+void set_editor_is_standalone(bool value) {
+    g_editor_is_standalone.store(value, std::memory_order_relaxed);
+}
+
+bool editor_is_standalone() {
+    return g_editor_is_standalone.load(std::memory_order_relaxed);
+}
+
+namespace {
 
 /// Are these two layouts the same mask?
 ///
@@ -1564,6 +1577,12 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // than with a feature mysteriously off.
     root.addMember("morph_applies_viewport", morph_applies_viewport_);
 
+    // "Keyboard shortcuts in DAW". Editor state with no parameter lane, like
+    // the switch above, so it rides here or is lost on reload. Absent on a
+    // writer that predates it; readers treat absence as OFF, the default, so
+    // an old session keeps the host's keys where a new instance would.
+    root.addMember("keyboard_shortcuts_in_daw", keyboard_shortcuts_in_daw_);
+
     // Macro membership: four arrays of canonical slot indices, shaped exactly
     // like `morph_overrides` above. The macro VALUES are StateStore
     // parameters and ride the base blob; only the membership is editor state
@@ -1943,6 +1962,13 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_morph_applies_viewport = flag.getBool();
     }
 
+    bool new_keyboard_shortcuts_in_daw = false;
+    if (root.hasObjectMember("keyboard_shortcuts_in_daw")) {
+        const auto& flag = root["keyboard_shortcuts_in_daw"];
+        if (!flag.isBool()) return false;
+        new_keyboard_shortcuts_in_daw = flag.getBool();
+    }
+
     std::array<MacroMembership<kMaxBands>, kMacroCount> new_macro_members{};
     if (root.hasObjectMember("macro_members")) {
         const auto macros = root["macro_members"];
@@ -2020,6 +2046,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_derived_ = new_morph_derived;
         morph_overrides_ = new_morph_overrides;
         morph_applies_viewport_ = new_morph_applies_viewport;
+        keyboard_shortcuts_in_daw_ = new_keyboard_shortcuts_in_daw;
         macro_members_ = new_macro_members;
         // Re-derive the LFO lanes from the restored parameters before the
         // mask rides along: the audio thread only honours a published mask
