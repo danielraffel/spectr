@@ -38,8 +38,11 @@ import sys
 
 from PIL import Image
 
-SHELL_ID = "__behavior_pr_z"
-TEXT_ID = "__behavior_pr_y"
+# Behaviour ids are handed out in creation order, so a header node added or
+# removed before the banner moves them. Re-read them from a lit layout dump
+# (the Label whose text reads "... BAND n/N" and the View that frames it).
+SHELL_ID = "__behavior_pr_w"
+TEXT_ID = "__behavior_pr_v"
 DEVIATION = 24
 
 
