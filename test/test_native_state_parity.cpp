@@ -6572,11 +6572,26 @@ void pump_host_frames(NativeEditorRig& rig, int frames) {
     }
 }
 
-// The frequency labels the band plot's canvas last committed, with their x.
+// The canvas that painted `text` last frame, searched through the tree.
+const pulp::view::CanvasWidget* canvas_painting(const View& view,
+                                                std::string_view text) {
+    if (const auto* canvas = dynamic_cast<const pulp::view::CanvasWidget*>(&view))
+        for (const auto& command : canvas->commands())
+            if (command.type == pulp::view::CanvasDrawCmd::Type::fill_text
+                && command.text == text)
+                return canvas;
+    for (std::size_t index = 0; index < view.child_count(); ++index)
+        if (const auto* found = canvas_painting(*view.child_at(index), text))
+            return found;
+    return nullptr;
+}
+
+// The frequency labels the band plot's ruler last committed, with their x.
+// The ruler is painted on the plot's static-layer canvas, found as the canvas
+// that painted the dBFS heading.
 std::vector<std::pair<std::string, float>> committed_frequency_labels(
     NativeEditorRig& rig) {
-    const auto* canvas = dynamic_cast<const pulp::view::CanvasWidget*>(
-        rig.bridge().widget("__behavior_pr_1"));
+    const auto* canvas = canvas_painting(*rig.root, "dBFS");
     REQUIRE(canvas != nullptr);
     std::vector<std::pair<std::string, float>> labels;
     for (const auto& command : canvas->commands())
@@ -6753,5 +6768,77 @@ TEST_CASE("bloom glows undo their transform without a save and restore",
     CHECK(unbalanced == 0);
     // With the caches intact, no glow after the first re-sends state.
     CHECK(resent == 0);
+    storage.require_unchanged();
+}
+
+// THE PLOT'S STATIC LAYER IS PAINTED ONCE, NOT EVERY FRAME.
+//
+// The background, grid and rulers depend only on the view, the plot geometry,
+// the band count, the theme, the rulers setting and the analyzer's dB scale.
+// They live on their own canvas behind the band canvas and repaint only when
+// one of those changes. So while audio animates the band canvas every frame,
+// the band canvas carries no ruler label and the static canvas's recorded
+// commands stay exactly as they were; a host viewport change repaints the
+// static canvas with the ruler moved to the new window. Pixel identity with
+// the single-canvas painter is checked by native-shot Skia renders.
+TEST_CASE("the plot's static layer repaints only when its inputs change",
+          "[native-n1][state-parity][paint-cost]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.bridge().load_script(
+        "globalThis.__spectrStaticId = String(document.querySelector("
+        "'[data-spectr-static-canvas]')?.__pulpId || '');",
+        "spectr-native-static-canvas-id");
+    rig.bridge().load_script(
+        "if (!globalThis.__spectrStaticId) throw new Error('no static canvas');",
+        "spectr-native-static-canvas-present");
+    const auto static_canvas = [&] { return canvas_painting(*rig.root, "dBFS"); };
+    const auto* band_canvas = dynamic_cast<const pulp::view::CanvasWidget*>(
+        rig.bridge().widget("__behavior_pr_1"));
+    REQUIRE(band_canvas != nullptr);
+    for (int round = 0; round < 6; ++round) {
+        feed_audio_blocks(rig, 16);
+        pump_host_frames(rig, 2);
+    }
+    const auto* layer = static_canvas();
+    REQUIRE(layer != nullptr);
+    REQUIRE(layer != band_canvas);
+    const auto recorded = layer->commands().size();
+    // No ruler label on the per-frame band canvas.
+    const auto band_ruler_labels = std::count_if(
+        band_canvas->commands().begin(), band_canvas->commands().end(),
+        [](const auto& command) {
+            return command.type == pulp::view::CanvasDrawCmd::Type::fill_text
+                && (command.text == "dBFS" || command.text == "1kHz");
+        });
+    CHECK(band_ruler_labels == 0);
+    const auto layer_labels = [&] {
+        std::vector<std::pair<std::string, float>> labels;
+        for (const auto& command : layer->commands())
+            if (command.type == pulp::view::CanvasDrawCmd::Type::fill_text
+                && command.text.size() > 2
+                && command.text.compare(command.text.size() - 2, 2, "Hz") == 0)
+                labels.emplace_back(command.text, command.x);
+        return labels;
+    };
+    const auto idle_labels = layer_labels();
+    REQUIRE_FALSE(idle_labels.empty());
+
+    // Audio keeps the band canvas busy; the static layer does not move.
+    for (int round = 0; round < 6; ++round) {
+        feed_audio_blocks(rig, 16);
+        pump_host_frames(rig, 2);
+    }
+    CHECK(layer->commands().size() == recorded);
+    CHECK(layer_labels() == idle_labels);
+
+    // A host viewport change repaints it with the ruler in the new window.
+    const auto [centre, width] = spectr::encode_viewport({300.0f, 3000.0f});
+    rig.store.set_value(spectr::kParamViewportCenter, centre);
+    rig.store.set_value(spectr::kParamViewportWidth, width);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    pump_host_frames(rig, 12);
+    CHECK(layer_labels() != idle_labels);
     storage.require_unchanged();
 }

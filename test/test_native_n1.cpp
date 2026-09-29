@@ -7,6 +7,7 @@
 #include <pulp/canvas/text_shaper.hpp>
 #include <pulp/state/store.hpp>
 #include <pulp/view/canvas_widget.hpp>
+#include <functional>
 #include <pulp/view/frame_clock.hpp>
 #include <pulp/view/input_events.hpp>
 #include <pulp/view/js_engine.hpp>
@@ -575,7 +576,24 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
     // is never confused with the EQ gain-axis `0`, then prove every label
     // uses the same linear [-120,+24] projection.
     using CanvasCommand = pulp::view::CanvasDrawCmd;
-    const auto& analyzer_commands = canvas->commands();
+    // The rulers live on the plot's static-layer canvas behind the band
+    // canvas; find it as the canvas that painted the dBFS heading.
+    const std::function<const pulp::view::CanvasWidget*(const pulp::view::View&)>
+        ruler_canvas_in = [&](const pulp::view::View& view)
+            -> const pulp::view::CanvasWidget* {
+        if (const auto* found = dynamic_cast<const pulp::view::CanvasWidget*>(&view))
+            for (const auto& command : found->commands())
+                if (command.type == pulp::view::CanvasDrawCmd::Type::fill_text
+                    && command.text == "dBFS")
+                    return found;
+        for (std::size_t index = 0; index < view.child_count(); ++index)
+            if (const auto* found = ruler_canvas_in(*view.child_at(index)))
+                return found;
+        return nullptr;
+    };
+    const auto* ruler_canvas = ruler_canvas_in(*root);
+    REQUIRE(ruler_canvas != nullptr);
+    const auto& analyzer_commands = ruler_canvas->commands();
     const auto find_text = [&](std::string_view label) {
         return std::find_if(
             analyzer_commands.begin(), analyzer_commands.end(),
