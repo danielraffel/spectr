@@ -167,7 +167,7 @@ const BOUND_MONO = (() => {
   return faces.length === 1 ? faces[0].runtime_family : "<no bound face>";
 })();
 const MONO_FAMILY = `'"${BOUND_MONO}", "JetBrains Mono", ui-monospace, monospace'`;
-const READOUT_STYLE = 'style: { width: 34, textAlign: "right", '
+const READOUT_STYLE = 'style: { width: 31, textAlign: "left", '
   + `whiteSpace: "nowrap", flexShrink: 0, fontFamily: ${MONO_FAMILY}, `
   + 'fontSize: 10, color: "rgba(255,255,255,0.72)" }';
 const TRACK_STYLE = 'style: { width: 156, flexShrink: 0, '
@@ -243,7 +243,7 @@ if (plantClipLabel) {
 }
 if (plantUntypedReadout) {
   plant("a trim readout with no type of its own", READOUT_STYLE,
-    'style: { width: 34, textAlign: "right", whiteSpace: "nowrap", '
+    'style: { width: 31, textAlign: "left", whiteSpace: "nowrap", '
     + "flexShrink: 0 }");
 }
 if (plantUnlabelledTrim) {

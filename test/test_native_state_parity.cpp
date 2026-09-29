@@ -6470,6 +6470,85 @@ TEST_CASE("the header reads freeze, OUTPUT, trim, value, PEAK on the controls' l
 
     // The glyph is centred on the same line as the words.
     const float line_centre = (line.top + line.bottom) * 0.5f;
+
+    // THE NUMBER BELONGS TO THE SLIDER. Measured on the paint: from the
+    // track's right end (the last inked column of the track on the line's
+    // centre row) to the value's first glyph is the cluster's 14pt gap, the
+    // same gap the value's box keeps to PEAK. A right-aligned readout left
+    // ~30pt here for "0.0".
+    const auto track_end = [&](const std::vector<std::uint8_t>& image,
+                               float before) {
+        float last = -1.0f;
+        for (float x = output_box.right + 2.0f; x < before; x += 0.5f) {
+            for (float dy = -1.5f; dy <= 1.5f; dy += 0.5f) {
+                const auto c = pixel(image, x, line_centre + dy);
+                if (c[0] + c[1] + c[2] > 250) { last = x + 0.5f; break; }
+            }
+        }
+        return last;
+    };
+    const auto value_ink = [&](const pulp::view::Label& label,
+                               const std::vector<std::uint8_t>& image) {
+        const auto words = word_ink(label, image);
+        REQUIRE(!words.empty());
+        return std::pair{words.front().left, words.back().right};
+    };
+    {
+        const auto [ink_left, ink_right] = value_ink(*value, frame);
+        const float track_right = track_end(frame, ink_left - 1.0f);
+        CAPTURE(track_right, ink_left, ink_right);
+        REQUIRE(track_right > 0.0f);
+        CHECK(ink_left - track_right == Catch::Approx(14.0f).margin(1.5f));
+        CHECK(peak_box.left - value_box.right
+              == Catch::Approx(14.0f).margin(1.0f));
+    }
+    // ...AND PEAK HOLDS STILL as the number runs its whole range. The host
+    // writes the trim, the meter publication carries it to the readout, and
+    // PEAK's box and the number's first glyph must not move.
+    const auto readout_at = [&]() -> const pulp::view::Label* {
+        const pulp::view::Label* found = nullptr;
+        const std::function<void(const View&)> walk = [&](const View& view) {
+            if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+                label != nullptr && std::abs(box_of(*label).left - value_box.left) < 0.5f
+                && box_of(*label).top < 44.0f)
+                found = label;
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                walk(*view.child_at(index));
+        };
+        walk(*rig.root);
+        return found;
+    };
+    {
+        const auto first_glyph = value_ink(*value, frame).first;
+        for (const float trim : {-24.0f, 24.0f, -0.5f, 12.5f, 0.0f}) {
+            rig.store.set_value(spectr::kOutputTrim, trim);
+            rig.processor.apply_surface_params(false);
+            feed_audio_blocks(rig, 8);
+            settle(rig.clock, 8);
+            char expected[16];
+            std::snprintf(expected, sizeof expected, "%s%.1f",
+                          trim > 0.0f ? "+" : "", trim);
+            const auto* readout = readout_at();
+            INFO("trim " << expected);
+            REQUIRE(readout != nullptr);
+            CHECK(readout->text() == expected);
+            const auto image = render();
+            const auto [ink_left, ink_right] = value_ink(*readout, image);
+            const auto peak_now = box_of(*peak_button);
+            CAPTURE(ink_left, ink_right, peak_now.left, first_glyph);
+            CHECK(peak_now.left == Catch::Approx(peak_box.left).margin(0.01f));
+            CHECK(box_of(*readout).right
+                  == Catch::Approx(value_box.right).margin(0.01f));
+            // The first glyph stays put (a sign is a glyph too, so it may
+            // start a hair left of a digit), and every glyph stays inside the
+            // fixed box, clear of PEAK.
+            CHECK(ink_left == Catch::Approx(first_glyph).margin(1.0f));
+            CHECK(ink_right <= value_box.right + 0.5f);
+            if (std::abs(trim) >= 10.0f)
+                CHECK(peak_now.left - ink_right >= 13.0f);
+        }
+    }
+    frame = render();
     const auto live_box = box_of(*live);
     const float glyph_x = live_box.left - 6.0f - 3.0f;
     const auto glyph_rows = [&](const std::vector<std::uint8_t>& image, float x) {
