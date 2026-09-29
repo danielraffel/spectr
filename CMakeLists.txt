@@ -3460,6 +3460,8 @@ if(Python3_Interpreter_FOUND)
     foreach(_help_plant
             stale-latency stale-latency-tracking
             zero-latency-claim seamless-claim
+            # The hidden LIVE / PRECISION control's section returns.
+            restored-motion-help
             lost-percussive-guidance
             # The automation guidance. `stale-param-name` is the only one of
             # these caught by the parameter-name rule rather than the approved

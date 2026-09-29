@@ -1085,14 +1085,14 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     scroll_view->set_scroll(0.0f, 728.0f);
     settle(rig.clock, 4);
     CHECK(scroll_view->scroll_y() > 0.0f);
-    const auto* response_label = find_label(*rig.root, "Response");
-    REQUIRE(response_label != nullptr);
-    const auto response_point = root_point(
-        *response_label, response_label->bounds().width * 0.5f,
-        response_label->bounds().height * 0.5f);
+    const auto* rulers_label = find_label(*rig.root, "Rulers");
+    REQUIRE(rulers_label != nullptr);
+    const auto rulers_point = root_point(
+        *rulers_label, rulers_label->bounds().width * 0.5f,
+        rulers_label->bounds().height * 0.5f);
     // After scrolling, descendants may legitimately have a negative root-space
     // y while remaining reachable inside the body viewport.
-    CHECK(std::isfinite(response_point.y));
+    CHECK(std::isfinite(rulers_point.y));
     capture(rig, directory, "minimum-settings-bottom", 792, 516);
 }
 
@@ -2755,10 +2755,10 @@ TEST_CASE("native frozen state atlas interactions and persistence",
                       "status info did not default on");
     const auto* feedback_label = find_label(*rig.root, "FEEDBACK");
     const auto* status_info_label = find_label(*rig.root, "Status info");
-    const auto* response_label = find_label(*rig.root, "Response");
+    const auto* rulers_label = find_label(*rig.root, "Rulers");
     REQUIRE(feedback_label != nullptr);
     REQUIRE(status_info_label != nullptr);
-    REQUIRE(response_label != nullptr);
+    REQUIRE(rulers_label != nullptr);
     // The settings groups are not necessarily direct children of the scroll
     // body: the document wraps them, and Pulp's ScrollView adds no content view
     // of its own, so walking up to "child of settings_body" resolves every
@@ -2778,31 +2778,31 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         return chain;
     };
     const auto feedback_chain = ancestry_to_body(feedback_label);
-    const auto response_chain = ancestry_to_body(response_label);
+    const auto rulers_chain = ancestry_to_body(rulers_label);
     REQUIRE_FALSE(feedback_chain.empty());
-    REQUIRE_FALSE(response_chain.empty());
+    REQUIRE_FALSE(rulers_chain.empty());
     REQUIRE(feedback_chain.front() == settings_body);
-    REQUIRE(response_chain.front() == settings_body);
+    REQUIRE(rulers_chain.front() == settings_body);
     std::size_t branch = 0;
-    while (branch < feedback_chain.size() && branch < response_chain.size()
-           && feedback_chain[branch] == response_chain[branch])
+    while (branch < feedback_chain.size() && branch < rulers_chain.size()
+           && feedback_chain[branch] == rulers_chain[branch])
         ++branch;
     // A shared prefix that runs out means one label nests inside the other's
     // group, which would make "below" meaningless.
     REQUIRE(branch < feedback_chain.size());
-    REQUIRE(branch < response_chain.size());
+    REQUIRE(branch < rulers_chain.size());
     const auto* feedback_group = feedback_chain[branch];
-    const auto* response_group = response_chain[branch];
+    const auto* rulers_group = rulers_chain[branch];
     REQUIRE(feedback_group != nullptr);
-    REQUIRE(response_group != nullptr);
-    REQUIRE(feedback_group != response_group);
+    REQUIRE(rulers_group != nullptr);
+    REQUIRE(feedback_group != rulers_group);
     const auto feedback_rect = root_rect(*feedback_group);
-    const auto response_rect = root_rect(*response_group);
+    const auto rulers_rect = root_rect(*rulers_group);
     INFO("settings_body=" << root_rect(*settings_body).left << "," << root_rect(*settings_body).top
          << " " << (root_rect(*settings_body).right - root_rect(*settings_body).left) << "x" << (root_rect(*settings_body).bottom - root_rect(*settings_body).top)
          << " feedback=" << feedback_rect.left << "," << feedback_rect.top
          << " " << (feedback_rect.right - feedback_rect.left) << "x" << (feedback_rect.bottom - feedback_rect.top));
-    CHECK(feedback_rect.top > response_rect.bottom);
+    CHECK(feedback_rect.top > rulers_rect.bottom);
     CHECK(feedback_rect.left >= panel_rect.left + 20.0f);
     CHECK(feedback_rect.right <= panel_rect.right - 20.0f);
     capture(rig, directory, "settings-top");
@@ -6174,6 +6174,175 @@ TEST_CASE("the tracing reminder sits on the header controls' line",
         CHECK(badge_bottom == Catch::Approx(caption_bottom).margin(0.5f));
         storage.require_unchanged();
     }
+}
+
+// THE LIVE / PRECISION CONTROL IS HIDDEN EVERYWHERE A USER COULD MEET IT.
+//
+// Motion Mode only ever set how fast the display eased; it never reached the
+// audio. The header's segmented control, the Settings MOTION row and the help
+// section that explained it are all withheld, so no surface offers a choice
+// the editor no longer makes. Each absence is paired with a word that MUST be
+// found by the same lookup on the same surface, so "not found" cannot mean
+// "looked in the wrong place".
+TEST_CASE("the LIVE / PRECISION control is hidden from the header, Settings and help",
+          "[native-n1][state-parity][header][motion-mode]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Header. Every "LIVE" label must belong to the freeze toggle, which is
+    // the only other control in the header that can print the word.
+    REQUIRE(find_label(*rig.root, "BARS") != nullptr);
+    CHECK(find_label(*rig.root, "PRECISION") == nullptr);
+    std::vector<const pulp::view::Label*> live_labels;
+    const std::function<void(const View&)> collect = [&](const View& view) {
+        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+            label != nullptr && label->text() == "LIVE")
+            live_labels.push_back(label);
+        for (std::size_t index = 0; index < view.child_count(); ++index)
+            collect(*view.child_at(index));
+    };
+    collect(*rig.root);
+    const auto freeze_toggles = [&] {
+        std::size_t inside = 0;
+        for (const auto* label : live_labels) {
+            // The freeze toggle sits at the left of the output cluster, well
+            // clear of where the segmented control painted (x=687.5).
+            if (root_point(*label, 0.0f, 0.0f).x < 400.0f) ++inside;
+        }
+        return inside;
+    }();
+    CHECK(freeze_toggles == live_labels.size());
+
+    // Help. The copy the overlay reads is the asset this global holds.
+    rig.bridge().load_script(R"js((() => {
+      const text = globalThis.SPECTR_HELP_TEXT;
+      if (typeof text !== 'string' || !text.includes('## Latency'))
+        throw new Error('the help copy is not loaded, so its absences prove nothing');
+      if (/Precision/.test(text))
+        throw new Error('the help copy still explains LIVE / PRECISION');
+    })();)js", "spectr-native-motion-mode-help-absent");
+
+    // Settings.
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+#if defined(__APPLE__)
+    constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+    constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+    REQUIRE(rig.root->on_global_key({
+        .key = static_cast<pulp::view::KeyCode>(','),
+        .modifiers = primary_modifier,
+        .is_down = true}));
+    settle(rig.clock, 16);
+    require_state(rig, "settings");
+    REQUIRE(find_label(*rig.root, "Mute style") != nullptr);
+    CHECK(find_label(*rig.root, "Response") == nullptr);
+    CHECK(find_label(*rig.root, "MOTION") == nullptr);
+    CHECK(find_label(*rig.root, "Precision") == nullptr);
+    storage.require_unchanged();
+}
+
+// A SESSION THAT STORED PRECISION STILL LOADS, AND EASES AT THE LIVE RATE.
+//
+// Param 3100 stays registered and nothing rewrites it: a value the host wrote
+// is the host's, and coercing it on load would write to an automation lane.
+// The editor keeps the stored value and ignores it. Measured, not inferred:
+// the draw loop eases each painted column toward its target by a fixed ratio
+// of the remaining distance per frame, exp(-dt * k), so the ratio read on the
+// PRECISION session must equal the ratio read on the same editor once the host
+// switches it to LIVE. PRECISION was k = 6 against LIVE's 22, which at this
+// runtime's 50 ms replay step is a ratio of exp(-0.3) = 0.74 against
+// exp(-1.1) = 0.33, so the two are far apart
+// whenever the editor honours the stored value. The LIVE reading is also the
+// control that shows the instrument reads a rate at all.
+TEST_CASE("a session that stored PRECISION loads and eases at the LIVE rate",
+          "[native-n1][state-parity][motion-mode]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.close();
+    rig.store.set_value(spectr::kParamMotionMode, 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    rig.open();
+    require_home(rig);
+
+    const auto host_bank = [&](float gain_db) {
+        for (std::size_t index = 0; index < spectr::kMaxBands; ++index)
+            rig.store.set_value(spectr::band_gain_param_id(index), gain_db);
+        REQUIRE(rig.processor.apply_surface_params(false));
+        settle(rig.clock, 30);
+    };
+    // Invert the bank and read the per-frame ratio of the remaining distance,
+    // frame by frame, into `globalThis.__spectrEaseRatio[key]`.
+    const auto measure = [&](std::string_view key) {
+        activate(rig, "[data-spectr-menu-root=\"overflow\"] [data-spectr-menu-trigger]");
+        // Pressed WITHOUT a settle, so each frame below is one step of the ease.
+        // The runtime's replay clock is re-armed ahead of now, so every frame
+        // advances exactly 50 ms and the ratio is a function of k alone, not of
+        // how long the host took between ticks.
+        rig.bridge().load_script(R"js((() => {
+          const clock = globalThis.__pulpCapturedReplayClock__;
+          if (!clock) throw new Error('the runtime replay clock is missing');
+          clock.target = clock.current + 5000;
+          globalThis.__spectrEaseSamples = [];
+          if (!globalThis.__pulpActivateMaterializedElement__(
+                '[data-spectr-overflow-action="invert"]', 'click', null))
+            throw new Error('INVERT could not be pressed');
+        })();)js", "spectr-native-motion-ease-press");
+        for (int frame = 0; frame < 6; ++frame) {
+            settle(rig.clock, 1);
+            rig.bridge().load_script(R"js((() => {
+              const state = globalThis.__spectrTestHooks?.renderState?.();
+              if (!state) throw new Error('native render-state hook missing');
+              globalThis.__spectrEaseSamples.push(
+                { drawn: state.gains[0], target: state.targetGains[0] });
+            })();)js", "spectr-native-motion-ease-sample");
+        }
+        rig.bridge().load_script(std::string{R"js((() => {
+          const samples = globalThis.__spectrEaseSamples;
+          const ratios = [];
+          for (let i = 1; i < samples.length; ++i) {
+            const before = samples[i - 1].target - samples[i - 1].drawn;
+            const after = samples[i].target - samples[i].drawn;
+            if (Math.abs(before) < 1e-6) continue;
+            ratios.push(after / before);
+          }
+          if (ratios.length < 3 || !ratios.every(r => r > 0 && r < 1))
+            throw new Error('the invert produced no measurable ease: '
+              + JSON.stringify(samples));
+          ratios.sort((a, b) => a - b);
+          globalThis.__spectrEaseRatio = globalThis.__spectrEaseRatio || {};
+          globalThis.__spectrEaseRatio[)js"} + js_string(key) + R"js(] =
+            ratios[Math.floor(ratios.length / 2)];
+        })();)js", "spectr-native-motion-ease-ratio");
+    };
+
+    // The session: the host projects its stored PRECISION into the editor.
+    host_bank(-12.0f);
+    require_app_state(rig, "s.settings && s.settings.motionMode === 'precision'",
+                      "the editor did not receive the stored PRECISION value");
+    measure("precision");
+    // Opening the editor and editing never rewrote the stored value.
+    CHECK(rig.store.get_value(spectr::kParamMotionMode) == Catch::Approx(1.0f));
+
+    // The control: the same editor, switched to LIVE by the host.
+    rig.store.set_value(spectr::kParamMotionMode, 0.0f);
+    host_bank(-12.0f);
+    require_app_state(rig, "s.settings && s.settings.motionMode === 'live'",
+                      "the host could not switch the editor to LIVE");
+    measure("live");
+
+    rig.bridge().load_script(R"js((() => {
+      const r = globalThis.__spectrEaseRatio;
+      if (!r || !(Math.abs(r.live - Math.exp(-22 * 0.05)) < 0.02))
+        throw new Error('the LIVE control read no LIVE-rate ease: '
+          + JSON.stringify(r));
+      if (!(Math.abs(r.precision - r.live) < 0.02))
+        throw new Error('a PRECISION session does not ease at the LIVE rate: '
+          + JSON.stringify(r));
+    })();)js", "spectr-native-motion-ease-verdict");
+    storage.require_unchanged();
 }
 
 // THE STATUS PILL IS FEEDBACK FOR AN EDIT.

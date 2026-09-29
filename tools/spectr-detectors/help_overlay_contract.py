@@ -148,8 +148,13 @@ HEADINGS = (
     "How the bands work", "Zooming", "Drawing", "The analyzer",
     "Snapshots and morph", "Movement", "Automation",
     "Modulating a range of bands", "What you can automate", "Presets",
-    "Live and Precision", "Latency",
+    "Latency",
 )
+# Sections the copy must NOT carry while the control they describe is hidden.
+# The header's LIVE / PRECISION control is commented out and the editor always
+# eases at the Live rate, so a guide that still explained the choice would send
+# a reader looking for a control that is not there.
+WITHHELD_HEADINGS = ("Live and Precision",)
 
 # -- REACHABILITY ---------------------------------------------------------
 #
@@ -467,6 +472,11 @@ PLANTS = {
     # find the editor box and paints at the anchor's own position, across the
     # bottom toolbar.
     "unnamed-rail": lambda h, a: (h.replace(RAIL_NAMED, ""), a),
+    # The hidden control's section comes back into the copy.
+    "restored-motion-help": lambda h, a: (h, a.replace(
+        "## Latency",
+        "## Live and Precision\n\nThis changes how the display moves, not how "
+        "it sounds.\n\n## Latency", 1)),
     # The copy's own rules, and the figure the code reports.
     "em-dash": lambda h, a: (h, a.replace("## Latency", "## Latency — really")),
     # One plant per figure. A single plant cannot show that BOTH assertions
@@ -811,6 +821,9 @@ def main():
                    "globalThis.SPECTR_HELP_TEXT")
     if heads:
         bad.append("the copy is missing approved sections: %s" % heads)
+    withheld = [h for h in WITHHELD_HEADINGS if ("## " + h) in text]
+    if withheld:
+        bad.append("the copy explains a hidden control: %s" % withheld)
     if "—" in text:
         bad.append("the copy contains an em dash, which this copy does not use")
     if "`" in text:

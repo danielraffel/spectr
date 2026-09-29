@@ -310,13 +310,13 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
           // census of the settings DOM, so an edit that adds or removes a laid
           // out node moves it legitimately -- re-pin it, and only treat a gap
           // between expected and applied as a defect.
-          settingsDiagnostics.layout_expected !== 162 ||
-          settingsDiagnostics.layout_applied !== 162 ||
+          settingsDiagnostics.layout_expected !== 159 ||
+          settingsDiagnostics.layout_applied !== 159 ||
           settingsDiagnostics.layout_node_miss !== 0 ||
           // The live band-count trigger owns one text node, so its former
           // number and suffix captures count as one binding here.
-          settingsDiagnostics.text_expected !== 63 ||
-          settingsDiagnostics.text_applied !== 63 ||
+          settingsDiagnostics.text_expected !== 61 ||
+          settingsDiagnostics.text_applied !== 61 ||
           settingsDiagnostics.text_node_miss !== 0 ||
           settingsDiagnostics.text_content_mismatch !== 0 ||
           settingsDiagnostics.text_target_miss !== 0)
@@ -422,13 +422,13 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
           // applied with no node misses. Re-pin the literal when an edit
           // legitimately adds or removes a laid out node, and only treat a gap
           // between expected and applied as a defect.
-          restoredHomeDiagnostics.layout_expected !== 68 ||
-          restoredHomeDiagnostics.layout_applied !== 68 ||
+          restoredHomeDiagnostics.layout_expected !== 65 ||
+          restoredHomeDiagnostics.layout_applied !== 65 ||
           restoredHomeDiagnostics.layout_node_miss !== 0 ||
           // The toolbar includes merged SCULPT/PEAK captures and one merged
           // band-count label instead of separate number and suffix bindings.
-          restoredHomeDiagnostics.text_expected !== 23 ||
-          restoredHomeDiagnostics.text_applied !== 23 ||
+          restoredHomeDiagnostics.text_expected !== 21 ||
+          restoredHomeDiagnostics.text_applied !== 21 ||
           restoredHomeDiagnostics.text_node_miss !== 0 ||
           restoredHomeDiagnostics.text_content_mismatch !== 0 ||
           restoredHomeDiagnostics.text_target_miss !== 0)

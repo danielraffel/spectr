@@ -33,6 +33,15 @@
 // The copy states the current default in exactly one sentence ("New instances
 // start in Tracking") and nowhere argues FROM the default, so changing which mode
 // ships as the default is a one-line edit here rather than a rewrite.
+// The "Live and Precision" section is withheld while the header's LIVE /
+// PRECISION control is hidden (the editor always eases at the Live rate).
+// Restoring that control means restoring this section, after "## Presets":
+//
+//   ## Live and Precision
+//
+//   This changes how the display moves, not how it sounds. **Live** reacts
+//   fast. **Precision** settles slowly so values sit still while you aim at
+//   them.
 globalThis.SPECTR_HELP_TEXT = `# About Spectr
 
 Spectr splits your sound into a row of frequency bands and lets you draw what happens to each one. Pull a band down to cut that frequency. Push it up to boost it. Mute it to remove it entirely.
@@ -141,10 +150,6 @@ Band numbers count from the left, so Band 01 is the lowest. Which frequency that
 ## Presets
 
 Eight to start: Flat, Harmonic Series, Alternating, Comb, Vocal Formants, Sub Only, Downward Tilt, Air Lift. Save your own, export them to a file or the clipboard, and import them back.
-
-## Live and Precision
-
-This changes how the display moves, not how it sounds. **Live** reacts fast. **Precision** settles slowly so values sit still while you aim at them.
 
 ## Latency
 
