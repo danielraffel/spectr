@@ -9,9 +9,8 @@ changes it, so the mode a project recalls is whatever it was born with.
 WHY THIS IS A PATCH SCRIPT AND NOT AN EDIT TO A SOURCE FILE
 native-ui/materialized/materialized-document.runtime.json IS the shipping
 editor -- the native host loads it, every native test drives it, and no recipe
-in this repo reproduces it (danielraffel/spectr#48). native-ui/src/editor.tsx
-is an unrelated stub with no Settings panel, and resources/editor.html has
-diverged. So an editor-behaviour change is applied to the committed blob by
+in this repo reproduces it (danielraffel/spectr#48), and resources/editor.html
+has diverged. So an editor-behaviour change is applied to the committed blob by
 hand, and this script is the durable record of what was applied.
 
 THE CONTROL IS NOT A HOST PARAMETER, and that shapes every read below. Pulp
