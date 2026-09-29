@@ -7095,3 +7095,111 @@ TEST_CASE("key hints appear only where their keys are live",
     CHECK(hints(/*standalone=*/true, /*in_daw=*/false) == live);
     storage.require_unchanged();
 }
+
+// ── A modal dialog makes the plot behind it inert ───────────────────────────
+//
+// With About or Settings open, a two-finger scroll over the band plot used to
+// zoom the viewport underneath the dialog. The wheel is delivered through the
+// host's own wheel verb at a point on the plot that the dialog's panel does
+// not cover, so the only thing standing between the gesture and the plot is
+// the dialog being open.
+
+namespace {
+
+std::string plot_view(NativeEditorRig& rig) {
+    return runtime_value(
+        rig, "JSON.stringify(__spectrTestHooks.renderState().view)",
+        "spectr-modal-plot-view");
+}
+
+void wheel_over_plot(NativeEditorRig& rig) {
+    // Low on the plot's left edge, outside every dialog panel Spectr
+    // centres. The About scrim paints over this point but lies outside its
+    // ancestors' bounds here, so the tree hit test reaches the plot through
+    // it -- the geometry the reported scroll went through.
+    const pulp::view::Point over_plot{140.0f, 620.0f};
+    for (int i = 0; i < 4; ++i)
+        pulp::view::deliver_mouse_wheel(*rig.root, over_plot, 0.0f, -30.0f, {});
+    settle(rig.clock, 12);
+}
+
+}  // namespace
+
+TEST_CASE("a scroll over the plot behind About or Settings changes nothing",
+          "[native-n1][state-parity][modal][wheel]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Control: with nothing open the same gesture zooms, so an unchanged view
+    // below is the dialog's doing, not a wheel that never arrived.
+    const auto at_rest = plot_view(rig);
+    wheel_over_plot(rig);
+    const auto zoomed = plot_view(rig);
+    REQUIRE(zoomed != at_rest);
+
+    const auto exercise = [&](std::string_view name, auto&& open,
+                              std::string_view open_selector, auto&& close) {
+        INFO("dialog=" << name);
+        open();
+        require_runtime_contract(
+            rig, "document.querySelector(" + js_string(open_selector) + ")",
+            std::string{name} + " did not open");
+        const auto before = plot_view(rig);
+        wheel_over_plot(rig);
+        CHECK(plot_view(rig) == before);
+        CHECK(runtime_value(rig, "document.querySelector(" + js_string(open_selector)
+                                     + ") ? 'open' : 'closed'",
+                            "spectr-modal-still-open") == "open");
+        close();
+        const auto closed = plot_view(rig);
+        wheel_over_plot(rig);
+        CHECK(plot_view(rig) != closed);
+    };
+
+    exercise("about", [&] {
+        activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+        activate(rig, "[data-spectr-help-learn-more]");
+    }, "[data-spectr-help-guide-scrim]", [&] {
+        CHECK(press_key(rig, pulp::view::KeyCode::escape));
+        require_runtime_contract(
+            rig, "!document.querySelector('[data-spectr-help-guide-scrim]')",
+            "About did not close");
+    });
+
+    exercise("settings", [&] {
+        activate(rig, "[data-spectr-settings-open]");
+    }, "[data-spectr-settings-panel][data-spectr-settings-live=\"true\"]", [&] {
+        activate(rig, "[data-spectr-settings-close]");
+    });
+
+    // A press on the About backdrop -- the start of any drag there -- closes
+    // About and edits no band: the SDK spends a press outside an open overlay
+    // on its dismissal. simulate_click is the host press path (overlay
+    // routing first); simulate_drag is not, so it cannot stand in here.
+    activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-help-learn-more]");
+    require_runtime_contract(rig, "document.querySelector('[data-spectr-help-guide-scrim]')",
+                             "About did not open for the drag case");
+    const auto bands_before = rig.processor.field().bands;
+    const auto view_before = plot_view(rig);
+    rig.root->simulate_click({140.0f, 620.0f});
+    settle(rig.clock, 12);
+    for (std::size_t i = 0; i < bands_before.size(); ++i) {
+        CHECK(rig.processor.field().bands[i].gain_db
+              == Catch::Approx(bands_before[i].gain_db));
+        CHECK(rig.processor.field().bands[i].muted == bands_before[i].muted);
+    }
+    CHECK(plot_view(rig) == view_before);
+    require_runtime_contract(rig, "!document.querySelector('[data-spectr-help-guide-scrim]')",
+                             "a press on the About backdrop did not close it");
+    // Closed, the plot takes a press again: the same point now edits.
+    rig.root->simulate_click({140.0f, 620.0f});
+    settle(rig.clock, 12);
+    bool edited = false;
+    for (std::size_t i = 0; i < bands_before.size(); ++i)
+        edited = edited || rig.processor.field().bands[i].muted != bands_before[i].muted
+            || rig.processor.field().bands[i].gain_db != bands_before[i].gain_db;
+    CHECK(edited);
+    storage.require_unchanged();
+}
