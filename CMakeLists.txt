@@ -337,16 +337,23 @@ endfunction()
 
 option(SPECTR_NATIVE_PREVIEW_IDENTITY
        "Build the native editor with a collision-free local preview identity" OFF)
-if(SPECTR_NATIVE_PREVIEW_IDENTITY)
-    set(SPECTR_NATIVE_PLUGIN_TARGET SpectrNativePreview)
-    set(SPECTR_NATIVE_PLUGIN_NAME "Spectr Native Preview")
-    set(SPECTR_NATIVE_BUNDLE_ID "com.pulp.spectr.native-preview")
-    set(SPECTR_NATIVE_PLUGIN_CODE "SpNP")
-else()
-    set(SPECTR_NATIVE_PLUGIN_TARGET Spectr)
-    set(SPECTR_NATIVE_PLUGIN_NAME "Spectr")
-    set(SPECTR_NATIVE_BUNDLE_ID "com.pulp.spectr")
-    set(SPECTR_NATIVE_PLUGIN_CODE "Spec")
+set(SPECTR_DEV_IDENTITY "" CACHE STRING
+    "Suffix for a side-by-side development identity (e.g. Freeze -> \"Spectr Freeze Dev\", com.pulp.spectr.freeze-dev, AU SpFz). Empty builds the shipping identity.")
+set(SPECTR_DEV_AU_SUBTYPE "" CACHE STRING
+    "Optional 4-char AU subtype override for SPECTR_DEV_IDENTITY")
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpectrIdentity.cmake)
+spectr_resolve_identity(_spectr_id "${SPECTR_NATIVE_PREVIEW_IDENTITY}"
+    "${SPECTR_DEV_IDENTITY}" "${SPECTR_DEV_AU_SUBTYPE}")
+set(SPECTR_NATIVE_PLUGIN_TARGET "${_spectr_id_TARGET}")
+set(SPECTR_NATIVE_PLUGIN_NAME "${_spectr_id_NAME}")
+set(SPECTR_NATIVE_BUNDLE_ID "${_spectr_id_BUNDLE_ID}")
+set(SPECTR_NATIVE_PLUGIN_CODE "${_spectr_id_PLUGIN_CODE}")
+set(SPECTR_NATIVE_MANUFACTURER_CODE "${_spectr_id_MFR_CODE}")
+if(_spectr_id_KIND STREQUAL "dev")
+    list(JOIN _spectr_id_VST3_UID "-" _spectr_id_VST3_UID_TEXT)
+    message(STATUS "Spectr: DEVELOPMENT identity '${SPECTR_NATIVE_PLUGIN_NAME}' "
+        "(${SPECTR_NATIVE_BUNDLE_ID}, AU aufx ${SPECTR_NATIVE_PLUGIN_CODE} "
+        "${SPECTR_NATIVE_MANUFACTURER_CODE}, VST3 ${_spectr_id_VST3_UID_TEXT})")
 endif()
 set(SPECTR_NATIVE_CORE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Core")
 set(SPECTR_NATIVE_STANDALONE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone")
@@ -363,7 +370,7 @@ pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     BUNDLE_ID "${SPECTR_NATIVE_BUNDLE_ID}"
     MANUFACTURER "Pulp"
     PLUGIN_CODE "${SPECTR_NATIVE_PLUGIN_CODE}"
-    MANUFACTURER_CODE "Pulp"
+    MANUFACTURER_CODE "${SPECTR_NATIVE_MANUFACTURER_CODE}"
     VERSION "1.0.0"
     CATEGORY Effect
     DESIGN_WIDTH ${SPECTR_AUTHORED_WIDTH}
@@ -385,6 +392,21 @@ foreach(_spectr_native_target
         if(SPECTR_NATIVE_PREVIEW_IDENTITY)
             target_compile_definitions(${_spectr_native_target} PRIVATE
                 SPECTR_NATIVE_PREVIEW_IDENTITY=1)
+        endif()
+        if(_spectr_id_KIND STREQUAL "dev")
+            list(GET _spectr_id_VST3_UID 0 _spectr_uid0)
+            list(GET _spectr_id_VST3_UID 1 _spectr_uid1)
+            list(GET _spectr_id_VST3_UID 2 _spectr_uid2)
+            list(GET _spectr_id_VST3_UID 3 _spectr_uid3)
+            target_compile_definitions(${_spectr_native_target} PRIVATE
+                SPECTR_DEV_IDENTITY=1
+                SPECTR_DEV_PLUGIN_NAME="${SPECTR_NATIVE_PLUGIN_NAME}"
+                SPECTR_DEV_BUNDLE_ID="${SPECTR_NATIVE_BUNDLE_ID}"
+                SPECTR_DEV_AU_CLASS=${_spectr_id_AU_CLASS}
+                SPECTR_DEV_VST3_UID0=0x${_spectr_uid0}
+                SPECTR_DEV_VST3_UID1=0x${_spectr_uid1}
+                SPECTR_DEV_VST3_UID2=0x${_spectr_uid2}
+                SPECTR_DEV_VST3_UID3=0x${_spectr_uid3})
         endif()
     endif()
 endforeach()
@@ -469,6 +491,12 @@ FetchContent_Declare(Catch2
 )
 FetchContent_MakeAvailable(Catch2)
 include(CTest)
+
+# Plugin identity: the shipping identifiers are pinned and a dev identity
+# (SPECTR_DEV_IDENTITY) changes every one a host keys on. Pure CMake, so it
+# runs in every configuration regardless of which identity this tree builds.
+add_test(NAME Spectr-plugin-identity
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/test/identity_check.cmake)
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
 
@@ -3730,7 +3758,8 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
         SPECTR_EXPECTED_LATENCY=${SPECTR_PROCESSING_LATENCY}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
-        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
+        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
+        SPECTR_TEST_EXPECTED_NAME="${SPECTR_NATIVE_PLUGIN_NAME}")
     if(TARGET ${SPECTR_NATIVE_CLAP_TARGET})
         target_compile_definitions(Spectr-artifact-test PRIVATE
             SPECTR_HAVE_TEST_CLAP=1
@@ -3755,7 +3784,7 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
             SPECTR_TEST_AU_PATH="${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
             SPECTR_TEST_AU_TYPE="aufx"
             SPECTR_TEST_AU_SUBTYPE="${SPECTR_NATIVE_PLUGIN_CODE}"
-            SPECTR_TEST_AU_MANUFACTURER="Pulp")
+            SPECTR_TEST_AU_MANUFACTURER="${SPECTR_NATIVE_MANUFACTURER_CODE}")
         target_link_libraries(Spectr-artifact-test PRIVATE
             "-framework AudioToolbox" "-framework CoreFoundation")
         add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_AU_TARGET})

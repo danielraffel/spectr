@@ -63,6 +63,15 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+To try a branch in a DAW next to an installed release, configure a separate
+build directory with `-DSPECTR_DEV_IDENTITY=<Suffix>` (for example `Freeze`).
+It changes every identifier a host keys on — product name `Spectr Freeze Dev`,
+bundle and CLAP id `com.pulp.spectr.freeze-dev`, AU `aufx SpFz Pulp`, and a
+VST3 class id derived from the bundle id — so the two plugins, and sessions
+saved against each, never resolve to one another. `SPECTR_DEV_AU_SUBTYPE`
+overrides the derived AU subtype. The default (empty) builds the shipping
+identity, pinned by the `Spectr-plugin-identity` test.
+
 The forge profile validates WebView provenance and normalizes every installed
 static archive to arm64. The expected-SHA gate rejects a compatible but older
 or substituted SDK before Spectr compiles. Release/distribution builds should

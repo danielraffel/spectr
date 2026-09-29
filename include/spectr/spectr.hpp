@@ -265,7 +265,9 @@ enum ParamIDs : pulp::state::ParamID {
 
 inline pulp::format::PluginDescriptor make_descriptor() {
     return {
-#if defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
+#if defined(SPECTR_DEV_IDENTITY)
+        .name         = SPECTR_DEV_PLUGIN_NAME,
+#elif defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
         .name         = "Spectr Native Preview",
 #else
         .name         = "Spectr",
@@ -276,7 +278,9 @@ inline pulp::format::PluginDescriptor make_descriptor() {
         // installed preview collides with it: a session saved against one can
         // resolve to the other. REAPER hides this by keying its cache on
         // filename, so the collision is invisible until a host keys by ID.
-#if defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
+#if defined(SPECTR_DEV_IDENTITY)
+        .bundle_id    = SPECTR_DEV_BUNDLE_ID,
+#elif defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
         .bundle_id    = "com.pulp.spectr.native-preview",
 #else
         .bundle_id    = "com.pulp.spectr",

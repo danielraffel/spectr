@@ -252,6 +252,14 @@ void check_three_islands(pulp::host::PluginSlot& slot) {
 // Maximum builds because both terms come from the configured profile.
 constexpr int kBlockSize = 512;
 
+// The product name the build under test declares: "Spectr" for the shipping
+// identity, the preview/dev name when the build selected one.
+#if defined(SPECTR_TEST_EXPECTED_NAME)
+constexpr const char* kExpectedArtifactName = SPECTR_TEST_EXPECTED_NAME;
+#else
+constexpr const char* kExpectedArtifactName = "Spectr";
+#endif
+
 // What a freshly loaded artifact tells its host. A new instance starts in the
 // render mode render_mode.hpp rules is the default, so the expected figure is
 // derived from that ruling, never assumed to be Mixing's WOLA latency.
@@ -311,7 +319,7 @@ float render_tone_peak(pulp::host::PluginSlot& slot,
 // part the CLAP, VST3, and AU cases share.
 void check_loaded_artifact_surface(pulp::host::PluginSlot& slot,
                                    bool loader_reports_bypass_flag) {
-    CHECK(slot.info().name == "Spectr");
+    CHECK(slot.info().name == kExpectedArtifactName);
     const auto parameters = slot.parameters();
     check_host_parameter_contract(parameters, loader_reports_bypass_flag);
     for (const auto& parameter : parameters) {
@@ -335,7 +343,7 @@ void check_built_artifact(const std::filesystem::path& bundle,
     REQUIRE(fs::exists(bundle));
 
     pulp::host::PluginInfo info;
-    info.name = "Spectr";
+    info.name = kExpectedArtifactName;
     info.path = bundle.string();
     info.format = format;
     auto slot = pulp::host::PluginSlot::load(info);
@@ -530,7 +538,7 @@ TEST_CASE("Pulp host loads and processes the built Spectr AU artifact") {
     const auto component = register_built_au_in_process(bundle);
 
     pulp::host::PluginInfo info;
-    info.name = "Spectr";
+    info.name = kExpectedArtifactName;
     info.path = bundle.string();
     info.format = pulp::host::PluginFormat::AudioUnit;
     info.unique_id = component.unique_id;
