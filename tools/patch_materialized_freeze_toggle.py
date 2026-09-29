@@ -23,12 +23,11 @@ anything beside it, and it is a leaf: its state is its own, so a press
 re-renders this one button and commits nothing on any per-frame path. A press
 flips the face; nothing else reads it.
 
-VERTICAL LINE. The cluster box moves from top 9 to top 8.5, so its 26pt row is
-centred on 21.5 -- the line the BARS / RESPONSE / BOTH captions and the band
-trigger share -- rather than half a point below it. The OUTPUT label and the
-toggle's word keep their natural line height: squeezed to `lineHeight: 1`, the
-OUTPUT label's capitals painted 2.5pt below the captions (ink rows 20.0..27.5
-against 17.5..25.0 on a 2x Skia raster).
+THE FACE. The toggle names the bound JetBrains Mono face read from the
+document's font_bindings, as the rest of the cluster does
+(patch_materialized_output_cluster_face.py): resolving `var(--mono)` by name
+reaches the same glyphs with a point more ascent, which paints the word below
+the captions' line.
 
 WHY A SCRIPT: the shipping document is one minified line and the materialized
 generator cannot rebuild it. The PEAK button is MOVED, not retyped: its text is
@@ -64,7 +63,7 @@ TOGGLE_FUNCTION = '''function SpectrFreezeToggle() {
     // Fixed at the FROZEN face's width -- 2 border + 20 padding + 6 glyph +
     // 6 gap + six 10pt mono glyphs at 1pt tracking (42) -- so a press never
     // moves the output controls beside it.
-    style: { width: 76, minWidth: 76, flexShrink: 0, height: 24, boxSizing: "border-box", padding: "0 10px", borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", background: frozen ? "rgba(200,140,60,0.18)" : "rgba(255,255,255,0.03)", border: "1px solid " + (frozen ? "rgba(240,180,110,0.45)" : "rgba(255,255,255,0.1)"), color: frozen ? "hsl(35,90%,75%)" : "rgba(255,255,255,0.75)", fontFamily: "var(--mono)", fontSize: 10, letterSpacing: 1, lineHeight: 1 }
+    style: { width: 76, minWidth: 76, flexShrink: 0, height: 24, boxSizing: "border-box", padding: "0 10px", borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", background: frozen ? "rgba(200,140,60,0.18)" : "rgba(255,255,255,0.03)", border: "1px solid " + (frozen ? "rgba(240,180,110,0.45)" : "rgba(255,255,255,0.1)"), color: frozen ? "hsl(35,90%,75%)" : "rgba(255,255,255,0.75)", fontFamily: @FACE@, fontSize: 10, letterSpacing: 1, lineHeight: 1 }
   }, /* @__PURE__ */ React.createElement("span", {
     "data-spectr-freeze-glyph": frozen ? "square" : "dot",
     "aria-hidden": true,
@@ -98,37 +97,27 @@ NEW_GEOMETRY = (
     "  // keep to OUTPUT.\n"
 )
 
-OLD_TOP = (
-    "    position: \"absolute\",\n"
-    "    left: 282,\n"
-    "    top: 9,\n"
-    "    height: 26,\n"
-)
-NEW_TOP = (
-    "    position: \"absolute\",\n"
-    "    left: 282,\n"
-    "    // Centred on 21.5, the line every other header control shares.\n"
-    "    top: 8.5,\n"
-    "    height: 26,\n"
-)
-
 # The PEAK button runs from this anchor (inclusive of the element call) to the
 # end of its label child. The cluster's style object closes just before it.
 PEAK_START = ' } }, /* @__PURE__ */ React.createElement("button", {\n    "data-spectr-output-peak": true,\n'
 PEAK_END = '  }, chipLabel(over, peakText))),\n'
 READOUT_END = '    }, trimText));\n}\n'
 
-# The OUTPUT label drops `lineHeight: 1`. A 10pt box around a face whose
-# ascent is 11.2 puts the baseline 2.5pt below the captions' line; at its
-# natural height the label centres on it, as the value readout beside it does.
-OLD_LABEL_STYLE = ('style: { fontFamily: "var(--mono)", fontSize: 10, '
-                   'letterSpacing: 0.8, color: "rgba(255,255,255,0.72)", '
-                   'lineHeight: 1, whiteSpace: "nowrap", flexShrink: 0 }')
-NEW_LABEL_STYLE = ('style: { fontFamily: "var(--mono)", fontSize: 10, '
-                   'letterSpacing: 0.8, color: "rgba(255,255,255,0.72)", '
-                   'whiteSpace: "nowrap", flexShrink: 0 }')
-
 TOGGLE_ELEMENT = ' } }, /* @__PURE__ */ React.createElement(SpectrFreezeToggle, null),\n'
+
+
+def bound_mono_face(document):
+    """The bound JetBrains Mono 400 Basic Latin face's runtime family."""
+    faces = [binding.get("runtime_family")
+             for binding in document.get("font_bindings", [])
+             if binding.get("family") == "JetBrains Mono"
+             and str(binding.get("weight")) == "400"
+             and binding.get("style") == "normal"
+             and str(binding.get("unicode_range", "")).startswith("U+0000-00FF")]
+    if len(faces) != 1 or not faces[0]:
+        sys.exit("FAIL: expected one bound JetBrains Mono 400 Basic Latin face, "
+                 "found %d" % len(faces))
+    return faces[0]
 
 
 def escaped(value):
@@ -147,7 +136,7 @@ def main():
     html = json.loads(raw)["html"]
 
     if "function SpectrFreezeToggle()" in html:
-        for marker in (TOGGLE_ELEMENT, NEW_GEOMETRY, NEW_TOP, NEW_LABEL_STYLE):
+        for marker in (TOGGLE_ELEMENT, NEW_GEOMETRY):
             if html.count(marker) != 1:
                 sys.exit("FAIL: the toggle is present but %r is not; the "
                          "document is half patched" % marker[:60])
@@ -156,8 +145,6 @@ def main():
 
     for text, label in ((METER_HEAD, "output meter"),
                         (OLD_GEOMETRY, "cluster geometry comment"),
-                        (OLD_TOP, "cluster top"),
-                        (OLD_LABEL_STYLE, "OUTPUT label style"),
                         (PEAK_START, "PEAK button start"),
                         (READOUT_END, "trim readout end")):
         once(raw, text, label)
@@ -177,10 +164,11 @@ def main():
     html = html.replace(
         READOUT_END,
         "    }, trimText),\n  " + peak + ");\n}\n", 1)
-    html = html.replace(METER_HEAD, TOGGLE_FUNCTION + METER_HEAD, 1)
+    face = ('\'"%s", "JetBrains Mono", ui-monospace, monospace\''
+            % bound_mono_face(json.loads(raw)))
+    html = html.replace(
+        METER_HEAD, TOGGLE_FUNCTION.replace("@FACE@", face) + METER_HEAD, 1)
     html = html.replace(OLD_GEOMETRY, NEW_GEOMETRY, 1)
-    html = html.replace(OLD_TOP, NEW_TOP, 1)
-    html = html.replace(OLD_LABEL_STYLE, NEW_LABEL_STYLE, 1)
 
     order = [html.index(marker) for marker in (
         "React.createElement(SpectrFreezeToggle, null)",

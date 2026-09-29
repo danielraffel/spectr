@@ -1532,6 +1532,14 @@ const char* backend_name(pulp::view::ScreenshotBackend backend) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // The fixtures here drive the editor's own shortcuts, so they run it as
+    // the standalone does, with the plain-key shortcuts live.
+    // SPECTR_EDITOR_HOSTED=1 runs it as a plug-in instead.
+    {
+        const char* hosted = std::getenv("SPECTR_EDITOR_HOSTED");
+        spectr::set_editor_is_standalone(
+            !(hosted != nullptr && std::string_view(hosted) == "1"));
+    }
     std::filesystem::path dir = "spectr-native-shots";
     auto backend = pulp::view::ScreenshotBackend::gpu;
     float scale = 2.0f;

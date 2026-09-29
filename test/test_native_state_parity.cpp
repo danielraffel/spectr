@@ -1039,7 +1039,10 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // 1660.98 when the LATENCY group was added, and 1660.98 -> 1820.58
         // when Appearance gained the Modulation look row -- each exactly one
         // group's 160px, with the authored box, scroll reachability and skin
-        // all unchanged. If you add a group and this fails, that is the window
+        // all unchanged -- and 1820.58 -> 1960.58 when FEEDBACK gained the
+        // plug-in-only "Keyboard shortcuts in DAW" row, whose label wraps,
+        // and 1960.58 -> 1846.58 when the MOTION group (the hidden LIVE /
+        // PRECISION choice) left. If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1049,7 +1052,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1740 && s.content_height < 1900"
+        " && s.content_height > 1767 && s.content_height < 1927"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
@@ -6079,6 +6082,59 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
     };
     check_words(*zoom, rgba, 2);
 
+    // The output cluster shares the line too: the OUTPUT caption, the peak
+    // chip's PEAK label and its number, and the trim readout. Audio runs first
+    // so the chip prints a number rather than its "--" placeholder, whose
+    // dashes sit mid-line and would say nothing about the baseline.
+    feed_audio_blocks(rig, 16);
+    settle(rig.clock, 12);
+    const std::function<const View*(const View&, std::string_view)> by_id =
+        [&by_id](const View& view, std::string_view id) -> const View* {
+            if (view.id() == id) return &view;
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                if (const auto* match = by_id(*view.child_at(index), id))
+                    return match;
+            return nullptr;
+        };
+    const std::function<const pulp::view::Label*(const View&)> first_label =
+        [&first_label](const View& view) -> const pulp::view::Label* {
+            if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view))
+                return label;
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                if (const auto* match = first_label(*view.child_at(index)))
+                    return match;
+            return nullptr;
+        };
+    const auto label_at = [&](const char* selector) {
+        auto id = runtime_string(
+            rig, std::string{"String(document.querySelector('"} + selector
+                     + "').__pulpId)",
+            "spectr-header-output-id");
+        id.erase(std::min(id.find('\n'), id.size()));
+        const auto* view = by_id(*rig.root, id);
+        INFO(selector << " id=" << id);
+        REQUIRE(view != nullptr);
+        const auto* label = first_label(*view);
+        REQUIRE(label != nullptr);
+        return label;
+    };
+    const auto* output_caption = label_at("[data-spectr-output-trim-label]");
+    const auto* peak_label = label_at("[data-spectr-output-peak-label]");
+    const auto* trim_readout = label_at("[data-spectr-output-trim-readout]");
+    CHECK(output_caption->text() == "OUTPUT");
+    CHECK(trim_readout->text() == "0.0");
+    INFO("peak chip reads " << peak_label->text());
+    REQUIRE(peak_label->text().rfind("PEAK -", 0) == 0);
+    REQUIRE(peak_label->text().find_first_of("0123456789") != std::string::npos);
+    const auto output_frame = pulp::view::render_to_rgba(
+        *rig.root, 1320, 860, kScale, &width, &height);
+    REQUIRE(!output_frame.empty());
+    check_words(*output_caption, output_frame, 1);
+    // "PEAK" and its number, which begins with a minus sign attached to the
+    // digits; the digits carry the word's top and bottom rows.
+    check_words(*peak_label, output_frame, 2);
+    check_words(*trim_readout, output_frame, 1);
+
     // The bands trigger's caption shares the same line, both as captured and
     // after its text changes -- a changed caption no longer matches its capture
     // and is laid out natively, which is the state a user who picked another
@@ -7285,5 +7341,365 @@ TEST_CASE("the plot's static layer repaints only when its inputs change",
     REQUIRE(rig.processor.apply_surface_params(false));
     pump_host_frames(rig, 12);
     CHECK(layer_labels() != idle_labels);
+    storage.require_unchanged();
+}
+
+// ── Plain-key shortcut policy ───────────────────────────────────────────────
+//
+// A DAW owns its plain keys: Logic's Musical Typing plays notes on A S D F G H
+// J K L ; ' and W E T Y U O P, and the digits pick octave and velocity. Spectr
+// cannot ask a host whether Musical Typing is open, so inside a plug-in its
+// single-letter shortcuts are off unless "Keyboard shortcuts in DAW" is on,
+// and every such key is handed back UNCONSUMED -- `dispatch_key_for_root`
+// returning false is exactly what makes the plug-in view return the key to
+// the host. The standalone owns its window and keeps them.
+
+namespace {
+
+struct EditorContextScope {
+    explicit EditorContextScope(bool standalone)
+        : previous(spectr::editor_is_standalone()) {
+        spectr::set_editor_is_standalone(standalone);
+    }
+    ~EditorContextScope() { spectr::set_editor_is_standalone(previous); }
+    bool previous;
+};
+
+bool press_key(NativeEditorRig& rig, pulp::view::KeyCode key,
+               std::uint16_t modifiers = pulp::view::kModNone) {
+    const bool consumed = pulp::view::WidgetBridge::dispatch_key_for_root(
+        *rig.root, static_cast<int>(key), modifiers, true);
+    settle(rig.clock, 8);
+    return consumed;
+}
+
+// runtime_string carries the thrown error's stack after the value.
+std::string runtime_value(NativeEditorRig& rig, std::string_view expression,
+                          std::string_view label) {
+    auto value = runtime_string(rig, expression, label);
+    const auto newline = value.find('\n');
+    if (newline != std::string::npos) value.erase(newline);
+    return value;
+}
+
+pulp::view::KeyCode key_of(char c) {
+    return static_cast<pulp::view::KeyCode>(c);
+}
+
+int muted_band_count(NativeEditorRig& rig) {
+    int muted = 0;
+    for (const auto& band : rig.processor.field().bands) muted += band.muted ? 1 : 0;
+    return muted;
+}
+
+// Everything a plain key in the inventory could change, in one string.
+std::string shortcut_fingerprint(NativeEditorRig& rig) {
+    return runtime_value(
+               rig,
+               "(() => { const a = __spectrTestHooks.appState(); "
+               "const r = __spectrTestHooks.renderState(); "
+               "return JSON.stringify([a.editMode, a.analyzerMode, "
+               "r.selection.length]); })()",
+               "spectr-keyboard-fingerprint")
+        + "|muted=" + std::to_string(muted_band_count(rig))
+        + "|render=" + std::to_string(static_cast<int>(rig.processor.render_mode()));
+}
+
+std::string app_string(NativeEditorRig& rig, std::string_view field) {
+    return runtime_value(
+        rig, "String(__spectrTestHooks.appState()." + std::string(field) + ")",
+        "spectr-keyboard-app-field");
+}
+
+// Select every band through the Cmd chord, which every context keeps, so M and
+// Escape are tested with something to act on rather than nothing to do.
+void select_all(NativeEditorRig& rig) {
+    REQUIRE(press_key(rig, pulp::view::KeyCode::a, pulp::view::kModCmd));
+    REQUIRE(runtime_value(rig, "__spectrTestHooks.renderState().selection.length",
+                           "spectr-keyboard-selection") != "0");
+}
+
+// Keys removed in every context: the digit aliases for the edit modes, which
+// no surface showed; A and 6, which cycled the analyzer (A is a Musical Typing
+// note); and Escape, pressed with a selection standing, which used to clear it.
+void require_removed_keys_do_nothing(NativeEditorRig& rig) {
+    select_all(rig);
+    for (const char key : {'1', '2', '3', '4', '5', 'a', '6'}) {
+        INFO("removed key " << key);
+        const auto before = shortcut_fingerprint(rig);
+        CHECK_FALSE(press_key(rig, key_of(key)));
+        CHECK(shortcut_fingerprint(rig) == before);
+    }
+    INFO("removed key Escape (selection clear)");
+    const auto before = shortcut_fingerprint(rig);
+    CHECK_FALSE(press_key(rig, pulp::view::KeyCode::escape));
+    CHECK(shortcut_fingerprint(rig) == before);
+    // W and the rest of the Musical Typing rows were never bound; they must
+    // stay the host's in every context.
+    for (const char key : {'w', 'd', 'h', 'j', 'k', 'e', 'y', 'u', 'o', 'p',
+                           'z', 'x', 'c', 'v', '7', '8'}) {
+        INFO("unbound key " << key);
+        const auto unbound_before = shortcut_fingerprint(rig);
+        CHECK_FALSE(press_key(rig, key_of(key)));
+        CHECK(shortcut_fingerprint(rig) == unbound_before);
+    }
+}
+
+// Every documented plain key does its action and is consumed.
+void require_documented_keys_act(NativeEditorRig& rig) {
+    select_all(rig);
+    const std::array<std::pair<char, const char*>, 5> modes{{
+        {'l', "level"}, {'b', "boost"}, {'f', "flare"}, {'g', "glide"}, {'s', "sculpt"}}};
+    for (const auto& [key, mode] : modes) {
+        INFO("edit-mode key " << key);
+        CHECK(press_key(rig, key_of(key)));
+        CHECK(app_string(rig, "editMode") == mode);
+    }
+    {
+        INFO("mute key m");
+        const int before = muted_band_count(rig);
+        CHECK(press_key(rig, pulp::view::KeyCode::m));
+        CHECK(muted_band_count(rig) != before);
+    }
+    {
+        INFO("latency key t");
+        const auto before = rig.processor.render_mode();
+        CHECK(press_key(rig, pulp::view::KeyCode::t));
+        CHECK(rig.processor.render_mode() != before);
+    }
+}
+
+// Every documented plain key is handed back to the host and changes nothing.
+void require_documented_keys_go_to_host(NativeEditorRig& rig) {
+    select_all(rig);
+    for (const char key : {'s', 'l', 'b', 'f', 'g', 'm', 't'}) {
+        INFO("gated key " << key);
+        const auto before = shortcut_fingerprint(rig);
+        CHECK_FALSE(press_key(rig, key_of(key)));
+        CHECK(shortcut_fingerprint(rig) == before);
+    }
+}
+
+}  // namespace
+
+TEST_CASE("in a plug-in, plain-key shortcuts go to the DAW by default",
+          "[native-n1][state-parity][keyboard]") {
+    PatternStoragePoison storage;
+    EditorContextScope hosted(false);
+    NativeEditorRig rig;
+    require_home(rig);
+    REQUIRE_FALSE(rig.processor.keyboard_shortcuts_in_daw());
+    // Control: the Cmd chord is still the editor's, so a false below is the
+    // policy speaking rather than a dead key path.
+    CHECK(press_key(rig, pulp::view::KeyCode::a, pulp::view::kModCmd));
+    require_documented_keys_go_to_host(rig);
+    require_removed_keys_do_nothing(rig);
+    storage.require_unchanged();
+}
+
+TEST_CASE("in a plug-in, Keyboard shortcuts in DAW makes the plain keys live",
+          "[native-n1][state-parity][keyboard]") {
+    PatternStoragePoison storage;
+    EditorContextScope hosted(false);
+    NativeEditorRig rig;
+    require_home(rig);
+    // Through the Settings switch itself, so the switch, the cache the key
+    // handler reads, and the processor's persisted value are all exercised.
+    activate(rig, "[data-spectr-settings-open]");
+    require_runtime_contract(
+        rig, "document.querySelector('[data-spectr-keyboard-shortcuts-in-daw=\"off\"]')",
+        "the Keyboard shortcuts in DAW switch is missing in a plug-in");
+    rig.bridge().load_script("spectrSetKeyboardShortcutsInDaw(true);",
+                             "spectr-keyboard-switch-on");
+    settle(rig.clock, 8);
+    CHECK(rig.processor.keyboard_shortcuts_in_daw());
+    require_runtime_contract(
+        rig, "document.querySelector('[data-spectr-keyboard-shortcuts-in-daw=\"on\"]')",
+        "the switch did not show its new state");
+    activate(rig, "[data-spectr-settings-close]");
+    require_documented_keys_act(rig);
+    require_removed_keys_do_nothing(rig);
+
+    // Persisted with the plugin state: a reloaded instance keeps it.
+    const auto blob = rig.processor.serialize_plugin_state();
+    NativeEditorRig reloaded(blob);
+    CHECK(reloaded.processor.keyboard_shortcuts_in_daw());
+    storage.require_unchanged();
+}
+
+TEST_CASE("in the standalone, plain-key shortcuts stay live",
+          "[native-n1][state-parity][keyboard]") {
+    PatternStoragePoison storage;
+    EditorContextScope standalone(true);
+    NativeEditorRig rig;
+    require_home(rig);
+    REQUIRE_FALSE(rig.processor.keyboard_shortcuts_in_daw());
+    // The switch only means something in a DAW, so the standalone hides it.
+    activate(rig, "[data-spectr-settings-open]");
+    require_runtime_contract(
+        rig, "!document.querySelector('[data-spectr-keyboard-shortcuts-in-daw]')",
+        "the standalone shows a DAW-only switch");
+    activate(rig, "[data-spectr-settings-close]");
+    require_documented_keys_act(rig);
+    require_removed_keys_do_nothing(rig);
+    storage.require_unchanged();
+}
+
+TEST_CASE("key hints appear only where their keys are live",
+          "[native-n1][state-parity][keyboard][hints]") {
+    PatternStoragePoison storage;
+    const auto hints = [](bool standalone, bool in_daw) {
+        EditorContextScope context(standalone);
+        NativeEditorRig rig;
+        require_home(rig);
+        if (in_daw) {
+            rig.bridge().load_script("spectrSetKeyboardShortcutsInDaw(true);",
+                                     "spectr-keyboard-switch-on");
+            settle(rig.clock, 8);
+        }
+        std::string out;
+        activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
+        out += "chips=" + runtime_value(
+            rig, "document.querySelectorAll('[data-spectr-shortcut-chip]').length",
+            "spectr-keyboard-chips");
+        CHECK(press_key(rig, pulp::view::KeyCode::escape));
+        activate(rig, "[data-spectr-menu-root=\"analyzer\"] [data-spectr-menu-trigger]");
+        // The analyzer names no key in any context: its shortcut is gone.
+        out += " analyzer=" + runtime_value(
+            rig,
+            "Array.from(document.querySelectorAll('[data-spectr-menu-options] div'))"
+            ".map(d => d.textContent).filter(t => t.indexOf('ANALYZER') === 0)[0]",
+            "spectr-keyboard-analyzer-header");
+        CHECK(press_key(rig, pulp::view::KeyCode::escape));
+        activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+        out += " note=" + runtime_value(
+            rig, "document.querySelectorAll('[data-spectr-shortcuts-daw-note]').length",
+            "spectr-keyboard-daw-note");
+        out += " help=" + runtime_value(
+            rig,
+            "String(Array.from(document.querySelectorAll('[data-spectr-help-panel] *'))"
+            ".some(n => n.textContent === 'S / L / B'))",
+            "spectr-keyboard-help-rows");
+        out += " latency=" + runtime_value(
+            rig,
+            "String(String(document.querySelector('[data-spectr-latency-chip]')"
+            ".getAttribute('title') || '').indexOf('press T') >= 0)",
+            "spectr-keyboard-latency-title");
+        return out;
+    };
+    const std::string live =
+        "chips=5 analyzer=ANALYZER note=0 help=true latency=true";
+    const std::string off = "chips=0 analyzer=ANALYZER note=1 help=false latency=false";
+    CHECK(hints(/*standalone=*/false, /*in_daw=*/false) == off);
+    CHECK(hints(/*standalone=*/false, /*in_daw=*/true) == live);
+    CHECK(hints(/*standalone=*/true, /*in_daw=*/false) == live);
+    storage.require_unchanged();
+}
+
+// ── A modal dialog makes the plot behind it inert ───────────────────────────
+//
+// With About or Settings open, a two-finger scroll over the band plot used to
+// zoom the viewport underneath the dialog. The wheel is delivered through the
+// host's own wheel verb at a point on the plot that the dialog's panel does
+// not cover, so the only thing standing between the gesture and the plot is
+// the dialog being open.
+
+namespace {
+
+std::string plot_view(NativeEditorRig& rig) {
+    return runtime_value(
+        rig, "JSON.stringify(__spectrTestHooks.renderState().view)",
+        "spectr-modal-plot-view");
+}
+
+void wheel_over_plot(NativeEditorRig& rig) {
+    // Low on the plot's left edge, outside every dialog panel Spectr
+    // centres. The About scrim paints over this point but lies outside its
+    // ancestors' bounds here, so the tree hit test reaches the plot through
+    // it -- the geometry the reported scroll went through.
+    const pulp::view::Point over_plot{140.0f, 620.0f};
+    for (int i = 0; i < 4; ++i)
+        pulp::view::deliver_mouse_wheel(*rig.root, over_plot, 0.0f, -30.0f, {});
+    settle(rig.clock, 12);
+}
+
+}  // namespace
+
+TEST_CASE("a scroll over the plot behind About or Settings changes nothing",
+          "[native-n1][state-parity][modal][wheel]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Control: with nothing open the same gesture zooms, so an unchanged view
+    // below is the dialog's doing, not a wheel that never arrived.
+    const auto at_rest = plot_view(rig);
+    wheel_over_plot(rig);
+    const auto zoomed = plot_view(rig);
+    REQUIRE(zoomed != at_rest);
+
+    const auto exercise = [&](std::string_view name, auto&& open,
+                              std::string_view open_selector, auto&& close) {
+        INFO("dialog=" << name);
+        open();
+        require_runtime_contract(
+            rig, "document.querySelector(" + js_string(open_selector) + ")",
+            std::string{name} + " did not open");
+        const auto before = plot_view(rig);
+        wheel_over_plot(rig);
+        CHECK(plot_view(rig) == before);
+        CHECK(runtime_value(rig, "document.querySelector(" + js_string(open_selector)
+                                     + ") ? 'open' : 'closed'",
+                            "spectr-modal-still-open") == "open");
+        close();
+        const auto closed = plot_view(rig);
+        wheel_over_plot(rig);
+        CHECK(plot_view(rig) != closed);
+    };
+
+    exercise("about", [&] {
+        activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+        activate(rig, "[data-spectr-help-learn-more]");
+    }, "[data-spectr-help-guide-scrim]", [&] {
+        CHECK(press_key(rig, pulp::view::KeyCode::escape));
+        require_runtime_contract(
+            rig, "!document.querySelector('[data-spectr-help-guide-scrim]')",
+            "About did not close");
+    });
+
+    exercise("settings", [&] {
+        activate(rig, "[data-spectr-settings-open]");
+    }, "[data-spectr-settings-panel][data-spectr-settings-live=\"true\"]", [&] {
+        activate(rig, "[data-spectr-settings-close]");
+    });
+
+    // A press on the About backdrop -- the start of any drag there -- closes
+    // About and edits no band: the SDK spends a press outside an open overlay
+    // on its dismissal. simulate_click is the host press path (overlay
+    // routing first); simulate_drag is not, so it cannot stand in here.
+    activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-help-learn-more]");
+    require_runtime_contract(rig, "document.querySelector('[data-spectr-help-guide-scrim]')",
+                             "About did not open for the drag case");
+    const auto bands_before = rig.processor.field().bands;
+    const auto view_before = plot_view(rig);
+    rig.root->simulate_click({140.0f, 620.0f});
+    settle(rig.clock, 12);
+    for (std::size_t i = 0; i < bands_before.size(); ++i) {
+        CHECK(rig.processor.field().bands[i].gain_db
+              == Catch::Approx(bands_before[i].gain_db));
+        CHECK(rig.processor.field().bands[i].muted == bands_before[i].muted);
+    }
+    CHECK(plot_view(rig) == view_before);
+    require_runtime_contract(rig, "!document.querySelector('[data-spectr-help-guide-scrim]')",
+                             "a press on the About backdrop did not close it");
+    // Closed, the plot takes a press again: the same point now edits.
+    rig.root->simulate_click({140.0f, 620.0f});
+    settle(rig.clock, 12);
+    bool edited = false;
+    for (std::size_t i = 0; i < bands_before.size(); ++i)
+        edited = edited || rig.processor.field().bands[i].muted != bands_before[i].muted
+            || rig.processor.field().bands[i].gain_db != bands_before[i].gain_db;
+    CHECK(edited);
     storage.require_unchanged();
 }

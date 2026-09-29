@@ -252,36 +252,42 @@ def main():
     raw = open(DOCUMENT, encoding="utf-8").read()
     runtime = open(RUNTIME, encoding="utf-8").read()
 
-    applied = already = 0
+    # The document (html + its bindings) and runtime.js are judged separately:
+    # a merge can bring one of them back unpatched while the other keeps its
+    # edits, and each must be all-or-nothing on its own.
+    doc_applied = doc_already = 0
     for label, old, new in HTML_EDITS:
         old_e, new_e = escaped(old), escaped(new)
         if raw.count(new_e) == 1 and raw.count(old_e) == 0:
             print("already applied ", label)
-            already += 1
+            doc_already += 1
             continue
         count = raw.count(old_e)
         if count != 1:
             sys.exit("FAIL %s: patch point occurs %d times, expected 1"
                      % (label, count))
         raw = raw.replace(old_e, new_e, 1)
-        applied += 1
+        doc_applied += 1
         print("applied         ", label)
 
     document_result = rewrite_bindings(raw, DOCUMENT_BINDING, "document")
     runtime_result = rewrite_bindings(runtime, RUNTIME_BINDING, "runtime.js")
-    for label, result in (("document bindings", document_result),
-                          ("runtime.js captured bindings", runtime_result)):
-        if result is None:
-            print("already applied ", label)
-            already += 1
-        else:
-            print("applied          %s: dropped %d, renumbered %d"
-                  % (label, result[1], result[2]))
-            applied += 1
+    if document_result is None:
+        print("already applied  document bindings")
+        doc_already += 1
+    else:
+        print("applied          document bindings: dropped %d, renumbered %d"
+              % document_result[1:])
+        doc_applied += 1
+    if runtime_result is None:
+        print("already applied  runtime.js captured bindings")
+    else:
+        print("applied          runtime.js captured bindings: dropped %d, "
+              "renumbered %d" % runtime_result[1:])
 
-    if already and applied:
-        sys.exit("FAIL: the editor is half patched; refusing to write")
-    if not applied:
+    if doc_already and doc_applied:
+        sys.exit("FAIL: the document is half patched; refusing to write")
+    if not doc_applied and runtime_result is None:
         print("no change needed")
         return 0
 
@@ -299,10 +305,12 @@ def main():
             if binding.get("text") in ("LIVE", "PRECISION"):
                 sys.exit("FAIL: a %s entry still captures %r"
                          % (binding_list, binding["text"]))
-    open(DOCUMENT, "w", encoding="utf-8").write(raw)
-    open(RUNTIME, "w", encoding="utf-8").write(runtime)
-    print("written", DOCUMENT)
-    print("written", RUNTIME)
+    if doc_applied:
+        open(DOCUMENT, "w", encoding="utf-8").write(raw)
+        print("written", DOCUMENT)
+    if runtime_result is not None:
+        open(RUNTIME, "w", encoding="utf-8").write(runtime)
+        print("written", RUNTIME)
     return 0
 
 

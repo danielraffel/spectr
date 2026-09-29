@@ -411,27 +411,22 @@ CASES: list[tuple[str, str, int, list[str]]] = [
      "plant: let the badge shrink instead of the name", 1,
      [f(D, "preset_manager_reset_and_chrome.py"), "--plant", "badge-shrinks"]),
 
-    # Two surfaces named two different analyzer-cycle keys and only one was
-    # bound: the SHORTCUTS popover said `6`, the ANALYZER popover said "A to
-    # cycle", and `A` did nothing in any state. No screenshot and no layout
-    # assertion can see that -- both popovers render identically whether the key
-    # they name works or not. Reads the checked-in artifact, so it needs no
-    # build, no GPU and no third-party module: it registers on every runner
-    # configuration, including the chrome-less acceptance one.
+    # The analyzer-cycle shortcut (A, and its alias 6) is removed with its
+    # hints: A is a Musical Typing note and kept flipping the analyzer in a
+    # DAW. Reads the checked-in artifact, so it needs no build, no GPU and no
+    # third-party module: it registers on every runner configuration,
+    # including the chrome-less acceptance one.
     ("analyzer_shortcut_agreement",
-     "every advertised analyzer key is bound, and every bound one advertised", 0,
+     "no key cycles the analyzer, and no surface says one does", 0,
      [f(D, "analyzer_shortcut_agreement.py")]),
-    # main's behaviour restored exactly: the letter is advertised and dead.
-    ("analyzer_shortcut_agreement", "plant: advertise A, bind only 6", 1,
-     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "restore-lie"]),
-    # The other direction, and the one a reviewer would not think to look for:
-    # a shipped shortcut that no surface names.
-    ("analyzer_shortcut_agreement", "plant: stop advertising the bound digit", 1,
-     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "drop-digit-from-chip"]),
-    ("analyzer_shortcut_agreement", "plant: bind a key nothing advertises", 1,
-     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "bind-unadvertised"]),
-    ("analyzer_shortcut_agreement", "plant: the ANALYZER header drifts to Z", 1,
-     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "header-drifts"]),
+    # Half-removals, each invisible in a screenshot: a hint naming a key that
+    # does nothing, and a binding no surface names that still fights the DAW.
+    ("analyzer_shortcut_agreement", "plant: the header says A to cycle again", 1,
+     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "restore-header"]),
+    ("analyzer_shortcut_agreement", "plant: the SHORTCUTS row lists it again", 1,
+     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "restore-row"]),
+    ("analyzer_shortcut_agreement", "plant: A is bound again, advertised nowhere", 1,
+     [f(D, "analyzer_shortcut_agreement.py"), "--plant", "restore-binding"]),
 
     # The long-form help overlay: the route into it, the copy's home, and
     # whether the panel can move content it is a screenful too small to show.

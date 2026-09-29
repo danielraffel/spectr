@@ -276,8 +276,10 @@ if (!rowMatch) {
 // S3b. THE ROW IS APPENDED LAST INSIDE ITS GROUP. Not cosmetic: this
 // document's text/layout/paint bindings address nodes by POSITIONAL DOM path,
 // so a row inserted anywhere but the end renumbers every later sibling and
-// silently re-points them at the wrong node.
-if (!/label: "OVER latch"[\s\S]{0,400}?\}\)\)\), React\.createElement\(SpectrModulationSettings/
+// silently re-points them at the wrong node. Rows appended AFTER it (the
+// plug-in-only "Keyboard shortcuts in DAW" switch) renumber nothing, so they
+// may follow; nothing may come between it and an older sibling.
+if (!/label: "OVER latch"[\s\S]{0,400}?\}\)\)(?:, keyboardPolicy\.hostKind !== "standalone" && [\s\S]{0,1200}?\}\)\)\))?\), React\.createElement\(SpectrModulationSettings/
     .test(html)) {
   fail("the latch row is not the last child of the FEEDBACK group; inserted "
     + "before a sibling it renumbers the positional binding paths");
