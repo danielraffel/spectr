@@ -78,7 +78,7 @@ Click a band to mute it. Shift and drag to mute a range.
 
 ## Keyboard shortcuts
 
-In the standalone app, letter keys switch modes: S, L, B, F and G pick the edit mode, M mutes the selected bands and T switches latency. In a DAW they are off by default, so the DAW's own keys, such as Logic's Musical Typing, keep working. Turn on **Keyboard shortcuts in DAW** in Settings to use them there.
+In the standalone app, letter keys switch modes: S, L, B, F and G pick the edit mode, M mutes the selected bands, T switches latency and Q freezes the sound. In a DAW they are off by default, so the DAW's own keys, such as Logic's Musical Typing, keep working. Turn on **Keyboard shortcuts in DAW** in Settings to use them there.
 
 ## The analyzer
 
@@ -91,6 +91,16 @@ This is only a display. It does not change your sound.
 Capture a shape into **A**, draw something different, capture it into **B**. The morph slider blends between them.
 
 The slider stays greyed out until both slots are filled.
+
+## Freeze
+
+Press **LIVE** in the header, or Q, to freeze the sound coming in. Spectr holds it and keeps playing it, and everything you draw keeps working on what it holds: the bands, mutes, the morph and both LFOs. Press **FROZEN** to go back to the live sound.
+
+Below 100% **Mix** only the processed part is frozen, so the untouched part stays live and you can play over the held sound.
+
+**Hold length**, in Settings, sets how much of the incoming sound a freeze takes in. A short one catches the moment you press. A longer one blends the last second or two into a smoother pad.
+
+A freeze pressed over silence waits for sound before it holds anything, so it never holds silence.
 
 ## Movement
 
@@ -146,6 +156,7 @@ The list your DAW shows is long, because every band is in it. The ones worth kno
 - **Viewport Center** and **Viewport Width** slide and widen the frequency range the bands cover. Automating the centre sweeps your whole shape up and down the spectrum.
 - **LFO Rate**, **LFO Depth**, and the same pair on **LFO 2**, let you modulate the modulators from outside.
 - **Band 01 Gain** through **Band 64 Gain**, and **Band 01 Mute** through **Band 64 Mute**, for one band at a time.
+- **Freeze** is the LIVE / FROZEN button, so your DAW can freeze and release the sound on the beat.
 - **Mix** blends Spectr against the untouched signal. **Output** trims the level on the way out, by up to 24 dB either way.
 - **Macro 1** through **Macro 4**, in a Macros group of their own, are four spare lanes each worth up to 24 dB either way. A macro is an offset: it rides on top of whatever its member bands are already drawn at, rather than replacing them. They are listed in every build so your host never has to rescan to find them, and they stay inert until bands are assigned to one, which this version has no way to do yet. Four lanes that currently move nothing, and worth recognising rather than hunting for.
 

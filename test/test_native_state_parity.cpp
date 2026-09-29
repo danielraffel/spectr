@@ -1042,7 +1042,8 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // all unchanged -- and 1820.58 -> 1960.58 when FEEDBACK gained the
         // plug-in-only "Keyboard shortcuts in DAW" row, whose label wraps,
         // and 1960.58 -> 1846.58 when the MOTION group (the hidden LIVE /
-        // PRECISION choice) left. If you add a group and this fails, that is the window
+        // PRECISION choice) left, and 1846.58 -> 1960.58 when the FREEZE group
+        // (Hold length) arrived. If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1052,7 +1053,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1767 && s.content_height < 1927"
+        " && s.content_height > 1881 && s.content_height < 2041"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
@@ -7481,7 +7482,8 @@ std::string shortcut_fingerprint(NativeEditorRig& rig) {
                "r.selection.length]); })()",
                "spectr-keyboard-fingerprint")
         + "|muted=" + std::to_string(muted_band_count(rig))
-        + "|render=" + std::to_string(static_cast<int>(rig.processor.render_mode()));
+        + "|render=" + std::to_string(static_cast<int>(rig.processor.render_mode()))
+        + "|freeze=" + std::to_string(rig.store.get_value(spectr::kParamFreeze));
 }
 
 std::string app_string(NativeEditorRig& rig, std::string_view field) {
@@ -7546,12 +7548,26 @@ void require_documented_keys_act(NativeEditorRig& rig) {
         CHECK(press_key(rig, pulp::view::KeyCode::t));
         CHECK(rig.processor.render_mode() != before);
     }
+    {
+        // Q writes the Freeze parameter, the lane a host records, and the
+        // header toggle turns over with it. A second press releases.
+        INFO("freeze key q");
+        REQUIRE(rig.store.get_value(spectr::kParamFreeze) == 0.0f);
+        CHECK(press_key(rig, key_of('q')));
+        CHECK(rig.store.get_value(spectr::kParamFreeze) == 1.0f);
+        CHECK(runtime_value(rig,
+            "document.querySelector('[data-spectr-freeze-toggle]')"
+            ".getAttribute('data-spectr-freeze-state')",
+            "spectr-keyboard-freeze-face") == "frozen");
+        CHECK(press_key(rig, key_of('q')));
+        CHECK(rig.store.get_value(spectr::kParamFreeze) == 0.0f);
+    }
 }
 
 // Every documented plain key is handed back to the host and changes nothing.
 void require_documented_keys_go_to_host(NativeEditorRig& rig) {
     select_all(rig);
-    for (const char key : {'s', 'l', 'b', 'f', 'g', 'm', 't'}) {
+    for (const char key : {'s', 'l', 'b', 'f', 'g', 'm', 't', 'q'}) {
         INFO("gated key " << key);
         const auto before = shortcut_fingerprint(rig);
         CHECK_FALSE(press_key(rig, key_of(key)));
@@ -7664,14 +7680,136 @@ TEST_CASE("key hints appear only where their keys are live",
             "String(String(document.querySelector('[data-spectr-latency-chip]')"
             ".getAttribute('title') || '').indexOf('press T') >= 0)",
             "spectr-keyboard-latency-title");
+        // The freeze toggle names Q in its tooltip, and the SHORTCUTS panel
+        // lists it, only where Q works.
+        out += " freeze=" + runtime_value(
+            rig,
+            "String(String(document.querySelector('[data-spectr-freeze-toggle]')"
+            ".getAttribute('title') || '').indexOf('(Q)') >= 0)",
+            "spectr-keyboard-freeze-title");
+        out += " q=" + runtime_value(
+            rig,
+            "String(Array.from(document.querySelectorAll('[data-spectr-help-panel] *'))"
+            ".some(n => n.textContent === 'Freeze / unfreeze'))",
+            "spectr-keyboard-freeze-row");
         return out;
     };
     const std::string live =
-        "chips=5 analyzer=ANALYZER note=0 help=true latency=true";
-    const std::string off = "chips=0 analyzer=ANALYZER note=1 help=false latency=false";
+        "chips=5 analyzer=ANALYZER note=0 help=true latency=true freeze=true q=true";
+    const std::string off =
+        "chips=0 analyzer=ANALYZER note=1 help=false latency=false freeze=false q=false";
     CHECK(hints(/*standalone=*/false, /*in_daw=*/false) == off);
     CHECK(hints(/*standalone=*/false, /*in_daw=*/true) == live);
     CHECK(hints(/*standalone=*/true, /*in_daw=*/false) == live);
+    storage.require_unchanged();
+}
+
+// HOST AUTOMATION OF FREEZE TURNS THE TOGGLE OVER, AND ONLY THE TOGGLE.
+//
+// Freeze is host parameter 3. A host write reaches the editor through the same
+// live projection the other lanes ride; the toggle must take the host's value,
+// and the commit that shows it must be the toggle's own, never a whole-editor
+// pass. The control on the pass counter is a real structural change (opening
+// Settings), and the control on "only when it moves" is a projection that
+// leaves Freeze alone, which must commit nothing.
+TEST_CASE("host automation of Freeze turns the toggle over as a leaf",
+          "[native-n1][state-parity][host-automation-cost][freeze-toggle]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.bridge().load_script(R"js((() => {
+      const log = globalThis.__spectrMetadataPasses = [];
+      const wrap = (fn) => typeof fn !== 'function' ? fn : (...args) => {
+        const scope = args[0];
+        log.push(Array.isArray(scope) && scope.length ? 'scoped' : 'full');
+        return fn(...args);
+      };
+      let wrapped = wrap(globalThis.__pulpApplyMaterializedImportMetadata__);
+      Object.defineProperty(globalThis, '__pulpApplyMaterializedImportMetadata__', {
+        configurable: true,
+        get() { return wrapped; },
+        set(value) { wrapped = wrap(value); },
+      });
+    })();)js", "spectr-native-freeze-pass-counter");
+    const auto reset = [&] {
+        rig.bridge().load_script("globalThis.__spectrMetadataPasses.length = 0;",
+                                 "spectr-native-freeze-pass-reset");
+    };
+    const auto passes = [&] {
+        return runtime_value(rig, "JSON.stringify(globalThis.__spectrMetadataPasses)",
+                             "spectr-native-freeze-passes");
+    };
+    const auto face = [&] {
+        return runtime_value(rig,
+            "document.querySelector('[data-spectr-freeze-toggle]')"
+            ".getAttribute('data-spectr-freeze-state')",
+            "spectr-native-freeze-face");
+    };
+    const auto host_writes = [&](float value) {
+        rig.store.set_value(spectr::kParamFreeze, value);
+        REQUIRE(rig.processor.apply_surface_params(false));
+        settle(rig.clock, 8);
+    };
+
+    reset();
+    activate(rig, "[data-spectr-settings-open]");
+    REQUIRE(passes() != "[]");
+    activate(rig, "[data-spectr-settings-close]");
+    settle(rig.clock, 8);
+
+    REQUIRE(face() == "live");
+    reset();
+    host_writes(1.0f);
+    CHECK(face() == "frozen");
+    const auto engaged = passes();
+    INFO("passes for a host freeze: " << engaged);
+    CHECK(engaged.find("full") == std::string::npos);
+
+    // A projection that leaves Freeze where it is commits nothing.
+    reset();
+    rig.store.set_value(spectr::kParamLfoShape, 2.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    CHECK(passes() == "[]");
+    CHECK(face() == "frozen");
+
+    reset();
+    host_writes(0.0f);
+    CHECK(face() == "live");
+    CHECK(passes().find("full") == std::string::npos);
+
+    // And the other direction: a press writes the host parameter.
+    activate(rig, "[data-spectr-freeze-toggle]");
+    CHECK(rig.store.get_value(spectr::kParamFreeze) == 1.0f);
+    CHECK(face() == "frozen");
+    activate(rig, "[data-spectr-freeze-toggle]");
+    CHECK(rig.store.get_value(spectr::kParamFreeze) == 0.0f);
+    storage.require_unchanged();
+}
+
+// Settings > FREEZE > Hold length writes the processor's value, clamped, and
+// shows what it will use.
+TEST_CASE("the Hold length setting reaches the processor",
+          "[native-n1][state-parity][freeze-toggle][settings]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    activate(rig, "[data-spectr-settings-open]");
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-settings-group=\"freeze\"] [data-spectr-freeze-hold]')",
+        "the FREEZE group's Hold length control is missing");
+    rig.bridge().load_script(
+        "window.pulp.postMessage('freeze_hold_set', { seconds: 0.5 }, 'test');",
+        "spectr-native-freeze-hold-write");
+    settle(rig.clock, 4);
+    CHECK(rig.processor.freeze_hold_seconds() == Catch::Approx(0.5));
+    rig.bridge().load_script(
+        "window.pulp.postMessage('freeze_hold_set', { seconds: 9 }, 'test');",
+        "spectr-native-freeze-hold-clamp");
+    settle(rig.clock, 4);
+    CHECK(rig.processor.freeze_hold_seconds()
+          == Catch::Approx(spectr::FreezeSource::kMaxHoldSeconds));
+    activate(rig, "[data-spectr-settings-close]");
     storage.require_unchanged();
 }
 

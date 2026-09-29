@@ -146,7 +146,7 @@ COPY_MARKERS = (
 )
 HEADINGS = (
     "How the bands work", "Zooming", "Drawing", "The analyzer",
-    "Snapshots and morph", "Movement", "Automation",
+    "Snapshots and morph", "Freeze", "Movement", "Automation",
     "Modulating a range of bands", "What you can automate", "Presets",
     "Latency",
 )
@@ -356,7 +356,7 @@ MACRO_FIELD = os.path.join(REPO, "include", "spectr", "macro_field.hpp")
 # Named in the copy and registered by the plugin. Both directions are checked.
 PROMISED_PARAMS = (
     "A/B Morph", "Viewport Center", "Viewport Width", "Band Count",
-    "LFO Rate", "LFO Depth", "Mix", "Output",
+    "LFO Rate", "LFO Depth", "Mix", "Output", "Freeze",
 )
 # (band index, suffix) whose derived display name the copy must quote. Index 30
 # is the Learn example, and the one a reader is most likely to copy verbatim.
