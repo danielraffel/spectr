@@ -46,6 +46,7 @@
 #include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
 #include "spectr/editor_resize.hpp"
+#include "spectr/freeze_source.hpp"
 #include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
 
@@ -514,6 +515,32 @@ public:
     [[nodiscard]] bool keyboard_shortcuts_in_daw() const noexcept;
     void set_keyboard_shortcuts_in_daw(bool enabled) noexcept;
 
+    /// Freeze's hold length: how many seconds of input the next freeze
+    /// averages into its held spectrum. Shorter holds closer to "now",
+    /// longer blends more of the recent past into a smoother hold. Clamped
+    /// to [FreezeSource::kMinHoldSeconds, kMaxHoldSeconds]; defaults to the
+    /// reference feel. A Settings value persisted in the supplemental
+    /// plugin-state blob, not a host parameter. Any thread.
+    [[nodiscard]] double freeze_hold_seconds() const noexcept {
+        return freeze_hold_seconds_.load(std::memory_order_relaxed);
+    }
+    void set_freeze_hold_seconds(double seconds) noexcept {
+        freeze_hold_seconds_.store(FreezeSource::clamp_hold_seconds(seconds),
+                                   std::memory_order_relaxed);
+    }
+
+    /// The freeze source. Audio-thread state: read it only where process()
+    /// cannot be running (tests, offline renders).
+    [[nodiscard]] const FreezeSource& freeze_source() const noexcept {
+        return freeze_source_;
+    }
+
+    /// True while a freeze is requested or its hold is still audible, which
+    /// is when the reported tail is infinite. Any thread.
+    [[nodiscard]] bool freeze_tail_infinite() const noexcept {
+        return freeze_tail_infinite_.load(std::memory_order_acquire);
+    }
+
     /// Accessor for the StateStore-level ABCompare. Lazily constructed
     /// the first time it's requested (after define_parameters has wired
     /// the store). Returns nullptr if the store isn't available yet.
@@ -747,6 +774,15 @@ private:
     }
     pulp::signal::SmoothedValue<float>     output_gain_{1.0f};
     bool                                   processor_prepared_ = false;
+    // Owned here, not by a renderer, so a Latency switch hands the running
+    // hold to the new realisation instead of dropping it. Prepared with the
+    // processor; its members belong to the audio thread afterwards.
+    FreezeSource                           freeze_source_{};
+    std::atomic<double> freeze_hold_seconds_{FreezeSource::kDefaultHoldSeconds};
+    // Written by the audio thread on each edge, read by descriptor() from
+    // whichever thread a host asks on.
+    std::atomic<bool>                      freeze_tail_infinite_{false};
+    void update_freeze_tail_() noexcept;
     std::array<const float*, kMaximumChannels> input_channels_{};
     std::array<float*, kMaximumChannels>       output_channels_{};
 
@@ -767,8 +803,9 @@ private:
     // 129 viewport center, 130 viewport width, 131 band count, then motion,
     // analyzer, edit, and visualization at 132..135, then internal LFO
     // enabled/shape/rate/depth/target at 136..140, LFO 2
-    // enabled/shape/rate/depth at 141..144, and Macro 1..4 at 145..148.
-    static constexpr std::size_t kSurfaceCacheSlots = 149;
+    // enabled/shape/rate/depth at 141..144, Macro 1..4 at 145..148, and
+    // Freeze at 149.
+    static constexpr std::size_t kSurfaceCacheSlots = 150;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
     // The audio thread's OWN record of the surface values it last pushed into

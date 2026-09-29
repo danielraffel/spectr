@@ -32,7 +32,11 @@ namespace spectr {
 
 // ── Control block ────────────────────────────────────────────────────────
 // Legacy global params (Mix = 1, Output = 2) are declared with the Processor
-// in spectr.hpp. IDs 3..999 are reserved headroom for future globals.
+// in spectr.hpp. IDs 4..999 are reserved headroom for future globals.
+
+/// Freeze: hold the input spectrum and keep the live mask acting on it.
+/// A boolean global, automatable; see FreezeSource.
+inline constexpr pulp::state::ParamID kParamFreeze = 3;
 
 /// A/B snapshot morph position, 0 = A .. 1 = B.
 inline constexpr pulp::state::ParamID kParamMorph = 3000;
@@ -96,10 +100,10 @@ constexpr pulp::state::ParamID band_mute_param_id(std::size_t band) noexcept {
     return kParamBandMuteBase + static_cast<pulp::state::ParamID>(band);
 }
 
-/// Total registered parameters: 2 legacy + 64 gain + 64 mute + 4 control
-/// (morph, center, width, count) + 4 modes + 9 internal LFO controls
+/// Total registered parameters: 2 legacy + freeze + 64 gain + 64 mute + 4
+/// control (morph, center, width, count) + 4 modes + 9 internal LFO controls
 /// + 4 macros.
-inline constexpr std::size_t kSurfaceParamCount = 151;
+inline constexpr std::size_t kSurfaceParamCount = 152;
 
 // ── Viewport log-frequency encoding ─────────────────────────────────────
 // The display mapping (pattern.cpp) spans log10(20)..log10(20000), so the
@@ -146,7 +150,8 @@ inline constexpr std::size_t kSlotModeBase   = 132;  // +0..3: motion/analyzer/e
 inline constexpr std::size_t kSlotLfoBase    = 136;  // +0..4: enabled/shape/rate/depth/target
 inline constexpr std::size_t kSlotLfo2Base   = 141;  // +0..3: enabled/shape/rate/depth
 inline constexpr std::size_t kSlotMacroBase  = 145;  // +0..3: Macro 1..4
-inline constexpr std::size_t kSurfaceSlots   = 149;
+inline constexpr std::size_t kSlotFreeze     = 149;
+inline constexpr std::size_t kSurfaceSlots   = 150;
 
 constexpr pulp::state::ParamID surface_slot_param_id(std::size_t slot) noexcept {
     if (slot < 64) return band_gain_param_id(slot);
@@ -156,6 +161,7 @@ constexpr pulp::state::ParamID surface_slot_param_id(std::size_t slot) noexcept 
         case kSlotCenter:    return kParamViewportCenter;
         case kSlotWidth:     return kParamViewportWidth;
         case kSlotBandCount: return kParamBandCount;
+        case kSlotFreeze:    return kParamFreeze;
         default:
             if (slot < kSlotLfoBase)
                 return kParamMotionMode

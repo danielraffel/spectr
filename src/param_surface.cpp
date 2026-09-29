@@ -134,6 +134,19 @@ void register_surface_params(pulp::state::StateStore& store) {
     store.add_group({kGroupModulation, "Modulation", 0});
     store.add_group({kGroupMacros, "Macros", 0});
 
+    {
+        // A global beside Mix and Output. Automatable: freezing changes
+        // neither latency nor topology, so a host may ride it freely.
+        pulp::state::ParamInfo info;
+        info.id = kParamFreeze;
+        info.name = "Freeze";
+        info.range = {0.0f, 1.0f, 0.0f, 1.0f};
+        info.group_id = kGroupGlobal;
+        info.kind = pulp::state::ParamKind::Toggle;
+        add_enum_labels(info, {"Live", "Frozen"});
+        store.add_parameter(info);
+    }
+
     for (std::size_t i = 0; i < kMaxBands; ++i) {
         pulp::state::ParamInfo info;
         info.id = band_gain_param_id(i);
@@ -510,6 +523,20 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         const auto id = kParamMotionMode + static_cast<pulp::state::ParamID>(m);
         const float value = store->get_value(id);
         auto& cached = applied_param_cache_[detail::kSlotModeBase + m];
+        if (value != cached.load(std::memory_order_relaxed)) {
+            cached.store(value, std::memory_order_relaxed);
+            editor_changed = true;
+        }
+    }
+
+    // Freeze is read by the audio thread straight off the parameter, per
+    // automation slice, so there is nothing to republish here. A host-side
+    // change only has to reach the editor's toggle, through the same live
+    // projection the mode toggles ride -- and it stays out of their loop,
+    // which is sized to the four modes.
+    {
+        const float value = store->get_value(kParamFreeze);
+        auto& cached = applied_param_cache_[detail::kSlotFreeze];
         if (value != cached.load(std::memory_order_relaxed)) {
             cached.store(value, std::memory_order_relaxed);
             editor_changed = true;

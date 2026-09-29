@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 151;  // +4 macros
+constexpr std::size_t kExpectedParamCount = 152;  // +4 macros, +freeze
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {
@@ -101,6 +101,13 @@ TEST_CASE("#34: the full static parameter surface is registered") {
     CHECK(find(w.store, kAnalyzerModeId) != nullptr);
     CHECK(find(w.store, kEditModeId) != nullptr);
     CHECK(find(w.store, kVisualizationId) != nullptr);
+
+    // Freeze is the first global after Output: a boolean the host can ride.
+    const auto* freeze = find(w.store, 3);
+    REQUIRE(freeze != nullptr);
+    CHECK(freeze->name == "Freeze");
+    CHECK(freeze->kind == pulp::state::ParamKind::Toggle);
+    CHECK(freeze->range.default_value == 0.0f);
 }
 
 TEST_CASE("#34: reserved ID ranges stay empty") {
@@ -109,8 +116,8 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     // from unregistered — id 1 (Mix) is always there.
     REQUIRE(find(w.store, 1) != nullptr);
 
-    // Legacy global growth headroom between Output and the band block.
-    CHECK(find(w.store, 3) == nullptr);
+    // Legacy global growth headroom between Freeze and the band block.
+    CHECK(find(w.store, 4) == nullptr);
     CHECK(find(w.store, 99) == nullptr);
     // Reserved tails between the band blocks and the control block.
     CHECK(find(w.store, 1064) == nullptr);

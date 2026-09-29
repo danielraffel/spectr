@@ -123,7 +123,22 @@ pulp::format::PluginDescriptor Spectr::descriptor() const {
     descriptor.tail_samples=2*kSpectralFftSize+kSpectralAnalysisHop
         +(kSpectralAnalysisHop/2)*5;
 #endif
+    // A held spectrum sounds for as long as it is held, with or without
+    // input, so a host must not stop processing on silence. Every format
+    // adapter reads a negative tail as infinite.
+    if (freeze_tail_infinite()) descriptor.tail_samples = -1;
     return descriptor;
+}
+
+void Spectr::update_freeze_tail_() noexcept {
+    // Audio thread. Infinite while a freeze is asked for or its hold still
+    // reaches the output; the host hears about each edge exactly once.
+    const bool infinite = freeze_source_.frozen_requested()
+                       || freeze_source_.hold_audible();
+    if (infinite != freeze_tail_infinite_.load(std::memory_order_relaxed)) {
+        freeze_tail_infinite_.store(infinite, std::memory_order_release);
+        flag_tail_changed();
+    }
 }
 
 namespace {
@@ -574,6 +589,10 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
         }
     }
     renderer->reset();
+    // Last: the pump above runs on this (control) thread while the audio
+    // thread may be running the outgoing renderer through the same source, so
+    // the source is attached only once nothing here will process again.
+    if (freeze_source_.prepared()) (void)renderer->set_wet_source(&freeze_source_);
     return renderer;
 }
 
@@ -676,6 +695,12 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     sample_rate_ = ctx.sample_rate;
     max_block_   = ctx.max_buffer_size;
     channels_    = std::max(1, ctx.output_channels);
+
+    // No audio thread runs across a prepare. Keep a prepared source whose
+    // geometry still fits, so a host re-prepare with the same rate and
+    // channels does not throw a playing hold away.
+    if (!freeze_source_.prepared_for(sample_rate_, channels_))
+        (void)freeze_source_.prepare(sample_rate_, channels_);
 
     // No audio thread can be running across a prepare, so the previous
     // renderer and anything a mode switch parked are free to go now.
@@ -1005,8 +1030,12 @@ void Spectr::process(
     if (should_reset_stream_history) {
         if (processor_prepared_ && renderer)
             renderer->reset();
+        // A transport jump forgets the input analysed so far and nothing
+        // else: a playing hold keeps playing across it.
+        freeze_source_.clear_history();
         output_gain_.set_immediate(target_output_gain);
     }
+    freeze_source_.set_hold_seconds(freeze_hold_seconds());
 
     // Gate on the pointer this block actually dereferences, not on a separate
     // bool that could in principle disagree with it.
@@ -1358,6 +1387,7 @@ void Spectr::process(
                     }
                     renderer->set_mix(std::clamp(
                         cursor.value(kMix) / 100.0f, 0.0f, 1.0f));
+                    freeze_source_.set_frozen(cursor.value(kParamFreeze) >= 0.5f);
 
                     for (std::size_t channel = 0;
                          channel < out_slice.num_channels(); ++channel) {
@@ -1423,6 +1453,7 @@ void Spectr::process(
                 output.num_samples() > 0 ? output.num_samples() - 1 : 0);
             audio_mix_percent_ = params.value_at(kMix, last_sample);
             audio_output_trim_db_ = params.value_at(kOutputTrim, last_sample);
+            update_freeze_tail_();
 
             const auto nc = output.num_channels();
             if (nc > 0 && nc <= 8) {
@@ -1444,11 +1475,13 @@ void Spectr::process(
             output_channels_[channel] = output.channel(channel).data();
         }
         renderer->set_mix(std::clamp(mix, 0.0f, 1.0f));
+        freeze_source_.set_frozen(state().get_value(kParamFreeze) >= 0.5f);
         audio_mix_percent_ = mix * 100.0f;
         audio_output_trim_db_ = out_trim_db;
         const bool processed = renderer->process(
             input_channels_.data(), output_channels_.data(),
             static_cast<int>(output.num_samples()));
+        update_freeze_tail_();
 
         // The shared processor already mixed latency-aligned dry and wet.
         // Output trim remains a product-level post gain.
@@ -1582,6 +1615,8 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // writer that predates it; readers treat absence as OFF, the default, so
     // an old session keeps the host's keys where a new instance would.
     root.addMember("keyboard_shortcuts_in_daw", keyboard_shortcuts_in_daw_);
+    // The Settings hold length. The held spectrum itself is not saved.
+    root.addMember("freeze_hold_seconds", freeze_hold_seconds());
 
     // Macro membership: four arrays of canonical slot indices, shaped exactly
     // like `morph_overrides` above. The macro VALUES are StateStore
@@ -1969,6 +2004,18 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_keyboard_shortcuts_in_daw = flag.getBool();
     }
 
+    // Absent on a blob written before freeze existed: the default length.
+    double new_freeze_hold_seconds = FreezeSource::kDefaultHoldSeconds;
+    if (root.hasObjectMember("freeze_hold_seconds")) {
+        const auto& seconds = root["freeze_hold_seconds"];
+        if (seconds.isFloat64()) new_freeze_hold_seconds = seconds.getFloat64();
+        else if (seconds.isInt32()) new_freeze_hold_seconds = seconds.getInt32();
+        else if (seconds.isInt64()) new_freeze_hold_seconds =
+            static_cast<double>(seconds.getInt64());
+        else return false;
+        if (!std::isfinite(new_freeze_hold_seconds)) return false;
+    }
+
     std::array<MacroMembership<kMaxBands>, kMacroCount> new_macro_members{};
     if (root.hasObjectMember("macro_members")) {
         const auto macros = root["macro_members"];
@@ -2047,6 +2094,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_overrides_ = new_morph_overrides;
         morph_applies_viewport_ = new_morph_applies_viewport;
         keyboard_shortcuts_in_daw_ = new_keyboard_shortcuts_in_daw;
+        set_freeze_hold_seconds(new_freeze_hold_seconds);
         macro_members_ = new_macro_members;
         // Re-derive the LFO lanes from the restored parameters before the
         // mask rides along: the audio thread only honours a published mask

@@ -84,6 +84,9 @@
 //  type="mode_set"          — payload: {kind: motion|analyzer|edit|visualization,
 //                                       value: the corresponding editor label}
 //                             effect: StateStore::set_value(id, value)
+//  type="freeze_hold_set"   — payload: {seconds: number}
+//                             effect: Spectr::set_freeze_hold_seconds(seconds);
+//                             the response carries the clamped value
 
 #include <pulp/view/editor_bridge.hpp>
 

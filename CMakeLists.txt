@@ -530,6 +530,7 @@ add_executable(Spectr-test
     test/test_tracking_transition.cpp
     test/test_tracking_transition_sweep.cpp
     test/test_render_mode.cpp
+    test/test_freeze.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
@@ -3854,6 +3855,14 @@ add_test(NAME Spectr-render-path-clock-product
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
         ${CMAKE_CURRENT_SOURCE_DIR}/src/spectr.cpp)
 set_tests_properties(Spectr-render-path-clock-product PROPERTIES TIMEOUT 60)
+
+# The freeze source runs inside both renderers' audio path, so its block and
+# hop code is held to the same rule.
+add_test(NAME Spectr-render-path-clock-freeze
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/spectr/freeze_source.hpp)
+set_tests_properties(Spectr-render-path-clock-freeze PROPERTIES TIMEOUT 60)
 
 # The merge driver for the materialized editor document. That artifact is one
 # minified line, so git's default merge conflicts on ANY two changes to it --
