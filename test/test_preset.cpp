@@ -219,6 +219,28 @@ TEST_CASE("M9 file save/load round-trip works end-to-end") {
     CHECK(result.metadata.name == "File");
 }
 
+TEST_CASE("a preset never carries Freeze in either direction") {
+    // Saved while frozen, loaded into a live instance: stays live.
+    Rig frozen;
+    frozen.store.set_value(spectr::kParamFreeze, 1.0f);
+    frozen.store.set_value(spectr::kMix, 30.0f);
+    PresetMetadata meta;
+    meta.name = "Frozen";
+    const auto saved_frozen = spectr::save_preset_to_string(*frozen.proc, meta);
+    Rig live;
+    REQUIRE(load_preset_from_string(*live.proc, saved_frozen));
+    CHECK(live.store.get_value(spectr::kMix) == Approx(30.0f)); // the preset did load
+    CHECK(live.store.get_value(spectr::kParamFreeze) == 0.0f);
+
+    // Saved live, loaded while frozen: the hold is kept.
+    Rig source;
+    const auto saved_live = spectr::save_preset_to_string(*source.proc, meta);
+    Rig holding;
+    holding.store.set_value(spectr::kParamFreeze, 1.0f);
+    REQUIRE(load_preset_from_string(*holding.proc, saved_live));
+    CHECK(holding.store.get_value(spectr::kParamFreeze) == 1.0f);
+}
+
 TEST_CASE("M9 describe() returns non-empty stable messages for every error") {
     using E = PresetLoadError;
     for (E e : {E::None, E::MalformedJson, E::NotASpectrPreset,
