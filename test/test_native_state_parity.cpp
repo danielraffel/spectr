@@ -7149,6 +7149,76 @@ TEST_CASE("key hints appear only where their keys are live",
     storage.require_unchanged();
 }
 
+// ── The EDIT MODE rows lay out the same with or without their key badge ─────
+//
+// Each row is an icon, then a header line (title, "· tagline", and the key
+// badge at the right while the keys are live), then the description below,
+// spanning the text column. Hiding the badge in a plug-in used to reflow the
+// whole row: the title and tagline collapsed into a narrow middle column,
+// stacked and truncated, with the description beside them instead of below.
+// The geometry is measured in every context and must agree across them.
+
+TEST_CASE("EDIT MODE rows lay out the same with or without the key badge",
+          "[native-n1][state-parity][keyboard][hints][layout]") {
+    PatternStoragePoison storage;
+    const auto rows = [](bool standalone) {
+        EditorContextScope context(standalone);
+        NativeEditorRig rig;
+        require_home(rig);
+        std::vector<std::string> out;
+        for (const char* mode : {"sculpt", "level", "boost", "flare", "glide"}) {
+            // One row per evaluation keeps each report on a single line.
+            activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
+            out.push_back(runtime_value(
+                rig,
+                std::string(
+                    "(() => {"
+                    "  const rect = (n) => { const r = n.getBoundingClientRect();"
+                    "    return { l: r.left, t: r.top, r: r.left + r.width,"
+                    "             b: r.top + r.height, w: r.width, h: r.height }; };"
+                    "  const round = (r) => [r.l, r.t, r.w, r.h].map(v => Math.round(v)).join(',');"
+                    "  const row = document.querySelector('[data-spectr-edit-mode=\"") + mode +
+                    "\"]');"
+                    "  if (!row) return 'no row';"
+                    "  const text = row.children[1];"
+                    "  const header = text && text.children[0];"
+                    "  const desc = text && text.children[1];"
+                    "  const title = header && header.children[0];"
+                    "  const tagline = header && header.children[1];"
+                    "  if (!title || !tagline || !desc) return 'missing parts';"
+                    "  const t = rect(title), g = rect(tagline), d = rect(desc), h = rect(header);"
+                    "  const rowRect = rect(row);"
+                    "  const faults = [];"
+                    "  if (Math.abs(t.t - g.t) > 2) faults.push('tagline not on the title line');"
+                    "  if (g.l < t.r - 0.5) faults.push('tagline overlaps the title');"
+                    "  if (t.h > 20 || g.h > 20) faults.push('title/tagline wrapped');"
+                    "  if (Math.max(t.b, g.b, h.b) > d.t + 0.5) faults.push('header overlaps the description');"
+                    "  if (Math.abs(t.l - d.l) > 1) faults.push('title not left-aligned with the description');"
+                    "  if (d.w < 180) faults.push('description does not span the row');"
+                    "  if (t.t - rowRect.t > 16) faults.push('title not at the top of the row');"
+                    "  return (faults.length ? faults.join('; ') : 'ok')"
+                    "    + ' | title=' + round(t) + ' tagline=' + round(g) + ' desc=' + round(d);"
+                    "})()",
+                "spectr-edit-mode-row-geometry"));
+            CHECK(press_key(rig, pulp::view::KeyCode::escape));
+        }
+        return out;
+    };
+    const auto hosted = rows(/*standalone=*/false);
+    const auto standalone = rows(/*standalone=*/true);
+    REQUIRE(hosted.size() == 5);
+    REQUIRE(standalone.size() == 5);
+    for (std::size_t i = 0; i < hosted.size(); ++i) {
+        INFO("row " << i << "\n  plug-in:    " << hosted[i]
+                    << "\n  standalone: " << standalone[i]);
+        CHECK(hosted[i].rfind("ok |", 0) == 0);
+        CHECK(standalone[i].rfind("ok |", 0) == 0);
+        // The badge is the only difference between the contexts.
+        CHECK(hosted[i] == standalone[i]);
+    }
+    storage.require_unchanged();
+}
+
 // ── A modal dialog makes the plot behind it inert ───────────────────────────
 //
 // With About or Settings open, a two-finger scroll over the band plot used to

@@ -959,6 +959,30 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     # heavyweight native materialized editor runtime and must not race.
     RESOURCE_LOCK spectr_native_materialized_editor)
 
+# The menus whose key hints follow the keyboard policy (EDIT MODE, ANALYZER,
+# SHORTCUTS), captured as a plug-in -- where the plain-key shortcuts go to the
+# DAW and the hints are hidden -- and as the standalone, with the EDIT MODE
+# rows measured in each. Hiding the key badge once reflowed every EDIT MODE
+# row into three columns in a plug-in only. Exit: 0 laid out, 1 a row is
+# broken, 3 a menu never opened (never a pass).
+foreach(_spectr_menu_context hosted standalone)
+    if(_spectr_menu_context STREQUAL "hosted")
+        set(_spectr_menu_hosted 1)
+    else()
+        set(_spectr_menu_hosted 0)
+    endif()
+    add_test(NAME Spectr-menu-shots-${_spectr_menu_context}
+        COMMAND ${CMAKE_COMMAND} -E env SPECTR_MENU_SHOTS=1
+            SPECTR_EDITOR_HOSTED=${_spectr_menu_hosted}
+            $<TARGET_FILE:Spectr-native-shot>
+            --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-menu-shots-${_spectr_menu_context}
+            --backend=skia)
+    set_tests_properties(Spectr-menu-shots-${_spectr_menu_context} PROPERTIES
+        TIMEOUT 300
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+endforeach()
+
 # Resize reachability (COR-4, editor half): sweeps host sizes through the
 # shipping resize path and asserts every hit-test leaf stays inside the design
 # viewport. Two stages -- capture, then a snapshot detector -- so the exit codes
