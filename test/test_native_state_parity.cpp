@@ -6080,6 +6080,59 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
     };
     check_words(*zoom, rgba, 2);
 
+    // The output cluster shares the line too: the OUTPUT caption, the peak
+    // chip's PEAK label and its number, and the trim readout. Audio runs first
+    // so the chip prints a number rather than its "--" placeholder, whose
+    // dashes sit mid-line and would say nothing about the baseline.
+    feed_audio_blocks(rig, 16);
+    settle(rig.clock, 12);
+    const std::function<const View*(const View&, std::string_view)> by_id =
+        [&by_id](const View& view, std::string_view id) -> const View* {
+            if (view.id() == id) return &view;
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                if (const auto* match = by_id(*view.child_at(index), id))
+                    return match;
+            return nullptr;
+        };
+    const std::function<const pulp::view::Label*(const View&)> first_label =
+        [&first_label](const View& view) -> const pulp::view::Label* {
+            if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view))
+                return label;
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                if (const auto* match = first_label(*view.child_at(index)))
+                    return match;
+            return nullptr;
+        };
+    const auto label_at = [&](const char* selector) {
+        auto id = runtime_string(
+            rig, std::string{"String(document.querySelector('"} + selector
+                     + "').__pulpId)",
+            "spectr-header-output-id");
+        id.erase(std::min(id.find('\n'), id.size()));
+        const auto* view = by_id(*rig.root, id);
+        INFO(selector << " id=" << id);
+        REQUIRE(view != nullptr);
+        const auto* label = first_label(*view);
+        REQUIRE(label != nullptr);
+        return label;
+    };
+    const auto* output_caption = label_at("[data-spectr-output-trim-label]");
+    const auto* peak_label = label_at("[data-spectr-output-peak-label]");
+    const auto* trim_readout = label_at("[data-spectr-output-trim-readout]");
+    CHECK(output_caption->text() == "OUTPUT");
+    CHECK(trim_readout->text() == "0.0");
+    INFO("peak chip reads " << peak_label->text());
+    REQUIRE(peak_label->text().rfind("PEAK -", 0) == 0);
+    REQUIRE(peak_label->text().find_first_of("0123456789") != std::string::npos);
+    const auto output_frame = pulp::view::render_to_rgba(
+        *rig.root, 1320, 860, kScale, &width, &height);
+    REQUIRE(!output_frame.empty());
+    check_words(*output_caption, output_frame, 1);
+    // "PEAK" and its number, which begins with a minus sign attached to the
+    // digits; the digits carry the word's top and bottom rows.
+    check_words(*peak_label, output_frame, 2);
+    check_words(*trim_readout, output_frame, 1);
+
     // The bands trigger's caption shares the same line, both as captured and
     // after its text changes -- a changed caption no longer matches its capture
     // and is laid out natively, which is the state a user who picked another

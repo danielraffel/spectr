@@ -154,8 +154,21 @@ const LATCH = "      if (payload.over === true) {\n        hold.over = true;\n";
 // is how an overload would decay WITH the number.
 const LATCH_RENDER = "  const over = reading.over === true;\n";
 const LABEL = '(over ? "OVER " : "PEAK ") + peakText';
+// The cluster names the document's BOUND monospace face (the one every
+// captured header label resolves), read from the document's own
+// font_bindings -- never typed here, so a re-capture with a new asset id
+// cannot leave these plants matching nothing. See
+// tools/patch_materialized_output_cluster_face.py.
+const BOUND_MONO = (() => {
+  const doc = JSON.parse(readFileSync(documentPath, "utf8"));
+  const faces = (doc.font_bindings || []).filter((b) => b.family === "JetBrains Mono"
+    && String(b.weight) === "400" && b.style === "normal"
+    && String(b.unicode_range || "").startsWith("U+0000-00FF"));
+  return faces.length === 1 ? faces[0].runtime_family : "<no bound face>";
+})();
+const MONO_FAMILY = `'"${BOUND_MONO}", "JetBrains Mono", ui-monospace, monospace'`;
 const READOUT_STYLE = 'style: { width: 34, textAlign: "right", '
-  + 'whiteSpace: "nowrap", flexShrink: 0, fontFamily: "var(--mono)", '
+  + `whiteSpace: "nowrap", flexShrink: 0, fontFamily: ${MONO_FAMILY}, `
   + 'fontSize: 10, color: "rgba(255,255,255,0.72)" }';
 const TRACK_STYLE = 'style: { width: 156, flexShrink: 0, '
   + 'accentColor: "hsl(200,80%,60%)" }';
@@ -165,8 +178,8 @@ const TRIM_LABEL_ELEMENT = '    /* @__PURE__ */ React.createElement("span", {\n'
   + '      // declares no type inherits the document body default, which is\n'
   + '      // how the readout beside it shipped 47% taller than every other\n'
   + '      // readout in this header.\n'
-  + '      style: { fontFamily: "var(--mono)", fontSize: 10, '
-  + 'letterSpacing: 0.8, color: "rgba(255,255,255,0.72)", lineHeight: 1, '
+  + `      style: { fontFamily: ${MONO_FAMILY}, fontSize: 10, `
+  + 'letterSpacing: 0.8, color: "rgba(255,255,255,0.72)", '
   + 'whiteSpace: "nowrap", flexShrink: 0 }\n'
   + '    }, "OUTPUT"),\n';
 
@@ -463,7 +476,13 @@ if (!peakLabelStyle) {
 //
 // Asserted against the sibling's declarations rather than against literals, so
 // a deliberate retype of the cluster moves both halves or fails here.
-const peakFontFamily = /fontFamily: "([^"]+)"/.exec(meterBody);
+// A family is written either "..." or '...' (a quoted face list).
+const FAMILY = /fontFamily: (?:"([^"]+)"|'([^']+)')/;
+const familyOf = (text) => {
+  const match = FAMILY.exec(text);
+  return match ? [match[0], match[1] || match[2]] : null;
+};
+const peakFontFamily = familyOf(meterBody);
 const peakFontSize = /fontSize: (\d+)/.exec(meterBody);
 const readoutStyle = /"data-spectr-output-trim-readout": true,[\s\S]{0,400}?style: \{([^}]*)\}/
   .exec(meterBody);
@@ -474,7 +493,7 @@ if (!peakFontFamily || !peakFontSize) {
   fail("no style object found on the trim readout");
 } else {
   const style = readoutStyle[1];
-  const family = /fontFamily: "([^"]+)"/.exec(style);
+  const family = familyOf(style);
   const size = /fontSize: (\d+)/.exec(style);
   if (!family || family[1] !== peakFontFamily[1]) {
     fail("the trim readout does not declare the PEAK button's font family "
@@ -537,7 +556,7 @@ if (!labelStyle || !labelText) {
   // Same defect class as S5, on the element added to fix a different one: a
   // control that declares no type inherits the document body default.
   const style = labelStyle[1];
-  const family = /fontFamily: "([^"]+)"/.exec(style);
+  const family = familyOf(style);
   const size = /fontSize: (\d+)/.exec(style);
   if (!peakFontFamily || !peakFontSize) {
     // already reported by S5
