@@ -76,7 +76,9 @@ TEST_CASE("Spectr actual processor selects shared output with matching fallback 
     }
     REQUIRE(g->set_render_mode(spectr::MaskRenderMode::zero_latency));
     gpu.prepare(48000, block);
-    CHECK(g->latency_samples() == 0);
+    // The near-zero-latency renderer has a fixed small FIR latency. It is
+    // intentionally not the literal zero used by the render-mode name.
+    CHECK(g->latency_samples() == spectr::kZeroLatencyRenderBlock);
     CHECK_FALSE(g->shared_product_snapshot().shared_renderer);
     gpu.release();
 }
