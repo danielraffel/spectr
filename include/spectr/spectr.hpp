@@ -16,6 +16,12 @@
 #include <pulp/view/ab_compare.hpp>
 #include <pulp/view/visualization_bridge.hpp>
 #include <array>
+
+// The build defines this from CMake's PROJECT_VERSION. A translation unit
+// compiled without it would report a version no bundle or installer carries.
+#if !defined(SPECTR_PRODUCT_VERSION)
+#error "SPECTR_PRODUCT_VERSION must come from Spectr's CMake PROJECT_VERSION"
+#endif
 #include <atomic>
 #include <bitset>
 #include <cmath>
@@ -280,7 +286,7 @@ inline pulp::format::PluginDescriptor make_descriptor() {
 #else
         .bundle_id    = "com.pulp.spectr",
 #endif
-        .version      = "1.0.0",
+        .version      = SPECTR_PRODUCT_VERSION,
         .category     = pulp::format::PluginCategory::Effect,
     };
 }

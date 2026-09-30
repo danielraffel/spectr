@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD="${BUILD:-$ROOT/build}"
 OUT="${OUT:-$ROOT/artifacts}"
-VER="${VER:-1.0.0}"
+VER="${VER:-}"
 PULP_ROOT="${PULP_ROOT:-$(cd "$ROOT/../pulp" 2>/dev/null && pwd || true)}"
 PULP_DIR_EXPECTED="${PULP_DIR_EXPECTED:-}"
 PULP_SDK_SHA_EXPECTED="${PULP_SDK_SHA_EXPECTED:-}"
@@ -66,6 +66,17 @@ CACHE="$BUILD/CMakeCache.txt"
 [[ -f "$CACHE" ]] || { echo "missing Spectr build cache: $CACHE" >&2; exit 2; }
 grep -q '^CMAKE_BUILD_TYPE:STRING=Release$' "$CACHE" || {
   echo "Spectr installer inputs must come from a Release build" >&2
+  exit 2
+}
+# The installer version is the build's product version: the one the plugin
+# descriptor, Settings > About and every bundle's Info.plist already carry.
+# VER may restate it but never contradict it.
+PROJECT_VER="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "$CACHE" | tail -1)"
+[[ -n "$PROJECT_VER" ]] || { echo "build cache names no CMAKE_PROJECT_VERSION" >&2; exit 2; }
+VER="${VER:-$PROJECT_VER}"
+[[ "$VER" == "$PROJECT_VER" ]] || {
+  echo "VER=$VER disagrees with the build's product version $PROJECT_VER" >&2
+  echo "  change project(Spectr VERSION ...) in CMakeLists.txt instead" >&2
   exit 2
 }
 SOURCE_ROOT="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$CACHE" | tail -1)"
@@ -169,4 +180,6 @@ if [[ -n "${DIAG_APP:-}" ]]; then
 fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
 
-exec "$PULP_ROOT/tools/scripts/build_combined_installer.sh" "${args[@]}"
+"$PULP_ROOT/tools/scripts/build_combined_installer.sh" "${args[@]}"
+python3 "$ROOT/tools/check_release_version.py" --expected "$VER" \
+  --pkg "$OUT/Spectr-$VER.pkg"
