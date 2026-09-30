@@ -220,6 +220,14 @@ bool editor_owns_resize_grip();
 void set_editor_is_standalone(bool value);
 bool editor_is_standalone();
 
+/// Make the plug-in host view take a click that lands while its window is not
+/// key, so the first press after the user has worked elsewhere in the DAW acts
+/// on the control under it instead of only focusing the editor window. A
+/// stopgap for a Pulp SDK that lacks the override; returns how many host view
+/// classes gained it, 0 when the SDK already has its own. macOS only (0
+/// elsewhere); idempotent.
+int install_host_view_first_mouse();
+
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
 // SpectralFrameEngine reads through a fixed causal cursor of one complete FFT

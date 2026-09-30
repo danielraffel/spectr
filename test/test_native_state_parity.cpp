@@ -3497,7 +3497,13 @@ TEST_CASE("native buttons are tappable across their whole painted bounds",
         if (initial->bounds().width <= 0.0f || initial->bounds().height <= 0.0f)
             continue;
         INFO("control " << describe_control(*initial));
-        for (const float fraction : {0.0f, 0.5f, 1.0f}) {
+        // A grid over the whole painted box -- corners, edges and interior --
+        // not a single row. The earlier sweep clicked only the vertical middle
+        // (left edge, centre, right edge), so a band along the top or bottom
+        // of a control could go dead without this test noticing, which is
+        // exactly the shape of the snapshot A/B report.
+        for (const float fy : {0.0f, 0.5f, 1.0f})
+        for (const float fx : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f}) {
             if (rig.root->interaction().active_overlay != nullptr) {
                 pulp::view::View::dismiss_active_overlay(*rig.root);
                 settle(rig.clock, 12);
@@ -3506,13 +3512,15 @@ TEST_CASE("native buttons are tappable across their whole painted bounds",
             REQUIRE(control != nullptr);
             // Aim at the PAINTED extent, in root space, because that is what
             // the user aims at. Re-resolve after dismissing an overlay because
-            // that React commit may replace a live view object.
+            // that React commit may replace a live view object. Stay 1.5 px
+            // inside every edge so a sample is unambiguously on the ink.
             const auto painted = painted_extent(*control);
-            const float y = (painted.top + painted.bottom) * 0.5f;
-            const float x = fraction == 0.0f ? painted.left + 1.5f
-                : fraction == 1.0f ? painted.right - 1.5f
-                                   : (painted.left + painted.right) * 0.5f;
-            CAPTURE(x, y, painted.left, painted.right);
+            const float x = painted.left + 1.5f
+                            + (painted.right - painted.left - 3.0f) * fx;
+            const float y = painted.top + 1.5f
+                            + (painted.bottom - painted.top - 3.0f) * fy;
+            CAPTURE(x, y, painted.left, painted.top, painted.right,
+                    painted.bottom);
             const auto before = click_dispatch_count(rig);
             rig.root->simulate_click({x, y});
             settle(rig.clock, 12);
