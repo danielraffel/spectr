@@ -33,6 +33,18 @@ the compatibility contract. Macro MEMBERSHIP and the snapshot bank itself stay
 editor-local working state, preserved in Spectr's supplemental plugin state:
 neither is a value a host can automate.
 
+Keyboard: **Ctrl+Opt+Cmd+F** toggles Freeze everywhere, including inside a DAW
+by default — no default key command in Logic Pro, Ableton Live, Cubase or
+REAPER uses it, and a chord is no Musical Typing key. The plug-in only sees it
+while its own window is key; a host that dispatches its key commands first (or
+whose window is key) keeps it, and then it does nothing there. **Escape**
+clears the band selection in every context (an open menu or dialog takes it
+first; with nothing selected it goes to the host). The single-letter keys —
+S L B F G edit modes, M mute, T latency, Q freeze — are the DAW's in a plug-in
+unless "Keyboard shortcuts in DAW" is on, and always live in the standalone. A
+Freeze press (toggle or key) reaches the host as one edit gesture, so Touch,
+Latch and Write automation record it.
+
 See [`planning/`](planning/) for the full design package:
 
 - [`planning/Spectr-V2-Product-Spec.md`](planning/Spectr-V2-Product-Spec.md) — product contract

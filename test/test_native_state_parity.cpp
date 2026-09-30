@@ -7501,8 +7501,8 @@ void select_all(NativeEditorRig& rig) {
 }
 
 // Keys removed in every context: the digit aliases for the edit modes, which
-// no surface showed; A and 6, which cycled the analyzer (A is a Musical Typing
-// note); and Escape, pressed with a selection standing, which used to clear it.
+// no surface showed; and A and 6, which cycled the analyzer (A is a Musical
+// Typing note).
 void require_removed_keys_do_nothing(NativeEditorRig& rig) {
     select_all(rig);
     for (const char key : {'1', '2', '3', '4', '5', 'a', '6'}) {
@@ -7511,10 +7511,6 @@ void require_removed_keys_do_nothing(NativeEditorRig& rig) {
         CHECK_FALSE(press_key(rig, key_of(key)));
         CHECK(shortcut_fingerprint(rig) == before);
     }
-    INFO("removed key Escape (selection clear)");
-    const auto before = shortcut_fingerprint(rig);
-    CHECK_FALSE(press_key(rig, pulp::view::KeyCode::escape));
-    CHECK(shortcut_fingerprint(rig) == before);
     // W and the rest of the Musical Typing rows were never bound; they must
     // stay the host's in every context.
     for (const char key : {'w', 'd', 'h', 'j', 'k', 'e', 'y', 'u', 'o', 'p',
@@ -7564,6 +7560,72 @@ void require_documented_keys_act(NativeEditorRig& rig) {
     }
 }
 
+std::string selection_size(NativeEditorRig& rig) {
+    return runtime_value(rig, "String(__spectrTestHooks.renderState().selection.length)",
+                         "spectr-keyboard-selection-size");
+}
+
+// Escape, in every context. An open menu takes it first and the selection
+// survives; with the menu gone it clears the selection and is consumed; with
+// nothing selected it is not consumed, so the host still gets its Escape.
+void require_escape_clears_selection(NativeEditorRig& rig) {
+    select_all(rig);
+    const auto selected = selection_size(rig);
+    REQUIRE(selected != "0");
+    activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
+    REQUIRE(runtime_value(rig, "String(!!document.querySelector('[data-spectr-menu-options]'))",
+                          "spectr-keyboard-escape-menu-open") == "true");
+    CHECK(press_key(rig, pulp::view::KeyCode::escape));
+    CHECK(runtime_value(rig, "String(!!document.querySelector('[data-spectr-menu-options]'))",
+                        "spectr-keyboard-escape-menu-closed") == "false");
+    CHECK(selection_size(rig) == selected);
+    INFO("Escape with a selection standing");
+    CHECK(press_key(rig, pulp::view::KeyCode::escape));
+    CHECK(selection_size(rig) == "0");
+    INFO("Escape with nothing selected");
+    const auto before = shortcut_fingerprint(rig);
+    CHECK_FALSE(press_key(rig, pulp::view::KeyCode::escape));
+    CHECK(shortcut_fingerprint(rig) == before);
+}
+
+constexpr std::uint16_t kFreezeChord =
+    pulp::view::kModCtrl | pulp::view::kModAlt | pulp::view::kModCmd;
+
+// Ctrl+Opt+Cmd+F toggles Freeze in every context and is consumed. The chords
+// DAWs DO use by default -- and would have to keep -- change nothing and go to
+// the host; so does the chord itself while a menu owns the keyboard.
+void require_freeze_chord(NativeEditorRig& rig) {
+    const auto freeze = [&] { return rig.store.get_value(spectr::kParamFreeze); };
+    REQUIRE(freeze() == 0.0f);
+    CHECK(press_key(rig, pulp::view::KeyCode::f, kFreezeChord));
+    CHECK(freeze() == 1.0f);
+    CHECK(runtime_value(rig,
+        "document.querySelector('[data-spectr-freeze-toggle]')"
+        ".getAttribute('data-spectr-freeze-state')",
+        "spectr-keyboard-chord-face") == "frozen");
+    CHECK(press_key(rig, pulp::view::KeyCode::f, kFreezeChord));
+    CHECK(freeze() == 0.0f);
+    using pulp::view::kModAlt;
+    using pulp::view::kModCmd;
+    using pulp::view::kModCtrl;
+    using pulp::view::kModShift;
+    for (const std::uint16_t other : {std::uint16_t(kModAlt | kModCmd),
+                                      std::uint16_t(kModCtrl | kModAlt),
+                                      std::uint16_t(kModCmd | kModShift),
+                                      std::uint16_t(kModCtrl | kModShift),
+                                      std::uint16_t(kModCmd | kModAlt | kModShift),
+                                      std::uint16_t(kFreezeChord | kModShift)}) {
+        INFO("a host's chord, modifiers " << other);
+        const auto before = shortcut_fingerprint(rig);
+        CHECK_FALSE(press_key(rig, pulp::view::KeyCode::f, other));
+        CHECK(shortcut_fingerprint(rig) == before);
+    }
+    activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
+    CHECK_FALSE(press_key(rig, pulp::view::KeyCode::f, kFreezeChord));
+    CHECK(freeze() == 0.0f);
+    CHECK(press_key(rig, pulp::view::KeyCode::escape));
+}
+
 // Every documented plain key is handed back to the host and changes nothing.
 void require_documented_keys_go_to_host(NativeEditorRig& rig) {
     select_all(rig);
@@ -7589,6 +7651,8 @@ TEST_CASE("in a plug-in, plain-key shortcuts go to the DAW by default",
     CHECK(press_key(rig, pulp::view::KeyCode::a, pulp::view::kModCmd));
     require_documented_keys_go_to_host(rig);
     require_removed_keys_do_nothing(rig);
+    require_escape_clears_selection(rig);
+    require_freeze_chord(rig);
     storage.require_unchanged();
 }
 
@@ -7614,6 +7678,8 @@ TEST_CASE("in a plug-in, Keyboard shortcuts in DAW makes the plain keys live",
     activate(rig, "[data-spectr-settings-close]");
     require_documented_keys_act(rig);
     require_removed_keys_do_nothing(rig);
+    require_escape_clears_selection(rig);
+    require_freeze_chord(rig);
 
     // Persisted with the plugin state: a reloaded instance keeps it.
     const auto blob = rig.processor.serialize_plugin_state();
@@ -7637,6 +7703,8 @@ TEST_CASE("in the standalone, plain-key shortcuts stay live",
     activate(rig, "[data-spectr-settings-close]");
     require_documented_keys_act(rig);
     require_removed_keys_do_nothing(rig);
+    require_escape_clears_selection(rig);
+    require_freeze_chord(rig);
     storage.require_unchanged();
 }
 
@@ -7680,24 +7748,38 @@ TEST_CASE("key hints appear only where their keys are live",
             "String(String(document.querySelector('[data-spectr-latency-chip]')"
             ".getAttribute('title') || '').indexOf('press T') >= 0)",
             "spectr-keyboard-latency-title");
-        // The freeze toggle names Q in its tooltip, and the SHORTCUTS panel
-        // lists it, only where Q works.
+        // The freeze toggle's tooltip names the chord everywhere and Q only
+        // where Q works; the SHORTCUTS panel lists the chord and Escape in
+        // every context, and Q only where it works.
         out += " freeze=" + runtime_value(
             rig,
-            "String(String(document.querySelector('[data-spectr-freeze-toggle]')"
-            ".getAttribute('title') || '').indexOf('(Q)') >= 0)",
+            "String(document.querySelector('[data-spectr-freeze-toggle]')"
+            ".getAttribute('title') || '')",
             "spectr-keyboard-freeze-title");
-        out += " q=" + runtime_value(
+        const auto row = [&](std::string_view key) {
+            return runtime_value(
+                rig,
+                "String(Array.from(document.querySelectorAll('[data-spectr-help-panel] span'))"
+                ".some(n => n.textContent === '" + std::string(key) + "'"
+                " && n.nextSibling && n.nextSibling.textContent === 'Freeze / unfreeze'))",
+                "spectr-keyboard-freeze-row");
+        };
+        out += " q=" + row("Q");
+        out += " chord=" + row("CTRL+OPT+CMD+F");
+        out += " esc=" + runtime_value(
             rig,
-            "String(Array.from(document.querySelectorAll('[data-spectr-help-panel] *'))"
-            ".some(n => n.textContent === 'Freeze / unfreeze'))",
-            "spectr-keyboard-freeze-row");
+            "String(Array.from(document.querySelectorAll('[data-spectr-help-panel] span'))"
+            ".some(n => n.textContent === 'ESC' && n.nextSibling"
+            " && n.nextSibling.textContent === 'Clear selection'))",
+            "spectr-keyboard-escape-row");
         return out;
     };
     const std::string live =
-        "chips=5 analyzer=ANALYZER note=0 help=true latency=true freeze=true q=true";
+        "chips=5 analyzer=ANALYZER note=0 help=true latency=true"
+        " freeze=Freeze the incoming sound (Ctrl+Opt+Cmd+F or Q) q=true chord=true esc=true";
     const std::string off =
-        "chips=0 analyzer=ANALYZER note=1 help=false latency=false freeze=false q=false";
+        "chips=0 analyzer=ANALYZER note=1 help=false latency=false"
+        " freeze=Freeze the incoming sound (Ctrl+Opt+Cmd+F) q=false chord=true esc=true";
     CHECK(hints(/*standalone=*/false, /*in_daw=*/false) == off);
     CHECK(hints(/*standalone=*/false, /*in_daw=*/true) == live);
     CHECK(hints(/*standalone=*/true, /*in_daw=*/false) == live);
@@ -8040,6 +8122,12 @@ TEST_CASE("a freeze press goes to the host as one edit gesture",
         activate(rig, "[data-spectr-freeze-toggle]");
         CHECK(recorder.take() == "begin, set 1, end");
         activate(rig, "[data-spectr-freeze-toggle]");
+        CHECK(recorder.take() == "begin, set 0, end");
+
+        // The chord, live in every context by default.
+        REQUIRE(press_key(rig, pulp::view::KeyCode::f, kFreezeChord));
+        CHECK(recorder.take() == "begin, set 1, end");
+        REQUIRE(press_key(rig, pulp::view::KeyCode::f, kFreezeChord));
         CHECK(recorder.take() == "begin, set 0, end");
 
         // Q, where plain keys are live (the standalone, or a plug-in whose
