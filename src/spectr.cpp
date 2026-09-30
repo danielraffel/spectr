@@ -28,6 +28,19 @@
 namespace spectr {
 
 namespace {
+// See set_editor_is_standalone: asserted by the standalone entry points only.
+std::atomic<bool> g_editor_is_standalone{false};
+}  // namespace
+
+void set_editor_is_standalone(bool value) {
+    g_editor_is_standalone.store(value, std::memory_order_relaxed);
+}
+
+bool editor_is_standalone() {
+    return g_editor_is_standalone.load(std::memory_order_relaxed);
+}
+
+namespace {
 
 /// Are these two layouts the same mask?
 ///
@@ -853,17 +866,23 @@ void Spectr::on_view_closed(pulp::view::View& view) {
 #endif
 }
 
-void Spectr::configure_bridge_(int num_channels) {
+pulp::view::VisualizationConfig analyzer_config(double sample_rate,
+                                                int num_channels) noexcept {
     pulp::view::VisualizationConfig c;
     c.fft_size         = kAnalyzerFftSize;
     c.hop_size         = kAnalyzerAnalysisHop;
     c.window           = pulp::signal::WindowFunction::Type::hann;
     c.num_channels     = std::max(1, num_channels);
-    c.sample_rate      = static_cast<float>(sample_rate_);
+    c.sample_rate      = static_cast<float>(sample_rate);
     c.capture_waveform = true;
     c.waveform_length  = 1024;
-    c.max_frames_per_poll = kAnalyzerMaxFramesPerPoll;
-    bridge_.configure(c);
+    c.capture_buffer_frames = kAnalyzerCaptureFrames;
+    c.backlog_policy = pulp::view::VisualizationBacklogPolicy::latest_window;
+    return c;
+}
+
+void Spectr::configure_bridge_(int num_channels) {
+    bridge_.configure(analyzer_config(sample_rate_, num_channels));
 }
 
 void Spectr::release() {
@@ -1168,14 +1187,28 @@ void Spectr::process(
                         audio_modulation_phase_2_ -=
                             std::floor(audio_modulation_phase_2_);
                     }
+                    if (!audio_lfo_shape_fade_primed_
+                        || (should_reset_stream_history
+                            && block_offset == 0)) {
+                        audio_lfo_shape_fade_ =
+                            settled_lfo_shape(modulation_settings.shape);
+                        audio_lfo_2_shape_fade_ =
+                            settled_lfo_shape(modulation_settings.lfo2_shape);
+                        audio_lfo_shape_fade_primed_ = true;
+                    }
+                    audio_lfo_shape_fade_ = retarget_lfo_shape(
+                        audio_lfo_shape_fade_, modulation_settings.shape);
+                    audio_lfo_2_shape_fade_ = retarget_lfo_shape(
+                        audio_lfo_2_shape_fade_,
+                        modulation_settings.lfo2_shape);
                     const float wave = lfo_value(
-                        modulation_settings.shape, audio_modulation_phase_);
+                        audio_lfo_shape_fade_, audio_modulation_phase_);
                     BandField audible = apply_internal_modulation(
                         host_field, audio_modulation.snapshots, host_morph,
                         modulation_settings, wave);
                     if (modulation_settings.lfo2_enabled) {
                         const float wave2 = lfo_value(
-                            modulation_settings.lfo2_shape,
+                            audio_lfo_2_shape_fade_,
                             audio_modulation_phase_2_);
                         ModulationSettings second = modulation_settings;
                         second.enabled = true;
@@ -1254,6 +1287,8 @@ void Spectr::process(
                                 slot.phase_2   = phase_2;
                                 slot.phase_per_second   = rate_1;
                                 slot.phase_2_per_second = rate_2;
+                                slot.shape_fade = audio_lfo_shape_fade_;
+                                slot.shape_2_fade = audio_lfo_2_shape_fade_;
                                 slot.published_ns = published_ns;
                             });
                     }
@@ -1374,6 +1409,13 @@ void Spectr::process(
                          * tempo / (60.0 * sample_rate)) / beats_per_cycle_2;
                     audio_modulation_phase_2_ -=
                         std::floor(audio_modulation_phase_2_);
+                    const double slice_seconds =
+                        static_cast<double>(out_slice.num_samples())
+                        / sample_rate;
+                    audio_lfo_shape_fade_ = advance_lfo_shape(
+                        audio_lfo_shape_fade_, slice_seconds);
+                    audio_lfo_2_shape_fade_ = advance_lfo_shape(
+                        audio_lfo_2_shape_fade_, slice_seconds);
                     block_offset += out_slice.num_samples();
                 });
 
@@ -1534,6 +1576,12 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // instance does, so an old session opens behaving like a new one rather
     // than with a feature mysteriously off.
     root.addMember("morph_applies_viewport", morph_applies_viewport_);
+
+    // "Keyboard shortcuts in DAW". Editor state with no parameter lane, like
+    // the switch above, so it rides here or is lost on reload. Absent on a
+    // writer that predates it; readers treat absence as OFF, the default, so
+    // an old session keeps the host's keys where a new instance would.
+    root.addMember("keyboard_shortcuts_in_daw", keyboard_shortcuts_in_daw_);
 
     // Macro membership: four arrays of canonical slot indices, shaped exactly
     // like `morph_overrides` above. The macro VALUES are StateStore
@@ -1914,6 +1962,13 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_morph_applies_viewport = flag.getBool();
     }
 
+    bool new_keyboard_shortcuts_in_daw = false;
+    if (root.hasObjectMember("keyboard_shortcuts_in_daw")) {
+        const auto& flag = root["keyboard_shortcuts_in_daw"];
+        if (!flag.isBool()) return false;
+        new_keyboard_shortcuts_in_daw = flag.getBool();
+    }
+
     std::array<MacroMembership<kMaxBands>, kMacroCount> new_macro_members{};
     if (root.hasObjectMember("macro_members")) {
         const auto macros = root["macro_members"];
@@ -1991,6 +2046,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_derived_ = new_morph_derived;
         morph_overrides_ = new_morph_overrides;
         morph_applies_viewport_ = new_morph_applies_viewport;
+        keyboard_shortcuts_in_daw_ = new_keyboard_shortcuts_in_daw;
         macro_members_ = new_macro_members;
         // Re-derive the LFO lanes from the restored parameters before the
         // mask rides along: the audio thread only honours a published mask

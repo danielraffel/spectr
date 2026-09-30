@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <limits>
 #include <optional>
 #include <string>
@@ -49,6 +50,34 @@ public:
     [[nodiscard]] EditorReceipt replace_processing_state(
         const BandField& field, const Viewport& viewport, Layout layout,
         std::optional<EditorRevision> expected = std::nullopt) noexcept;
+
+    /// The editor's full-state publication: every visible band, the viewport
+    /// and the band count, as the editor currently draws them. The editor
+    /// sends its whole picture on every edit, a frame after the render it
+    /// read, while host automation reaches the same state from the
+    /// parameter-sync worker thread. So a publication can be built before a
+    /// host write and land after the worker adopted it -- or after the editor
+    /// was handed the host's change but before it applied it.
+    ///
+    /// `drawn` is the revision of the last state the editor APPLIED when it
+    /// built this publication. A value equal to that state's is one the
+    /// editor carried over, not one it set, so it keeps the processor's
+    /// current value instead of reverting the host's write -- and instead of
+    /// pushing the stale value back to the host as a parameter change. A value
+    /// that differs is an edit and applies as before. Without `drawn`, the
+    /// base is the latest state the editor was handed (see
+    /// `note_editor_shown`); with nothing handed over yet, every value is an
+    /// edit.
+    [[nodiscard]] EditorReceipt publish_editor_state(
+        const BandField& field, const Viewport& viewport, Layout layout,
+        std::optional<EditorRevision> drawn = std::nullopt,
+        std::optional<EditorRevision> expected = std::nullopt) noexcept;
+
+    /// Record the processing state an editor has just been handed at
+    /// `revision`: a hydration, a command response it applies, or a live
+    /// host-automation projection. UI thread only, like every editor call.
+    void note_editor_shown(const FieldSnapshot& shown,
+                           EditorRevision revision) noexcept;
 
     [[nodiscard]] EditorReceipt begin_band_edit(
         std::optional<EditorRevision> expected = std::nullopt) noexcept;
@@ -149,6 +178,18 @@ private:
 
     Spectr& processor_;
     std::optional<BandSnapshot> edit_snapshot_;
+    // What the editor was handed, by revision, oldest first -- each updated
+    // with what the editor itself published from it. The base a full-state
+    // publication is diffed against. Pruned up to the revision a publication
+    // says it was drawn from, and capped for an editor that never says.
+    struct ShownState {
+        EditorRevision revision = 0;
+        FieldSnapshot state{};
+    };
+    static constexpr std::size_t kShownHistory = 128;
+    std::deque<ShownState> shown_;
+    void remember_shown_(EditorRevision revision,
+                         const FieldSnapshot& state) noexcept;
     std::atomic<EditorRevision> revision_{0};
 
     pulp::state::UndoManager history_;

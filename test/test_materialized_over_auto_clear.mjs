@@ -276,8 +276,10 @@ if (!rowMatch) {
 // S3b. THE ROW IS APPENDED LAST INSIDE ITS GROUP. Not cosmetic: this
 // document's text/layout/paint bindings address nodes by POSITIONAL DOM path,
 // so a row inserted anywhere but the end renumbers every later sibling and
-// silently re-points them at the wrong node.
-if (!/label: "OVER latch"[\s\S]{0,400}?\}\)\)\), React\.createElement\(SpectrModulationSettings/
+// silently re-points them at the wrong node. Rows appended AFTER it (the
+// plug-in-only "Keyboard shortcuts in DAW" switch) renumber nothing, so they
+// may follow; nothing may come between it and an older sibling.
+if (!/label: "OVER latch"[\s\S]{0,400}?\}\)\)(?:, keyboardPolicy\.hostKind !== "standalone" && [\s\S]{0,1200}?\}\)\)\))?\), React\.createElement\(SpectrModulationSettings/
     .test(html)) {
   fail("the latch row is not the last child of the FEEDBACK group; inserted "
     + "before a sibling it renumbers the positional binding paths");
@@ -410,11 +412,45 @@ if (!leafBlock) {
         ran.set(index, { deps, cleanup: fn() });
       }
     };
+    // A node per ref, reconciled the way React does it: a render writes a
+    // node's text only when the RENDERED text changed since the last render.
+    // The chip's number is written straight into its label between renders,
+    // so the label node -- not the last returned element -- is what a person
+    // reads. Same model as test_materialized_output_meter.mjs.
+    const nodes = new Map();
+    const reconcile = (node) => {
+      if (!node || typeof node !== "object") return;
+      const p = node.props || {};
+      if (p.ref && typeof p.ref === "object") {
+        if (!nodes.has(p.ref)) {
+          const attributes = new Map();
+          nodes.set(p.ref, {
+            renderedText: undefined, textContent: "",
+            setAttribute(name, value) { attributes.set(name, String(value)); },
+            getAttribute(name) {
+              return attributes.has(name) ? attributes.get(name) : null;
+            },
+          });
+        }
+        const target = nodes.get(p.ref);
+        p.ref.current = target;
+        const children = node.children || [];
+        if (children.every((c) => typeof c !== "object")) {
+          const text = children.map(String).join("");
+          if (text !== target.renderedText) {
+            target.renderedText = text;
+            target.textContent = text;
+          }
+        }
+      }
+      for (const child of node.children || []) reconcile(child);
+    };
     const render = () => {
       hooks.index = 0;
       hooks.effectIndex = 0;
       hooks.effects = [];
       element = props === undefined ? Meter() : Meter(props);
+      reconcile(element);
       return element;
     };
     rerender = () => { render(); };
@@ -441,7 +477,11 @@ if (!leafBlock) {
       commits,
       frames,
       subscribed: () => listeners.has("output_meter"),
-      peakText: () => flatten(peakNode()),
+      peakText: () => {
+        const label = find(element, (p) => p["data-spectr-output-peak-label"]);
+        return label && label.props.ref && label.props.ref.current
+          ? label.props.ref.current.textContent : flatten(peakNode());
+      },
       overFlag: () => peakNode() && peakNode().props["data-spectr-output-over"],
       overPeak: () => peakNode().props["data-spectr-output-over-peak"],
       click: () => peakNode().props.onClick(),

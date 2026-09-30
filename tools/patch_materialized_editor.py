@@ -4198,10 +4198,14 @@ RUNTIME_EDITS = [
      '      g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0);\n'
      '    }',
      'g5.setTransform(String(bandRootId), 1, 0, 0, 1, -12, 0)'),
-    ('band trigger text centers in the common 24px rail',
-     '        92, 73.03125, 20, 3.5),',
+    # The caption box sits inside the trigger's 1px border: centre it in the
+    # 20px inner area, not the 22px border box, or it paints a point low.
+    ('band trigger caption centers inside the trigger border',
      '        92, 73.03125, 22, 4.5),',
-     '92, 73.03125, 22, 4.5'),
+     '        // The caption sits inside the trigger\'s 1px border, so it centres\n'
+     '        // in the 20px inner area, not the 22px border box.\n'
+     '        92, 73.03125, 20, 3.5),',
+     "        // The caption sits inside the trigger's 1px border, so it centres\n"),
     ('dropdown optical centering follows every selected label',
      '      const label = descendants.find(\n'
      '        (node) => String(node && node.textContent || "") === correction.text\n'
@@ -5836,15 +5840,22 @@ def main():
                 runtime_changed = True
                 print('normalized      band trigger rail regression')
                 break
-    previous_band_text = '        92, 73.03125, 24, 5.5),'
-    replayable_band_text = '        92, 73.03125, 20, 3.5),'
-    desired_band_text = '        92, 73.03125, 22, 4.5),'
-    if (desired_band_text not in runtime_raw
-            and previous_band_text in runtime_raw):
-        runtime_raw = runtime_raw.replace(
-            previous_band_text, replayable_band_text, 1)
-        runtime_changed = True
-        print('normalized      band trigger text regression')
+    # Earlier recipes sized the caption box to the trigger's whole height
+    # (20, then 24). Normalize those to the 22px border-box form the caption
+    # edit below consumes, so it moves them inside the border too.
+    replayable_band_text = '        92, 73.03125, 22, 4.5),'
+    desired_band_text = ("        // The caption sits inside the trigger's 1px border, so it centres\n"
+                         '        // in the 20px inner area, not the 22px border box.\n'
+                         '        92, 73.03125, 20, 3.5),')
+    if desired_band_text not in runtime_raw:
+        for stale in ('        92, 73.03125, 24, 5.5),',
+                      '        92, 73.03125, 20, 3.5),'):
+            if stale in runtime_raw:
+                runtime_raw = runtime_raw.replace(
+                    stale, replayable_band_text, 1)
+                runtime_changed = True
+                print('normalized      band trigger text regression')
+                break
     for label, old, new, sentinel in RUNTIME_EDITS:
         if sentinel in runtime_raw:
             print('already applied ', label)

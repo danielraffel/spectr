@@ -107,14 +107,19 @@ using ClipboardWriter = std::function<bool(std::string_view)>;
 /// Canonical editor projection used by initial hydration and every native-owned
 /// snapshot/recall/morph response. Keeping one builder prevents the WebView's
 /// optimistic display mirror from becoming a second sound-state authority.
+///
+/// `shown`, when given, receives the exact state the payload carries, for
+/// `EditorAuthority::note_editor_shown` at a site that delivers it.
 choc::value::Value make_editor_state_payload(const Spectr& plugin,
-                                             EditorRevision revision = 0);
+                                             EditorRevision revision = 0,
+                                             FieldSnapshot* shown = nullptr);
 
 /// Compact projection for frame-coalesced host automation playback. Unlike
 /// the full hydration payload, this excludes presets, snapshots, and settings
 /// that would force a broad React reconciliation on every display frame.
 choc::value::Value make_editor_live_state_payload(const Spectr& plugin,
-                                                  EditorRevision revision);
+                                                  EditorRevision revision,
+                                                  FieldSnapshot* shown = nullptr);
 
 /// Register Spectr's editor-bridge handlers on the given Pulp
 /// EditorBridge. All state references are captured by closures and

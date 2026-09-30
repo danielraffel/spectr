@@ -16,8 +16,15 @@
 #include <pulp/view/ab_compare.hpp>
 #include <pulp/view/visualization_bridge.hpp>
 #include <array>
+
+// The build defines this from CMake's PROJECT_VERSION. A translation unit
+// compiled without it would report a version no bundle or installer carries.
+#if !defined(SPECTR_PRODUCT_VERSION)
+#error "SPECTR_PRODUCT_VERSION must come from Spectr's CMake PROJECT_VERSION"
+#endif
 #include <atomic>
 #include <bitset>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -157,6 +164,10 @@ struct ModulatedFieldSnapshot {
     double             phase_2 = 0.0; ///< LFO 2 phase at `published_ns`
     double             phase_per_second = 0.0;
     double             phase_2_per_second = 0.0;
+    /// Shape crossfades at `published_ns`; the consumer advances them by the
+    /// same elapsed time as the phases.
+    LfoShapeFade       shape_fade{};
+    LfoShapeFade       shape_2_fade{};
     /// steady_clock nanoseconds at which `phase`/`phase_2` were sampled. Zero
     /// means the publication carries no usable clock and the consumer must
     /// fall back to `field` rather than extrapolate from an unknown origin.
@@ -196,6 +207,18 @@ static_assert(std::is_trivially_copyable_v<ModulatedFieldSnapshot>,
 void set_editor_owns_resize_grip(bool value);
 bool editor_owns_resize_grip();
 
+/// Whether this process is Spectr's standalone app rather than a plug-in host.
+///
+/// Decides the plain-key shortcut policy. A DAW owns its plain keys -- Logic's
+/// Musical Typing plays notes on A S D F G H J K L and W E T Y U O P -- so in
+/// a plug-in the editor's single-letter shortcuts are off unless the user
+/// turns on "Keyboard shortcuts in DAW"; the standalone owns its window and
+/// keeps them. Default false (hosted), asserted true by the two standalone
+/// entry points only, for the same reason as the resize grip above: the
+/// linked entry point is the one place that knows the wrapper.
+void set_editor_is_standalone(bool value);
+bool editor_is_standalone();
+
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
 // SpectralFrameEngine reads through a fixed causal cursor of one complete FFT
@@ -215,9 +238,20 @@ inline constexpr int kAnalyzerAnalysisHop =
     kAnalyzerAnalysisHopUncapped < 1 ? 1
     : (kAnalyzerAnalysisHopUncapped > kAnalyzerFftSize / 2
         ? kAnalyzerFftSize / 2 : kAnalyzerAnalysisHopUncapped);
-// At 30 UI polls/s this drains 61,440 frames/s, enough to stay ahead of a
-// 48 kHz stream while bounding each UI tick even in a refilling host.
-inline constexpr int kAnalyzerMaxFramesPerPoll = 2048;
+// VisualizationBridge's capture capacity: four analyzer windows. The editor
+// polls with the latest_window backlog policy, so one poll consumes whatever
+// is waiting however slowly the UI ticks; audio is dropped only when a single
+// gap between polls outlasts this buffer.
+inline constexpr int kAnalyzerCaptureFrames = 4 * kAnalyzerFftSize;
+
+/// The analyzer bridge configuration Spectr runs with. The editor is a display,
+/// so the bridge uses `latest_window`: every poll analyzes the whole backlog
+/// and the published spectrum trails the newest audio by under one hop, rather
+/// than a poll analyzing a bounded slice and a slow UI tick leaving the rest
+/// queued until the capture buffer overflows and blanks the spectrum.
+[[nodiscard]] pulp::view::VisualizationConfig
+analyzer_config(double sample_rate, int num_channels) noexcept;
+
 static_assert(kSpectralFftSize >= pulp::signal::kSpectralFrameEngineMinimumFftSize
               && kSpectralFftSize
                      <= pulp::signal::kSpectralFrameEngineMaximumFftSize
@@ -252,7 +286,7 @@ inline pulp::format::PluginDescriptor make_descriptor() {
 #else
         .bundle_id    = "com.pulp.spectr",
 #endif
-        .version      = "1.0.0",
+        .version      = SPECTR_PRODUCT_VERSION,
         .category     = pulp::format::PluginCategory::Effect,
     };
 }
@@ -478,6 +512,14 @@ public:
     [[nodiscard]] bool morph_applies_viewport() const noexcept;
     void set_morph_applies_viewport(bool enabled) noexcept;
 
+    /// "Keyboard shortcuts in DAW": whether the editor's plain-key shortcuts
+    /// (S L B F G, A / 6, M, T) are live inside a plug-in host. Off by
+    /// default so the host's own keys reach it; ignored by the standalone,
+    /// where they are always live. Persisted in the supplemental plugin-state
+    /// blob like morph_applies_viewport.
+    [[nodiscard]] bool keyboard_shortcuts_in_daw() const noexcept;
+    void set_keyboard_shortcuts_in_daw(bool enabled) noexcept;
+
     /// Accessor for the StateStore-level ABCompare. Lazily constructed
     /// the first time it's requested (after define_parameters has wired
     /// the store). Returns nullptr if the store isn't available yet.
@@ -576,6 +618,10 @@ public:
     // latest complete frame.
     pulp::view::VisualizationBridge& bridge() noexcept { return bridge_; }
     const pulp::view::SpectrumData& read_spectrum() { return bridge_.read_spectrum(); }
+    /// Analyze everything captured since the last call. One poll suffices:
+    /// the bridge runs the latest_window backlog policy (see analyzer_config).
+    /// UI thread only, like every other bridge read.
+    void drain_analyzer() { (void)bridge_.poll(); }
     const pulp::view::WaveformData& read_waveform() { return bridge_.read_waveform(); }
     const pulp::signal::MultiChannelMeterData& read_meter() { return bridge_.read_meter(); }
 
@@ -754,6 +800,11 @@ private:
         audio_modulation_publication_{};
     double audio_modulation_phase_ = 0.0;
     double audio_modulation_phase_2_ = 0.0;
+    // Shape crossfades, advanced with the phases. Unprimed until the first
+    // block so the initial shape is adopted without a fade.
+    LfoShapeFade audio_lfo_shape_fade_{};
+    LfoShapeFade audio_lfo_2_shape_fade_{};
+    bool         audio_lfo_shape_fade_primed_ = false;
     // Audio owner -> UI publication of the post-LFO band field, so the editor
     // can draw the modulation it is playing. Write-only on the audio thread,
     // read-only through read_modulated_field().
@@ -791,6 +842,9 @@ private:
     // Guarded by processing_state_mutex_ and published to the audio thread in
     // AudioModulationState, so both sides of a morph agree on what moves.
     bool morph_applies_viewport_ = true;
+    // Guarded by processing_state_mutex_. Editor-only: the audio thread
+    // never reads it.
+    bool keyboard_shortcuts_in_daw_ = false;
     // Which canonical slots each macro drives. Guarded by
     // processing_state_mutex_ and published in AudioModulationState.
     //

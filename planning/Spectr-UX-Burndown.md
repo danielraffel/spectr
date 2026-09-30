@@ -749,7 +749,7 @@ state — it never even reached COPYING — while a press on the padding strip a
 x+4 produced COPIED. Centering the word without fixing this would have moved
 the dead zone from the button's left edge to the exact point a person aims at,
 so both ship together: the span is authored `pointerEvents: "none"`, which
-`native-ui/dist/editor.js` maps to the SDK's `View::set_pointer_events` and
+the materialized runtime maps to the SDK's `View::set_pointer_events` and
 `hit_test` honors. The press at dead centre now returns COPIED.
 
 Both properties are authored in `resources/editor.html`'s generator edit and

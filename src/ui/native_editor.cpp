@@ -8,6 +8,7 @@
 #include <pulp/format/plugin_descriptor.hpp>
 #include <cstdio>
 #include <pulp/view/script_event_dispatch.hpp>
+#include <pulp/view/tracing_badge.hpp>
 #include <pulp/view/buttons.hpp>
 #include <pulp/view/hover_cursor.hpp>
 #include <pulp/view/input_events.hpp>
@@ -503,18 +504,35 @@ std::vector<float> analyzer_trace(const pulp::view::SpectrumData& spectrum,
     return result;
 }
 
-void append_trace(std::ostringstream& js,
-                  std::string_view name,
-                  float min_hz,
-                  float max_hz,
-                  std::span<const float> values) {
-    js << name << ":{min_hz:" << min_hz << ",max_hz:" << max_hz
-       << ",magnitude_db:[";
-    for (std::size_t index = 0; index < values.size(); ++index) {
-        if (index != 0) js << ',';
-        js << values[index];
-    }
-    js << "]}";
+// Payloads are built as values and handed to dispatch_native_message, which
+// invokes the page's receiver directly. Formatting them as a script instead
+// meant compiling a ~5 KB literal per frame. The object carries no class
+// name, so the receiver sees exactly these members and nothing else.
+choc::value::Value analyzer_trace_value(float min_hz,
+                                        float max_hz,
+                                        std::span<const float> values) {
+    auto magnitudes = choc::value::createEmptyArray();
+    for (const auto value : values)
+        magnitudes.addArrayElement(static_cast<double>(value));
+    auto trace = choc::value::createObject("");
+    trace.addMember("min_hz", static_cast<double>(min_hz));
+    trace.addMember("max_hz", static_cast<double>(max_hz));
+    trace.addMember("magnitude_db", magnitudes);
+    return trace;
+}
+
+// Digital silence has no level: `peak_db` is left undefined rather than 0,
+// and the receiver reads anything that is not a finite number as silence.
+choc::value::Value make_output_meter_payload(float peak_db, bool over,
+                                             float trim_db) {
+    auto payload = choc::value::createObject("");
+    payload.addMember("schema_version", static_cast<std::int32_t>(1));
+    payload.addMember("peak_db", std::isfinite(peak_db)
+        ? choc::value::createFloat64(static_cast<double>(peak_db))
+        : choc::value::Value{});
+    payload.addMember("over", over);
+    payload.addMember("trim_db", static_cast<double>(trim_db));
+    return payload;
 }
 
 } // namespace
@@ -801,6 +819,19 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                 "if (typeof globalThis.__pulpBindMaterializedCanvases__ === 'function') "
                 "globalThis.__pulpBindMaterializedCanvases__();",
                 "spectr-materialized-bind");
+            // A tracing build carries a "TRACING" reminder. Pulp paints one
+            // from the root View at a fixed corner, above the header's line;
+            // the header draws its own on that line instead, so Pulp's is
+            // hidden while this editor is open (restored on close).
+            if constexpr (pulp::runtime::kTracingEnabled) {
+                pulp::view::set_tracing_badge_visible(false);
+                bridge->load_script(
+                    "if (typeof globalThis.__spectrShowTracingBadge === 'function') "
+                    "globalThis.__spectrShowTracingBadge(); "
+                    "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+                    "globalThis.__pulpRuntimeSettle__(4);",
+                    "spectr-tracing-badge");
+            }
             // The standalone host can screenshot, but it has no way to drive a
             // control before the capture, so the Settings modal could not be
             // photographed in the shipping app at all. Settings renders empty
@@ -1150,6 +1181,8 @@ void Spectr::publish_modulation_frame_() {
         modulated.active && modulated.published_ns != 0;
     double phase_1 = modulated.phase;
     double phase_2 = modulated.phase_2;
+    LfoShapeFade fade_1 = modulated.shape_fade;
+    LfoShapeFade fade_2 = modulated.shape_2_fade;
     if (reconstructable) {
         const auto now_ns = std::chrono::duration_cast<
             std::chrono::nanoseconds>(
@@ -1164,6 +1197,8 @@ void Spectr::publish_modulation_frame_() {
         };
         phase_1 = advance(phase_1, modulated.phase_per_second, elapsed);
         phase_2 = advance(phase_2, modulated.phase_2_per_second, elapsed);
+        fade_1 = advance_lfo_shape(fade_1, elapsed);
+        fade_2 = advance_lfo_shape(fade_2, elapsed);
     }
     // Once the clamp above pins the phase, every further tick would rebuild
     // and dispatch byte-identical numbers. Nothing changed, so nothing is sent.
@@ -1179,7 +1214,7 @@ void Spectr::publish_modulation_frame_() {
         native_modulation_drawn_ = apply_internal_modulation(
             modulated.pre_field, modulated.snapshots, modulated.host_morph,
             modulated.settings,
-            lfo_value(modulated.settings.shape, phase_1));
+            lfo_value(fade_1, phase_1));
         if (modulated.settings.lfo2_enabled) {
             ModulationSettings second = modulated.settings;
             second.enabled = true;
@@ -1189,7 +1224,7 @@ void Spectr::publish_modulation_frame_() {
             native_modulation_drawn_ = apply_internal_modulation(
                 native_modulation_drawn_, modulated.snapshots,
                 modulated.host_morph, second,
-                lfo_value(second.shape, phase_2));
+                lfo_value(fade_2, phase_2));
         }
         drawn = &native_modulation_drawn_;
     }
@@ -3079,10 +3114,12 @@ bool Spectr::tick_native_analyzer_(float dt) {
     if (automation_perf_fixture
         || host_revision != native_host_automation_revision_) {
         PULP_TRACE_SCOPE_NAMED("state", "spectr_host_automation_project");
+        FieldSnapshot shown;
         const auto payload = [&] {
             PULP_TRACE_SCOPE_NAMED(
                 "state", "spectr_host_automation_snapshot");
-            return make_editor_live_state_payload(*this, projection_revision);
+            return make_editor_live_state_payload(
+                *this, projection_revision, &shown);
         }();
         try {
             {
@@ -3096,6 +3133,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     "spectr-native-host-automation-live");
             }
             native_host_automation_revision_ = projection_revision;
+            editor_authority().note_editor_shown(shown, projection_revision);
         } catch (const std::exception& error) {
             pulp::runtime::log_error(
                 "[Spectr native] host automation hydration rejected: {}",
@@ -3104,11 +3142,17 @@ bool Spectr::tick_native_analyzer_(float dt) {
     }
     publish_modulation_frame_();
 
-    native_analyzer_elapsed_ += std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
+    const float tick_seconds = std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
+    native_analyzer_elapsed_ += tick_seconds;
     if (native_analyzer_elapsed_ < kPublishPeriodSeconds) return true;
     native_analyzer_elapsed_ = std::fmod(native_analyzer_elapsed_, kPublishPeriodSeconds);
 
-    bridge_.poll();
+    // One poll consumes everything captured since the last one, however long
+    // this tick took: the bridge runs the latest_window backlog policy.
+    {
+        PULP_TRACE_SCOPE_NAMED("state", "spectr_analyzer_drain");
+        drain_analyzer();
+    }
 
     // ── Output level ────────────────────────────────────────────────────
     //
@@ -3120,8 +3164,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
     {
         const auto level = read_output_level();
         // Publish only a CHANGED reading. A meter that republishes an
-        // unchanged one 30 times a second is another per-frame script
-        // evaluation and another React commit for a number that did not
+        // unchanged one 30 times a second is another per-frame dispatch
+        // into the page and another handler run for a number that did not
         // move -- the same cost the hover readout's 700ms throttle and the
         // zoom readout's live guard were both written to avoid. It is also
         // load bearing for the test fleet: an unconditional per-tick
@@ -3145,19 +3189,15 @@ bool Spectr::tick_native_analyzer_(float dt) {
         // Only the publication is skipped, never the rest of the tick: the
         // analyzer frame below has its own cadence and its own guard.
         if (moved) {
-            std::ostringstream meter;
-            meter << "if (typeof globalThis.__spectrPublishNativeMessage === "
-                     "'function') globalThis.__spectrPublishNativeMessage("
-                     "'output_meter',{schema_version:1,peak_db:"
-                  << (std::isfinite(level.peak_db)
-                          ? std::to_string(level.peak_db)
-                          : std::string("null"))
-                  << ",over:" << (level.over ? "true" : "false")
-                  << ",trim_db:" << level.trim_db
-                  << "},'spectr-output-meter');";
+            PULP_TRACE_SCOPE_NAMED("state", "spectr_output_meter_dispatch");
             try {
-                native_scripted_ui_->bridge()->load_script(
-                    meter.str(), "spectr-native-output-meter");
+                native_scripted_ui_->bridge()->dispatch_native_message(
+                    "__spectrPublishNativeMessage",
+                    "output_meter",
+                    make_output_meter_payload(level.peak_db, level.over,
+                                              level.trim_db),
+                    "spectr-output-meter",
+                    "spectr-native-output-meter");
             } catch (const std::exception& error) {
                 pulp::runtime::log_error(
                     "[Spectr native] output meter publication rejected: {}",
@@ -3182,23 +3222,31 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                         kVisibleAnalyzerPointCount);
     const auto overview = analyzer_trace(spectrum, overview_min, overview_max,
                                          kOverviewAnalyzerPointCount);
-    std::ostringstream js;
-    js << "if (typeof globalThis.__spectrPublishNativeMessage === 'function') "
-          "globalThis.__spectrPublishNativeMessage('analyzer_frame',{"
-          "schema_version:1,epoch:" << spectrum.epoch
-       << ",sequence_number:" << spectrum.sequence_number
-       << ",dropped_frames:" << spectrum.dropped_frames
-       << ",source_channels:" << spectrum.source_channels
-       << ",fft_size:" << spectrum.fft_size
-       << ",sample_rate:" << spectrum.sample_rate
-       << ",floor_db:" << spectrum.floor_db
-       << ",ceiling_db:" << kAnalyzerCeilingDb << ',';
-    append_trace(js, "visible", visible_min, visible_max, visible);
-    js << ',';
-    append_trace(js, "overview", overview_min, overview_max, overview);
-    js << "},'spectr-analyzer-frame');";
+    auto payload = choc::value::createObject("");
+    payload.addMember("schema_version", static_cast<std::int32_t>(1));
+    payload.addMember("epoch", static_cast<std::int64_t>(spectrum.epoch));
+    payload.addMember("sequence_number",
+                      static_cast<std::int64_t>(spectrum.sequence_number));
+    payload.addMember("dropped_frames",
+                      static_cast<std::int64_t>(spectrum.dropped_frames));
+    payload.addMember("source_channels",
+                      static_cast<std::int32_t>(spectrum.source_channels));
+    payload.addMember("fft_size", static_cast<std::int32_t>(spectrum.fft_size));
+    payload.addMember("sample_rate", static_cast<double>(spectrum.sample_rate));
+    payload.addMember("floor_db", static_cast<double>(spectrum.floor_db));
+    payload.addMember("ceiling_db", static_cast<double>(kAnalyzerCeilingDb));
+    payload.addMember("visible",
+                      analyzer_trace_value(visible_min, visible_max, visible));
+    payload.addMember("overview",
+                      analyzer_trace_value(overview_min, overview_max, overview));
     try {
-        native_scripted_ui_->bridge()->load_script(js.str(), "spectr-native-analyzer");
+        PULP_TRACE_SCOPE_NAMED("state", "spectr_analyzer_frame_dispatch");
+        native_scripted_ui_->bridge()->dispatch_native_message(
+            "__spectrPublishNativeMessage",
+            "analyzer_frame",
+            payload,
+            "spectr-analyzer-frame",
+            "spectr-native-analyzer");
     } catch (const std::exception& error) {
         pulp::runtime::log_error(
             "[Spectr native N1] analyzer publication rejected: {}", error.what());
@@ -3207,6 +3255,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
 }
 
 void Spectr::close_native_editor_() {
+    if constexpr (pulp::runtime::kTracingEnabled)
+        pulp::view::set_tracing_badge_visible(true);
     if (native_frame_subscription_ >= 0 && native_frame_clock_)
         native_frame_clock_->unsubscribe(native_frame_subscription_);
     native_frame_subscription_ = -1;

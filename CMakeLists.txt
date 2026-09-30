@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
-project(Spectr VERSION 1.0.0 LANGUAGES CXX)
+project(Spectr VERSION 1.0.3 LANGUAGES CXX)
+
+# PROJECT_VERSION is Spectr's one product version. The plugin descriptor (what
+# Settings > About, CLAP and VST3 report), every bundle's Info.plist, the AU
+# component version integer and the installer's default VER all derive from
+# it; Spectr-release-version fails if any of them disagree.
+add_compile_definitions("SPECTR_PRODUCT_VERSION=\"${PROJECT_VERSION}\"")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,7 +61,7 @@ endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
      "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
-find_package(Pulp 0.801.0 REQUIRED)
+find_package(Pulp 0.880.0 REQUIRED)
 
 # Product provenance is recomputed on every configure. Never preserve a SHA
 # from a prior checkout in CMakeCache.txt: acceptance packages must identify
@@ -364,7 +370,7 @@ pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     MANUFACTURER "Pulp"
     PLUGIN_CODE "${SPECTR_NATIVE_PLUGIN_CODE}"
     MANUFACTURER_CODE "Pulp"
-    VERSION "1.0.0"
+    VERSION "${PROJECT_VERSION}"
     CATEGORY Effect
     DESIGN_WIDTH ${SPECTR_AUTHORED_WIDTH}
     DESIGN_HEIGHT ${SPECTR_AUTHORED_HEIGHT}
@@ -958,6 +964,30 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     # Shares the lock with Spectr-native-n1-test: both mount the same
     # heavyweight native materialized editor runtime and must not race.
     RESOURCE_LOCK spectr_native_materialized_editor)
+
+# The menus whose key hints follow the keyboard policy (EDIT MODE, ANALYZER,
+# SHORTCUTS), captured as a plug-in -- where the plain-key shortcuts go to the
+# DAW and the hints are hidden -- and as the standalone, with the EDIT MODE
+# rows measured in each. Hiding the key badge once reflowed every EDIT MODE
+# row into three columns in a plug-in only. Exit: 0 laid out, 1 a row is
+# broken, 3 a menu never opened (never a pass).
+foreach(_spectr_menu_context hosted standalone)
+    if(_spectr_menu_context STREQUAL "hosted")
+        set(_spectr_menu_hosted 1)
+    else()
+        set(_spectr_menu_hosted 0)
+    endif()
+    add_test(NAME Spectr-menu-shots-${_spectr_menu_context}
+        COMMAND ${CMAKE_COMMAND} -E env SPECTR_MENU_SHOTS=1
+            SPECTR_EDITOR_HOSTED=${_spectr_menu_hosted}
+            $<TARGET_FILE:Spectr-native-shot>
+            --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-menu-shots-${_spectr_menu_context}
+            --backend=skia)
+    set_tests_properties(Spectr-menu-shots-${_spectr_menu_context} PROPERTIES
+        TIMEOUT 300
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+endforeach()
 
 # Resize reachability (COR-4, editor half): sweeps host sizes through the
 # shipping resize path and asserts every hit-test leaf stays inside the design
@@ -2187,6 +2217,52 @@ if(SPECTR_NODE_EXECUTABLE)
         PROPERTIES TIMEOUT 30)
 endif()
 
+# Commits re-apply captured metadata only where they changed something.
+#
+# In the vendored runtime every host commit marked the whole materialized tree
+# dirty and re-applied captured layout, text and paint bindings across the
+# entire document -- measured at 22-127 ms per commit in the shipping editor.
+# The runtime now scopes the re-apply to the subtree a commit touched, skips
+# paint-only and handler-only commits, and retains registry misses per
+# mutation epoch. The suite drives the patched host config and applier in a vm;
+# the two controls revert a key half each and must be rejected.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-runtime-commit-scope
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_runtime_commit_scope.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/runtime.js)
+    set_tests_properties(Spectr-materialized-runtime-commit-scope PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-materialized-runtime-commit-scope-paint-gate-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_runtime_commit_scope.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/runtime.js
+            --plant-no-paint-gate --expect-fail)
+    set_tests_properties(Spectr-materialized-runtime-commit-scope-paint-gate-control
+        PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-materialized-runtime-commit-scope-unscoped-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_runtime_commit_scope.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/runtime.js
+            --plant-unscoped-hook --expect-fail)
+    set_tests_properties(Spectr-materialized-runtime-commit-scope-unscoped-control
+        PROPERTIES TIMEOUT 30)
+endif()
+
+# Two per-frame paint helpers do their work once and answer exactly as before:
+# the analyzer sample reads the trace position straight off the caller's log
+# frequency (no 10^x / log10 round trip per sample, trace bounds taken once per
+# frame), and specColor formats hue/saturation/lightness once per band and
+# theme. The suite checks identical answers against the previous code kept
+# verbatim as the oracle, and counts the per-call work.
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-paint-micro
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_paint_micro.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/spectr-native-services.js)
+    set_tests_properties(Spectr-materialized-paint-micro PROPERTIES TIMEOUT 30)
+endif()
+
 # The output level readout, and the Output trim beside it.
 #
 # `kOutputTrim` is applied post-render and proved exact by a unit test, and
@@ -2344,6 +2420,23 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-short-track --expect-fail)
     set_tests_properties(Spectr-materialized-output-meter-trim-track-control
         PROPERTIES TIMEOUT 30)
+    # The number moves without a render. The native side publishes every
+    # 0.1 dB change, ~25 times a second with audio playing, and every React
+    # commit re-applies this captured document; measured with Perfetto, those
+    # commits were the meter's whole cost and the >100 ms stalls were runs of
+    # them. Three rows because three separate things make it cheap: no commit
+    # per reading, no faster than 10 Hz, and a label box its digits cannot
+    # resize.
+    foreach(_spectr_meter_plant meter-commits unthrottled-readout elastic-readout)
+        add_test(NAME Spectr-materialized-output-meter-${_spectr_meter_plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_output_meter.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_spectr_meter_plant} --expect-fail)
+        set_tests_properties(
+            Spectr-materialized-output-meter-${_spectr_meter_plant}-control
+            PROPERTIES TIMEOUT 30)
+    endforeach()
 
     # THE OVERLOAD CHIP GOES OUT BY ITSELF, and latching it is a setting.
     #
@@ -3165,6 +3258,54 @@ if(SPECTR_NODE_EXECUTABLE)
     set_tests_properties(Spectr-materialized-marquee-render-cost-rectangle-control
         PROPERTIES TIMEOUT 60)
 
+    # PRESSING AND RELEASING A BAND DOES NOT RE-RENDER THE EDITOR. Measured
+    # with Perfetto, each press and each release of a band stroke cost
+    # 88-124 ms of React: the band reading went through the App's onStatus
+    # (a root commit plus the banner's own), and the release re-rendered the
+    # bank to refresh a gains mirror nothing on screen reads. The suite
+    # counts the renders each press/release schedules and checks the pill
+    # still gets every reading, directly. Four controls, one per mechanism:
+    # the release render, readings through onStatus, a mirror built on its
+    # stale copy (which lets a later edit undo a stroke), and a direct show
+    # that renders.
+    add_test(NAME Spectr-materialized-band-press-cost
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_press_cost.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-band-press-cost PROPERTIES TIMEOUT 60)
+    foreach(_spectr_press_plant release-render status-via-react stale-mirror banner-renders)
+        add_test(NAME Spectr-materialized-band-press-cost-${_spectr_press_plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_press_cost.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_spectr_press_plant} --expect-fail)
+        set_tests_properties(
+            Spectr-materialized-band-press-cost-${_spectr_press_plant}-control
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+
+    # EVERY FULL-STATE PUBLICATION NAMES THE STATE IT WAS DRAWN FROM, and
+    # carries the live viewport. Native merges a publication against that
+    # state so a stale one cannot revert host automation; the drawn revision
+    # must be the last state the bank APPLIED, and the window must be the live
+    # one after a setView that has not rendered and during host viewport
+    # automation. Each control restores one shipped omission.
+    add_test(NAME Spectr-materialized-publication-provenance
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_publication_provenance.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-publication-provenance PROPERTIES TIMEOUT 60)
+    foreach(_spectr_provenance_plant no-drawn render-view)
+        add_test(NAME Spectr-materialized-publication-provenance-${_spectr_provenance_plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_publication_provenance.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_spectr_provenance_plant} --expect-fail)
+        set_tests_properties(
+            Spectr-materialized-publication-provenance-${_spectr_provenance_plant}-control
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+
     # THE EDITOR STOPS PAINTING WHEN NOTHING CHANGED -- and wakes for every
     # path that can change the canvas. Measured on a genuinely idle editor
     # (nothing hovered, nothing playing, nothing animating) the draw loop
@@ -3545,7 +3686,7 @@ pulp_add_plugin(SpectrWebViewReference
     PLUGIN_NAME     "Spectr WebView Reference"
     BUNDLE_ID       "com.pulp.spectr.webview-reference"
     MANUFACTURER    "Pulp"
-    VERSION         "1.0.0"
+    VERSION         "${PROJECT_VERSION}"
     CATEGORY        Effect
     PLUGIN_CODE     "SpWR"
     MANUFACTURER_CODE "Pulp"
@@ -3795,3 +3936,26 @@ target_compile_definitions(Spectr-gpu-audio-status-test PRIVATE
 target_link_libraries(Spectr-gpu-audio-status-test PRIVATE ${SPECTR_NATIVE_CORE_TARGET})
 add_test(NAME Spectr-gpu-audio-status COMMAND Spectr-gpu-audio-status-test)
 set_tests_properties(Spectr-gpu-audio-status PROPERTIES TIMEOUT 120 RESOURCE_LOCK pulp_gpu)
+
+# Every shipped artifact must name PROJECT_VERSION: each bundle's Info.plist,
+# the AU component version integer, and the descriptor string compiled into
+# the plugin binary that Settings > About displays. package.sh runs the same
+# check against the finished installer with --pkg.
+if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
+   AND TARGET ${SPECTR_NATIVE_VST3_TARGET} AND TARGET ${SPECTR_NATIVE_AU_TARGET}
+   AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET})
+    add_test(NAME Spectr-release-version
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_release_version.py
+            --expected ${PROJECT_VERSION}
+            --bundle ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
+            --bundle ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
+            --bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap
+            --bundle ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app
+            --binary-version-bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
+    set_tests_properties(Spectr-release-version PROPERTIES TIMEOUT 60)
+    add_test(NAME Spectr-release-version-controls
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_release_version.py --self-test)
+    set_tests_properties(Spectr-release-version-controls PROPERTIES TIMEOUT 60)
+endif()

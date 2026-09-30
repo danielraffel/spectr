@@ -257,8 +257,9 @@ SCENARIO_KEYS = ";".join([
     "s_out=press:1100,400", "s_out_settled=wait",
     "s_open2=rpress:378,400", "s_close2=escape",
     "s_ctl=press:1100,400", "s_ctl_settled=wait", "s_ctl_undo=press:1100,400",
-    # Escape clears a selection -- through the plugin editor's key path -- and
-    # an Escape with nothing to clear still reaches the DAW.
+    # Escape does NOT clear a selection -- the shortcut was never shown
+    # anywhere and was removed -- so through the plugin editor's key path it
+    # reaches the DAW with a selection standing, as it does with none.
     "s_mark2=drag:cmd+100,150>400,700", "s_esc=pkey:escape", "s_esc_settled=wait",
     "s_open3=rpress:378,400", "s_close3=escape",
     "s_idle=pkey:escape",
@@ -516,8 +517,8 @@ def verify_keys(steps, plant_no_keys=False):
             "selection:press-outside-only-deselects")
     require(muted_count("s_ctl_settled") == muted_count("s_close2") + 1,
             "selection:control-a-press-with-no-selection-mutes")
-    require(st("s_esc").get("result") == "script-consumed" and not selected("s_open3"),
-            "keys:escape-clears-a-selection")
+    require(st("s_esc").get("result") == "forward-to-host" and selected("s_open3"),
+            "keys:escape-leaves-a-selection-and-reaches-the-daw")
     require(st("s_idle").get("result") == "forward-to-host",
             "negative-control:idle-escape-reaches-the-daw")
     require("LFO 1 PARAMETERS" in labels(st("l_mod_settled"))

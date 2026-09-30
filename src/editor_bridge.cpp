@@ -197,6 +197,28 @@ choc::value::Value build_info_projection_(const Spectr& plugin) {
     return result;
 }
 
+// The revision of the last state the editor applied when it built a
+// publication. Absent or malformed reads as absent: the publication is then
+// diffed against the latest state handed over, which is never worse than
+// taking it wholesale.
+std::optional<EditorRevision> drawn_revision_(
+    const choc::value::ValueView& payload) {
+    if (!payload.isObject() || !payload.hasObjectMember("drawn_revision"))
+        return std::nullopt;
+    const auto value = payload["drawn_revision"];
+    if (value.isInt32() && value.getInt32() >= 0)
+        return static_cast<EditorRevision>(value.getInt32());
+    if (value.isInt64() && value.getInt64() >= 0)
+        return static_cast<EditorRevision>(value.getInt64());
+    if (value.isFloat64()) {
+        const double d = value.getFloat64();
+        if (std::isfinite(d) && d >= 0.0 && d == std::floor(d)
+            && d <= static_cast<double>(kMaxEditorRevision))
+            return static_cast<EditorRevision>(d);
+    }
+    return std::nullopt;
+}
+
 std::optional<EditorRevision> expected_revision_(
     const choc::value::ValueView& payload) {
     if (!payload.isObject() || !payload.hasObjectMember("expected_revision"))
@@ -217,6 +239,16 @@ std::optional<EditorRevision> expected_revision_(
 /// parameter, so an editor that only ever reads them at hydration shows the
 /// user a settings panel frozen at the value the session opened with while the
 /// host drives the audio somewhere else.
+// Where this editor lives and whether its plain-key shortcuts are on there.
+// "standalone" always binds them; "plugin" only when the user asked.
+choc::value::Value make_keyboard_policy_payload_(const Spectr& plugin) {
+    auto keyboard = choc::value::createObject("SpectrKeyboardPolicy");
+    keyboard.addMember("host_kind",
+                       std::string(editor_is_standalone() ? "standalone" : "plugin"));
+    keyboard.addMember("shortcuts_in_daw", plugin.keyboard_shortcuts_in_daw());
+    return keyboard;
+}
+
 choc::value::Value make_modulation_payload_(const Spectr& plugin) {
     const auto modulation_state = plugin.modulation_settings();
     auto modulation = choc::value::createObject("SpectrModulationState");
@@ -282,8 +314,26 @@ void add_history_and_macros_(choc::value::Value& payload, const Spectr& plugin,
 
 }
 
-std::string authority_response_(const Spectr& plugin,
+// A response the editor applies: what it carries is what the editor is shown.
+std::string shown_response_(EditorAuthority& authority, const Spectr& plugin,
+                            EditorRevision revision) {
+    FieldSnapshot shown;
+    auto payload = make_editor_state_payload(plugin, revision, &shown);
+    authority.note_editor_shown(shown, revision);
+    return EditorBridge::ok_response(payload);
+}
+
+std::string authority_response_(EditorAuthority& authority, const Spectr& plugin,
                                 const EditorReceipt& receipt) {
+    if (!receipt.accepted) return EditorBridge::err_response(receipt.error);
+    return shown_response_(authority, plugin, receipt.revision);
+}
+
+// The response to the editor's own full-state publication. The editor does
+// not apply it (it replays only the history availability), so it is not a
+// state the editor was shown; `publish_editor_state` records what was sent.
+std::string publication_response_(const Spectr& plugin,
+                                  const EditorReceipt& receipt) {
     if (!receipt.accepted) return EditorBridge::err_response(receipt.error);
     return EditorBridge::ok_response(
         make_editor_state_payload(plugin, receipt.revision));
@@ -292,8 +342,10 @@ std::string authority_response_(const Spectr& plugin,
 } // namespace
 
 choc::value::Value make_editor_state_payload(const Spectr& plugin,
-                                             EditorRevision revision) {
+                                             EditorRevision revision,
+                                             FieldSnapshot* shown) {
     const auto state = plugin.processing_state_snapshot();
+    if (shown) *shown = {state.field, state.viewport, state.layout, true};
     const auto n = visible_count(state.layout);
     auto gains = choc::value::createEmptyArray();
     auto muted = choc::value::createEmptyArray();
@@ -332,6 +384,9 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     // per-revision projection, which stays exactly the automatable lanes.
     modulation.addMember("morph_applies_viewport",
                          plugin.morph_applies_viewport());
+    // The plain-key shortcut policy. Hydration-only, like the switch above:
+    // it is never automated, so the live per-revision projection omits it.
+    payload.addMember("keyboard", make_keyboard_policy_payload_(plugin));
     // The Latency control. Not a host parameter and not automatable, so like
     // "Morph moves the view" it rides the hydration payload the panel reads
     // once and deliberately never appears in the live per-revision projection,
@@ -369,8 +424,10 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
 }
 
 choc::value::Value make_editor_live_state_payload(const Spectr& plugin,
-                                                  EditorRevision revision) {
+                                                  EditorRevision revision,
+                                                  FieldSnapshot* shown) {
     const auto state = plugin.processing_state_snapshot();
+    if (shown) *shown = {state.field, state.viewport, state.layout, true};
     const auto n = visible_count(state.layout);
     auto gains = choc::value::createEmptyArray();
     auto muted = choc::value::createEmptyArray();
@@ -418,7 +475,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             // new gesture epoch so a reload can never resume a C++ snapshot
             // captured by callbacks from the retired realm.
             authority.reset_transient_state();
-            return authority_response_(plugin, {true, authority.revision(), {}});
+            return authority_response_(authority, plugin, {true, authority.revision(), {}});
         });
 
     bridge.add_handler("build_info_get",
@@ -495,8 +552,9 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 next.bands[i].muted = mutes[i].getBool();
             }
 
-            return authority_response_(plugin, authority.replace_processing_state(
-                next, state.viewport, *layout, expected_revision_(p)));
+            return publication_response_(plugin, authority.publish_editor_state(
+                next, state.viewport, *layout, drawn_revision_(p),
+                expected_revision_(p)));
         });
 
     // Atomic state publication for the imported live editor. Zoom/pan changes
@@ -544,15 +602,16 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 return EditorBridge::err_response(
                     "min_hz and max_hz must be finite numbers");
             const Viewport viewport{*min_hz, *max_hz};
-            return authority_response_(plugin, authority.replace_processing_state(
-                next, viewport, *layout, expected_revision_(p)));
+            return publication_response_(plugin, authority.publish_editor_state(
+                next, viewport, *layout, drawn_revision_(p),
+                expected_revision_(p)));
         });
 
     // ── Drag protocol ──────────────────────────────────────────────────
 
     bridge.add_handler("paint_start",
         [&plugin, &authority](const choc::value::ValueView& p) {
-            return authority_response_(
+            return authority_response_(authority,
                 plugin, authority.begin_band_edit(expected_revision_(p)));
         });
 
@@ -587,13 +646,13 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             g.current_value = *current_value;
             g.n_visible     = n_visible;
 
-            return authority_response_(plugin, authority.update_band_edit(
+            return authority_response_(authority, plugin, authority.update_band_edit(
                 *mode, g, expected_revision_(p)));
         });
 
     bridge.add_handler("paint_end",
         [&plugin, &authority](const choc::value::ValueView&) {
-            return authority_response_(plugin, authority.end_band_edit());
+            return authority_response_(authority, plugin, authority.end_band_edit());
         });
 
     // ── Morph / snapshot / A-B ─────────────────────────────────────────
@@ -601,7 +660,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     bridge.add_handler("morph",
         [&plugin, &authority](const choc::value::ValueView& p) {
             const auto t = std::clamp(EditorBridge::get_float(p, "t", 0.0f), 0.0f, 1.0f);
-            return authority_response_(
+            return authority_response_(authority,
                 plugin, authority.apply_morph(t, expected_revision_(p)));
         });
 
@@ -609,7 +668,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));
             if (!slot) return EditorBridge::err_response("slot must be 'A' or 'B'");
-            return authority_response_(plugin, authority.capture_snapshot(
+            return authority_response_(authority, plugin, authority.capture_snapshot(
                 *slot, expected_revision_(p)));
         });
 
@@ -617,7 +676,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));
             if (!slot) return EditorBridge::err_response("slot must be 'A' or 'B'");
-            return authority_response_(plugin, authority.clear_snapshot(
+            return authority_response_(authority, plugin, authority.clear_snapshot(
                 *slot, expected_revision_(p)));
         });
 
@@ -625,7 +684,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         [&plugin, &authority](const choc::value::ValueView& p) -> std::string {
             const auto slot = parse_slot_(EditorBridge::get_string(p, "slot"));
             if (!slot) return EditorBridge::err_response("slot must be 'A' or 'B'");
-            return authority_response_(plugin, authority.recall_snapshot(
+            return authority_response_(authority, plugin, authority.recall_snapshot(
                 *slot, expected_revision_(p)));
         });
 
@@ -661,17 +720,17 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     bridge.add_handler("undo_gesture_end",
         [&plugin, &authority](const choc::value::ValueView&) -> std::string {
             authority.end_undo_gesture();
-            return authority_response_(plugin, {true, authority.revision(), {}});
+            return authority_response_(authority, plugin, {true, authority.revision(), {}});
         });
 
     bridge.add_handler("undo",
         [&plugin, &authority](const choc::value::ValueView&) -> std::string {
-            return authority_response_(plugin, authority.undo());
+            return authority_response_(authority, plugin, authority.undo());
         });
 
     bridge.add_handler("redo",
         [&plugin, &authority](const choc::value::ValueView&) -> std::string {
-            return authority_response_(plugin, authority.redo());
+            return authority_response_(authority, plugin, authority.redo());
         });
 
     // ── Pattern library ────────────────────────────────────────────────
@@ -871,9 +930,8 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             // so it must not be mistaken for a malformed one.
             if (!plugin.set_macro_members(macro, members))
                 return EditorBridge::err_response("macro state unavailable");
-            return EditorBridge::ok_response(
-                make_editor_state_payload(plugin,
-                                          plugin.editor_authority().revision()));
+            return shown_response_(plugin.editor_authority(), plugin,
+                                   plugin.editor_authority().revision());
         });
 
     // The macro DRAG triad. Shaped like paint_start/paint/paint_end and for
@@ -914,6 +972,27 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             return EditorBridge::ok_response();
         });
 
+    // The plain-key shortcut policy, read synchronously by the document
+    // before its first render so a hosted editor never binds a letter the
+    // DAW owns, not even for the frames before hydration.
+    bridge.add_handler("keyboard_policy_get",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
+        });
+
+    // "Keyboard shortcuts in DAW". Shaped like morph_viewport_set: an editor
+    // preference persisted in the plugin state, never a host parameter.
+    bridge.add_handler("keyboard_shortcuts_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("enabled"))
+                return EditorBridge::err_response("enabled missing");
+            const auto& flag = p["enabled"];
+            if (!flag.isBool())
+                return EditorBridge::err_response("enabled must be a boolean");
+            plugin.set_keyboard_shortcuts_in_daw(flag.getBool());
+            return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
+        });
+
     bridge.add_handler("morph_viewport_set",
         [&plugin](const choc::value::ValueView& p) -> std::string {
             if (!p.isObject() || !p.hasObjectMember("enabled"))
@@ -950,8 +1029,8 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             // Return the rehydrated panel state: the switch moves the reported
             // latency, and the caller needs the new figures without a second
             // round trip.
-            return EditorBridge::ok_response(
-                make_editor_state_payload(plugin, plugin.editor_authority().revision()));
+            return shown_response_(plugin.editor_authority(), plugin,
+                                   plugin.editor_authority().revision());
         });
 }
 

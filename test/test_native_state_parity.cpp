@@ -6,8 +6,13 @@
 
 #include <pulp/canvas/recording_canvas.hpp>
 #include <pulp/state/store.hpp>
+#include <pulp/runtime/trace.hpp>
+#include <pulp/view/canvas_widget.hpp>
 #include <pulp/view/frame_clock.hpp>
+#include <pulp/view/tracing_badge.hpp>
+#include <pulp/view/hover_cursor.hpp>
 #include <pulp/view/input_events.hpp>
+#include <pulp/view/overlay_dismissal.hpp>
 #include <pulp/view/pointer_dispatch.hpp>
 #include <pulp/view/screenshot.hpp>
 #include <pulp/view/scripted_ui.hpp>
@@ -19,6 +24,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <chrono>
 #include <cmath>
 #include <functional>
@@ -29,6 +35,7 @@
 #include <random>
 #include <span>
 #include <sstream>
+#include <thread>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1032,7 +1039,8 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // 1660.98 when the LATENCY group was added, and 1660.98 -> 1820.58
         // when Appearance gained the Modulation look row -- each exactly one
         // group's 160px, with the authored box, scroll reachability and skin
-        // all unchanged. If you add a group and this fails, that is the window
+        // all unchanged -- and 1820.58 -> 1960.58 when FEEDBACK gained the
+        // plug-in-only "Keyboard shortcuts in DAW" row, whose label wraps. If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1042,7 +1050,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1740 && s.content_height < 1900"
+        " && s.content_height > 1880 && s.content_height < 2040"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
@@ -1097,19 +1105,19 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
 
     require_runtime_contract(
         rig,
-        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 4.5"
-        " && globalThis.__spectrBandCountCenteringReceipt__.trigger.height === 22"
+        "globalThis.__spectrBandCountCenteringReceipt__?.trigger?.top === 3.5"
+        " && globalThis.__spectrBandCountCenteringReceipt__.trigger.height === 20"
         " && Math.abs(globalThis.__spectrBandCountCenteringReceipt__.trigger.left"
         " - 9.484375) < 0.001",
         "band trigger text was not optically centered");
-    const auto* trigger_label = find_label(*rig.root, "32 bands ▾");
+    const auto* trigger_label = find_label(*rig.root, "32 BANDS ▾");
     REQUIRE(trigger_label != nullptr);
     CAPTURE(trigger_label->id(), trigger_label->parent()->id());
     REQUIRE(trigger_label->cached_line_boxes().size() == 1);
     CHECK(trigger_label->cached_line_boxes().front().left
           == Catch::Approx(9.484375f).margin(0.01f));
     CHECK(trigger_label->cached_line_boxes().front().top
-          == Catch::Approx(4.5f).margin(0.01f));
+          == Catch::Approx(3.5f).margin(0.01f));
 
     REQUIRE(static_cast<bool>(rig.root->on_global_key));
     const auto comma = static_cast<pulp::view::KeyCode>(',');
@@ -1381,9 +1389,15 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
       if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
         globalThis.__pulpRuntimeSettle__(4);
       const released = hooks.renderState();
-      if (released.reactGains.some((value, index) =>
-          Math.abs(value - released.targetGains[index]) > 1e-9))
-        throw new Error('band release did not publish final React state');
+      // The release does not re-render to refresh React's `gains`. That copy
+      // is a mirror nothing on screen reads -- the live projection leaves it
+      // stale the same way -- and every setter writes it from the ref, so a
+      // render here only re-applied the captured document. What must hold is
+      // the drawn result, and that no release render happened.
+      if (released.targetGains.every((value, index) => value === before[index]))
+        throw new Error('band release lost the drawn target');
+      if (released.reactGains.some((value, index) => value !== before[index]))
+        throw new Error('band release re-rendered React gains');
 
       // A transient leave between related drag/hover updates must not flash an
       // empty banner, and its stale clear timer must not erase the replacement.
@@ -1784,7 +1798,7 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
     const auto directory = atlas_directory();
     capture(rig, directory, "band-header-closed");
 
-    const auto* band_label = find_label(*rig.root, "32 bands ▾");
+    const auto* band_label = find_label(*rig.root, "32 BANDS ▾");
     const auto* peer_label = find_label(*rig.root, "BOTH");
     REQUIRE(band_label != nullptr);
     REQUIRE(peer_label != nullptr);
@@ -1832,7 +1846,7 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
           '[data-spectr-visualization] button')).find(
           button => button.textContent.trim() === 'BOTH')?.getBoundingClientRect(),
         zoom: Array.from(document.querySelectorAll('span')).find(
-          span => span.textContent.trim().endsWith('× zoom'))?.getBoundingClientRect()
+          span => span.textContent.trim().endsWith('× ZOOM'))?.getBoundingClientRect()
       };
     })();)js", "spectr-native-band-header-before-open");
     const auto focus_and_open = [&] {
@@ -5695,7 +5709,7 @@ TEST_CASE("switching native dropdowns costs one press",
     // One top-rail trigger and three bottom-rail ones, so the pairs below
     // include a switch that crosses rails.
     const std::array<Menu, 4> menus{{
-        {"bands", "32 bands ▾"},
+        {"bands", "32 BANDS ▾"},
         {"edit", "SCULPT ▾"},
         {"analyzer", "PEAK ▾"},
         {"overflow", "⋯"},
@@ -5794,5 +5808,1521 @@ TEST_CASE("dismissing a native dropdown over ordinary content still consumes",
         settle(rig.clock, 30);
         require_open_menu(rig, "");
     }
+    storage.require_unchanged();
+}
+
+namespace {
+
+// Where a hover lands and which cursor it shows, sampled across an open
+// popup's own box in the order a macOS host runs a buttonless move:
+// `deliver_hover_move` (the scripted `pointermove`), then `hover_cursor_at`.
+struct PopupHoverSweep {
+    std::vector<pulp::view::Point> points;
+    int crosshair = 0;       // points showing the plot's crosshair
+    std::string first_bad;   // first offending point, for the failure message
+};
+
+PopupHoverSweep sweep_popup_hover(NativeEditorRig& rig, View& popup) {
+    auto& root = *rig.root;
+    const auto origin = pulp::view::point_to_local({0.0f, 0.0f}, &popup, &root);
+    const float left = -origin.x, top = -origin.y;
+    const auto box = popup.bounds();
+    PopupHoverSweep sweep;
+    for (float y = top + 3.0f; y < top + box.height - 2.0f; y += 11.0f) {
+        for (float x = left + 3.0f; x < left + box.width - 2.0f; x += 13.0f) {
+            const pulp::view::Point point{x, y};
+            sweep.points.push_back(point);
+            pulp::view::deliver_hover_move(root, point);
+            if (pulp::view::hover_cursor_at(root, point)
+                != View::CursorStyle::crosshair)
+                continue;
+            ++sweep.crosshair;
+            if (sweep.first_bad.empty()) {
+                // The tree hit names the view whose cursor leaked through.
+                const auto* under = root.hit_test(point);
+                std::ostringstream text;
+                text << point.x << ',' << point.y << " shows the cursor of "
+                     << (under ? under->id() : std::string("<nothing>"));
+                sweep.first_bad = text.str();
+            }
+        }
+    }
+    return sweep;
+}
+
+// The popup must actually cover plot pixels for a zero-crosshair sweep to mean
+// anything: re-read the same points with the popup closed and count the plot's
+// crosshair there.
+int crosshair_points_without_popup(NativeEditorRig& rig,
+                                   const std::vector<pulp::view::Point>& points) {
+    int crosshair = 0;
+    for (const auto& point : points) {
+        pulp::view::deliver_hover_move(*rig.root, point);
+        if (pulp::view::hover_cursor_at(*rig.root, point)
+            == View::CursorStyle::crosshair)
+            ++crosshair;
+    }
+    return crosshair;
+}
+
+void close_every_popup(NativeEditorRig& rig) {
+    while (rig.root->interaction().active_overlay != nullptr) {
+        View::dismiss_active_overlay(*rig.root);
+        settle(rig.clock, 16);
+    }
+}
+
+}  // namespace
+
+// Over an open popup the pointer shows the popup's cursor, never the crosshair
+// of the band plot it is painted over. The band menu opens inside the plot's
+// own subtree; the rail dropdowns open upward from the bottom rail, and the
+// tall edit menu reaches far enough over the plot that a tree hit test stops
+// reaching its upper rows. A press there was always routed into the menu
+// through the overlay slot; the hover has to resolve the same way.
+TEST_CASE("an open popup never shows the band plot's crosshair",
+          "[native-n1][cursor][overlay][hover]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    auto& root = *rig.root;
+    const pulp::view::Point plot{660.0f, 430.0f};
+
+    const auto check_open_popup = [&](const std::string& what) {
+        View* popup = root.interaction().active_overlay;
+        INFO(what);
+        REQUIRE(popup != nullptr);
+        const auto sweep = sweep_popup_hover(rig, *popup);
+        INFO("first offending point: " << sweep.first_bad);
+        REQUIRE(sweep.points.size() > 40);
+        CHECK(sweep.crosshair == 0);
+        close_every_popup(rig);
+        CHECK(crosshair_points_without_popup(rig, sweep.points) > 0);
+    };
+
+    // Band context menu, opened on the plot the way a right click opens it.
+    pulp::view::deliver_hover_move(root, plot);
+    REQUIRE(pulp::view::hover_cursor_at(root, plot) == View::CursorStyle::crosshair);
+    REQUIRE(pulp::view::route_context_press(root, plot).handled);
+    settle(rig.clock, 16);
+    check_open_popup("band context menu");
+
+    // Every chrome dropdown, each opened while the pointer last showed the
+    // crosshair so a stale plot cursor has every chance to survive.
+    for (const char* label : {"32 BANDS ▾", "SCULPT ▾", "PEAK ▾", "⋯"}) {
+        pulp::view::deliver_hover_move(root, plot);
+        REQUIRE(host_click(rig, trigger_centre(root, label)).reached_tree);
+        View* popup = root.interaction().active_overlay;
+        if (popup == nullptr) FAIL("dropdown did not open: " << label);
+        // A dropdown mounted clear of the plot has nothing to cover; only the
+        // ones painted over it can show the defect, and those must not.
+        const auto sweep = sweep_popup_hover(rig, *popup);
+        INFO(label << " first offending point: " << sweep.first_bad);
+        CHECK(sweep.crosshair == 0);
+        close_every_popup(rig);
+    }
+    storage.require_unchanged();
+}
+
+// THE ZOOM READOUT AND THE BANDS CAPTION SIT ON THE HEADER'S LINE.
+//
+// Two separate causes, one symptom: each painted a point below the segmented
+// control's captions.
+//
+// Its layout box was always centred on the controls beside it; its glyphs were
+// not. The readout is a leaf added after the capture, so it carries no text
+// binding and resolved the stylesheet's monospace family by name, which reports
+// a point more ascent than the bound face every captured header label uses.
+// Native text centres a line as (box - ink) / 2 + ascent, so that point landed
+// the baseline one point low. A box-only check cannot see this, so the case
+// measures three things: the layout boxes, the face metric that caused it, and
+// the painted ink itself against the segmented control's captions.
+//
+// The bands caption's line box is installed by the runtime's optical-centring
+// pass, which centred it in the trigger's 22px border box although the box sits
+// inside the 1px border; it has to centre in the 20px content box instead.
+TEST_CASE("the zoom readout's text sits on the header controls' line",
+          "[native-n1][state-parity][header]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Layout boxes: the readout's box is centred on the bands trigger's.
+    rig.bridge().load_script(R"js((() => {
+      const trigger = document.querySelector(
+        '[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]');
+      const zoom = Array.from(document.querySelectorAll('span')).find(
+        span => span.textContent.trim().endsWith('× ZOOM'));
+      if (!trigger || !zoom) throw new Error('header subjects missing');
+      const t = trigger.getBoundingClientRect();
+      const z = zoom.getBoundingClientRect();
+      const tc = t.top + t.height / 2, zc = z.top + z.height / 2;
+      if (Math.abs(tc - zc) > 1)
+        throw new Error('zoom readout box off the trigger line: trigger centre='
+          + tc + ' readout centre=' + zc);
+    })();)js", "spectr-native-zoom-readout-box");
+
+    const auto* zoom = find_label(*rig.root, "1.00× ZOOM");
+    const auto* caption = find_label(*rig.root, "BOTH");
+    const auto* bands = find_label(*rig.root, "32 BANDS ▾");
+    REQUIRE(zoom != nullptr);
+    REQUIRE(caption != nullptr);
+    REQUIRE(bands != nullptr);
+
+    // The face: the readout's ascent is the bound face's, the one the captured
+    // labels beside it are centred with.
+    CAPTURE(zoom->effective_font_family(), bands->effective_font_family());
+    CHECK(zoom->baseline_y() == Catch::Approx(bands->baseline_y()).margin(0.05f));
+
+    // The pixels: the readout's ink rows match the segmented captions'. Its
+    // digits and the captions' capitals share a cap height and neither has a
+    // descender, so equal top and bottom rows mean one shared line.
+    REQUIRE(pulp::view::raw_rgba_render_available());
+    constexpr float kScale = 2.0f;
+    std::uint32_t width = 0, height = 0;
+    const auto rgba = pulp::view::render_to_rgba(
+        *rig.root, 1320, 860, kScale, &width, &height);
+    REQUIRE(!rgba.empty());
+    struct InkRows { float top = -1.0f; float bottom = -1.0f; };
+    const auto ink_rows = [&](const pulp::view::Label& label,
+                              const std::vector<std::uint8_t>& frame) {
+        const auto origin = root_point(label, 0.0f, 0.0f);
+        const auto x0 = static_cast<std::uint32_t>(origin.x * kScale);
+        const auto x1 = std::min<std::uint32_t>(
+            width, static_cast<std::uint32_t>(
+                       (origin.x + label.bounds().width) * kScale));
+        const auto y0 = static_cast<std::uint32_t>(
+            std::max(0.0f, origin.y - 3.0f) * kScale);
+        const auto y1 = std::min<std::uint32_t>(
+            height, static_cast<std::uint32_t>(
+                        (origin.y + label.bounds().height + 3.0f) * kScale));
+        InkRows rows;
+        for (std::uint32_t y = y0; y < y1; ++y) {
+            bool inked = false;
+            for (std::uint32_t x = x0; x < x1 && !inked; ++x) {
+                const auto* px =
+                    &frame[(static_cast<std::size_t>(y) * width + x) * 4];
+                inked = px[0] + px[1] + px[2] > 250;
+            }
+            if (!inked) continue;
+            if (rows.top < 0.0f) rows.top = static_cast<float>(y) / kScale;
+            rows.bottom = static_cast<float>(y + 1) / kScale;
+        }
+        return rows;
+    };
+    // Each WORD's ink rows, split where the ink breaks for at least 4 pt --
+    // a space, never the gap between two glyphs of one word. The whole
+    // control's rows are not enough: a lowercase word with no ascender sits
+    // on the lower part of the line, and digits beside it would still carry
+    // the control's top row up to the capitals'.
+    struct WordInk { float left = 0, right = 0, top = -1, bottom = -1; };
+    const auto word_ink = [&](const pulp::view::Label& label,
+                              const std::vector<std::uint8_t>& frame) {
+        const auto origin = root_point(label, 0.0f, 0.0f);
+        const auto x0 = static_cast<std::uint32_t>(origin.x * kScale);
+        const auto x1 = std::min<std::uint32_t>(
+            width, static_cast<std::uint32_t>(
+                       (origin.x + label.bounds().width) * kScale));
+        const auto y0 = static_cast<std::uint32_t>(
+            std::max(0.0f, origin.y - 3.0f) * kScale);
+        const auto y1 = std::min<std::uint32_t>(
+            height, static_cast<std::uint32_t>(
+                        (origin.y + label.bounds().height + 3.0f) * kScale));
+        const auto bright = [&](std::uint32_t x, std::uint32_t y) {
+            const auto* px = &frame[(static_cast<std::size_t>(y) * width + x) * 4];
+            return px[0] + px[1] + px[2] > 250;
+        };
+        std::vector<WordInk> words;
+        std::uint32_t gap = 0;
+        constexpr std::uint32_t kWordGap = static_cast<std::uint32_t>(4 * 2);
+        for (std::uint32_t x = x0; x < x1; ++x) {
+            float top = -1.0f, bottom = -1.0f;
+            for (std::uint32_t y = y0; y < y1; ++y) {
+                if (!bright(x, y)) continue;
+                if (top < 0.0f) top = static_cast<float>(y) / kScale;
+                bottom = static_cast<float>(y + 1) / kScale;
+            }
+            if (top < 0.0f) { ++gap; continue; }
+            if (words.empty() || gap >= kWordGap)
+                words.push_back({static_cast<float>(x) / kScale, 0.0f, top, bottom});
+            auto& word = words.back();
+            word.right = static_cast<float>(x + 1) / kScale;
+            word.top = std::min(word.top, top);
+            word.bottom = std::max(word.bottom, bottom);
+            gap = 0;
+        }
+        return words;
+    };
+    const auto readout_ink = ink_rows(*zoom, rgba);
+    const auto caption_ink = ink_rows(*caption, rgba);
+    CAPTURE(readout_ink.top, readout_ink.bottom,
+            caption_ink.top, caption_ink.bottom);
+    REQUIRE(readout_ink.top >= 0.0f);
+    REQUIRE(caption_ink.top >= 0.0f);
+    // Half a point: the defect is one point, so a one-point tolerance could
+    // not see it.
+    CHECK(readout_ink.top == Catch::Approx(caption_ink.top).margin(0.5f));
+    CHECK(readout_ink.bottom == Catch::Approx(caption_ink.bottom).margin(0.5f));
+    // Word by word: the number and ZOOM each on the captions' rows.
+    const auto check_words = [&](const pulp::view::Label& label,
+                                 const std::vector<std::uint8_t>& frame,
+                                 std::size_t words_to_check) {
+        const auto words = word_ink(label, frame);
+        INFO(label.text());
+        REQUIRE(words.size() >= words_to_check);
+        for (std::size_t index = 0; index < words_to_check; ++index) {
+            const auto& word = words[index];
+            CAPTURE(index, word.left, word.right, word.top, word.bottom,
+                    caption_ink.top, caption_ink.bottom);
+            CHECK(word.top == Catch::Approx(caption_ink.top).margin(0.5f));
+            CHECK(word.bottom == Catch::Approx(caption_ink.bottom).margin(0.5f));
+        }
+    };
+    check_words(*zoom, rgba, 2);
+
+    // The output cluster shares the line too: the OUTPUT caption, the peak
+    // chip's PEAK label and its number, and the trim readout. Audio runs first
+    // so the chip prints a number rather than its "--" placeholder, whose
+    // dashes sit mid-line and would say nothing about the baseline.
+    feed_audio_blocks(rig, 16);
+    settle(rig.clock, 12);
+    const std::function<const View*(const View&, std::string_view)> by_id =
+        [&by_id](const View& view, std::string_view id) -> const View* {
+            if (view.id() == id) return &view;
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                if (const auto* match = by_id(*view.child_at(index), id))
+                    return match;
+            return nullptr;
+        };
+    const std::function<const pulp::view::Label*(const View&)> first_label =
+        [&first_label](const View& view) -> const pulp::view::Label* {
+            if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view))
+                return label;
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                if (const auto* match = first_label(*view.child_at(index)))
+                    return match;
+            return nullptr;
+        };
+    const auto label_at = [&](const char* selector) {
+        auto id = runtime_string(
+            rig, std::string{"String(document.querySelector('"} + selector
+                     + "').__pulpId)",
+            "spectr-header-output-id");
+        id.erase(std::min(id.find('\n'), id.size()));
+        const auto* view = by_id(*rig.root, id);
+        INFO(selector << " id=" << id);
+        REQUIRE(view != nullptr);
+        const auto* label = first_label(*view);
+        REQUIRE(label != nullptr);
+        return label;
+    };
+    const auto* output_caption = label_at("[data-spectr-output-trim-label]");
+    const auto* peak_label = label_at("[data-spectr-output-peak-label]");
+    const auto* trim_readout = label_at("[data-spectr-output-trim-readout]");
+    CHECK(output_caption->text() == "OUTPUT");
+    CHECK(trim_readout->text() == "0.0");
+    INFO("peak chip reads " << peak_label->text());
+    REQUIRE(peak_label->text().rfind("PEAK -", 0) == 0);
+    REQUIRE(peak_label->text().find_first_of("0123456789") != std::string::npos);
+    const auto output_frame = pulp::view::render_to_rgba(
+        *rig.root, 1320, 860, kScale, &width, &height);
+    REQUIRE(!output_frame.empty());
+    check_words(*output_caption, output_frame, 1);
+    // "PEAK" and its number, which begins with a minus sign attached to the
+    // digits; the digits carry the word's top and bottom rows.
+    check_words(*peak_label, output_frame, 2);
+    check_words(*trim_readout, output_frame, 1);
+
+    // The bands trigger's caption shares the same line, both as captured and
+    // after its text changes -- a changed caption no longer matches its capture
+    // and is laid out natively, which is the state a user who picked another
+    // band count sees.
+    const auto check_bands_caption = [&](const char* text) {
+        const auto* label = find_label(*rig.root, text);
+        REQUIRE(label != nullptr);
+        const auto frame = pulp::view::render_to_rgba(
+            *rig.root, 1320, 860, kScale, &width, &height);
+        REQUIRE(!frame.empty());
+        const auto rows = ink_rows(*label, frame);
+        INFO(text);
+        CAPTURE(rows.top, rows.bottom, caption_ink.top, caption_ink.bottom);
+        REQUIRE(rows.top >= 0.0f);
+        CHECK(rows.top == Catch::Approx(caption_ink.top).margin(0.5f));
+        CHECK(rows.bottom == Catch::Approx(caption_ink.bottom).margin(0.5f));
+        // The count and the word; the ▾ glyph is not a caption word.
+        check_words(*label, frame, 2);
+    };
+    check_bands_caption("32 BANDS ▾");
+    activate(rig, "[data-spectr-menu-root=\"bands\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-band-count=\"64\"]");
+    settle(rig.clock, 12);
+    require_app_state(rig, "s.settings.bandCount === 64",
+                      "the 64-band option was not selected");
+    check_bands_caption("64 BANDS ▾");
+    storage.require_unchanged();
+}
+
+
+// THE TRACING REMINDER SITS ON THE HEADER'S LINE.
+//
+// A tracing build shows exactly one "◉ TRACING" reminder, and it is the
+// header's: Pulp's root-painted corner pill is hidden while the editor is open,
+// and the header's own sits on the line every header control shares. Measured
+// on the painted ink -- the TRACING letters against the BOTH caption, whose
+// capitals share their cap height -- because that line is what a reader sees.
+// A non-tracing build has no reminder to measure; it says so and skips.
+TEST_CASE("the tracing reminder sits on the header controls' line",
+          "[native-n1][state-parity][header][tracing]") {
+    if constexpr (!pulp::runtime::kTracingEnabled) {
+        SKIP("not a PULP_TRACING build: there is no tracing reminder to measure");
+    } else {
+        PatternStoragePoison storage;
+        NativeEditorRig rig;
+        require_home(rig);
+        CHECK_FALSE(pulp::view::tracing_badge_should_paint());
+        const auto* badge = find_label(*rig.root, "◉ TRACING");
+        const auto* caption = find_label(*rig.root, "BOTH");
+        REQUIRE(badge != nullptr);
+        REQUIRE(caption != nullptr);
+
+        constexpr float kScale = 2.0f;
+        std::uint32_t width = 0, height = 0;
+        REQUIRE(pulp::view::raw_rgba_render_available());
+        const auto frame = pulp::view::render_to_rgba(
+            *rig.root, 1320, 860, kScale, &width, &height);
+        REQUIRE(!frame.empty());
+        // Ink rows of the bright glyphs inside a label's box, from `from` of
+        // its width to its right edge.
+        const auto ink_rows = [&](const pulp::view::Label& label, float from) {
+            const auto origin = root_point(label, 0.0f, 0.0f);
+            const auto x0 = static_cast<std::uint32_t>(
+                (origin.x + label.bounds().width * from) * kScale);
+            const auto x1 = std::min<std::uint32_t>(
+                width, static_cast<std::uint32_t>(
+                           (origin.x + label.bounds().width) * kScale));
+            const auto y0 = static_cast<std::uint32_t>(
+                std::max(0.0f, origin.y - 3.0f) * kScale);
+            const auto y1 = std::min<std::uint32_t>(
+                height, static_cast<std::uint32_t>(
+                            (origin.y + label.bounds().height + 3.0f) * kScale));
+            float top = -1.0f, bottom = -1.0f;
+            for (std::uint32_t y = y0; y < y1; ++y) {
+                bool inked = false;
+                for (std::uint32_t x = x0; x < x1 && !inked; ++x) {
+                    const auto* px = &frame[(static_cast<std::size_t>(y) * width + x) * 4];
+                    inked = px[0] + px[1] + px[2] > 250;
+                }
+                if (!inked) continue;
+                if (top < 0.0f) top = static_cast<float>(y) / kScale;
+                bottom = static_cast<float>(y + 1) / kScale;
+            }
+            return std::pair{top, bottom};
+        };
+        // Skip the ◉ glyph, which is taller than the capitals.
+        const auto [badge_top, badge_bottom] = ink_rows(*badge, 0.3f);
+        const auto [caption_top, caption_bottom] = ink_rows(*caption, 0.0f);
+        CAPTURE(badge_top, badge_bottom, caption_top, caption_bottom);
+        REQUIRE(badge_top >= 0.0f);
+        REQUIRE(caption_top >= 0.0f);
+        CHECK(badge_top == Catch::Approx(caption_top).margin(0.5f));
+        CHECK(badge_bottom == Catch::Approx(caption_bottom).margin(0.5f));
+        storage.require_unchanged();
+    }
+}
+
+// THE STATUS PILL IS FEEDBACK FOR AN EDIT.
+//
+// The top-centre pill ("12.3kHz   -1.3 dB   BAND 7/32") may appear or update only
+// when a pointer gesture actually changes a band's level or mute state. Not on
+// a plain hover, not on a press, not on a drag that leaves every band where it
+// was, and never because an LFO moved what is painted. Every write is counted
+// at the two doors the bank has into the pill: the direct show
+// (spectrStatusBannerShow) and the live writer's keep-alive, which accompanies
+// every direct text write. Both are wrapped through a property accessor, so a
+// banner re-render that reinstalls either function is still counted.
+TEST_CASE("the status pill shows a band reading only when a gesture edits a band",
+          "[native-n1][state-parity][status-pill]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    rig.bridge().load_script(R"js((() => {
+      const w = typeof window !== 'undefined' ? window : globalThis;
+      const log = globalThis.__spectrPillWrites = [];
+      for (const name of ['spectrStatusBannerShow', 'spectrStatusBannerKeepAlive']) {
+        let impl = w[name];
+        Object.defineProperty(w, name, {
+          configurable: true,
+          get() {
+            if (typeof impl !== 'function') return impl;
+            return (...args) => {
+              log.push({ door: name, text: String(args[0] ?? '') });
+              return impl(...args);
+            };
+          },
+          set(value) { impl = value; },
+        });
+      }
+      const selector = '[data-spectr-filter-surface]';
+      globalThis.__spectrPillFire = (type, x, y, buttons, extra) => {
+        if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+          clientX: x, clientY: y, pointerId: 91, button: 0, buttons,
+          ...(extra || {})
+        })) throw new Error('surface activation failed: ' + type);
+        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+          globalThis.__pulpRuntimeSettle__(2);
+      };
+      globalThis.__spectrPillMark = () => globalThis.__spectrPillWrites.length;
+      globalThis.__spectrPillSince = (mark) => globalThis.__spectrPillWrites.slice(mark);
+    })();)js", "spectr-native-pill-probe");
+
+    const auto expect_no_writes = [&](std::string_view stimulus,
+                                      std::string_view script,
+                                      int frames = 12) {
+        rig.bridge().load_script("globalThis.__spectrPillStart = __spectrPillMark();",
+                                 "spectr-native-pill-mark");
+        rig.bridge().load_script(std::string(script), "spectr-native-pill-stimulus");
+        settle(rig.clock, frames);
+        rig.bridge().load_script(
+            std::string{"(() => { const writes = __spectrPillSince(__spectrPillStart); "
+                        "if (writes.length) throw new Error("}
+                + js_string(stimulus)
+                + " + ' wrote the pill ' + writes.length + ' time(s): ' "
+                  "+ JSON.stringify(writes)); })();",
+            "spectr-native-pill-silent");
+    };
+    const auto require_js = [&](std::string_view script, std::string_view tag) {
+        rig.bridge().load_script(std::string(script), std::string(tag));
+    };
+
+    // 1. A plain hover across the bank writes nothing.
+    expect_no_writes("a plain hover", R"js((() => {
+      for (let x = 300; x <= 900; x += 40) __spectrPillFire('pointermove', x, 430, 0);
+    })();)js");
+
+    // 2. A press, and a jitter under the drag threshold, write nothing. The
+    // release of that click toggles the band's mute -- an edit -- so it is
+    // measured separately below and undone afterwards.
+    expect_no_writes("a press without a drag", R"js((() => {
+      __spectrPillFire('pointermove', 320, 430, 0);
+      __spectrPillFire('pointerdown', 320, 430, 1);
+      __spectrPillFire('pointermove', 322, 431, 1);
+    })();)js");
+    require_js(R"js((() => {
+      const mark = __spectrPillMark();
+      __spectrPillFire('pointerup', 322, 431, 0);
+      const writes = __spectrPillSince(mark);
+      if (!writes.some(w => /^BAND \d+ MUTED$/.test(w.text)))
+        throw new Error('the click that muted a band did not say so: '
+          + JSON.stringify(writes));
+      if (writes.some(w => /Hz/.test(w.text)))
+        throw new Error('the click release also showed a level reading it did '
+          + 'not change: ' + JSON.stringify(writes));
+      // Put the band back so it plays no part below.
+      __spectrPillFire('pointerdown', 322, 431, 1);
+      __spectrPillFire('pointerup', 322, 431, 0);
+    })();)js", "spectr-native-pill-click");
+    settle(rig.clock, 6);
+
+    // 3. A real stroke shows the reading of the band it edited.
+    require_js(R"js((() => {
+      const hooks = globalThis.__spectrTestHooks;
+      globalThis.__spectrPillBefore = hooks.renderState().targetGains.slice();
+      globalThis.__spectrPillStrokeStart = __spectrPillMark();
+      __spectrPillFire('pointermove', 560, 430, 0);
+      __spectrPillFire('pointerdown', 560, 430, 1);
+      __spectrPillFire('pointermove', 600, 365, 1);
+      __spectrPillFire('pointermove', 640, 365, 1);
+    })();)js", "spectr-native-pill-stroke");
+    settle(rig.clock, 6);
+    require_js(R"js((() => {
+      const hooks = globalThis.__spectrTestHooks;
+      const before = globalThis.__spectrPillBefore;
+      const after = hooks.renderState().targetGains;
+      const changed = after.map((v, i) => v !== before[i] ? i : -1).filter(i => i >= 0);
+      if (!changed.length) throw new Error('the stroke changed no band');
+      const last = Math.max(...changed);
+      const n = hooks.appState().settings.bandCount;
+      const writes = __spectrPillSince(globalThis.__spectrPillStrokeStart);
+      const expected = 'BAND ' + (last + 1) + '/' + n;
+      const db = (after[last] * 24).toFixed(1);
+      if (!writes.length)
+        throw new Error('a stroke that changed bands ' + JSON.stringify(changed)
+          + ' never wrote the pill');
+      const shown = document.querySelector('[data-spectr-status-text]')?.textContent || '';
+      if (!shown.includes(expected) || !shown.includes(db + ' dB'))
+        throw new Error('the pill reads "' + shown + '" but the stroke left band '
+          + (last + 1) + ' at ' + db + ' dB (' + expected + ')');
+      __spectrPillFire('pointerup', 640, 365, 0);
+    })();)js", "spectr-native-pill-stroke-reading");
+    settle(rig.clock, 6);
+
+    // 4. The same stroke again changes nothing: press, drag and release are
+    // all silent. The control proves it really changed nothing.
+    require_js(R"js((() => {
+      globalThis.__spectrPillBefore =
+        globalThis.__spectrTestHooks.renderState().targetGains.slice();
+    })();)js", "spectr-native-pill-noop-before");
+    expect_no_writes("a drag that changes no band", R"js((() => {
+      __spectrPillFire('pointermove', 600, 365, 0);
+      __spectrPillFire('pointerdown', 600, 365, 1);
+      __spectrPillFire('pointermove', 620, 365, 1);
+      __spectrPillFire('pointermove', 640, 365, 1);
+      __spectrPillFire('pointerup', 640, 365, 0);
+    })();)js");
+    require_js(R"js((() => {
+      const before = globalThis.__spectrPillBefore;
+      const after = globalThis.__spectrTestHooks.renderState().targetGains;
+      if (after.some((v, i) => v !== before[i]))
+        throw new Error('the no-op stroke changed a band, so its silence proves '
+          + 'nothing');
+    })();)js", "spectr-native-pill-noop-control");
+
+    // 5. An LFO moving the painted bank while the pointer is held still on a
+    // band writes nothing. The display hold is turned off so the band under
+    // the pointer really does move while it is pressed.
+    activate(rig, "[data-spectr-settings-open]");
+    activate(rig, "[data-spectr-hold-edit] [data-spectr-setting-toggle]");
+    require_app_state(rig, "s.settings.holdModulationWhileEditing === false",
+                      "the modulation hold did not turn off");
+    activate(rig, "[data-spectr-settings-close]");
+    settle(rig.clock, 6);
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape,
+                        static_cast<float>(spectr::LfoShape::Sine));
+    rig.store.set_value(spectr::kParamLfoRate, 0.25f);
+    rig.store.set_value(spectr::kParamLfoDepth, 1.0f);
+    rig.store.set_value(spectr::kParamLfoTarget,
+                        static_cast<float>(spectr::ModulationTarget::WholeBank));
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 4);
+    require_js(R"js((() => {
+      globalThis.__spectrPillStart = __spectrPillMark();
+      globalThis.__spectrPillDrawn = [];
+      __spectrPillFire('pointermove', 760, 430, 0);
+      __spectrPillFire('pointerdown', 760, 430, 1);
+    })();)js", "spectr-native-pill-lfo-press");
+    for (int sample = 0; sample < 8; ++sample) {
+        feed_audio_blocks(rig, 6);
+        settle(rig.clock, 3);
+        require_js(R"js(globalThis.__spectrPillDrawn.push(
+          globalThis.__spectrTestHooks.renderState().gains[20]);)js",
+                   "spectr-native-pill-lfo-sample");
+    }
+    require_js(R"js((() => {
+      const drawn = globalThis.__spectrPillDrawn;
+      const spread = Math.max(...drawn) - Math.min(...drawn);
+      // Stimulus control: the band under the pointer must really have moved.
+      if (!(spread > 0.05))
+        throw new Error('the LFO did not move the painted band under the pointer '
+          + '(spread ' + spread + '), so a silent pill proves nothing');
+      const writes = __spectrPillSince(globalThis.__spectrPillStart);
+      if (writes.length)
+        throw new Error('an LFO under a held pointer wrote the pill '
+          + writes.length + ' time(s): ' + JSON.stringify(writes));
+      // Releasing a press that never moved is a click, which toggles the
+      // band's mute: that edit reports itself, and no level reading rides
+      // along with it.
+      __spectrPillFire('pointerup', 760, 430, 0);
+      const released = __spectrPillSince(globalThis.__spectrPillStart);
+      if (!released.length || released.some(w => !/^BAND \d+ (UN)?MUTED$/.test(w.text)))
+        throw new Error('the click release after the held press wrote '
+          + JSON.stringify(released) + '; only its mute toggle may show');
+    })();)js", "spectr-native-pill-lfo-silent");
+    rig.store.set_value(spectr::kParamLfoEnabled, 0.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 4);
+    storage.require_unchanged();
+}
+
+// HOVERING THE SETTINGS CLOSE BUTTON RE-RENDERS THE BUTTON, NOT THE PANEL.
+//
+// The button's hover and press look is its own state. When it was state of
+// the Settings panel, each pointer-enter and pointer-leave re-rendered every
+// group, field, chip row and slider in the panel to recolour one 32px square,
+// ~18 ms of a ~25 ms hover commit headless. Counted as the panel's rows
+// rebuilt during hovers (each field is a React element created per render),
+// with a control that the same counter sees the rows when the panel renders.
+TEST_CASE("hovering the Settings close button re-renders only the button",
+          "[native-n1][state-parity][render-scope]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    activate(rig, "[data-spectr-settings-open]");
+    settle(rig.clock, 8);
+    // The Settings panel reads window.SPECTR_MODULATION_LOOKS once per render,
+    // so a counting getter on it counts panel renders.
+    rig.bridge().load_script(R"js((() => {
+      const w = typeof window !== 'undefined' ? window : globalThis;
+      let looks = w.SPECTR_MODULATION_LOOKS;
+      globalThis.__spectrPanelRenders = 0;
+      Object.defineProperty(w, 'SPECTR_MODULATION_LOOKS', { configurable: true,
+        get() { ++globalThis.__spectrPanelRenders; return looks; },
+        set(value) { looks = value; } });
+      const sel = '[data-spectr-settings-close]';
+      for (let i = 0; i < 10; ++i) {
+        globalThis.__pulpActivateMaterializedElement__(sel, i % 2 ? 'pointerleave' : 'pointerenter', null);
+        globalThis.__pulpRuntimeSettle__(2);
+      }
+      const hovered = globalThis.__spectrPanelRenders;
+      const state = document.querySelector(sel)?.getAttribute('data-spectr-close-state');
+      // Control: a real panel render (a setting changed, then changed back)
+      // must register on the same counter.
+      globalThis.__spectrPanelRenders = 0;
+      for (let i = 0; i < 2; ++i) {
+        globalThis.__pulpActivateMaterializedElement__(
+          '[data-spectr-status-info-toggle]', 'click', null);
+        globalThis.__pulpRuntimeSettle__(4);
+      }
+      const control = globalThis.__spectrPanelRenders;
+      Object.defineProperty(w, 'SPECTR_MODULATION_LOOKS', { configurable: true,
+        writable: true, value: looks });
+      if (!(control > 0))
+        throw new Error('the panel-render counter saw nothing when a setting changed');
+      if (state !== 'hover' && state !== 'idle')
+        throw new Error('the close button lost its hover state: ' + state);
+      if (hovered !== 0)
+        throw new Error('10 hovers on the close button re-rendered the Settings panel '
+          + hovered + ' times; the button must own its own hover state');
+    })();)js", "spectr-native-close-hover-render-scope");
+    storage.require_unchanged();
+}
+
+// HOST AUTOMATION MOVES THE EDITOR THROUGH ITS CHEAP PATHS.
+//
+// A host parameter change reaches the editor as one live-state projection per
+// frame. It must update what changed through the paths pointer input uses --
+// the viewport ref published live (settled once when the burst ends), the
+// paint refs, the modulation publication -- and never re-render the editor.
+// Perfetto measured spectr_host_automation_project at 22-127 ms per host
+// change while each one committed React: the modulation hook merged every
+// projection into a new object, re-rendering the (mounted, hidden) Settings
+// panel, and each viewport change settled the zoom readout. So every metadata
+// pass -- the per-commit hook, scoped or full -- is counted across a burst of
+// viewport and LFO-shape automation and must be zero, and the editor must
+// still end exactly where the host put it.
+TEST_CASE("host automation of the viewport and LFO shape re-renders nothing",
+          "[native-n1][state-parity][host-automation-cost]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.bridge().load_script(R"js((() => {
+      const log = globalThis.__spectrMetadataPasses = [];
+      // One stable wrapper per installed hook: the runtime treats a changed
+      // hook identity as a new hook and forces a full pass, so a wrapper
+      // minted per read would manufacture the very passes being counted.
+      const wrap = (fn) => typeof fn !== 'function' ? fn : (...args) => {
+        const scope = args[0];
+        log.push(Array.isArray(scope) && scope.length ? 'scoped' : 'full');
+        return fn(...args);
+      };
+      let wrapped = wrap(globalThis.__pulpApplyMaterializedImportMetadata__);
+      Object.defineProperty(globalThis, '__pulpApplyMaterializedImportMetadata__', {
+        configurable: true,
+        get() { return wrapped; },
+        set(value) { wrapped = wrap(value); },
+      });
+    })();)js", "spectr-native-metadata-pass-counter");
+    const auto reset = [&] {
+        rig.bridge().load_script("globalThis.__spectrMetadataPasses.length = 0;",
+                                 "spectr-native-metadata-pass-reset");
+    };
+    const auto require_no_pass = [&](std::string_view what) {
+        rig.bridge().load_script(
+            std::string{"(() => { const passes = __spectrMetadataPasses; "
+                        "if (passes.length) throw new Error("}
+                + js_string(what)
+                + " + ' committed React ' + passes.length + ' time(s): ' + JSON.stringify(passes)); })();",
+            "spectr-native-metadata-pass-check");
+    };
+    const auto set_view = [&](float min_hz, float max_hz) {
+        const auto [centre, width] = spectr::encode_viewport({min_hz, max_hz});
+        rig.store.set_value(spectr::kParamViewportCenter, centre);
+        rig.store.set_value(spectr::kParamViewportWidth, width);
+        REQUIRE(rig.processor.apply_surface_params(false));
+        settle(rig.clock, 2);
+    };
+
+    // Positive control on the counter: a real structural change (opening
+    // Settings) must register passes, or a zero below proves nothing.
+    reset();
+    activate(rig, "[data-spectr-settings-open]");
+    rig.bridge().load_script(
+        "if (!__spectrMetadataPasses.length) throw new Error("
+        "'the metadata-pass counter saw nothing when Settings opened');",
+        "spectr-native-metadata-pass-control");
+    activate(rig, "[data-spectr-settings-close]");
+    settle(rig.clock, 8);
+    // The first live projection after hydration used to re-set the motion
+    // mode into a new settings object (a whole-app re-render) because the
+    // live-mode cache starts empty; it must commit nothing either.
+    reset();
+    set_view(100.0f, 5000.0f);
+    settle(rig.clock, 8);
+    require_no_pass("the first projection after hydration");
+    rig.bridge().load_script(
+        "globalThis.__spectrReactViewBefore = JSON.stringify("
+        "globalThis.__spectrTestHooks.renderState().reactView);",
+        "spectr-native-react-view-before");
+
+    // Viewport automation: eight windows.
+    reset();
+    float last_min = 0.0f, last_max = 0.0f;
+    for (int step = 0; step < 8; ++step) {
+        set_view(120.0f + 15.0f * static_cast<float>(step),
+                 6000.0f + 400.0f * static_cast<float>(step));
+        last_min = rig.processor.viewport().min_hz;
+        last_max = rig.processor.viewport().max_hz;
+    }
+    require_no_pass("viewport automation");
+    rig.bridge().load_script(
+        std::string{"(() => { const s = globalThis.__spectrTestHooks.renderState(); "
+                    "const v = s.view; const lmin = Math.log10("} + std::to_string(last_min)
+            + "), lmax = Math.log10(" + std::to_string(last_max) + "); "
+              "if (Math.abs(v.lmin - lmin) > 1e-4 || Math.abs(v.lmax - lmax) > 1e-4) "
+              "throw new Error('the editor view ' + v.lmin + '..' + v.lmax + "
+              "' does not match the host ' + lmin + '..' + lmax); "
+              "if (JSON.stringify(s.reactView) !== globalThis.__spectrReactViewBefore) "
+              "throw new Error('the burst settled the React copy of the view mid-burst'); })();",
+        "spectr-native-host-viewport-matches");
+
+    // LFO shape automation: through every shape twice, ending on sine.
+    reset();
+    for (int step = 0; step < 8; ++step) {
+        rig.store.set_value(spectr::kParamLfoShape, static_cast<float>((step + 1) % 4));
+        REQUIRE(rig.processor.apply_surface_params(false));
+        settle(rig.clock, 2);
+    }
+    require_no_pass("LFO shape automation");
+    rig.bridge().load_script(
+        "(() => { const m = globalThis.__spectrModulationLast; "
+        "if (!m) throw new Error('the editor holds no modulation state'); "
+        "if (m.shape !== 0) throw new Error("
+        "'the editor LFO shape ' + JSON.stringify(m.shape) + ' does not match the host (sine)'); })();",
+        "spectr-native-host-lfo-matches");
+
+    // Opening Settings after the burst shows the host's LFO shape: the panel
+    // stopped following projections while hidden and catches up when shown.
+    activate(rig, "[data-spectr-settings-open]");
+    settle(rig.clock, 8);
+    require_runtime_contract(rig,
+        "globalThis.__spectrModulationLast && globalThis.__spectrModulationLast.shape === 0",
+        "the Settings panel did not catch up with the host's LFO shape");
+    storage.require_unchanged();
+}
+
+// A real host advances a frame by ticking the frame clock AND polling the
+// scripted session: the poll services JS timers and commits each canvas's
+// recorded commands to its native widget. settle() only ticks the clock, so a
+// canvas's committed command stream and every setTimeout stand still under it.
+void pump_host_frames(NativeEditorRig& rig, int frames) {
+    for (int frame = 0; frame < frames; ++frame) {
+        rig.clock.tick(1.0f / 60.0f);
+        // poll() answers "did anything change"; false is an idle frame. Only a
+        // reported error is a failure.
+        std::string error;
+        (void)rig.session->poll(&error);
+        REQUIRE(error.empty());
+    }
+}
+
+// The canvas that painted `text` last frame, searched through the tree.
+const pulp::view::CanvasWidget* canvas_painting(const View& view,
+                                                std::string_view text) {
+    if (const auto* canvas = dynamic_cast<const pulp::view::CanvasWidget*>(&view))
+        for (const auto& command : canvas->commands())
+            if (command.type == pulp::view::CanvasDrawCmd::Type::fill_text
+                && command.text == text)
+                return canvas;
+    for (std::size_t index = 0; index < view.child_count(); ++index)
+        if (const auto* found = canvas_painting(*view.child_at(index), text))
+            return found;
+    return nullptr;
+}
+
+// The frequency labels the band plot's ruler last committed, with their x.
+// The ruler is painted on the plot's static-layer canvas, found as the canvas
+// that painted the dBFS heading.
+std::vector<std::pair<std::string, float>> committed_frequency_labels(
+    NativeEditorRig& rig) {
+    const auto* canvas = canvas_painting(*rig.root, "dBFS");
+    REQUIRE(canvas != nullptr);
+    std::vector<std::pair<std::string, float>> labels;
+    for (const auto& command : canvas->commands())
+        if (command.type == pulp::view::CanvasDrawCmd::Type::fill_text
+            && command.text.size() > 2
+            && command.text.compare(command.text.size() - 2, 2, "Hz") == 0)
+            labels.emplace_back(command.text, command.x);
+    return labels;
+}
+
+// HOST AUTOMATION REDRAWS THE PLOT AND SETTLES THE READOUT.
+//
+// The projection writes the view into refs and publishes it live, so the only
+// proof it reached the screen is the plot's committed canvas: the frequency
+// ruler must move to the new window. The control is the same pumping with no
+// parameter change, which must leave the ruler exactly as it was. The zoom
+// readout settles from a timer once the automation pauses, so the test lets
+// real time pass and pumps the host, which services timers.
+TEST_CASE("a host viewport change redraws the plot and settles the zoom readout",
+          "[native-n1][state-parity][host-automation-cost]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    pump_host_frames(rig, 12);
+    const auto idle = committed_frequency_labels(rig);
+    REQUIRE_FALSE(idle.empty());
+
+    // Control: no parameter change, same pumping, same ruler.
+    pump_host_frames(rig, 12);
+    CHECK(committed_frequency_labels(rig) == idle);
+
+    const auto [centre, width] = spectr::encode_viewport({300.0f, 3000.0f});
+    rig.store.set_value(spectr::kParamViewportCenter, centre);
+    rig.store.set_value(spectr::kParamViewportWidth, width);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    pump_host_frames(rig, 12);
+    const auto moved = committed_frequency_labels(rig);
+    CAPTURE(idle.size(), moved.size());
+    REQUIRE(moved != idle);
+    // The 1 kHz label sits where the new window puts 1 kHz on the plot.
+    const auto viewport = rig.processor.viewport();
+    const float lmin = std::log10(viewport.min_hz);
+    const float lmax = std::log10(viewport.max_hz);
+    constexpr float kInnerX = 56.0f, kInnerW = 1320.0f - 112.0f;
+    const float expected_x = kInnerX + (3.0f - lmin) / (lmax - lmin) * kInnerW;
+    const auto one_k = std::find_if(moved.begin(), moved.end(),
+        [](const auto& label) { return label.first == "1kHz"; });
+    REQUIRE(one_k != moved.end());
+    CHECK(one_k->second == Catch::Approx(expected_x).margin(1.0f));
+
+    // The readout settles once the burst pauses: after the settle delay the
+    // React copy of the view and the printed zoom follow the host.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    pump_host_frames(rig, 6);
+    const double zoom = (std::log10(20000.0) - std::log10(20.0)) / (lmax - lmin);
+    char expected_zoom[32];
+    std::snprintf(expected_zoom, sizeof expected_zoom, "%.2f\u00d7 ZOOM", zoom);
+    require_runtime_contract(rig,
+        std::string{"(() => { const s = globalThis.__spectrTestHooks.renderState(); "
+                    "return Math.abs(s.reactView.lmin - s.view.lmin) < 1e-9 "
+                    "&& Math.abs(s.reactView.lmax - s.view.lmax) < 1e-9 "
+                    "&& Array.from(document.querySelectorAll('span')).some("
+                    "span => span.textContent === '"} + expected_zoom + "'); })()",
+        "the zoom readout did not settle to the host's window");
+
+    // LFO shape: the Settings panel shows the host's shape when it opens.
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape,
+                        static_cast<float>(spectr::LfoShape::Saw));
+    REQUIRE(rig.processor.apply_surface_params(false));
+    pump_host_frames(rig, 6);
+    activate(rig, "[data-spectr-settings-open]");
+    pump_host_frames(rig, 8);
+    require_runtime_contract(rig,
+        // A boolean aria-pressed reflects as an empty attribute here, so read
+        // the committed prop. The first Saw chip is LFO 1's shape row.
+        "(() => { const chip = Array.from(document.querySelectorAll("
+        "'[data-spectr-setting-option=\"3\"]')).find(n => n.textContent === 'Saw'); "
+        "return !!chip && chip.__pulpAuthoredLayout__?.['aria-pressed'] === true; })()",
+        "the Settings panel does not show the host's LFO shape (saw)");
+    rig.store.set_value(spectr::kParamLfoEnabled, 0.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    storage.require_unchanged();
+}
+
+// The live band canvas, and its recorded command stream for the last frame.
+const pulp::view::CanvasWidget& live_band_canvas(NativeEditorRig& rig) {
+    const auto* canvas = dynamic_cast<const pulp::view::CanvasWidget*>(
+        rig.bridge().widget("__behavior_pr_1"));
+    REQUIRE(canvas != nullptr);
+    return *canvas;
+}
+
+// BLOOM GLOWS COST THEIR DRAW AND NOTHING MORE.
+//
+// Each lit band paints an elliptical glow under translate + scale. Bracketing
+// that with save()/restore() made every glow also drop the canvas shim's
+// sent-state caches, so the next draw re-sent composite, alpha and the rest. A
+// glow is recognised by its shape in the command stream -- translate, scale,
+// begin_path, a full circle at the origin, fill -- and must be neither opened by
+// a save nor closed by a restore; it closes with the inverse scale and
+// translate instead, which return the transform exactly where it was. The
+// saving is measured too: behind a bracket each glow re-sent alpha, blend and
+// four shadow settings before its fill.
+TEST_CASE("bloom glows undo their transform without a save and restore",
+          "[native-n1][state-parity][paint-cost]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    // Audio through the analyzer lights the bands, which is what paints glows.
+    for (int round = 0; round < 12; ++round) {
+        feed_audio_blocks(rig, 16);
+        pump_host_frames(rig, 2);
+    }
+    using Cmd = pulp::view::CanvasDrawCmd;
+    const auto& cmds = live_band_canvas(rig).commands();
+    int glows = 0;
+    int bracketed = 0;
+    int unbalanced = 0;
+    int resent = 0;
+    for (std::size_t k = 4; k + 3 < cmds.size(); ++k) {
+        const auto& arc = cmds[k];
+        if (arc.type != Cmd::Type::path_arc || arc.x != 0.0f || arc.y != 0.0f)
+            continue;
+        if (cmds[k - 1].type != Cmd::Type::begin_path
+            || cmds[k - 2].type != Cmd::Type::scale
+            || cmds[k - 3].type != Cmd::Type::translate)
+            continue;
+        // The fill, after any state the shim re-sends ahead of it (a
+        // save/restore bracket drops its sent-state caches, so the fill is
+        // preceded by re-sent alpha or composite).
+        std::size_t fill = k + 1;
+        while (fill < cmds.size() && fill < k + 16
+               && cmds[fill].type != Cmd::Type::fill_path) ++fill;
+        if (fill >= cmds.size() || cmds[fill].type != Cmd::Type::fill_path
+            || fill + 2 >= cmds.size())
+            continue;
+        // Sticky state re-sent ahead of this glow's fill. The first glow may
+        // follow a restore from the painter before it; every later glow runs
+        // inside the bloom loop and must find the caches intact. The radial
+        // gradient itself is this glow's own fill style, not re-sent state.
+        if (glows > 0)
+            for (std::size_t j = k + 1; j < fill; ++j) {
+                const auto type = cmds[j].type;
+                if (type == Cmd::Type::set_global_alpha
+                    || type == Cmd::Type::set_blend_mode
+                    || type == Cmd::Type::set_shadow_color
+                    || type == Cmd::Type::set_shadow_blur
+                    || type == Cmd::Type::set_shadow_offset_x
+                    || type == Cmd::Type::set_shadow_offset_y)
+                    ++resent;
+            }
+        ++glows;
+        if (cmds[k - 4].type == Cmd::Type::save
+            || cmds[fill + 1].type == Cmd::Type::restore)
+            ++bracketed;
+        // The close: the inverse scale, then the inverse translate.
+        const auto& scale = cmds[k - 2];
+        const auto& translate = cmds[k - 3];
+        const auto& undo_scale = cmds[fill + 1];
+        const auto& undo_translate = cmds[fill + 2];
+        if (undo_scale.type != Cmd::Type::scale
+            || undo_translate.type != Cmd::Type::translate
+            || std::abs(undo_scale.x * scale.x - 1.0f) > 1e-5f
+            || undo_scale.y != 1.0f
+            || undo_translate.x != -translate.x
+            || undo_translate.y != -translate.y)
+            ++unbalanced;
+    }
+    CAPTURE(cmds.size(), glows, bracketed, unbalanced, resent);
+    // Stimulus control: with no glow in the frame there is nothing to judge.
+    REQUIRE(glows > 0);
+    CHECK(bracketed == 0);
+    CHECK(unbalanced == 0);
+    // With the caches intact, no glow after the first re-sends state.
+    CHECK(resent == 0);
+    storage.require_unchanged();
+}
+
+// THE PLOT'S STATIC LAYER IS PAINTED ONCE, NOT EVERY FRAME.
+//
+// The background, grid and rulers depend only on the view, the plot geometry,
+// the band count, the theme, the rulers setting and the analyzer's dB scale.
+// They live on their own canvas behind the band canvas and repaint only when
+// one of those changes. So while audio animates the band canvas every frame,
+// the band canvas carries no ruler label and the static canvas's recorded
+// commands stay exactly as they were; a host viewport change repaints the
+// static canvas with the ruler moved to the new window. Pixel identity with
+// the single-canvas painter is checked by native-shot Skia renders.
+TEST_CASE("the plot's static layer repaints only when its inputs change",
+          "[native-n1][state-parity][paint-cost]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.bridge().load_script(
+        "globalThis.__spectrStaticId = String(document.querySelector("
+        "'[data-spectr-static-canvas]')?.__pulpId || '');",
+        "spectr-native-static-canvas-id");
+    rig.bridge().load_script(
+        "if (!globalThis.__spectrStaticId) throw new Error('no static canvas');",
+        "spectr-native-static-canvas-present");
+    const auto static_canvas = [&] { return canvas_painting(*rig.root, "dBFS"); };
+    const auto* band_canvas = dynamic_cast<const pulp::view::CanvasWidget*>(
+        rig.bridge().widget("__behavior_pr_1"));
+    REQUIRE(band_canvas != nullptr);
+    for (int round = 0; round < 6; ++round) {
+        feed_audio_blocks(rig, 16);
+        pump_host_frames(rig, 2);
+    }
+    const auto* layer = static_canvas();
+    REQUIRE(layer != nullptr);
+    REQUIRE(layer != band_canvas);
+    const auto recorded = layer->commands().size();
+    // No ruler label on the per-frame band canvas.
+    const auto band_ruler_labels = std::count_if(
+        band_canvas->commands().begin(), band_canvas->commands().end(),
+        [](const auto& command) {
+            return command.type == pulp::view::CanvasDrawCmd::Type::fill_text
+                && (command.text == "dBFS" || command.text == "1kHz");
+        });
+    CHECK(band_ruler_labels == 0);
+    const auto layer_labels = [&] {
+        std::vector<std::pair<std::string, float>> labels;
+        for (const auto& command : layer->commands())
+            if (command.type == pulp::view::CanvasDrawCmd::Type::fill_text
+                && command.text.size() > 2
+                && command.text.compare(command.text.size() - 2, 2, "Hz") == 0)
+                labels.emplace_back(command.text, command.x);
+        return labels;
+    };
+    const auto idle_labels = layer_labels();
+    REQUIRE_FALSE(idle_labels.empty());
+
+    // Audio keeps the band canvas busy; the static layer does not move.
+    for (int round = 0; round < 6; ++round) {
+        feed_audio_blocks(rig, 16);
+        pump_host_frames(rig, 2);
+    }
+    CHECK(layer->commands().size() == recorded);
+    CHECK(layer_labels() == idle_labels);
+
+    // A host viewport change repaints it with the ruler in the new window.
+    const auto [centre, width] = spectr::encode_viewport({300.0f, 3000.0f});
+    rig.store.set_value(spectr::kParamViewportCenter, centre);
+    rig.store.set_value(spectr::kParamViewportWidth, width);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    pump_host_frames(rig, 12);
+    CHECK(layer_labels() != idle_labels);
+    storage.require_unchanged();
+}
+
+// ── Plain-key shortcut policy ───────────────────────────────────────────────
+//
+// A DAW owns its plain keys: Logic's Musical Typing plays notes on A S D F G H
+// J K L ; ' and W E T Y U O P, and the digits pick octave and velocity. Spectr
+// cannot ask a host whether Musical Typing is open, so inside a plug-in its
+// single-letter shortcuts are off unless "Keyboard shortcuts in DAW" is on,
+// and every such key is handed back UNCONSUMED -- `dispatch_key_for_root`
+// returning false is exactly what makes the plug-in view return the key to
+// the host. The standalone owns its window and keeps them.
+
+namespace {
+
+struct EditorContextScope {
+    explicit EditorContextScope(bool standalone)
+        : previous(spectr::editor_is_standalone()) {
+        spectr::set_editor_is_standalone(standalone);
+    }
+    ~EditorContextScope() { spectr::set_editor_is_standalone(previous); }
+    bool previous;
+};
+
+bool press_key(NativeEditorRig& rig, pulp::view::KeyCode key,
+               std::uint16_t modifiers = pulp::view::kModNone) {
+    const bool consumed = pulp::view::WidgetBridge::dispatch_key_for_root(
+        *rig.root, static_cast<int>(key), modifiers, true);
+    settle(rig.clock, 8);
+    return consumed;
+}
+
+// runtime_string carries the thrown error's stack after the value.
+std::string runtime_value(NativeEditorRig& rig, std::string_view expression,
+                          std::string_view label) {
+    auto value = runtime_string(rig, expression, label);
+    const auto newline = value.find('\n');
+    if (newline != std::string::npos) value.erase(newline);
+    return value;
+}
+
+pulp::view::KeyCode key_of(char c) {
+    return static_cast<pulp::view::KeyCode>(c);
+}
+
+int muted_band_count(NativeEditorRig& rig) {
+    int muted = 0;
+    for (const auto& band : rig.processor.field().bands) muted += band.muted ? 1 : 0;
+    return muted;
+}
+
+// Everything a plain key in the inventory could change, in one string.
+std::string shortcut_fingerprint(NativeEditorRig& rig) {
+    return runtime_value(
+               rig,
+               "(() => { const a = __spectrTestHooks.appState(); "
+               "const r = __spectrTestHooks.renderState(); "
+               "return JSON.stringify([a.editMode, a.analyzerMode, "
+               "r.selection.length]); })()",
+               "spectr-keyboard-fingerprint")
+        + "|muted=" + std::to_string(muted_band_count(rig))
+        + "|render=" + std::to_string(static_cast<int>(rig.processor.render_mode()));
+}
+
+std::string app_string(NativeEditorRig& rig, std::string_view field) {
+    return runtime_value(
+        rig, "String(__spectrTestHooks.appState()." + std::string(field) + ")",
+        "spectr-keyboard-app-field");
+}
+
+// Select every band through the Cmd chord, which every context keeps, so M and
+// Escape are tested with something to act on rather than nothing to do.
+void select_all(NativeEditorRig& rig) {
+    REQUIRE(press_key(rig, pulp::view::KeyCode::a, pulp::view::kModCmd));
+    REQUIRE(runtime_value(rig, "__spectrTestHooks.renderState().selection.length",
+                           "spectr-keyboard-selection") != "0");
+}
+
+// Keys removed in every context: the digit aliases for the edit modes, which
+// no surface showed; A and 6, which cycled the analyzer (A is a Musical Typing
+// note); and Escape, pressed with a selection standing, which used to clear it.
+void require_removed_keys_do_nothing(NativeEditorRig& rig) {
+    select_all(rig);
+    for (const char key : {'1', '2', '3', '4', '5', 'a', '6'}) {
+        INFO("removed key " << key);
+        const auto before = shortcut_fingerprint(rig);
+        CHECK_FALSE(press_key(rig, key_of(key)));
+        CHECK(shortcut_fingerprint(rig) == before);
+    }
+    INFO("removed key Escape (selection clear)");
+    const auto before = shortcut_fingerprint(rig);
+    CHECK_FALSE(press_key(rig, pulp::view::KeyCode::escape));
+    CHECK(shortcut_fingerprint(rig) == before);
+    // W and the rest of the Musical Typing rows were never bound; they must
+    // stay the host's in every context.
+    for (const char key : {'w', 'd', 'h', 'j', 'k', 'e', 'y', 'u', 'o', 'p',
+                           'z', 'x', 'c', 'v', '7', '8'}) {
+        INFO("unbound key " << key);
+        const auto unbound_before = shortcut_fingerprint(rig);
+        CHECK_FALSE(press_key(rig, key_of(key)));
+        CHECK(shortcut_fingerprint(rig) == unbound_before);
+    }
+}
+
+// Every documented plain key does its action and is consumed.
+void require_documented_keys_act(NativeEditorRig& rig) {
+    select_all(rig);
+    const std::array<std::pair<char, const char*>, 5> modes{{
+        {'l', "level"}, {'b', "boost"}, {'f', "flare"}, {'g', "glide"}, {'s', "sculpt"}}};
+    for (const auto& [key, mode] : modes) {
+        INFO("edit-mode key " << key);
+        CHECK(press_key(rig, key_of(key)));
+        CHECK(app_string(rig, "editMode") == mode);
+    }
+    {
+        INFO("mute key m");
+        const int before = muted_band_count(rig);
+        CHECK(press_key(rig, pulp::view::KeyCode::m));
+        CHECK(muted_band_count(rig) != before);
+    }
+    {
+        INFO("latency key t");
+        const auto before = rig.processor.render_mode();
+        CHECK(press_key(rig, pulp::view::KeyCode::t));
+        CHECK(rig.processor.render_mode() != before);
+    }
+}
+
+// Every documented plain key is handed back to the host and changes nothing.
+void require_documented_keys_go_to_host(NativeEditorRig& rig) {
+    select_all(rig);
+    for (const char key : {'s', 'l', 'b', 'f', 'g', 'm', 't'}) {
+        INFO("gated key " << key);
+        const auto before = shortcut_fingerprint(rig);
+        CHECK_FALSE(press_key(rig, key_of(key)));
+        CHECK(shortcut_fingerprint(rig) == before);
+    }
+}
+
+}  // namespace
+
+TEST_CASE("in a plug-in, plain-key shortcuts go to the DAW by default",
+          "[native-n1][state-parity][keyboard]") {
+    PatternStoragePoison storage;
+    EditorContextScope hosted(false);
+    NativeEditorRig rig;
+    require_home(rig);
+    REQUIRE_FALSE(rig.processor.keyboard_shortcuts_in_daw());
+    // Control: the Cmd chord is still the editor's, so a false below is the
+    // policy speaking rather than a dead key path.
+    CHECK(press_key(rig, pulp::view::KeyCode::a, pulp::view::kModCmd));
+    require_documented_keys_go_to_host(rig);
+    require_removed_keys_do_nothing(rig);
+    storage.require_unchanged();
+}
+
+TEST_CASE("in a plug-in, Keyboard shortcuts in DAW makes the plain keys live",
+          "[native-n1][state-parity][keyboard]") {
+    PatternStoragePoison storage;
+    EditorContextScope hosted(false);
+    NativeEditorRig rig;
+    require_home(rig);
+    // Through the Settings switch itself, so the switch, the cache the key
+    // handler reads, and the processor's persisted value are all exercised.
+    activate(rig, "[data-spectr-settings-open]");
+    require_runtime_contract(
+        rig, "document.querySelector('[data-spectr-keyboard-shortcuts-in-daw=\"off\"]')",
+        "the Keyboard shortcuts in DAW switch is missing in a plug-in");
+    rig.bridge().load_script("spectrSetKeyboardShortcutsInDaw(true);",
+                             "spectr-keyboard-switch-on");
+    settle(rig.clock, 8);
+    CHECK(rig.processor.keyboard_shortcuts_in_daw());
+    require_runtime_contract(
+        rig, "document.querySelector('[data-spectr-keyboard-shortcuts-in-daw=\"on\"]')",
+        "the switch did not show its new state");
+    activate(rig, "[data-spectr-settings-close]");
+    require_documented_keys_act(rig);
+    require_removed_keys_do_nothing(rig);
+
+    // Persisted with the plugin state: a reloaded instance keeps it.
+    const auto blob = rig.processor.serialize_plugin_state();
+    NativeEditorRig reloaded(blob);
+    CHECK(reloaded.processor.keyboard_shortcuts_in_daw());
+    storage.require_unchanged();
+}
+
+TEST_CASE("in the standalone, plain-key shortcuts stay live",
+          "[native-n1][state-parity][keyboard]") {
+    PatternStoragePoison storage;
+    EditorContextScope standalone(true);
+    NativeEditorRig rig;
+    require_home(rig);
+    REQUIRE_FALSE(rig.processor.keyboard_shortcuts_in_daw());
+    // The switch only means something in a DAW, so the standalone hides it.
+    activate(rig, "[data-spectr-settings-open]");
+    require_runtime_contract(
+        rig, "!document.querySelector('[data-spectr-keyboard-shortcuts-in-daw]')",
+        "the standalone shows a DAW-only switch");
+    activate(rig, "[data-spectr-settings-close]");
+    require_documented_keys_act(rig);
+    require_removed_keys_do_nothing(rig);
+    storage.require_unchanged();
+}
+
+TEST_CASE("key hints appear only where their keys are live",
+          "[native-n1][state-parity][keyboard][hints]") {
+    PatternStoragePoison storage;
+    const auto hints = [](bool standalone, bool in_daw) {
+        EditorContextScope context(standalone);
+        NativeEditorRig rig;
+        require_home(rig);
+        if (in_daw) {
+            rig.bridge().load_script("spectrSetKeyboardShortcutsInDaw(true);",
+                                     "spectr-keyboard-switch-on");
+            settle(rig.clock, 8);
+        }
+        std::string out;
+        activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
+        out += "chips=" + runtime_value(
+            rig, "document.querySelectorAll('[data-spectr-shortcut-chip]').length",
+            "spectr-keyboard-chips");
+        CHECK(press_key(rig, pulp::view::KeyCode::escape));
+        activate(rig, "[data-spectr-menu-root=\"analyzer\"] [data-spectr-menu-trigger]");
+        // The analyzer names no key in any context: its shortcut is gone.
+        out += " analyzer=" + runtime_value(
+            rig,
+            "Array.from(document.querySelectorAll('[data-spectr-menu-options] div'))"
+            ".map(d => d.textContent).filter(t => t.indexOf('ANALYZER') === 0)[0]",
+            "spectr-keyboard-analyzer-header");
+        CHECK(press_key(rig, pulp::view::KeyCode::escape));
+        activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+        out += " note=" + runtime_value(
+            rig, "document.querySelectorAll('[data-spectr-shortcuts-daw-note]').length",
+            "spectr-keyboard-daw-note");
+        out += " help=" + runtime_value(
+            rig,
+            "String(Array.from(document.querySelectorAll('[data-spectr-help-panel] *'))"
+            ".some(n => n.textContent === 'S / L / B'))",
+            "spectr-keyboard-help-rows");
+        out += " latency=" + runtime_value(
+            rig,
+            "String(String(document.querySelector('[data-spectr-latency-chip]')"
+            ".getAttribute('title') || '').indexOf('press T') >= 0)",
+            "spectr-keyboard-latency-title");
+        return out;
+    };
+    const std::string live =
+        "chips=5 analyzer=ANALYZER note=0 help=true latency=true";
+    const std::string off = "chips=0 analyzer=ANALYZER note=1 help=false latency=false";
+    CHECK(hints(/*standalone=*/false, /*in_daw=*/false) == off);
+    CHECK(hints(/*standalone=*/false, /*in_daw=*/true) == live);
+    CHECK(hints(/*standalone=*/true, /*in_daw=*/false) == live);
+    storage.require_unchanged();
+}
+
+// ── The EDIT MODE rows lay out the same with or without their key badge ─────
+//
+// Each row is an icon, then a header line (title, "· tagline", and the key
+// badge at the right while the keys are live), then the description below,
+// spanning the text column. Hiding the badge in a plug-in used to reflow the
+// whole row: the title and tagline collapsed into a narrow middle column,
+// stacked and truncated, with the description beside them instead of below.
+// The geometry is measured in every context and must agree across them.
+
+TEST_CASE("EDIT MODE rows lay out the same with or without the key badge",
+          "[native-n1][state-parity][keyboard][hints][layout]") {
+    PatternStoragePoison storage;
+    const auto rows = [](bool standalone) {
+        EditorContextScope context(standalone);
+        NativeEditorRig rig;
+        require_home(rig);
+        std::vector<std::string> out;
+        for (const char* mode : {"sculpt", "level", "boost", "flare", "glide"}) {
+            // One row per evaluation keeps each report on a single line.
+            activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
+            out.push_back(runtime_value(
+                rig,
+                std::string(
+                    "(() => {"
+                    "  const rect = (n) => { const r = n.getBoundingClientRect();"
+                    "    return { l: r.left, t: r.top, r: r.left + r.width,"
+                    "             b: r.top + r.height, w: r.width, h: r.height }; };"
+                    "  const round = (r) => [r.l, r.t, r.w, r.h].map(v => Math.round(v)).join(',');"
+                    "  const row = document.querySelector('[data-spectr-edit-mode=\"") + mode +
+                    "\"]');"
+                    "  if (!row) return 'no row';"
+                    "  const text = row.children[1];"
+                    "  const header = text && text.children[0];"
+                    "  const desc = text && text.children[1];"
+                    "  const title = header && header.children[0];"
+                    "  const tagline = header && header.children[1];"
+                    "  if (!title || !tagline || !desc) return 'missing parts';"
+                    "  const t = rect(title), g = rect(tagline), d = rect(desc), h = rect(header);"
+                    "  const rowRect = rect(row);"
+                    "  const faults = [];"
+                    "  if (Math.abs(t.t - g.t) > 2) faults.push('tagline not on the title line');"
+                    "  if (g.l < t.r - 0.5) faults.push('tagline overlaps the title');"
+                    "  if (t.h > 20 || g.h > 20) faults.push('title/tagline wrapped');"
+                    "  if (Math.max(t.b, g.b, h.b) > d.t + 0.5) faults.push('header overlaps the description');"
+                    "  if (Math.abs(t.l - d.l) > 1) faults.push('title not left-aligned with the description');"
+                    "  if (d.w < 180) faults.push('description does not span the row');"
+                    "  if (t.t - rowRect.t > 16) faults.push('title not at the top of the row');"
+                    "  return (faults.length ? faults.join('; ') : 'ok')"
+                    "    + ' | title=' + round(t) + ' tagline=' + round(g) + ' desc=' + round(d);"
+                    "})()",
+                "spectr-edit-mode-row-geometry"));
+            CHECK(press_key(rig, pulp::view::KeyCode::escape));
+        }
+        return out;
+    };
+    const auto hosted = rows(/*standalone=*/false);
+    const auto standalone = rows(/*standalone=*/true);
+    REQUIRE(hosted.size() == 5);
+    REQUIRE(standalone.size() == 5);
+    for (std::size_t i = 0; i < hosted.size(); ++i) {
+        INFO("row " << i << "\n  plug-in:    " << hosted[i]
+                    << "\n  standalone: " << standalone[i]);
+        CHECK(hosted[i].rfind("ok |", 0) == 0);
+        CHECK(standalone[i].rfind("ok |", 0) == 0);
+        // The badge is the only difference between the contexts.
+        CHECK(hosted[i] == standalone[i]);
+    }
+    storage.require_unchanged();
+}
+
+// ── A modal dialog makes the plot behind it inert ───────────────────────────
+//
+// With About or Settings open, a two-finger scroll over the band plot used to
+// zoom the viewport underneath the dialog. The wheel is delivered through the
+// host's own wheel verb at a point on the plot that the dialog's panel does
+// not cover, so the only thing standing between the gesture and the plot is
+// the dialog being open.
+
+namespace {
+
+std::string plot_view(NativeEditorRig& rig) {
+    return runtime_value(
+        rig, "JSON.stringify(__spectrTestHooks.renderState().view)",
+        "spectr-modal-plot-view");
+}
+
+void wheel_over_plot(NativeEditorRig& rig) {
+    // Low on the plot's left edge, outside every dialog panel Spectr
+    // centres. The About scrim paints over this point but lies outside its
+    // ancestors' bounds here, so the tree hit test reaches the plot through
+    // it -- the geometry the reported scroll went through.
+    const pulp::view::Point over_plot{140.0f, 620.0f};
+    for (int i = 0; i < 4; ++i)
+        pulp::view::deliver_mouse_wheel(*rig.root, over_plot, 0.0f, -30.0f, {});
+    settle(rig.clock, 12);
+}
+
+}  // namespace
+
+TEST_CASE("a scroll over the plot behind About or Settings changes nothing",
+          "[native-n1][state-parity][modal][wheel]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Control: with nothing open the same gesture zooms, so an unchanged view
+    // below is the dialog's doing, not a wheel that never arrived.
+    const auto at_rest = plot_view(rig);
+    wheel_over_plot(rig);
+    const auto zoomed = plot_view(rig);
+    REQUIRE(zoomed != at_rest);
+
+    const auto exercise = [&](std::string_view name, auto&& open,
+                              std::string_view open_selector, auto&& close) {
+        INFO("dialog=" << name);
+        open();
+        require_runtime_contract(
+            rig, "document.querySelector(" + js_string(open_selector) + ")",
+            std::string{name} + " did not open");
+        const auto before = plot_view(rig);
+        wheel_over_plot(rig);
+        CHECK(plot_view(rig) == before);
+        CHECK(runtime_value(rig, "document.querySelector(" + js_string(open_selector)
+                                     + ") ? 'open' : 'closed'",
+                            "spectr-modal-still-open") == "open");
+        close();
+        const auto closed = plot_view(rig);
+        wheel_over_plot(rig);
+        CHECK(plot_view(rig) != closed);
+    };
+
+    exercise("about", [&] {
+        activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+        activate(rig, "[data-spectr-help-learn-more]");
+    }, "[data-spectr-help-guide-scrim]", [&] {
+        CHECK(press_key(rig, pulp::view::KeyCode::escape));
+        require_runtime_contract(
+            rig, "!document.querySelector('[data-spectr-help-guide-scrim]')",
+            "About did not close");
+    });
+
+    exercise("settings", [&] {
+        activate(rig, "[data-spectr-settings-open]");
+    }, "[data-spectr-settings-panel][data-spectr-settings-live=\"true\"]", [&] {
+        activate(rig, "[data-spectr-settings-close]");
+    });
+
+    // A press on the About backdrop -- the start of any drag there -- closes
+    // About and edits no band: the SDK spends a press outside an open overlay
+    // on its dismissal. simulate_click is the host press path (overlay
+    // routing first); simulate_drag is not, so it cannot stand in here.
+    activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-help-learn-more]");
+    require_runtime_contract(rig, "document.querySelector('[data-spectr-help-guide-scrim]')",
+                             "About did not open for the drag case");
+    const auto bands_before = rig.processor.field().bands;
+    const auto view_before = plot_view(rig);
+    rig.root->simulate_click({140.0f, 620.0f});
+    settle(rig.clock, 12);
+    for (std::size_t i = 0; i < bands_before.size(); ++i) {
+        CHECK(rig.processor.field().bands[i].gain_db
+              == Catch::Approx(bands_before[i].gain_db));
+        CHECK(rig.processor.field().bands[i].muted == bands_before[i].muted);
+    }
+    CHECK(plot_view(rig) == view_before);
+    require_runtime_contract(rig, "!document.querySelector('[data-spectr-help-guide-scrim]')",
+                             "a press on the About backdrop did not close it");
+    // Closed, the plot takes a press again: the same point now edits.
+    rig.root->simulate_click({140.0f, 620.0f});
+    settle(rig.clock, 12);
+    bool edited = false;
+    for (std::size_t i = 0; i < bands_before.size(); ++i)
+        edited = edited || rig.processor.field().bands[i].muted != bands_before[i].muted
+            || rig.processor.field().bands[i].gain_db != bands_before[i].gain_db;
+    CHECK(edited);
     storage.require_unchanged();
 }

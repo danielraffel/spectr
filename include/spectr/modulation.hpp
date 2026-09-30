@@ -66,6 +66,52 @@ inline float lfo_value(LfoShape shape, double phase) noexcept {
     }
 }
 
+/// A change of LFO shape crossfades from the old waveform to the new one
+/// instead of switching at once. Both waveforms are evaluated at the same
+/// phase, so the phase never moves; without the fade a switch lands wherever
+/// the two shapes differ at that phase (a square at +1 switched to a saw at
+/// -0.8 is a 1.8 step), which is heard as a click in the gains and seen as a
+/// jump in the drawn bands.
+inline constexpr double kLfoShapeFadeSeconds = 0.15;
+
+struct LfoShapeFade {
+    LfoShape from = LfoShape::Sine;
+    LfoShape to   = LfoShape::Sine;
+    float    mix  = 1.0f;  ///< 0 = `from`, 1 = `to` (fade complete)
+};
+
+/// Start at @p shape with no fade in progress.
+inline constexpr LfoShapeFade settled_lfo_shape(LfoShape shape) noexcept {
+    return LfoShapeFade{shape, shape, 1.0f};
+}
+
+/// Point the fade at @p shape. A change made while a fade is still running
+/// starts the new fade from whichever shape currently dominates.
+inline constexpr LfoShapeFade retarget_lfo_shape(LfoShapeFade fade,
+                                                 LfoShape shape) noexcept {
+    if (shape == fade.to) return fade;
+    return LfoShapeFade{fade.mix < 0.5f ? fade.from : fade.to, shape, 0.0f};
+}
+
+/// The fade @p seconds later. Pure, so the editor can evaluate the fade at
+/// its own frame time from what the audio owner published.
+inline LfoShapeFade advance_lfo_shape(LfoShapeFade fade,
+                                      double seconds) noexcept {
+    if (fade.mix >= 1.0f || seconds <= 0.0) return fade;
+    fade.mix = static_cast<float>(std::min(
+        1.0, static_cast<double>(fade.mix) + seconds / kLfoShapeFadeSeconds));
+    return fade;
+}
+
+inline float lfo_value(const LfoShapeFade& fade, double phase) noexcept {
+    if (fade.mix >= 1.0f || fade.from == fade.to)
+        return lfo_value(fade.to, phase);
+    const float mix = std::clamp(fade.mix, 0.0f, 1.0f);
+    const float a = lfo_value(fade.from, phase);
+    const float b = lfo_value(fade.to, phase);
+    return a + (b - a) * mix;
+}
+
 /// Re-impose the authored mute topology on a modulated field.
 ///
 /// An LFO modulates LEVELS. It must never toggle a mute, in either direction.

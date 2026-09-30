@@ -304,8 +304,7 @@ try {
 // ...and it must not have stolen a key that already meant something. These are
 // the collisions the issue asked to be proved rather than read off the source.
 for (const [key, kind] of [["s", "editMode"], ["l", "editMode"], ["b", "editMode"],
-                           ["f", "editMode"], ["g", "editMode"], ["a", "analyzer"],
-                           ["6", "analyzer"]]) {
+                           ["f", "editMode"], ["g", "editMode"]]) {
   let out;
   try { out = press(key); } catch (error) { failures.push(`onKey rig (${key}): ${error.message}`); continue; }
   check(`\`${key}\` still does what it did`,
@@ -315,6 +314,16 @@ for (const [key, kind] of [["s", "editMode"], ["l", "editMode"], ["b", "editMode
     !out.events.some((e) => e.kind === "toggle"));
 }
 
+// A and 6 cycled the analyzer until that shortcut was removed (A is a Musical
+// Typing note). They must now do nothing at all -- and in particular must not
+// have become group mute.
+for (const key of ["a", "6"]) {
+  let out;
+  try { out = press(key); } catch (error) { failures.push(`onKey rig (${key}): ${error.message}`); continue; }
+  check(`\`${key}\` does nothing`, out.events.length === 0 && !out.prevented,
+    `recorded ${JSON.stringify(out.events)}`);
+}
+
 // The tap-one variant is deliberately NOT implemented: a plain CLICK must keep
 // meaning "toggle the band under the pointer", selection or not.
 //
@@ -322,8 +331,10 @@ for (const [key, kind] of [["s", "editMode"], ["l", "editMode"], ["b", "editMode
 // `b` spelling until the band context menu's unmute was fixed, and `b` is the
 // MENU's handler, not the click's: the check passed for the whole life of a
 // bug in the very line it was pointing at.
+// The toggle is deferred (the painters read the refs), which is why the call
+// carries its trailing `true`.
 check("CLICK still toggles a single band rather than the selection",
-  html.includes("commitGain(p.band, isMuted(cur) ? restored : -Infinity);"));
+  html.includes("commitGain(p.band, isMuted(cur) ? restored : -Infinity, true);"));
 
 // The menu's group mute WAS a one-way `map.set(i, -Infinity)` with no second
 // press that reversed it. It now defers to `toggleMuteSelection`, the owner

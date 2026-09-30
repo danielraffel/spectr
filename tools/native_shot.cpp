@@ -61,6 +61,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <initializer_list>
 #include <thread>
 #include <vector>
 
@@ -430,6 +431,22 @@ struct Rig {
         bridge().load_script(script, name);
     }
 
+    // Service the runtime the way a host's message loop does between frames:
+    // drain Promise jobs and React commits, then run the frames that deliver
+    // what those commits scheduled (a publication rides requestAnimationFrame).
+    // The synthetic clock alone does neither, so a press driven through the
+    // host's input path would otherwise leave its consequence pending until
+    // whatever next happens to enter the runtime -- and land in the middle of
+    // the next arrangement instead of in its own.
+    void service_runtime() {
+        for (int pass = 0; pass < 2; ++pass) {
+            eval("(() => { if (typeof globalThis.__pulpRuntimeSettle__ === "
+                 "'function') globalThis.__pulpRuntimeSettle__(8); })();",
+                 "spectr-native-shot-service");
+            settle(clock, 4);
+        }
+    }
+
     // Drive a real control through the importer's semantic activation seam and
     // then drain the Promise jobs and React commits a host would service.
     void activate(std::string_view selector, std::string_view event = "click") {
@@ -719,6 +736,29 @@ struct Rig {
              "    + ' sw=' + n.scrollWidth); } "
              "console.log('[shot] typeprobe :: ' + probe.slice(0, 10).join('  |  ')); })();",
              "spectr-native-shot-textfit");
+    }
+
+    // A host parameter write reaches the band field through process()'s
+    // parameter-sync worker -- a real thread on the wall clock -- while
+    // settle() ticks a synthetic one. Settle rounds used to take long enough
+    // by accident (each analyzer frame was compiled as a script), so wait for
+    // the worker instead of depending on how slow the editor's tick is:
+    // bounded at ~1 s, after which the caller's premise check still judges.
+    void await_band_levels(
+        std::initializer_list<std::pair<std::size_t, float>> want,
+        bool require_unmuted = false) {
+        for (int wait = 0; wait < 100; ++wait) {
+            bool landed = true;
+            for (const auto& [band, db] : want) {
+                const auto& b = processor.field().bands[band];
+                if (std::abs(b.gain_db - db) > 0.5f
+                    || (require_unmuted && b.muted)) landed = false;
+            }
+            if (landed) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            feed_tone(2);
+            settle(clock, 4);
+        }
     }
 
     // Push a tone through the DSP so the analyzer surfaces carry real data
@@ -1504,6 +1544,14 @@ const char* backend_name(pulp::view::ScreenshotBackend backend) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // The fixtures here drive the editor's own shortcuts, so they run it as
+    // the standalone does, with the plain-key shortcuts live.
+    // SPECTR_EDITOR_HOSTED=1 runs it as a plug-in instead.
+    {
+        const char* hosted = std::getenv("SPECTR_EDITOR_HOSTED");
+        spectr::set_editor_is_standalone(
+            !(hosted != nullptr && std::string_view(hosted) == "1"));
+    }
     std::filesystem::path dir = "spectr-native-shots";
     auto backend = pulp::view::ScreenshotBackend::gpu;
     float scale = 2.0f;
@@ -3687,6 +3735,7 @@ int main(int argc, char** argv) {
                 if (!menu_open()) return;
                 pulp::view::route_escape_to_active_overlay(root);
                 settle(rig.clock, 16);
+                rig.service_runtime();
             };
             auto open_menu = [&]() {
                 close_menu();
@@ -3695,6 +3744,7 @@ int main(int argc, char** argv) {
                 settle(rig.clock, 24);
                 root.layout_children();
                 settle(rig.clock, 8);
+                rig.service_runtime();
                 return res.handled && menu_open();
             };
             auto press_key = [&root, &rig](pulp::view::KeyCode code) {
@@ -3703,6 +3753,7 @@ int main(int argc, char** argv) {
                 pulp::view::WidgetBridge::dispatch_key_for_root(
                     root, static_cast<int>(code), pulp::view::kModNone, false);
                 settle(rig.clock, 24);
+                rig.service_runtime();
             };
             // Put every band back to a known neutral through the HOST
             // PARAMETER -- the same real, user-reachable path automation uses,
@@ -3715,6 +3766,7 @@ int main(int argc, char** argv) {
                 }
                 settle_round();
                 settle_round();
+                rig.await_band_levels({{0, 0.0f}, {count - 1, 0.0f}}, true);
             };
 
             // PREMISE -- the menu is reachable in this tree at all.
@@ -3873,6 +3925,9 @@ int main(int argc, char** argv) {
                 settle(rig.clock, 24);
                 root.layout_children();
                 settle(rig.clock, 8);
+                // Serviced whether or not the plant skipped the press, so the
+                // negative control differs from the real run by the press alone.
+                rig.service_runtime();
                 return aim;
             };
 
@@ -3898,6 +3953,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, kAuthoredDb}});
             {
                 const auto before = band_of(kBand);
                 if (std::abs(before.gain_db - kAuthoredDb) > 0.5f || before.muted) {
@@ -3963,6 +4019,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, kAuthoredDb}});
             {
                 const auto before = band_of(kBand);
                 if (!open_menu()) return 3;
@@ -4006,6 +4063,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, -6.0f}, {kOther, kOtherDb}});
             {
                 const auto self_before = band_of(kBand);
                 const auto other_before = band_of(kOther);
@@ -4123,6 +4181,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, kAuthoredDb}, {kOther, kOtherDb}});
             {
                 const auto a_before = band_of(kBand);
                 const auto b_before = band_of(kOther);
@@ -4162,6 +4221,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, kAuthoredDb}, {kOther, kOtherDb}});
             {
                 if (!open_menu()) return 3;
                 const auto aim = press_row("Mute / Unmute selection");
@@ -4452,6 +4512,7 @@ int main(int argc, char** argv) {
                 rig.store.set_value(spectr::band_gain_param_id(last), 9.0f);
                 settle_round();
                 settle_round();
+                rig.await_band_levels({{0, -9.0f}, {last, 9.0f}});
                 pulp::view::WheelHost wheel_host;
                 for (int i = 0; i < 12; ++i) {
                     pulp::view::deliver_mouse_wheel(
@@ -4495,22 +4556,42 @@ int main(int argc, char** argv) {
             for (int count : {40, 48, 56, 64}) {
                 close_menu();
                 const std::string label = "count " + std::to_string(count);
-                int adopted = -1;
-                // The first write of the sweep has been observed not to take
-                // on the first round-trip, so ask twice rather than report a
-                // layout that was simply still in flight.
-                for (int attempt = 0; attempt < 2 && adopted != count; ++attempt) {
-                    rig.store.set_value(spectr::kParamBandCount,
-                                        static_cast<float>(count));
-                    for (int i = 0; i < 6; ++i) settle_round();
-                    adopted = js_int(
-                        "window.__spectrTestHooks.renderState().nVisible", 32, 64);
+                // One host write, then wait for it to land on both sides: the
+                // processor adopts it on the parameter-sync worker (a real
+                // thread), and the editor redraws at the new count only after
+                // it re-hydrates. The editor must be quiet first -- an edit it
+                // has not yet published is exactly what used to race this
+                // write and put the old count back.
+                rig.service_runtime();
+                rig.store.set_value(spectr::kParamBandCount,
+                                    static_cast<float>(count));
+                const auto want = static_cast<spectr::Layout>(count);
+                const std::string drawn =
+                    "window.__spectrTestHooks.renderState().nVisible === "
+                    + std::to_string(count);
+                // Bounded in wall-clock time, not in rounds: the worker runs
+                // on the real clock, and a loaded machine must not turn a
+                // late adoption into a failed arrangement.
+                bool landed = false;
+                const auto deadline =
+                    std::chrono::steady_clock::now() + std::chrono::seconds(3);
+                while (!landed && std::chrono::steady_clock::now() < deadline) {
+                    settle_round();
+                    rig.service_runtime();
+                    landed = rig.processor.processing_state_snapshot().layout == want
+                             && rig.truth(drawn);
+                    if (!landed)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 }
-                if (adopted != count) {
+                if (!landed) {
                     record("Select all + Mute selection", label.c_str(),
                            "real press", "acts on all N bands at this layout",
-                           3, fmt("arrangement failed: asked for %d, the editor "
-                                  "is drawing %d", count, adopted));
+                           3, fmt("arrangement failed: asked for %d; host "
+                                  "parameter %.0f, processor %d, editor drawing %d",
+                                  count, rig.store.get_value(spectr::kParamBandCount),
+                                  static_cast<int>(rig.processor.processing_state_snapshot().layout),
+                                  js_int("window.__spectrTestHooks.renderState()"
+                                         ".nVisible", 32, 64)));
                     continue;
                 }
                 neutralise(static_cast<std::size_t>(count));
@@ -4683,6 +4764,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kBand), kAuthoredDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kBand, kAuthoredDb}});
             const auto authored = report("authored");
 
             // PREMISE 2 -- the level actually took. Without this, a band that
@@ -4755,6 +4837,7 @@ int main(int argc, char** argv) {
                 rig.store.set_value(spectr::band_gain_param_id(kBand), 0.0f);
                 settle_round();
                 settle_round();
+                rig.await_band_levels({{kBand, 0.0f}});
             }
             const auto restored = report("after menu UNMUTE");
             capture(rig, dir, prefix + "unmute-2-restored", backend, scale);
@@ -4811,6 +4894,7 @@ int main(int argc, char** argv) {
             rig.store.set_value(spectr::band_gain_param_id(kOther), kOtherDb);
             settle_round();
             settle_round();
+            rig.await_band_levels({{kOther, kOtherDb}});
             const auto other_before = rig.processor.field().bands[kOther];
             std::printf("[unmute] sel: band %zu authored gain_db=%.3f\n",
                         kOther, other_before.gain_db);
@@ -6266,6 +6350,96 @@ int main(int argc, char** argv) {
         // probe issues the pointerdown itself. `claimed=` below is the control
         // for that: an unclaimed popup paints no cursor at all, and would
         // photograph as a clean single-indicator menu while proving nothing.
+        // The menus whose key hints follow the keyboard policy, captured in
+        // whichever context this run is (SPECTR_EDITOR_HOSTED=1 is a plug-in,
+        // where the plain-key shortcuts go to the DAW and the hints are gone):
+        // EDIT MODE, ANALYZER and the SHORTCUTS popover. The EDIT MODE rows
+        // are also measured -- title and tagline on one line at the top of the
+        // row, above the description and left-aligned with it -- because
+        // hiding the key badge once reflowed every row into three columns.
+        // Exit: 0 all menus opened and the rows are laid out, 1 a row is not,
+        // 3 a menu never opened, so nothing was measured.
+        if (std::getenv("SPECTR_MENU_SHOTS") != nullptr) {
+            const auto toggle = [&rig](const char* root) {
+                rig.activate(std::string("[data-spectr-menu-root=\"") + root
+                             + "\"] [data-spectr-menu-trigger]");
+                settle(rig.clock, 24);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+            };
+            const auto shot = [&](const char* name) {
+                write_layout_snapshot(*rig.root, dir, prefix + name,
+                                      kDesignWidth, kDesignHeight);
+                capture(rig, dir, prefix + name, backend, scale);
+            };
+            std::printf("[menus] context: %s\n",
+                        spectr::editor_is_standalone() ? "standalone" : "plug-in");
+
+            toggle("edit");
+            if (!rig.is_mounted("[data-spectr-edit-mode=\"glide\"]")) {
+                std::printf("[menus] CONTROL FAILED: EDIT MODE did not open\n");
+                return 3;
+            }
+            shot("menus-edit-mode");
+            rig.eval(
+                "globalThis.__spectrEditRowFaults = () => {"
+                "  const rect = (n) => { const r = n.getBoundingClientRect();"
+                "    return { l: r.left, t: r.top, r: r.left + r.width,"
+                "             b: r.top + r.height, w: r.width, h: r.height }; };"
+                "  const out = [];"
+                "  const rows = Array.from(document.querySelectorAll('[data-spectr-edit-mode]'));"
+                "  if (rows.length !== 5) out.push('rows=' + rows.length);"
+                "  rows.forEach((row) => {"
+                "    const mode = row.getAttribute('data-spectr-edit-mode');"
+                "    const text = row.children[1];"
+                "    const header = text && text.children[0];"
+                "    const desc = text && text.children[1];"
+                "    const title = header && header.children[0];"
+                "    const tagline = header && header.children[1];"
+                "    if (!title || !tagline || !desc) { out.push(mode + ': missing parts'); return; }"
+                "    const t = rect(title), g = rect(tagline), d = rect(desc), h = rect(header);"
+                "    const w = rect(row);"
+                "    const f = [];"
+                "    if (Math.abs(t.t - g.t) > 2) f.push('tagline off the title line');"
+                "    if (g.l < t.r - 0.5) f.push('tagline overlaps the title');"
+                "    if (t.h > 20 || g.h > 20) f.push('title/tagline wrapped');"
+                "    if (Math.max(t.b, g.b, h.b) > d.t + 0.5) f.push('header overlaps the description');"
+                "    if (Math.abs(t.l - d.l) > 1) f.push('title not left-aligned with the description');"
+                "    if (d.w < 180) f.push('description does not span the row');"
+                "    if (t.t - w.t > 16) f.push('title not at the top of the row');"
+                "    console.log('[menus] ' + mode + ' title=' + [t.l, t.t, t.w, t.h].map(Math.round)"
+                "      + ' tagline=' + [g.l, g.t, g.w, g.h].map(Math.round)"
+                "      + ' desc=' + [d.l, d.t, d.w, d.h].map(Math.round)"
+                "      + (f.length ? ' FAULT: ' + f.join('; ') : ' ok'));"
+                "    if (f.length) out.push(mode + ': ' + f.join('; '));"
+                "  });"
+                "  return out.join(' | ');"
+                "};",
+                "spectr-menu-shots-geometry");
+            const bool rows_ok =
+                rig.truth("globalThis.__spectrEditRowFaults() === ''");
+            toggle("edit");
+
+            toggle("analyzer");
+            if (!rig.is_mounted("[data-spectr-analyzer-mode]")) {
+                std::printf("[menus] CONTROL FAILED: ANALYZER did not open\n");
+                return 3;
+            }
+            shot("menus-analyzer");
+            toggle("analyzer");
+
+            toggle("help");
+            if (!rig.is_mounted("[data-spectr-help-learn-more]")) {
+                std::printf("[menus] CONTROL FAILED: SHORTCUTS did not open\n");
+                return 3;
+            }
+            shot("menus-shortcuts");
+            toggle("help");
+
+            std::printf("[menus] EDIT MODE rows: %s\n", rows_ok ? "ok" : "BROKEN");
+            return rows_ok ? 0 : 1;
+        }
+
         if (std::getenv("SPECTR_DROPDOWN_PROBE") != nullptr) {
             const char* kTrigger =
                 "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]";

@@ -724,13 +724,13 @@ stayAwake("a gain still smoothing", () => {
 {
   render();
   settle(600);
-  // Put the pointer on a band and give it a reading that keeps moving.
+  // Draw: the pill reads out a band only once a gesture has changed one (plain
+  // hover, a bare press and a drag that alters nothing show nothing), so the
+  // live reading here comes from a stroke that moves band 13's level on every
+  // frame.
   dispatchWindow("pointermove", pointerEvent(centre(12), PLOT_Y));
   surface.props.onPointerMove(pointerEvent(centre(12), PLOT_Y));
-  render();
-  // A target the hovered band is NOT already sitting on, so the reading
-  // under the pointer genuinely sweeps while it travels there.
-  sharedState.current.setGains(Array.from({ length: N }, (_, i) => (i === 12 ? -0.8 : 0)));
+  surface.props.onPointerDown(pointerEvent(centre(12), PLOT_Y));
   render();
   statusCalls = 0;
   bannerText.textContent = "";
@@ -738,6 +738,9 @@ stayAwake("a gain still smoothing", () => {
   let labelWrites = 0;
   let previous = bannerText.textContent;
   for (let i = 0; i < 90; i++) {
+    // A new level every frame, inside band 13, well past the drag threshold.
+    const y = PLOT_Y - 20 - (i % 30) * 3;
+    surface.props.onPointerMove(pointerEvent(centre(12), y));
     step();
     clock += 400;                      // three throttle windows across the run
     if (bannerText.textContent !== previous) {
@@ -745,10 +748,15 @@ stayAwake("a gain still smoothing", () => {
       previous = bannerText.textContent;
     }
   }
+  const heldCalls = statusCalls;
+  surface.props.onPointerUp(pointerEvent(centre(12), PLOT_Y - 20));
+  render();
+  settle(600);
+  statusCalls = heldCalls;
   console.log("status    %d frame(s): %d direct label write(s), %d React "
     + "publication(s)", 90, labelWrites, statusCalls);
   // STIMULUS CONTROL. Zero publications is what a correct document and a
-  // pointer that never landed on a band both produce. The direct writes prove
+  // stroke that never changed a band both produce. The direct writes prove
   // the reading was live and moving, so the zero below means something.
   if (labelWrites === 0) {
     console.error("FAIL: the banner's own text never changed across 90 frames, "
@@ -757,7 +765,7 @@ stayAwake("a gain still smoothing", () => {
     process.exit(2);
   }
   if (statusCalls !== 0) {
-    fail(`a live hover reading published ${statusCalls} status update(s) back `
+    fail(`a live drawing reading published ${statusCalls} status update(s) back `
       + "through React across 90 frames. `onStatus` is the parent's state and "
       + "this document is a captured import, so each one re-applies the whole "
       + "captured document -- and the pill's width is a function of the string "
