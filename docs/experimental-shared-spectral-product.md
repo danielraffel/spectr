@@ -1,5 +1,23 @@
 # Opt-in Spectr shared renderer
 
+## 2026-09-28 latest-source validation
+
+The isolated validation branch was rebuilt from the current Spectr `main`
+(`d32c98548a4d2d3dafc345e232a48887c3313296`) plus the three GPU-audio
+validation commits on this branch, against the exact Pulp SDK source
+`c9c785f6cf81dba0f1eeae43f4a00037725523c0` (SDK `0.877.2`). A fresh Release
+build with `SPECTR_EXPERIMENTAL_SHARED_RENDERER=ON`,
+`SPECTR_SHARED_PRODUCT_ACCEPTANCE=ON`, and
+`SPECTR_SHARED_NATIVE_HOST_PROBE=ON` completed successfully.
+
+The four focused gates passed: `Spectr-shared-product-acceptance`,
+`Spectr-shared-clap-host`, `Spectr-shared-host-contract`, and
+`Spectr-gpu-audio-status`. Product acceptance reported 124 GPU selections and
+zero CPU selections per normal cycle; its forced-CPU control reported zero GPU
+and 124 CPU selections. This validates current-source integration and fallback
+control on the isolated branch. It is not a realtime deadline or speedup claim,
+and the CPU backend remains the product default.
+
 `SPECTR_EXPERIMENTAL_SHARED_RENDERER=ON` selects the shared spectral adapter for
 native Spectr's existing linear-phase mode. It is OFF by default. The saved mode
 values and normal CPU factory are unchanged; the zero-latency mode stays CPU.
