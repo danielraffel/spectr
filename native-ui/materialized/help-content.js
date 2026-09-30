@@ -98,7 +98,7 @@ Press **LIVE** in the header, or Q, to freeze the sound coming in. Spectr holds 
 
 Below 100% Mix only the processed part is frozen, so the untouched part stays live and you can play over the held sound.
 
-**Hold length**, in Settings, sets how much of the incoming sound a freeze takes in. A short one catches the moment you press. A longer one blends the last second or two into a smoother pad.
+**Hold length**, in Settings, sets how much of the incoming sound a freeze takes in. Below a quarter of a second it holds the moment you press as a steady tone. From a quarter of a second up it loops that much of what you just played, so you hear the phrase repeat, joined without a click.
 
 A freeze pressed over silence waits for sound before it holds anything, so it never holds silence.
 

@@ -716,12 +716,11 @@ int hold_check(Options o) {
             if (std::fabs(r.hold_seconds_read_back - hold) > 1e-6) ++bad;
         }
         // Pressed well after the change, the short hold must carry almost
-        // none of chord A. Whether the long one is HEARD to carry it is
-        // reported, not gated: pulp::signal::FreezeHold plays every bin at
-        // the newest frame's frequency, so chord A's bins cancel (see the
-        // [!shouldfail] row in test/test_freeze.cpp).
+        // none of chord A, and the 2 s one -- a loop of the 2 s before the
+        // press, most of it chord A -- must carry it: the measured second
+        // plays the loop's start.
         if (offset > 0.3 && !(a_share[0] < 0.05)) ++bad;
-        (void)a_share[1];
+        if (offset > 0.3 && !(a_share[1] > 0.5)) ++bad;
     }
     std::printf("%s: hold check (the unit read back every Hold length it was given)\n",
                 bad ? "FAIL" : "OK");

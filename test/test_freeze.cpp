@@ -174,6 +174,9 @@ const char* mode_name(MaskRenderMode mode) {
 constexpr MaskRenderMode kModes[] = {MaskRenderMode::linear_phase,
                                      MaskRenderMode::zero_latency};
 
+/// A spectral hold (the default Hold length) and a loop of the audio itself.
+constexpr double kHoldLengths[] = {FreezeSource::kDefaultHoldSeconds, 1.0};
+
 } // namespace
 
 // ── Capture is ahead of the mask ───────────────────────────────────────────
@@ -182,9 +185,11 @@ TEST_CASE("Freeze holds the input ahead of the mask", "[freeze][spectral]") {
     // Every band is muted before the freeze and unmuted after the input has
     // stopped. A capture taken after the mask would have held silence; one
     // taken ahead of it holds the tone, which the unmuted mask then lets out.
+    for (const double hold : kHoldLengths)
     for (const auto mode : kModes) {
         const auto render = [&](bool freeze) {
             Rig rig(mode);
+            rig.plugin->set_freeze_hold_seconds(hold);
             rig.mute_all(true);
             return rig.run(at(3.5), tone(1000.0, 0.3f, /*stop=*/1.5),
                 [&](std::size_t n, auto&, auto&) {
@@ -196,7 +201,7 @@ TEST_CASE("Freeze holds the input ahead of the mask", "[freeze][spectral]") {
         const auto control = render(false);
         const auto held = fit(frozen.left, at(3.0), at(0.4), 1000.0).amplitude;
         const auto live = fit(control.left, at(3.0), at(0.4), 1000.0).amplitude;
-        INFO(mode_name(mode) << " held=" << held << " without freeze=" << live);
+        INFO(mode_name(mode) << " hold " << hold << " s: held=" << held << " without freeze=" << live);
         CHECK(held > 0.15);
         // Control: without a freeze the same schedule is silent there, so the
         // tone above can only have come from the hold.
@@ -208,9 +213,11 @@ TEST_CASE("The live mask and LFO keep acting on the held sound", "[freeze][modul
     // A square LFO over the whole bank, started after the input has stopped:
     // the held tone must rise and fall with it. Depth 0 is the control -- the
     // same measurement on a steady hold reads flat.
+    for (const double hold : kHoldLengths)
     for (const auto mode : kModes) {
         const auto swing = [&](float depth) {
             Rig rig(mode);
+            rig.plugin->set_freeze_hold_seconds(hold);
             for (std::size_t band = 0; band < 32; ++band)
                 rig.set(spectr::band_gain_param_id(band), -12.0f);
             const auto out = rig.run(at(3.2), tone(1000.0, 0.3f, /*stop=*/1.0),
@@ -236,7 +243,7 @@ TEST_CASE("The live mask and LFO keep acting on the held sound", "[freeze][modul
         };
         const auto [lo, hi] = swing(1.0f);
         const auto [flat_lo, flat_hi] = swing(0.0f);
-        INFO(mode_name(mode) << " modulated " << lo << ".." << hi
+        INFO(mode_name(mode) << " hold " << hold << " s: modulated " << lo << ".." << hi
              << " unmodulated " << flat_lo << ".." << flat_hi);
         REQUIRE(flat_lo > 0.01);                // the hold is audible at all
         CHECK(hi > lo * 4.0);                   // the LFO moves it by > 12 dB
@@ -499,9 +506,11 @@ TEST_CASE("Below 100% Mix the dry leg stays live while the wet leg holds",
         const auto v = static_cast<float>(0.3 * std::sin(2.0 * kPi * hz * n / kSampleRate));
         return std::pair<float, float>{v, v};
     };
+    for (const double hold : kHoldLengths)
     for (const auto mode : kModes) {
         const auto render = [&](float mix) {
             Rig rig(mode);
+            rig.plugin->set_freeze_hold_seconds(hold);
             rig.set(spectr::kMix, mix);
             return rig.run(at(2.2), stimulus, [&](std::size_t n, auto&, auto&) {
                 if (rig.hits(n, 0.5)) rig.set(spectr::kParamFreeze, 1.0f);
@@ -512,7 +521,8 @@ TEST_CASE("Below 100% Mix the dry leg stays live while the wet leg holds",
         const double held = fit(half.left, at(1.6), at(0.5), 440.0).amplitude;
         const double dry = fit(half.left, at(1.6), at(0.5), 880.0).amplitude;
         const double leak = fit(full.left, at(1.6), at(0.5), 880.0).amplitude;
-        INFO(mode_name(mode) << " held " << held << " dry " << dry << " leak at 100% " << leak);
+        INFO(mode_name(mode) << " hold " << hold << " s: held " << held << " dry " << dry
+             << " leak at 100% " << leak);
         CHECK(held > 0.1);
         CHECK(dry == Catch::Approx(0.15).margin(0.02));
         CHECK(leak < 0.005);

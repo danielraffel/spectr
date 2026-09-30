@@ -3803,7 +3803,15 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
             --mode mixing --sr 44100 --block 256 --taps 6 --repeat 3
             --max-cost-ratio 6 --forbid-render-notifications --quiet)
+    # A Hold length long enough to loop the audio itself: the engage (a seam
+    # search and a copy of up to 2 s of audio, spread over a hop) must stay
+    # inside the same budget.
+    add_test(NAME Spectr-au-freeze-host-loop
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-seconds 2 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
+            --forbid-render-notifications --quiet)
     set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
+        Spectr-au-freeze-host-loop
         PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
 endif()
 

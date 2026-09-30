@@ -462,7 +462,10 @@ const std::vector<Programme>& programmes() {
 }
 
 constexpr double kHolds[] = {FreezeSource::kDefaultHoldSeconds, FreezeSource::kMaxHoldSeconds};
-const char* hold_name(double s) { return s < 1.0 ? "85 ms" : "2 s"; }
+const char* hold_name(double s) { return s < 0.1 ? "85 ms" : s < 1.0 ? "0.2 s" : "2 s"; }
+/// Hold lengths the hold is spectral at: the default and the longest below
+/// the loop.
+constexpr double kSpectralHolds[] = {FreezeSource::kDefaultHoldSeconds, 0.2};
 
 } // namespace
 
@@ -581,7 +584,7 @@ TEST_CASE("The hold is stationary from its first frame", "[freeze][level]") {
         {"saw chord", &programmes()[1].audio}, {"synth pad", &programmes()[2].audio},
         {"texture", &programmes()[3].audio}, {"pad after a chord change", &change}};
     for (const auto& [name, audio] : material)
-        for (const double hold : kHolds) {
+        for (const double hold : kSpectralHolds) {
             const auto r = render_spectr(*audio, press, hold, MaskRenderMode::zero_latency);
             const auto l = level_of(r, press, hold);
             INFO(name << " at " << hold_name(hold) << ": the first 300 ms against the settled hold "
@@ -604,7 +607,7 @@ TEST_CASE("The hold is stationary from its first frame", "[freeze][level]") {
 TEST_CASE("The hold plays at the level, peak and pitch of the sound it holds", "[freeze][level]") {
     const std::size_t press = samples(3.0);
     for (const auto& prog : programmes())
-        for (const double hold : kHolds)
+        for (const double hold : {kSpectralHolds[0], kSpectralHolds[1], FreezeSource::kMaxHoldSeconds})
             for (const auto mode : {MaskRenderMode::zero_latency, MaskRenderMode::linear_phase}) {
                 const auto r = render_spectr(prog.audio, press, hold, mode);
                 const auto l = level_of(r, press, hold);
@@ -622,3 +625,274 @@ TEST_CASE("The hold plays at the level, peak and pitch of the sound it holds", "
             }
 }
 
+
+// ── The loop ───────────────────────────────────────────────────────────────
+
+namespace {
+
+/// A phrase: a note every 0.25 s from a seeded sequence (a harmonic tone with
+/// a short attack and a decay), so every quarter second of it differs from
+/// the next and a loop of it can be told from any other stretch.
+Stereo phrase(double seconds) {
+    Stereo s; s.resize(samples(seconds));
+    std::mt19937 rng(17);
+    std::uniform_int_distribution<int> step(0, 11);
+    const double note = 0.25;
+    for (std::size_t k = 0; double(k) * note < seconds; ++k) {
+        const double hz = 196.0 * std::pow(2.0, step(rng) / 12.0);
+        const auto start = samples(double(k) * note);
+        for (std::size_t i = 0; i < samples(note) && start + i < s.size(); ++i) {
+            const double t = double(i) / kRate;
+            const double env = std::min(1.0, t / 0.005) * std::exp(-t / 0.12);
+            double v = 0;
+            for (int h = 1; h <= 6; ++h) v += std::sin(2 * kPi * h * hz * t) / (h * h);
+            s.l[start + i] += float(0.3 * env * v);
+            s.r[start + i] += float(0.28 * env * v);
+        }
+    }
+    add_room(s, 7);
+    return s;
+}
+
+double correlation(const std::vector<float>& a, std::size_t from_a,
+                   const std::vector<float>& b, std::size_t from_b, std::size_t n) {
+    double ab = 0, aa = 0, bb = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        ab += double(a[from_a + i]) * b[from_b + i];
+        aa += double(a[from_a + i]) * a[from_a + i];
+        bb += double(b[from_b + i]) * b[from_b + i];
+    }
+    return ab / std::sqrt(aa * bb + 1e-30);
+}
+
+/// A linear-prediction whitener: a waveform discontinuity is energy the
+/// signal's own recent past does not predict (as in test_freeze_click.cpp).
+constexpr int kOrder = 32;
+
+/// Prediction-error filter [1, a1..ap] fitted to x[from, to) (Hann windowed
+/// autocorrelation, Levinson-Durbin, a tiny ridge so silence is well posed).
+std::vector<double> fit_whitener(const std::vector<float>& x, std::size_t from, std::size_t to) {
+    const std::size_t n = to - from;
+    std::vector<double> w(n);
+    for (std::size_t i = 0; i < n; ++i)
+        w[i] = x[from + i] * (0.5 - 0.5 * std::cos(2.0 * kPi * double(i) / double(n - 1)));
+    std::vector<double> r(kOrder + 1, 0.0);
+    for (int k = 0; k <= kOrder; ++k)
+        for (std::size_t i = std::size_t(k); i < n; ++i) r[std::size_t(k)] += w[i] * w[i - std::size_t(k)];
+    r[0] = r[0] * (1.0 + 1e-6) + 1e-12;
+    std::vector<double> a(kOrder + 1, 0.0), tmp(kOrder + 1);
+    a[0] = 1.0;
+    double err = r[0];
+    for (int i = 1; i <= kOrder; ++i) {
+        double acc = r[std::size_t(i)];
+        for (int j = 1; j < i; ++j) acc += a[std::size_t(j)] * r[std::size_t(i - j)];
+        const double k = -acc / err;
+        tmp = a;
+        for (int j = 1; j < i; ++j) a[std::size_t(j)] = tmp[std::size_t(j)] + k * tmp[std::size_t(i - j)];
+        a[std::size_t(i)] = k;
+        err *= (1.0 - k * k);
+        if (err <= 0.0) break;
+    }
+    return a;
+}
+
+std::vector<double> residual(const std::vector<float>& x, const std::vector<double>& a,
+                             std::size_t from, std::size_t to) {
+    std::vector<double> e(to - from, 0.0);
+    for (std::size_t n = from; n < to; ++n) {
+        double acc = 0.0;
+        for (int k = 0; k <= kOrder && n >= std::size_t(k); ++k)
+            acc += a[std::size_t(k)] * x[n - std::size_t(k)];
+        e[n - from] = acc;
+    }
+    return e;
+}
+
+
+/// The worst whitened sample over [from, to) of `x` against the whitened
+/// RMS in the 4 ms either side of it (excluding its own 0.5 ms), in dB; the
+/// predictor fitted to the 0.3 s of `x` before `from`.
+double spike_db(const Stereo& x, std::size_t from, std::size_t to) {
+    const std::size_t outer = samples(0.004), inner = samples(0.0005);
+    double worst = -200.0;
+    for (const auto* c : {&x.l, &x.r}) {
+        const auto a = fit_whitener(*c, from - samples(0.3), from);
+        const auto e = residual(*c, a, from - outer, to + outer);
+        std::vector<double> prefix(e.size() + 1, 0.0);
+        for (std::size_t i = 0; i < e.size(); ++i) prefix[i + 1] = prefix[i] + e[i] * e[i];
+        for (std::size_t n = outer; n + outer < e.size(); ++n) {
+            const double around = prefix[n - inner] - prefix[n - outer]
+                                + prefix[n + outer + 1] - prefix[n + inner + 1];
+            const double rms = std::sqrt(around / double(2 * (outer - inner)) + 1e-24);
+            worst = std::max(worst, 20.0 * std::log10(std::abs(e[n]) / rms + 1e-12));
+        }
+    }
+    return worst;
+}
+
+/// The freeze source alone, Freeze on from `press` to the end.
+struct Looped {
+    Stereo out;
+    std::int64_t length = 0;
+    std::size_t engaged = 0; // the sample the engage fade starts at
+    /// Where the loop's first pass began: the latch, a hop before the fade
+    /// (the loop's start plays there on every later pass).
+    std::size_t origin() const { return engaged - std::size_t(FreezeSource::kHop); }
+};
+
+Looped loop_source(const Stereo& in, std::size_t press, double hold, int crossfade = 0) {
+    FreezeSource source;
+    REQUIRE(source.prepare(kRate, 2));
+    source.set_hold_seconds(hold);
+    if (crossfade > 0) source.set_crossfade_samples(crossfade);
+    Looped r;
+    r.out.resize(in.size());
+    for (std::size_t pos = 0; pos < in.size(); pos += 128) {
+        const auto n = std::min<std::size_t>(128, in.size() - pos);
+        source.set_frozen(pos >= press);
+        const float* i[] = {in.l.data() + pos, in.r.data() + pos};
+        float* o[] = {r.out.l.data() + pos, r.out.r.data() + pos};
+        source.process_block(i, o, 2, int(n));
+        // Blocks of 128 end on every hop boundary, where the fade starts.
+        if (r.engaged == 0 && source.hold_audible()) r.engaged = pos + n;
+    }
+    REQUIRE(source.looping());
+    r.length = source.loop_length();
+    return r;
+}
+
+} // namespace
+
+TEST_CASE("A long Hold length loops the last Hold-length seconds of the input", "[freeze][loop]") {
+    // Hold length is the length of what is frozen and looped: at 2 s the
+    // output after the press repeats the 2 s of input before it, pass after
+    // pass -- through the product, in both Latency modes. Measured as the
+    // correlation of the output with the unpressed output one and two loop
+    // lengths earlier. Control: the same instrument a quarter second off
+    // the loop's lag reads the phrase's other notes, not a repeat.
+    const auto input = phrase(10.0);
+    const std::size_t press = samples(4.0);
+    for (const auto mode : {MaskRenderMode::zero_latency, MaskRenderMode::linear_phase}) {
+        const auto pressed = render_spectr(input, press, 2.0, mode);
+        const auto live = render_spectr(input, SIZE_MAX - 1, 2.0, mode);
+        const std::size_t p = press + std::size_t(pressed.latency);
+        const std::size_t n = samples(1.5);
+        // The loop's length: the lag, within 10 ms of 2 s, at which the
+        // first pass best matches the live output.
+        std::size_t length = samples(2.0);
+        double best = -2.0;
+        for (std::size_t lag = samples(1.99); lag <= samples(2.01); ++lag) {
+            const double c = correlation(pressed.out.l, p + samples(0.1), live.out.l,
+                                         p + samples(0.1) - lag, samples(0.2));
+            if (c > best) { best = c; length = lag; }
+        }
+        INFO((mode == MaskRenderMode::linear_phase ? "Mixing" : "Tracking") << ": loop of "
+             << double(length) / kRate << " s");
+        // First pass (after the engage fade), second pass (after its seam).
+        const double first = correlation(pressed.out.l, p + samples(0.1), live.out.l,
+                                         p + samples(0.1) - length, n);
+        const double second = correlation(pressed.out.l, p + length + samples(0.1), live.out.l,
+                                          p + samples(0.1) - length, n);
+        const double off = correlation(pressed.out.l, p + samples(0.1), live.out.l,
+                                       p + samples(0.1) - length + samples(0.25), n);
+        INFO("first pass " << first << ", second pass " << second << ", a quarter second off " << off);
+        CHECK(first > 0.99);
+        CHECK(second > 0.99);
+        CHECK(off < 0.5);
+    }
+}
+
+TEST_CASE("A loop's seams are level and click-free", "[freeze][loop]") {
+    // Every pass through the loop's start crossfades from the audio that
+    // followed its end into its start. Across each seam, over the fade: the
+    // output's level against the level either side of it (within 1 dB, on
+    // the steady material -- the phrase's notes rise and fall by
+    // themselves), and its worst spike -- a whitened sample against its own
+    // neighbourhood, as the click tests score one -- against the worst the
+    // loop has anywhere else (no more than 3 dB above it). Control: a
+    // -20 dBFS step planted at a seam (a plain click), which the spike
+    // measure must see.
+    const std::pair<const char*, Stereo> material[] = {
+        {"phrase", phrase(8.0)}, {"synth pad", synth_pad(8.0)},
+        {"saw chord", saw_chord(8.0)}, {"texture", texture(8.0)}};
+    const auto kink = [](const Stereo& x, std::size_t from, std::size_t to) {
+        return spike_db(x, from, to);
+    };
+    const auto rms = [](const Stereo& x, std::size_t from, std::size_t n) {
+        double e = 0;
+        for (std::size_t i = from; i < from + n; ++i) e += double(x.l[i]) * x.l[i] + double(x.r[i]) * x.r[i];
+        return 10 * std::log10(e / double(2 * n) + 1e-30);
+    };
+    const std::size_t press = samples(3.0);
+    const std::size_t fade = samples(FreezeSource::kCrossfadeSeconds);
+    for (const auto& [name, input] : material)
+        for (const double hold : {0.5, 2.0}) {
+            const auto r = loop_source(input, press, hold);
+            const auto length = std::size_t(r.length);
+            double worst_level = 0, worst_kink = -200, elsewhere = -200;
+            for (int pass = 1; pass <= 2; ++pass) {
+                const std::size_t seam = r.origin() + std::size_t(pass) * length;
+                const double at_seam = rms(r.out, seam, fade);
+                const double before = rms(r.out, seam - fade, fade);
+                const double after = rms(r.out, seam + fade, fade);
+                worst_level = std::max(worst_level, std::abs(at_seam - 0.5 * (before + after)));
+                worst_kink = std::max(worst_kink, kink(r.out, seam, seam + fade));
+                elsewhere = std::max(elsewhere, kink(r.out, seam + 2 * fade, seam + length / 2));
+            }
+            INFO(name << ", " << hold << " s loop: level across the seam " << worst_level
+                 << " dB; worst spike " << worst_kink << " dB against " << elsewhere << " dB elsewhere");
+            if (std::string(name) != "phrase") CHECK(worst_level < 1.0);
+            CHECK(worst_kink <= elsewhere + 3.0);
+        }
+    // Control: a step planted at a seam of the pad's loop.
+    auto planted = loop_source(material[1].second, press, 0.5);
+    const std::size_t seam = planted.origin() + std::size_t(planted.length);
+    for (std::size_t n = seam; n < planted.out.size(); ++n) { planted.out.l[n] += 0.1f; planted.out.r[n] += 0.1f; }
+    const double hard = kink(planted.out, seam, seam + fade);
+    const double rest = kink(planted.out, seam + 2 * fade, seam + std::size_t(planted.length) / 2);
+    INFO("planted step: spike " << hard << " dB against " << rest << " dB elsewhere");
+    CHECK(hard > rest + 3.0);
+}
+
+TEST_CASE("A long Hold length engages at once, looping what has been heard", "[freeze][loop]") {
+    // A 2 s Hold length pressed 1 s after the stream starts used to wait for
+    // 2 s of input to analyse (1.2 s of nothing happening). It loops the 1 s
+    // there is, now; with less than kLoopMinSeconds heard it waits for that.
+    const auto input = phrase(4.0);
+    for (const auto mode : {MaskRenderMode::zero_latency, MaskRenderMode::linear_phase}) {
+        const auto r = render_spectr(input, samples(1.0), 2.0, mode);
+        const double engage_ms = r.engaged_at
+            ? double(r.engaged_at - std::size_t(r.latency) - samples(1.0)) * 1000.0 / kRate : -1.0;
+        INFO("pressed 1 s in: engaged " << engage_ms << " ms after the press");
+        CHECK(engage_ms >= 0.0);
+        CHECK(engage_ms < 30.0);
+    }
+    const auto early = loop_source(input, samples(1.0), 2.0);
+    INFO("loop of " << double(early.length) / kRate << " s");
+    CHECK(double(early.length) / kRate > 0.95);
+    const auto soon = loop_source(input, samples(0.1), 2.0);
+    const double soon_s = double(soon.engaged) / kRate;
+    INFO("pressed 0.1 s in: engaged at " << soon_s << " s");
+    CHECK(soon_s >= FreezeSource::kLoopMinSeconds);
+    CHECK(soon_s < FreezeSource::kLoopMinSeconds + 0.05);
+}
+
+TEST_CASE("Hold lengths below the loop hold the spectrum", "[freeze][loop]") {
+    FreezeSource source;
+    REQUIRE(source.prepare(kRate, 2));
+    const auto input = phrase(2.0);
+    for (const double hold : {FreezeSource::kDefaultHoldSeconds, 0.2, 0.25}) {
+        source.reset();
+        source.set_hold_seconds(hold);
+        std::vector<float> l(input.l), r(input.r);
+        for (std::size_t pos = 0; pos < l.size(); pos += 256) {
+            source.set_frozen(pos >= samples(1.0));
+            float* io[] = {l.data() + pos, r.data() + pos};
+            const float* in[] = {input.l.data() + pos, input.r.data() + pos};
+            source.process_block(in, io, 2, int(std::min<std::size_t>(256, l.size() - pos)));
+        }
+        INFO("hold " << hold << " s");
+        REQUIRE(source.hold_audible());
+        CHECK(source.looping() == (hold >= FreezeSource::kLoopMinSeconds));
+    }
+}

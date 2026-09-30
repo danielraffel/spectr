@@ -17,7 +17,13 @@
 /// either renderer, switching the Latency mode while frozen hands the SAME
 /// hold to the new renderer.
 ///
-/// HOW IT HOLDS. The source runs its own short-hop analysis of the input
+/// TWO KINDS OF HOLD. Hold length is how much of the input is frozen. From
+/// kLoopMinSeconds up that audio itself is looped -- the last Hold-length
+/// seconds, repeated with a crossfaded, waveform-matched seam (see THE LOOP):
+/// you hear the phrase repeat. Below it a loop would be a buzz, so the hold
+/// is spectral: a steady resynthesis of the spectrum of that stretch.
+///
+/// HOW IT HOLDS (spectral). The source runs its own short-hop analysis of the input
 /// (`kFftSize` points every `kHop` samples) into `pulp::signal::FreezeHoldT`,
 /// which captures the recent frames and, at the latch, averages their
 /// magnitudes and measures each bin's instantaneous frequency. The phases the
@@ -135,6 +141,20 @@ public:
     /// capture window must reach before a freeze latches (-90 dBFS RMS).
     static constexpr double kSignalFloorPower = 1.0e-9;
 
+    /// A Hold length from this long up loops the audio itself: the last
+    /// Hold-length seconds of input, repeated with a crossfaded seam. Below
+    /// it the hold is spectral (a loop that short is a buzz, not a phrase).
+    static constexpr double kLoopMinSeconds = 0.25;
+    /// How far the loop's start may move from exactly Hold length before
+    /// the end, to land where the audio before it matches the audio before
+    /// the end; and how much audio that match compares.
+    static constexpr double kLoopSearchSeconds = 0.005;
+    static constexpr double kLoopMatchSeconds = 0.010;
+    /// The loop's preparation, in shares of the hop after the latch: the
+    /// seam search, then the copy of the loop.
+    static constexpr int kLoopSearchSteps = 8;
+    static constexpr int kLoopCopySteps = 8;
+
     /// Where the source is in a freeze.
     enum class Phase : std::uint8_t {
         live,      ///< live input passes; nothing is held
@@ -223,6 +243,22 @@ public:
         crossfade_samples_ = std::max(
             1, static_cast<int>(std::lround(kCrossfadeSeconds * sample_rate)));
 
+        // The loop: every sample of input is recorded, so a loop can be taken
+        // from the moment the stream starts; the loop plays from its own copy
+        // so recording never stops.
+        loop_search_ = static_cast<std::int64_t>(std::lround(kLoopSearchSeconds * sample_rate));
+        loop_match_ = std::max<std::int64_t>(
+            1, static_cast<std::int64_t>(std::lround(kLoopMatchSeconds * sample_rate)));
+        loop_min_ = static_cast<std::int64_t>(std::lround(kLoopMinSeconds * sample_rate));
+        // The seam search compares every `loop_stride_`-th sample, so its cost
+        // is the same at any sample rate.
+        loop_stride_ = std::max<std::int64_t>(1, std::llround(sample_rate / 48000.0));
+        const auto longest = static_cast<std::int64_t>(std::ceil(kMaxHoldSeconds * sample_rate));
+        record_length_ = static_cast<std::size_t>(longest + loop_search_ + loop_match_ + 4 * kHop);
+        record_.assign(channel_count * record_length_, 0.0f);
+        loop_capacity_ = static_cast<std::size_t>(longest + loop_search_ + crossfade_samples_ + kHop);
+        loop_.assign(channel_count * loop_capacity_, 0.0f);
+
         requested_hold_seconds_ = kDefaultHoldSeconds;
         applied_hold_seconds_ = kDefaultHoldSeconds;
         prepared_ = true;
@@ -250,6 +286,11 @@ public:
         phase_ = Phase::live;
         weight_step_ = 0;
         pending_engage_ = false;
+        loop_mode_ = false;
+        fade_rho_ = 0.0f;
+        std::fill(record_.begin(), record_.end(), 0.0f);
+        recorded_ = 0;
+        history_ = 0;
         rng_ = kRngSeed;
         walk_rng_ = kWalkSeed;
         held_gain_ = 1.0f;
@@ -261,6 +302,7 @@ public:
     void clear_history() noexcept {
         if (!prepared_) return;
         hold_.clear_history();
+        history_ = 0;
         std::fill(input_ring_.begin(), input_ring_.end(), 0.0f);
         clear_energy_history_();
     }
@@ -278,6 +320,11 @@ public:
     [[nodiscard]] int capture_frames() const noexcept { return hold_.capture_frames(); }
 
     [[nodiscard]] Phase phase() const noexcept { return phase_; }
+    /// True when the hold that is (or was last) latched loops the audio
+    /// itself rather than holding its spectrum.
+    [[nodiscard]] bool looping() const noexcept { return loop_mode_; }
+    /// The latched loop's length in samples (0 before the first loop).
+    [[nodiscard]] std::int64_t loop_length() const noexcept { return loop_length_; }
     /// True while any held content reaches the output.
     [[nodiscard]] bool hold_audible() const noexcept {
         return phase_ == Phase::engaging || phase_ == Phase::held
@@ -337,6 +384,17 @@ private:
         const auto window = static_cast<std::size_t>(kFftSize);
         // Record the live input first: `wet` may alias `input`.
         for (int ch = 0; ch < channels_; ++ch) {
+            float* record = record_.data() + static_cast<std::size_t>(ch) * record_length_;
+            const float* source = input[ch] + offset;
+            auto at = static_cast<std::size_t>(recorded_ % static_cast<std::int64_t>(record_length_));
+            for (int i = 0; i < count; ++i) {
+                record[at] = source[i];
+                if (++at == record_length_) at = 0;
+            }
+        }
+        recorded_ += count;
+        history_ = std::min<std::int64_t>(history_ + count, static_cast<std::int64_t>(record_length_));
+        for (int ch = 0; ch < channels_; ++ch) {
             float* ring = input_ring_.data() + static_cast<std::size_t>(ch) * window;
             const float* in = input[ch] + offset;
             std::size_t pos = write_pos_;
@@ -363,21 +421,37 @@ private:
             write_pos_ = (write_pos_ + static_cast<std::size_t>(count)) % window;
             // This chunk's share of the engage work, by samples, so no host
             // block carries more of it than its length warrants.
-            if (phase_ == Phase::preparing)
-                prepare_until_((prepare_steps_() * (hop_pos_ + count) + kHop - 1) / kHop);
+            if (phase_ == Phase::preparing) {
+                if (loop_mode_)
+                    loop_prepare_until_(((kLoopSearchSteps + kLoopCopySteps) * (hop_pos_ + count)
+                                         + kHop - 1) / kHop);
+                else
+                    prepare_until_((prepare_steps_() * (hop_pos_ + count) + kHop - 1) / kHop);
+            }
             return;
         }
 
         const int direction = phase_ == Phase::releasing ? -1 : 1;
         const int start_step = weight_step_;
+        std::int64_t loop_at = loop_position_;
+        bool seam = loop_seam_;
         for (int ch = 0; ch < channels_; ++ch) {
             const float* held = ola_.data() + static_cast<std::size_t>(ch) * window
                                 + static_cast<std::size_t>(hop_pos_);
+            const float* loop = loop_.data() + static_cast<std::size_t>(ch) * loop_capacity_;
             const float* in = input[ch] + offset;
             float* out = wet[ch] + offset;
             int step = start_step;
+            loop_at = loop_position_;
+            seam = loop_seam_;
             for (int i = 0; i < count; ++i) {
-                const float hold = held[i] * held_gain_;
+                float hold;
+                if (loop_mode_) {
+                    hold = loop_value_(loop, loop_at, seam);
+                    if (++loop_at == loop_length_) { loop_at = 0; seam = true; }
+                } else {
+                    hold = held[i] * held_gain_;
+                }
                 if (phase_ == Phase::held) {
                     out[i] = hold;
                     continue;
@@ -388,9 +462,18 @@ private:
                 const float angle = p * 1.57079632679489662f;
                 const float g_hold = std::sin(angle);
                 const float g_live = std::cos(angle);
-                out[i] = g_live * in[i] + g_hold * hold;
+                // Correlated sounds (an aligned loop and the live sound it
+                // repeats) sum above an equal-power fade's unity: take out
+                // what their measured correlation adds.
+                const float norm = fade_rho_ > 0.0f
+                    ? 1.0f / std::sqrt(1.0f + 2.0f * fade_rho_ * g_hold * g_live) : 1.0f;
+                out[i] = (g_live * in[i] + g_hold * hold) * norm;
             }
             if (ch == channels_ - 1) weight_step_ = step;
+        }
+        if (loop_mode_ && hold_audible()) {
+            loop_position_ = loop_at;
+            loop_seam_ = seam;
         }
         if (phase_ == Phase::held) weight_step_ = crossfade_samples_;
         write_pos_ = (write_pos_ + static_cast<std::size_t>(count)) % window;
@@ -442,34 +525,190 @@ private:
             } else if (phase_ == Phase::engaging || phase_ == Phase::held) {
                 phase_ = Phase::releasing;
                 hold_.set_frozen(false); // restarts the capture window
+                // The live sound after a release is not the one the hold
+                // repeats: a plain equal-power fade.
+                fade_rho_ = 0.0f;
             }
         }
 
         if (phase_ == Phase::preparing) {
             // The pre-roll was built for this boundary: the ring is not
             // shifted, and the fade starts on the next sample.
-            finish_prepare_();
+            if (loop_mode_) finish_loop_prepare_();
+            else finish_prepare_();
             return;
         }
 
         const bool rendering = hold_audible();
+        const bool spectral = rendering && !loop_mode_;
         // Render the hold frame for the segment that starts now, BEFORE the
         // hold advances, so each frame carries the phases for its place.
         shift_output_();
-        if (rendering) add_hold_frame_(0);
+        if (spectral) add_hold_frame_(0);
+        if (rendering && loop_mode_) copy_loop_tail_();
 
         if (phase_ == Phase::live || phase_ == Phase::arming
             || phase_ == Phase::releasing) {
             analyse_();
+            const bool loop = applied_hold_seconds_ >= kLoopMinSeconds;
             if (phase_ == Phase::arming)
-                hold_.set_frozen(window_has_signal_());
+                hold_.set_frozen(!loop && window_has_signal_());
             const bool was_latched = hold_.is_latched();
             hold_.process_group(frame_ptrs_.data(), channels_, bins_);
-            if (phase_ == Phase::arming && !was_latched && hold_.is_latched())
-                begin_prepare_();
+            if (phase_ == Phase::arming) {
+                if (loop) {
+                    if (loop_ready_()) begin_loop_prepare_();
+                } else if (!was_latched && hold_.is_latched()) {
+                    loop_mode_ = false;
+                    begin_prepare_();
+                }
+            }
         }
         // The hold's phases move on for as long as it is heard.
-        if (rendering) advance_phases_(1, true);
+        if (spectral) advance_phases_(1, true);
+    }
+
+    // THE LOOP. A Hold length of kLoopMinSeconds or more freezes the audio
+    // itself: the last Hold-length seconds of input, repeated. The loop's
+    // start is moved (by up to kLoopSearchSeconds) to where the audio just
+    // before it best matches the audio just before its end, so running off
+    // the end into the start continues the waveform; every pass through the
+    // start crossfades from the audio that actually followed the end (kept
+    // for the purpose) into the start, over the same length and law as the
+    // engage, normalised by the two sides' measured correlation so an
+    // aligned seam is as level as an unrelated one. The engage is that same
+    // seam with the live input as the audio that follows the end.
+    //
+    // The loop is taken from as much input as there is: a press sooner than
+    // Hold length after the stream starts (or after a transport jump) loops
+    // what has been heard, if that is at least kLoopMinSeconds.
+
+    // The loop the next latch would take: its length, or 0 if there is not
+    // yet enough input with signal in it.
+    [[nodiscard]] std::int64_t loop_length_for_latch_() const noexcept {
+        const auto wanted = static_cast<std::int64_t>(std::llround(applied_hold_seconds_ * sample_rate_));
+        const std::int64_t length = std::min(wanted, history_ - loop_search_ - loop_match_);
+        if (length < loop_min_) return 0;
+        // Signal over the loop: its mean power, from the per-hop record.
+        const auto ring = hop_energy_.size();
+        const auto hops = static_cast<std::size_t>(std::min<std::int64_t>(
+            static_cast<std::int64_t>(ring), (length + kHop - 1) / kHop));
+        double power = 0.0;
+        for (std::size_t back = 1; back <= hops; ++back)
+            power += hop_energy_[(hop_energy_pos_ + ring - back) % ring];
+        if (!(power / static_cast<double>(hops) >= signal_floor_power_)) return 0;
+        return length;
+    }
+
+    [[nodiscard]] bool loop_ready_() const noexcept { return loop_length_for_latch_() > 0; }
+
+    [[nodiscard]] float recorded_at_(int ch, std::int64_t absolute) const noexcept {
+        const auto at = static_cast<std::size_t>(absolute % static_cast<std::int64_t>(record_length_));
+        return record_[static_cast<std::size_t>(ch) * record_length_ + at];
+    }
+
+    void begin_loop_prepare_() noexcept {
+        const std::int64_t length = loop_length_for_latch_();
+        loop_end_ = recorded_;
+        // Candidate starts: Hold length before the end, give or take the
+        // search; each needs its match window inside the recorded history.
+        const std::int64_t earliest = loop_end_ - history_ + loop_match_;
+        search_first_ = std::max(loop_end_ - length - loop_search_, earliest);
+        search_last_ = std::min(loop_end_ - length + loop_search_, loop_end_ - loop_min_);
+        search_first_ = std::min(search_first_, search_last_);
+        best_start_ = loop_end_ - length;
+        best_score_ = -2.0;
+        end_energy_ = 0.0;
+        for (int ch = 0; ch < channels_; ++ch)
+            for (std::int64_t m = 0; m < loop_match_; m += loop_stride_) {
+                const double v = recorded_at_(ch, loop_end_ - loop_match_ + m);
+                end_energy_ += v * v;
+            }
+        loop_mode_ = true;
+        hold_.set_frozen(false);
+        prepare_step_ = 0;
+        phase_ = Phase::preparing;
+    }
+
+    void loop_prepare_until_(int target) noexcept {
+        target = std::min(target, kLoopSearchSteps + kLoopCopySteps);
+        for (; prepare_step_ < target; ++prepare_step_) {
+            if (prepare_step_ < kLoopSearchSteps) {
+                // A share of the candidate starts: normalised correlation of
+                // the audio before each with the audio before the end.
+                const std::int64_t span = search_last_ - search_first_ + 1;
+                const std::int64_t from = search_first_ + span * prepare_step_ / kLoopSearchSteps;
+                const std::int64_t to = search_first_ + span * (prepare_step_ + 1) / kLoopSearchSteps;
+                const std::int64_t first = from + (loop_stride_ - (from - search_first_) % loop_stride_) % loop_stride_;
+                for (std::int64_t start = first; start < to; start += loop_stride_) {
+                    double cross = 0.0, energy = 0.0;
+                    for (int ch = 0; ch < channels_; ++ch)
+                        for (std::int64_t m = 0; m < loop_match_; m += loop_stride_) {
+                            const double a = recorded_at_(ch, start - loop_match_ + m);
+                            const double b = recorded_at_(ch, loop_end_ - loop_match_ + m);
+                            cross += a * b;
+                            energy += a * a;
+                        }
+                    const double score = cross / std::sqrt(std::max(energy * end_energy_, 1.0e-30));
+                    if (score > best_score_) { best_score_ = score; best_start_ = start; }
+                }
+                continue;
+            }
+            // A share of the loop, copied out of the recording.
+            const std::int64_t length = loop_end_ - best_start_;
+            const int part = prepare_step_ - kLoopSearchSteps;
+            const std::int64_t from = length * part / kLoopCopySteps;
+            const std::int64_t to = length * (part + 1) / kLoopCopySteps;
+            for (int ch = 0; ch < channels_; ++ch) {
+                float* loop = loop_.data() + static_cast<std::size_t>(ch) * loop_capacity_;
+                for (std::int64_t n = from; n < to; ++n)
+                    loop[n] = recorded_at_(ch, best_start_ + n);
+            }
+        }
+    }
+
+    // The hop boundary after the latch: the loop is ready, and the fade into
+    // it starts. The loop's start lines up with its end, so the hop that
+    // passed since the latch is a hop into the loop.
+    void finish_loop_prepare_() noexcept {
+        loop_prepare_until_(kLoopSearchSteps + kLoopCopySteps);
+        loop_length_ = loop_end_ - best_start_;
+        seam_length_ = std::min<std::int64_t>(
+            crossfade_samples_, static_cast<std::int64_t>(loop_capacity_) - loop_length_);
+        loop_position_ = std::min<std::int64_t>(recorded_ - loop_end_, loop_length_ - 1);
+        loop_seam_ = false;
+        loop_tail_ = false;
+        loop_rho_ = static_cast<float>(std::clamp(best_score_, 0.0, 1.0));
+        fade_rho_ = loop_rho_;
+        held_gain_ = 1.0f;
+        phase_ = Phase::engaging;
+        weight_step_ = 0;
+    }
+
+    // What followed the loop's end in the input, once it has been recorded:
+    // the seam fades out of it into the start.
+    void copy_loop_tail_() noexcept {
+        const std::int64_t tail = seam_length_;
+        if (loop_tail_ || recorded_ < loop_end_ + tail) return;
+        for (int ch = 0; ch < channels_; ++ch) {
+            float* loop = loop_.data() + static_cast<std::size_t>(ch) * loop_capacity_;
+            for (std::int64_t n = 0; n < tail; ++n)
+                loop[loop_length_ + n] = recorded_at_(ch, loop_end_ + n);
+        }
+        loop_tail_ = true;
+    }
+
+    // One sample of the loop at `at`; across the seam (a pass after the
+    // first, within a crossfade of the start), the audio that followed the
+    // end fades into the start.
+    [[nodiscard]] float loop_value_(const float* loop, std::int64_t at, bool seam) const noexcept {
+        const float start = loop[at];
+        if (!seam || !loop_tail_ || at >= seam_length_) return start;
+        const float p = (static_cast<float>(at) + 0.5f) / static_cast<float>(seam_length_);
+        const float a = std::sin(p * 1.57079632679489662f);
+        const float b = std::cos(p * 1.57079632679489662f);
+        const float norm = 1.0f / std::sqrt(1.0f + 2.0f * loop_rho_ * a * b);
+        return (a * start + b * loop[loop_length_ + at]) * norm;
     }
 
     bool hold_seconds_changed_() noexcept {
@@ -1047,6 +1286,24 @@ private:
     bool prepared_ = false;
     bool requested_ = false;
     bool pending_engage_ = false;
+
+    // The loop (see THE LOOP).
+    std::vector<float> record_;                   // channels * record_length_: every input sample
+    std::size_t record_length_ = 1;
+    std::int64_t recorded_ = 0;                   // samples recorded since reset
+    std::int64_t history_ = 0;                    // ...of them since the last clear
+    std::vector<float> loop_;                     // channels * loop_capacity_: the loop, then its tail
+    std::size_t loop_capacity_ = 0;
+    std::int64_t loop_search_ = 0, loop_match_ = 1, loop_min_ = 0, loop_stride_ = 1;
+    std::int64_t seam_length_ = 1;
+    std::int64_t loop_end_ = 0, loop_length_ = 0, loop_position_ = 0;
+    std::int64_t search_first_ = 0, search_last_ = 0, best_start_ = 0;
+    double best_score_ = 0.0, end_energy_ = 0.0;
+    bool loop_mode_ = false;
+    bool loop_seam_ = false;                      // a pass after the first
+    bool loop_tail_ = false;                      // the audio after the end is copied
+    float fade_rho_ = 0.0f;                       // the engage fade's two sides' correlation
+    float loop_rho_ = 0.0f;                       // the seam's
     Phase phase_ = Phase::live;
     int weight_step_ = 0;
     int prepare_step_ = 0;
