@@ -1120,3 +1120,61 @@ TEST_CASE("A release after a long hold on a steady tone stays level", "[freeze][
         }
     }
 }
+
+TEST_CASE("Freeze engage latency: when the hold replaces the live sound", "[.][freeze-engage-latency]") {
+    // 440 Hz until the press, 660 Hz from the press on (a 5 ms raised-cosine
+    // join). The hold is 440, the live input 660. In 2.5 ms steps: when the
+    // 440 hold first reaches 10% and 90% of its settled level, and when the
+    // live 660 falls below 10% of its level, in ms after the press, both in
+    // wall time and after the variant's reported latency.
+    const std::size_t press = samples(1.0);
+    Stereo tone2; tone2.resize(samples(2.5));
+    for (std::size_t n = 0; n < tone2.size(); ++n) {
+        const double t = double(n) / kRate;
+        const double c = std::clamp((t - 1.0) / 0.005, 0.0, 1.0);
+        const double w = 0.5 - 0.5 * std::cos(kPi * c);
+        const auto v = float(0.3 * ((1 - w) * std::sin(2 * kPi * 440 * t) + w * std::sin(2 * kPi * 660 * t)));
+        tone2.l[n] = tone2.r[n] = v;
+    }
+    Take take;
+    take.programme = &tone2;
+    take.start = 0;
+    take.press = press;
+    take.release = tone2.size();
+    take.length = tone2.size();
+    const auto measure = [&](const char* label, const Stereo& out, int latency) {
+        const auto amp = [&](std::size_t at, double hz) {
+            double c = 0, s = 0;
+            const std::size_t len = samples(0.005);
+            for (std::size_t n = at; n < at + len; ++n) {
+                const double ph = 2 * kPi * hz * double(n) / kRate;
+                c += out.l[n] * std::cos(ph); s += out.l[n] * std::sin(ph);
+            }
+            return 2.0 * std::hypot(c, s) / double(len);
+        };
+        const double held = amp(press + samples(1.0), 440.0);
+        const double live = 0.3;
+        double first = -1, full = -1, gone = -1;
+        for (std::size_t n = press; n + samples(0.005) < out.size() && n < press + samples(0.6); n += samples(0.0025)) {
+            const double ms = double(n - press) * 1000.0 / kRate;
+            const bool after_latency = n >= press + std::size_t(latency);
+            if (after_latency && first < 0 && amp(n, 440.0) > 0.1 * held) first = ms;
+            if (after_latency && full < 0 && amp(n, 440.0) > 0.9 * held) full = ms;
+            if (gone < 0 && n > press + std::size_t(latency) && amp(n, 660.0) < 0.1 * live) gone = ms;
+        }
+        const double lat = latency * 1000.0 / kRate;
+        std::printf("%-44s latency %6.1f ms | hold 10%% at %6.1f, 90%% at %6.1f, live gone at %6.1f ms after the press"
+                    " (%6.1f / %6.1f / %6.1f after the latency)\n",
+                    label, lat, first, full, gone, first - lat, full - lat, gone - lat);
+    };
+    {
+        SourceRender r; measure("Spectr (shipped source, any mode)", r(take, true), 0);
+    }
+    for (const auto mode : {MaskRenderMode::zero_latency, MaskRenderMode::linear_phase}) {
+        ProcessorRender r{mode, 100.0f};
+        const auto out = r(take, true);
+        measure(mode == MaskRenderMode::linear_phase ? "Spectr Mixing (processor)" : "Spectr Tracking (processor)", out, r.latency);
+    }
+    { BendrReferenceRender r; const auto out = r(take, true); measure("bendr-pulp reference", out, r.latency); }
+    { StreamRender r; const auto out = r(take, true); measure("continuous stream variant (8192/512)", out, r.latency); }
+}
