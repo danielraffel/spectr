@@ -32,12 +32,30 @@
 /// to finish, so the hold being faded out is never swapped underneath the
 /// fade.
 ///
-/// LEVEL. A crossfade between two signals is only level-flat for a known
-/// correlation, and here it is not known: a steady tone continues coherently
-/// into its own hold, noise does not. Each channel's crossfade is therefore
-/// renormalised toward the power interpolated between the live and held
-/// levels by the fade position (the rule FreezeHold applies per frame),
-/// measured by short one-pole trackers and clamped.
+/// NO GHOST, AND ORTHOGONAL TO THE LIVE SOUND. The latched frame's phases
+/// encode WHEN things happened inside it. Advanced bin by bin they replay
+/// that timing one analysis window later -- a drum hit that landed just
+/// before the press comes back as a tick just after it. So every bin of the
+/// hold is turned by a quarter cycle, +90 or -90 degrees at random, the same
+/// on every channel (the image keeps its phase differences) -- except that
+/// the main lobe of a tonal peak turns as one, so the partial keeps its
+/// level and shape. Across bins the timing is scrambled and nothing replays.
+/// A quarter cycle also makes each partial of the hold orthogonal to the
+/// same partial still sounding live, so the equal-power engage fade is
+/// level-flat for a steady tone as it is for noise, with no gain correction
+/// riding the waveform (one that followed the waveform's own power sample
+/// by sample modulated the fade at audio rate -- a click on drums).
+///
+/// LEVEL. Averaging magnitudes lowers noise-like material by a few dB; the
+/// hold is matched to the live level of the window it was taken from. The
+/// match is measured and applied at the hop grid -- a gain that glides
+/// linearly across each hop -- so it is smooth and does not depend on the
+/// host's block size. Its first value is measured on the hold's own first
+/// hops before any of them is heard, so the hold enters at its matched level
+/// rather than asking the fade to hide a correction still settling. The
+/// quarter-cycle turn keeps the hold close to orthogonal to a steady live
+/// sound for as long as it plays (its phases advance at the measured
+/// frequencies), so the release fade is the same plain equal-power fade.
 ///
 /// SILENCE. A freeze asked for over silence does not latch it: the request
 /// stays armed, and live (silent) input passes, until every hop of input the
@@ -81,14 +99,22 @@ public:
     static constexpr double kCrossfadeSeconds = 0.048;
 
     /// Level match between the hold and the live input it was taken from:
-    /// how slowly the hold's level is followed, and how far it may be
-    /// corrected. Averaging magnitudes leaves a steady tone's level alone
-    /// but lowers noise-like material by a few dB.
+    /// the longest stretch of the hold's own output its level is averaged
+    /// over (a running mean until then, a follow after), and how far it may
+    /// be corrected.
     static constexpr double kLevelMatchSeconds = 0.25;
-    static constexpr double kLevelSettleSeconds = 0.08;
-    static constexpr double kLevelSettleFollowSeconds = 0.012;
     static constexpr float kMinLevelMatch = 0.8f;
     static constexpr float kMaxLevelMatch = 1.35f;
+
+    /// Hops of the hold measured, before it is heard, to set its level.
+    static constexpr int kLevelMeasureHops = 8;
+
+    /// A tonal peak, for the hold's quarter-cycle turn: a local maximum this
+    /// many times the mean magnitude of the bins within the neighbourhood,
+    /// turned as one across its Hann main lobe.
+    static constexpr float kPeakProminence = 4.0f;
+    static constexpr int kPeakNeighbourhood = 16;
+    static constexpr int kPeakLobe = 2;
 
     /// Mean power per sample, per channel, every hop of input under the
     /// capture window must reach before a freeze latches (-90 dBFS RMS).
@@ -163,9 +189,10 @@ public:
         hop_energy_.assign(static_cast<std::size_t>(max_frames - 1 + hops_per_window_), 0.0);
         frame_energy_.assign(static_cast<std::size_t>(max_frames), 0.0);
 
-        tracker_alpha_ = static_cast<float>(
-            1.0 - std::exp(-1.0 / (0.003 * sample_rate)));
-        trackers_.assign(channel_count, {});
+        level_scratch_.assign(channel_count * static_cast<std::size_t>(kLevelMeasureHops * kHop), 0.0f);
+        rotation_.assign(static_cast<std::size_t>(bins_), 1);
+        magnitude_.assign(static_cast<std::size_t>(bins_), 0.0f);
+        prefix_.assign(static_cast<std::size_t>(bins_) + 1, 0.0);
         crossfade_samples_ = std::max(
             1, static_cast<int>(std::lround(kCrossfadeSeconds * sample_rate)));
 
@@ -196,7 +223,8 @@ public:
         phase_ = Phase::live;
         weight_step_ = 0;
         pending_engage_ = false;
-        for (auto& tracker : trackers_) tracker = {};
+        rng_ = kRngSeed;
+        held_gain_ = held_gain_target_ = 1.0f;
     }
 
     /// A transport discontinuity: forget the input analysed so far, keep the
@@ -273,12 +301,6 @@ public:
     }
 
 private:
-    struct Tracker {
-        float live = 0.0f;
-        float held = 0.0f;
-        float mix = 0.0f;
-    };
-
     void render_chunk_(const float* const* input, float* const* wet,
                        int offset, int count) noexcept {
         const auto window = static_cast<std::size_t>(kFftSize);
@@ -306,31 +328,6 @@ private:
             return;
         }
 
-        // Level match: the hold's raw level, tracked slowly across channels,
-        // against the live level of the window it was captured from. One
-        // gain for every channel keeps the image; it glides across the chunk.
-        double held_energy = 0.0;
-        for (int ch = 0; ch < channels_; ++ch) {
-            const float* held = ola_.data() + static_cast<std::size_t>(ch) * window
-                                + static_cast<std::size_t>(hop_pos_);
-            for (int i = 0; i < count; ++i)
-                held_energy += static_cast<double>(held[i]) * held[i];
-        }
-        held_energy /= static_cast<double>(count) * static_cast<double>(channels_);
-        // Quick while the engage fade is still hiding the correction, then
-        // slow, so the match settles fast and never pumps a steady hold.
-        const bool settling = held_age_samples_ < kLevelSettleSeconds * sample_rate_;
-        held_age_samples_ += count;
-        const double follow = 1.0 - std::exp(
-            -static_cast<double>(count)
-            / ((settling ? kLevelSettleFollowSeconds : kLevelMatchSeconds) * sample_rate_));
-        held_power_ += follow * (held_energy - held_power_);
-        const float gain_from = held_gain_;
-        const float gain_to = static_cast<float>(std::clamp(
-            std::sqrt(live_reference_power_ / std::max(held_power_, 1.0e-20)),
-            static_cast<double>(kMinLevelMatch), static_cast<double>(kMaxLevelMatch)));
-        held_gain_ = gain_to;
-
         const int direction = phase_ == Phase::releasing ? -1 : 1;
         const int start_step = weight_step_;
         for (int ch = 0; ch < channels_; ++ch) {
@@ -338,18 +335,14 @@ private:
                                 + static_cast<std::size_t>(hop_pos_);
             const float* in = input[ch] + offset;
             float* out = wet[ch] + offset;
-            Tracker& tracker = trackers_[static_cast<std::size_t>(ch)];
             int step = start_step;
+            double energy = 0.0;
             for (int i = 0; i < count; ++i) {
-                const float live = in[i];
-                const float glide = static_cast<float>(i + 1) / static_cast<float>(count);
-                const float hold = held[i] * (gain_from + (gain_to - gain_from) * glide);
+                // The level match glides across the hop, whatever the block.
+                const float glide = static_cast<float>(hop_pos_ + i + 1) / static_cast<float>(kHop);
+                const float hold = held[i] * (held_gain_ + (held_gain_target_ - held_gain_) * glide);
+                energy += static_cast<double>(held[i]) * held[i];
                 if (phase_ == Phase::held) {
-                    // Keep the level trackers current, so a release starts
-                    // from the levels actually playing.
-                    tracker.live += tracker_alpha_ * (live * live - tracker.live);
-                    tracker.held += tracker_alpha_ * (hold * hold - tracker.held);
-                    tracker.mix = tracker.held;
                     out[i] = hold;
                     continue;
                 }
@@ -359,18 +352,9 @@ private:
                 const float angle = p * 1.57079632679489662f;
                 const float g_hold = std::sin(angle);
                 const float g_live = std::cos(angle);
-                const float mixed = g_live * live + g_hold * hold;
-                tracker.live += tracker_alpha_ * (live * live - tracker.live);
-                tracker.held += tracker_alpha_ * (hold * hold - tracker.held);
-                tracker.mix += tracker_alpha_ * (mixed * mixed - tracker.mix);
-                const float target = (1.0f - p) * tracker.live + p * tracker.held;
-                float scale = 1.0f;
-                if (tracker.mix > 1.0e-12f) {
-                    scale = std::sqrt(target / tracker.mix);
-                    scale = std::clamp(scale, 0.5f, 2.0f);
-                }
-                out[i] = mixed * scale;
+                out[i] = g_live * in[i] + g_hold * hold;
             }
+            held_energy_accum_ += energy;
             if (ch == channels_ - 1) weight_step_ = step;
         }
         if (phase_ == Phase::held) weight_step_ = crossfade_samples_;
@@ -406,6 +390,7 @@ private:
         if (frames_since_clear_ < (1 << 30)) ++frames_since_clear_;
 
         if (hold_seconds_changed_()) hold_.set_capture_seconds(applied_hold_seconds_);
+        update_level_match_();
 
         // Request edges. A release commits the hold to fading out; a freeze
         // asked for mid-release waits for the release to finish.
@@ -446,6 +431,27 @@ private:
         } else {
             hold_.advance_hold(1);
         }
+    }
+
+    // A hop of the hold has played. Its raw power updates the estimate of
+    // the hold's level -- a running mean seeded with the power measured at
+    // the latch, then a slow follow -- and the gain the next hop glides to.
+    void update_level_match_() noexcept {
+        held_gain_ = held_gain_target_;
+        if (!hold_audible()) {
+            held_energy_accum_ = 0.0;
+            return;
+        }
+        const double hop_power = held_energy_accum_
+            / (static_cast<double>(kHop) * static_cast<double>(channels_));
+        held_energy_accum_ = 0.0;
+        held_age_samples_ += kHop;
+        const double weight = static_cast<double>(kHop)
+            / std::min(held_age_samples_, kLevelMatchSeconds * sample_rate_);
+        held_power_ += std::min(1.0, weight) * (hop_power - held_power_);
+        held_gain_target_ = static_cast<float>(std::clamp(
+            std::sqrt(live_reference_power_ / std::max(held_power_, 1.0e-20)),
+            static_cast<double>(kMinLevelMatch), static_cast<double>(kMaxLevelMatch)));
     }
 
     bool hold_seconds_changed_() noexcept {
@@ -507,9 +513,15 @@ private:
     // ring, as the frame placed `hops_back` hops before now: only its part
     // from now onward is added.
     void add_hold_frame_(int hops_back) noexcept {
+        add_hold_frame_to_(ola_.data(), static_cast<std::size_t>(kFftSize),
+                           -hops_back * kHop);
+    }
+
+    // The same, into `dest` (channels * `length`), with the frame's first
+    // sample at `at` (negative: that many samples of it are already past).
+    void add_hold_frame_to_(float* dest, std::size_t length, int at) noexcept {
         const auto window = static_cast<std::size_t>(kFftSize);
         if (!hold_.write_hold(frame_ptrs_.data(), channels_, bins_)) return;
-        const auto skip = static_cast<std::size_t>(hops_back) * static_cast<std::size_t>(kHop);
         // Two real channels per complex inverse transform: one in the real
         // part, one in the imaginary part.
         for (int ch = 0; ch < channels_; ch += 2) {
@@ -518,24 +530,29 @@ private:
             const auto* b = pair ? a + window : nullptr;
             constexpr std::complex<float> j{0.0f, 1.0f};
             for (int k = 0; k < bins_; ++k) {
-                const auto ka = a[k];
-                const auto kb = pair ? b[k] : std::complex<float>{};
+                // A quarter-cycle turn, one sign per peak region.
+                const float turn = static_cast<float>(rotation_[static_cast<std::size_t>(k)]);
+                const auto ka = a[k] * std::complex<float>{0.0f, turn};
+                const auto kb = pair ? b[k] * std::complex<float>{0.0f, turn}
+                                     : std::complex<float>{};
                 time_[static_cast<std::size_t>(k)] = ka + j * kb;
                 if (k > 0 && k < kFftSize / 2)
                     time_[window - static_cast<std::size_t>(k)] =
                         std::conj(ka) + j * std::conj(kb);
             }
-            // DC and Nyquist of a real signal are real.
-            time_[0] = {a[0].real(), pair ? b[0].real() : 0.0f};
-            const auto nyquist = static_cast<std::size_t>(kFftSize / 2);
-            time_[nyquist] = {a[nyquist].real(), pair ? b[nyquist].real() : 0.0f};
+            // DC and Nyquist of a real signal are real; turned a quarter
+            // cycle, they have nothing left to carry.
+            time_[0] = {};
+            time_[static_cast<std::size_t>(kFftSize / 2)] = {};
             fft_.inverse(time_.data());
-            float* out_a = ola_.data() + static_cast<std::size_t>(ch) * window;
-            float* out_b = pair ? out_a + window : nullptr;
-            for (std::size_t n = skip; n < window; ++n) {
+            float* out_a = dest + static_cast<std::size_t>(ch) * length;
+            float* out_b = pair ? out_a + length : nullptr;
+            for (std::size_t n = at < 0 ? static_cast<std::size_t>(-at) : 0; n < window; ++n) {
+                const auto to = static_cast<std::ptrdiff_t>(n) + at;
+                if (to >= static_cast<std::ptrdiff_t>(length)) break;
                 const float w = window_[n] * synthesis_scale_;
-                out_a[n - skip] += time_[n].real() * w;
-                if (pair) out_b[n - skip] += time_[n].imag() * w;
+                out_a[to] += time_[n].real() * w;
+                if (pair) out_b[to] += time_[n].imag() * w;
             }
         }
     }
@@ -545,20 +562,21 @@ private:
     // that would already be overlapping now, phase-continued from the latched
     // frame, so the full hold is audible from the next sample.
     void begin_engage_() noexcept {
+        choose_rotation_();
         std::fill(ola_.begin(), ola_.end(), 0.0f);
         // The latched frame covered the last kFftSize input samples. A frame
         // placed `back` hops before now continues it by (hops_per_window -
         // back) hops; the current phases are one hop on already.
         for (int back = hops_per_window_ - 1; back >= 0; --back) {
             add_hold_frame_(back);
-            // Step on without the random walk inside the pre-roll; past the
-            // newest frame, advance as every later hop does.
+            // Step on without the random walk inside the pre-roll.
             if (back > 0) hold_.rewind_hold_phases(-1);
-            else hold_.advance_hold(1);
         }
+        const double held = measure_hold_power_();
+        // Past the newest frame, advance as every later hop does.
+        hold_.advance_hold(1);
         phase_ = Phase::engaging;
         weight_step_ = 0;
-        for (auto& tracker : trackers_) tracker = {};
         // The live level the hold is matched to: the capture window's mean.
         const int frames = hold_.capture_frames();
         const auto ring = frame_energy_.size();
@@ -567,9 +585,75 @@ private:
             live += frame_energy_[(frame_energy_pos_ + ring
                                    - static_cast<std::size_t>(back)) % ring];
         live_reference_power_ = live / static_cast<double>(frames);
-        held_power_ = live_reference_power_; // start matched: gain 1
-        held_gain_ = 1.0f;
-        held_age_samples_ = 0.0;
+        // The hold enters at its matched level: the fade is not asked to
+        // hide a correction still settling.
+        held_power_ = held;
+        held_gain_ = held_gain_target_ = static_cast<float>(std::clamp(
+            std::sqrt(live_reference_power_ / std::max(held_power_, 1.0e-20)),
+            static_cast<double>(kMinLevelMatch), static_cast<double>(kMaxLevelMatch)));
+        held_energy_accum_ = 0.0;
+        held_age_samples_ = static_cast<double>(kLevelMeasureHops * kHop);
+    }
+
+    // The raw power the hold is about to play, per sample and channel, before
+    // any of it is heard: the output ring's first hops completed with the
+    // frames that will follow (stepped without the random walk, then stepped
+    // back), in a scratch copy. The hold's phases are left where they were.
+    double measure_hold_power_() noexcept {
+        const auto window = static_cast<std::size_t>(kFftSize);
+        const auto length = static_cast<std::size_t>(kLevelMeasureHops * kHop);
+        for (int ch = 0; ch < channels_; ++ch)
+            std::copy_n(ola_.data() + static_cast<std::size_t>(ch) * window, length,
+                        level_scratch_.data() + static_cast<std::size_t>(ch) * length);
+        for (int ahead = 1; ahead < kLevelMeasureHops; ++ahead) {
+            hold_.rewind_hold_phases(-1);
+            add_hold_frame_to_(level_scratch_.data(), length, ahead * kHop);
+        }
+        hold_.rewind_hold_phases(kLevelMeasureHops - 1);
+        double energy = 0.0;
+        for (std::size_t n = 0; n < length * static_cast<std::size_t>(channels_); ++n)
+            energy += static_cast<double>(level_scratch_[n]) * level_scratch_[n];
+        return energy / (static_cast<double>(length) * static_cast<double>(channels_));
+    }
+
+    // A quarter-cycle turn for every bin of the new hold, +90 or -90
+    // degrees, the same on every channel. Independent per bin, so no timing
+    // survives -- except across the main lobe of a tonal peak (a bin well
+    // above its neighbourhood), which turns as one, so the partial keeps its
+    // level and shape.
+    void choose_rotation_() noexcept {
+        const auto bins = static_cast<std::size_t>(bins_);
+        for (std::size_t k = 0; k < bins; ++k) {
+            float sum = 0.0f;
+            for (int ch = 0; ch < channels_; ++ch) sum += hold_.held_magnitudes(ch)[k];
+            magnitude_[k] = sum;
+            rotation_[k] = next_sign_();
+        }
+        // Local means over +-kPeakNeighbourhood bins, by a running sum.
+        prefix_[0] = 0.0;
+        for (std::size_t k = 0; k < bins; ++k) prefix_[k + 1] = prefix_[k] + magnitude_[k];
+        const auto reach = static_cast<std::size_t>(kPeakNeighbourhood);
+        const auto lobe = static_cast<std::size_t>(kPeakLobe);
+        for (std::size_t k = 1; k + 1 < bins; ++k) {
+            const float m = magnitude_[k];
+            if (!(m > magnitude_[k - 1] && m >= magnitude_[k + 1])) continue;
+            const std::size_t lo = k > reach ? k - reach : 0;
+            const std::size_t hi = std::min(bins, k + reach + 1);
+            const double mean = (prefix_[hi] - prefix_[lo]) / static_cast<double>(hi - lo);
+            if (!(m > kPeakProminence * mean)) continue;
+            const std::int8_t sign = next_sign_();
+            for (std::size_t j = k > lobe ? k - lobe : 0; j <= std::min(bins - 1, k + lobe); ++j)
+                rotation_[j] = sign;
+        }
+    }
+
+    // xorshift64*: deterministic from the stream, so a bounce and real-time
+    // playback turn the same hold the same way.
+    std::int8_t next_sign_() noexcept {
+        rng_ ^= rng_ >> 12;
+        rng_ ^= rng_ << 25;
+        rng_ ^= rng_ >> 27;
+        return ((rng_ * 0x2545f4914f6cdd1dull) >> 63) != 0 ? std::int8_t{1} : std::int8_t{-1};
     }
     // SPECTR-RENDER-PATH END
 
@@ -593,13 +677,19 @@ private:
     int frames_since_clear_ = 0;
     int hops_per_window_ = 16;
 
-    std::vector<Tracker> trackers_;
+    static constexpr std::uint64_t kRngSeed = 0x2545f4914f6cdd1dull;
+    std::vector<std::int8_t> rotation_;           // bins: +1 or -1 quarter cycle
+    std::vector<float> magnitude_;                // bins, scratch
+    std::vector<double> prefix_;                  // bins + 1, scratch
+    std::uint64_t rng_ = kRngSeed;
+    std::vector<float> level_scratch_;            // channels * kLevelMeasureHops * kHop
     double signal_floor_power_ = kSignalFloorPower;
     double live_reference_power_ = 0.0;
     double held_power_ = 0.0;
+    double held_energy_accum_ = 0.0;
     float held_gain_ = 1.0f;
+    float held_gain_target_ = 1.0f;
     double held_age_samples_ = 0.0;
-    float tracker_alpha_ = 0.0f;
     int crossfade_samples_ = 1;
 
     double sample_rate_ = 0.0;
