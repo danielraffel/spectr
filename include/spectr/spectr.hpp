@@ -554,6 +554,12 @@ public:
                                    std::memory_order_relaxed);
     }
 
+    /// The editor's write of Freeze (the LIVE / FROZEN toggle, its keys):
+    /// the parameter set inside one complete host gesture, begin -> value ->
+    /// end, so a host in Touch / Latch / Write records the press. UI thread.
+    /// Returns false before the parameter store exists.
+    bool set_freeze_from_editor(bool frozen) noexcept;
+
     /// The freeze source. Audio-thread state: read it only where process()
     /// cannot be running (tests, offline renders).
     [[nodiscard]] const FreezeSource& freeze_source() const noexcept {

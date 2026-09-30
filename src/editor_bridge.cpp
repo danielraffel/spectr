@@ -1010,6 +1010,25 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
         });
 
+    // The LIVE / FROZEN toggle and its keyboard shortcuts. Freeze is host
+    // parameter 3, so an editor write is a user edit the host must be able
+    // to record: it goes out as one complete gesture (begin, value, end), the
+    // bracket Touch / Latch / Write automation keys on. `param_set` writes
+    // the value alone, which moves the DSP but leaves a host that records
+    // on gestures nothing to record.
+    bridge.add_handler("freeze_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("frozen"))
+                return EditorBridge::err_response("frozen missing");
+            const auto& flag = p["frozen"];
+            if (!flag.isBool())
+                return EditorBridge::err_response("frozen must be a boolean");
+            if (!plugin.set_freeze_from_editor(flag.getBool()))
+                return EditorBridge::err_response("freeze parameter unavailable");
+            return EditorBridge::ok_response(
+                make_freeze_payload_(plugin, /*with_settings=*/false));
+        });
+
     // Freeze's hold length. A Settings value like the two above: persisted
     // in the plugin state, never a host parameter. Clamped, and the value in
     // force is returned so the control shows what the processor will use.

@@ -806,6 +806,17 @@ void Spectr::sync_params_from_field(bool emit_gestures) noexcept {
     }
 }
 
+bool Spectr::set_freeze_from_editor(bool frozen) noexcept {
+    auto* store = param_store_;
+    if (!store) return false;
+    // Its own bracket even inside an open drag epoch: a press is a discrete
+    // command, and the epoch closes only the parameters its drag touched.
+    store->begin_gesture(kParamFreeze);
+    store->set_value(kParamFreeze, frozen ? 1.0f : 0.0f);
+    store->end_gesture(kParamFreeze);
+    return true;
+}
+
 void Spectr::begin_param_gesture_epoch() noexcept {
     // UI thread only (EditorAuthority). Re-entrant-safe: a stale epoch from
     // a cancelled realm is closed, not stacked.

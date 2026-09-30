@@ -7990,3 +7990,77 @@ TEST_CASE("a scroll over the plot behind About or Settings changes nothing",
     CHECK(edited);
     storage.require_unchanged();
 }
+
+// ── A freeze press records in host automation ────────────────────────────────
+//
+// A host recording in Touch, Latch or Write keys on the edit gesture: begin,
+// value, end. The recorder below is what a format adapter sees -- the store's
+// gesture callbacks and its inline value listener, in order, for Freeze only.
+// Control: the old route, `param_set`, moves the value with no gesture, and
+// the recorder must show exactly that, so a bracket below is the product's.
+
+namespace {
+
+struct FreezeEditRecorder {
+    std::vector<std::string> events;
+    pulp::state::ListenerToken token;
+    explicit FreezeEditRecorder(pulp::state::StateStore& store) {
+        store.set_gesture_callbacks(
+            [this](pulp::state::ParamID id) {
+                if (id == spectr::kParamFreeze) events.emplace_back("begin");
+            },
+            [this](pulp::state::ParamID id) {
+                if (id == spectr::kParamFreeze) events.emplace_back("end");
+            });
+        token = store.add_audio_listener([this](pulp::state::ParamID id, float value) {
+            if (id == spectr::kParamFreeze)
+                events.emplace_back(value >= 0.5f ? "set 1" : "set 0");
+        });
+    }
+    std::string take() {
+        std::string out;
+        for (const auto& e : events) out += (out.empty() ? "" : ", ") + e;
+        events.clear();
+        return out;
+    }
+};
+
+}  // namespace
+
+TEST_CASE("a freeze press goes to the host as one edit gesture",
+          "[native-n1][state-parity][freeze-toggle][automation]") {
+    PatternStoragePoison storage;
+    for (const bool standalone : {false, true}) {
+        INFO((standalone ? "standalone" : "plug-in"));
+        EditorContextScope context(standalone);
+        NativeEditorRig rig;
+        require_home(rig);
+        FreezeEditRecorder recorder(rig.store);
+
+        activate(rig, "[data-spectr-freeze-toggle]");
+        CHECK(recorder.take() == "begin, set 1, end");
+        activate(rig, "[data-spectr-freeze-toggle]");
+        CHECK(recorder.take() == "begin, set 0, end");
+
+        // Q, where plain keys are live (the standalone, or a plug-in whose
+        // user turned them on).
+        if (!standalone) rig.processor.set_keyboard_shortcuts_in_daw(true);
+        rig.bridge().load_script("globalThis.__spectrApplyKeyboardPolicy("
+                                 "{ shortcuts_in_daw: true });",
+                                 "spectr-freeze-gesture-keys-live");
+        settle(rig.clock, 8);
+        REQUIRE(press_key(rig, key_of('q')));
+        CHECK(recorder.take() == "begin, set 1, end");
+        REQUIRE(press_key(rig, key_of('q')));
+        CHECK(recorder.take() == "begin, set 0, end");
+
+        // Control: a bare value write is visible to the recorder as exactly
+        // that -- a value with no gesture around it.
+        rig.bridge().load_script(
+            "window.pulp.postMessage('param_set', { id: 3, value: 1 }, 'test');",
+            "spectr-freeze-gesture-control");
+        settle(rig.clock, 8);
+        CHECK(recorder.take() == "set 1");
+    }
+    storage.require_unchanged();
+}
