@@ -569,87 +569,45 @@ TEST_CASE("The silence check is what keeps silence from latching",
     CHECK(without < 0.003);
 }
 
-TEST_CASE("Freeze reports an infinite tail while frozen and says so on each edge",
+TEST_CASE("Spectr reports a constant infinite tail and never flags a tail edge",
           "[freeze][tail]") {
+    // A held spectrum sounds without input, so the tail is infinite -- and it
+    // is infinite always, on every format. A tail that followed Freeze had to
+    // be announced on each edge from the audio thread, inside the callback a
+    // tap lands in: AU v2 turned that into TailTime listener calls on the
+    // render thread, VST3 into a component reload. With a constant tail there
+    // is nothing to announce, on a press, a release, or a Latency switch.
     Rig rig(MaskRenderMode::zero_latency);
     auto* plugin = rig.plugin;
-    (void)plugin->consume_tail_changed_flag();
-    const auto finite = plugin->descriptor().tail_samples;
-    REQUIRE(finite >= 0);
-
-    bool raised_on = false, raised_off = false;
-    int tail_while_frozen = 0;
+    int flags = 0, holds = 0;
+    bool always_infinite = plugin->descriptor().tail_samples == -1;
+    auto last = FreezeSource::Phase::live;
     rig.run(at(2.0), tone(1000.0, 0.3f),
         [&](std::size_t n, auto&, auto&) {
             if (rig.hits(n, 0.5)) rig.set(spectr::kParamFreeze, 1.0f);
             if (rig.hits(n, 1.0)) rig.set(spectr::kParamFreeze, 0.0f);
+            if (rig.hits(n, 1.3)) rig.set(spectr::kParamFreeze, 1.0f);
+            if (rig.hits(n, 1.6)) rig.set(spectr::kParamFreeze, 0.0f);
         },
-        [&](std::size_t n) {
-            if (n > at(0.5) && n <= at(0.5) + 256) {
-                raised_on = plugin->consume_tail_changed_flag();
-                tail_while_frozen = plugin->descriptor().tail_samples;
-            }
-            if (n > at(1.2) && n <= at(1.2) + 256)
-                raised_off = plugin->consume_tail_changed_flag();
+        [&](std::size_t) {
+            if (plugin->consume_tail_changed_flag()) ++flags;
+            always_infinite = always_infinite && plugin->descriptor().tail_samples == -1;
+            const auto phase = plugin->freeze_source().phase();
+            if (phase == FreezeSource::Phase::held && last != phase) ++holds;
+            last = phase;
         });
-    CHECK(raised_on);
-    CHECK(tail_while_frozen == -1);
-    CHECK(raised_off);
-    CHECK(plugin->descriptor().tail_samples == finite);
-    // No edge, no flag: nothing moved after the release finished.
-    rig.run(at(0.2), tone(1000.0, 0.3f));
-    CHECK_FALSE(plugin->consume_tail_changed_flag());
-}
-
-TEST_CASE("A VST3 build reports a constant infinite tail and never flags a freeze edge",
-          "[freeze][tail][vst3]") {
-    // VST3 has no lightweight tail notification: the adapter republishes a
-    // tail change as restartComponent(kReloadComponent), which JUCE-based
-    // hosts answer with release()+prepare() -- an audible gap on every
-    // freeze press. So the VST3 entry point declares a constant infinite
-    // tail. AU and CLAP keep the dynamic tail; the control below runs the
-    // identical script under that policy and must see the flags.
-    struct Policy {
-        explicit Policy(bool constant) { spectr::set_constant_infinite_tail(constant); }
-        ~Policy() { spectr::set_constant_infinite_tail(false); }
-    };
-    const auto script = [](bool constant) {
-        Policy policy(constant);
-        Rig rig(MaskRenderMode::zero_latency);
-        auto* plugin = rig.plugin;
-        int flags = 0;
-        bool tail_always_infinite = plugin->descriptor().tail_samples == -1;
-        rig.run(at(2.0), tone(1000.0, 0.3f),
-            [&](std::size_t n, auto&, auto&) {
-                if (rig.hits(n, 0.5)) rig.set(spectr::kParamFreeze, 1.0f);
-                if (rig.hits(n, 1.0)) rig.set(spectr::kParamFreeze, 0.0f);
-                if (rig.hits(n, 1.3)) rig.set(spectr::kParamFreeze, 1.0f);
-                if (rig.hits(n, 1.6)) rig.set(spectr::kParamFreeze, 0.0f);
-            },
-            [&](std::size_t) {
-                if (plugin->consume_tail_changed_flag()) ++flags;
-                tail_always_infinite = tail_always_infinite
-                    && plugin->descriptor().tail_samples == -1;
-            });
-        // A Latency switch moves the latency, which VST3 must still hear, but
-        // under a constant tail there is no tail edge to report with it.
-        (void)plugin->consume_latency_changed_flag();
-        REQUIRE(plugin->set_render_mode(MaskRenderMode::linear_phase));
-        const bool latency_flagged = plugin->consume_latency_changed_flag();
-        if (plugin->consume_tail_changed_flag()) ++flags;
-        return std::tuple{flags, tail_always_infinite, latency_flagged};
-    };
-    const auto [vst3_flags, vst3_infinite, vst3_latency] = script(true);
-    const auto [dyn_flags, dyn_infinite, dyn_latency] = script(false);
-    INFO("VST3 flags " << vst3_flags << " dynamic flags " << dyn_flags);
-    CHECK(vst3_flags == 0);
-    CHECK(vst3_infinite);
-    CHECK(vst3_latency);
-    // Control: the dynamic policy flags each of the four freeze edges and the
-    // mode switch, and its tail is finite when nothing is held.
-    CHECK(dyn_flags >= 5);
-    CHECK_FALSE(dyn_infinite);
-    CHECK(dyn_latency);
+    // Both freezes really held and released: the script is not vacuous.
+    REQUIRE(holds == 2);
+    REQUIRE(plugin->freeze_source().phase() == FreezeSource::Phase::live);
+    (void)plugin->consume_latency_changed_flag();
+    REQUIRE(plugin->set_render_mode(MaskRenderMode::linear_phase));
+    // The instrument sees a flag when one is raised: a Latency switch still
+    // moves the latency, which every host must hear.
+    CHECK(plugin->consume_latency_changed_flag());
+    if (plugin->consume_tail_changed_flag()) ++flags;
+    CHECK(flags == 0);
+    CHECK(always_infinite);
+    CHECK(plugin->descriptor().tail_samples == -1);
 }
 
 namespace {

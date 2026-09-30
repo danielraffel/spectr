@@ -23,11 +23,15 @@
 /// each bin's phase at its instantaneous frequency plus a small random walk.
 /// The hold is rendered with `write_hold()` and resynthesised by overlap-add.
 ///
-/// HOW IT ENGAGES. Nothing waits for an analysis latency. At the latch the
-/// output ring is pre-rolled with the frames that would already have been
+/// HOW IT ENGAGES. Nothing waits for an analysis latency. After the latch
+/// the output ring is pre-rolled with the frames that would already have been
 /// overlapping (the latched phases stepped forward hop by hop), so a full
-/// hold is available on the very next sample, and a short equal-power
-/// crossfade takes the output from live to held. A release runs the same
+/// hold is present from the fade's first sample, and a short equal-power
+/// crossfade takes the output from live to held. The pre-roll is built over
+/// the hop after the latch, a share of it per sample of audio, and the fade
+/// starts at the next hop boundary: done at once, it was several
+/// milliseconds of work in the one callback a tap lands in -- more than a
+/// small host buffer's whole real-time budget. A release runs the same
 /// fade the other way, and a freeze requested during that fade waits for it
 /// to finish, so the hold being faded out is never swapped underneath the
 /// fade.
@@ -124,6 +128,7 @@ public:
     enum class Phase : std::uint8_t {
         live,      ///< live input passes; nothing is held
         arming,    ///< freeze requested; waiting for a window with signal
+        preparing, ///< latched; building the hold's pre-roll, live still passes
         engaging,  ///< crossfading live -> held
         held,      ///< the hold alone
         releasing, ///< crossfading held -> live
@@ -170,6 +175,9 @@ public:
             overlap += static_cast<double>(window_[static_cast<std::size_t>(n)])
                        * window_[static_cast<std::size_t>(n)];
         synthesis_scale_ = static_cast<float>(1.0 / overlap);
+        synthesis_window_.resize(window_.size());
+        for (std::size_t n = 0; n < window_.size(); ++n)
+            synthesis_window_[n] = window_[n] * synthesis_scale_;
 
         const auto per_channel = static_cast<std::size_t>(kFftSize);
         const auto channel_count = static_cast<std::size_t>(channels);
@@ -191,6 +199,7 @@ public:
 
         level_scratch_.assign(channel_count * static_cast<std::size_t>(kLevelMeasureHops * kHop), 0.0f);
         rotation_.assign(static_cast<std::size_t>(bins_), 1);
+        hop_rotor_.assign(static_cast<std::size_t>(bins_), {1.0f, 0.0f});
         magnitude_.assign(static_cast<std::size_t>(bins_), 0.0f);
         prefix_.assign(static_cast<std::size_t>(bins_) + 1, 0.0);
         crossfade_samples_ = std::max(
@@ -319,12 +328,17 @@ private:
             hop_energy_accum_ += energy;
         }
 
-        if (phase_ == Phase::live || phase_ == Phase::arming) {
+        if (phase_ == Phase::live || phase_ == Phase::arming
+            || phase_ == Phase::preparing) {
             for (int ch = 0; ch < channels_; ++ch)
                 if (wet[ch] != input[ch])
                     std::copy(input[ch] + offset, input[ch] + offset + count,
                               wet[ch] + offset);
             write_pos_ = (write_pos_ + static_cast<std::size_t>(count)) % window;
+            // This chunk's share of the engage work, by samples, so no host
+            // block carries more of it than its length warrants.
+            if (phase_ == Phase::preparing)
+                prepare_until_((prepare_steps_() * (hop_pos_ + count) + kHop - 1) / kHop);
             return;
         }
 
@@ -399,13 +413,21 @@ private:
             else if (phase_ == Phase::releasing) pending_engage_ = true;
         } else {
             pending_engage_ = false;
-            if (phase_ == Phase::arming) {
+            if (phase_ == Phase::arming || phase_ == Phase::preparing) {
+                // Nothing of the hold has been heard.
                 phase_ = Phase::live;
                 hold_.set_frozen(false);
             } else if (phase_ == Phase::engaging || phase_ == Phase::held) {
                 phase_ = Phase::releasing;
                 hold_.set_frozen(false); // restarts the capture window
             }
+        }
+
+        if (phase_ == Phase::preparing) {
+            // The pre-roll was built for this boundary: the ring is not
+            // shifted, and the fade starts on the next sample.
+            finish_prepare_();
+            return;
         }
 
         const bool rendering = hold_audible();
@@ -422,7 +444,7 @@ private:
             const bool was_latched = hold_.is_latched();
             hold_.process_group(frame_ptrs_.data(), channels_, bins_);
             if (phase_ == Phase::arming && !was_latched && hold_.is_latched()) {
-                begin_engage_();
+                begin_prepare_();
             } else if (phase_ == Phase::releasing && !hold_.is_latched()) {
                 // The hold finished its own release; keep its phases moving
                 // for as long as this fade still plays it.
@@ -520,64 +542,89 @@ private:
     // The same, into `dest` (channels * `length`), with the frame's first
     // sample at `at` (negative: that many samples of it are already past).
     void add_hold_frame_to_(float* dest, std::size_t length, int at) noexcept {
-        const auto window = static_cast<std::size_t>(kFftSize);
         if (!hold_.write_hold(frame_ptrs_.data(), channels_, bins_)) return;
+        synthesise_to_(dest, length, at);
+    }
+
+    // Resynthesise the spectra already in `spectra_` and overlap-add them
+    // into `dest`, as add_hold_frame_to_() does after rendering the hold.
+    void synthesise_to_(float* dest, std::size_t length, int at) noexcept {
+        const auto window = static_cast<std::size_t>(kFftSize);
+        const auto half = static_cast<std::size_t>(kFftSize / 2);
+        // Only the part of the frame from `dest`'s start to its end is added.
+        const std::size_t first = at < 0 ? static_cast<std::size_t>(-at) : 0;
+        const auto room = static_cast<std::ptrdiff_t>(length) - at;
+        const std::size_t last = room <= 0 ? 0
+            : std::min(window, static_cast<std::size_t>(room));
         // Two real channels per complex inverse transform: one in the real
-        // part, one in the imaginary part.
+        // part, one in the imaginary part. The arithmetic is spelled out:
+        // std::complex multiplication carries NaN/infinity recovery, and
+        // this loop runs once per bin for every frame of the hold.
         for (int ch = 0; ch < channels_; ch += 2) {
             const bool pair = ch + 1 < channels_;
             const auto* a = spectra_.data() + static_cast<std::size_t>(ch) * window;
             const auto* b = pair ? a + window : nullptr;
-            constexpr std::complex<float> j{0.0f, 1.0f};
-            for (int k = 0; k < bins_; ++k) {
-                // A quarter-cycle turn, one sign per peak region.
-                const float turn = static_cast<float>(rotation_[static_cast<std::size_t>(k)]);
-                const auto ka = a[k] * std::complex<float>{0.0f, turn};
-                const auto kb = pair ? b[k] * std::complex<float>{0.0f, turn}
-                                     : std::complex<float>{};
-                time_[static_cast<std::size_t>(k)] = ka + j * kb;
-                if (k > 0 && k < kFftSize / 2)
-                    time_[window - static_cast<std::size_t>(k)] =
-                        std::conj(ka) + j * std::conj(kb);
+            for (std::size_t k = 1; k < half; ++k) {
+                // A quarter-cycle turn, one sign per peak region:
+                // ka = a * (i * turn), kb = b * (i * turn).
+                const float turn = static_cast<float>(rotation_[k]);
+                const float ka_re = -turn * a[k].imag(), ka_im = turn * a[k].real();
+                const float kb_re = pair ? -turn * b[k].imag() : 0.0f;
+                const float kb_im = pair ? turn * b[k].real() : 0.0f;
+                // time[k] = ka + i kb; time[N - k] = conj(ka) + i conj(kb).
+                time_[k] = {ka_re - kb_im, ka_im + kb_re};
+                time_[window - k] = {ka_re + kb_im, kb_re - ka_im};
             }
             // DC and Nyquist of a real signal are real; turned a quarter
             // cycle, they have nothing left to carry.
             time_[0] = {};
-            time_[static_cast<std::size_t>(kFftSize / 2)] = {};
+            time_[half] = {};
             fft_.inverse(time_.data());
             float* out_a = dest + static_cast<std::size_t>(ch) * length;
             float* out_b = pair ? out_a + length : nullptr;
-            for (std::size_t n = at < 0 ? static_cast<std::size_t>(-at) : 0; n < window; ++n) {
-                const auto to = static_cast<std::ptrdiff_t>(n) + at;
-                if (to >= static_cast<std::ptrdiff_t>(length)) break;
-                const float w = window_[n] * synthesis_scale_;
-                out_a[to] += time_[n].real() * w;
-                if (pair) out_b[to] += time_[n].imag() * w;
+            const std::ptrdiff_t shift = at;
+            if (pair) {
+                for (std::size_t n = first; n < last; ++n) {
+                    const float w = synthesis_window_[n];
+                    out_a[static_cast<std::ptrdiff_t>(n) + shift] += time_[n].real() * w;
+                    out_b[static_cast<std::ptrdiff_t>(n) + shift] += time_[n].imag() * w;
+                }
+            } else {
+                for (std::size_t n = first; n < last; ++n)
+                    out_a[static_cast<std::ptrdiff_t>(n) + shift] += time_[n].real() * synthesis_window_[n];
             }
         }
     }
 
-    // The hold latched on the frame just analysed. Its phases have already
-    // advanced one hop past that frame. Fill the output ring with the frames
-    // that would already be overlapping now, phase-continued from the latched
-    // frame, so the full hold is audible from the next sample.
-    void begin_engage_() noexcept {
-        choose_rotation_();
-        std::fill(ola_.begin(), ola_.end(), 0.0f);
-        // The latched frame covered the last kFftSize input samples. A frame
-        // placed `back` hops before now continues it by (hops_per_window -
-        // back) hops; the current phases are one hop on already.
-        for (int back = hops_per_window_ - 1; back >= 0; --back) {
-            add_hold_frame_(back);
-            // Step on without the random walk inside the pre-roll.
-            if (back > 0) hold_.rewind_hold_phases(-1);
-        }
-        const double held = measure_hold_power_();
-        // Past the newest frame, advance as every later hop does.
-        hold_.advance_hold(1);
-        phase_ = Phase::engaging;
-        weight_step_ = 0;
-        // The live level the hold is matched to: the capture window's mean.
+    // ENGAGE, SPREAD OVER ONE HOP. The hold latched on the frame just
+    // analysed; its phases have already advanced one hop past that frame.
+    // Before it is heard, the output ring is filled with the frames that
+    // would already be overlapping (a pre-roll, so the full hold is present
+    // from the fade's first sample) and the level of the hold's first hops is
+    // measured. That is hops_per_window + kLevelMeasureHops - 1 inverse
+    // transforms.
+    //
+    // Done inside the callback the latch lands in, it cost several
+    // milliseconds in that one callback, past a 128-frame buffer's entire
+    // real-time budget: a live host missed the deadline and dropped the
+    // buffer, and the tap clicked (the output cut mid-swing) -- on engage
+    // only, since a release renders nothing extra. An offline render has no
+    // deadline and was clean.
+    //
+    // So the work is spread across the hop after the latch, a fixed number
+    // of frames per sample of audio, whatever the host's block size; live
+    // input passes meanwhile, and the fade starts at the next hop boundary,
+    // with the pre-roll built for that boundary. It costs one hop of engage
+    // latency and bounds every callback to a few frames of work.
+    //
+    // Inside the pre-roll the phases step without the random walk, so each
+    // frame is the one before it with every bin turned by that bin's advance
+    // over one hop: the hold is rendered from its phases once, and each later
+    // frame is one complex multiply per bin. The hold's own phases step
+    // exactly as before.
+    void begin_prepare_() noexcept {
+        // The live level the hold is matched to: the capture window's mean,
+        // as it stands at the latch.
         const int frames = hold_.capture_frames();
         const auto ring = frame_energy_.size();
         double live = 0.0;
@@ -585,6 +632,81 @@ private:
             live += frame_energy_[(frame_energy_pos_ + ring
                                    - static_cast<std::size_t>(back)) % ring];
         live_reference_power_ = live / static_cast<double>(frames);
+        prepare_step_ = 0;
+        phase_ = Phase::preparing;
+    }
+
+    // The steps of the preparation: one to set it up, hops_per_window
+    // pre-roll frames, then kLevelMeasureHops - 1 measurement frames.
+    [[nodiscard]] int prepare_steps_() const noexcept {
+        return 1 + hops_per_window_ + kLevelMeasureHops - 1;
+    }
+
+    // Do the preparation's steps up to `target`.
+    void prepare_until_(int target) noexcept {
+        target = std::min(target, prepare_steps_());
+        const auto window = static_cast<std::size_t>(kFftSize);
+        const auto length = static_cast<std::size_t>(kLevelMeasureHops * kHop);
+        for (; prepare_step_ < target; ++prepare_step_) {
+            if (prepare_step_ == 0) {
+                choose_rotation_();
+                std::fill(ola_.begin(), ola_.end(), 0.0f);
+                // The pre-roll is built for the NEXT hop boundary. A frame
+                // placed `back` hops before it continues the latched frame by
+                // (hops_per_window + 1 - back) hops; the current phases are
+                // one hop on already, so the oldest (back = hops_per_window
+                // - 1) is one step further on.
+                hold_.rewind_hold_phases(-1);
+                prepare_have_hold_ = hold_.write_hold(frame_ptrs_.data(), channels_, bins_);
+                if (prepare_have_hold_) compute_hop_rotor_();
+                continue;
+            }
+            const int step = prepare_step_ - 1;
+            if (step < hops_per_window_) {
+                const int back = hops_per_window_ - 1 - step;
+                if (prepare_have_hold_)
+                    synthesise_to_(ola_.data(), window, -back * kHop);
+                // Step on without the random walk inside the pre-roll.
+                if (back > 0) {
+                    hold_.rewind_hold_phases(-1);
+                    if (prepare_have_hold_) rotate_spectra_one_hop_();
+                }
+                continue;
+            }
+            // The level measurement: the output ring's first hops completed,
+            // in a scratch copy, with the frames that will follow.
+            const int ahead = step - hops_per_window_ + 1;
+            if (ahead == 1)
+                for (int ch = 0; ch < channels_; ++ch)
+                    std::copy_n(ola_.data() + static_cast<std::size_t>(ch) * window, length,
+                                level_scratch_.data() + static_cast<std::size_t>(ch) * length);
+            hold_.rewind_hold_phases(-1);
+            if (prepare_have_hold_) {
+                rotate_spectra_one_hop_();
+                synthesise_to_(level_scratch_.data(), length, ahead * kHop);
+            }
+        }
+    }
+
+    // The hop boundary the pre-roll was built for: finish anything a short
+    // hop left undone, set the level, and start the fade.
+    void finish_prepare_() noexcept {
+        prepare_until_(prepare_steps_());
+        // The measurement stepped the phases ahead; put them back.
+        hold_.rewind_hold_phases(kLevelMeasureHops - 1);
+        double held = 0.0;
+        if (prepare_have_hold_) {
+            const auto length = static_cast<std::size_t>(kLevelMeasureHops * kHop)
+                              * static_cast<std::size_t>(channels_);
+            double energy = 0.0;
+            for (std::size_t n = 0; n < length; ++n)
+                energy += static_cast<double>(level_scratch_[n]) * level_scratch_[n];
+            held = energy / static_cast<double>(length);
+        }
+        // Past the newest frame, advance as every later hop does.
+        hold_.advance_hold(1);
+        phase_ = Phase::engaging;
+        weight_step_ = 0;
         // The hold enters at its matched level: the fade is not asked to
         // hide a correction still settling.
         held_power_ = held;
@@ -595,25 +717,30 @@ private:
         held_age_samples_ = static_cast<double>(kLevelMeasureHops * kHop);
     }
 
-    // The raw power the hold is about to play, per sample and channel, before
-    // any of it is heard: the output ring's first hops completed with the
-    // frames that will follow (stepped without the random walk, then stepped
-    // back), in a scratch copy. The hold's phases are left where they were.
-    double measure_hold_power_() noexcept {
-        const auto window = static_cast<std::size_t>(kFftSize);
-        const auto length = static_cast<std::size_t>(kLevelMeasureHops * kHop);
-        for (int ch = 0; ch < channels_; ++ch)
-            std::copy_n(ola_.data() + static_cast<std::size_t>(ch) * window, length,
-                        level_scratch_.data() + static_cast<std::size_t>(ch) * length);
-        for (int ahead = 1; ahead < kLevelMeasureHops; ++ahead) {
-            hold_.rewind_hold_phases(-1);
-            add_hold_frame_to_(level_scratch_.data(), length, ahead * kHop);
+    // Each bin's phase advance over one hop at the hold's instantaneous
+    // frequency, as a unit rotor: what rewind_hold_phases(-1) adds.
+    void compute_hop_rotor_() noexcept {
+        const auto freq = hold_.instantaneous_frequency();
+        const auto bins = std::min(static_cast<std::size_t>(bins_), freq.size());
+        for (std::size_t k = 0; k < bins; ++k) {
+            const double advance = freq[k] * static_cast<double>(kHop);
+            hop_rotor_[k] = {static_cast<float>(std::cos(advance)),
+                             static_cast<float>(std::sin(advance))};
         }
-        hold_.rewind_hold_phases(kLevelMeasureHops - 1);
-        double energy = 0.0;
-        for (std::size_t n = 0; n < length * static_cast<std::size_t>(channels_); ++n)
-            energy += static_cast<double>(level_scratch_[n]) * level_scratch_[n];
-        return energy / (static_cast<double>(length) * static_cast<double>(channels_));
+    }
+
+    // Step every channel's spectrum in `spectra_` on by one hop.
+    void rotate_spectra_one_hop_() noexcept {
+        const auto window = static_cast<std::size_t>(kFftSize);
+        const auto bins = static_cast<std::size_t>(bins_);
+        for (int ch = 0; ch < channels_; ++ch) {
+            auto* spectrum = spectra_.data() + static_cast<std::size_t>(ch) * window;
+            for (std::size_t k = 0; k < bins; ++k) {
+                const float re = spectrum[k].real(), im = spectrum[k].imag();
+                const float c = hop_rotor_[k].real(), sn = hop_rotor_[k].imag();
+                spectrum[k] = {re * c - im * sn, re * sn + im * c};
+            }
+        }
     }
 
     // A quarter-cycle turn for every bin of the new hold, +90 or -90
@@ -660,6 +787,7 @@ private:
     pulp::signal::FreezeHold hold_{};
     pulp::signal::Fft fft_{};
     std::vector<float> window_;
+    std::vector<float> synthesis_window_;         // window_ * synthesis_scale_
     float synthesis_scale_ = 1.0f;
 
     std::vector<float> input_ring_;               // channels * kFftSize
@@ -679,6 +807,7 @@ private:
 
     static constexpr std::uint64_t kRngSeed = 0x2545f4914f6cdd1dull;
     std::vector<std::int8_t> rotation_;           // bins: +1 or -1 quarter cycle
+    std::vector<std::complex<float>> hop_rotor_;  // bins: one hop's phase advance
     std::vector<float> magnitude_;                // bins, scratch
     std::vector<double> prefix_;                  // bins + 1, scratch
     std::uint64_t rng_ = kRngSeed;
@@ -702,6 +831,8 @@ private:
     bool pending_engage_ = false;
     Phase phase_ = Phase::live;
     int weight_step_ = 0;
+    int prepare_step_ = 0;
+    bool prepare_have_hold_ = false;
     double requested_hold_seconds_ = kDefaultHoldSeconds;
     double applied_hold_seconds_ = kDefaultHoldSeconds;
 };

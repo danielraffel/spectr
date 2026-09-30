@@ -41,19 +41,6 @@ bool editor_is_standalone() {
 }
 
 namespace {
-// See set_constant_infinite_tail: asserted by the VST3 entry point only.
-std::atomic<bool> g_constant_infinite_tail{false};
-}  // namespace
-
-void set_constant_infinite_tail(bool value) {
-    g_constant_infinite_tail.store(value, std::memory_order_relaxed);
-}
-
-bool constant_infinite_tail() {
-    return g_constant_infinite_tail.load(std::memory_order_relaxed);
-}
-
-namespace {
 
 /// Are these two layouts the same mask?
 ///
@@ -130,31 +117,20 @@ Spectr::~Spectr() {
 
 pulp::format::PluginDescriptor Spectr::descriptor() const {
     auto descriptor=make_descriptor();
-#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
-    // Descriptor queries may overlap control-side mode replacement. A fixed
-    // conservative bound covers either mode without touching renderer ownership.
-    descriptor.tail_samples=2*kSpectralFftSize+kSpectralAnalysisHop
-        +(kSpectralAnalysisHop/2)*5;
-#endif
     // A held spectrum sounds for as long as it is held, with or without
-    // input, so a host must not stop processing on silence. Every format
-    // adapter reads a negative tail as infinite.
-    if (constant_infinite_tail() || freeze_tail_infinite())
-        descriptor.tail_samples = -1;
+    // input, so a host must not stop processing on silence. The tail is
+    // infinite always, on every format, rather than only while frozen.
+    //
+    // A tail that followed Freeze had to be announced on each edge, from the
+    // audio thread, in the very callback a tap lands in: AU v2 turns that
+    // into kAudioUnitProperty_TailTime listener calls on the render thread
+    // (an out-of-process host such as Logic forwards them across the process
+    // boundary), and VST3 into restartComponent(kReloadComponent), which
+    // JUCE-based hosts answer with a full release()+prepare(). A constant
+    // tail has nothing to announce. Every format adapter reads a negative
+    // tail as infinite.
+    descriptor.tail_samples = -1;
     return descriptor;
-}
-
-void Spectr::update_freeze_tail_() noexcept {
-    // Audio thread. Infinite while a freeze is asked for or its hold still
-    // reaches the output; the host hears about each edge exactly once.
-    const bool infinite = freeze_source_.frozen_requested()
-                       || freeze_source_.hold_audible();
-    if (infinite != freeze_tail_infinite_.load(std::memory_order_relaxed)) {
-        freeze_tail_infinite_.store(infinite, std::memory_order_release);
-        // Under a constant infinite tail (VST3) there is no edge to report,
-        // and reporting one would ask the host to reload the component.
-        if (!constant_infinite_tail()) flag_tail_changed();
-    }
 }
 
 namespace {
@@ -696,7 +672,6 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
     // The host's delay compensation is now wrong by the difference between the
     // two modes. This is the whole reason the switch is observable to a host.
     flag_latency_changed();
-    if (!constant_infinite_tail()) flag_tail_changed();
     return true;
 }
 
@@ -1502,7 +1477,6 @@ void Spectr::process(
                 output.num_samples() > 0 ? output.num_samples() - 1 : 0);
             audio_mix_percent_ = params.value_at(kMix, last_sample);
             audio_output_trim_db_ = params.value_at(kOutputTrim, last_sample);
-            update_freeze_tail_();
 
             const auto nc = output.num_channels();
             if (nc > 0 && nc <= 8) {
@@ -1530,7 +1504,6 @@ void Spectr::process(
         const bool processed = renderer->process(
             input_channels_.data(), output_channels_.data(),
             static_cast<int>(output.num_samples()));
-        update_freeze_tail_();
 
         // The shared processor already mixed latency-aligned dry and wet.
         // Output trim remains a product-level post gain.

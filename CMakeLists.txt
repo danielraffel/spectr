@@ -3760,6 +3760,34 @@ foreach(fmt VST3 AU CLAP Standalone)
 endforeach()
 endif()
 
+# Freeze taps through the built AU v2 component, the way a host drives it.
+# The probe registers the bundle in-process (nothing is installed), renders
+# loud programme material offline (no audio device is opened), toggles Freeze
+# with AudioUnitSetParameter at many moments, and scores every engage and
+# release against an unpressed render: discontinuity, fade overshoot,
+# dropout, the cost of the render calls the edge lands in against the
+# costliest call without Freeze, and TailTime notifications raised from the
+# render thread. The headless click tests could not see what a host saw: an
+# engage that did several milliseconds of work in one callback, past a
+# 128-frame buffer's real-time budget, so a live host dropped that buffer.
+if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
+    add_executable(Spectr-au-freeze-probe tools/au_freeze_probe.cpp)
+    target_link_libraries(Spectr-au-freeze-probe PRIVATE
+        "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+    add_dependencies(Spectr-au-freeze-probe ${SPECTR_NATIVE_AU_TARGET})
+    set(_spectr_au_bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
+    add_test(NAME Spectr-au-freeze-host
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
+            --forbid-render-notifications --quiet)
+    add_test(NAME Spectr-au-freeze-host-mixing
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --mode mixing --sr 44100 --block 256 --taps 6 --repeat 3
+            --max-cost-ratio 6 --forbid-render-notifications --quiet)
+    set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
+        PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
+endif()
+
 # Artifact-level host proof: load the built CLAP, VST3 and AU through
 # Pulp::host and run real audio across each binary boundary. This is
 # deliberately separate from Spectr-test's in-process Processor fixtures.
