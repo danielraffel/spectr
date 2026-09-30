@@ -224,6 +224,10 @@ set(SPECTR_NATIVE_SOURCES
     src/snapshot.cpp
     src/ui/native_editor.cpp
 )
+if(APPLE)
+    enable_language(OBJCXX)
+    list(APPEND SPECTR_NATIVE_SOURCES src/ui/host_view_first_mouse_mac.mm)
+endif()
 
 # Shipping Spectr is a native cutover consumer. Requiring the dedicated target
 # makes an older compatibility SDK fail during configure instead of silently
@@ -928,6 +932,20 @@ spectr_configure_native_target(Spectr-native-n1-test)
 # shorter interaction case observe an event before its host-state response.
 catch_discover_tests(Spectr-native-n1-test
     PROPERTIES RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Clicks through the REAL plug-in host NSView and AppKit's event routing. The n1
+# rig asks the view tree directly, so it cannot see a press AppKit withholds
+# before the tree is consulted (a click into a non-key editor window). Needs a
+# window server; it SKIPs rather than passes without one.
+if(APPLE)
+    add_executable(Spectr-native-host-click-test test/test_native_host_click.mm)
+    target_link_libraries(Spectr-native-host-click-test PRIVATE
+        ${SPECTR_NATIVE_CORE_TARGET} Catch2::Catch2WithMain "-framework AppKit")
+    spectr_configure_native_target(Spectr-native-host-click-test)
+    catch_discover_tests(Spectr-native-host-click-test
+        PROPERTIES RESOURCE_LOCK spectr_native_materialized_editor
+                   SKIP_RETURN_CODE 4)
+endif()
 
 # The product icon must actually arrive in all four shipped bundles. The
 # CMake wiring above is not evidence: CFBundleIconFile is substituted at
@@ -4000,3 +4018,4 @@ if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_release_version.py --self-test)
     set_tests_properties(Spectr-release-version-controls PROPERTIES TIMEOUT 60)
 endif()
+

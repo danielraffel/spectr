@@ -40,6 +40,11 @@ bool editor_is_standalone() {
     return g_editor_is_standalone.load(std::memory_order_relaxed);
 }
 
+#if !defined(__APPLE__)
+// Only AppKit withholds a click that lands in a non-key window from the view.
+int install_host_view_first_mouse() { return 0; }
+#endif
+
 namespace {
 // See set_constant_infinite_tail: asserted by the VST3 entry point only.
 std::atomic<bool> g_constant_infinite_tail{false};

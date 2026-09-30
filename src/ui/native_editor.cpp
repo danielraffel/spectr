@@ -680,6 +680,7 @@ bool Spectr::perform_command(pulp::view::CommandID id) {
 }
 
 std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
+    (void)install_host_view_first_mouse();
     // Logic may retain a detached AUv2 NSView and ask the same Processor for a
     // replacement editor before that retained view is deallocated. In that
     // ordering `on_view_closed(old_root)` has not run yet. Spectr has one
