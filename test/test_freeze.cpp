@@ -776,6 +776,117 @@ TEST_CASE("Freeze rides host automation events and reaches the editor's live pro
     CHECK_FALSE(project()["freeze"].hasObjectMember("hold_seconds"));
 }
 
+namespace {
+
+// Chord A until the change, chord B after it; no partial in common.
+constexpr double kChordA[] = {261.63, 329.63, 392.00, 523.25};
+constexpr double kChordB[] = {369.99, 466.16, 554.37, 739.99};
+constexpr double kChordChange = 3.0;
+
+std::pair<float, float> chord_change(std::size_t n) {
+    const double t = static_cast<double>(n) / kSampleRate;
+    double v = 0.0;
+    for (const double f : t < kChordChange ? kChordA : kChordB)
+        v += 0.12 * std::sin(2.0 * kPi * f * t);
+    return {static_cast<float>(v), static_cast<float>(v)};
+}
+
+/// The strongest held magnitude within two bins of `hz`, left channel.
+double held_peak(const FreezeSource& source, double hz) {
+    const auto mags = source.hold().held_magnitudes(0);
+    const auto centre = static_cast<std::ptrdiff_t>(
+        std::lround(hz * FreezeSource::kFftSize / kSampleRate));
+    double peak = 0.0;
+    for (std::ptrdiff_t k = centre - 2; k <= centre + 2; ++k)
+        peak = std::max(peak, static_cast<double>(mags[static_cast<std::size_t>(k)]));
+    return peak;
+}
+
+struct HoldTake {
+    int latched_frames = 0;
+    double a_over_b_db = 0.0;     // what the hold captured
+    Stereo out;
+    int latency = 0;
+    double a_root_played_hz = 0.0; // the frequency chord A's root bin is played at
+};
+
+/// Hold length set through the editor's own message, carried through a
+/// session save and restore into a fresh instance, and a freeze pressed
+/// `offset` after the chord change.
+HoldTake take_hold(double hold_seconds, double offset) {
+    Rig first(MaskRenderMode::zero_latency);
+    pulp::view::EditorBridge bridge;
+    spectr::register_spectr_editor_handlers(bridge, *first.plugin, first.plugin->patterns(),
+                                            first.plugin->editor_authority());
+    const auto response = bridge.dispatch_json(
+        R"({"type":"freeze_hold_set","payload":{"seconds":)" + std::to_string(hold_seconds) + "}}");
+    REQUIRE(response.find("\"ok\"") != std::string::npos);
+    REQUIRE(first.plugin->freeze_hold_seconds() == Catch::Approx(hold_seconds));
+    const auto blob = first.plugin->serialize_plugin_state();
+
+    Rig rig(MaskRenderMode::zero_latency);
+    REQUIRE(rig.plugin->deserialize_plugin_state(blob));
+    REQUIRE(rig.plugin->freeze_hold_seconds() == Catch::Approx(hold_seconds));
+    HoldTake take;
+    take.out = rig.run(at(kChordChange + offset + 1.5), chord_change,
+        [&](std::size_t n, auto&, auto&) {
+            if (rig.hits(n, kChordChange + offset)) rig.set(spectr::kParamFreeze, 1.0f);
+        });
+    const auto& source = rig.plugin->freeze_source();
+    REQUIRE(source.phase() == FreezeSource::Phase::held);
+    take.latched_frames = source.capture_frames();
+    double a = 0.0, b = 0.0;
+    for (const double f : kChordA) a += held_peak(source, f);
+    for (const double f : kChordB) b += held_peak(source, f);
+    take.a_over_b_db = 20.0 * std::log10((a + 1e-12) / (b + 1e-12));
+    take.latency = rig.latency();
+    const auto root_bin = static_cast<std::size_t>(
+        std::lround(kChordA[0] * FreezeSource::kFftSize / kSampleRate));
+    take.a_root_played_hz = source.hold().instantaneous_frequency()[root_bin]
+                          * kSampleRate / (2.0 * kPi);
+    return take;
+}
+
+} // namespace
+
+TEST_CASE("Hold length reaches the next latch through the editor and a session restore",
+          "[freeze][settings][hold-length]") {
+    // Pressed 0.4 s after a chord change. Each analysed frame spans kFftSize
+    // samples (170 ms at 48 kHz), so an 85 ms hold reaches back about a
+    // quarter second: all of it chord B. A 2 s hold averages the last two
+    // seconds, most of them chord A.
+    const auto shortest = take_hold(0.085, 0.40);
+    const auto longest = take_hold(2.0, 0.40);
+    INFO("85 ms hold: " << shortest.latched_frames << " frames, chord A "
+         << shortest.a_over_b_db << " dB against B; 2 s hold: "
+         << longest.latched_frames << " frames, chord A " << longest.a_over_b_db << " dB");
+    CHECK(shortest.latched_frames == 8);
+    CHECK(longest.latched_frames == static_cast<int>(std::lround(2.0 * kSampleRate / FreezeSource::kHop)));
+    CHECK(shortest.a_over_b_db < -30.0);
+    CHECK(longest.a_over_b_db > 6.0);
+}
+
+TEST_CASE("A long hold taken across a change keeps the older sound audible",
+          "[freeze][hold-length][!shouldfail]") {
+    // KNOWN LIMITATION, pinned so it cannot go unnoticed: the hold captures
+    // chord A (the test above), but pulp::signal::FreezeHold takes every
+    // bin's frequency from the NEWEST captured frame. Chord A's bins then
+    // advance at the frequencies chord B's leakage gives them, the
+    // overlapping frames of each bin cancel, and chord A is not heard; the
+    // whole hold also plays well below the input. Tagged [!shouldfail]: when
+    // the hold takes its frequencies from the whole capture window, this
+    // starts passing and the tag must come off.
+    const auto longest = take_hold(2.0, 0.40);
+    const auto from = at(kChordChange + 0.40 + 0.5) + static_cast<std::size_t>(longest.latency);
+    const auto count = at(0.8);
+    double a = 0.0;
+    for (const double f : kChordA) a += fit(longest.out.left, from, count, f).amplitude;
+    INFO("chord A heard at " << 20.0 * std::log10(a / (4 * 0.12) + 1e-12)
+         << " dB against the input; its root's bin plays at " << longest.a_root_played_hz
+         << " Hz, not " << kChordA[0] << " Hz");
+    CHECK(a > 0.25 * 4 * 0.12);
+}
+
 TEST_CASE("Hold length selects the capture window and persists with the session",
           "[freeze][settings]") {
     Rig rig(MaskRenderMode::zero_latency);

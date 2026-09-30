@@ -190,7 +190,7 @@ function SpectrFreezeSettings() {
       "spectr-freeze-hold")).catch((error) =>
         console.error("[Spectr] hold length write failed", error));
   };
-  return /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "freeze", title: "FREEZE", subtitle: "Freeze holds the sound coming in and keeps playing it through everything you draw." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Hold length", hint: "How much of the incoming sound a freeze takes in" }, /* @__PURE__ */ React.createElement("div", { "data-spectr-freeze-hold": true }, /* @__PURE__ */ React.createElement(SpectrSettingsSlider, {
+  return /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "freeze", title: "FREEZE", subtitle: "Freeze holds the sound coming in and keeps playing it through everything you draw." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Hold length", hint: "How much of the incoming sound the next freeze takes in" }, /* @__PURE__ */ React.createElement("div", { "data-spectr-freeze-hold": true }, /* @__PURE__ */ React.createElement(SpectrSettingsSlider, {
     value: hold.seconds,
     min: hold.min,
     max: hold.max,
