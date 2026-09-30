@@ -1064,8 +1064,15 @@ TEST_CASE("Freeze taps on a drum loop, chords and a voice add no click in either
         CHECK(p95(&Onset::engage_pressed, &Score::spike) <= p95(&Onset::engage_control, &Score::spike) + 1.0);
         CHECK(p95(&Onset::release_pressed, &Score::spike) <= p95(&Onset::release_control, &Score::spike) + 1.0);
         if (c.mix < 100.0f) continue; // the held reference is the wet leg alone at 100%
-        const double overshoot_limit = std::max(worst(&Onset::engage_ideal, &Score::overshoot),
-                                                worst(&Onset::engage_steady, &Score::overshoot)) + 3.0;
+        // The hold's own frame-to-frame fluctuation sets the band -- but a
+        // hold steady enough to fluctuate by less than kInaudibleOvershoot
+        // would otherwise tighten it below what anyone hears (the engage
+        // itself unchanged): energy that far under the frame's explained
+        // energy is no click.
+        constexpr double kInaudibleOvershoot = -45.0;
+        const double overshoot_limit = std::max({worst(&Onset::engage_ideal, &Score::overshoot),
+                                                 worst(&Onset::engage_steady, &Score::overshoot),
+                                                 kInaudibleOvershoot}) + 3.0;
         const auto above = [&](Score Onset::*edge) {
             const auto v = column(onsets, edge, &Score::overshoot);
             return std::count_if(v.begin(), v.end(), [&](double x) { return x > overshoot_limit; });

@@ -213,6 +213,9 @@ Stereo material(const Options& o, double seconds) {
 // ── Scoring ─────────────────────────────────────────────────────────────────
 
 constexpr int kOrder = 32;
+// 20 log10(sqrt(2)): the most an equal-power fade's sum can exceed the larger
+// of the two signals it mixes.
+constexpr double kEqualPowerSumDb = 3.0103;
 
 std::vector<double> fit_whitener(const std::vector<float>& x, std::size_t from, std::size_t to) {
     const std::size_t n = to - from;
@@ -862,7 +865,13 @@ int main(int argc, char** argv) {
             }
             // THE FADE'S OWN PEAK. The hold is a different sound from the
             // live input and may well peak higher; what the fade must not do
-            // is peak above both of the sounds it moves between.
+            // is peak above both of the sounds it moves between by more than
+            // its law allows. An equal-power fade of two uncorrelated sounds
+            // keeps their power, but its sum can reach (cos + sin) = sqrt(2)
+            // times the larger of them, +3 dB, where both happen to peak
+            // together: on loud, dense material that is a few percent of
+            // edges, for any hold. A gain that rides the fade (the defect
+            // this is here for) goes past that bound.
             const std::size_t fade_from = edge, fade_to = edge + std::size_t(0.07 * o.sr);
             double fade_pk = 0, live_pk = 0, hold_pk = 0;
             for (int side = 0; side < 2; ++side) {
@@ -884,7 +893,7 @@ int main(int argc, char** argv) {
                     && pressed.block_start[b] < delivered + span)
                     cost = std::max(cost, pressed.block_us[b]);
             const bool click = spike > std::max(ctrl_spike + 6.0, 20.0);
-            const bool over = fade_over > 0.5 && fade_pk > 1.0;
+            const bool over = fade_over > kEqualPowerSumDb + 0.5 && fade_pk > 1.0;
             const bool dropout = drop > 12.0;
             const bool slow = max_cost_ratio > 0.0 && cost > max_cost_ratio * control_max;
             if (click || over || dropout || slow) ++bad;

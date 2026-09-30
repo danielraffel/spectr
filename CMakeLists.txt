@@ -570,6 +570,7 @@ add_executable(Spectr-test
     test/test_render_mode.cpp
     test/test_freeze.cpp
     test/test_freeze_click.cpp
+    test/test_freeze_level.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
