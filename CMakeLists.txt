@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
-project(Spectr VERSION 1.0.0 LANGUAGES CXX)
+project(Spectr VERSION 1.0.3 LANGUAGES CXX)
+
+# PROJECT_VERSION is Spectr's one product version. The plugin descriptor (what
+# Settings > About, CLAP and VST3 report), every bundle's Info.plist, the AU
+# component version integer and the installer's default VER all derive from
+# it; Spectr-release-version fails if any of them disagree.
+add_compile_definitions("SPECTR_PRODUCT_VERSION=\"${PROJECT_VERSION}\"")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -371,7 +377,7 @@ pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     MANUFACTURER "Pulp"
     PLUGIN_CODE "${SPECTR_NATIVE_PLUGIN_CODE}"
     MANUFACTURER_CODE "${SPECTR_NATIVE_MANUFACTURER_CODE}"
-    VERSION "1.0.0"
+    VERSION "${PROJECT_VERSION}"
     CATEGORY Effect
     DESIGN_WIDTH ${SPECTR_AUTHORED_WIDTH}
     DESIGN_HEIGHT ${SPECTR_AUTHORED_HEIGHT}
@@ -3712,7 +3718,7 @@ pulp_add_plugin(SpectrWebViewReference
     PLUGIN_NAME     "Spectr WebView Reference"
     BUNDLE_ID       "com.pulp.spectr.webview-reference"
     MANUFACTURER    "Pulp"
-    VERSION         "1.0.0"
+    VERSION         "${PROJECT_VERSION}"
     CATEGORY        Effect
     PLUGIN_CODE     "SpWR"
     MANUFACTURER_CODE "Pulp"
@@ -3971,3 +3977,26 @@ target_compile_definitions(Spectr-gpu-audio-status-test PRIVATE
 target_link_libraries(Spectr-gpu-audio-status-test PRIVATE ${SPECTR_NATIVE_CORE_TARGET})
 add_test(NAME Spectr-gpu-audio-status COMMAND Spectr-gpu-audio-status-test)
 set_tests_properties(Spectr-gpu-audio-status PROPERTIES TIMEOUT 120 RESOURCE_LOCK pulp_gpu)
+
+# Every shipped artifact must name PROJECT_VERSION: each bundle's Info.plist,
+# the AU component version integer, and the descriptor string compiled into
+# the plugin binary that Settings > About displays. package.sh runs the same
+# check against the finished installer with --pkg.
+if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
+   AND TARGET ${SPECTR_NATIVE_VST3_TARGET} AND TARGET ${SPECTR_NATIVE_AU_TARGET}
+   AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET})
+    add_test(NAME Spectr-release-version
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_release_version.py
+            --expected ${PROJECT_VERSION}
+            --bundle ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
+            --bundle ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
+            --bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap
+            --bundle ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app
+            --binary-version-bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
+    set_tests_properties(Spectr-release-version PROPERTIES TIMEOUT 60)
+    add_test(NAME Spectr-release-version-controls
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_release_version.py --self-test)
+    set_tests_properties(Spectr-release-version-controls PROPERTIES TIMEOUT 60)
+endif()
