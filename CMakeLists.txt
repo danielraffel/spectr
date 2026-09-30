@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(Spectr VERSION 1.0.3 LANGUAGES CXX)
+project(Spectr VERSION 1.0.4 LANGUAGES CXX)
 
 # PROJECT_VERSION is Spectr's one product version. The plugin descriptor (what
 # Settings > About, CLAP and VST3 report), every bundle's Info.plist, the AU
