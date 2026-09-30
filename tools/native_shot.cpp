@@ -6354,6 +6354,96 @@ int main(int argc, char** argv) {
         // probe issues the pointerdown itself. `claimed=` below is the control
         // for that: an unclaimed popup paints no cursor at all, and would
         // photograph as a clean single-indicator menu while proving nothing.
+        // The menus whose key hints follow the keyboard policy, captured in
+        // whichever context this run is (SPECTR_EDITOR_HOSTED=1 is a plug-in,
+        // where the plain-key shortcuts go to the DAW and the hints are gone):
+        // EDIT MODE, ANALYZER and the SHORTCUTS popover. The EDIT MODE rows
+        // are also measured -- title and tagline on one line at the top of the
+        // row, above the description and left-aligned with it -- because
+        // hiding the key badge once reflowed every row into three columns.
+        // Exit: 0 all menus opened and the rows are laid out, 1 a row is not,
+        // 3 a menu never opened, so nothing was measured.
+        if (std::getenv("SPECTR_MENU_SHOTS") != nullptr) {
+            const auto toggle = [&rig](const char* root) {
+                rig.activate(std::string("[data-spectr-menu-root=\"") + root
+                             + "\"] [data-spectr-menu-trigger]");
+                settle(rig.clock, 24);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+            };
+            const auto shot = [&](const char* name) {
+                write_layout_snapshot(*rig.root, dir, prefix + name,
+                                      kDesignWidth, kDesignHeight);
+                capture(rig, dir, prefix + name, backend, scale);
+            };
+            std::printf("[menus] context: %s\n",
+                        spectr::editor_is_standalone() ? "standalone" : "plug-in");
+
+            toggle("edit");
+            if (!rig.is_mounted("[data-spectr-edit-mode=\"glide\"]")) {
+                std::printf("[menus] CONTROL FAILED: EDIT MODE did not open\n");
+                return 3;
+            }
+            shot("menus-edit-mode");
+            rig.eval(
+                "globalThis.__spectrEditRowFaults = () => {"
+                "  const rect = (n) => { const r = n.getBoundingClientRect();"
+                "    return { l: r.left, t: r.top, r: r.left + r.width,"
+                "             b: r.top + r.height, w: r.width, h: r.height }; };"
+                "  const out = [];"
+                "  const rows = Array.from(document.querySelectorAll('[data-spectr-edit-mode]'));"
+                "  if (rows.length !== 5) out.push('rows=' + rows.length);"
+                "  rows.forEach((row) => {"
+                "    const mode = row.getAttribute('data-spectr-edit-mode');"
+                "    const text = row.children[1];"
+                "    const header = text && text.children[0];"
+                "    const desc = text && text.children[1];"
+                "    const title = header && header.children[0];"
+                "    const tagline = header && header.children[1];"
+                "    if (!title || !tagline || !desc) { out.push(mode + ': missing parts'); return; }"
+                "    const t = rect(title), g = rect(tagline), d = rect(desc), h = rect(header);"
+                "    const w = rect(row);"
+                "    const f = [];"
+                "    if (Math.abs(t.t - g.t) > 2) f.push('tagline off the title line');"
+                "    if (g.l < t.r - 0.5) f.push('tagline overlaps the title');"
+                "    if (t.h > 20 || g.h > 20) f.push('title/tagline wrapped');"
+                "    if (Math.max(t.b, g.b, h.b) > d.t + 0.5) f.push('header overlaps the description');"
+                "    if (Math.abs(t.l - d.l) > 1) f.push('title not left-aligned with the description');"
+                "    if (d.w < 180) f.push('description does not span the row');"
+                "    if (t.t - w.t > 16) f.push('title not at the top of the row');"
+                "    console.log('[menus] ' + mode + ' title=' + [t.l, t.t, t.w, t.h].map(Math.round)"
+                "      + ' tagline=' + [g.l, g.t, g.w, g.h].map(Math.round)"
+                "      + ' desc=' + [d.l, d.t, d.w, d.h].map(Math.round)"
+                "      + (f.length ? ' FAULT: ' + f.join('; ') : ' ok'));"
+                "    if (f.length) out.push(mode + ': ' + f.join('; '));"
+                "  });"
+                "  return out.join(' | ');"
+                "};",
+                "spectr-menu-shots-geometry");
+            const bool rows_ok =
+                rig.truth("globalThis.__spectrEditRowFaults() === ''");
+            toggle("edit");
+
+            toggle("analyzer");
+            if (!rig.is_mounted("[data-spectr-analyzer-mode]")) {
+                std::printf("[menus] CONTROL FAILED: ANALYZER did not open\n");
+                return 3;
+            }
+            shot("menus-analyzer");
+            toggle("analyzer");
+
+            toggle("help");
+            if (!rig.is_mounted("[data-spectr-help-learn-more]")) {
+                std::printf("[menus] CONTROL FAILED: SHORTCUTS did not open\n");
+                return 3;
+            }
+            shot("menus-shortcuts");
+            toggle("help");
+
+            std::printf("[menus] EDIT MODE rows: %s\n", rows_ok ? "ok" : "BROKEN");
+            return rows_ok ? 0 : 1;
+        }
+
         if (std::getenv("SPECTR_DROPDOWN_PROBE") != nullptr) {
             const char* kTrigger =
                 "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]";
