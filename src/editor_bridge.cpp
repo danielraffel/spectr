@@ -249,17 +249,47 @@ choc::value::Value make_keyboard_policy_payload_(const Spectr& plugin) {
     return keyboard;
 }
 
-// Freeze. `frozen` is the host parameter, so it rides the LIVE projection
-// too: automation turns the toggle over without a hydration. The hold length
-// is a Settings value and rides hydration only.
+// Freeze. `frozen` and the Length are host parameters, so they ride the
+// LIVE projection too: automation turns the toggle over, or moves the
+// dropdown, without a hydration. The vocabulary -- the common lengths, the
+// fraction set, the bar limit -- is the processor's (freeze_length.hpp) and
+// rides hydration, so the editor never keeps a list of its own.
 choc::value::Value make_freeze_payload_(const Spectr& plugin, bool with_settings) {
     auto freeze = choc::value::createObject("SpectrFreeze");
     freeze.addMember("frozen", plugin.state().get_value(kParamFreeze) >= 0.5f);
+    const auto length = plugin.freeze_length();
+    const auto custom = plugin.freeze_custom_length();
+    auto current = choc::value::createObject("SpectrFreezeLength");
+    current.addMember("preset", static_cast<std::int32_t>(plugin.freeze_length_preset()));
+    current.addMember("bars", static_cast<std::int32_t>(length.bars));
+    current.addMember("fraction", std::string(fraction_of(length).text));
+    current.addMember("label", length_label(length));
+    current.addMember("custom_bars", static_cast<std::int32_t>(custom.bars));
+    current.addMember("custom_fraction", std::string(fraction_of(custom).text));
+    // What it is at the tempo last seen, and whether the loop cap bites:
+    // the editor says so only then.
+    const double seconds = plugin.freeze_length_seconds();
+    const double cap = plugin.freeze_loop_cap_seconds();
+    current.addMember("seconds", seconds);
+    current.addMember("cap_seconds", cap);
+    current.addMember("capped", seconds > cap);
+    current.addMember("tempo_bpm", plugin.transport_tempo_bpm());
+    freeze.addMember("length", current);
     if (with_settings) {
-        freeze.addMember("hold_seconds", plugin.freeze_hold_seconds());
-        freeze.addMember("min_hold_seconds", FreezeSource::kMinHoldSeconds);
-        freeze.addMember("max_hold_seconds", FreezeSource::kMaxHoldSeconds);
-        freeze.addMember("default_hold_seconds", FreezeSource::kDefaultHoldSeconds);
+        auto presets = choc::value::createEmptyArray();
+        for (const auto& preset : kLengthPresets) {
+            auto item = choc::value::createObject("SpectrFreezeLengthPreset");
+            item.addMember("bars", static_cast<std::int32_t>(preset.bars));
+            item.addMember("fraction", std::string(fraction_of(preset).text));
+            item.addMember("label", length_label(preset));
+            presets.addArrayElement(item);
+        }
+        freeze.addMember("length_presets", presets);
+        auto fractions = choc::value::createEmptyArray();
+        for (const auto& fraction : kLengthFractions)
+            fractions.addArrayElement(std::string(fraction.text));
+        freeze.addMember("length_fractions", fractions);
+        freeze.addMember("length_max_bars", static_cast<std::int32_t>(kMaxLengthBars));
     }
     return freeze;
 }
@@ -1029,25 +1059,58 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 make_freeze_payload_(plugin, /*with_settings=*/false));
         });
 
-    // Freeze's hold length. A Settings value like the two above: persisted
-    // in the plugin state, never a host parameter. Clamped, and the value in
-    // force is returned so the control shows what the processor will use.
-    bridge.add_handler("freeze_hold_set",
+    // Freeze's Length, from the header dropdown or its Custom length
+    // popover: {bars: integer, fraction: "1/8"}. Validated here by the one
+    // model function (validate_length), whatever the editor checked: a
+    // refused length leaves the length in force untouched. A common length
+    // selects its preset; anything else becomes the custom length. One host
+    // gesture, so automation records it.
+    bridge.add_handler("freeze_length_set",
         [&plugin](const choc::value::ValueView& p) -> std::string {
-            if (!p.isObject() || !p.hasObjectMember("seconds"))
-                return EditorBridge::err_response("seconds missing");
-            const auto& value = p["seconds"];
-            double seconds = 0.0;
-            if (value.isFloat64()) seconds = value.getFloat64();
-            else if (value.isFloat32()) seconds = value.getFloat32();
-            else if (value.isInt32()) seconds = value.getInt32();
-            else if (value.isInt64()) seconds = static_cast<double>(value.getInt64());
-            else return EditorBridge::err_response("seconds must be a number");
-            if (!std::isfinite(seconds))
-                return EditorBridge::err_response("seconds must be finite");
-            plugin.set_freeze_hold_seconds(seconds);
+            if (!p.isObject() || !p.hasObjectMember("bars")
+                || !p.hasObjectMember("fraction"))
+                return EditorBridge::err_response("bars and fraction required");
+            const auto& bars = p["bars"];
+            const auto& fraction = p["fraction"];
+            std::int64_t bars_value = 0;
+            if (bars.isInt32()) bars_value = bars.getInt32();
+            else if (bars.isInt64()) bars_value = bars.getInt64();
+            else if (bars.isFloat64() && std::isfinite(bars.getFloat64())
+                     && bars.getFloat64() == std::floor(bars.getFloat64())
+                     && std::abs(bars.getFloat64()) < 1.0e9)
+                bars_value = static_cast<std::int64_t>(bars.getFloat64());
+            else return EditorBridge::err_response("bars must be an integer");
+            if (!fraction.isString())
+                return EditorBridge::err_response("fraction must be a string");
+            const int fraction_index = fraction_index_from_text(fraction.getString());
+            const int bars_int = bars_value < 0 ? -1
+                : bars_value > kMaxLengthBars ? kMaxLengthBars + 1
+                : static_cast<int>(bars_value);
+            switch (validate_length(bars_int, fraction_index)) {
+                case LengthError::none: break;
+                case LengthError::bars_below_zero:
+                    return EditorBridge::err_response("bars must not be negative");
+                case LengthError::bars_above_limit:
+                    return EditorBridge::err_response("bars must be at most 128");
+                case LengthError::unknown_fraction:
+                    return EditorBridge::err_response("unknown fraction");
+                case LengthError::zero_length:
+                    return EditorBridge::err_response("length must be longer than zero");
+            }
+            const auto length = make_length(bars_int, fraction_index);
+            if (!length || !plugin.set_freeze_length_from_editor(*length))
+                return EditorBridge::err_response("freeze length unavailable");
             return EditorBridge::ok_response(
-                make_freeze_payload_(plugin, /*with_settings=*/true));
+                make_freeze_payload_(plugin, /*with_settings=*/false));
+        });
+
+    // The Length as it stands now, for an editor about to show it: its
+    // seconds and the loop cap depend on the host tempo, which moves without
+    // a projection.
+    bridge.add_handler("freeze_length_get",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            return EditorBridge::ok_response(
+                make_freeze_payload_(plugin, /*with_settings=*/false));
         });
 
     bridge.add_handler("morph_viewport_set",

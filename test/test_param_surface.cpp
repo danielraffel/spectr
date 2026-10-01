@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 152;  // +4 macros, +freeze
+constexpr std::size_t kExpectedParamCount = 153;  // +4 macros, +freeze, +freeze length
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {
@@ -108,6 +108,21 @@ TEST_CASE("#34: the full static parameter surface is registered") {
     CHECK(freeze->name == "Freeze");
     CHECK(freeze->kind == pulp::state::ParamKind::Toggle);
     CHECK(freeze->range.default_value == 0.0f);
+
+    // Freeze Length follows it: the header's common lengths, then Custom,
+    // each named by the one length formatter.
+    const auto* length = find(w.store, 4);
+    REQUIRE(length != nullptr);
+    CHECK(length->name == "Freeze Length");
+    CHECK(length->kind == pulp::state::ParamKind::Enum);
+    CHECK(length->range.default_value == 0.0f);
+    CHECK(length->range.max == 4.0f);
+    REQUIRE(length->value_labels.size() == 5);
+    CHECK(length->value_labels[0] == "1 bar");
+    CHECK(length->value_labels[1] == "2 bars");
+    CHECK(length->value_labels[2] == "4 bars");
+    CHECK(length->value_labels[3] == "8 bars");
+    CHECK(length->value_labels[4] == "Custom");
 }
 
 TEST_CASE("#34: reserved ID ranges stay empty") {
@@ -117,7 +132,7 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     REQUIRE(find(w.store, 1) != nullptr);
 
     // Legacy global growth headroom between Freeze and the band block.
-    CHECK(find(w.store, 4) == nullptr);
+    CHECK(find(w.store, 5) == nullptr);
     CHECK(find(w.store, 99) == nullptr);
     // Reserved tails between the band blocks and the control block.
     CHECK(find(w.store, 1064) == nullptr);

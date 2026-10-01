@@ -84,9 +84,11 @@
 //  type="mode_set"          — payload: {kind: motion|analyzer|edit|visualization,
 //                                       value: the corresponding editor label}
 //                             effect: StateStore::set_value(id, value)
-//  type="freeze_hold_set"   — payload: {seconds: number}
-//                             effect: Spectr::set_freeze_hold_seconds(seconds);
-//                             the response carries the clamped value
+//  type="freeze_length_set" — payload: {bars: integer, fraction: "1/8"}
+//                             effect: Spectr::set_freeze_length_from_editor;
+//                             an invalid length is refused and changes nothing
+//  type="freeze_length_get" — the freeze payload as it stands (its seconds
+//                             follow the host tempo)
 
 #include <pulp/view/editor_bridge.hpp>
 

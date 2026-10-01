@@ -53,6 +53,7 @@
 #include "spectr/viewport.hpp"
 #include "spectr/editor_resize.hpp"
 #include "spectr/freeze_source.hpp"
+#include "spectr/freeze_length.hpp"
 #include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
 
@@ -533,18 +534,48 @@ public:
     [[nodiscard]] bool keyboard_shortcuts_in_daw() const noexcept;
     void set_keyboard_shortcuts_in_daw(bool enabled) noexcept;
 
-    /// Freeze's hold length: how many seconds of input the next freeze
-    /// averages into its held spectrum. Shorter holds closer to "now",
-    /// longer blends more of the recent past into a smoother hold. Clamped
-    /// to [FreezeSource::kMinHoldSeconds, kMaxHoldSeconds]; defaults to the
-    /// reference feel. A Settings value persisted in the supplemental
-    /// plugin-state blob, not a host parameter. Any thread.
-    [[nodiscard]] double freeze_hold_seconds() const noexcept {
-        return freeze_hold_seconds_.load(std::memory_order_relaxed);
+    /// Freeze's musical Length: how much of the incoming sound the next
+    /// freeze takes in (freeze_length.hpp). Host parameter 4 (Freeze Length)
+    /// picks one of the header's common lengths or "Custom", the custom
+    /// length below, which is persisted in the supplemental plugin-state
+    /// blob. The length in force, from either. Any thread.
+    [[nodiscard]] FreezeLength freeze_length() const noexcept;
+    /// The Freeze Length parameter as a preset index; kLengthPresetCustom
+    /// selects freeze_custom_length().
+    [[nodiscard]] int freeze_length_preset() const noexcept;
+    [[nodiscard]] FreezeLength freeze_custom_length() const noexcept {
+        return unpack_length(freeze_custom_length_.load(std::memory_order_relaxed));
     }
-    void set_freeze_hold_seconds(double seconds) noexcept {
-        freeze_hold_seconds_.store(FreezeSource::clamp_hold_seconds(seconds),
-                                   std::memory_order_relaxed);
+    /// Store a custom length. Refuses (false) an invalid one. Any thread.
+    bool set_freeze_custom_length(FreezeLength length) noexcept;
+    /// The editor's commit of a length: a common one selects its preset, any
+    /// other becomes the custom length and selects "Custom"; the parameter
+    /// moves inside one host gesture, like set_freeze_from_editor. UI
+    /// thread. False for an invalid length or before the store exists.
+    bool set_freeze_length_from_editor(FreezeLength length) noexcept;
+
+    /// The host transport the audio thread last saw (120 BPM 4/4 until it
+    /// has seen one, and wherever the host gives none). Any thread.
+    [[nodiscard]] double transport_tempo_bpm() const noexcept {
+        return transport_tempo_bpm_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] int transport_time_sig_numerator() const noexcept {
+        return transport_time_sig_numerator_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] int transport_time_sig_denominator() const noexcept {
+        return transport_time_sig_denominator_.load(std::memory_order_relaxed);
+    }
+    /// The Length in seconds at that transport.
+    [[nodiscard]] double freeze_length_seconds() const noexcept;
+    /// The longest loop this instance holds at its sample rate and channel
+    /// count (FreezeSource::loop_cap_seconds).
+    [[nodiscard]] double freeze_loop_cap_seconds() const noexcept;
+
+    /// Tests and diagnostics: hold exactly `seconds` instead of the Length
+    /// converted at the transport tempo; negative turns it off. Not
+    /// persisted, not reachable from the editor or a host.
+    void set_freeze_seconds_override(double seconds) noexcept {
+        freeze_seconds_override_.store(seconds, std::memory_order_relaxed);
     }
 
     /// The editor's write of Freeze (the LIVE / FROZEN toggle, its keys):
@@ -796,7 +827,22 @@ private:
     // hold to the new realisation instead of dropping it. Prepared with the
     // processor; its members belong to the audio thread afterwards.
     FreezeSource                           freeze_source_{};
-    std::atomic<double> freeze_hold_seconds_{FreezeSource::kDefaultHoldSeconds};
+    std::atomic<std::uint32_t> freeze_custom_length_{pack_length(kDefaultFreezeLength)};
+    std::atomic<double> transport_tempo_bpm_{kFallbackTempoBpm};
+    std::atomic<int> transport_time_sig_numerator_{4};
+    std::atomic<int> transport_time_sig_denominator_{4};
+    std::atomic<double> freeze_seconds_override_{-1.0};
+    // Audio -> worker: build bigger loop rings off the audio thread, and free
+    // the ones the source let go of (FreezeSource LOOP MEMORY). Declared
+    // after freeze_source_ so it is joined before the source is destroyed.
+    struct FreezeStorageTask { double seconds = 0.0; };
+    pulp::format::BackgroundTaskLane<FreezeStorageTask, 8> freeze_storage_lane_;
+    bool freeze_storage_collect_sent_ = false;   // audio thread
+    static void freeze_storage_trampoline_(void* ctx, const FreezeStorageTask& task) noexcept;
+    void start_freeze_storage_lane_();
+    /// The seconds the next freeze takes in at a transport (or the override).
+    [[nodiscard]] double freeze_hold_seconds_at_(double tempo_bpm, int numerator,
+                                                 int denominator) const noexcept;
     void preroll_surviving_hold_();
     std::array<const float*, kMaximumChannels> input_channels_{};
     std::array<float*, kMaximumChannels>       output_channels_{};
@@ -818,9 +864,9 @@ private:
     // 129 viewport center, 130 viewport width, 131 band count, then motion,
     // analyzer, edit, and visualization at 132..135, then internal LFO
     // enabled/shape/rate/depth/target at 136..140, LFO 2
-    // enabled/shape/rate/depth at 141..144, Macro 1..4 at 145..148, and
-    // Freeze at 149.
-    static constexpr std::size_t kSurfaceCacheSlots = 150;
+    // enabled/shape/rate/depth at 141..144, Macro 1..4 at 145..148,
+    // Freeze at 149 and Freeze Length at 150.
+    static constexpr std::size_t kSurfaceCacheSlots = 151;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
     // The audio thread's OWN record of the surface values it last pushed into

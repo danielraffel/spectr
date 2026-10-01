@@ -146,6 +146,24 @@ void register_surface_params(pulp::state::StateStore& store) {
         add_enum_labels(info, {"Live", "Frozen"});
         store.add_parameter(info);
     }
+    {
+        // How much the next freeze takes in. An enum of the header's common
+        // lengths plus "Custom" (the bars + fraction in the plugin state):
+        // a host can automate it, and like Freeze it moves neither latency
+        // nor topology. Every valid length (129 x 17) as one stepped lane
+        // would be unusable to draw automation on.
+        pulp::state::ParamInfo info;
+        info.id = kParamFreezeLength;
+        info.name = "Freeze Length";
+        info.range = {0.0f, static_cast<float>(kLengthPresetCustom),
+                      static_cast<float>(kDefaultLengthPreset), 1.0f};
+        info.group_id = kGroupGlobal;
+        info.kind = pulp::state::ParamKind::Enum;
+        for (const auto& preset : kLengthPresets)
+            info.value_labels.emplace_back(length_label(preset));
+        info.value_labels.emplace_back("Custom");
+        store.add_parameter(info);
+    }
 
     for (std::size_t i = 0; i < kMaxBands; ++i) {
         pulp::state::ParamInfo info;
@@ -537,6 +555,16 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     {
         const float value = store->get_value(kParamFreeze);
         auto& cached = applied_param_cache_[detail::kSlotFreeze];
+        if (value != cached.load(std::memory_order_relaxed)) {
+            cached.store(value, std::memory_order_relaxed);
+            editor_changed = true;
+        }
+    }
+    // Freeze Length likewise: the audio thread reads it each block, and a
+    // host-side change only has to reach the header's dropdown.
+    {
+        const float value = store->get_value(kParamFreezeLength);
+        auto& cached = applied_param_cache_[detail::kSlotFreezeLength];
         if (value != cached.load(std::memory_order_relaxed)) {
             cached.store(value, std::memory_order_relaxed);
             editor_changed = true;
