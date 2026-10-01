@@ -100,6 +100,9 @@ public:
     /// never lands in one callback) and sounds after them: its note latency.
     static constexpr int kVoicePrepareSamples = 512;
     static constexpr int kPrepareSteps = 1 + kVoiceFftSize / kVoiceHop;
+    /// Successive voices start this far apart in their hop (mod kVoiceHop):
+    /// eight in a row land on eight distinct eighths of it.
+    static constexpr std::uint64_t kHopStagger = 640;
 
     static constexpr int kMaxEvents = 512;
     /// Longest stretch rendered at once while keys sound: the live leg's fade
@@ -720,7 +723,11 @@ private:
             if (v.prepare_step == 0) {
                 layout_voice_(v);
                 std::fill(v.ola.begin(), v.ola.end(), 0.0f);
-                v.hop_pos = 0;
+                // Where in its hop the voice starts. The pre-roll frames sit
+                // at the hop boundaries before ola[0] whatever this is, so any
+                // start is a full overlap; staggering it keeps a chord's
+                // voices from all drawing their next frame in one callback.
+                v.hop_pos = static_cast<int>((v.age * kHopStagger) % kVoiceHop);
                 continue;
             }
             const int back = kPrepareSteps - 1 - v.prepare_step;

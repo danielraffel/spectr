@@ -2,10 +2,12 @@
 #include <catch2/catch_approx.hpp>
 
 #include <pulp/audio/buffer.hpp>
+#include <pulp/format/detail/vst3_midi_mapping.hpp>
 #include <pulp/format/headless.hpp>
 #include <pulp/format/quirk_apply.hpp>
 #include <pulp/host/plugin_slot.hpp>
 #include <pulp/midi/buffer.hpp>
+#include <pulp/signal/fft.hpp>
 
 #include "spectr/spectr.hpp"
 #include "spectr/param_surface.hpp"
@@ -320,7 +322,16 @@ float render_tone_peak(pulp::host::PluginSlot& slot,
 void check_loaded_artifact_surface(pulp::host::PluginSlot& slot,
                                    bool loader_reports_bypass_flag) {
     CHECK(slot.info().name == kExpectedArtifactName);
-    const auto parameters = slot.parameters();
+    auto parameters = slot.parameters();
+#if defined(SPECTR_TEST_FREEZE_KEYS)
+    // A VST3 that takes MIDI also registers the SDK's hidden MIDI-controller
+    // proxy parameters (IMidiMapping: 16 channels x 130 controllers). They
+    // are the format's, not Spectr's surface.
+    std::erase_if(parameters, [](const pulp::host::HostParamInfo& p) {
+        return p.id >= pulp::format::detail::kVst3MidiCcParamBase
+            && p.id < pulp::format::detail::kVst3MidiCcParamEnd;
+    });
+#endif
     check_host_parameter_contract(parameters, loader_reports_bypass_flag);
     for (const auto& parameter : parameters) {
         INFO("parameter " << parameter.name << " id=" << parameter.id
@@ -336,6 +347,67 @@ void check_loaded_artifact_surface(pulp::host::PluginSlot& slot,
          << ", settle_blocks=" << kSettleBlocks);
     CHECK(render_tone_peak(slot, 0, kSettleBlocks) > 0.1f);
 }
+
+#if defined(SPECTR_TEST_FREEZE_KEYS)
+// Freeze Keys across the format boundary: a 220 Hz tone, Freeze set through
+// the host parameter, then a note seven semitones above the root in the
+// host's MIDI buffer. The output must move from the tone's own pitch (the
+// hold, before the note: the control) to a fifth above it.
+double strongest_hz(const std::vector<float>& x, std::size_t from, std::size_t n) {
+    constexpr int N = 262144;
+    static const pulp::signal::Fft fft(N);
+    std::vector<float> buf(N, 0.0f);
+    std::vector<std::complex<float>> spec(N);
+    for (std::size_t i = 0; i < n; ++i)
+        buf[i] = x[from + i] * float(0.5 - 0.5 * std::cos(2.0 * 3.14159265358979323846 * double(i) / double(n)));
+    fft.forward_real(buf.data(), spec.data());
+    std::size_t best = 2;
+    for (std::size_t k = 2; k + 2 < std::size_t(N / 2); ++k)
+        if (std::abs(spec[k]) > std::abs(spec[best])) best = k;
+    const double a = std::log(std::abs(spec[best - 1]) + 1e-20);
+    const double b = std::log(std::abs(spec[best]) + 1e-20);
+    const double c = std::log(std::abs(spec[best + 1]) + 1e-20);
+    return (double(best) + 0.5 * (a - c) / (a - 2 * b + c)) * 48000.0 / N;
+}
+
+void check_freeze_keys(pulp::host::PluginSlot& slot) {
+    std::vector<float> left(kBlockSize), right(kBlockSize);
+    std::vector<float> out_left(kBlockSize), out_right(kBlockSize);
+    const float* inputs[] = {left.data(), right.data()};
+    float* outputs[] = {out_left.data(), out_right.data()};
+    auto input = pulp::audio::BufferView<const float>(inputs, 2, kBlockSize);
+    auto output = pulp::audio::BufferView<float>(outputs, 2, kBlockSize);
+    pulp::midi::MidiBuffer midi_in, midi_out;
+    midi_in.reserve_events(16);
+    pulp::host::ParameterEventQueue parameter_events;
+    std::vector<float> rendered;
+    const int blocks = int(4.0 * 48000.0) / kBlockSize;
+    const int freeze_block = int(1.0 * 48000.0) / kBlockSize;
+    const int note_block = int(2.0 * 48000.0) / kBlockSize;
+    for (int block = 0; block < blocks; ++block) {
+        for (int i = 0; i < kBlockSize; ++i) {
+            const double t = double(block * kBlockSize + i) / 48000.0;
+            left[std::size_t(i)] = right[std::size_t(i)] =
+                float(0.3 * std::sin(2.0 * 3.14159265358979323846 * 220.0 * t));
+        }
+        if (block == freeze_block) slot.set_parameter(spectr::kParamFreeze, 1.0f);
+        midi_in.clear();
+        if (block == note_block) {
+            auto on = pulp::midi::MidiEvent::note_on(0, 67, 127);
+            on.sample_offset = 100;
+            midi_in.add(on);
+        }
+        slot.process(output, input, midi_in, midi_out, parameter_events, kBlockSize);
+        rendered.insert(rendered.end(), out_left.begin(), out_left.end());
+    }
+    const auto window = std::size_t(16384);
+    const double held = strongest_hz(rendered, std::size_t(1.5 * 48000), window);
+    const double played = strongest_hz(rendered, std::size_t(3.4 * 48000), window);
+    CAPTURE(held, played);
+    CHECK(std::abs(1200.0 * std::log2(held / 220.0)) < 3.0);
+    CHECK(std::abs(1200.0 * std::log2(played / (220.0 * std::exp2(7.0 / 12.0)))) < 3.0);
+}
+#endif
 
 void check_built_artifact(const std::filesystem::path& bundle,
                           pulp::host::PluginFormat format) {
@@ -367,6 +439,15 @@ void check_built_artifact(const std::filesystem::path& bundle,
     REQUIRE(slot->restore_state(make_all_muted_state()));
     CHECK(render_tone_peak(*slot, kSettleBlocks, kSettleBlocks) == 0.0f);
     slot->release();
+#if defined(SPECTR_TEST_FREEZE_KEYS)
+    {
+        auto keys = pulp::host::PluginSlot::load(info);
+        REQUIRE(keys != nullptr);
+        REQUIRE(keys->prepare(48000.0, kBlockSize));
+        check_freeze_keys(*keys);
+        keys->release();
+    }
+#endif
 }
 
 #if defined(SPECTR_HAVE_TEST_AU)
@@ -584,6 +665,15 @@ TEST_CASE("Pulp host loads and processes the built Spectr AU artifact") {
     CHECK(render_tone_peak(*slot, 3 * kSettleBlocks, 2 * kSettleBlocks) > 0.1f);
 
     slot->release();
+#if defined(SPECTR_TEST_FREEZE_KEYS)
+    {
+        auto keys = pulp::host::PluginSlot::load(info);
+        REQUIRE(keys != nullptr);
+        REQUIRE(keys->prepare(48000.0, kBlockSize));
+        check_freeze_keys(*keys);
+        keys->release();
+    }
+#endif
 }
 #endif
 

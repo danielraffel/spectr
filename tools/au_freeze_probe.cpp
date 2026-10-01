@@ -36,6 +36,10 @@
 //                           its buffer is replaced by silence before scoring)
 //       [--notify-reset]   (act like a host that Resets the unit when the
 //                           tail time it reads changes)
+//       [--keys]           (Freeze Keys: a MIDI-receiving build -- an aumf,
+//                           so pass --bundle -- gets an 8-note chord through
+//                           MusicDeviceMIDIEvent while each tap holds; see
+//                           keys_check())
 // Exit: 0 clean, 1 a problem (click, fade overshoot, dropout, slow edge,
 // render-thread tail notification), 2 setup error.
 
@@ -571,6 +575,8 @@ struct Host {
 
 struct Tap { std::size_t press, release; };
 
+struct Midi { std::size_t at; UInt32 status, data1, data2; };
+
 struct RenderResult {
     Stereo out;
     std::vector<double> block_us;
@@ -580,9 +586,12 @@ struct RenderResult {
     int latency = 0;
     int resets = 0;
     double hold_seconds_read_back = -1.0;
+    int midi_errors = 0;
+    OSStatus midi_status = noErr;
 };
 
-RenderResult render(const Options& o, const Stereo& input, const std::vector<Tap>* taps) {
+RenderResult render(const Options& o, const Stereo& input, const std::vector<Tap>* taps,
+                    const std::vector<Midi>* midi = nullptr) {
     RenderResult result;
     Host host(o);
     host.in = &input;
@@ -599,6 +608,7 @@ RenderResult render(const Options& o, const Stereo& input, const std::vector<Tap
         for (const auto& t : *taps) { events.push_back({t.press, 1.0f}); events.push_back({t.release, 0.0f}); }
     std::sort(events.begin(), events.end());
     std::size_t next_event = 0;
+    std::size_t next_midi = 0;
     std::size_t pos = 0;
     while (pos < total) {
         UInt32 frames = o.varied ? varied(rng) : o.block;
@@ -624,6 +634,13 @@ RenderResult render(const Options& o, const Stereo& input, const std::vector<Tap
                 // of the block it falls in.
                 AudioUnitSetParameter(host.au, kParamFreeze, kAudioUnitScope_Global, 0, value, 0);
             }
+        }
+        // MIDI for this block, at its sample, the way a host schedules it.
+        while (midi && next_midi < midi->size() && (*midi)[next_midi].at < pos + frames) {
+            const auto& m = (*midi)[next_midi++];
+            const OSStatus ms = MusicDeviceMIDIEvent(host.au, m.status, m.data1, m.data2,
+                                                     UInt32(m.at > pos ? m.at - pos : 0));
+            if (ms != noErr) { ++result.midi_errors; result.midi_status = ms; }
         }
         AudioBufferList* abl = static_cast<AudioBufferList*>(std::calloc(1, sizeof(AudioBufferList) + sizeof(AudioBuffer)));
         abl->mNumberBuffers = 2;
@@ -727,8 +744,99 @@ int hold_check(Options o) {
     return bad ? 1 : 0;
 }
 
+// ── Freeze Keys, end to end ─────────────────────────────────────────────────
+//
+// The same taps three ways: unpressed (the cost reference), pressed, and
+// pressed with an 8-note chord played into each hold. Through the real AU the
+// chord must reach the unit (MusicDeviceMIDIEvent accepted -- an aumf whose
+// factory lacks the MIDI selectors answers -4 -- and the played output
+// differs from the plain hold), cost no more per render call than the gate
+// allows from its note-on through its voices' preparation, change nothing
+// before the first note, and leave nothing once each Freeze is released and
+// the live input is back.
+int keys_check(const Options& o, const std::vector<Tap>& taps, const Stereo& input,
+               int repeat, double max_cost_ratio) {
+    static constexpr UInt32 chord[] = {48, 52, 55, 60, 64, 67, 71, 72};
+    std::vector<Midi> midi;
+    struct Played { std::size_t on, off; };
+    std::vector<Played> played;
+    for (const auto& t : taps) {
+        // After the hold has engaged; mid-block, as a host delivers it.
+        const std::size_t on = t.press + std::size_t(0.25 * o.sr) + 37;
+        const std::size_t off = t.release - std::size_t(0.15 * o.sr);
+        if (off <= on + std::size_t(0.1 * o.sr)) continue;
+        for (const UInt32 n : chord) midi.push_back({on, 0x90, n, 112});
+        for (const UInt32 n : chord) midi.push_back({off, 0x80, n, 0});
+        played.push_back({on, off});
+    }
+    auto control = render(o, input, nullptr);
+    auto pressed = render(o, input, &taps);
+    auto keys = render(o, input, &taps, &midi);
+    for (int r = 1; r < repeat; ++r) {
+        const auto c = render(o, input, nullptr);
+        const auto k = render(o, input, &taps, &midi);
+        for (std::size_t b = 0; b < control.block_us.size(); ++b)
+            control.block_us[b] = std::min(control.block_us[b], c.block_us[b]);
+        for (std::size_t b = 0; b < keys.block_us.size(); ++b)
+            keys.block_us[b] = std::min(keys.block_us[b], k.block_us[b]);
+    }
+    if (!o.wav.empty()) write_wav(o.wav, keys.out, o.sr);
+    const double control_max = *std::max_element(control.block_us.begin(), control.block_us.end());
+    const auto lat = std::size_t(keys.latency);
+    const auto diff = [&](std::size_t from, std::size_t to) {
+        double d = 0.0;
+        to = std::min(to, keys.out.size());
+        for (std::size_t n = from; n < to; ++n)
+            d = std::max({d, double(std::fabs(keys.out.l[n] - pressed.out.l[n])),
+                          double(std::fabs(keys.out.r[n] - pressed.out.r[n]))});
+        return d;
+    };
+    std::printf("keys probe sr=%.0f block=%u mode=%s latency=%d: %zu chords of 8 notes; "
+                "MusicDeviceMIDIEvent errors %d (last status %d)\n",
+                o.sr, o.block, o.mode.c_str(), keys.latency, played.size(), keys.midi_errors,
+                int(keys.midi_status));
+    int bad = keys.midi_errors > 0 ? 1 : 0;
+    if (played.empty()) ++bad;
+    double worst_cost = 0.0;
+    for (std::size_t k = 0; k < played.size(); ++k) {
+        const auto& p = played[k];
+        const double sounding = diff(p.on + lat + std::size_t(0.05 * o.sr), p.off + lat);
+        const std::size_t live_from = taps[k].release + lat + std::size_t(0.4 * o.sr);
+        const std::size_t live_to = k + 1 < taps.size() ? taps[k + 1].press + lat : keys.out.size();
+        const double after = diff(live_from, live_to);
+        // From the note-on's render call through its voices' preparation.
+        double cost = 0.0;
+        for (std::size_t b = 0; b < keys.block_start.size(); ++b)
+            if (keys.block_start[b] + keys.block_frames[b] > p.on
+                && keys.block_start[b] < p.on + std::size_t(0.05 * o.sr))
+                cost = std::max(cost, keys.block_us[b]);
+        worst_cost = std::max(worst_cost, cost);
+        const bool deaf = !(sounding > 0.01);
+        const bool residue = !(after < 1e-4);
+        const bool slow = max_cost_ratio > 0.0 && cost > max_cost_ratio * control_max;
+        if (deaf || residue || slow) ++bad;
+        if (!o.quiet || deaf || residue || slow)
+            std::printf("  chord %2zu @%8zu  played vs plain hold %.3f  after release %.2g  "
+                        "cost %5.0f us (%.1fx)%s%s%s\n", k, p.on, sounding, after, cost,
+                        cost / std::max(control_max, 1.0), deaf ? "  NO-KEYS" : "",
+                        residue ? "  RESIDUE" : "", slow ? "  SLOW" : "");
+    }
+    const double before = played.empty() ? 0.0 : diff(0, played[0].on + lat);
+    if (!(before < 1e-5)) ++bad;
+    std::printf("before the first note: keys vs plain hold %.2g; chord cost worst %.0f us "
+                "(%.1fx the costliest call without freeze, %.0f us; budget %.0f us)\n",
+                before, worst_cost, worst_cost / std::max(control_max, 1.0), control_max,
+                1e6 * o.block / o.sr);
+    if (max_cost_ratio > 0.0)
+        std::printf("cost gate: a chord's note-on may cost at most %.1fx the costliest call without freeze\n",
+                    max_cost_ratio);
+    std::printf("%s: %d problem(s)\n", bad ? "FAIL" : "OK", bad);
+    return bad ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
     Options o;
+    bool check_keys = false;
     int repeat = 1;
     double max_cost_ratio = 0.0;
     bool forbid_notifications = false;
@@ -757,6 +865,7 @@ int main(int argc, char** argv) {
         else if (a == "--deadline") deadline = std::atof(next().c_str());
         else if (a == "--hold-check") check_hold = true;
         else if (a == "--hold-seconds") o.hold_seconds = std::atof(next().c_str());
+        else if (a == "--keys") check_keys = true;
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
 
@@ -776,6 +885,7 @@ int main(int argc, char** argv) {
     }
     const double seconds = t + 1.0;
     const Stereo input = material(o, seconds);
+    if (check_keys) return keys_check(o, taps, input, repeat, max_cost_ratio);
 
     // Renders are deterministic, so repeats split into the same blocks; the
     // cheapest time each block took is its cost with scheduling noise removed.

@@ -468,6 +468,33 @@ TEST_CASE("Freeze Keys: a key pressed while the freeze arms sounds once the hold
     CHECK(std::abs(cents(220.0 * ratio(7), p[0].first)) < 3.0);
 }
 
+TEST_CASE("Freeze Keys: notes start, stop and switch the bus without a click", "[freeze-keys]") {
+    // A sine's second difference is tiny (0.3 (2 pi f / fs)^2: ~1e-4 at
+    // 220 Hz); a step anywhere -- a note that starts or stops at full level,
+    // the hold cut off under the first note -- is a sample-sized jump many
+    // times that. Every edge here is a note-on, a note-off, a chord, the
+    // first key into the hold, and the release of Freeze under held notes.
+    const auto input = sine(220.0, 4.0);
+    for (const auto& hold : kHolds) {
+        CAPTURE(hold.name);
+        const auto r = render(input, {{Edge::freeze, at(0.6)},
+                                      {Edge::on, at(1.5), 60}, {Edge::off, at(1.9), 60},
+                                      {Edge::on, at(2.0), 64}, {Edge::on, at(2.1), 67},
+                                      {Edge::off, at(2.5), 64}, {Edge::on, at(2.6), 55},
+                                      {Edge::unfreeze, at(3.0)}},
+                              hold.seconds);
+        double worst = 0.0;
+        std::size_t where = 0;
+        for (std::size_t n = at(1.0); n + 2 < r.out.size(); ++n)
+            for (const auto* x : {&r.out.l, &r.out.r}) {
+                const double d2 = std::abs(double((*x)[n + 2]) - 2.0 * (*x)[n + 1] + (*x)[n]);
+                if (d2 > worst) { worst = d2; where = n; }
+            }
+        CAPTURE(worst, double(where) / kRate);
+        CHECK(worst < 0.01);
+    }
+}
+
 TEST_CASE("Freeze Keys: report the cost of an 8-note chord's note-on", "[freeze-keys][.report]") {
     const auto input = pad(3.0);
     for (const auto& hold : kHolds) {
@@ -481,5 +508,50 @@ TEST_CASE("Freeze Keys: report the cost of an 8-note chord's note-on", "[freeze-
                         hold.name, block, chord.max_edge_ms, chord.max_block_ms, plain.max_block_ms,
                         1000.0 * block / kRate);
         }
+    }
+}
+
+namespace {
+
+void write_wav(const std::string& path, const Stereo& s, std::size_t trim) {
+    FILE* f = std::fopen(path.c_str(), "wb");
+    REQUIRE(f != nullptr);
+    const auto frames = std::uint32_t(s.size() - trim), bytes = frames * 8;
+    const auto u32 = [&](std::uint32_t v) { std::fwrite(&v, 4, 1, f); };
+    const auto u16 = [&](std::uint16_t v) { std::fwrite(&v, 2, 1, f); };
+    std::fwrite("RIFF", 1, 4, f); u32(36 + bytes); std::fwrite("WAVEfmt ", 1, 8, f);
+    u32(16); u16(3); u16(2); u32(std::uint32_t(kRate)); u32(std::uint32_t(kRate) * 8); u16(8); u16(32);
+    std::fwrite("data", 1, 4, f); u32(bytes);
+    for (std::size_t n = trim; n < s.size(); ++n) { std::fwrite(&s.l[n], 4, 1, f); std::fwrite(&s.r[n], 4, 1, f); }
+    std::fclose(f);
+}
+
+} // namespace
+
+TEST_CASE("Freeze Keys: render a melody over a frozen pad to WAV", "[freeze-keys][.render]") {
+    // FREEZE_KEYS_WAV_DIR (default /tmp/freeze-keys) must exist.
+    const char* env = std::getenv("FREEZE_KEYS_WAV_DIR");
+    const std::string dir = env ? env : "/tmp/freeze-keys";
+    const auto input = pad(12.0);
+    // Freeze at 1 s; a melody from 2 s, a chord, then Freeze released at
+    // 10 s and the live pad again.
+    std::vector<Edge> edges{{Edge::freeze, at(1.0)}};
+    static constexpr int melody[] = {60, 62, 64, 67, 64, 62, 60, 55, 57, 60, 64, 72};
+    double t = 2.0;
+    for (int note : melody) {
+        edges.push_back({Edge::on, at(t), note, 100});
+        edges.push_back({Edge::off, at(t + 0.36), note});
+        t += 0.42;
+    }
+    for (int note : {48, 55, 60, 64, 67}) edges.push_back({Edge::on, at(t + 0.2), note, 96});
+    for (int note : {48, 55, 60, 64, 67}) edges.push_back({Edge::off, at(t + 2.2), note});
+    edges.push_back({Edge::unfreeze, at(10.0)});
+    write_wav(dir + "/pad-input.wav", input, 0);
+    for (const auto& hold : kHolds) {
+        const auto r = render(input, edges, hold.seconds);
+        write_wav(dir + "/melody-over-frozen-pad-" + hold.name + ".wav", r.out, std::size_t(r.latency));
+        // The same freeze without keys, for A/B.
+        const auto plain = render(input, {{Edge::freeze, at(1.0)}, {Edge::unfreeze, at(10.0)}}, hold.seconds);
+        write_wav(dir + "/frozen-pad-no-keys-" + hold.name + ".wav", plain.out, std::size_t(plain.latency));
     }
 }

@@ -3825,6 +3825,24 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
         Spectr-au-freeze-host-loop
         PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
+    # Freeze Keys (an aumf dev build): an 8-note chord into every hold, through
+    # MusicDeviceMIDIEvent. It must reach the unit, stay inside the same cost
+    # gate from its note-on on, and leave the live render behind on release.
+    if(_spectr_id_FREEZE_KEYS)
+        add_test(NAME Spectr-au-freeze-keys-host
+            COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}" --keys
+                --block 128 --taps 6 --repeat 3 --max-cost-ratio 6 --quiet)
+        add_test(NAME Spectr-au-freeze-keys-host-mixing
+            COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}" --keys
+                --mode mixing --sr 44100 --block 256 --taps 6 --repeat 3
+                --max-cost-ratio 6 --quiet)
+        add_test(NAME Spectr-au-freeze-keys-host-loop
+            COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}" --keys
+                --hold-seconds 2 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6 --quiet)
+        set_tests_properties(Spectr-au-freeze-keys-host Spectr-au-freeze-keys-host-mixing
+            Spectr-au-freeze-keys-host-loop
+            PROPERTIES TIMEOUT 300 LABELS "freeze;au-host;freeze-keys")
+    endif()
 endif()
 
 # Artifact-level host proof: load the built CLAP, VST3 and AU through
@@ -3858,6 +3876,10 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         SPECTR_TEST_EXPECTED_NAME="${SPECTR_NATIVE_PLUGIN_NAME}")
+    if(_spectr_id_FREEZE_KEYS)
+        # The artifact takes MIDI: play it through each format's note input.
+        target_compile_definitions(Spectr-artifact-test PRIVATE SPECTR_TEST_FREEZE_KEYS=1)
+    endif()
     if(TARGET ${SPECTR_NATIVE_CLAP_TARGET})
         target_compile_definitions(Spectr-artifact-test PRIVATE
             SPECTR_HAVE_TEST_CLAP=1
@@ -3880,7 +3902,7 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         target_compile_definitions(Spectr-artifact-test PRIVATE
             SPECTR_HAVE_TEST_AU=1
             SPECTR_TEST_AU_PATH="${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
-            SPECTR_TEST_AU_TYPE="aufx"
+            SPECTR_TEST_AU_TYPE="${_spectr_id_AU_TYPE}"
             SPECTR_TEST_AU_SUBTYPE="${SPECTR_NATIVE_PLUGIN_CODE}"
             SPECTR_TEST_AU_MANUFACTURER="${SPECTR_NATIVE_MANUFACTURER_CODE}")
         target_link_libraries(Spectr-artifact-test PRIVATE
@@ -3990,6 +4012,13 @@ add_test(NAME Spectr-render-path-clock-freeze
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
         ${CMAKE_CURRENT_SOURCE_DIR}/include/spectr/freeze_source.hpp)
 set_tests_properties(Spectr-render-path-clock-freeze PROPERTIES TIMEOUT 60)
+
+# Freeze Keys renders its voices on the same path, from the same callback.
+add_test(NAME Spectr-render-path-clock-freeze-keys
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/spectr/freeze_keys.hpp)
+set_tests_properties(Spectr-render-path-clock-freeze-keys PROPERTIES TIMEOUT 60)
 
 # The merge driver for the materialized editor document. That artifact is one
 # minified line, so git's default merge conflicts on ANY two changes to it --
