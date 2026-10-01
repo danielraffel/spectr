@@ -1340,6 +1340,18 @@ add_test(NAME Spectr-standalone-band-menu-keyboard
 set_tests_properties(Spectr-standalone-band-menu-keyboard PROPERTIES
     TIMEOUT 900
     RESOURCE_LOCK spectr_native_materialized_editor)
+# The Freeze LENGTH control driven through the standalone's own host routes:
+# click, hover, arrows, Return, Escape, the Custom length editor's keys and
+# fields, Apply / Cancel, and the checked custom row, each read back from the
+# control and from the processor.
+add_test(NAME Spectr-standalone-freeze-length
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/length_scenario_check.py
+        --binary ${CMAKE_CURRENT_BINARY_DIR}/Spectr.app/Contents/MacOS/Spectr
+        --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-standalone-freeze-length)
+set_tests_properties(Spectr-standalone-freeze-length PROPERTIES
+    TIMEOUT 900
+    RESOURCE_LOCK spectr_native_materialized_editor)
 # A two-finger trackpad scroll over Settings carries a sideways component;
 # the panel must scroll vertically and never move sideways. The vertical half
 # is the positive control that the wheel reached the panel at all.

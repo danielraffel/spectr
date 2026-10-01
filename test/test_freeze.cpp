@@ -19,6 +19,8 @@
 #include "spectr/spectr.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <functional>
 #include <string_view>
@@ -910,6 +912,123 @@ TEST_CASE("Freeze Length follows the host tempo and meter, and grows its memory 
         REQUIRE(rig.plugin->freeze_source().looping());
         CHECK(rig.plugin->freeze_source().loop_length()
               == static_cast<std::int64_t>(std::llround(c.seconds * kSampleRate)));
+    }
+}
+
+// THE PERIOD, MEASURED, ACROSS TEMPI, METERS AND LENGTHS.
+//
+// The host-transport matrix: 120 4/4, 90 4/4, 140 3/4 and 75 6/8, each with
+// 1/8, 1, 2, 1 1/8, 2 3/16 and 1/12 bar, plus a tempo change before the
+// engage. The transport is the ProcessContext the processor receives (tempo
+// in quarter notes per minute, as VST3, CLAP, AU and REAPER report it, so a
+// bar of 6/8 is 3 quarter notes). Common lengths go in through the host
+// parameter, custom ones through the editor's commit and then a session
+// save and restore into a fresh instance, which is what renders. The period
+// is MEASURED from the render: the lag, within 20 ms of the expected one, at
+// which the held noise best matches itself one pass later, refined to a
+// fraction of a sample. It must be bars x quarters-per-bar x 60 / tempo to
+// within 1 ms. A length under a quarter second is a spectral hold, which has
+// no period, and is checked as one.
+TEST_CASE("Freeze Length: the looped period matches the transport, measured",
+          "[freeze][freeze-length][render][matrix]") {
+    using spectr::FreezeLength;
+    using spectr::LengthFraction;
+    struct Transport { double bpm; int num, den; };
+    const Transport transports[] = {{120, 4, 4}, {90, 4, 4}, {140, 3, 4}, {75, 6, 8}};
+    const FreezeLength lengths[] = {
+        {0, LengthFraction::f1_8}, {1, LengthFraction::zero}, {2, LengthFraction::zero},
+        {1, LengthFraction::f1_8}, {2, LengthFraction::f3_16}, {0, LengthFraction::f1_12}};
+    const auto input = noise(23);
+    const auto measure = [&](const std::vector<float>& y, std::size_t engage, double expected,
+                             double& corr) {
+        const std::size_t start = engage + at(0.35);
+        const std::size_t win = at(0.4);
+        const auto exp = static_cast<long>(std::llround(expected * kSampleRate));
+        double best = -2.0;
+        long best_lag = exp;
+        std::vector<double> scores;
+        const long span = static_cast<long>(at(0.02));
+        for (long lag = exp - span; lag <= exp + span; ++lag) {
+            const double c = correlation(y, start, y, start + static_cast<std::size_t>(lag), win);
+            scores.push_back(c);
+            if (c > best) { best = c; best_lag = lag; }
+        }
+        const auto k = static_cast<std::size_t>(best_lag - (exp - span));
+        double frac = 0.0;
+        if (k > 0 && k + 1 < scores.size()) {
+            const double l = scores[k - 1], r = scores[k + 1];
+            const double d = l - 2.0 * best + r;
+            if (d != 0.0) frac = 0.5 * (l - r) / d;
+        }
+        corr = best;
+        return (static_cast<double>(best_lag) + frac) / kSampleRate;
+    };
+    struct Case { Transport t; FreezeLength length; double change_at = -1.0, change_bpm = 0.0; };
+    std::vector<Case> cases;
+    for (const auto& t : transports)
+        for (const auto& l : lengths) cases.push_back({t, l});
+    cases.push_back({{120, 4, 4}, {1, LengthFraction::zero}, 6.0, 90.0});
+    cases.push_back({{140, 3, 4}, {1, LengthFraction::f1_8}, 6.0, 100.0});
+    for (const auto& c : cases) {
+        const double final_bpm = c.change_at >= 0.0 ? c.change_bpm : c.t.bpm;
+        const double expected = spectr::length_seconds(c.length, final_bpm, c.t.num, c.t.den);
+        const double bar = spectr::length_seconds({1, LengthFraction::zero}, c.t.bpm, c.t.num, c.t.den);
+        const double engage = c.change_at >= 0.0 ? 10.0 : std::max(4.0 * bar, expected + 2.0);
+        const auto transport_at = [&](std::size_t n, pulp::format::ProcessContext& ctx) {
+            const bool changed = c.change_at >= 0.0 && n >= at(c.change_at);
+            transport(ctx, changed ? c.change_bpm : c.t.bpm, c.t.num, c.t.den);
+        };
+        INFO(c.t.bpm << " BPM " << c.t.num << "/" << c.t.den
+             << (c.change_at >= 0.0 ? " -> " + std::to_string(int(c.change_bpm)) + " BPM" : "")
+             << ", " << spectr::length_label(c.length) << ": expected " << expected << " s");
+        // Set the length the way it reaches a session: a common one on the
+        // host parameter, a custom one committed in the editor, saved, and
+        // restored into the instance that renders.
+        Rig rig(MaskRenderMode::zero_latency);
+        const int preset = spectr::preset_index_of(c.length);
+        if (preset >= 0) {
+            rig.set(spectr::kParamFreezeLength, static_cast<float>(preset));
+        } else {
+            Rig editor(MaskRenderMode::zero_latency);
+            REQUIRE(editor.plugin->set_freeze_length_from_editor(c.length));
+            const auto blob = editor.plugin->serialize_plugin_state();
+            rig.set(spectr::kParamFreezeLength,
+                    editor.host.state().get_value(spectr::kParamFreezeLength));
+            REQUIRE(rig.plugin->deserialize_plugin_state(blob));
+        }
+        REQUIRE(rig.plugin->freeze_length() == c.length);
+        const auto total = at(engage + 0.35 + 0.4 + expected * 1.05 + 0.3);
+        const auto out = rig.run(total, input,
+            [&](std::size_t n, auto&, pulp::format::ProcessContext& ctx) {
+                transport_at(n, ctx);
+                if (rig.hits(n, engage)) rig.set(spectr::kParamFreeze, 1.0f);
+            });
+        if (expected < FreezeSource::kLoopMinSeconds) {
+            CHECK(rig.plugin->freeze_source().hold_audible());
+            CHECK_FALSE(rig.plugin->freeze_source().looping());
+            if (std::getenv("SPECTR_LENGTH_TABLE") != nullptr)
+                std::printf("| %g %d/%d | %s | %s | %.6f | spectral hold | - | - |\n",
+                            c.t.bpm, c.t.num, c.t.den, spectr::length_label(c.length).c_str(),
+                            preset >= 0 ? "parameter" : "custom, saved + restored", expected);
+            continue;
+        }
+        REQUIRE(rig.plugin->freeze_source().looping());
+        double corr = 0.0;
+        const double period = measure(out.left, at(engage), expected, corr);
+        const double error_ms = (period - expected) * 1000.0;
+        CAPTURE(period, error_ms, corr);
+        CHECK(std::abs(error_ms) <= 1.0);
+        CHECK(corr > 0.99);
+        // The measured row, for the record (SPECTR_LENGTH_TABLE=1 prints it).
+        if (std::getenv("SPECTR_LENGTH_TABLE") != nullptr)
+            std::printf("| %g %d/%d%s | %s | %s | %.6f | %.6f | %+.4f | %.4f |\n",
+                        c.t.bpm, c.t.num, c.t.den,
+                        c.change_at >= 0.0
+                            ? (" -> " + std::to_string(int(c.change_bpm)) + " BPM before the engage").c_str()
+                            : "",
+                        spectr::length_label(c.length).c_str(),
+                        preset >= 0 ? "parameter" : "custom, saved + restored",
+                        expected, period, error_ms, corr);
     }
 }
 

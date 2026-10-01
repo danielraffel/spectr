@@ -127,8 +127,29 @@ function spectrCommitFreezeLength(bars, fraction) {
 }
 window.spectrCommitFreezeLength = spectrCommitFreezeLength;
 const SPECTR_LENGTH_FACE = @FACE@;
+// Spectr's own menu tokens, not copies: the row is `menuItem` (the preset
+// and overflow menus' row), the selected row takes the EDIT MODE and
+// ANALYZER menus' tint and edge, and the panel is theirs too.
 const SPECTR_LENGTH_ACCENT = "rgba(120,180,255,0.14)";
 const SPECTR_LENGTH_ACCENT_EDGE = "rgba(180,210,255,0.4)";
+const SPECTR_LENGTH_PANEL = {
+  background: "rgba(12,16,22,0.96)", border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 4, padding: 6, gap: 2, boxSizing: "border-box",
+  display: "flex", flexDirection: "column",
+  backdropFilter: "blur(10px)", boxShadow: "0 8px 30px rgba(0,0,0,0.5)"
+};
+function spectrLengthRowStyle(selected) {
+  const base = typeof menuItem === "object" && menuItem ? menuItem : {
+    background: "rgba(255,255,255,0.025)", border: "1px solid transparent",
+    color: "rgba(255,255,255,0.85)", fontFamily: "var(--mono)", fontSize: 10.5,
+    letterSpacing: 0.8, padding: "7px 10px", minHeight: 30, width: "100%",
+    boxSizing: "border-box", display: "flex", alignItems: "center",
+    justifyContent: "flex-start", gap: 6, textAlign: "left", cursor: "pointer",
+    borderRadius: 3 };
+  return Object.assign({}, base, { whiteSpace: "nowrap" }, selected ? {
+    background: SPECTR_LENGTH_ACCENT, border: "1px solid " + SPECTR_LENGTH_ACCENT_EDGE,
+    color: "#fff" } : {});
+}
 function SpectrLengthCheck({ on }) {
   // A drawn check: the bound mono face covers Basic Latin only.
   return /* @__PURE__ */ React.createElement("svg", {
@@ -146,16 +167,7 @@ function SpectrLengthRow({ label, selected, action, onPick, value }) {
     "data-spectr-length-option": value,
     "data-spectr-length-action": action || undefined,
     onClick: onPick,
-    style: {
-      background: selected ? SPECTR_LENGTH_ACCENT : "rgba(255,255,255,0.025)",
-      border: "1px solid " + (selected ? SPECTR_LENGTH_ACCENT_EDGE : "transparent"),
-      color: selected ? "#fff" : "rgba(255,255,255,0.85)",
-      fontFamily: SPECTR_LENGTH_FACE, fontSize: 10.5, letterSpacing: 0.3,
-      padding: "0 10px 0 8px", height: 26, minHeight: 26, width: "100%",
-      boxSizing: "border-box", display: "flex", alignItems: "center",
-      justifyContent: "flex-start", gap: 7,
-      textAlign: "left", cursor: "pointer", borderRadius: 3, whiteSpace: "nowrap"
-    }
+    style: spectrLengthRowStyle(selected)
   }, /* @__PURE__ */ React.createElement(SpectrLengthCheck, { on: selected }),
      /* @__PURE__ */ React.createElement("span", null, label));
 }
@@ -266,6 +278,7 @@ function SpectrLengthEditor({ store, initial, onClose }) {
       fill: "none", strokeLinecap: "round", strokeLinejoin: "round" })));
   return /* @__PURE__ */ React.createElement("div", {
     "data-spectr-length-editor": true,
+    "data-spectr-length-focus": ["bars", "fraction", "cancel", "apply"][focus],
     "data-spectr-overlay": "true",
     overlay: true,
     onDismiss: () => onClose(false),
@@ -275,8 +288,9 @@ function SpectrLengthEditor({ store, initial, onClose }) {
     style: {
       position: "absolute", top: 32, left: -38, width: 236, zIndex: 30,
       boxSizing: "border-box", padding: "12px 12px 12px",
-      background: "rgba(12,16,22,0.97)", border: "1px solid rgba(255,255,255,0.12)",
-      borderRadius: 5, boxShadow: "0 10px 34px rgba(0,0,0,0.55)",
+      // The menus' panel tokens, with a dialog's padding.
+      background: "rgba(12,16,22,0.96)", border: "1px solid rgba(255,255,255,0.1)",
+      borderRadius: 4, boxShadow: "0 8px 30px rgba(0,0,0,0.5)", backdropFilter: "blur(10px)",
       display: "flex", flexDirection: "column", gap: 8, color: "#fff"
     }
   },
@@ -318,24 +332,26 @@ function SpectrLengthEditor({ store, initial, onClose }) {
           overlay: true,
           onDismiss: () => setFractionOpen(false),
           role: "listbox",
-          style: { position: "absolute", top: 31, left: 0, width: 108, zIndex: 31, padding: 3,
-                   boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 1,
-                   background: "rgba(12,16,22,0.98)", border: "1px solid rgba(255,255,255,0.12)",
-                   borderRadius: 4, boxShadow: "0 8px 30px rgba(0,0,0,0.5)" }
-        }, fractions.map((f) => /* @__PURE__ */ React.createElement("button", {
-          key: f,
-          role: "option",
-          "aria-selected": f === fraction ? "true" : "false",
-          "data-spectr-length-fraction-option": f,
-          onClick: () => { setFraction(f); setFractionOpen(false); setFocus(1); },
-          style: { height: 20, minHeight: 20, width: "100%", boxSizing: "border-box", padding: "0 8px",
-                   display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 6,
-                   borderRadius: 2, cursor: "pointer",
-                   background: f === fraction ? SPECTR_LENGTH_ACCENT : "transparent",
-                   border: "1px solid " + (f === fraction ? SPECTR_LENGTH_ACCENT_EDGE : "transparent"),
-                   color: "rgba(255,255,255,0.88)", fontFamily: SPECTR_LENGTH_FACE, fontSize: 10.5 }
-        }, /* @__PURE__ */ React.createElement(SpectrLengthCheck, { on: f === fraction }),
-           /* @__PURE__ */ React.createElement("span", null, f)))))),
+          // Two columns, down the first then the second, so the seventeen
+          // fractions stay a short list with Spectr's full menu rows: one
+          // column of them ran past what the overlay could be pressed in.
+          // Up/Down still walk them in order.
+          style: Object.assign({}, SPECTR_LENGTH_PANEL,
+                   { position: "absolute", top: 31, left: -40, zIndex: 31,
+                     backdropFilter: undefined, flexDirection: "row", gap: 4 })
+        }, [fractions.slice(0, Math.ceil(fractions.length / 2)),
+            fractions.slice(Math.ceil(fractions.length / 2))].map((column, at) =>
+          /* @__PURE__ */ React.createElement("div", {
+            key: at, style: { display: "flex", flexDirection: "column", gap: 2, width: 90 }
+          }, column.map((f) => /* @__PURE__ */ React.createElement("button", {
+            key: f,
+            role: "option",
+            "aria-selected": f === fraction ? "true" : "false",
+            "data-spectr-length-fraction-option": f,
+            onClick: () => { setFraction(f); setFractionOpen(false); setFocus(1); },
+            style: spectrLengthRowStyle(f === fraction)
+          }, /* @__PURE__ */ React.createElement(SpectrLengthCheck, { on: f === fraction }),
+             /* @__PURE__ */ React.createElement("span", null, f)))))))),
     /* @__PURE__ */ React.createElement("div", {
       "data-spectr-length-preview": true,
       "data-spectr-length-valid": valid ? "true" : "false",
@@ -355,21 +371,23 @@ function SpectrLengthEditor({ store, initial, onClose }) {
       /* @__PURE__ */ React.createElement("button", {
         "data-spectr-length-cancel": true,
         onClick: () => onClose(false),
-        style: { flex: 1, height: 28, borderRadius: 3, cursor: "pointer", fontFamily: SPECTR_LENGTH_FACE,
-                 fontSize: 10, letterSpacing: 1, color: "rgba(255,255,255,0.85)",
-                 background: "rgba(255,255,255,0.04)",
+        // The preset manager's MBtn tokens: secondary here, primary below.
+        style: { flex: 1, height: 26, padding: "5px 9px", borderRadius: 3, cursor: "pointer",
+                 fontFamily: "var(--mono)", fontSize: 10, letterSpacing: 1,
+                 color: "rgba(255,255,255,0.85)", background: "rgba(255,255,255,0.04)",
                  border: focus === 2 ? "1px solid rgba(140,190,240,0.75)" : "1px solid rgba(255,255,255,0.12)" }
       }, "CANCEL"),
       /* @__PURE__ */ React.createElement("button", {
         "data-spectr-length-apply": true,
         "aria-disabled": valid ? "false" : "true",
         onClick: apply,
-        style: { flex: 1, height: 28, borderRadius: 3, cursor: valid ? "pointer" : "default",
-                 fontFamily: SPECTR_LENGTH_FACE, fontSize: 10, letterSpacing: 1,
+        style: { flex: 1, height: 26, padding: "5px 9px", borderRadius: 3,
+                 cursor: valid ? "pointer" : "default",
+                 fontFamily: "var(--mono)", fontSize: 10, letterSpacing: 1,
                  color: valid ? "#fff" : "rgba(255,255,255,0.4)",
-                 background: valid ? "rgba(80,140,210,0.32)" : "rgba(80,140,210,0.1)",
+                 background: valid ? "rgba(80,140,210,0.22)" : "rgba(80,140,210,0.08)",
                  border: focus === 3 ? "1px solid rgba(190,220,255,0.95)"
-                   : "1px solid " + (valid ? "rgba(140,190,240,0.55)" : "rgba(140,190,240,0.2)") }
+                   : "1px solid " + (valid ? "rgba(140,190,240,0.4)" : "rgba(140,190,240,0.18)") }
       }, "APPLY")));
 }
 function SpectrFreezeLength() {
@@ -422,8 +440,9 @@ function SpectrFreezeLength() {
         width: 88, minWidth: 88, flexShrink: 0, height: 24, boxSizing: "border-box",
         padding: "0 7px 0 8px", borderRadius: 3, display: "flex", alignItems: "center",
         justifyContent: "space-between", gap: 4, cursor: "pointer",
-        background: menuOpen || editorOpen ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.03)",
-        border: "1px solid " + (menuOpen || editorOpen ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.1)"),
+        // The header's band-count trigger, token for token.
+        background: menuOpen || editorOpen ? "rgba(255,255,255,0.08)" : "transparent",
+        border: "1px solid " + (menuOpen || editorOpen ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.08)"),
         color: "rgba(255,255,255,0.85)", fontFamily: SPECTR_LENGTH_FACE, lineHeight: 1
       }
     }, /* @__PURE__ */ React.createElement("span", {
@@ -439,12 +458,8 @@ function SpectrFreezeLength() {
       onDismiss: () => setMenuOpen(false),
       role: "listbox",
       "aria-label": "Freeze length",
-      style: {
-        position: "absolute", top: 29, left: 0, width: 150, zIndex: 20, padding: 4,
-        boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 2,
-        background: "rgba(12,16,22,0.96)", border: "1px solid rgba(255,255,255,0.12)",
-        borderRadius: 4, boxShadow: "0 8px 30px rgba(0,0,0,0.5)"
-      }
+      style: Object.assign({}, SPECTR_LENGTH_PANEL,
+                           { position: "absolute", top: 29, left: 0, width: 160, zIndex: 20 })
     }, presets.map((preset, index) => /* @__PURE__ */ React.createElement(SpectrLengthRow, {
       key: preset.label, label: preset.label, value: preset.label,
       selected: !!length && length.preset === index, onPick: () => pick(preset)

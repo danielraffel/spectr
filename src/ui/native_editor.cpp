@@ -7,6 +7,7 @@
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/format/plugin_descriptor.hpp>
 #include <cstdio>
+#include <pulp/view/screenshot.hpp>
 #include <pulp/view/script_event_dispatch.hpp>
 #include <pulp/view/tracing_badge.hpp>
 #include <pulp/view/buttons.hpp>
@@ -2267,6 +2268,12 @@ bool Spectr::tick_native_analyzer_(float dt) {
     //                  to arrange a level and read `n_visible` before trusting
     //                  a layout change.
     //   resize:w,h     a host window resize, through `on_view_resized`
+    //   psel:SELECTOR  a left click at the painted centre of the element a
+    //                  CSS selector names, measured from the live layout
+    //   hsel:SELECTOR  a pointer move there (-mouseMoved:)
+    //   exists:SELECTOR  whether the selector matches anything (a reading)
+    //   lenprobe       the Freeze LENGTH control and the processor's length
+    //   shot:PATH      a Skia raster of the editor, written to PATH
     //   wait           nothing at all -- the ambient control
     //
     // An unrecognised verb records `unknown-step` and changes nothing. A
@@ -2478,6 +2485,9 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     else if (spec == "right") code = pulp::view::KeyCode::right;
                     else if (spec == "home") code = pulp::view::KeyCode::home;
                     else if (spec == "end") code = pulp::view::KeyCode::end_;
+                    else if (spec == "backspace") code = pulp::view::KeyCode::backspace;
+                    else if (spec == "delete") code = pulp::view::KeyCode::delete_;
+                    else if (spec == "minus") code = static_cast<pulp::view::KeyCode>('-');
                     else if (spec.size() == 1) {
                         char c = spec[0];
                         if (c >= 'A' && c <= 'Z')
@@ -2770,6 +2780,102 @@ bool Spectr::tick_native_analyzer_(float dt) {
                             "spectr-modulation-frame", "spectr-native-modulation-frame");
                         detail = "dispatched";
                     } catch (const std::exception&) { detail = "rejected"; }
+                } else if (kind == "psel" || kind == "hsel") {
+                    // A left click (psel) or a pointer move (hsel) at the
+                    // painted centre of the element a CSS selector names,
+                    // measured from the live layout at that moment -- the
+                    // place a person would aim -- and then delivered through
+                    // the host's own press or hover route like `press`.
+                    pulp::view::Point pt{};
+                    bool aimed = false;
+                    try {
+                        native_scripted_ui_->bridge()->load_script(
+                            "(() => { const n = document.querySelector(\"" + spectr_menu_probe::json_escape(arg) + "\""
+                            + "); const r = n && n.getBoundingClientRect ? "
+                              "n.getBoundingClientRect() : null; throw new Error('PULPVALUE:' "
+                              "+ (r && r.width > 0 && r.height > 0 ? (r.left + r.width / 2) + ',' "
+                              "+ (r.top + r.height / 2) : 'none')); })();",
+                            "spectr-scenario-selector-aim");
+                    } catch (const std::exception& e) {
+                        const std::string msg = e.what();
+                        const auto at = msg.find("PULPVALUE:");
+                        if (at != std::string::npos) {
+                            const auto value = msg.substr(
+                                at + 10, msg.find_first_of("\n\"", at + 10) - (at + 10));
+                            aimed = value != "none" && point_of(value, pt);
+                        }
+                    }
+                    if (!aimed) detail = "selector-absent";
+                    else {
+                        press_x = pt.x; press_y = pt.y;
+                        auto* hit = root.hit_test(pt);
+                        attributable = hit != nullptr;
+                        if (kind == "psel") detail = click_at(pt);
+                        else { pulp::view::deliver_hover_move(root, pt); detail = "hovered"; }
+                    }
+                } else if (kind == "exists") {
+                    // Whether a selector matches anything now (a reading).
+                    try {
+                        native_scripted_ui_->bridge()->load_script(
+                            "(() => { throw new Error('PULPVALUE:' + (document.querySelector(\""
+                            + spectr_menu_probe::json_escape(arg)
+                            + "\") ? 'present' : 'absent')); })();",
+                            "spectr-scenario-exists");
+                        detail = "no-value";
+                    } catch (const std::exception& e) {
+                        const std::string msg = e.what();
+                        const auto at = msg.find("PULPVALUE:");
+                        detail = at == std::string::npos ? "probe-error"
+                            : msg.substr(at + 10, msg.find_first_of("\n\"", at + 10) - (at + 10));
+                    }
+                } else if (kind == "lenprobe") {
+                    // The Freeze LENGTH control as a person sees it, and the
+                    // length the processor holds: the collapsed label, the
+                    // menu's rows (* checked, ^ the highlight), the editor's
+                    // fields and focus, the Fraction list's checked and
+                    // highlighted rows.
+                    try {
+                        native_scripted_ui_->bridge()->load_script(
+                            "(() => { const q = (s) => document.querySelector(s);"
+                            " const all = (s) => Array.from(document.querySelectorAll(s));"
+                            " const mark = (n, id) => n.getAttribute(id)"
+                            "   + (n.getAttribute('aria-selected') === 'true' ? '*' : '')"
+                            "   + (n.getAttribute('data-pulp-popup-active') === 'true' ? '^' : '');"
+                            " const len = q('[data-spectr-freeze-length]');"
+                            " const menu = q('[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]');"
+                            " const ed = q('[data-spectr-length-editor]');"
+                            " const fr = q('[data-spectr-length-fraction-options]');"
+                            " throw new Error('PULPVALUE:' + encodeURIComponent(JSON.stringify({"
+                            "  label: len && len.getAttribute('data-spectr-freeze-length-label'),"
+                            "  menu: menu ? all('[data-spectr-menu-root=\"length\"] [data-spectr-length-option]')"
+                            "    .map((n) => mark(n, 'data-spectr-length-option')) : null,"
+                            "  editor: !!ed,"
+                            "  focus: ed ? ed.getAttribute('data-spectr-length-focus') : null,"
+                            "  bars: ed ? q('[data-spectr-length-bars]').getAttribute('data-spectr-length-bars') : null,"
+                            "  fraction: ed ? q('[data-spectr-length-fraction]').getAttribute('data-spectr-length-fraction') : null,"
+                            "  valid: ed ? q('[data-spectr-length-preview]').getAttribute('data-spectr-length-valid') : null,"
+                            "  message: ed ? q('[data-spectr-length-preview]').getAttribute('data-spectr-length-message') : null,"
+                            "  fractions: fr ? all('[data-spectr-length-fraction-option]')"
+                            "    .map((n) => mark(n, 'data-spectr-length-fraction-option'))"
+                            "    .filter((t) => /[*^]$/.test(t)) : null }))); })();",
+                            "spectr-scenario-length-probe");
+                        detail = "no-value";
+                    } catch (const std::exception& e) {
+                        const std::string msg = e.what();
+                        const auto at = msg.find("PULPVALUE:");
+                        detail = at == std::string::npos ? "probe-error"
+                            : msg.substr(at + 10, msg.find_first_of("\n\"", at + 10) - (at + 10));
+                    }
+                    detail += "|processor=" + length_label(freeze_length());
+                } else if (kind == "shot") {
+                    // A Skia raster of the editor as it stands, to the path
+                    // given (the screenshot backend the GPU compositor matches).
+                    const auto box = root.bounds();
+                    detail = pulp::view::render_to_file(
+                                 root, static_cast<int>(box.width),
+                                 static_cast<int>(box.height), arg, 2.0f,
+                                 pulp::view::ScreenshotBackend::skia)
+                        ? "written" : "not-written";
                 } else if (kind == "rgprobe") {
                     // The editor's PAINTED band heights (normalised, four
                     // from band `arg`, default 0), read back through a throw
