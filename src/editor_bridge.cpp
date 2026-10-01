@@ -294,6 +294,29 @@ choc::value::Value make_freeze_payload_(const Spectr& plugin, bool with_settings
     return freeze;
 }
 
+// A length request's shape: {bars: integer, fraction: "n/d"}. Returns an
+// error for a malformed request, or "" with `bars` (pinned to -1 or 129 when
+// out of range, so validate_length names the reason) and the fraction's
+// index (-1 for one outside the set). Validity itself is validate_length's.
+std::string read_length_request_(const choc::value::ValueView& p, int& bars, int& fraction) {
+    if (!p.isObject() || !p.hasObjectMember("bars") || !p.hasObjectMember("fraction"))
+        return "bars and fraction required";
+    const auto& b = p["bars"];
+    const auto& f = p["fraction"];
+    std::int64_t value = 0;
+    if (b.isInt32()) value = b.getInt32();
+    else if (b.isInt64()) value = b.getInt64();
+    else if (b.isFloat64() && std::isfinite(b.getFloat64())
+             && b.getFloat64() == std::floor(b.getFloat64())
+             && std::abs(b.getFloat64()) < 1.0e9)
+        value = static_cast<std::int64_t>(b.getFloat64());
+    else return "bars must be an integer";
+    if (!f.isString()) return "fraction must be a string";
+    bars = value < 0 ? -1 : value > kMaxLengthBars ? kMaxLengthBars + 1 : static_cast<int>(value);
+    fraction = fraction_index_from_text(f.getString());
+    return "";
+}
+
 choc::value::Value make_modulation_payload_(const Spectr& plugin) {
     const auto modulation_state = plugin.modulation_settings();
     auto modulation = choc::value::createObject("SpectrModulationState");
@@ -1067,41 +1090,42 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     // gesture, so automation records it.
     bridge.add_handler("freeze_length_set",
         [&plugin](const choc::value::ValueView& p) -> std::string {
-            if (!p.isObject() || !p.hasObjectMember("bars")
-                || !p.hasObjectMember("fraction"))
-                return EditorBridge::err_response("bars and fraction required");
-            const auto& bars = p["bars"];
-            const auto& fraction = p["fraction"];
-            std::int64_t bars_value = 0;
-            if (bars.isInt32()) bars_value = bars.getInt32();
-            else if (bars.isInt64()) bars_value = bars.getInt64();
-            else if (bars.isFloat64() && std::isfinite(bars.getFloat64())
-                     && bars.getFloat64() == std::floor(bars.getFloat64())
-                     && std::abs(bars.getFloat64()) < 1.0e9)
-                bars_value = static_cast<std::int64_t>(bars.getFloat64());
-            else return EditorBridge::err_response("bars must be an integer");
-            if (!fraction.isString())
-                return EditorBridge::err_response("fraction must be a string");
-            const int fraction_index = fraction_index_from_text(fraction.getString());
-            const int bars_int = bars_value < 0 ? -1
-                : bars_value > kMaxLengthBars ? kMaxLengthBars + 1
-                : static_cast<int>(bars_value);
-            switch (validate_length(bars_int, fraction_index)) {
-                case LengthError::none: break;
-                case LengthError::bars_below_zero:
-                    return EditorBridge::err_response("bars must not be negative");
-                case LengthError::bars_above_limit:
-                    return EditorBridge::err_response("bars must be at most 128");
-                case LengthError::unknown_fraction:
-                    return EditorBridge::err_response("unknown fraction");
-                case LengthError::zero_length:
-                    return EditorBridge::err_response("length must be longer than zero");
-            }
-            const auto length = make_length(bars_int, fraction_index);
+            int bars = 0, fraction = -1;
+            if (const auto shape = read_length_request_(p, bars, fraction); !shape.empty())
+                return EditorBridge::err_response(shape);
+            const auto error = validate_length(bars, fraction);
+            if (error != LengthError::none)
+                return EditorBridge::err_response(std::string(length_error_message(error)));
+            const auto length = make_length(bars, fraction);
             if (!length || !plugin.set_freeze_length_from_editor(*length))
                 return EditorBridge::err_response("freeze length unavailable");
             return EditorBridge::ok_response(
                 make_freeze_payload_(plugin, /*with_settings=*/false));
+        });
+
+    // The Custom length editor's preview: the same validation, the same
+    // label, nothing committed. The editor formats no length itself.
+    bridge.add_handler("freeze_length_describe",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            int bars = 0, fraction = -1;
+            if (const auto shape = read_length_request_(p, bars, fraction); !shape.empty())
+                return EditorBridge::err_response(shape);
+            auto out = choc::value::createObject("SpectrFreezeLengthPreview");
+            const auto error = validate_length(bars, fraction);
+            out.addMember("valid", error == LengthError::none);
+            out.addMember("message", std::string(length_error_message(error)));
+            if (const auto length = make_length(bars, fraction)) {
+                const double seconds = length_seconds(
+                    *length, plugin.transport_tempo_bpm(),
+                    plugin.transport_time_sig_numerator(),
+                    plugin.transport_time_sig_denominator());
+                out.addMember("label", length_label(*length));
+                out.addMember("seconds", seconds);
+                out.addMember("capped", seconds > plugin.freeze_loop_cap_seconds());
+                out.addMember("cap_seconds", plugin.freeze_loop_cap_seconds());
+                out.addMember("tempo_bpm", plugin.transport_tempo_bpm());
+            }
+            return EditorBridge::ok_response(out);
         });
 
     // The Length as it stands now, for an editor about to show it: its

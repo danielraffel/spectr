@@ -1636,4 +1636,17 @@ TEST_CASE("freeze: hydration carries the toggle and the Length; freeze_length_se
     }
     CHECK(response_has_error(r.dispatch(
         R"({"type":"freeze_length_set","payload":{"bars":129,"fraction":"0"}})"), "128"));
+
+    // The editor's preview: the model's label and verdict, nothing committed.
+    const auto preview = r.dispatch(
+        R"({"type":"freeze_length_describe","payload":{"bars":2,"fraction":"3/16"}})");
+    REQUIRE(response_ok(preview));
+    CHECK(preview.find("2 3/16 bars") != std::string::npos);
+    CHECK(preview.find("\"valid\": true") != std::string::npos);
+    const auto zero = r.dispatch(
+        R"({"type":"freeze_length_describe","payload":{"bars":0,"fraction":"0"}})");
+    REQUIRE(response_ok(zero));
+    CHECK(zero.find("\"valid\": false") != std::string::npos);
+    CHECK(zero.find("longer than 0") != std::string::npos);
+    CHECK(r.proc->freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_8});
 }

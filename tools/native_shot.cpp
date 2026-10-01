@@ -70,9 +70,9 @@ namespace {
 constexpr float kDesignWidth = 1320.0f;
 constexpr float kDesignHeight = 860.0f;
 // A point in the header's empty span, between the output cluster's PEAK button
-// (which ends at x~741) and the divider before BARS (x=839.5). A press here
-// lands on no control.
-constexpr float kHeaderGapX = 790.0f;
+// (which ends at x~823 since LENGTH joined the cluster) and the divider before
+// BARS (x=839.5). A press here lands on no control.
+constexpr float kHeaderGapX = 833.0f;
 
 int g_failures = 0;
 

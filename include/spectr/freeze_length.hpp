@@ -92,6 +92,19 @@ constexpr LengthError validate_length(int bars, int fraction_index) noexcept {
     return LengthError::none;
 }
 
+/// What the editor says when it refuses a length. The bar limit is named
+/// here and nowhere else in the UI: it is shown only to explain a refusal.
+constexpr std::string_view length_error_message(LengthError error) noexcept {
+    switch (error) {
+        case LengthError::none: return "";
+        case LengthError::bars_below_zero: return "Bars can't be negative";
+        case LengthError::bars_above_limit: return "Up to 128 bars";
+        case LengthError::unknown_fraction: return "Choose a fraction from the list";
+        case LengthError::zero_length: return "Choose a length longer than 0";
+    }
+    return "";
+}
+
 constexpr std::optional<FreezeLength> make_length(int bars, int fraction_index) noexcept {
     if (validate_length(bars, fraction_index) != LengthError::none) return std::nullopt;
     return FreezeLength{bars, static_cast<LengthFraction>(fraction_index)};

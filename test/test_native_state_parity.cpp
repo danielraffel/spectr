@@ -1043,7 +1043,8 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // plug-in-only "Keyboard shortcuts in DAW" row, whose label wraps,
         // and 1960.58 -> 1846.58 when the MOTION group (the hidden LIVE /
         // PRECISION choice) left, and 1846.58 -> 1960.58 when the FREEZE group
-        // (Hold length) arrived. If you add a group and this fails, that is the window
+        // (Hold length) arrived, and 1960.58 -> 1846.58 when it left again for
+        // the header's LENGTH control. If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1053,7 +1054,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1881 && s.content_height < 2041"
+        " && s.content_height > 1767 && s.content_height < 1927"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
@@ -2034,8 +2035,8 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
     NativeEditorRig rig;
     require_home(rig);
 
-    const std::array<std::string_view, 5> menus{
-        "bands", "edit", "analyzer", "overflow", "pattern"};
+    const std::array<std::string_view, 6> menus{
+        "bands", "edit", "analyzer", "overflow", "pattern", "length"};
     const pulp::view::Point outside{660.0f, 430.0f};
     for (const auto menu : menus) {
         INFO("menu=" << menu);
@@ -5172,8 +5173,8 @@ TEST_CASE("native dropdown arrows reach every option and commit the highlighted 
     NativeEditorRig rig;
     require_home(rig);
 
-    const std::array<std::string_view, 5> menus{
-        "bands", "edit", "analyzer", "overflow", "pattern"};
+    const std::array<std::string_view, 6> menus{
+        "bands", "edit", "analyzer", "overflow", "pattern", "length"};
     for (const auto menu : menus) {
         INFO("menu=" << menu);
         const auto root = std::string{"[data-spectr-menu-root=\""}
@@ -6374,24 +6375,43 @@ TEST_CASE("the header reads freeze, OUTPUT, trim, value, PEAK on the controls' l
     REQUIRE(toggle != nullptr);
     REQUIRE(peak_button != nullptr);
 
-    // ORDER AND SPACING. The toggle now fills PEAK's old slot, so its gap to
-    // OUTPUT is the old PEAK-to-OUTPUT gap; PEAK must keep that gap to the value.
+    // ORDER AND SPACING. [toggle] | LENGTH [length] | OUTPUT --o-- value
+    // [PEAK]: a divider 5pt either side of it, the caption 6pt from its
+    // dropdown, and the cluster's 14pt between OUTPUT, the track, the value
+    // and PEAK. All of it clear of the divider before BARS (x=839.5).
+    const auto* length_caption = header_label("LENGTH");
+    REQUIRE(length_caption != nullptr);
+    const auto* length_value = header_label("1 bar");
+    REQUIRE(length_value != nullptr);
+    const View* length_trigger = length_value->parent();
+    REQUIRE(length_trigger != nullptr);
     const auto toggle_box = box_of(*toggle);
+    const auto length_caption_box = box_of(*length_caption);
+    const auto length_box = box_of(*length_trigger);
     const auto output_box = box_of(*output);
     const auto value_box = box_of(*value);
     const auto peak_box = box_of(*peak_button);
     const auto caption_box = box_of(*caption);
-    CAPTURE(toggle_box.left, toggle_box.right, output_box.left, output_box.right,
+    CAPTURE(toggle_box.left, toggle_box.right, length_caption_box.left,
+            length_caption_box.right, length_box.left, length_box.right,
+            output_box.left, output_box.right,
             value_box.left, value_box.right, peak_box.left, peak_box.right);
-    CHECK(toggle_box.right < output_box.left);
+    CHECK(toggle_box.right < length_caption_box.left);
+    CHECK(length_caption_box.right < length_box.left);
+    CHECK(length_box.right < output_box.left);
     CHECK(output_box.right < value_box.left);
     CHECK(value_box.right < peak_box.left);
     CHECK(peak_box.right < caption_box.left);
-    const float old_gap = output_box.left - toggle_box.right;
+    CHECK(peak_box.right <= 839.5f - 14.0f);
+    // toggle, 5, divider, 5, LENGTH: 11; LENGTH, 6, [length]; [length], 5,
+    // divider, 5, OUTPUT: 11.
+    CHECK(length_caption_box.left - toggle_box.right == Catch::Approx(11.0f).margin(1.0f));
+    CHECK(length_box.left - length_caption_box.right == Catch::Approx(6.0f).margin(1.0f));
+    CHECK(output_box.left - length_box.right == Catch::Approx(11.0f).margin(1.0f));
+    CHECK(length_box.right - length_box.left == Catch::Approx(88.0f).margin(0.5f));
     const float peak_gap = peak_box.left - value_box.right;
-    CAPTURE(old_gap, peak_gap);
-    CHECK(old_gap == Catch::Approx(14.0f).margin(1.0f));
-    CHECK(peak_gap == Catch::Approx(old_gap).margin(1.0f));
+    CAPTURE(peak_gap);
+    CHECK(peak_gap == Catch::Approx(14.0f).margin(1.0f));
     CHECK(toggle_box.right - toggle_box.left == Catch::Approx(76.0f).margin(0.5f));
 
     // THE PIXELS.
@@ -6472,6 +6492,16 @@ TEST_CASE("the header reads freeze, OUTPUT, trim, value, PEAK on the controls' l
     };
     on_line(*live, frame, 1);
     on_line(*output, frame, 1);
+    on_line(*length_caption, frame, 1);
+    {
+        // The length's value is lower case at its own size, so it is centred
+        // on the line rather than sharing its cap top.
+        const auto words = word_ink(*length_value, frame);
+        REQUIRE(!words.empty());
+        const float centre = (words.front().top + words.front().bottom) * 0.5f;
+        CAPTURE(centre, line.top, line.bottom);
+        CHECK(centre == Catch::Approx((line.top + line.bottom) * 0.5f).margin(1.25f));
+    }
     on_line(*value, frame, 1);
     // "PEAK" only: the level beside it is "--" in a silent rig, which has no
     // cap height to compare.
@@ -7877,29 +7907,282 @@ TEST_CASE("host automation of Freeze turns the toggle over as a leaf",
     storage.require_unchanged();
 }
 
-// Settings > FREEZE > Hold length writes the processor's value, clamped, and
-// shows what it will use.
-TEST_CASE("the Hold length setting reaches the processor",
-          "[native-n1][state-parity][freeze-toggle][settings]") {
+
+
+// THE LENGTH CONTROL, END TO END, THROUGH THE SHIPPING EDITOR.
+//
+// Header LENGTH [ 1 bar v ]: pick a common length; open Custom length...,
+// set 1 + 1/8 and Apply, and the collapsed control reads the resolved
+// "1 1/8 bars" while the menu shows it as a checked row under Custom
+// length...; Cancel and Escape leave the length alone; a length the model
+// refuses cannot be applied; the editor's keys (Up/Down, Tab, Return,
+// Escape) work and are stopped there, so Escape does not also clear a band
+// selection; and Settings no longer carries a Hold length.
+TEST_CASE("the LENGTH control picks, edits and shows a musical length",
+          "[native-n1][state-parity][freeze-length]") {
     PatternStoragePoison storage;
     NativeEditorRig rig;
     require_home(rig);
+    const auto attribute = [&](std::string_view name) {
+        return runtime_value(rig,
+            "document.querySelector('[data-spectr-freeze-length]').getAttribute('"
+                + std::string(name) + "')",
+            "spectr-native-length-attribute");
+    };
+    const auto shown = [&] { return attribute("data-spectr-freeze-length-label"); };
+    const auto key = [&](pulp::view::KeyCode code, std::uint16_t mods = pulp::view::kModNone) {
+        (void)pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(code), mods, true);
+        settle(rig.clock, 8);
+    };
+    const auto mounted = [&](std::string_view selector) {
+        return runtime_value(rig, "!!document.querySelector(" + js_string(selector) + ")",
+                              "spectr-native-length-mounted") == "true";
+    };
+    // Bars is typed into: click it, empty it, type each character.
+    const auto set_bars = [&](std::string_view text) {
+        activate(rig, "[data-spectr-length-bars]");
+        key(pulp::view::KeyCode::delete_);
+        for (const char c : text) key(static_cast<pulp::view::KeyCode>(c));
+    };
+    const auto bars_text = [&] {
+        return runtime_value(rig,
+            "document.querySelector('[data-spectr-length-bars]').getAttribute('data-spectr-length-bars')",
+            "spectr-native-length-bars-text");
+    };
+    const auto preview_valid = [&] {
+        return runtime_value(rig,
+            "document.querySelector('[data-spectr-length-preview]').getAttribute('data-spectr-length-valid')",
+            "spectr-native-length-valid") == "true";
+    };
+    const auto open_editor = [&] {
+        activate(rig, "[data-spectr-length-trigger]");
+        REQUIRE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+        activate(rig, "[data-spectr-length-option=\"custom-editor\"]");
+        settle(rig.clock, 8);
+        REQUIRE(mounted("[data-spectr-length-editor]"));
+        REQUIRE_FALSE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+    };
+
+    // SPECTR_LENGTH_SHOTS=<dir> saves the surfaces this walks through
+    // (Skia raster, the GPU compositor's reference).
+    const auto shot = [&](std::string_view name) {
+        const char* dir = std::getenv("SPECTR_LENGTH_SHOTS");
+        if (dir == nullptr) return;
+        rig.root->layout_children();
+        settle(rig.clock, 4);
+        const auto path = std::filesystem::path(dir) / (std::string(name) + ".png");
+        REQUIRE(pulp::view::render_to_file(*rig.root, 1320, 860, path.string(), 2.0f,
+                                           pulp::view::ScreenshotBackend::skia));
+    };
+
+    // Default, from the processor.
+    REQUIRE(shown() == "1 bar");
+    shot("1-collapsed");
+    REQUIRE(find_label(*rig.root, "LENGTH") != nullptr);
+    REQUIRE(find_label(*rig.root, "1 bar") != nullptr);
+
+    // Settings has no Hold length. Control: a Settings row that must be there.
     activate(rig, "[data-spectr-settings-open]");
-    require_runtime_contract(rig,
-        "document.querySelector('[data-spectr-settings-group=\"freeze\"] [data-spectr-freeze-hold]')",
-        "the FREEZE group's Hold length control is missing");
-    rig.bridge().load_script(
-        "window.pulp.postMessage('freeze_hold_set', { seconds: 0.5 }, 'test');",
-        "spectr-native-freeze-hold-write");
-    settle(rig.clock, 4);
-    CHECK(rig.processor.freeze_hold_seconds() == Catch::Approx(0.5));
-    rig.bridge().load_script(
-        "window.pulp.postMessage('freeze_hold_set', { seconds: 9 }, 'test');",
-        "spectr-native-freeze-hold-clamp");
-    settle(rig.clock, 4);
-    CHECK(rig.processor.freeze_hold_seconds()
-          == Catch::Approx(spectr::FreezeSource::kMaxHoldSeconds));
+    settle(rig.clock, 8);
+    REQUIRE(find_label(*rig.root, "Theme") != nullptr);
+    CHECK(find_label(*rig.root, "Hold length") == nullptr);
+    CHECK_FALSE(mounted("[data-spectr-settings-group=\"freeze\"]"));
+    CHECK_FALSE(mounted("[data-spectr-freeze-hold]"));
     activate(rig, "[data-spectr-settings-close]");
+    settle(rig.clock, 8);
+
+    // The menu: 1, 2, 4, 8 bars, a separator, Custom length... -- no
+    // sub-bar rows, and no custom row while no custom length is in force.
+    activate(rig, "[data-spectr-length-trigger]");
+    require_runtime_contract(rig,
+        "(() => { const rows = Array.from(document.querySelectorAll("
+        "'[data-spectr-menu-root=\"length\"] [data-spectr-menu-options] [data-spectr-length-option]'))"
+        ".map((n) => n.getAttribute('data-spectr-length-option'));"
+        " return JSON.stringify(rows) === JSON.stringify(['1 bar','2 bars','4 bars','8 bars','custom-editor'])"
+        " && !!document.querySelector('[data-spectr-length-separator]')"
+        " && document.querySelector('[data-spectr-length-option=\"1 bar\"]').getAttribute('aria-selected') === 'true'; })()",
+        "the LENGTH menu does not list exactly the common lengths and Custom length...");
+    shot("2-open-dropdown");
+    activate(rig, "[data-spectr-length-option=\"2 bars\"]");
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-freeze-length]').getAttribute('data-spectr-freeze-length-label') === '2 bars'",
+        "picking 2 bars did not reach the control");
+    CHECK_FALSE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+    CHECK(rig.store.get_value(spectr::kParamFreezeLength) == 1.0f);
+    CHECK(rig.processor.freeze_length() == spectr::FreezeLength{2, spectr::LengthFraction::zero});
+
+    // Custom length...: 1 + 1/8, Apply. The editor opens on the custom
+    // length, 1 bar until one is set, so Bars already reads 1.
+    open_editor();
+    CHECK(find_label(*rig.root, "Custom…") != nullptr);
+    CHECK(runtime_value(rig,
+              "document.querySelector('[data-spectr-length-bars]').getAttribute('data-spectr-length-bars')",
+              "spectr-native-length-bars-initial") == "1");
+
+    activate(rig, "[data-spectr-length-fraction]");
+    REQUIRE(mounted("[data-spectr-length-fraction-options]"));
+    activate(rig, "[data-spectr-length-fraction-option=\"1/8\"]");
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-length-preview]')?.getAttribute('data-spectr-length-valid') === 'true'",
+        "1 + 1/8 never became a valid preview");
+    CHECK(find_label(*rig.root, "= 1 1/8 bars") != nullptr);
+    shot("3-custom-editor");
+    activate(rig, "[data-spectr-length-apply]");
+    settle_until_contract(rig, "!document.querySelector('[data-spectr-length-editor]')",
+                          "Apply did not close the editor");
+    CHECK(shown() == "1 1/8 bars");
+    CHECK(find_label(*rig.root, "1 1/8 bars") != nullptr);
+    CHECK(find_label(*rig.root, "Custom…") == nullptr);
+    shot("4-after-apply-collapsed");
+    CHECK(rig.store.get_value(spectr::kParamFreezeLength)
+          == static_cast<float>(spectr::kLengthPresetCustom));
+    CHECK(rig.processor.freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_8});
+    // ...and the menu shows it, checked, under Custom length..., which stays.
+    activate(rig, "[data-spectr-length-trigger]");
+    require_runtime_contract(rig,
+        "(() => { const rows = Array.from(document.querySelectorAll("
+        "'[data-spectr-menu-root=\"length\"] [data-spectr-length-option]'));"
+        " const ids = rows.map((n) => n.getAttribute('data-spectr-length-option'));"
+        " const custom = document.querySelector('[data-spectr-length-option=\"custom\"]');"
+        " return JSON.stringify(ids) === JSON.stringify(['1 bar','2 bars','4 bars','8 bars','custom-editor','custom'])"
+        " && custom.getAttribute('aria-selected') === 'true'"
+        " && rows.filter((n) => n.getAttribute('aria-selected') === 'true').length === 1; })()",
+        "the applied custom length is not the one checked row under Custom length...");
+    shot("5-after-apply-menu");
+    key(pulp::view::KeyCode::escape);
+    CHECK_FALSE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+
+    // Cancel leaves it alone, and the editor opens on the custom length.
+    open_editor();
+    CHECK(runtime_value(rig, "document.querySelector('[data-spectr-length-bars]').getAttribute('data-spectr-length-bars')",
+                         "spectr-native-length-bars-value") == "1");
+    CHECK(runtime_value(rig,
+              "document.querySelector('[data-spectr-length-fraction]').getAttribute('data-spectr-length-fraction')",
+              "spectr-native-length-fraction-value") == "1/8");
+    set_bars("3");
+    activate(rig, "[data-spectr-length-cancel]");
+    settle(rig.clock, 8);
+    CHECK_FALSE(mounted("[data-spectr-length-editor]"));
+    CHECK(shown() == "1 1/8 bars");
+    CHECK(rig.processor.freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_8});
+
+    // Lengths the model refuses cannot be applied: past the limit, negative
+    // or not a number, empty, and nothing at all.
+    open_editor();
+    struct Refusal { const char* bars; const char* fraction; const char* message; };
+    const Refusal refusals[] = {
+        {"129", "0", "Up to 128 bars"},
+        {"9999", "1/2", "Up to 128 bars"},
+        {"", "0", "Enter a number of bars"},
+        {"0", "0", "Choose a length longer than 0"},
+    };
+    for (const auto& refusal : refusals) {
+        INFO("bars '" << refusal.bars << "' + " << refusal.fraction);
+        set_bars(refusal.bars);
+        activate(rig, "[data-spectr-length-fraction]");
+        activate(rig, std::string("[data-spectr-length-fraction-option=\"") + refusal.fraction + "\"]");
+        settle_until_contract(rig,
+            "document.querySelector('[data-spectr-length-preview]')?.getAttribute('data-spectr-length-valid') === 'false'",
+            "a refused length read as valid");
+        settle(rig.clock, 8);
+        CHECK(find_label(*rig.root, refusal.message) != nullptr);
+        CHECK_FALSE(preview_valid());
+        activate(rig, "[data-spectr-length-apply]");
+        settle(rig.clock, 8);
+        CHECK(mounted("[data-spectr-length-editor]"));
+        CHECK(rig.processor.freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_8});
+    }
+    // Only digits can be typed: a sign, a point, a letter never reach it.
+    set_bars("-1.5x");
+    CHECK(bars_text() == "15");
+    key(pulp::view::KeyCode::backspace);
+    CHECK(bars_text() == "1");
+    // The positive control for the refusals: the same field, a valid value.
+    set_bars("2");
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-length-preview]')?.getAttribute('data-spectr-length-valid') === 'true'",
+        "a valid length after the refusals did not read as valid");
+    // The loop memory's limit is mentioned only when it bites: 2 bars at
+    // the rig's 120 BPM (4 s) says nothing, 40 bars (80 s, past 60 s) does.
+    CHECK_FALSE(mounted("[data-spectr-length-cap-note]"));
+    set_bars("40");
+    settle_until_contract(rig, "!!document.querySelector('[data-spectr-length-cap-note]')",
+                          "a length past the loop memory did not say so");
+    CHECK(preview_valid());
+    shot("7-editor-cap-note");
+    activate(rig, "[data-spectr-length-cancel]");
+    settle(rig.clock, 8);
+
+    // THE KEYS. A band selection stands, so an Escape that leaked through
+    // the editor would clear it.
+#if defined(__APPLE__)
+    key(static_cast<pulp::view::KeyCode>('a'), pulp::view::kModCmd);
+#else
+    key(static_cast<pulp::view::KeyCode>('a'), pulp::view::kModCtrl);
+#endif
+    const auto selected = [&] {
+        return runtime_value(rig,
+            "globalThis.__spectrTestHooks.renderState().selection.length",
+            "spectr-native-length-selection");
+    };
+    REQUIRE(selected() != "0");
+    const auto before = selected();
+    // The menu's Escape closes the menu and nothing else.
+    activate(rig, "[data-spectr-length-trigger]");
+    REQUIRE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+    key(pulp::view::KeyCode::escape);
+    CHECK_FALSE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+    CHECK(selected() == before);
+    // The editor's Escape cancels it and nothing else.
+    open_editor();
+    key(pulp::view::KeyCode::escape);
+    CHECK_FALSE(mounted("[data-spectr-length-editor]"));
+    CHECK(selected() == before);
+    CHECK(shown() == "1 1/8 bars");
+
+    // Up/Down step Bars (focused on open); Tab moves to Fraction, where they
+    // step the fraction; Return applies.
+    open_editor();
+    key(pulp::view::KeyCode::up);
+    key(pulp::view::KeyCode::up);
+    key(pulp::view::KeyCode::down);
+    CHECK(runtime_value(rig, "document.querySelector('[data-spectr-length-bars]').getAttribute('data-spectr-length-bars')",
+                         "spectr-native-length-bars-stepped") == "2");
+    key(pulp::view::KeyCode::tab);
+    key(pulp::view::KeyCode::up);
+    CHECK(runtime_value(rig,
+              "document.querySelector('[data-spectr-length-fraction]').getAttribute('data-spectr-length-fraction')",
+              "spectr-native-length-fraction-stepped") == "1/6");
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-length-preview]')?.getAttribute('data-spectr-length-valid') === 'true'",
+        "2 + 1/6 never became a valid preview");
+    CHECK(find_label(*rig.root, "= 2 1/6 bars") != nullptr);
+    shot("6-editor-keyboard");
+    key(pulp::view::KeyCode::enter);
+    settle_until_contract(rig, "!document.querySelector('[data-spectr-length-editor]')",
+                          "Return did not apply and close the editor");
+    CHECK(shown() == "2 1/6 bars");
+    CHECK(rig.processor.freeze_length() == spectr::FreezeLength{2, spectr::LengthFraction::f1_6});
+    CHECK(selected() == before);
+
+    // Tab to CANCEL and Return there cancels; Shift+Tab walks back.
+    open_editor();
+    key(pulp::view::KeyCode::up);
+    key(pulp::view::KeyCode::tab);
+    key(pulp::view::KeyCode::tab);
+    key(pulp::view::KeyCode::tab);
+    key(pulp::view::KeyCode::tab, pulp::view::kModShift); // APPLY -> CANCEL
+    key(pulp::view::KeyCode::enter);
+    CHECK_FALSE(mounted("[data-spectr-length-editor]"));
+    CHECK(rig.processor.freeze_length() == spectr::FreezeLength{2, spectr::LengthFraction::f1_6});
+
+    // The host moves the parameter: the control follows.
+    rig.store.set_value(spectr::kParamFreezeLength, 2.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-freeze-length]').getAttribute('data-spectr-freeze-length-label') === '4 bars'",
+        "host automation of Freeze Length did not reach the control");
     storage.require_unchanged();
 }
 

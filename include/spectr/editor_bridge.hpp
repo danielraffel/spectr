@@ -89,6 +89,9 @@
 //                             an invalid length is refused and changes nothing
 //  type="freeze_length_get" — the freeze payload as it stands (its seconds
 //                             follow the host tempo)
+//  type="freeze_length_describe" — payload as freeze_length_set; commits
+//                             nothing, answers {valid, message, label, seconds,
+//                             capped, cap_seconds} for the editor's preview
 
 #include <pulp/view/editor_bridge.hpp>
 
