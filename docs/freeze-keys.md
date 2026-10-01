@@ -90,10 +90,32 @@ it landed in, which is more than the 2.67 ms real-time budget. Spread out, the
 worst callback in the AU probe costs about 1.0 ms. See "Measured" below.
 
 **Loop hold** (Hold length 0.25 s or more). The voice plays the loop with
-varispeed, like a sampler. It uses 4-point Hermite interpolation, crossfades
-the seam the way the source does, and starts from wherever the loop is playing
-at the note-on, so the root key continues the frozen loop exactly. Pitch and
-loop duration change together. There is no note latency.
+varispeed, like a sampler. It uses 4-point Hermite interpolation and crossfades
+the seam the way the source does. Pitch and loop duration change together.
+There is no note latency. Where a note starts is a setting,
+**Restart loop on note** (Settings > FREEZE KEYS):
+
+- **On (the default).** Each note-on starts its own playhead at the top of the
+  captured loop. Its first pass plays the plain captured audio, then it loops
+  for as long as the key is held, with the source's seam crossfade at each
+  wrap. A chord, or notes played at different times, each start from the top.
+  This is sampler behaviour: hold a key over a 2-bar loop and you hear those
+  2 bars from their downbeat, repeating.
+- **Off.** A note starts wherever the frozen loop is playing at the note-on,
+  so the root key continues the running loop seamlessly. That makes the hold
+  fade out under the first root note linearly, since it is the same audio;
+  any other first note fades the hold out equal-power.
+
+The setting does not apply to a spectral hold, which has no start. It is
+saved in the plugin state as `freeze_keys_restart_loop`. A session saved
+before the setting existed has no such member and loads as **On**, the same
+as a new instance. It is not a host parameter: it adds nothing to the
+append-only automation surface, and it can be exposed later as an appended
+parameter if hosts need to automate it. The Settings group is its own
+(`marker: "freeze-keys"`), placed before APPEARANCE and independent of the
+FREEZE group and its Hold length row. It renders only where Freeze Keys plays
+(the hydration carries `freeze_keys` only then). The UI is applied by
+`tools/patch_materialized_freeze_keys_restart.py`.
 
 - Upward transposition applies no anti-alias filter. Content above
   `fs / (2 * ratio)` folds back. This has not been measured. If it is audible
@@ -128,6 +150,10 @@ sample.
 | Clicks (sine, note on/off, chord, first key, unfreeze) | worst second difference 0.0012 (0.30 with the envelopes removed) |
 | AU host, 8-note chord per tap (`Spectr-au-freeze-keys-host*`) | MIDI accepted (no −4); worst note-on call about 1.0 ms at 128 frames / 48 kHz, 3.6× the costliest call without freeze (gate 6×); loop voices 57 µs |
 | CLAP, VST3, AU through `pulp::host::PluginSlot` | 220.000 Hz held, then 329.628 Hz after note 67 |
+| Restart loop on note, on | a held root note's first Hold length (after its 10 ms attack) correlates 1.0000 with the loop's top; a second note 0.37 s later does too |
+| ...held for 2.5 loop lengths | equals the loop sample for sample (worst 1.7e-8): the plain top, then each later pass with the source's seam; sharpest step equals the plain hold's over the same span |
+| ...off (the control) | the same note correlates −0.008 with the top; the root equals the plain hold within 1e-5 |
+| ...saved state | round-trips; a blob without the member restores On |
 
 Renders to listen to (`Spectr-test "[.render]"` with
 `FREEZE_KEYS_WAV_DIR=/tmp/freeze-keys`): a melody and a chord played over a

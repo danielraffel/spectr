@@ -1043,7 +1043,10 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // plug-in-only "Keyboard shortcuts in DAW" row, whose label wraps,
         // and 1960.58 -> 1846.58 when the MOTION group (the hidden LIVE /
         // PRECISION choice) left, and 1846.58 -> 1960.58 when the FREEZE group
-        // (Hold length) arrived. If you add a group and this fails, that is the window
+        // (Hold length) arrived. A build where Freeze Keys plays shows one
+        // more group, FREEZE KEYS (Restart loop on note): 1960.58 -> 2074.58,
+        // so the window is centred on whichever extent this build shows. If
+        // you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1051,12 +1054,14 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // forever and catches nothing; keeping the same +/-80 margin either
         // side is what leaves it able to fail in BOTH directions, which is the
         // only reason to have a numeric band here at all.
-        "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
-        "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1881 && s.content_height < 2041"
-        " && s.scroll_reachable === true"
-        " && s.native_scroll_view === true"
-        " && s.authored_skin === true; })()",
+        std::string{"(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
+        "return s && s.width === 520 && s.height === 679"}
+        + (rig.processor.freeze_keys_enabled()
+               ? " && s.content_height > 1995 && s.content_height < 2155"
+               : " && s.content_height > 1881 && s.content_height < 2041")
+        + " && s.scroll_reachable === true"
+          " && s.native_scroll_view === true"
+          " && s.authored_skin === true; })()",
         "settings panel did not keep its authored geometry under the pin");
     capture(rig, directory, "minimum-settings", 792, 516);
     // Title and close action are separate native targets so the close glyph has
@@ -7899,6 +7904,50 @@ TEST_CASE("the Hold length setting reaches the processor",
     settle(rig.clock, 4);
     CHECK(rig.processor.freeze_hold_seconds()
           == Catch::Approx(spectr::FreezeSource::kMaxHoldSeconds));
+    activate(rig, "[data-spectr-settings-close]");
+    storage.require_unchanged();
+}
+
+// Settings > FREEZE KEYS > Restart loop on note: present only where Freeze
+// Keys plays, on by default, and its switch writes the processor's value.
+TEST_CASE("the Restart loop on note setting reaches the processor",
+          "[native-n1][state-parity][freeze-keys][settings]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto group = std::string{
+        "document.querySelector('[data-spectr-settings-group=\"freeze-keys\"] "
+        "[data-spectr-freeze-keys-restart]')"};
+    // Control: Freeze Keys off (every shipping build), no group at all.
+    rig.close();
+    rig.processor.set_freeze_keys_enabled(false);
+    rig.open();
+    require_home(rig);
+    activate(rig, "[data-spectr-settings-open]");
+    settle(rig.clock, 4);
+    CHECK(runtime_value(rig, "!!" + group, "spectr-native-freeze-keys-absent") == "false");
+    activate(rig, "[data-spectr-settings-close]");
+    rig.close();
+
+    rig.processor.set_freeze_keys_enabled(true);
+    REQUIRE(rig.processor.freeze_keys_restart_loop());
+    rig.open();
+    require_home(rig);
+    activate(rig, "[data-spectr-settings-open]");
+    require_runtime_contract(rig, group,
+        "the FREEZE KEYS group's Restart loop on note switch is missing");
+    CHECK(runtime_value(rig, group + ".getAttribute('data-spectr-freeze-keys-restart')",
+                         "spectr-native-freeze-keys-default") == "on");
+    activate(rig, "[data-spectr-freeze-keys-restart] [data-spectr-setting-toggle]");
+    settle(rig.clock, 4);
+    CHECK_FALSE(rig.processor.freeze_keys_restart_loop());
+    CHECK(runtime_value(rig, group + ".getAttribute('data-spectr-freeze-keys-restart')",
+                         "spectr-native-freeze-keys-off") == "off");
+    rig.bridge().load_script(
+        "window.pulp.postMessage('freeze_keys_restart_set', { enabled: true }, 'test');",
+        "spectr-native-freeze-keys-write");
+    settle(rig.clock, 4);
+    CHECK(rig.processor.freeze_keys_restart_loop());
     activate(rig, "[data-spectr-settings-close]");
     storage.require_unchanged();
 }
