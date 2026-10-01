@@ -360,6 +360,16 @@ public:
         const float start = copied ? loop[at] : recorded_at_(channel, loop_start_ + at);
         return seam_value_(loop, start, at);
     }
+    /// The same sample on a chosen pass: `seam` false is the loop's first
+    /// pass, the plain start with no crossfade in from the end (a reader that
+    /// starts the loop from its top, FreezeKeys' restarting voices); true is
+    /// a later pass, as loop_sample(channel, at).
+    [[nodiscard]] float loop_sample(int channel, std::int64_t at, bool seam) const noexcept {
+        if (seam) return loop_sample(channel, at);
+        const float* loop = loop_.data() + static_cast<std::size_t>(channel) * loop_capacity_;
+        const bool copied = loop_seam_ || at < loop_position_;
+        return copied ? loop[at] : recorded_at_(channel, loop_start_ + at);
+    }
     /// True while any held content reaches the output.
     [[nodiscard]] bool hold_audible() const noexcept {
         return phase_ == Phase::engaging || phase_ == Phase::held

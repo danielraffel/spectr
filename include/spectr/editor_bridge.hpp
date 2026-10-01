@@ -87,6 +87,10 @@
 //  type="freeze_hold_set"   — payload: {seconds: number}
 //                             effect: Spectr::set_freeze_hold_seconds(seconds);
 //                             the response carries the clamped value
+//  type="freeze_keys_restart_set" — payload: {enabled: bool}
+//                             effect: Spectr::set_freeze_keys_restart_loop(enabled);
+//                             hydration carries freeze_keys.restart_loop only in
+//                             a Freeze Keys build
 
 #include <pulp/view/editor_bridge.hpp>
 

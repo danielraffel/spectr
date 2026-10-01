@@ -46,10 +46,17 @@
 ///    48 kHz). A loop voice sounds at its note-on.
 ///  - LOOP (Hold length from kLoopMinSeconds). The hold is audio, so a voice
 ///    is a varispeed (sampler) read of the loop -- 4-point Hermite
-///    interpolation, the seam crossfaded as the source plays it -- starting
-///    where the loop is playing at the note-on, so the root note continues
-///    the frozen loop exactly. Pitch and loop duration change together, as
-///    on a sampler. A time-preserving (formant/duration-keeping) shifter is
+///    interpolation, the seam crossfaded as the source plays it. Where it
+///    starts is a setting (set_restart_loop):
+///      ON, the default ("Restart loop on note"): every note starts its own
+///      playhead at the TOP of the loop, its first pass the plain captured
+///      audio, and loops for as long as the key is held, the seam crossfaded
+///      at each wrap -- a sampler. A chord, or notes played at different
+///      times, each start from the top.
+///      OFF: a note starts where the frozen loop is playing at the note-on,
+///      so the root note continues the running loop exactly.
+///    The setting does not apply to a spectral hold, which has no start.
+///    Pitch and loop duration change together, as on a sampler. A time-preserving (formant/duration-keeping) shifter is
 ///    the alternative; see docs/freeze-keys.md.
 ///
 /// ENVELOPES. Attack kAttackSeconds, release kReleaseSeconds, both click-free
@@ -196,6 +203,11 @@ public:
     [[nodiscard]] bool enabled() const noexcept { return enabled_; }
 
     void set_root_note(int note) noexcept { root_note_ = std::clamp(note, 0, 127); }
+
+    /// Loop holds: ON (the default), each note starts the loop from its top;
+    /// OFF, it joins the loop where it is playing. Read at each note-on.
+    void set_restart_loop(bool restart) noexcept { restart_loop_ = restart; }
+    [[nodiscard]] bool restart_loop() const noexcept { return restart_loop_; }
     [[nodiscard]] int root_note() const noexcept { return root_note_; }
 
     /// Start of a host block: events queued from here are stamped relative
@@ -287,6 +299,9 @@ private:
         float release_dec = 0.0f;
         // Loop voice.
         double position = 0.0;
+        // Still on its first pass from the loop's top (a restarting voice):
+        // reads the plain start, with no seam crossfade from the end.
+        bool first_pass = false;
         // Spectral voice, before it sounds: samples to go, and how much of
         // its preparation (frame plan, then pre-roll frames) is done.
         int delay = 0;
@@ -437,7 +452,8 @@ private:
         v.active = false;
         if (v.loop) {
             if (source_.loop_length() < 4) return;
-            v.position = static_cast<double>(source_.loop_position());
+            v.first_pass = restart_loop_;
+            v.position = restart_loop_ ? 0.0 : static_cast<double>(source_.loop_position());
         } else {
             if (!analysed_) analyse_hold_();
             if (!analysed_) return;
@@ -454,7 +470,8 @@ private:
             mode_step_ = 0;
             mode_delay_ = v.loop ? 0 : v.delay;
             // The root note of a loop continues the very audio it replaces.
-            mode_loop_ = v.loop && note == root_note_;
+            // A restarting voice starts the loop over, so it is not that audio.
+            mode_loop_ = v.loop && note == root_note_ && !v.first_pass;
         }
     }
 
@@ -532,11 +549,15 @@ private:
                 const std::int64_t i0 = base == 0 ? length - 1 : base - 1;
                 const std::int64_t i2 = base + 1 >= length ? base + 1 - length : base + 1;
                 const std::int64_t i3 = i2 + 1 >= length ? i2 + 1 - length : i2 + 1;
+                // On a restarting voice's first pass, the taps that have
+                // not wrapped read the plain start; the ones past the end are
+                // the next pass, seam and all.
+                const bool first = v.first_pass;
                 for (int ch = 0; ch < channels_; ++ch) {
-                    const float y0 = source_.loop_sample(ch, i0);
-                    const float y1 = source_.loop_sample(ch, base);
-                    const float y2 = source_.loop_sample(ch, i2);
-                    const float y3 = source_.loop_sample(ch, i3);
+                    const float y0 = source_.loop_sample(ch, i0, !first);
+                    const float y1 = source_.loop_sample(ch, base, !first);
+                    const float y2 = source_.loop_sample(ch, i2, !first || i2 < base);
+                    const float y3 = source_.loop_sample(ch, i3, !first || i3 < base);
                     // 4-point, 3rd-order Hermite.
                     const float c1 = 0.5f * (y2 - y0);
                     const float c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
@@ -545,7 +566,7 @@ private:
                     voice_sum_[static_cast<std::size_t>(ch) * stride + static_cast<std::size_t>(i)] += gain * y;
                 }
                 v.position += v.ratio;
-                if (v.position >= len) v.position -= len;
+                if (v.position >= len) { v.position -= len; v.first_pass = false; }
             }
             return;
         }
@@ -907,6 +928,7 @@ private:
     int attack_samples_ = 1;
     int release_samples_ = 1;
     int root_note_ = kDefaultRootNote;
+    bool restart_loop_ = true;
     bool enabled_ = false;
     bool prepared_ = false;
     double sample_rate_ = 0.0;

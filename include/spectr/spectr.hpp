@@ -583,6 +583,16 @@ public:
     void set_freeze_keys_root_note(int note) noexcept {
         freeze_keys_root_.store(std::clamp(note, 0, 127), std::memory_order_relaxed);
     }
+    /// Freeze Keys on a loop hold: ON (the default), every note starts the
+    /// loop from its top, as a sampler; OFF, a note joins the loop where it
+    /// is playing. A Settings value persisted in the supplemental plugin-state
+    /// blob (absent -> ON), not a host parameter. Any thread.
+    [[nodiscard]] bool freeze_keys_restart_loop() const noexcept {
+        return freeze_keys_restart_loop_.load(std::memory_order_relaxed);
+    }
+    void set_freeze_keys_restart_loop(bool restart) noexcept {
+        freeze_keys_restart_loop_.store(restart, std::memory_order_relaxed);
+    }
     /// Audio-thread state, as freeze_source().
     [[nodiscard]] const FreezeKeys& freeze_keys() const noexcept { return freeze_keys_; }
 
@@ -830,6 +840,7 @@ private:
     std::atomic<bool> freeze_keys_enabled_{false};
 #endif
     std::atomic<int> freeze_keys_root_{FreezeKeys::kDefaultRootNote};
+    std::atomic<bool> freeze_keys_restart_loop_{true};
     std::atomic<double> freeze_hold_seconds_{FreezeSource::kDefaultHoldSeconds};
     void preroll_surviving_hold_();
     std::array<const float*, kMaximumChannels> input_channels_{};

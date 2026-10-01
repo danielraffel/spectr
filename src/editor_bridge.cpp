@@ -264,6 +264,15 @@ choc::value::Value make_freeze_payload_(const Spectr& plugin, bool with_settings
     return freeze;
 }
 
+// Freeze Keys' Settings, present only in a build where Freeze Keys plays
+// (the Settings row renders nothing without it). Its own member, apart from
+// the freeze payload, so the two Settings rows stay independent.
+choc::value::Value make_freeze_keys_payload_(const Spectr& plugin) {
+    auto keys = choc::value::createObject("SpectrFreezeKeys");
+    keys.addMember("restart_loop", plugin.freeze_keys_restart_loop());
+    return keys;
+}
+
 choc::value::Value make_modulation_payload_(const Spectr& plugin) {
     const auto modulation_state = plugin.modulation_settings();
     auto modulation = choc::value::createObject("SpectrModulationState");
@@ -403,6 +412,8 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     // it is never automated, so the live per-revision projection omits it.
     payload.addMember("keyboard", make_keyboard_policy_payload_(plugin));
     payload.addMember("freeze", make_freeze_payload_(plugin, /*with_settings=*/true));
+    if (plugin.freeze_keys_enabled())
+        payload.addMember("freeze_keys", make_freeze_keys_payload_(plugin));
     // The Latency control. Not a host parameter and not automatable, so like
     // "Morph moves the view" it rides the hydration payload the panel reads
     // once and deliberately never appears in the live per-revision projection,
@@ -1048,6 +1059,19 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             plugin.set_freeze_hold_seconds(seconds);
             return EditorBridge::ok_response(
                 make_freeze_payload_(plugin, /*with_settings=*/true));
+        });
+
+    // Freeze Keys: do notes restart a loop hold from its top. A Settings
+    // value, persisted in the plugin state, never a host parameter.
+    bridge.add_handler("freeze_keys_restart_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("enabled"))
+                return EditorBridge::err_response("enabled missing");
+            const auto& flag = p["enabled"];
+            if (!flag.isBool())
+                return EditorBridge::err_response("enabled must be a boolean");
+            plugin.set_freeze_keys_restart_loop(flag.getBool());
+            return EditorBridge::ok_response(make_freeze_keys_payload_(plugin));
         });
 
     bridge.add_handler("morph_viewport_set",

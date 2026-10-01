@@ -177,6 +177,10 @@ struct Edge {
     int velocity = 127;
 };
 
+/// Freeze Keys' loop-restart setting for the renders that follow; the hold
+/// cases below set it.
+bool g_restart_loop = true;
+
 struct Render {
     Stereo out;
     int latency = 0;
@@ -193,6 +197,7 @@ Render render(const Stereo& in, std::vector<Edge> edges, double hold_seconds,
     REQUIRE(plugin->set_render_mode(mode));
     plugin->set_freeze_hold_seconds(hold_seconds);
     plugin->set_freeze_keys_enabled(keys);
+    plugin->set_freeze_keys_restart_loop(g_restart_loop);
     host.prepare(kRate, block);
     Render r;
     r.latency = plugin->latency_samples();
@@ -266,8 +271,12 @@ constexpr std::size_t kWindow = 16384;
 constexpr double kSpectralHold = FreezeSource::kDefaultHoldSeconds; // a spectral hold
 constexpr double kLoopHold = 0.5;                                    // a loop
 
-struct HoldCase { const char* name; double seconds; };
-const HoldCase kHolds[] = {{"spectral", kSpectralHold}, {"loop", kLoopHold}};
+/// Every hold kind, and a loop hold both ways: notes restarting it from its
+/// top (the default) and joining it where it plays.
+struct HoldCase { const char* name; double seconds; bool restart = true; };
+const HoldCase kHolds[] = {{"spectral", kSpectralHold},
+                           {"loop", kLoopHold, true},
+                           {"loop-join", kLoopHold, false}};
 
 double ratio(int semitones) { return std::exp2(semitones / 12.0); }
 
@@ -277,6 +286,7 @@ TEST_CASE("Freeze Keys: the root note plays the hold at its pitch, other keys tr
           "[freeze-keys]") {
     const auto input = sine(220.0, 3.0);
     for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
         CAPTURE(hold.name);
         for (int semitones : {0, 7, -5, 12, -12}) {
             CAPTURE(semitones);
@@ -293,6 +303,7 @@ TEST_CASE("Freeze Keys: the root note plays the hold at its pitch, other keys tr
 TEST_CASE("Freeze Keys: a chord plays every one of its pitches", "[freeze-keys]") {
     const auto input = sine(220.0, 3.0);
     for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
         CAPTURE(hold.name);
         const auto r = play(input, hold.seconds, {60, 64, 67});
         const auto p = peaks(r.out, window_start(r), kWindow, 3);
@@ -316,6 +327,7 @@ TEST_CASE("Freeze Keys: richer material transposes by the interval", "[freeze-ke
     const Material materials[] = {{"saw chord", saw_chord(3.0)}, {"pad", pad(3.0)}};
     for (const auto& m : materials) {
         for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
             CAPTURE(m.name, hold.name);
             const auto root = play(m.audio, hold.seconds, {60});
             const auto fifth = play(m.audio, hold.seconds, {67});
@@ -338,6 +350,7 @@ TEST_CASE("Freeze Keys: the root at full velocity plays at the hold's level; vel
           "[freeze-keys]") {
     const auto input = pad(3.0);
     for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
         CAPTURE(hold.name);
         // Freeze alone: the hold's level over the same window.
         const auto frozen = render(input, {{Edge::freeze, at(0.6)}}, hold.seconds);
@@ -357,6 +370,7 @@ TEST_CASE("Freeze Keys: the root at full velocity plays at the hold's level; vel
 TEST_CASE("Freeze Keys: note-off releases to silence; no key held is silence", "[freeze-keys]") {
     const auto input = pad(3.5);
     for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
         CAPTURE(hold.name);
         const auto r = render(input, {{Edge::freeze, at(0.6)},
                                       {Edge::on, at(1.5), 60}, {Edge::on, at(1.5), 64},
@@ -376,6 +390,7 @@ TEST_CASE("Freeze Keys: unfrozen, notes do nothing and the output is the live re
           "[freeze-keys]") {
     const auto input = pad(5.0);
     for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
         CAPTURE(hold.name);
         const std::vector<Edge> frozen_part{{Edge::freeze, at(0.6)},
                                             {Edge::on, at(1.5), 60}, {Edge::on, at(1.5), 67},
@@ -414,6 +429,7 @@ TEST_CASE("Freeze Keys: unfrozen, notes do nothing and the output is the live re
 TEST_CASE("Freeze Keys: no MIDI while frozen sounds exactly as Freeze did", "[freeze-keys]") {
     const auto input = pad(3.0);
     for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
         CAPTURE(hold.name);
         const std::vector<Edge> edges{{Edge::freeze, at(0.6)}, {Edge::unfreeze, at(2.2)}};
         const auto keys = render(input, edges, hold.seconds, true);
@@ -526,6 +542,172 @@ TEST_CASE("Freeze Keys: a voice reads the loop correctly before its first pass h
     }
 }
 
+namespace {
+
+/// The freeze stage on its own (no mask): FreezeSource wrapped by FreezeKeys,
+/// frozen at `freeze_at`, a loop hold, with notes at given samples. Returns
+/// the stage output; `source` is left as it ended, for reading the loop.
+struct StageNote { std::size_t at; int note; bool on; };
+Stereo render_stage(FreezeSource& source, const Stereo& input, std::size_t freeze_at,
+                    std::vector<StageNote> notes, bool restart, int block = 128) {
+    REQUIRE(source.prepare(kRate, 2));
+    source.set_hold_seconds(kLoopHold);
+    FreezeKeys keys{source};
+    REQUIRE(keys.prepare(kRate, 2));
+    keys.set_enabled(true);
+    keys.set_restart_loop(restart);
+    Stereo out; out.resize(input.size());
+    for (std::size_t pos = 0; pos < input.size(); pos += std::size_t(block)) {
+        const auto n = std::min<std::size_t>(std::size_t(block), input.size() - pos);
+        source.set_frozen(pos >= freeze_at);
+        keys.begin_block();
+        for (const auto& e : notes)
+            if (e.at >= pos && e.at < pos + n) {
+                if (e.on) REQUIRE(keys.note_on(int(e.at - pos), e.note, 127));
+                else REQUIRE(keys.note_off(int(e.at - pos), e.note));
+            }
+        const float* i[] = {input.l.data() + pos, input.r.data() + pos};
+        float* o[] = {out.l.data() + pos, out.r.data() + pos};
+        keys.process_block(i, o, 2, int(n));
+    }
+    return out;
+}
+
+double correlation(const std::vector<float>& a, std::size_t from, const std::vector<float>& b,
+                   std::size_t n) {
+    double ab = 0, aa = 0, bb = 0;
+    for (std::size_t k = 0; k < n; ++k) {
+        ab += double(a[from + k]) * b[k];
+        aa += double(a[from + k]) * a[from + k];
+        bb += double(b[k]) * b[k];
+    }
+    return ab / std::sqrt(aa * bb + 1e-30);
+}
+
+} // namespace
+
+TEST_CASE("Freeze Keys: with Restart loop on, a note plays the loop from its top",
+          "[freeze-keys][restart]") {
+    // A pad that keeps changing (a slow swell and a chord change), so the
+    // loop's top is unlike the audio around wherever the frozen loop happens
+    // to be playing: a note joining the running loop does not correlate with
+    // it. Freeze at 1.4 s; the root at 2.31 s, released at 2.51 s, then again
+    // at 2.68 s (each at a loop phase unrelated to the other). The same key
+    // twice keeps both at the loop's own pitch, so each compares sample for
+    // sample with the loop.
+    auto input = pad(6.0);
+    for (std::size_t n = 0; n < input.size(); ++n) {
+        const double g = 0.55 + 0.45 * std::sin(2 * kPi * 1.3 * double(n) / kRate);
+        input.l[n] *= float(g); input.r[n] *= float(g);
+    }
+    const std::size_t a = at(2.31), b = at(2.68);
+    FreezeSource with_both, only_a;
+    const auto both = render_stage(with_both, input, at(1.4),
+                                   {{a, 60, true}, {at(2.51), 60, false}, {b, 60, true}}, true);
+    const auto first = render_stage(only_a, input, at(1.4), {{a, 60, true}, {at(2.51), 60, false}}, true);
+    FreezeSource held_source;
+    const auto held = render_stage(held_source, input, at(1.4), {{a, 60, true}}, true);
+    REQUIRE(with_both.looping());
+    const auto length = std::size_t(with_both.loop_length());
+    REQUIRE(length > std::size_t(at(0.25)));
+    // The loop's top as its first pass plays it, then later passes.
+    std::vector<float> top(length), pass(length);
+    for (std::size_t k = 0; k < length; ++k) {
+        top[k] = with_both.loop_sample(0, std::int64_t(k), false);
+        pass[k] = with_both.loop_sample(0, std::int64_t(k), true);
+    }
+    // Each note over its first Hold length, its 10 ms attack ramp aside.
+    const std::size_t attack = at(FreezeKeys::kAttackSeconds) + 1;
+    const std::vector<float> top_after(top.begin() + long(attack), top.end());
+    const double ra = correlation(held.l, a + attack, top_after, length - attack);
+    // Note B: what B added to A.
+    Stereo b_only; b_only.resize(input.size());
+    for (std::size_t n = 0; n < input.size(); ++n) b_only.l[n] = both.l[n] - first.l[n];
+    const double rb = correlation(b_only.l, b + attack, top_after, length - attack);
+    CAPTURE(length, ra, rb);
+    CHECK(ra > 0.99);
+    CHECK(rb > 0.99);
+
+    // Held for 2.5 loop lengths: after the attack, the voice IS the loop --
+    // the plain top on the first pass, then each later pass with the seam
+    // the source crossfades -- sample for sample.
+    REQUIRE(a + length * 5 / 2 < input.size());
+    float worst = 0.0f;
+    for (std::size_t k = attack; k < length * 5 / 2; ++k) {
+        const std::size_t i = k % length;
+        const float expected = k < length ? top[i] : pass[i];
+        worst = std::max(worst, std::abs(held.l[a + k] - expected));
+    }
+    CAPTURE(worst);
+    CHECK(worst < 1e-6f);
+    // ...so its wraps are the source's own seams: no sharper a step than
+    // the plain hold makes over the same span.
+    const auto step = [](const std::vector<float>& x, std::size_t from, std::size_t to) {
+        double m = 0.0;
+        for (std::size_t n = from; n + 2 < to; ++n)
+            m = std::max(m, std::abs(double(x[n + 2]) - 2.0 * x[n + 1] + x[n]));
+        return m;
+    };
+    FreezeSource plain_source;
+    const auto plain = render_stage(plain_source, input, at(1.4), {}, true);
+    const double voice_step = step(held.l, a + attack, a + length * 5 / 2);
+    const double hold_step = step(plain.l, a, a + length * 5 / 2);
+    CAPTURE(voice_step, hold_step);
+    CHECK(voice_step < 1.5 * hold_step + 1e-4);
+
+    // Control: joining the running loop instead (Restart off), the same
+    // note does not start at the top.
+    FreezeSource joined_source;
+    const auto joined = render_stage(joined_source, input, at(1.4), {{a, 60, true}}, false);
+    const double rj = correlation(joined.l, a + attack, top_after, length - attack);
+    CAPTURE(rj);
+    CHECK(rj < 0.9);
+}
+
+TEST_CASE("Freeze Keys: with Restart loop off, the root note continues the running loop",
+          "[freeze-keys][restart]") {
+    const auto input = pad(5.0);
+    FreezeSource keyed, plain;
+    const std::size_t a = at(2.31);
+    const auto played = render_stage(keyed, input, at(1.4), {{a, 60, true}}, false);
+    const auto held = render_stage(plain, input, at(1.4), {}, false);
+    // The root joins the loop where it plays and the hold fades out under
+    // it linearly: the same audio, sample for sample.
+    CHECK(max_diff(played, held) < 1e-5);
+}
+
+TEST_CASE("Freeze Keys: the restart setting persists in the plugin state, absent is on",
+          "[freeze-keys][restart]") {
+    pulp::format::HeadlessHost host{spectr::create_spectr};
+    auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+    REQUIRE(plugin != nullptr);
+    CHECK(plugin->freeze_keys_restart_loop());          // a new instance: on
+    plugin->set_freeze_keys_restart_loop(false);
+    const auto blob = plugin->serialize_plugin_state();
+    std::string json(blob.begin(), blob.end());
+    const std::string key = "\"freeze_keys_restart_loop\"";
+    const auto key_at = json.find(key);
+    REQUIRE(key_at != std::string::npos);
+    const auto value_end = json.find_first_of(",}", key_at);
+    REQUIRE(json.substr(key_at, value_end - key_at).find("false") != std::string::npos);
+
+    pulp::format::HeadlessHost other{spectr::create_spectr};
+    auto* restored = dynamic_cast<spectr::Spectr*>(other.processor());
+    REQUIRE(restored != nullptr);
+    REQUIRE(restored->deserialize_plugin_state(blob));
+    CHECK_FALSE(restored->freeze_keys_restart_loop());
+
+    // A session saved before the setting existed carries no member: on.
+    std::string old = json;
+    // The member and the comma before it.
+    const auto comma = old.rfind(',', key_at);
+    old.erase(comma, value_end - comma);
+    REQUIRE(old.find("freeze_keys_restart_loop") == std::string::npos);
+    REQUIRE(restored->deserialize_plugin_state(
+        std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(old.data()), old.size())));
+    CHECK(restored->freeze_keys_restart_loop());
+}
+
 TEST_CASE("Freeze Keys: notes start, stop and switch the bus without a click", "[freeze-keys]") {
     // A sine's second difference is tiny (0.3 (2 pi f / fs)^2: ~1e-4 at
     // 220 Hz); a step anywhere -- a note that starts or stops at full level,
@@ -534,6 +716,7 @@ TEST_CASE("Freeze Keys: notes start, stop and switch the bus without a click", "
     // first key into the hold, and the release of Freeze under held notes.
     const auto input = sine(220.0, 4.0);
     for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
         CAPTURE(hold.name);
         const auto r = render(input, {{Edge::freeze, at(0.6)},
                                       {Edge::on, at(1.5), 60}, {Edge::off, at(1.9), 60},
@@ -556,6 +739,7 @@ TEST_CASE("Freeze Keys: notes start, stop and switch the bus without a click", "
 TEST_CASE("Freeze Keys: report the cost of an 8-note chord's note-on", "[freeze-keys][.report]") {
     const auto input = pad(3.0);
     for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
         for (int block : {128, 256}) {
             std::vector<Edge> edges{{Edge::freeze, at(0.6)}};
             for (int note : {48, 52, 55, 60, 64, 67, 71, 72}) edges.push_back({Edge::on, at(1.5), note});
@@ -606,6 +790,7 @@ TEST_CASE("Freeze Keys: render a melody over a frozen pad to WAV", "[freeze-keys
     edges.push_back({Edge::unfreeze, at(10.0)});
     write_wav(dir + "/pad-input.wav", input, 0);
     for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
         const auto r = render(input, edges, hold.seconds);
         write_wav(dir + "/melody-over-frozen-pad-" + hold.name + ".wav", r.out, std::size_t(r.latency));
         // The same freeze without keys, for A/B.

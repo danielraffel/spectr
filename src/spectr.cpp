@@ -1083,6 +1083,7 @@ void Spectr::process(
     freeze_keys_.set_enabled(freeze_keys_enabled());
     if (freeze_keys_.enabled()) {
         freeze_keys_.set_root_note(freeze_keys_root_note());
+        freeze_keys_.set_restart_loop(freeze_keys_restart_loop());
         for (const auto& event : midi_in) {
             const int offset = std::max(0, static_cast<int>(event.sample_offset));
             if (event.is_note_on())
@@ -1672,6 +1673,10 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     root.addMember("keyboard_shortcuts_in_daw", keyboard_shortcuts_in_daw_);
     // The Settings hold length. The held spectrum itself is not saved.
     root.addMember("freeze_hold_seconds", freeze_hold_seconds());
+    // Freeze Keys: do notes restart a loop hold from its top. Absent on a
+    // writer that predates it; readers take absence as ON, the default, so
+    // an old session plays keys as a new instance does.
+    root.addMember("freeze_keys_restart_loop", freeze_keys_restart_loop());
 
     // Macro membership: four arrays of canonical slot indices, shaped exactly
     // like `morph_overrides` above. The macro VALUES are StateStore
@@ -2059,6 +2064,13 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_keyboard_shortcuts_in_daw = flag.getBool();
     }
 
+    bool new_freeze_keys_restart_loop = true;
+    if (root.hasObjectMember("freeze_keys_restart_loop")) {
+        const auto& flag = root["freeze_keys_restart_loop"];
+        if (!flag.isBool()) return false;
+        new_freeze_keys_restart_loop = flag.getBool();
+    }
+
     // Absent on a blob written before freeze existed: the default length.
     double new_freeze_hold_seconds = FreezeSource::kDefaultHoldSeconds;
     if (root.hasObjectMember("freeze_hold_seconds")) {
@@ -2150,6 +2162,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_applies_viewport_ = new_morph_applies_viewport;
         keyboard_shortcuts_in_daw_ = new_keyboard_shortcuts_in_daw;
         set_freeze_hold_seconds(new_freeze_hold_seconds);
+        set_freeze_keys_restart_loop(new_freeze_keys_restart_loop);
         macro_members_ = new_macro_members;
         // Re-derive the LFO lanes from the restored parameters before the
         // mask rides along: the audio thread only honours a published mask
