@@ -638,6 +638,43 @@ public:
     void begin_param_gesture_epoch() noexcept;
     void end_param_gesture_epoch() noexcept;
 
+    // ── Editor edits of plain host parameters ──────────────────────────────
+    //
+    // The controls whose parameter IS their whole state -- Mix, Output trim,
+    // and every internal-LFO lane (on/off, shape, rate, depth, target, for
+    // both LFOs) -- are edited by the editor through these, never through a
+    // bare value write. A host recording in Touch, Latch or Write keys on the
+    // edit gesture (begin, value, end); a bare write moves the parameter and
+    // the DSP but leaves such a host nothing to record.
+    //
+    // A press that is one complete act (a toggle, a shape, a target, a step
+    // of the keyboard) calls only `edit_param_from_editor`, which emits a
+    // complete bracket. A drag opens the bracket on press with
+    // `begin_editor_param_gesture`, writes through `edit_param_from_editor`
+    // inside it, and closes it on release -- one bracket per drag. UI thread.
+    //
+    // Other parameters have their own editor routes (bands, morph and
+    // viewport through the field publication; modes through mode_set; Freeze
+    // through freeze_set; macros through macro_set), each already gestured,
+    // so these refuse them rather than offer a second, cache-bypassing path.
+
+    /// True when @p id is edited through the three calls below.
+    [[nodiscard]] static bool is_editor_plain_param(
+        pulp::state::ParamID id) noexcept;
+    /// Write @p value. Inside an open drag gesture for @p id this is the
+    /// value alone; otherwise it is a complete begin/value/end bracket.
+    /// Returns false for a parameter outside the set above or before the
+    /// store exists.
+    bool edit_param_from_editor(pulp::state::ParamID id, float value) noexcept;
+    /// Open a drag gesture on @p id. A second begin on an open id is a no-op.
+    bool begin_editor_param_gesture(pulp::state::ParamID id) noexcept;
+    /// Close the drag gesture on @p id. Closing one that is not open is a
+    /// no-op, so a release the editor reports twice cannot unbalance a host.
+    bool end_editor_param_gesture(pulp::state::ParamID id) noexcept;
+    /// Close every editor drag gesture still open (the editor went away
+    /// mid-drag).
+    void end_editor_param_gestures() noexcept;
+
     // ── Pattern library ────────────────────────────────────────────────
     //
     // Each Spectr owns a PatternLibrary pre-populated with the factory
@@ -912,6 +949,8 @@ private:
     // Open paint-drag epoch (UI thread only): params already begin-gestured.
     std::vector<pulp::state::ParamID> epoch_gesture_params_{};
     bool param_gesture_epoch_open_ = false;
+    // Editor drag gestures open on plain parameters (UI thread only).
+    std::vector<pulp::state::ParamID> editor_param_gestures_{};
 
     // A morph derives non-overridden bands from the snapshot bank while the
     // sparse override mask identifies later band edits whose values live in

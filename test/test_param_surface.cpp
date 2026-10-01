@@ -342,6 +342,55 @@ TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
     CHECK(target->value_labels.size() == 4);
 }
 
+TEST_CASE("LFO rate and depth read in a host's lane as the editor shows them",
+          "[modulation][automation]") {
+    Wired w;
+    for (const auto id : {spectr::kParamLfoRate, spectr::kParamLfo2Rate}) {
+        const auto* rate = find(w.store, id);
+        REQUIRE(rate != nullptr);
+        REQUIRE(rate->to_string);
+        REQUIRE(rate->from_string);
+        CHECK(rate->to_string(4.0f) == "4 beats");
+        CHECK(rate->to_string(0.25f) == "0.25 beats");
+        CHECK(rate->to_string(1.0f) == "1 beat");
+        CHECK(rate->from_string("2 beats") == Approx(2.0f));
+        CHECK(rate->from_string(rate->to_string(0.5f)) == Approx(0.5f));
+        // The string carries the unit, so a host that prints `units` after it
+        // must not print it twice.
+        CHECK(rate->unit.empty());
+    }
+    for (const auto id : {spectr::kParamLfoDepth, spectr::kParamLfo2Depth}) {
+        const auto* depth = find(w.store, id);
+        REQUIRE(depth != nullptr);
+        REQUIRE(depth->to_string);
+        REQUIRE(depth->from_string);
+        CHECK(depth->to_string(0.5f) == "50%");
+        CHECK(depth->to_string(0.0f) == "0%");
+        CHECK(depth->to_string(1.0f) == "100%");
+        CHECK(depth->from_string("37%") == Approx(0.37f));
+        CHECK(depth->from_string("37") == Approx(0.37f));
+        CHECK(depth->from_string("0.37") == Approx(0.37f));
+    }
+    // Toggles and shapes are discrete lanes with labels, so a host steps them
+    // rather than interpolating between "Sine" and "Square".
+    for (const auto id : {spectr::kParamLfoEnabled, spectr::kParamLfo2Enabled}) {
+        const auto* on = find(w.store, id);
+        REQUIRE(on != nullptr);
+        CHECK(on->kind == pulp::state::ParamKind::Toggle);
+        CHECK(on->range.step == Approx(1.0f));
+        REQUIRE(on->value_labels.size() == 2);
+        CHECK(on->value_labels[1] == "On");
+    }
+    for (const auto id : {spectr::kParamLfoShape, spectr::kParamLfo2Shape,
+                          spectr::kParamLfoTarget}) {
+        const auto* e = find(w.store, id);
+        REQUIRE(e != nullptr);
+        CHECK(e->kind == pulp::state::ParamKind::Enum);
+        CHECK(e->range.step == Approx(1.0f));
+        CHECK(e->value_labels.size() == 4);
+    }
+}
+
 TEST_CASE("#34: viewport parameters round-trip without inverted edges") {
     const spectr::Viewport authored{120.0f, 7200.0f};
     const auto [center, width] = spectr::encode_viewport(authored);
