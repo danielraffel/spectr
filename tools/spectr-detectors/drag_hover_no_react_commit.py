@@ -37,8 +37,8 @@ ARTIFACT = os.path.join(REPO, "native-ui", "materialized",
                         "materialized-document.runtime.json")
 
 # The pointer-sample entry point, and the React state setters that must not be
-# reachable from it unconditionally.  setHover is the one that regressed; the
-# others are listed so a future rewrite that swaps the setter is still caught.
+# reachable from it unconditionally. Hover is now paint-only and uses a ref;
+# the planted case below adds the old setter back to keep this detector live.
 ENTRY = "updatePointerHover"
 STATE_SETTERS = ("setHover", "setStatus", "setCtxMenu", "setSettingsOpen")
 # The guard that makes a state write safe: it fires only when no drag is in
@@ -91,7 +91,7 @@ def main():
     # present, or the instrument -- not the build -- is what changed.
     controls = {
         "pointer dispatch entry": payload.count(ENTRY),
-        "hover state setter": payload.count("setHover("),
+        "hover ref writer": payload.count("hoverRef.current"),
         "drag pointer ref": payload.count("pointerRef.current"),
     }
     for label, count in controls.items():
@@ -110,14 +110,19 @@ def main():
     print("subject   %-24s %d chars" % (ENTRY + "() body", len(body)))
 
     if args.plant == "unguard":
-        if not any(setter + "(" in body for setter in STATE_SETTERS):
-            print("PLANT IMPOSSIBLE: the body names no React state setter, so "
-                  "there is nothing to unguard -- this check passes vacuously "
-                  "and proves nothing", file=sys.stderr)
+        # The healthy implementation is intentionally setter-free. Reintroduce
+        # the historical bug in the extracted writer so the detector's negative
+        # control still proves that an unconditional React update is caught.
+        marker = "hoverRef.current = stamped;"
+        if marker not in body:
+            print("PLANT IMPOSSIBLE: the body has no hover ref writer, so "
+                  "the detector's negative control cannot be applied",
+                  file=sys.stderr)
             return 4
+        body = body.replace(marker, marker + " setHover(stamped);")
+        print("CONTROL: planted an unconditional React hover setter")
         for tok in GUARD_TOKENS:
             body = body.replace(tok, "PLANTED_NO_GUARD")
-        print("CONTROL: stripped the drag guard from the extracted body")
 
     failures = []
     for setter in STATE_SETTERS:
