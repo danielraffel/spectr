@@ -851,6 +851,11 @@ private:
     LfoShapeFade audio_lfo_shape_fade_{};
     LfoShapeFade audio_lfo_2_shape_fade_{};
     bool         audio_lfo_shape_fade_primed_ = false;
+    // Each LFO's slewed audible level (enabled ? depth : 0); see
+    // slew_lfo_level. Adopted without a ramp on the first block, like the
+    // shape, so a session that opens with an LFO running starts on it.
+    std::array<float, 2> audio_lfo_level_{};
+    bool                 audio_lfo_level_primed_ = false;
     // Audio owner -> UI publication of the post-LFO band field, so the editor
     // can draw the modulation it is playing. Write-only on the audio thread,
     // read-only through read_modulated_field().

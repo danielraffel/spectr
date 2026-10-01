@@ -1096,8 +1096,13 @@ void Spectr::process(
         // lands, or miss it entirely. Reading the drifted store here through
         // the cursor makes the block that OBSERVES the drift also act on it.
         // The worker still runs: it owns canonical state for the editor.
+        // A level still ramping toward zero after the LFO was switched off
+        // keeps the branch alive too: the ramp IS the switch-off, and a host
+        // that sends nothing after the off event must still hear it finish.
+        const bool lfo_level_ramping =
+            audio_lfo_level_[0] > 0.0f || audio_lfo_level_[1] > 0.0f;
         if (has_events || modulation_enabled || modulated_field_was_active_
-            || surface_drift.audio) {
+            || lfo_level_ramping || surface_drift.audio) {
             std::array<pulp::format::ParamSnapshotEntry,
                        kSurfaceCacheSlots + 2> initial{};
             initial[0] = {kMix, audio_mix_percent_};
@@ -1259,6 +1264,34 @@ void Spectr::process(
                     audio_lfo_2_shape_fade_ = retarget_lfo_shape(
                         audio_lfo_2_shape_fade_,
                         modulation_settings.lfo2_shape);
+                    // Slew each LFO's audible level, then let the slewed
+                    // value stand in for enabled + depth everywhere below:
+                    // the modulation, the activity flag and the editor's
+                    // publication all see the same ramp, so the drawn overlay
+                    // fades exactly as the sound does.
+                    {
+                        const float targets[2] = {
+                            modulation_settings.enabled
+                                ? modulation_settings.depth : 0.0f,
+                            modulation_settings.lfo2_enabled
+                                ? modulation_settings.lfo2_depth : 0.0f};
+                        const double level_seconds =
+                            static_cast<double>(out_slice.num_samples())
+                            / (ctx.sample_rate > 0.0 ? ctx.sample_rate
+                                                     : sample_rate_);
+                        for (std::size_t lfo = 0; lfo < 2; ++lfo) {
+                            audio_lfo_level_[lfo] = audio_lfo_level_primed_
+                                ? slew_lfo_level(audio_lfo_level_[lfo],
+                                                 targets[lfo], level_seconds)
+                                : targets[lfo];
+                        }
+                        audio_lfo_level_primed_ = true;
+                        modulation_settings.enabled = audio_lfo_level_[0] > 0.0f;
+                        modulation_settings.depth = audio_lfo_level_[0];
+                        modulation_settings.lfo2_enabled =
+                            audio_lfo_level_[1] > 0.0f;
+                        modulation_settings.lfo2_depth = audio_lfo_level_[1];
+                    }
                     const float wave = lfo_value(
                         audio_lfo_shape_fade_, audio_modulation_phase_);
                     BandField audible = apply_internal_modulation(
