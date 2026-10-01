@@ -11,6 +11,18 @@ PULP_VST3_PLUGIN(
     "",
     spectr::create_spectr
 )
+#elif defined(SPECTR_DEV_IDENTITY)
+// Class id derived from the dev bundle id in cmake/SpectrIdentity.cmake.
+PULP_VST3_PLUGIN(
+    Steinberg::FUID(SPECTR_DEV_VST3_UID0, SPECTR_DEV_VST3_UID1,
+                    SPECTR_DEV_VST3_UID2, SPECTR_DEV_VST3_UID3),
+    SPECTR_DEV_PLUGIN_NAME,
+    Steinberg::Vst::PlugType::kFx,
+    "Pulp",
+    "1.0.0",
+    "",
+    spectr::create_spectr
+)
 #elif defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
 PULP_VST3_PLUGIN(
     Steinberg::FUID(0x2A1E66F4, 0x40A94790, 0xA1774EA7, 0x53504E50),

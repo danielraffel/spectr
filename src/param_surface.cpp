@@ -134,6 +134,19 @@ void register_surface_params(pulp::state::StateStore& store) {
     store.add_group({kGroupModulation, "Modulation", 0});
     store.add_group({kGroupMacros, "Macros", 0});
 
+    {
+        // A global beside Mix and Output. Automatable: freezing changes
+        // neither latency nor topology, so a host may ride it freely.
+        pulp::state::ParamInfo info;
+        info.id = kParamFreeze;
+        info.name = "Freeze";
+        info.range = {0.0f, 1.0f, 0.0f, 1.0f};
+        info.group_id = kGroupGlobal;
+        info.kind = pulp::state::ParamKind::Toggle;
+        add_enum_labels(info, {"Live", "Frozen"});
+        store.add_parameter(info);
+    }
+
     for (std::size_t i = 0; i < kMaxBands; ++i) {
         pulp::state::ParamInfo info;
         info.id = band_gain_param_id(i);
@@ -516,6 +529,20 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         }
     }
 
+    // Freeze is read by the audio thread straight off the parameter, per
+    // automation slice, so there is nothing to republish here. A host-side
+    // change only has to reach the editor's toggle, through the same live
+    // projection the mode toggles ride -- and it stays out of their loop,
+    // which is sized to the four modes.
+    {
+        const float value = store->get_value(kParamFreeze);
+        auto& cached = applied_param_cache_[detail::kSlotFreeze];
+        if (value != cached.load(std::memory_order_relaxed)) {
+            cached.store(value, std::memory_order_relaxed);
+            editor_changed = true;
+        }
+    }
+
     ModulationSettings next_modulation = modulation_from_store_();
     // The explicit destination selection is editor state; it is not derived
     // from a parameter lane, so carry it across rather than resetting it to
@@ -777,6 +804,17 @@ void Spectr::sync_params_from_field(bool emit_gestures) noexcept {
         push_surface_param_(pending[k].id, pending[k].slot, pending[k].value,
                             emit_gestures);
     }
+}
+
+bool Spectr::set_freeze_from_editor(bool frozen) noexcept {
+    auto* store = param_store_;
+    if (!store) return false;
+    // Its own bracket even inside an open drag epoch: a press is a discrete
+    // command, and the epoch closes only the parameters its drag touched.
+    store->begin_gesture(kParamFreeze);
+    store->set_value(kParamFreeze, frozen ? 1.0f : 0.0f);
+    store->end_gesture(kParamFreeze);
+    return true;
 }
 
 void Spectr::begin_param_gesture_epoch() noexcept {

@@ -20,6 +20,7 @@
 /// so a project recalls with the same delay compensation everywhere.
 
 #include <pulp/signal/spectral_band_mask.hpp>
+#include <pulp/signal/spectral_mask_processor.hpp>
 
 #include <memory>
 #include <span>
@@ -102,6 +103,22 @@ public:
     [[nodiscard]] virtual bool set_layout_rt(const Layout& layout) noexcept = 0;
 
     virtual void set_mix(float mix) noexcept = 0;
+
+    /// A time-domain source for the WET path only: each block, `process()`
+    /// hands the source the live input and realises the mask over what the
+    /// source writes, while the dry leg of the mix stays the live input. This
+    /// is how a freeze replaces what the mask shapes without owning a
+    /// renderer, so the same held source serves either realisation and
+    /// survives a switch between them.
+    ///
+    /// Non-owning. Install while the audio thread cannot be inside this
+    /// renderer (before it is published, or from the audio thread itself);
+    /// the source must outlive its installation. Returns false when this
+    /// realisation cannot take a source, in which case nothing is installed.
+    using WetSource = pulp::signal::SpectralWetSourceStageT<float>;
+    [[nodiscard]] virtual bool set_wet_source(WetSource* /*source*/) noexcept {
+        return false;
+    }
 
     /// Process one prepared planar block. `num_samples` may be any length up
     /// to the prepared `max_block`; the caller never learns the renderer's

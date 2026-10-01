@@ -167,7 +167,7 @@ const BOUND_MONO = (() => {
   return faces.length === 1 ? faces[0].runtime_family : "<no bound face>";
 })();
 const MONO_FAMILY = `'"${BOUND_MONO}", "JetBrains Mono", ui-monospace, monospace'`;
-const READOUT_STYLE = 'style: { width: 34, textAlign: "right", '
+const READOUT_STYLE = 'style: { width: 31, textAlign: "left", '
   + `whiteSpace: "nowrap", flexShrink: 0, fontFamily: ${MONO_FAMILY}, `
   + 'fontSize: 10, color: "rgba(255,255,255,0.72)" }';
 const TRACK_STYLE = 'style: { width: 156, flexShrink: 0, '
@@ -243,7 +243,7 @@ if (plantClipLabel) {
 }
 if (plantUntypedReadout) {
   plant("a trim readout with no type of its own", READOUT_STYLE,
-    'style: { width: 34, textAlign: "right", whiteSpace: "nowrap", '
+    'style: { width: 31, textAlign: "left", whiteSpace: "nowrap", '
     + "flexShrink: 0 }");
 }
 if (plantUnlabelledTrim) {
@@ -529,7 +529,7 @@ if (!peakFontFamily || !peakFontSize) {
 
 // S6. THE TRIM HAS AN ON-SCREEN LABEL, AND IT LABELS THE TRACK.
 //
-// Every other control in this header is labelled -- LIVE, PRECISION, BARS,
+// Every other control in this header is labelled -- the freeze toggle, BARS,
 // RESPONSE, BOTH, the band chip, the zoom readout. The trim shipped carrying
 // only `aria-label` and `title`. Neither is drawn: in a DAW a user met an
 // unlabelled slider beside a meter and had to guess what it moved.
@@ -663,43 +663,48 @@ if (!sliderRow || !sliderReadout) {
 
 // S8. AND IT STILL FITS THE GAP IT WAS PLACED IN.
 //
-// The cluster is absolutely positioned at x=282 in the header's empty flex
-// spacer, measured at x=281.7..669.5 with the LIVE button's painted left edge
-// at x=687.5. Lengthening the track is only a fix if the result stays inside
-// that gap -- a track long enough to reach under LIVE trades one defect for a
-// worse one. Computed from the cluster's own declarations so it tracks any
-// later edit to them.
+// The cluster is absolutely positioned at x=282 in the header's empty span,
+// which runs to the divider before BARS at x=839.5 now that the LIVE /
+// PRECISION control is hidden. It reads freeze toggle, OUTPUT, track, value,
+// PEAK at one flex gap, and must end short of that divider by at least the
+// header's own 18pt inter-group gap -- a cluster that crowds the divider reads
+// as part of the view controls. Computed from the cluster's own declarations
+// so it tracks any later edit to them.
 const clusterLeft =
   /"data-spectr-output-cluster": true,[\s\S]{0,400}?left: (\d+)/
     .exec(meterBody);
 const clusterGap = /gap: (\d+),\n\s*flexShrink/.exec(meterBody);
 const peakWidth = /width: (\d+),\n\s*minWidth/.exec(meterBody);
+const toggleBody = (() => {
+  const at = html.indexOf("function SpectrFreezeToggle(");
+  return at < 0 ? "" : html.slice(at, html.indexOf("function SpectrOutputMeter(", at));
+})();
+const toggleWidth = /style: \{ width: (\d+), minWidth: \1,/.exec(toggleBody);
 const readoutWidth = readoutStyle ? /width: (\d+)/.exec(readoutStyle[1]) : null;
-const HEADER_GAP_END = 669.5;
+const HEADER_DIVIDER = 839.5;
+const HEADER_GROUP_GAP = 18;
 if (!clusterLeft || !clusterGap || !peakWidth || !readoutWidth || !trackWidth
-    || !labelText) {
+    || !labelText || !toggleWidth) {
   fail("the cluster's own geometry is unreadable, so whether it still fits "
     + "the header's measured gap cannot be answered");
 } else {
   const glyph = Number(peakFontSize ? peakFontSize[1] : 10);
-  // A mono advance is ~0.6em, plus the button's own 0.8pt of tracking. This
+  // A mono advance is ~0.6em, plus the label's own 0.8pt of tracking. This
   // estimates "OUTPUT" at 40.8pt against 41.0pt measured from a Skia raster
-  // of the shipping editor, so it is accurate to ~0.2pt -- immaterial against
-  // the ~19pt of headroom the bound below leaves, but it IS an estimate and
-  // not a measurement, which is why the bound is the gap's end and not the
-  // LIVE button's edge 18pt further right.
+  // of the shipping editor.
   const labelWidth = labelText[1].length * (glyph * 0.6 + 0.8);
+  const gap = Number(clusterGap[1]);
   const right = Number(clusterLeft[1])
-    + Number(peakWidth[1]) + Number(clusterGap[1])
-    + labelWidth + Number(clusterGap[1])
-    + Number(trackWidth[1]) + Number(clusterGap[1])
-    + Number(readoutWidth[1]);
-  console.log("measured  cluster 282..%s against a gap ending %s",
-    right.toFixed(1), HEADER_GAP_END);
-  if (right > HEADER_GAP_END) {
-    fail(`the cluster now ends at ~${right.toFixed(1)}, past the header's `
-      + `measured empty gap (x=281.7..${HEADER_GAP_END}); it crowds or runs `
-      + "under the LIVE/PRECISION group at x=687.5");
+    + Number(toggleWidth[1]) + gap
+    + labelWidth + gap
+    + Number(trackWidth[1]) + gap
+    + Number(readoutWidth[1]) + gap
+    + Number(peakWidth[1]);
+  console.log("measured  cluster 282..%s against a divider at %s",
+    right.toFixed(1), HEADER_DIVIDER);
+  if (right > HEADER_DIVIDER - HEADER_GROUP_GAP) {
+    fail(`the cluster now ends at ~${right.toFixed(1)}, within `
+      + `${HEADER_GROUP_GAP}pt of the divider before BARS at x=${HEADER_DIVIDER}`);
   }
 }
 
@@ -920,15 +925,20 @@ if (!leafBlock) {
       // it, which would make it part of the slider's own hit region.
       const clusterNode = find(element, (p) => p["data-spectr-output-cluster"]);
       if (clusterNode) {
+        // The freeze toggle is a component of its own, so it is identified
+        // by its type rather than by props.
         const kinds = (clusterNode.children || [])
-          .filter((c) => c && typeof c === "object" && c.props)
-          .map((c) => c.props["data-spectr-output-peak"] ? "peak"
+          .filter((c) => c && typeof c === "object")
+          .map((c) => typeof c.type === "function"
+              && c.type.name === "SpectrFreezeToggle" ? "freeze"
+            : !c.props ? "?"
+            : c.props["data-spectr-output-peak"] ? "peak"
             : c.props["data-spectr-output-trim-label"] ? "label"
             : c.props["data-spectr-output-trim"] ? "track"
             : c.props["data-spectr-output-trim-readout"] ? "readout" : "?");
-        if (kinds.join(",") !== "peak,label,track,readout") {
+        if (kinds.join(",") !== "freeze,label,track,readout,peak") {
           fail(`the rendered cluster's children are ${kinds.join(",")}, `
-            + "expected peak,label,track,readout");
+            + "expected freeze,label,track,readout,peak");
         }
       }
 

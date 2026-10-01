@@ -11,7 +11,8 @@ layout remain stored but do not enter the active spectral mask.
 | --- | --- |
 | `1` | Mix |
 | `2` | Output trim |
-| `3...999` | Reserved global controls |
+| `3` | Freeze (Live/Frozen) |
+| `4...999` | Reserved global controls |
 | `1000...1063` | Band 01...64 gain |
 | `1064...1999` | Reserved band-gain growth |
 | `2000...2063` | Band 01...64 mute |
@@ -42,6 +43,20 @@ layout remain stored but do not enter the active spectral mask.
 
 The gain and mute names are zero-padded (`Band 01 Gain` through
 `Band 64 Gain`) so hosts that flatten groups still sort them correctly.
+
+## Freeze
+
+`3` holds the input spectrum. It is a boolean, automatable like any other
+lane: freezing changes neither the reported latency nor the topology. The
+capture is taken ahead of the mask, so bands, mutes, morph, macros and both
+LFOs keep acting on the held sound, and the dry leg of Mix stays live. While a
+freeze is requested or its hold is still audible, Spectr reports an infinite
+tail.
+
+How much input a freeze averages ("Hold length") is a Settings value persisted
+in the supplemental plugin-state blob as `freeze_hold_seconds`, not a lane. The
+held spectrum itself is not saved: a session that stored Freeze on re-arms and
+holds the first stretch of input it plays.
 
 ## Macros
 

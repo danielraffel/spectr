@@ -447,6 +447,12 @@ public:
         return true;
     }
     void set_mix(float mix) noexcept override { processor_.set_mix(mix); }
+    [[nodiscard]] bool set_wet_source(WetSource* source) noexcept override {
+        // The framework's wet-source stage runs before this processor's
+        // analysis and leaves its latency-aligned dry path on the input.
+        processor_.set_wet_source_stage(source);
+        return true;
+    }
     [[nodiscard]] bool process(const float* const* input, float* const* output,
                                int num_samples) noexcept override {
         return processor_.process(input, output, num_samples);
@@ -509,6 +515,15 @@ public:
             swappers_.push_back(std::make_unique<pulp::signal::ConvolverIrSwapper>());
 
         in_fifo_.assign(static_cast<std::size_t>(channels_ * kRenderBlock), 0.0f);
+        wet_block_.assign(static_cast<std::size_t>(channels_)
+                              * static_cast<std::size_t>(config.max_block), 0.0f);
+        wet_write_.assign(static_cast<std::size_t>(channels_), nullptr);
+        wet_read_.assign(static_cast<std::size_t>(channels_), nullptr);
+        for (int ch = 0; ch < channels_; ++ch) {
+            wet_write_[static_cast<std::size_t>(ch)] = wet_block_.data()
+                + static_cast<std::size_t>(ch) * static_cast<std::size_t>(config.max_block);
+            wet_read_[static_cast<std::size_t>(ch)] = wet_write_[static_cast<std::size_t>(ch)];
+        }
         out_fifo_.assign(static_cast<std::size_t>(channels_ * kRenderBlock), 0.0f);
         in_ptrs_.assign(static_cast<std::size_t>(channels_), nullptr);
         out_ptrs_.assign(static_cast<std::size_t>(channels_), nullptr);
@@ -603,6 +618,11 @@ public:
         if (std::isfinite(mix)) mixer_.set_mix(mix);
     }
 
+    [[nodiscard]] bool set_wet_source(WetSource* source) noexcept override {
+        wet_source_ = source;
+        return true;
+    }
+
     // SPECTR-RENDER-PATH BEGIN
     //
     // Everything between these markers runs on the audio thread. It must
@@ -625,15 +645,25 @@ public:
 
         mixer_.push_dry(input, channels_, num_samples);
 
+        // The wet path convolves what the source writes; the dry leg pushed
+        // above stays the live input. The source runs before any output
+        // sample is written, so an in-place caller is still safe.
+        const float* const* wet_input = input;
+        if (wet_source_ != nullptr) {
+            wet_source_->process_block(input, wet_write_.data(), channels_,
+                                       num_samples);
+            wet_input = wet_read_.data();
+        }
+
         for (int i = 0; i < num_samples; ++i) {
             const auto slot = static_cast<std::size_t>(fill_);
             for (int ch = 0; ch < channels_; ++ch) {
                 const auto base = static_cast<std::size_t>(ch * kRenderBlock);
                 // Read the finished sample BEFORE overwriting the input slot,
                 // so an in-place caller (output aliasing input) is safe.
-                const float dry = input[ch][i];
+                const float sample = wet_input[ch][i];
                 output[ch][i] = out_fifo_[base + slot];
-                in_fifo_[base + slot] = dry;
+                in_fifo_[base + slot] = sample;
             }
             if (++fill_ == kRenderBlock) {
                 fill_ = 0;
@@ -820,6 +850,10 @@ private:
     pulp::signal::DryWetMixer                                           mixer_{};
 
     std::vector<float>  in_fifo_;
+    WetSource*          wet_source_ = nullptr;
+    std::vector<float>  wet_block_;                  // channels * max_block
+    std::vector<float*> wet_write_;
+    std::vector<const float*> wet_read_;
     std::vector<float>  out_fifo_;
     std::vector<float*> in_ptrs_;
     std::vector<float*> out_ptrs_;

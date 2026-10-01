@@ -52,6 +52,7 @@
 #include "spectr/snapshot.hpp"
 #include "spectr/viewport.hpp"
 #include "spectr/editor_resize.hpp"
+#include "spectr/freeze_source.hpp"
 #include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
 
@@ -219,6 +220,14 @@ bool editor_owns_resize_grip();
 void set_editor_is_standalone(bool value);
 bool editor_is_standalone();
 
+/// Make the plug-in host view take a click that lands while its window is not
+/// key, so the first press after the user has worked elsewhere in the DAW acts
+/// on the control under it instead of only focusing the editor window. A
+/// stopgap for a Pulp SDK that lacks the override; returns how many host view
+/// classes gained it, 0 when the SDK already has its own. macOS only (0
+/// elsewhere); idempotent.
+int install_host_view_first_mouse();
+
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
 // SpectralFrameEngine reads through a fixed causal cursor of one complete FFT
@@ -270,7 +279,9 @@ enum ParamIDs : pulp::state::ParamID {
 
 inline pulp::format::PluginDescriptor make_descriptor() {
     return {
-#if defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
+#if defined(SPECTR_DEV_IDENTITY)
+        .name         = SPECTR_DEV_PLUGIN_NAME,
+#elif defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
         .name         = "Spectr Native Preview",
 #else
         .name         = "Spectr",
@@ -281,7 +292,9 @@ inline pulp::format::PluginDescriptor make_descriptor() {
         // installed preview collides with it: a session saved against one can
         // resolve to the other. REAPER hides this by keying its cache on
         // filename, so the collision is invisible until a host keys by ID.
-#if defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
+#if defined(SPECTR_DEV_IDENTITY)
+        .bundle_id    = SPECTR_DEV_BUNDLE_ID,
+#elif defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
         .bundle_id    = "com.pulp.spectr.native-preview",
 #else
         .bundle_id    = "com.pulp.spectr",
@@ -520,6 +533,32 @@ public:
     [[nodiscard]] bool keyboard_shortcuts_in_daw() const noexcept;
     void set_keyboard_shortcuts_in_daw(bool enabled) noexcept;
 
+    /// Freeze's hold length: how many seconds of input the next freeze
+    /// averages into its held spectrum. Shorter holds closer to "now",
+    /// longer blends more of the recent past into a smoother hold. Clamped
+    /// to [FreezeSource::kMinHoldSeconds, kMaxHoldSeconds]; defaults to the
+    /// reference feel. A Settings value persisted in the supplemental
+    /// plugin-state blob, not a host parameter. Any thread.
+    [[nodiscard]] double freeze_hold_seconds() const noexcept {
+        return freeze_hold_seconds_.load(std::memory_order_relaxed);
+    }
+    void set_freeze_hold_seconds(double seconds) noexcept {
+        freeze_hold_seconds_.store(FreezeSource::clamp_hold_seconds(seconds),
+                                   std::memory_order_relaxed);
+    }
+
+    /// The editor's write of Freeze (the LIVE / FROZEN toggle, its keys):
+    /// the parameter set inside one complete host gesture, begin -> value ->
+    /// end, so a host in Touch / Latch / Write records the press. UI thread.
+    /// Returns false before the parameter store exists.
+    bool set_freeze_from_editor(bool frozen) noexcept;
+
+    /// The freeze source. Audio-thread state: read it only where process()
+    /// cannot be running (tests, offline renders).
+    [[nodiscard]] const FreezeSource& freeze_source() const noexcept {
+        return freeze_source_;
+    }
+
     /// Accessor for the StateStore-level ABCompare. Lazily constructed
     /// the first time it's requested (after define_parameters has wired
     /// the store). Returns nullptr if the store isn't available yet.
@@ -753,6 +792,12 @@ private:
     }
     pulp::signal::SmoothedValue<float>     output_gain_{1.0f};
     bool                                   processor_prepared_ = false;
+    // Owned here, not by a renderer, so a Latency switch hands the running
+    // hold to the new realisation instead of dropping it. Prepared with the
+    // processor; its members belong to the audio thread afterwards.
+    FreezeSource                           freeze_source_{};
+    std::atomic<double> freeze_hold_seconds_{FreezeSource::kDefaultHoldSeconds};
+    void preroll_surviving_hold_();
     std::array<const float*, kMaximumChannels> input_channels_{};
     std::array<float*, kMaximumChannels>       output_channels_{};
 
@@ -773,8 +818,9 @@ private:
     // 129 viewport center, 130 viewport width, 131 band count, then motion,
     // analyzer, edit, and visualization at 132..135, then internal LFO
     // enabled/shape/rate/depth/target at 136..140, LFO 2
-    // enabled/shape/rate/depth at 141..144, and Macro 1..4 at 145..148.
-    static constexpr std::size_t kSurfaceCacheSlots = 149;
+    // enabled/shape/rate/depth at 141..144, Macro 1..4 at 145..148, and
+    // Freeze at 149.
+    static constexpr std::size_t kSurfaceCacheSlots = 150;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
     // The audio thread's OWN record of the surface values it last pushed into

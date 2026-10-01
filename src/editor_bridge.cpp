@@ -249,6 +249,21 @@ choc::value::Value make_keyboard_policy_payload_(const Spectr& plugin) {
     return keyboard;
 }
 
+// Freeze. `frozen` is the host parameter, so it rides the LIVE projection
+// too: automation turns the toggle over without a hydration. The hold length
+// is a Settings value and rides hydration only.
+choc::value::Value make_freeze_payload_(const Spectr& plugin, bool with_settings) {
+    auto freeze = choc::value::createObject("SpectrFreeze");
+    freeze.addMember("frozen", plugin.state().get_value(kParamFreeze) >= 0.5f);
+    if (with_settings) {
+        freeze.addMember("hold_seconds", plugin.freeze_hold_seconds());
+        freeze.addMember("min_hold_seconds", FreezeSource::kMinHoldSeconds);
+        freeze.addMember("max_hold_seconds", FreezeSource::kMaxHoldSeconds);
+        freeze.addMember("default_hold_seconds", FreezeSource::kDefaultHoldSeconds);
+    }
+    return freeze;
+}
+
 choc::value::Value make_modulation_payload_(const Spectr& plugin) {
     const auto modulation_state = plugin.modulation_settings();
     auto modulation = choc::value::createObject("SpectrModulationState");
@@ -387,6 +402,7 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     // The plain-key shortcut policy. Hydration-only, like the switch above:
     // it is never automated, so the live per-revision projection omits it.
     payload.addMember("keyboard", make_keyboard_policy_payload_(plugin));
+    payload.addMember("freeze", make_freeze_payload_(plugin, /*with_settings=*/true));
     // The Latency control. Not a host parameter and not automatable, so like
     // "Morph moves the view" it rides the hydration payload the panel reads
     // once and deliberately never appears in the live per-revision projection,
@@ -454,6 +470,7 @@ choc::value::Value make_editor_live_state_payload(const Spectr& plugin,
         plugin.editor_mode_param(kParamVisualization)));
     add_history_and_macros_(payload, plugin, n);
     payload.addMember("modulation", make_modulation_payload_(plugin));
+    payload.addMember("freeze", make_freeze_payload_(plugin, /*with_settings=*/false));
     return payload;
 }
 
@@ -991,6 +1008,46 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 return EditorBridge::err_response("enabled must be a boolean");
             plugin.set_keyboard_shortcuts_in_daw(flag.getBool());
             return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
+        });
+
+    // The LIVE / FROZEN toggle and its keyboard shortcuts. Freeze is host
+    // parameter 3, so an editor write is a user edit the host must be able
+    // to record: it goes out as one complete gesture (begin, value, end), the
+    // bracket Touch / Latch / Write automation keys on. `param_set` writes
+    // the value alone, which moves the DSP but leaves a host that records
+    // on gestures nothing to record.
+    bridge.add_handler("freeze_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("frozen"))
+                return EditorBridge::err_response("frozen missing");
+            const auto& flag = p["frozen"];
+            if (!flag.isBool())
+                return EditorBridge::err_response("frozen must be a boolean");
+            if (!plugin.set_freeze_from_editor(flag.getBool()))
+                return EditorBridge::err_response("freeze parameter unavailable");
+            return EditorBridge::ok_response(
+                make_freeze_payload_(plugin, /*with_settings=*/false));
+        });
+
+    // Freeze's hold length. A Settings value like the two above: persisted
+    // in the plugin state, never a host parameter. Clamped, and the value in
+    // force is returned so the control shows what the processor will use.
+    bridge.add_handler("freeze_hold_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("seconds"))
+                return EditorBridge::err_response("seconds missing");
+            const auto& value = p["seconds"];
+            double seconds = 0.0;
+            if (value.isFloat64()) seconds = value.getFloat64();
+            else if (value.isFloat32()) seconds = value.getFloat32();
+            else if (value.isInt32()) seconds = value.getInt32();
+            else if (value.isInt64()) seconds = static_cast<double>(value.getInt64());
+            else return EditorBridge::err_response("seconds must be a number");
+            if (!std::isfinite(seconds))
+                return EditorBridge::err_response("seconds must be finite");
+            plugin.set_freeze_hold_seconds(seconds);
+            return EditorBridge::ok_response(
+                make_freeze_payload_(plugin, /*with_settings=*/true));
         });
 
     bridge.add_handler("morph_viewport_set",

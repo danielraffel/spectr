@@ -40,6 +40,11 @@ bool editor_is_standalone() {
     return g_editor_is_standalone.load(std::memory_order_relaxed);
 }
 
+#if !defined(__APPLE__)
+// Only AppKit withholds a click that lands in a non-key window from the view.
+int install_host_view_first_mouse() { return 0; }
+#endif
+
 namespace {
 
 /// Are these two layouts the same mask?
@@ -117,12 +122,19 @@ Spectr::~Spectr() {
 
 pulp::format::PluginDescriptor Spectr::descriptor() const {
     auto descriptor=make_descriptor();
-#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
-    // Descriptor queries may overlap control-side mode replacement. A fixed
-    // conservative bound covers either mode without touching renderer ownership.
-    descriptor.tail_samples=2*kSpectralFftSize+kSpectralAnalysisHop
-        +(kSpectralAnalysisHop/2)*5;
-#endif
+    // A held spectrum sounds for as long as it is held, with or without
+    // input, so a host must not stop processing on silence. The tail is
+    // infinite always, on every format, rather than only while frozen.
+    //
+    // A tail that followed Freeze had to be announced on each edge, from the
+    // audio thread, in the very callback a tap lands in: AU v2 turns that
+    // into kAudioUnitProperty_TailTime listener calls on the render thread
+    // (an out-of-process host such as Logic forwards them across the process
+    // boundary), and VST3 into restartComponent(kReloadComponent), which
+    // JUCE-based hosts answer with a full release()+prepare(). A constant
+    // tail has nothing to announce. Every format adapter reads a negative
+    // tail as infinite.
+    descriptor.tail_samples = -1;
     return descriptor;
 }
 
@@ -574,6 +586,10 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
         }
     }
     renderer->reset();
+    // Last: the pump above runs on this (control) thread while the audio
+    // thread may be running the outgoing renderer through the same source, so
+    // the source is attached only once nothing here will process again.
+    if (freeze_source_.prepared()) (void)renderer->set_wet_source(&freeze_source_);
     return renderer;
 }
 
@@ -661,7 +677,6 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
     // The host's delay compensation is now wrong by the difference between the
     // two modes. This is the whole reason the switch is observable to a host.
     flag_latency_changed();
-    flag_tail_changed();
     return true;
 }
 
@@ -676,6 +691,12 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     sample_rate_ = ctx.sample_rate;
     max_block_   = ctx.max_buffer_size;
     channels_    = std::max(1, ctx.output_channels);
+
+    // No audio thread runs across a prepare. Keep a prepared source whose
+    // geometry still fits, so a host re-prepare with the same rate and
+    // channels does not throw a playing hold away.
+    if (!freeze_source_.prepared_for(sample_rate_, channels_))
+        (void)freeze_source_.prepare(sample_rate_, channels_);
 
     // No audio thread can be running across a prepare, so the previous
     // renderer and anything a mode switch parked are free to go now.
@@ -727,6 +748,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         publish_processing_state_();
     }
+    preroll_surviving_hold_();
     // Audio→worker lane for host-automation adoption (see the drift sweep
     // in process()). Restart cleanly across re-prepare.
     if (!param_sync_lane_.start(&Spectr::param_sync_trampoline_, this,
@@ -736,6 +758,38 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
             "of the band surface will not reach the DSP");
     }
     configure_bridge_(ctx.output_channels);
+}
+
+void Spectr::preroll_surviving_hold_() {
+    // A host reload at the same geometry kept the freeze source -- and with
+    // it a playing hold -- but the renderer was rebuilt empty, so its wet
+    // pipeline would open with up to a full latency of silence (a quarter
+    // second in Mixing) before the hold reached the output again. No audio
+    // thread runs across a prepare: fill the new pipeline with the hold here,
+    // off the stream, so the first block after the reload continues it.
+    if (!processor_prepared_ || !renderer_ || !freeze_source_.hold_audible())
+        return;
+    const int span = std::max(renderer_->latency_samples(),
+                              renderer_->maximum_tail_samples());
+    const int block = std::max(1, max_block_);
+    if (span <= 0 || channels_ < 1
+        || channels_ > static_cast<int>(kMaximumChannels))
+        return;
+    std::vector<float> silence(static_cast<std::size_t>(block), 0.0f);
+    std::vector<float> scratch(static_cast<std::size_t>(block * channels_), 0.0f);
+    std::array<const float*, kMaximumChannels> in{};
+    std::array<float*, kMaximumChannels> out{};
+    for (int ch = 0; ch < channels_; ++ch) {
+        in[static_cast<std::size_t>(ch)] = silence.data();
+        out[static_cast<std::size_t>(ch)] =
+            scratch.data() + static_cast<std::size_t>(ch * block);
+    }
+    renderer_->set_mix(std::clamp(state().get_value(kMix) / 100.0f, 0.0f, 1.0f));
+    freeze_source_.set_frozen(state().get_value(kParamFreeze) >= 0.5f);
+    for (int done = 0; done < span; done += block)
+        (void)renderer_->process(in.data(), out.data(), std::min(block, span - done));
+    // The pre-roll fed the source silence; keep it out of the next capture.
+    freeze_source_.clear_history();
 }
 
 std::unique_ptr<pulp::view::View> Spectr::create_view() {
@@ -1005,8 +1059,12 @@ void Spectr::process(
     if (should_reset_stream_history) {
         if (processor_prepared_ && renderer)
             renderer->reset();
+        // A transport jump forgets the input analysed so far and nothing
+        // else: a playing hold keeps playing across it.
+        freeze_source_.clear_history();
         output_gain_.set_immediate(target_output_gain);
     }
+    freeze_source_.set_hold_seconds(freeze_hold_seconds());
 
     // Gate on the pointer this block actually dereferences, not on a separate
     // bool that could in principle disagree with it.
@@ -1358,6 +1416,7 @@ void Spectr::process(
                     }
                     renderer->set_mix(std::clamp(
                         cursor.value(kMix) / 100.0f, 0.0f, 1.0f));
+                    freeze_source_.set_frozen(cursor.value(kParamFreeze) >= 0.5f);
 
                     for (std::size_t channel = 0;
                          channel < out_slice.num_channels(); ++channel) {
@@ -1444,6 +1503,7 @@ void Spectr::process(
             output_channels_[channel] = output.channel(channel).data();
         }
         renderer->set_mix(std::clamp(mix, 0.0f, 1.0f));
+        freeze_source_.set_frozen(state().get_value(kParamFreeze) >= 0.5f);
         audio_mix_percent_ = mix * 100.0f;
         audio_output_trim_db_ = out_trim_db;
         const bool processed = renderer->process(
@@ -1582,6 +1642,8 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // writer that predates it; readers treat absence as OFF, the default, so
     // an old session keeps the host's keys where a new instance would.
     root.addMember("keyboard_shortcuts_in_daw", keyboard_shortcuts_in_daw_);
+    // The Settings hold length. The held spectrum itself is not saved.
+    root.addMember("freeze_hold_seconds", freeze_hold_seconds());
 
     // Macro membership: four arrays of canonical slot indices, shaped exactly
     // like `morph_overrides` above. The macro VALUES are StateStore
@@ -1969,6 +2031,18 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_keyboard_shortcuts_in_daw = flag.getBool();
     }
 
+    // Absent on a blob written before freeze existed: the default length.
+    double new_freeze_hold_seconds = FreezeSource::kDefaultHoldSeconds;
+    if (root.hasObjectMember("freeze_hold_seconds")) {
+        const auto& seconds = root["freeze_hold_seconds"];
+        if (seconds.isFloat64()) new_freeze_hold_seconds = seconds.getFloat64();
+        else if (seconds.isInt32()) new_freeze_hold_seconds = seconds.getInt32();
+        else if (seconds.isInt64()) new_freeze_hold_seconds =
+            static_cast<double>(seconds.getInt64());
+        else return false;
+        if (!std::isfinite(new_freeze_hold_seconds)) return false;
+    }
+
     std::array<MacroMembership<kMaxBands>, kMacroCount> new_macro_members{};
     if (root.hasObjectMember("macro_members")) {
         const auto macros = root["macro_members"];
@@ -2047,6 +2121,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_overrides_ = new_morph_overrides;
         morph_applies_viewport_ = new_morph_applies_viewport;
         keyboard_shortcuts_in_daw_ = new_keyboard_shortcuts_in_daw;
+        set_freeze_hold_seconds(new_freeze_hold_seconds);
         macro_members_ = new_macro_members;
         // Re-derive the LFO lanes from the restored parameters before the
         // mask rides along: the audio thread only honours a published mask

@@ -1575,3 +1575,43 @@ TEST_CASE("plugin state rejects non-finite gain encodings failure-atomically") {
         CHECK(r.proc->snapshots().b.field.bands[0].gain_db == Approx(before_b));
     }
 }
+
+TEST_CASE("freeze: hydration carries the toggle and the hold length; freeze_hold_set clamps",
+          "[bridge][freeze]") {
+    Rig r;
+    const auto hydrate = [&] {
+        return spectr::make_editor_state_payload(*r.proc);
+    };
+    auto payload = hydrate();
+    REQUIRE(payload.hasObjectMember("freeze"));
+    CHECK_FALSE(payload["freeze"]["frozen"].getBool());
+    CHECK(payload["freeze"]["hold_seconds"].getFloat64()
+          == Approx(spectr::FreezeSource::kDefaultHoldSeconds));
+    CHECK(payload["freeze"]["min_hold_seconds"].getFloat64()
+          == Approx(spectr::FreezeSource::kMinHoldSeconds));
+    CHECK(payload["freeze"]["max_hold_seconds"].getFloat64()
+          == Approx(spectr::FreezeSource::kMaxHoldSeconds));
+
+    // The toggle is the host parameter, written the way the editor writes it.
+    REQUIRE(response_ok(r.dispatch(
+        R"({"type":"param_set","payload":{"id":3,"value":1}})")));
+    CHECK(r.store.get_value(spectr::kParamFreeze) == 1.0f);
+    CHECK(hydrate()["freeze"]["frozen"].getBool());
+
+    const auto set = r.dispatch(
+        R"({"type":"freeze_hold_set","payload":{"seconds":0.4}})");
+    REQUIRE(response_ok(set));
+    CHECK(r.proc->freeze_hold_seconds() == Approx(0.4));
+    // Out of range is clamped rather than refused, and the response says what
+    // is in force.
+    const auto high = r.dispatch(
+        R"({"type":"freeze_hold_set","payload":{"seconds":60}})");
+    REQUIRE(response_ok(high));
+    CHECK(r.proc->freeze_hold_seconds() == Approx(spectr::FreezeSource::kMaxHoldSeconds));
+    CHECK(high.find("\"hold_seconds\"") != std::string::npos);
+    CHECK(response_has_error(r.dispatch(
+        R"({"type":"freeze_hold_set","payload":{"seconds":"long"}})"), "number"));
+    CHECK(response_has_error(r.dispatch(
+        R"({"type":"freeze_hold_set","payload":{}})"), "missing"));
+    CHECK(r.proc->freeze_hold_seconds() == Approx(spectr::FreezeSource::kMaxHoldSeconds));
+}

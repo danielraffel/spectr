@@ -23,6 +23,11 @@ const bool g_au_v2_owns_resize_grip = [] {
 
 #if defined(SPECTR_WEBVIEW_REFERENCE)
 PULP_AU_PLUGIN(SpectrWebViewReferenceAU, spectr::create_spectr)
+#elif defined(SPECTR_DEV_IDENTITY)
+// One level of indirection so SPECTR_DEV_AU_CLASS expands before the entry
+// macro pastes it into the factory name the Info.plist declares.
+#define SPECTR_AU_ENTRY(ClassName, factory) PULP_AU_PLUGIN(ClassName, factory)
+SPECTR_AU_ENTRY(SPECTR_DEV_AU_CLASS, spectr::create_spectr)
 #elif defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
 PULP_AU_PLUGIN(SpectrNativePreviewAU, spectr::create_spectr)
 #else

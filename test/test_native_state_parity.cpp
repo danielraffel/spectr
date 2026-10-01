@@ -1040,7 +1040,10 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // when Appearance gained the Modulation look row -- each exactly one
         // group's 160px, with the authored box, scroll reachability and skin
         // all unchanged -- and 1820.58 -> 1960.58 when FEEDBACK gained the
-        // plug-in-only "Keyboard shortcuts in DAW" row, whose label wraps. If you add a group and this fails, that is the window
+        // plug-in-only "Keyboard shortcuts in DAW" row, whose label wraps,
+        // and 1960.58 -> 1846.58 when the MOTION group (the hidden LIVE /
+        // PRECISION choice) left, and 1846.58 -> 1960.58 when the FREEZE group
+        // (Hold length) arrived. If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1050,7 +1053,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1880 && s.content_height < 2040"
+        " && s.content_height > 1881 && s.content_height < 2041"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
@@ -1086,14 +1089,14 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
     scroll_view->set_scroll(0.0f, 728.0f);
     settle(rig.clock, 4);
     CHECK(scroll_view->scroll_y() > 0.0f);
-    const auto* response_label = find_label(*rig.root, "Response");
-    REQUIRE(response_label != nullptr);
-    const auto response_point = root_point(
-        *response_label, response_label->bounds().width * 0.5f,
-        response_label->bounds().height * 0.5f);
+    const auto* rulers_label = find_label(*rig.root, "Rulers");
+    REQUIRE(rulers_label != nullptr);
+    const auto rulers_point = root_point(
+        *rulers_label, rulers_label->bounds().width * 0.5f,
+        rulers_label->bounds().height * 0.5f);
     // After scrolling, descendants may legitimately have a negative root-space
     // y while remaining reachable inside the body viewport.
-    CHECK(std::isfinite(response_point.y));
+    CHECK(std::isfinite(rulers_point.y));
     capture(rig, directory, "minimum-settings-bottom", 792, 516);
 }
 
@@ -2756,10 +2759,10 @@ TEST_CASE("native frozen state atlas interactions and persistence",
                       "status info did not default on");
     const auto* feedback_label = find_label(*rig.root, "FEEDBACK");
     const auto* status_info_label = find_label(*rig.root, "Status info");
-    const auto* response_label = find_label(*rig.root, "Response");
+    const auto* rulers_label = find_label(*rig.root, "Rulers");
     REQUIRE(feedback_label != nullptr);
     REQUIRE(status_info_label != nullptr);
-    REQUIRE(response_label != nullptr);
+    REQUIRE(rulers_label != nullptr);
     // The settings groups are not necessarily direct children of the scroll
     // body: the document wraps them, and Pulp's ScrollView adds no content view
     // of its own, so walking up to "child of settings_body" resolves every
@@ -2779,31 +2782,31 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         return chain;
     };
     const auto feedback_chain = ancestry_to_body(feedback_label);
-    const auto response_chain = ancestry_to_body(response_label);
+    const auto rulers_chain = ancestry_to_body(rulers_label);
     REQUIRE_FALSE(feedback_chain.empty());
-    REQUIRE_FALSE(response_chain.empty());
+    REQUIRE_FALSE(rulers_chain.empty());
     REQUIRE(feedback_chain.front() == settings_body);
-    REQUIRE(response_chain.front() == settings_body);
+    REQUIRE(rulers_chain.front() == settings_body);
     std::size_t branch = 0;
-    while (branch < feedback_chain.size() && branch < response_chain.size()
-           && feedback_chain[branch] == response_chain[branch])
+    while (branch < feedback_chain.size() && branch < rulers_chain.size()
+           && feedback_chain[branch] == rulers_chain[branch])
         ++branch;
     // A shared prefix that runs out means one label nests inside the other's
     // group, which would make "below" meaningless.
     REQUIRE(branch < feedback_chain.size());
-    REQUIRE(branch < response_chain.size());
+    REQUIRE(branch < rulers_chain.size());
     const auto* feedback_group = feedback_chain[branch];
-    const auto* response_group = response_chain[branch];
+    const auto* rulers_group = rulers_chain[branch];
     REQUIRE(feedback_group != nullptr);
-    REQUIRE(response_group != nullptr);
-    REQUIRE(feedback_group != response_group);
+    REQUIRE(rulers_group != nullptr);
+    REQUIRE(feedback_group != rulers_group);
     const auto feedback_rect = root_rect(*feedback_group);
-    const auto response_rect = root_rect(*response_group);
+    const auto rulers_rect = root_rect(*rulers_group);
     INFO("settings_body=" << root_rect(*settings_body).left << "," << root_rect(*settings_body).top
          << " " << (root_rect(*settings_body).right - root_rect(*settings_body).left) << "x" << (root_rect(*settings_body).bottom - root_rect(*settings_body).top)
          << " feedback=" << feedback_rect.left << "," << feedback_rect.top
          << " " << (feedback_rect.right - feedback_rect.left) << "x" << (feedback_rect.bottom - feedback_rect.top));
-    CHECK(feedback_rect.top > response_rect.bottom);
+    CHECK(feedback_rect.top > rulers_rect.bottom);
     CHECK(feedback_rect.left >= panel_rect.left + 20.0f);
     CHECK(feedback_rect.right <= panel_rect.right - 20.0f);
     capture(rig, directory, "settings-top");
@@ -3494,7 +3497,13 @@ TEST_CASE("native buttons are tappable across their whole painted bounds",
         if (initial->bounds().width <= 0.0f || initial->bounds().height <= 0.0f)
             continue;
         INFO("control " << describe_control(*initial));
-        for (const float fraction : {0.0f, 0.5f, 1.0f}) {
+        // A grid over the whole painted box -- corners, edges and interior --
+        // not a single row. The earlier sweep clicked only the vertical middle
+        // (left edge, centre, right edge), so a band along the top or bottom
+        // of a control could go dead without this test noticing, which is
+        // exactly the shape of the snapshot A/B report.
+        for (const float fy : {0.0f, 0.5f, 1.0f})
+        for (const float fx : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f}) {
             if (rig.root->interaction().active_overlay != nullptr) {
                 pulp::view::View::dismiss_active_overlay(*rig.root);
                 settle(rig.clock, 12);
@@ -3503,13 +3512,15 @@ TEST_CASE("native buttons are tappable across their whole painted bounds",
             REQUIRE(control != nullptr);
             // Aim at the PAINTED extent, in root space, because that is what
             // the user aims at. Re-resolve after dismissing an overlay because
-            // that React commit may replace a live view object.
+            // that React commit may replace a live view object. Stay 1.5 px
+            // inside every edge so a sample is unambiguously on the ink.
             const auto painted = painted_extent(*control);
-            const float y = (painted.top + painted.bottom) * 0.5f;
-            const float x = fraction == 0.0f ? painted.left + 1.5f
-                : fraction == 1.0f ? painted.right - 1.5f
-                                   : (painted.left + painted.right) * 0.5f;
-            CAPTURE(x, y, painted.left, painted.right);
+            const float x = painted.left + 1.5f
+                            + (painted.right - painted.left - 3.0f) * fx;
+            const float y = painted.top + 1.5f
+                            + (painted.bottom - painted.top - 3.0f) * fy;
+            CAPTURE(x, y, painted.left, painted.top, painted.right,
+                    painted.bottom);
             const auto before = click_dispatch_count(rig);
             rig.root->simulate_click({x, y});
             settle(rig.clock, 12);
@@ -6230,6 +6241,530 @@ TEST_CASE("the tracing reminder sits on the header controls' line",
     }
 }
 
+// THE LIVE / PRECISION CONTROL IS HIDDEN EVERYWHERE A USER COULD MEET IT.
+//
+// Motion Mode only ever set how fast the display eased; it never reached the
+// audio. The header's segmented control, the Settings MOTION row and the help
+// section that explained it are all withheld, so no surface offers a choice
+// the editor no longer makes. Each absence is paired with a word that MUST be
+// found by the same lookup on the same surface, so "not found" cannot mean
+// "looked in the wrong place".
+TEST_CASE("the LIVE / PRECISION control is hidden from the header, Settings and help",
+          "[native-n1][state-parity][header][motion-mode]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Header. Every "LIVE" label must belong to the freeze toggle, which is
+    // the only other control in the header that can print the word.
+    REQUIRE(find_label(*rig.root, "BARS") != nullptr);
+    CHECK(find_label(*rig.root, "PRECISION") == nullptr);
+    std::vector<const pulp::view::Label*> live_labels;
+    const std::function<void(const View&)> collect = [&](const View& view) {
+        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+            label != nullptr && label->text() == "LIVE")
+            live_labels.push_back(label);
+        for (std::size_t index = 0; index < view.child_count(); ++index)
+            collect(*view.child_at(index));
+    };
+    collect(*rig.root);
+    const auto freeze_toggles = [&] {
+        std::size_t inside = 0;
+        for (const auto* label : live_labels) {
+            // The freeze toggle sits at the left of the output cluster, well
+            // clear of where the segmented control painted (x=687.5).
+            if (root_point(*label, 0.0f, 0.0f).x < 400.0f) ++inside;
+        }
+        return inside;
+    }();
+    CHECK(freeze_toggles == live_labels.size());
+
+    // Help. The copy the overlay reads is the asset this global holds.
+    rig.bridge().load_script(R"js((() => {
+      const text = globalThis.SPECTR_HELP_TEXT;
+      if (typeof text !== 'string' || !text.includes('## Latency'))
+        throw new Error('the help copy is not loaded, so its absences prove nothing');
+      if (/Precision/.test(text))
+        throw new Error('the help copy still explains LIVE / PRECISION');
+    })();)js", "spectr-native-motion-mode-help-absent");
+
+    // Settings.
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+#if defined(__APPLE__)
+    constexpr auto primary_modifier = pulp::view::kModCmd;
+#else
+    constexpr auto primary_modifier = pulp::view::kModCtrl;
+#endif
+    REQUIRE(rig.root->on_global_key({
+        .key = static_cast<pulp::view::KeyCode>(','),
+        .modifiers = primary_modifier,
+        .is_down = true}));
+    settle(rig.clock, 16);
+    require_state(rig, "settings");
+    REQUIRE(find_label(*rig.root, "Mute style") != nullptr);
+    CHECK(find_label(*rig.root, "Response") == nullptr);
+    CHECK(find_label(*rig.root, "MOTION") == nullptr);
+    CHECK(find_label(*rig.root, "Precision") == nullptr);
+    storage.require_unchanged();
+}
+
+// THE HEADER READS [freeze] OUTPUT --o-- value [PEAK], ALL ON ONE LINE.
+//
+// The freeze toggle takes the place PEAK held, and PEAK sits right of the
+// trim's value at the same gap it used to keep to OUTPUT. Each word is checked
+// by its painted ink against the BOTH caption, word by word (a space-sized
+// break in the ink starts a new word), because a whole-label reading lets a
+// lower word hide behind a taller one. The toggle is then pressed and its
+// FROZEN face checked the same way, with its tokens read off the pixels: the
+// green dot and neutral box of LIVE, the amber square, amber text and warm box
+// of FROZEN, at one fixed width so nothing beside it moves.
+TEST_CASE("the header reads freeze, OUTPUT, trim, value, PEAK on the controls' line",
+          "[native-n1][state-parity][header][freeze-toggle]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    // Labels in the top bar only: the plot's rulers print numbers too.
+    const auto header_label = [&](std::string_view text) {
+        const pulp::view::Label* found = nullptr;
+        const std::function<void(const View&)> walk = [&](const View& view) {
+            if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+                label != nullptr && label->text() == text
+                && root_point(*label, 0.0f, 0.0f).y < 44.0f) {
+                REQUIRE(found == nullptr);
+                found = label;
+            }
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                walk(*view.child_at(index));
+        };
+        walk(*rig.root);
+        return found;
+    };
+    struct Box { float left, top, right, bottom; };
+    const auto box_of = [&](const View& view) {
+        const auto origin = root_point(view, 0.0f, 0.0f);
+        return Box{origin.x, origin.y, origin.x + view.bounds().width,
+                   origin.y + view.bounds().height};
+    };
+
+    const auto* live = header_label("LIVE");
+    const auto* output = header_label("OUTPUT");
+    const auto* value = header_label("0.0");
+    const auto* caption = header_label("BOTH");
+    REQUIRE(live != nullptr);
+    REQUIRE(output != nullptr);
+    REQUIRE(value != nullptr);
+    REQUIRE(caption != nullptr);
+    const pulp::view::Label* peak = nullptr;
+    {
+        const std::function<void(const View&)> walk = [&](const View& view) {
+            if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+                label != nullptr && label->text().rfind("PEAK ", 0) == 0
+                && root_point(*label, 0.0f, 0.0f).y < 44.0f)
+                peak = label;
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                walk(*view.child_at(index));
+        };
+        walk(*rig.root);
+    }
+    REQUIRE(peak != nullptr);
+    const View* toggle = live->parent();
+    const View* peak_button = peak->parent();
+    REQUIRE(toggle != nullptr);
+    REQUIRE(peak_button != nullptr);
+
+    // ORDER AND SPACING. The toggle now fills PEAK's old slot, so its gap to
+    // OUTPUT is the old PEAK-to-OUTPUT gap; PEAK must keep that gap to the value.
+    const auto toggle_box = box_of(*toggle);
+    const auto output_box = box_of(*output);
+    const auto value_box = box_of(*value);
+    const auto peak_box = box_of(*peak_button);
+    const auto caption_box = box_of(*caption);
+    CAPTURE(toggle_box.left, toggle_box.right, output_box.left, output_box.right,
+            value_box.left, value_box.right, peak_box.left, peak_box.right);
+    CHECK(toggle_box.right < output_box.left);
+    CHECK(output_box.right < value_box.left);
+    CHECK(value_box.right < peak_box.left);
+    CHECK(peak_box.right < caption_box.left);
+    const float old_gap = output_box.left - toggle_box.right;
+    const float peak_gap = peak_box.left - value_box.right;
+    CAPTURE(old_gap, peak_gap);
+    CHECK(old_gap == Catch::Approx(14.0f).margin(1.0f));
+    CHECK(peak_gap == Catch::Approx(old_gap).margin(1.0f));
+    CHECK(toggle_box.right - toggle_box.left == Catch::Approx(76.0f).margin(0.5f));
+
+    // THE PIXELS.
+    REQUIRE(pulp::view::raw_rgba_render_available());
+    constexpr float kScale = 2.0f;
+    std::uint32_t width = 0, height = 0;
+    const auto render = [&] {
+        auto frame = pulp::view::render_to_rgba(
+            *rig.root, 1320, 860, kScale, &width, &height);
+        REQUIRE(!frame.empty());
+        return frame;
+    };
+    const auto pixel = [&](const std::vector<std::uint8_t>& frame, float x, float y) {
+        const auto px = static_cast<std::size_t>(x * kScale);
+        const auto py = static_cast<std::size_t>(y * kScale);
+        const auto* p = &frame[(py * width + px) * 4];
+        return std::array<int, 3>{p[0], p[1], p[2]};
+    };
+    // Ink of each word inside a label's box, where a word is a run of inked
+    // columns broken by less than 4pt of blank. `bright` picks what counts as
+    // ink, so dim captions and coloured text are both measurable.
+    struct WordInk { float left = 0, right = 0, top = -1, bottom = -1; };
+    const auto word_ink = [&](const pulp::view::Label& label,
+                              const std::vector<std::uint8_t>& frame) {
+        const auto origin = root_point(label, 0.0f, 0.0f);
+        const auto x0 = static_cast<std::uint32_t>(origin.x * kScale);
+        const auto x1 = std::min<std::uint32_t>(
+            width, static_cast<std::uint32_t>(
+                       (origin.x + label.bounds().width) * kScale));
+        const auto y0 = static_cast<std::uint32_t>(
+            std::max(0.0f, origin.y - 3.0f) * kScale);
+        const auto y1 = std::min<std::uint32_t>(
+            height, static_cast<std::uint32_t>(
+                        (origin.y + label.bounds().height + 3.0f) * kScale));
+        const auto inked = [&](std::uint32_t x, std::uint32_t y) {
+            const auto* px = &frame[(static_cast<std::size_t>(y) * width + x) * 4];
+            return px[0] + px[1] + px[2] > 250;
+        };
+        std::vector<WordInk> words;
+        std::uint32_t gap = 0;
+        constexpr std::uint32_t kWordGap = static_cast<std::uint32_t>(4 * kScale);
+        for (std::uint32_t x = x0; x < x1; ++x) {
+            float top = -1.0f, bottom = -1.0f;
+            for (std::uint32_t y = y0; y < y1; ++y) {
+                if (!inked(x, y)) continue;
+                if (top < 0.0f) top = static_cast<float>(y) / kScale;
+                bottom = static_cast<float>(y + 1) / kScale;
+            }
+            if (top < 0.0f) { ++gap; continue; }
+            if (words.empty() || gap >= kWordGap)
+                words.push_back({static_cast<float>(x) / kScale, 0.0f, top, bottom});
+            auto& word = words.back();
+            word.right = static_cast<float>(x + 1) / kScale;
+            word.top = std::min(word.top, top);
+            word.bottom = std::max(word.bottom, bottom);
+            gap = 0;
+        }
+        return words;
+    };
+    auto frame = render();
+    const auto caption_words = word_ink(*caption, frame);
+    REQUIRE(caption_words.size() == 1);
+    const auto line = caption_words.front();
+    CAPTURE(line.top, line.bottom);
+    const auto on_line = [&](const pulp::view::Label& label,
+                             const std::vector<std::uint8_t>& image,
+                             std::size_t words_to_check) {
+        const auto words = word_ink(label, image);
+        INFO(label.text());
+        REQUIRE(words.size() >= words_to_check);
+        for (std::size_t index = 0; index < words_to_check; ++index) {
+            const auto& word = words[index];
+            CAPTURE(index, word.left, word.right, word.top, word.bottom);
+            // Half a point: a one-point defect is the size these drift by.
+            CHECK(word.top == Catch::Approx(line.top).margin(0.5f));
+            CHECK(word.bottom == Catch::Approx(line.bottom).margin(0.5f));
+        }
+    };
+    on_line(*live, frame, 1);
+    on_line(*output, frame, 1);
+    on_line(*value, frame, 1);
+    // "PEAK" only: the level beside it is "--" in a silent rig, which has no
+    // cap height to compare.
+    on_line(*peak, frame, 1);
+
+    // The glyph is centred on the same line as the words.
+    const float line_centre = (line.top + line.bottom) * 0.5f;
+
+    // THE NUMBER BELONGS TO THE SLIDER. Measured on the paint: from the
+    // track's right end (the last inked column of the track on the line's
+    // centre row) to the value's first glyph is the cluster's 14pt gap, the
+    // same gap the value's box keeps to PEAK. A right-aligned readout left
+    // ~30pt here for "0.0".
+    const auto track_end = [&](const std::vector<std::uint8_t>& image,
+                               float before) {
+        float last = -1.0f;
+        for (float x = output_box.right + 2.0f; x < before; x += 0.5f) {
+            for (float dy = -1.5f; dy <= 1.5f; dy += 0.5f) {
+                const auto c = pixel(image, x, line_centre + dy);
+                if (c[0] + c[1] + c[2] > 250) { last = x + 0.5f; break; }
+            }
+        }
+        return last;
+    };
+    const auto value_ink = [&](const pulp::view::Label& label,
+                               const std::vector<std::uint8_t>& image) {
+        const auto words = word_ink(label, image);
+        REQUIRE(!words.empty());
+        return std::pair{words.front().left, words.back().right};
+    };
+    {
+        const auto [ink_left, ink_right] = value_ink(*value, frame);
+        const float track_right = track_end(frame, ink_left - 1.0f);
+        CAPTURE(track_right, ink_left, ink_right);
+        REQUIRE(track_right > 0.0f);
+        CHECK(ink_left - track_right == Catch::Approx(14.0f).margin(1.5f));
+        CHECK(peak_box.left - value_box.right
+              == Catch::Approx(14.0f).margin(1.0f));
+    }
+    // ...AND PEAK HOLDS STILL as the number runs its whole range. The host
+    // writes the trim, the meter publication carries it to the readout, and
+    // PEAK's box and the number's first glyph must not move.
+    const auto readout_at = [&]() -> const pulp::view::Label* {
+        const pulp::view::Label* found = nullptr;
+        const std::function<void(const View&)> walk = [&](const View& view) {
+            if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+                label != nullptr && std::abs(box_of(*label).left - value_box.left) < 0.5f
+                && box_of(*label).top < 44.0f)
+                found = label;
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                walk(*view.child_at(index));
+        };
+        walk(*rig.root);
+        return found;
+    };
+    {
+        const auto first_glyph = value_ink(*value, frame).first;
+        for (const float trim : {-24.0f, 24.0f, -0.5f, 12.5f, 0.0f}) {
+            rig.store.set_value(spectr::kOutputTrim, trim);
+            rig.processor.apply_surface_params(false);
+            feed_audio_blocks(rig, 8);
+            settle(rig.clock, 8);
+            char expected[16];
+            std::snprintf(expected, sizeof expected, "%s%.1f",
+                          trim > 0.0f ? "+" : "", trim);
+            const auto* readout = readout_at();
+            INFO("trim " << expected);
+            REQUIRE(readout != nullptr);
+            CHECK(readout->text() == expected);
+            const auto image = render();
+            const auto [ink_left, ink_right] = value_ink(*readout, image);
+            const auto peak_now = box_of(*peak_button);
+            CAPTURE(ink_left, ink_right, peak_now.left, first_glyph);
+            CHECK(peak_now.left == Catch::Approx(peak_box.left).margin(0.01f));
+            CHECK(box_of(*readout).right
+                  == Catch::Approx(value_box.right).margin(0.01f));
+            // The first glyph stays put (a sign is a glyph too, so it may
+            // start a hair left of a digit), and every glyph stays inside the
+            // fixed box, clear of PEAK.
+            CHECK(ink_left == Catch::Approx(first_glyph).margin(1.0f));
+            CHECK(ink_right <= value_box.right + 0.5f);
+            if (std::abs(trim) >= 10.0f)
+                CHECK(peak_now.left - ink_right >= 13.0f);
+        }
+    }
+    frame = render();
+    const auto live_box = box_of(*live);
+    const float glyph_x = live_box.left - 6.0f - 3.0f;
+    const auto glyph_rows = [&](const std::vector<std::uint8_t>& image, float x) {
+        float top = -1.0f, bottom = -1.0f;
+        for (float y = toggle_box.top + 2.0f; y < toggle_box.bottom - 2.0f; y += 0.5f) {
+            const auto c = pixel(image, x, y);
+            if (std::max({c[0], c[1], c[2]}) < 120) continue;
+            if (top < 0.0f) top = y;
+            bottom = y + 0.5f;
+        }
+        return std::pair{top, bottom};
+    };
+    {
+        const auto [top, bottom] = glyph_rows(frame, glyph_x);
+        CAPTURE(top, bottom, line_centre);
+        REQUIRE(top >= 0.0f);
+        CHECK((top + bottom) * 0.5f == Catch::Approx(line_centre).margin(1.0f));
+    }
+
+    // LIVE TOKENS: a green dot (hsl(150,75%,60%) = rgb(77,230,153)) and a
+    // box that adds no hue to the header behind it.
+    const float box_probe_x = toggle_box.right - 3.0f;
+    const float box_probe_y = (toggle_box.top + toggle_box.bottom) * 0.5f;
+    const auto behind = pixel(frame, toggle_box.left - 4.0f, box_probe_y);
+    const int behind_warmth = behind[0] - behind[2];
+    {
+        const auto dot = pixel(frame, glyph_x, line_centre);
+        CAPTURE(dot[0], dot[1], dot[2]);
+        CHECK(std::abs(dot[0] - 77) <= 20);
+        CHECK(std::abs(dot[1] - 230) <= 20);
+        CHECK(std::abs(dot[2] - 153) <= 20);
+        const auto inside = pixel(frame, box_probe_x, box_probe_y);
+        CAPTURE(inside[0], inside[1], inside[2], behind_warmth);
+        CHECK(std::abs((inside[0] - inside[2]) - behind_warmth) <= 3);
+    }
+
+    // FROZEN. The press flips only this control.
+    activate(rig, "[data-spectr-freeze-toggle]");
+    require_runtime_contract(
+        rig,
+        "document.querySelector('[data-spectr-freeze-toggle]')"
+        "?.getAttribute('data-spectr-freeze-state') === 'frozen'",
+        "the freeze toggle did not take its FROZEN face");
+    CHECK(header_label("LIVE") == nullptr);
+    const auto* frozen = header_label("FROZEN");
+    REQUIRE(frozen != nullptr);
+    const auto frozen_toggle_box = box_of(*frozen->parent());
+    CHECK(frozen_toggle_box.left == Catch::Approx(toggle_box.left).margin(0.01f));
+    CHECK(frozen_toggle_box.right == Catch::Approx(toggle_box.right).margin(0.01f));
+    CHECK(box_of(*output).left == Catch::Approx(output_box.left).margin(0.01f));
+    // The word fits the fixed box it was sized for.
+    CHECK(box_of(*frozen).right <= frozen_toggle_box.right - 10.0f + 0.5f);
+    frame = render();
+    {
+        // The FROZEN text is amber, hsl(35,90%,75%) = rgb(249,201,134), so the
+        // ink threshold above still sees it.
+        on_line(*frozen, frame, 1);
+        const auto words = word_ink(*frozen, frame);
+        REQUIRE(!words.empty());
+        std::array<int, 3> brightest{0, 0, 0};
+        const auto fbox = box_of(*frozen);
+        for (float y = words[0].top; y < words[0].bottom; y += 0.5f)
+            for (float x = words[0].left; x < words[0].right; x += 0.5f) {
+                const auto c = pixel(frame, x, y);
+                if (c[0] + c[1] + c[2] > brightest[0] + brightest[1] + brightest[2])
+                    brightest = c;
+            }
+        CAPTURE(brightest[0], brightest[1], brightest[2], fbox.left);
+        CHECK(brightest[0] - brightest[2] >= 80);
+        CHECK(brightest[0] >= brightest[1]);
+        const float frozen_glyph_x = fbox.left - 6.0f - 3.0f;
+        const auto [top, bottom] = glyph_rows(frame, frozen_glyph_x);
+        CAPTURE(top, bottom);
+        REQUIRE(top >= 0.0f);
+        CHECK((top + bottom) * 0.5f == Catch::Approx(line_centre).margin(1.0f));
+        // The amber square, hsl(35,90%,65%) = rgb(246,179,85). Its corner
+        // radius is 1, so its corner is inked where the dot's is not.
+        const auto square = pixel(frame, frozen_glyph_x, line_centre);
+        CAPTURE(square[0], square[1], square[2]);
+        CHECK(std::abs(square[0] - 246) <= 20);
+        CHECK(std::abs(square[1] - 179) <= 20);
+        CHECK(std::abs(square[2] - 85) <= 20);
+        const auto corner = pixel(frame, frozen_glyph_x - 2.5f,
+                                  (top + bottom) * 0.5f - 2.5f);
+        CAPTURE(corner[0], corner[1], corner[2]);
+        CHECK(corner[0] - corner[2] >= 60);
+        // The box takes the warm tint rgba(200,140,60,0.18).
+        const auto inside = pixel(frame, box_probe_x, box_probe_y);
+        CAPTURE(inside[0], inside[1], inside[2], behind_warmth);
+        CHECK((inside[0] - inside[2]) - behind_warmth >= 12);
+    }
+    if (const char* shot = std::getenv("SPECTR_FREEZE_SHOT")) {
+        const auto png = pulp::view::render_to_png(
+            *rig.root, 1320, 860, kScale, pulp::view::ScreenshotBackend::skia);
+        std::ofstream(shot, std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()),
+                   static_cast<std::streamsize>(png.size()));
+    }
+
+    // And back.
+    activate(rig, "[data-spectr-freeze-toggle]");
+    CHECK(header_label("LIVE") != nullptr);
+    CHECK(header_label("FROZEN") == nullptr);
+    storage.require_unchanged();
+}
+
+// A SESSION THAT STORED PRECISION STILL LOADS, AND EASES AT THE LIVE RATE.
+//
+// Param 3100 stays registered and nothing rewrites it: a value the host wrote
+// is the host's, and coercing it on load would write to an automation lane.
+// The editor keeps the stored value and ignores it. Measured, not inferred:
+// the draw loop eases each painted column toward its target by a fixed ratio
+// of the remaining distance per frame, exp(-dt * k), so the ratio read on the
+// PRECISION session must equal the ratio read on the same editor once the host
+// switches it to LIVE. PRECISION was k = 6 against LIVE's 22, which at this
+// runtime's 50 ms replay step is a ratio of exp(-0.3) = 0.74 against
+// exp(-1.1) = 0.33, so the two are far apart
+// whenever the editor honours the stored value. The LIVE reading is also the
+// control that shows the instrument reads a rate at all.
+TEST_CASE("a session that stored PRECISION loads and eases at the LIVE rate",
+          "[native-n1][state-parity][motion-mode]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.close();
+    rig.store.set_value(spectr::kParamMotionMode, 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    rig.open();
+    require_home(rig);
+
+    const auto host_bank = [&](float gain_db) {
+        for (std::size_t index = 0; index < spectr::kMaxBands; ++index)
+            rig.store.set_value(spectr::band_gain_param_id(index), gain_db);
+        REQUIRE(rig.processor.apply_surface_params(false));
+        settle(rig.clock, 30);
+    };
+    // Invert the bank and read the per-frame ratio of the remaining distance,
+    // frame by frame, into `globalThis.__spectrEaseRatio[key]`.
+    const auto measure = [&](std::string_view key) {
+        activate(rig, "[data-spectr-menu-root=\"overflow\"] [data-spectr-menu-trigger]");
+        // Pressed WITHOUT a settle, so each frame below is one step of the ease.
+        // The runtime's replay clock is re-armed ahead of now, so every frame
+        // advances exactly 50 ms and the ratio is a function of k alone, not of
+        // how long the host took between ticks.
+        rig.bridge().load_script(R"js((() => {
+          const clock = globalThis.__pulpCapturedReplayClock__;
+          if (!clock) throw new Error('the runtime replay clock is missing');
+          clock.target = clock.current + 5000;
+          globalThis.__spectrEaseSamples = [];
+          if (!globalThis.__pulpActivateMaterializedElement__(
+                '[data-spectr-overflow-action="invert"]', 'click', null))
+            throw new Error('INVERT could not be pressed');
+        })();)js", "spectr-native-motion-ease-press");
+        for (int frame = 0; frame < 6; ++frame) {
+            settle(rig.clock, 1);
+            rig.bridge().load_script(R"js((() => {
+              const state = globalThis.__spectrTestHooks?.renderState?.();
+              if (!state) throw new Error('native render-state hook missing');
+              globalThis.__spectrEaseSamples.push(
+                { drawn: state.gains[0], target: state.targetGains[0] });
+            })();)js", "spectr-native-motion-ease-sample");
+        }
+        rig.bridge().load_script(std::string{R"js((() => {
+          const samples = globalThis.__spectrEaseSamples;
+          const ratios = [];
+          for (let i = 1; i < samples.length; ++i) {
+            const before = samples[i - 1].target - samples[i - 1].drawn;
+            const after = samples[i].target - samples[i].drawn;
+            if (Math.abs(before) < 1e-6) continue;
+            ratios.push(after / before);
+          }
+          if (ratios.length < 3 || !ratios.every(r => r > 0 && r < 1))
+            throw new Error('the invert produced no measurable ease: '
+              + JSON.stringify(samples));
+          ratios.sort((a, b) => a - b);
+          globalThis.__spectrEaseRatio = globalThis.__spectrEaseRatio || {};
+          globalThis.__spectrEaseRatio[)js"} + js_string(key) + R"js(] =
+            ratios[Math.floor(ratios.length / 2)];
+        })();)js", "spectr-native-motion-ease-ratio");
+    };
+
+    // The session: the host projects its stored PRECISION into the editor.
+    host_bank(-12.0f);
+    require_app_state(rig, "s.settings && s.settings.motionMode === 'precision'",
+                      "the editor did not receive the stored PRECISION value");
+    measure("precision");
+    // Opening the editor and editing never rewrote the stored value.
+    CHECK(rig.store.get_value(spectr::kParamMotionMode) == Catch::Approx(1.0f));
+
+    // The control: the same editor, switched to LIVE by the host.
+    rig.store.set_value(spectr::kParamMotionMode, 0.0f);
+    host_bank(-12.0f);
+    require_app_state(rig, "s.settings && s.settings.motionMode === 'live'",
+                      "the host could not switch the editor to LIVE");
+    measure("live");
+
+    rig.bridge().load_script(R"js((() => {
+      const r = globalThis.__spectrEaseRatio;
+      if (!r || !(Math.abs(r.live - Math.exp(-22 * 0.05)) < 0.02))
+        throw new Error('the LIVE control read no LIVE-rate ease: '
+          + JSON.stringify(r));
+      if (!(Math.abs(r.precision - r.live) < 0.02))
+        throw new Error('a PRECISION session does not ease at the LIVE rate: '
+          + JSON.stringify(r));
+    })();)js", "spectr-native-motion-ease-verdict");
+    storage.require_unchanged();
+}
+
 // THE STATUS PILL IS FEEDBACK FOR AN EDIT.
 //
 // The top-centre pill ("12.3kHz   -1.3 dB   BAND 7/32") may appear or update only
@@ -6955,7 +7490,8 @@ std::string shortcut_fingerprint(NativeEditorRig& rig) {
                "r.selection.length]); })()",
                "spectr-keyboard-fingerprint")
         + "|muted=" + std::to_string(muted_band_count(rig))
-        + "|render=" + std::to_string(static_cast<int>(rig.processor.render_mode()));
+        + "|render=" + std::to_string(static_cast<int>(rig.processor.render_mode()))
+        + "|freeze=" + std::to_string(rig.store.get_value(spectr::kParamFreeze));
 }
 
 std::string app_string(NativeEditorRig& rig, std::string_view field) {
@@ -6973,8 +7509,8 @@ void select_all(NativeEditorRig& rig) {
 }
 
 // Keys removed in every context: the digit aliases for the edit modes, which
-// no surface showed; A and 6, which cycled the analyzer (A is a Musical Typing
-// note); and Escape, pressed with a selection standing, which used to clear it.
+// no surface showed; and A and 6, which cycled the analyzer (A is a Musical
+// Typing note).
 void require_removed_keys_do_nothing(NativeEditorRig& rig) {
     select_all(rig);
     for (const char key : {'1', '2', '3', '4', '5', 'a', '6'}) {
@@ -6983,10 +7519,6 @@ void require_removed_keys_do_nothing(NativeEditorRig& rig) {
         CHECK_FALSE(press_key(rig, key_of(key)));
         CHECK(shortcut_fingerprint(rig) == before);
     }
-    INFO("removed key Escape (selection clear)");
-    const auto before = shortcut_fingerprint(rig);
-    CHECK_FALSE(press_key(rig, pulp::view::KeyCode::escape));
-    CHECK(shortcut_fingerprint(rig) == before);
     // W and the rest of the Musical Typing rows were never bound; they must
     // stay the host's in every context.
     for (const char key : {'w', 'd', 'h', 'j', 'k', 'e', 'y', 'u', 'o', 'p',
@@ -7020,12 +7552,92 @@ void require_documented_keys_act(NativeEditorRig& rig) {
         CHECK(press_key(rig, pulp::view::KeyCode::t));
         CHECK(rig.processor.render_mode() != before);
     }
+    {
+        // Q writes the Freeze parameter, the lane a host records, and the
+        // header toggle turns over with it. A second press releases.
+        INFO("freeze key q");
+        REQUIRE(rig.store.get_value(spectr::kParamFreeze) == 0.0f);
+        CHECK(press_key(rig, key_of('q')));
+        CHECK(rig.store.get_value(spectr::kParamFreeze) == 1.0f);
+        CHECK(runtime_value(rig,
+            "document.querySelector('[data-spectr-freeze-toggle]')"
+            ".getAttribute('data-spectr-freeze-state')",
+            "spectr-keyboard-freeze-face") == "frozen");
+        CHECK(press_key(rig, key_of('q')));
+        CHECK(rig.store.get_value(spectr::kParamFreeze) == 0.0f);
+    }
+}
+
+std::string selection_size(NativeEditorRig& rig) {
+    return runtime_value(rig, "String(__spectrTestHooks.renderState().selection.length)",
+                         "spectr-keyboard-selection-size");
+}
+
+// Escape, in every context. An open menu takes it first and the selection
+// survives; with the menu gone it clears the selection and is consumed; with
+// nothing selected it is not consumed, so the host still gets its Escape.
+void require_escape_clears_selection(NativeEditorRig& rig) {
+    select_all(rig);
+    const auto selected = selection_size(rig);
+    REQUIRE(selected != "0");
+    activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
+    REQUIRE(runtime_value(rig, "String(!!document.querySelector('[data-spectr-menu-options]'))",
+                          "spectr-keyboard-escape-menu-open") == "true");
+    CHECK(press_key(rig, pulp::view::KeyCode::escape));
+    CHECK(runtime_value(rig, "String(!!document.querySelector('[data-spectr-menu-options]'))",
+                        "spectr-keyboard-escape-menu-closed") == "false");
+    CHECK(selection_size(rig) == selected);
+    INFO("Escape with a selection standing");
+    CHECK(press_key(rig, pulp::view::KeyCode::escape));
+    CHECK(selection_size(rig) == "0");
+    INFO("Escape with nothing selected");
+    const auto before = shortcut_fingerprint(rig);
+    CHECK_FALSE(press_key(rig, pulp::view::KeyCode::escape));
+    CHECK(shortcut_fingerprint(rig) == before);
+}
+
+constexpr std::uint16_t kFreezeChord =
+    pulp::view::kModCtrl | pulp::view::kModAlt | pulp::view::kModCmd;
+
+// Ctrl+Opt+Cmd+F toggles Freeze in every context and is consumed. The chords
+// DAWs DO use by default -- and would have to keep -- change nothing and go to
+// the host; so does the chord itself while a menu owns the keyboard.
+void require_freeze_chord(NativeEditorRig& rig) {
+    const auto freeze = [&] { return rig.store.get_value(spectr::kParamFreeze); };
+    REQUIRE(freeze() == 0.0f);
+    CHECK(press_key(rig, pulp::view::KeyCode::f, kFreezeChord));
+    CHECK(freeze() == 1.0f);
+    CHECK(runtime_value(rig,
+        "document.querySelector('[data-spectr-freeze-toggle]')"
+        ".getAttribute('data-spectr-freeze-state')",
+        "spectr-keyboard-chord-face") == "frozen");
+    CHECK(press_key(rig, pulp::view::KeyCode::f, kFreezeChord));
+    CHECK(freeze() == 0.0f);
+    using pulp::view::kModAlt;
+    using pulp::view::kModCmd;
+    using pulp::view::kModCtrl;
+    using pulp::view::kModShift;
+    for (const std::uint16_t other : {std::uint16_t(kModAlt | kModCmd),
+                                      std::uint16_t(kModCtrl | kModAlt),
+                                      std::uint16_t(kModCmd | kModShift),
+                                      std::uint16_t(kModCtrl | kModShift),
+                                      std::uint16_t(kModCmd | kModAlt | kModShift),
+                                      std::uint16_t(kFreezeChord | kModShift)}) {
+        INFO("a host's chord, modifiers " << other);
+        const auto before = shortcut_fingerprint(rig);
+        CHECK_FALSE(press_key(rig, pulp::view::KeyCode::f, other));
+        CHECK(shortcut_fingerprint(rig) == before);
+    }
+    activate(rig, "[data-spectr-menu-root=\"edit\"] [data-spectr-menu-trigger]");
+    CHECK_FALSE(press_key(rig, pulp::view::KeyCode::f, kFreezeChord));
+    CHECK(freeze() == 0.0f);
+    CHECK(press_key(rig, pulp::view::KeyCode::escape));
 }
 
 // Every documented plain key is handed back to the host and changes nothing.
 void require_documented_keys_go_to_host(NativeEditorRig& rig) {
     select_all(rig);
-    for (const char key : {'s', 'l', 'b', 'f', 'g', 'm', 't'}) {
+    for (const char key : {'s', 'l', 'b', 'f', 'g', 'm', 't', 'q'}) {
         INFO("gated key " << key);
         const auto before = shortcut_fingerprint(rig);
         CHECK_FALSE(press_key(rig, key_of(key)));
@@ -7047,6 +7659,8 @@ TEST_CASE("in a plug-in, plain-key shortcuts go to the DAW by default",
     CHECK(press_key(rig, pulp::view::KeyCode::a, pulp::view::kModCmd));
     require_documented_keys_go_to_host(rig);
     require_removed_keys_do_nothing(rig);
+    require_escape_clears_selection(rig);
+    require_freeze_chord(rig);
     storage.require_unchanged();
 }
 
@@ -7072,6 +7686,8 @@ TEST_CASE("in a plug-in, Keyboard shortcuts in DAW makes the plain keys live",
     activate(rig, "[data-spectr-settings-close]");
     require_documented_keys_act(rig);
     require_removed_keys_do_nothing(rig);
+    require_escape_clears_selection(rig);
+    require_freeze_chord(rig);
 
     // Persisted with the plugin state: a reloaded instance keeps it.
     const auto blob = rig.processor.serialize_plugin_state();
@@ -7095,6 +7711,8 @@ TEST_CASE("in the standalone, plain-key shortcuts stay live",
     activate(rig, "[data-spectr-settings-close]");
     require_documented_keys_act(rig);
     require_removed_keys_do_nothing(rig);
+    require_escape_clears_selection(rig);
+    require_freeze_chord(rig);
     storage.require_unchanged();
 }
 
@@ -7138,14 +7756,150 @@ TEST_CASE("key hints appear only where their keys are live",
             "String(String(document.querySelector('[data-spectr-latency-chip]')"
             ".getAttribute('title') || '').indexOf('press T') >= 0)",
             "spectr-keyboard-latency-title");
+        // The freeze toggle's tooltip names the chord everywhere and Q only
+        // where Q works; the SHORTCUTS panel lists the chord and Escape in
+        // every context, and Q only where it works.
+        out += " freeze=" + runtime_value(
+            rig,
+            "String(document.querySelector('[data-spectr-freeze-toggle]')"
+            ".getAttribute('title') || '')",
+            "spectr-keyboard-freeze-title");
+        const auto row = [&](std::string_view key) {
+            return runtime_value(
+                rig,
+                "String(Array.from(document.querySelectorAll('[data-spectr-help-panel] span'))"
+                ".some(n => n.textContent === '" + std::string(key) + "'"
+                " && n.nextSibling && n.nextSibling.textContent === 'Freeze / unfreeze'))",
+                "spectr-keyboard-freeze-row");
+        };
+        out += " q=" + row("Q");
+        out += " chord=" + row("CTRL+OPT+CMD+F");
+        out += " esc=" + runtime_value(
+            rig,
+            "String(Array.from(document.querySelectorAll('[data-spectr-help-panel] span'))"
+            ".some(n => n.textContent === 'ESC' && n.nextSibling"
+            " && n.nextSibling.textContent === 'Clear selection'))",
+            "spectr-keyboard-escape-row");
         return out;
     };
     const std::string live =
-        "chips=5 analyzer=ANALYZER note=0 help=true latency=true";
-    const std::string off = "chips=0 analyzer=ANALYZER note=1 help=false latency=false";
+        "chips=5 analyzer=ANALYZER note=0 help=true latency=true"
+        " freeze=Freeze the incoming sound (Ctrl+Opt+Cmd+F or Q) q=true chord=true esc=true";
+    const std::string off =
+        "chips=0 analyzer=ANALYZER note=1 help=false latency=false"
+        " freeze=Freeze the incoming sound (Ctrl+Opt+Cmd+F) q=false chord=true esc=true";
     CHECK(hints(/*standalone=*/false, /*in_daw=*/false) == off);
     CHECK(hints(/*standalone=*/false, /*in_daw=*/true) == live);
     CHECK(hints(/*standalone=*/true, /*in_daw=*/false) == live);
+    storage.require_unchanged();
+}
+
+// HOST AUTOMATION OF FREEZE TURNS THE TOGGLE OVER, AND ONLY THE TOGGLE.
+//
+// Freeze is host parameter 3. A host write reaches the editor through the same
+// live projection the other lanes ride; the toggle must take the host's value,
+// and the commit that shows it must be the toggle's own, never a whole-editor
+// pass. The control on the pass counter is a real structural change (opening
+// Settings), and the control on "only when it moves" is a projection that
+// leaves Freeze alone, which must commit nothing.
+TEST_CASE("host automation of Freeze turns the toggle over as a leaf",
+          "[native-n1][state-parity][host-automation-cost][freeze-toggle]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.bridge().load_script(R"js((() => {
+      const log = globalThis.__spectrMetadataPasses = [];
+      const wrap = (fn) => typeof fn !== 'function' ? fn : (...args) => {
+        const scope = args[0];
+        log.push(Array.isArray(scope) && scope.length ? 'scoped' : 'full');
+        return fn(...args);
+      };
+      let wrapped = wrap(globalThis.__pulpApplyMaterializedImportMetadata__);
+      Object.defineProperty(globalThis, '__pulpApplyMaterializedImportMetadata__', {
+        configurable: true,
+        get() { return wrapped; },
+        set(value) { wrapped = wrap(value); },
+      });
+    })();)js", "spectr-native-freeze-pass-counter");
+    const auto reset = [&] {
+        rig.bridge().load_script("globalThis.__spectrMetadataPasses.length = 0;",
+                                 "spectr-native-freeze-pass-reset");
+    };
+    const auto passes = [&] {
+        return runtime_value(rig, "JSON.stringify(globalThis.__spectrMetadataPasses)",
+                             "spectr-native-freeze-passes");
+    };
+    const auto face = [&] {
+        return runtime_value(rig,
+            "document.querySelector('[data-spectr-freeze-toggle]')"
+            ".getAttribute('data-spectr-freeze-state')",
+            "spectr-native-freeze-face");
+    };
+    const auto host_writes = [&](float value) {
+        rig.store.set_value(spectr::kParamFreeze, value);
+        REQUIRE(rig.processor.apply_surface_params(false));
+        settle(rig.clock, 8);
+    };
+
+    reset();
+    activate(rig, "[data-spectr-settings-open]");
+    REQUIRE(passes() != "[]");
+    activate(rig, "[data-spectr-settings-close]");
+    settle(rig.clock, 8);
+
+    REQUIRE(face() == "live");
+    reset();
+    host_writes(1.0f);
+    CHECK(face() == "frozen");
+    const auto engaged = passes();
+    INFO("passes for a host freeze: " << engaged);
+    CHECK(engaged.find("full") == std::string::npos);
+
+    // A projection that leaves Freeze where it is commits nothing.
+    reset();
+    rig.store.set_value(spectr::kParamLfoShape, 2.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    CHECK(passes() == "[]");
+    CHECK(face() == "frozen");
+
+    reset();
+    host_writes(0.0f);
+    CHECK(face() == "live");
+    CHECK(passes().find("full") == std::string::npos);
+
+    // And the other direction: a press writes the host parameter.
+    activate(rig, "[data-spectr-freeze-toggle]");
+    CHECK(rig.store.get_value(spectr::kParamFreeze) == 1.0f);
+    CHECK(face() == "frozen");
+    activate(rig, "[data-spectr-freeze-toggle]");
+    CHECK(rig.store.get_value(spectr::kParamFreeze) == 0.0f);
+    storage.require_unchanged();
+}
+
+// Settings > FREEZE > Hold length writes the processor's value, clamped, and
+// shows what it will use.
+TEST_CASE("the Hold length setting reaches the processor",
+          "[native-n1][state-parity][freeze-toggle][settings]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    activate(rig, "[data-spectr-settings-open]");
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-settings-group=\"freeze\"] [data-spectr-freeze-hold]')",
+        "the FREEZE group's Hold length control is missing");
+    rig.bridge().load_script(
+        "window.pulp.postMessage('freeze_hold_set', { seconds: 0.5 }, 'test');",
+        "spectr-native-freeze-hold-write");
+    settle(rig.clock, 4);
+    CHECK(rig.processor.freeze_hold_seconds() == Catch::Approx(0.5));
+    rig.bridge().load_script(
+        "window.pulp.postMessage('freeze_hold_set', { seconds: 9 }, 'test');",
+        "spectr-native-freeze-hold-clamp");
+    settle(rig.clock, 4);
+    CHECK(rig.processor.freeze_hold_seconds()
+          == Catch::Approx(spectr::FreezeSource::kMaxHoldSeconds));
+    activate(rig, "[data-spectr-settings-close]");
     storage.require_unchanged();
 }
 
@@ -7324,5 +8078,85 @@ TEST_CASE("a scroll over the plot behind About or Settings changes nothing",
         edited = edited || rig.processor.field().bands[i].muted != bands_before[i].muted
             || rig.processor.field().bands[i].gain_db != bands_before[i].gain_db;
     CHECK(edited);
+    storage.require_unchanged();
+}
+
+// ── A freeze press records in host automation ────────────────────────────────
+//
+// A host recording in Touch, Latch or Write keys on the edit gesture: begin,
+// value, end. The recorder below is what a format adapter sees -- the store's
+// gesture callbacks and its inline value listener, in order, for Freeze only.
+// Control: the old route, `param_set`, moves the value with no gesture, and
+// the recorder must show exactly that, so a bracket below is the product's.
+
+namespace {
+
+struct FreezeEditRecorder {
+    std::vector<std::string> events;
+    pulp::state::ListenerToken token;
+    explicit FreezeEditRecorder(pulp::state::StateStore& store) {
+        store.set_gesture_callbacks(
+            [this](pulp::state::ParamID id) {
+                if (id == spectr::kParamFreeze) events.emplace_back("begin");
+            },
+            [this](pulp::state::ParamID id) {
+                if (id == spectr::kParamFreeze) events.emplace_back("end");
+            });
+        token = store.add_audio_listener([this](pulp::state::ParamID id, float value) {
+            if (id == spectr::kParamFreeze)
+                events.emplace_back(value >= 0.5f ? "set 1" : "set 0");
+        });
+    }
+    std::string take() {
+        std::string out;
+        for (const auto& e : events) out += (out.empty() ? "" : ", ") + e;
+        events.clear();
+        return out;
+    }
+};
+
+}  // namespace
+
+TEST_CASE("a freeze press goes to the host as one edit gesture",
+          "[native-n1][state-parity][freeze-toggle][automation]") {
+    PatternStoragePoison storage;
+    for (const bool standalone : {false, true}) {
+        INFO((standalone ? "standalone" : "plug-in"));
+        EditorContextScope context(standalone);
+        NativeEditorRig rig;
+        require_home(rig);
+        FreezeEditRecorder recorder(rig.store);
+
+        activate(rig, "[data-spectr-freeze-toggle]");
+        CHECK(recorder.take() == "begin, set 1, end");
+        activate(rig, "[data-spectr-freeze-toggle]");
+        CHECK(recorder.take() == "begin, set 0, end");
+
+        // The chord, live in every context by default.
+        REQUIRE(press_key(rig, pulp::view::KeyCode::f, kFreezeChord));
+        CHECK(recorder.take() == "begin, set 1, end");
+        REQUIRE(press_key(rig, pulp::view::KeyCode::f, kFreezeChord));
+        CHECK(recorder.take() == "begin, set 0, end");
+
+        // Q, where plain keys are live (the standalone, or a plug-in whose
+        // user turned them on).
+        if (!standalone) rig.processor.set_keyboard_shortcuts_in_daw(true);
+        rig.bridge().load_script("globalThis.__spectrApplyKeyboardPolicy("
+                                 "{ shortcuts_in_daw: true });",
+                                 "spectr-freeze-gesture-keys-live");
+        settle(rig.clock, 8);
+        REQUIRE(press_key(rig, key_of('q')));
+        CHECK(recorder.take() == "begin, set 1, end");
+        REQUIRE(press_key(rig, key_of('q')));
+        CHECK(recorder.take() == "begin, set 0, end");
+
+        // Control: a bare value write is visible to the recorder as exactly
+        // that -- a value with no gesture around it.
+        rig.bridge().load_script(
+            "window.pulp.postMessage('param_set', { id: 3, value: 1 }, 'test');",
+            "spectr-freeze-gesture-control");
+        settle(rig.clock, 8);
+        CHECK(recorder.take() == "set 1");
+    }
     storage.require_unchanged();
 }

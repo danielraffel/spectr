@@ -173,10 +173,16 @@ PresetLoadResult load_preset_from_string(pulp::format::Processor& proc,
     // Apply. StateStore first — deserialize fills the atomics. Plugin
     // state second so handlers that read params during their apply see
     // the restored flat state.
+    //
+    // Freeze is a performance state, not part of a sound: loading a preset
+    // while frozen keeps the hold and lays the new mask over it, and a preset
+    // saved while frozen does not freeze whoever loads it.
+    const float freeze = proc.state().get_value(kParamFreeze);
     if (!proc.state().deserialize(std::span<const uint8_t>(store_decoded->data(),
                                                            store_decoded->size()))) {
         r.error = PresetLoadError::CorruptState; return r;
     }
+    proc.state().set_value(kParamFreeze, freeze);
     if (!proc.deserialize_plugin_state(std::span<const uint8_t>(plugin_state_bytes.data(),
                                                                 plugin_state_bytes.size()))) {
         r.error = PresetLoadError::CorruptState; return r;

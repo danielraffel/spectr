@@ -1,0 +1,115 @@
+# Asserts the plugin identities resolved by cmake/SpectrIdentity.cmake:
+# the shipping identity is byte-for-byte the released one, and a dev identity
+# changes EVERY identifier a host keys on. Run: cmake -P test/identity_check.cmake
+get_filename_component(_root "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+include("${_root}/cmake/SpectrIdentity.cmake")
+
+if(DEFINED SPECTR_IDENTITY_CHECK_MODE)
+    # Child mode: a configuration that must be rejected.
+    if(SPECTR_IDENTITY_CHECK_MODE STREQUAL "conflict")
+        spectr_resolve_identity(x ON "Freeze" "")
+    elseif(SPECTR_IDENTITY_CHECK_MODE STREQUAL "collide")
+        spectr_resolve_identity(x OFF "Freeze" "Spec")
+    elseif(SPECTR_IDENTITY_CHECK_MODE STREQUAL "badsuffix")
+        spectr_resolve_identity(x OFF "Freeze dev" "")
+    endif()
+    return()
+endif()
+
+set(_failures 0)
+macro(expect_eq actual expected what)
+    if(NOT "${actual}" STREQUAL "${expected}")
+        message(SEND_ERROR "${what}: expected '${expected}', got '${actual}'")
+        math(EXPR _failures "${_failures} + 1")
+    endif()
+endmacro()
+macro(expect_ne a b what)
+    if("${a}" STREQUAL "${b}")
+        message(SEND_ERROR "${what}: both are '${a}'")
+        math(EXPR _failures "${_failures} + 1")
+    endif()
+endmacro()
+
+# Shipping identity: pinned to what Spectr 1.0.x declares.
+spectr_resolve_identity(ship OFF "" "")
+expect_eq("${ship_KIND}" "shipping" "shipping kind")
+expect_eq("${ship_TARGET}" "Spectr" "shipping target")
+expect_eq("${ship_NAME}" "Spectr" "shipping name")
+expect_eq("${ship_BUNDLE_ID}" "com.pulp.spectr" "shipping bundle id / CLAP id")
+expect_eq("${ship_PLUGIN_CODE}" "Spec" "shipping AU subtype")
+expect_eq("${ship_MFR_CODE}" "Pulp" "shipping AU manufacturer")
+expect_eq("${ship_VST3_UID}" "" "shipping VST3 uid (pinned in vst3_entry.cpp)")
+expect_eq("${ship_AU_CLASS}" "SpectrAU" "shipping AU class")
+
+# The shipping VST3 class id and AU entry live in source; pin them too.
+set(_ship_fuid "0xE0A36443, 0x43D1A08E, 0xC73C7FDC, 0xC7E5D370")
+file(READ "${_root}/vst3_entry.cpp" _vst3)
+string(FIND "${_vst3}" "#else\nPULP_VST3_PLUGIN(\n    Steinberg::FUID(${_ship_fuid}),\n    \"Spectr\"," _pos)
+if(_pos EQUAL -1)
+    message(SEND_ERROR "vst3_entry.cpp default branch no longer declares FUID(${_ship_fuid}) \"Spectr\"")
+    math(EXPR _failures "${_failures} + 1")
+endif()
+file(READ "${_root}/au_v2_entry.cpp" _au)
+string(FIND "${_au}" "#else\nPULP_AU_PLUGIN(SpectrAU, spectr::create_spectr)" _pos)
+if(_pos EQUAL -1)
+    message(SEND_ERROR "au_v2_entry.cpp default branch no longer declares SpectrAU")
+    math(EXPR _failures "${_failures} + 1")
+endif()
+file(READ "${_root}/include/spectr/spectr.hpp" _hpp)
+foreach(_needle "#else\n        .name         = \"Spectr\","
+                "#else\n        .bundle_id    = \"com.pulp.spectr\",")
+    string(FIND "${_hpp}" "${_needle}" _pos)
+    if(_pos EQUAL -1)
+        message(SEND_ERROR "spectr.hpp default descriptor changed: missing '${_needle}'")
+        math(EXPR _failures "${_failures} + 1")
+    endif()
+endforeach()
+
+spectr_resolve_identity(prev ON "" "")
+
+# Dev identity: every host-visible identifier differs from shipping AND preview.
+spectr_resolve_identity(dev OFF "Freeze" "")
+expect_eq("${dev_KIND}" "dev" "dev kind")
+expect_eq("${dev_NAME}" "Spectr Freeze Dev" "dev name")
+expect_eq("${dev_BUNDLE_ID}" "com.pulp.spectr.freeze-dev" "dev bundle id")
+expect_eq("${dev_PLUGIN_CODE}" "SpFz" "dev AU subtype")
+expect_eq("${dev_TARGET}" "SpectrFreezeDev" "dev target")
+expect_eq("${dev_AU_CLASS}" "SpectrFreezeDevAU" "dev AU class")
+foreach(_other ship prev)
+    foreach(_field TARGET NAME BUNDLE_ID PLUGIN_CODE AU_CLASS)
+        expect_ne("${dev_${_field}}" "${${_other}_${_field}}" "dev ${_field} vs ${_other}")
+    endforeach()
+endforeach()
+list(LENGTH dev_VST3_UID _n)
+expect_eq("${_n}" "4" "dev VST3 uid word count")
+list(JOIN dev_VST3_UID ", 0x" _dev_fuid)
+set(_dev_fuid "0x${_dev_fuid}")
+expect_ne("${_dev_fuid}" "${_ship_fuid}" "dev VST3 uid vs shipping")
+expect_ne("${_dev_fuid}" "0x2A1E66F4, 0x40A94790, 0xA1774EA7, 0x53504E50" "dev VST3 uid vs preview")
+expect_ne("${_dev_fuid}" "0xB7D7C75B, 0xBC1C4CF9, 0xA71444BA, 0x53504E31" "dev VST3 uid vs webview reference")
+
+# Deterministic, and distinct per suffix.
+spectr_resolve_identity(dev_again OFF "Freeze" "")
+expect_eq("${dev_again_VST3_UID}" "${dev_VST3_UID}" "dev VST3 uid is stable")
+spectr_resolve_identity(other OFF "Morph" "")
+expect_ne("${other_BUNDLE_ID}" "${dev_BUNDLE_ID}" "two dev suffixes: bundle id")
+expect_ne("${other_VST3_UID}" "${dev_VST3_UID}" "two dev suffixes: VST3 uid")
+spectr_resolve_identity(over OFF "Freeze" "SpQq")
+expect_eq("${over_PLUGIN_CODE}" "SpQq" "AU subtype override")
+
+# Configurations that must be refused.
+foreach(_mode conflict collide badsuffix)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -DSPECTR_IDENTITY_CHECK_MODE=${_mode}
+                -P "${CMAKE_CURRENT_LIST_FILE}"
+        RESULT_VARIABLE _rc OUTPUT_QUIET ERROR_QUIET)
+    if(_rc EQUAL 0)
+        message(SEND_ERROR "identity mode '${_mode}' was accepted; it must be refused")
+        math(EXPR _failures "${_failures} + 1")
+    endif()
+endforeach()
+
+if(_failures GREATER 0)
+    message(FATAL_ERROR "Spectr identity check: ${_failures} failure(s)")
+endif()
+message(STATUS "Spectr identity check: OK")

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(Spectr VERSION 1.0.3 LANGUAGES CXX)
+project(Spectr VERSION 1.0.5 LANGUAGES CXX)
 
 # PROJECT_VERSION is Spectr's one product version. The plugin descriptor (what
 # Settings > About, CLAP and VST3 report), every bundle's Info.plist, the AU
@@ -224,6 +224,10 @@ set(SPECTR_NATIVE_SOURCES
     src/snapshot.cpp
     src/ui/native_editor.cpp
 )
+if(APPLE)
+    enable_language(OBJCXX)
+    list(APPEND SPECTR_NATIVE_SOURCES src/ui/host_view_first_mouse_mac.mm)
+endif()
 
 # Shipping Spectr is a native cutover consumer. Requiring the dedicated target
 # makes an older compatibility SDK fail during configure instead of silently
@@ -343,16 +347,23 @@ endfunction()
 
 option(SPECTR_NATIVE_PREVIEW_IDENTITY
        "Build the native editor with a collision-free local preview identity" OFF)
-if(SPECTR_NATIVE_PREVIEW_IDENTITY)
-    set(SPECTR_NATIVE_PLUGIN_TARGET SpectrNativePreview)
-    set(SPECTR_NATIVE_PLUGIN_NAME "Spectr Native Preview")
-    set(SPECTR_NATIVE_BUNDLE_ID "com.pulp.spectr.native-preview")
-    set(SPECTR_NATIVE_PLUGIN_CODE "SpNP")
-else()
-    set(SPECTR_NATIVE_PLUGIN_TARGET Spectr)
-    set(SPECTR_NATIVE_PLUGIN_NAME "Spectr")
-    set(SPECTR_NATIVE_BUNDLE_ID "com.pulp.spectr")
-    set(SPECTR_NATIVE_PLUGIN_CODE "Spec")
+set(SPECTR_DEV_IDENTITY "" CACHE STRING
+    "Suffix for a side-by-side development identity (e.g. Freeze -> \"Spectr Freeze Dev\", com.pulp.spectr.freeze-dev, AU SpFz). Empty builds the shipping identity.")
+set(SPECTR_DEV_AU_SUBTYPE "" CACHE STRING
+    "Optional 4-char AU subtype override for SPECTR_DEV_IDENTITY")
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpectrIdentity.cmake)
+spectr_resolve_identity(_spectr_id "${SPECTR_NATIVE_PREVIEW_IDENTITY}"
+    "${SPECTR_DEV_IDENTITY}" "${SPECTR_DEV_AU_SUBTYPE}")
+set(SPECTR_NATIVE_PLUGIN_TARGET "${_spectr_id_TARGET}")
+set(SPECTR_NATIVE_PLUGIN_NAME "${_spectr_id_NAME}")
+set(SPECTR_NATIVE_BUNDLE_ID "${_spectr_id_BUNDLE_ID}")
+set(SPECTR_NATIVE_PLUGIN_CODE "${_spectr_id_PLUGIN_CODE}")
+set(SPECTR_NATIVE_MANUFACTURER_CODE "${_spectr_id_MFR_CODE}")
+if(_spectr_id_KIND STREQUAL "dev")
+    list(JOIN _spectr_id_VST3_UID "-" _spectr_id_VST3_UID_TEXT)
+    message(STATUS "Spectr: DEVELOPMENT identity '${SPECTR_NATIVE_PLUGIN_NAME}' "
+        "(${SPECTR_NATIVE_BUNDLE_ID}, AU aufx ${SPECTR_NATIVE_PLUGIN_CODE} "
+        "${SPECTR_NATIVE_MANUFACTURER_CODE}, VST3 ${_spectr_id_VST3_UID_TEXT})")
 endif()
 set(SPECTR_NATIVE_CORE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Core")
 set(SPECTR_NATIVE_STANDALONE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone")
@@ -369,7 +380,7 @@ pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     BUNDLE_ID "${SPECTR_NATIVE_BUNDLE_ID}"
     MANUFACTURER "Pulp"
     PLUGIN_CODE "${SPECTR_NATIVE_PLUGIN_CODE}"
-    MANUFACTURER_CODE "Pulp"
+    MANUFACTURER_CODE "${SPECTR_NATIVE_MANUFACTURER_CODE}"
     VERSION "${PROJECT_VERSION}"
     CATEGORY Effect
     DESIGN_WIDTH ${SPECTR_AUTHORED_WIDTH}
@@ -391,6 +402,21 @@ foreach(_spectr_native_target
         if(SPECTR_NATIVE_PREVIEW_IDENTITY)
             target_compile_definitions(${_spectr_native_target} PRIVATE
                 SPECTR_NATIVE_PREVIEW_IDENTITY=1)
+        endif()
+        if(_spectr_id_KIND STREQUAL "dev")
+            list(GET _spectr_id_VST3_UID 0 _spectr_uid0)
+            list(GET _spectr_id_VST3_UID 1 _spectr_uid1)
+            list(GET _spectr_id_VST3_UID 2 _spectr_uid2)
+            list(GET _spectr_id_VST3_UID 3 _spectr_uid3)
+            target_compile_definitions(${_spectr_native_target} PRIVATE
+                SPECTR_DEV_IDENTITY=1
+                SPECTR_DEV_PLUGIN_NAME="${SPECTR_NATIVE_PLUGIN_NAME}"
+                SPECTR_DEV_BUNDLE_ID="${SPECTR_NATIVE_BUNDLE_ID}"
+                SPECTR_DEV_AU_CLASS=${_spectr_id_AU_CLASS}
+                SPECTR_DEV_VST3_UID0=0x${_spectr_uid0}
+                SPECTR_DEV_VST3_UID1=0x${_spectr_uid1}
+                SPECTR_DEV_VST3_UID2=0x${_spectr_uid2}
+                SPECTR_DEV_VST3_UID3=0x${_spectr_uid3})
         endif()
     endif()
 endforeach()
@@ -475,6 +501,12 @@ FetchContent_Declare(Catch2
 )
 FetchContent_MakeAvailable(Catch2)
 include(CTest)
+
+# Plugin identity: the shipping identifiers are pinned and a dev identity
+# (SPECTR_DEV_IDENTITY) changes every one a host keys on. Pure CMake, so it
+# runs in every configuration regardless of which identity this tree builds.
+add_test(NAME Spectr-plugin-identity
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/test/identity_check.cmake)
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
 
@@ -536,6 +568,9 @@ add_executable(Spectr-test
     test/test_tracking_transition.cpp
     test/test_tracking_transition_sweep.cpp
     test/test_render_mode.cpp
+    test/test_freeze.cpp
+    test/test_freeze_click.cpp
+    test/test_freeze_level.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
@@ -898,6 +933,20 @@ spectr_configure_native_target(Spectr-native-n1-test)
 # shorter interaction case observe an event before its host-state response.
 catch_discover_tests(Spectr-native-n1-test
     PROPERTIES RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Clicks through the REAL plug-in host NSView and AppKit's event routing. The n1
+# rig asks the view tree directly, so it cannot see a press AppKit withholds
+# before the tree is consulted (a click into a non-key editor window). Needs a
+# window server; it SKIPs rather than passes without one.
+if(APPLE)
+    add_executable(Spectr-native-host-click-test test/test_native_host_click.mm)
+    target_link_libraries(Spectr-native-host-click-test PRIVATE
+        ${SPECTR_NATIVE_CORE_TARGET} Catch2::Catch2WithMain "-framework AppKit")
+    spectr_configure_native_target(Spectr-native-host-click-test)
+    catch_discover_tests(Spectr-native-host-click-test
+        PROPERTIES RESOURCE_LOCK spectr_native_materialized_editor
+                   SKIP_RETURN_CODE 4)
+endif()
 
 # The product icon must actually arrive in all four shipped bundles. The
 # CMake wiring above is not evidence: CFBundleIconFile is substituted at
@@ -3512,6 +3561,8 @@ if(Python3_Interpreter_FOUND)
     foreach(_help_plant
             stale-latency stale-latency-tracking
             zero-latency-claim seamless-claim
+            # The hidden LIVE / PRECISION control's section returns.
+            restored-motion-help
             lost-percussive-guidance
             # The automation guidance. `stale-param-name` is the only one of
             # these caught by the parameter-name rule rather than the approved
@@ -3728,6 +3779,42 @@ foreach(fmt VST3 AU CLAP Standalone)
 endforeach()
 endif()
 
+# Freeze taps through the built AU v2 component, the way a host drives it.
+# The probe registers the bundle in-process (nothing is installed), renders
+# loud programme material offline (no audio device is opened), toggles Freeze
+# with AudioUnitSetParameter at many moments, and scores every engage and
+# release against an unpressed render: discontinuity, fade overshoot,
+# dropout, the cost of the render calls the edge lands in against the
+# costliest call without Freeze, and TailTime notifications raised from the
+# render thread. The headless click tests could not see what a host saw: an
+# engage that did several milliseconds of work in one callback, past a
+# 128-frame buffer's real-time budget, so a live host dropped that buffer.
+if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
+    add_executable(Spectr-au-freeze-probe tools/au_freeze_probe.cpp)
+    target_link_libraries(Spectr-au-freeze-probe PRIVATE
+        "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+    add_dependencies(Spectr-au-freeze-probe ${SPECTR_NATIVE_AU_TARGET})
+    set(_spectr_au_bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
+    add_test(NAME Spectr-au-freeze-host
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
+            --forbid-render-notifications --quiet)
+    add_test(NAME Spectr-au-freeze-host-mixing
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --mode mixing --sr 44100 --block 256 --taps 6 --repeat 3
+            --max-cost-ratio 6 --forbid-render-notifications --quiet)
+    # A Hold length long enough to loop the audio itself: the engage (a seam
+    # search and a copy of up to 2 s of audio, spread over a hop) must stay
+    # inside the same budget.
+    add_test(NAME Spectr-au-freeze-host-loop
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-seconds 2 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
+            --forbid-render-notifications --quiet)
+    set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
+        Spectr-au-freeze-host-loop
+        PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
+endif()
+
 # Artifact-level host proof: load the built CLAP, VST3 and AU through
 # Pulp::host and run real audio across each binary boundary. This is
 # deliberately separate from Spectr-test's in-process Processor fixtures.
@@ -3757,7 +3844,8 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
         SPECTR_EXPECTED_LATENCY=${SPECTR_PROCESSING_LATENCY}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
-        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
+        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
+        SPECTR_TEST_EXPECTED_NAME="${SPECTR_NATIVE_PLUGIN_NAME}")
     if(TARGET ${SPECTR_NATIVE_CLAP_TARGET})
         target_compile_definitions(Spectr-artifact-test PRIVATE
             SPECTR_HAVE_TEST_CLAP=1
@@ -3782,7 +3870,7 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
             SPECTR_TEST_AU_PATH="${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
             SPECTR_TEST_AU_TYPE="aufx"
             SPECTR_TEST_AU_SUBTYPE="${SPECTR_NATIVE_PLUGIN_CODE}"
-            SPECTR_TEST_AU_MANUFACTURER="Pulp")
+            SPECTR_TEST_AU_MANUFACTURER="${SPECTR_NATIVE_MANUFACTURER_CODE}")
         target_link_libraries(Spectr-artifact-test PRIVATE
             "-framework AudioToolbox" "-framework CoreFoundation")
         add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_AU_TARGET})
@@ -3883,6 +3971,14 @@ add_test(NAME Spectr-render-path-clock-product
         ${CMAKE_CURRENT_SOURCE_DIR}/src/spectr.cpp)
 set_tests_properties(Spectr-render-path-clock-product PROPERTIES TIMEOUT 60)
 
+# The freeze source runs inside both renderers' audio path, so its block and
+# hop code is held to the same rule.
+add_test(NAME Spectr-render-path-clock-freeze
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/spectr/freeze_source.hpp)
+set_tests_properties(Spectr-render-path-clock-freeze PROPERTIES TIMEOUT 60)
+
 # The merge driver for the materialized editor document. That artifact is one
 # minified line, so git's default merge conflicts on ANY two changes to it --
 # four PRs paid for that on 2026-09-15 alone. The driver merges its decoded
@@ -3959,3 +4055,4 @@ if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_release_version.py --self-test)
     set_tests_properties(Spectr-release-version-controls PROPERTIES TIMEOUT 60)
 endif()
+
