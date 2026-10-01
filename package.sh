@@ -124,6 +124,43 @@ grep -q '^PULP_SDK_DISTRIBUTION_ELIGIBLE:INTERNAL=TRUE$' "$CACHE" || {
   exit 2
 }
 
+# Optional "Spectr Diagnostics" helper: a DiagnosticKit app
+# (https://github.com/danielraffel/pulp-diagnostickit) built with
+# tools/ship/diagnostics.env. It installs to /Applications as its own
+# Customize-pane component, and a tester who hits "it won't load" runs it to
+# save a report ZIP on the Desktop. Unset DIAG_APP to build without it; a set
+# DIAG_APP that does not exist is an error, never a silent omission.
+#
+# It ships under two identities, both checked here and again in the finished
+# installer. Outside, it is Spectr: its CFBundleShortVersionString and
+# CFBundleVersion are stamped to this release, so users report one number.
+# Inside, it names its kit: DiagnosticKitVersion/Commit/Dirty must be a clean
+# build of exactly the version and commit pinned in
+# tools/ship/diagnostics-kit.json. Moving to a new kit is a reviewed change to
+# that pin, never whatever DIAG_APP happens to hold. DIAG_APP itself is never
+# modified: the stamped copy is staged under the build directory.
+DIAG_PIN="$ROOT/tools/ship/diagnostics-kit.json"
+DIAG_STAGED=""
+if [[ -n "${DIAG_APP:-}" ]]; then
+  [[ -d "$DIAG_APP" ]] || { echo "DIAG_APP does not exist: $DIAG_APP" >&2; exit 2; }
+  [[ -f "${DIAG_ENT:-}" ]] || { echo "DIAG_ENT must name DiagnosticKit.entitlements" >&2; exit 2; }
+  python3 "$ROOT/tools/check_release_version.py" \
+    --diagnostics-kit "$DIAG_APP" --diagnostics-pin "$DIAG_PIN" || {
+    echo "DIAG_APP is not a clean build of the pinned DiagnosticKit ($DIAG_PIN)" >&2
+    exit 2
+  }
+  DIAG_STAGE_DIR="$BUILD/diagnostics-stage"
+  DIAG_STAGED="$DIAG_STAGE_DIR/$(basename "$DIAG_APP")"
+  rm -rf "$DIAG_STAGE_DIR"
+  mkdir -p "$DIAG_STAGE_DIR"
+  ditto "$DIAG_APP" "$DIAG_STAGED"
+  for key in CFBundleShortVersionString CFBundleVersion; do
+    /usr/libexec/PlistBuddy -c "Set :$key $VER" "$DIAG_STAGED/Contents/Info.plist"
+  done
+  python3 "$ROOT/tools/check_release_version.py" --expected "$VER" \
+    --diagnostics-app "$DIAG_STAGED" --diagnostics-pin "$DIAG_PIN"
+fi
+
 # Rebuild every payload named below from this exact clean head. The governor
 # leases a bounded share of the shared M5 rather than claiming the machine.
 "$PULP_ROOT/tools/ci/governed-build.sh" \
@@ -167,19 +204,29 @@ args=(
   --plugin clap "$CLAP"
   --app "Standalone app" "$APP"
 )
-# Optional "Spectr Diagnostics" helper for test builds: a DiagnosticKit app
-# (https://github.com/danielraffel/pulp-diagnostickit) built with
-# tools/ship/diagnostics.env. It installs to /Applications as its own
-# Customize-pane component, and a tester who hits "it won't load" runs it to
-# save a report ZIP on the Desktop. Unset DIAG_APP to build without it; a set
-# DIAG_APP that does not exist is an error, never a silent omission.
-if [[ -n "${DIAG_APP:-}" ]]; then
-  [[ -d "$DIAG_APP" ]] || { echo "DIAG_APP does not exist: $DIAG_APP" >&2; exit 2; }
-  [[ -f "${DIAG_ENT:-}" ]] || { echo "DIAG_ENT must name DiagnosticKit.entitlements" >&2; exit 2; }
-  args+=(--app "Diagnostics app" "$DIAG_APP" "$DIAG_ENT")
+if [[ -n "$DIAG_STAGED" ]]; then
+  args+=(--app "Diagnostics app" "$DIAG_STAGED" "$DIAG_ENT")
 fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
 
 "$PULP_ROOT/tools/scripts/build_combined_installer.sh" "${args[@]}"
-python3 "$ROOT/tools/check_release_version.py" --expected "$VER" \
-  --pkg "$OUT/Spectr-$VER.pkg"
+if [[ -n "$DIAG_STAGED" ]]; then
+  python3 "$ROOT/tools/check_release_version.py" --expected "$VER" \
+    --pkg "$OUT/Spectr-$VER.pkg" --diagnostics-pin "$DIAG_PIN"
+  # The build record names the kit that went into this installer, next to it.
+  python3 - "$DIAG_STAGED/Contents/Info.plist" "$VER" "$OUT/Spectr-$VER.diagnostics.json" <<'PY'
+import json, plistlib, sys
+info = plistlib.load(open(sys.argv[1], "rb"))
+record = {"spectr_version": sys.argv[2],
+          "diagnostics_app_version": info["CFBundleShortVersionString"],
+          "diagnostickit_version": info["DiagnosticKitVersion"],
+          "diagnostickit_commit": info["DiagnosticKitCommit"],
+          "diagnostickit_dirty": info["DiagnosticKitDirty"]}
+open(sys.argv[3], "w").write(json.dumps(record, indent=2) + "\n")
+print(f"Spectr Diagnostics {record['diagnostics_app_version']}: DiagnosticKit "
+      f"{record['diagnostickit_version']} ({record['diagnostickit_commit'][:12]})")
+PY
+else
+  python3 "$ROOT/tools/check_release_version.py" --expected "$VER" \
+    --pkg "$OUT/Spectr-$VER.pkg"
+fi

@@ -4036,7 +4036,9 @@ set_tests_properties(Spectr-gpu-audio-status PROPERTIES TIMEOUT 120 RESOURCE_LOC
 # Every shipped artifact must name PROJECT_VERSION: each bundle's Info.plist,
 # the AU component version integer, and the descriptor string compiled into
 # the plugin binary that Settings > About displays. package.sh runs the same
-# check against the finished installer with --pkg.
+# check against the finished installer with --pkg, including the bundled
+# Spectr Diagnostics app: stamped to PROJECT_VERSION outside, a clean build of
+# the DiagnosticKit pinned in tools/ship/diagnostics-kit.json inside.
 if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
    AND TARGET ${SPECTR_NATIVE_VST3_TARGET} AND TARGET ${SPECTR_NATIVE_AU_TARGET}
    AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET})
@@ -4054,5 +4056,11 @@ if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_release_version.py --self-test)
     set_tests_properties(Spectr-release-version-controls PROPERTIES TIMEOUT 60)
+    # The release-notes line for the bundled Diagnostics app's kit appears
+    # only when the pinned DiagnosticKit version moved.
+    add_test(NAME Spectr-diagnostics-notes-controls
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/ship/diagnostics_notes.py --self-test)
+    set_tests_properties(Spectr-diagnostics-notes-controls PROPERTIES TIMEOUT 60)
 endif()
 

@@ -59,6 +59,33 @@ Release candidates use the manually dispatched, local-first
 It consumes an immutable official Pulp SDK, runs in a clean transient Tart macOS
 ARM64 guest, and publishes an exact-head PKG for hands-on M5 testing.
 
+### Versions
+
+`project(Spectr VERSION ...)` in `CMakeLists.txt` is Spectr's one product
+version. Every shipped bundle carries it, including the bundled **Spectr
+Diagnostics** app, so users report one number. That app also names the
+DiagnosticKit build inside it (`DiagnosticKitVersion` / `DiagnosticKitCommit`
+in its Info.plist, repeated in every report it saves or sends):
+
+- `tools/ship/diagnostics-kit.json` pins the DiagnosticKit version and commit a
+  release bundles. Build the app from a clean checkout of that commit with
+  `tools/ship/diagnostics.env`; moving to a newer kit is a reviewed change to
+  the pin.
+- `package.sh` refuses a `DIAG_APP` that is unversioned, built from modified
+  sources, or not the pinned kit; stamps a staged copy with the release
+  version; and writes `artifacts/Spectr-<version>.diagnostics.json` next to the
+  installer.
+- `tools/check_release_version.py --pkg` (run by `package.sh`) fails when any
+  bundle in the installer, the Diagnostics app included, names a version other
+  than the release, or when the app's kit is not the pin.
+
+Release notes end with the SDK line, followed by the kit line only when the
+pinned kit changed since the previous release:
+
+```text
+Built with the Pulp v<x.y.z> SDK. <output of: tools/ship/diagnostics_notes.py --since v<previous>>
+```
+
 ## Building
 
 Requires a Pulp SDK with the dedicated native scripted Skia/Dawn view target
