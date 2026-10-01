@@ -1607,9 +1607,17 @@ TEST_CASE("freeze: hydration carries the toggle and the Length; freeze_length_se
     CHECK(r.store.get_value(spectr::kParamFreeze) == 1.0f);
     CHECK(hydrate()["freeze"]["frozen"].getBool());
 
-    // A common length selects its preset.
+    // A common length selects its preset, as one complete host gesture so a
+    // host recording in Touch / Latch / Write keeps it.
+    std::vector<std::pair<char, pulp::state::ParamID>> gestures;
+    r.store.set_gesture_callbacks(
+        [&](pulp::state::ParamID id) { gestures.emplace_back('b', id); },
+        [&](pulp::state::ParamID id) { gestures.emplace_back('e', id); });
     REQUIRE(response_ok(r.dispatch(
         R"({"type":"freeze_length_set","payload":{"bars":2,"fraction":"0"}})")));
+    REQUIRE(gestures.size() == 2);
+    CHECK(gestures[0] == std::pair<char, pulp::state::ParamID>{'b', spectr::kParamFreezeLength});
+    CHECK(gestures[1] == std::pair<char, pulp::state::ParamID>{'e', spectr::kParamFreezeLength});
     CHECK(r.store.get_value(spectr::kParamFreezeLength) == 1.0f);
     CHECK(r.proc->freeze_length() == spectr::FreezeLength{2, spectr::LengthFraction::zero});
     // Anything else is the custom length, selected by "Custom".

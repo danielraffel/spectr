@@ -379,6 +379,10 @@ void add_history_and_macros_(choc::value::Value& payload, const Spectr& plugin,
         macros.addArrayElement(entry);
     }
     payload.addMember("macros", macros);
+    // The Morph lane, so the slider follows host playback. The bands it
+    // derives are projected on their own; this is the thumb.
+    payload.addMember("morph", static_cast<double>(
+        plugin.state().get_value(kParamMorph)));
 
 }
 
@@ -946,6 +950,71 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 return EditorBridge::err_response("param value missing");
             const float value = EditorBridge::get_float(p, "value", 0.0f);
             plugin.state().set_value(id, value);
+            return EditorBridge::ok_response();
+        });
+
+    // Editor edits of the plain parameters (Mix, Output trim, both LFOs):
+    // see Spectr::edit_param_from_editor. `param_edit` is the value; outside
+    // a drag it is a complete host gesture, inside one it joins it.
+    // `param_gesture_begin` / `param_gesture_end` bracket a drag. Unlike
+    // `param_set`, which writes a bare value, every one of these is something
+    // a host recording in Touch, Latch or Write can record.
+    const auto param_id_of = [](const choc::value::ValueView& p)
+        -> std::optional<pulp::state::ParamID> {
+        if (!p.isObject() || !p.hasObjectMember("id")) return std::nullopt;
+        const auto id_v = p["id"];
+        if (id_v.isInt32()) return static_cast<pulp::state::ParamID>(id_v.getInt32());
+        if (id_v.isInt64()) return static_cast<pulp::state::ParamID>(id_v.getInt64());
+        return std::nullopt;
+    };
+
+    bridge.add_handler("param_edit",
+        [&plugin, param_id_of](const choc::value::ValueView& p) -> std::string {
+            const auto id = param_id_of(p);
+            if (!id) return EditorBridge::err_response("param id must be an integer");
+            if (!p.hasObjectMember("value"))
+                return EditorBridge::err_response("param value missing");
+            const auto value = finite_number_(p["value"]);
+            if (!value) return EditorBridge::err_response("param value must be finite");
+            if (!plugin.edit_param_from_editor(*id, static_cast<float>(*value)))
+                return EditorBridge::err_response("param is not editor-editable");
+            return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("param_gesture_begin",
+        [&plugin, param_id_of](const choc::value::ValueView& p) -> std::string {
+            const auto id = param_id_of(p);
+            if (!id) return EditorBridge::err_response("param id must be an integer");
+            if (!plugin.begin_editor_param_gesture(*id))
+                return EditorBridge::err_response("param is not editor-editable");
+            return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("param_gesture_end",
+        [&plugin, param_id_of](const choc::value::ValueView& p) -> std::string {
+            const auto id = param_id_of(p);
+            if (!id) return EditorBridge::err_response("param id must be an integer");
+            if (!plugin.end_editor_param_gesture(*id))
+                return EditorBridge::err_response("param is not editor-editable");
+            return EditorBridge::ok_response();
+        });
+
+    // A drag on a control the PROCESSOR writes as a derived value -- Morph,
+    // pushed by apply_morph_to_live as the snapshot derivation runs. The pair
+    // opens and closes the processor's gesture epoch, the same bracket a
+    // paint drag and `macro_drag_start`/`macro_drag_end` use: each parameter
+    // the drag writes opens its host gesture once and every one closes on
+    // release, so a host in Touch sees one gesture per drag instead of the
+    // control released between every two moves.
+    bridge.add_handler("param_drag_start",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            plugin.begin_param_gesture_epoch();
+            return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("param_drag_end",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            plugin.end_param_gesture_epoch();
             return EditorBridge::ok_response();
         });
 

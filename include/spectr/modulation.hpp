@@ -112,6 +112,28 @@ inline float lfo_value(const LfoShapeFade& fade, double phase) noexcept {
     return a + (b - a) * mix;
 }
 
+/// An LFO's audible LEVEL -- its depth while enabled, zero while off -- slews
+/// toward its target instead of switching. Switching the LFO on at a crest, or
+/// jumping its depth, would otherwise move every modulated band by up to the
+/// full 12 dB excursion in one block, which is heard as a step. The phase and
+/// shape are untouched, so a slewed enable fades the running waveform in where
+/// it already is rather than restarting it.
+///
+/// Short on purpose: an LFO toggle is a performance gesture, so the ramp is
+/// sized to remove the step and no longer. Full scale (0 -> 1) takes this
+/// long; a smaller move takes proportionally less.
+inline constexpr double kLfoLevelSlewSeconds = 0.06;
+
+/// The level @p seconds later, moving toward @p target at full scale per
+/// kLfoLevelSlewSeconds. Pure, so a test can reason about the ramp exactly.
+inline float slew_lfo_level(float current, float target,
+                            double seconds) noexcept {
+    if (seconds <= 0.0 || current == target) return current;
+    const float step = static_cast<float>(seconds / kLfoLevelSlewSeconds);
+    if (current < target) return std::min(target, current + step);
+    return std::max(target, current - step);
+}
+
 /// Re-impose the authored mute topology on a modulated field.
 ///
 /// An LFO modulates LEVELS. It must never toggle a mute, in either direction.

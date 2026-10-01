@@ -21,8 +21,9 @@
 //      scale. That wording is pinned here so it cannot drift back.
 //
 //   STATIC   one leaf, rendered by Chrome, subscribing to the native frame
-//            rather than polling; the trim written through the existing
-//            `param_set` verb at Spectr's own kOutputTrim id; OVER not CLIP.
+//            rather than polling; the trim written through `param_edit` --
+//            a recordable host gesture, never a bare `param_set` -- at
+//            Spectr's own kOutputTrim id; OVER not CLIP.
 //   RUNTIME  the leaf's own script block is evaluated in a vm with a hook
 //            runtime, a real frame queue and a controllable clock, then
 //            driven with published frames: the number must rise instantly,
@@ -30,7 +31,7 @@
 //            OVER must survive that same elapsed time; a click must clear the
 //            latch without blanking a meter that has signal in it; silence
 //            must read "--" and not "0.0"; the trim must reach the host as a
-//            param_set; and an externally published trim must move the
+//            param_edit; and an externally published trim must move the
 //            control.
 //
 // THIS SUITE DRIVES THE LEAF WITH `latchOver: true`. The overload half is a
@@ -360,11 +361,17 @@ if (/setInterval/.test(meterBody)) {
     + "only adds commits");
 }
 
-// S3. The trim reaches the host through the flat param verb that already
-// exists, at Spectr's own kOutputTrim id. An id typed by hand somewhere else
-// would write a different parameter and look like it worked.
-if (!meterBody.includes('window.pulp.postMessage("param_set",')) {
-  fail("the trim control does not write through param_set");
+// S3. The trim reaches the host through `param_edit`, at Spectr's own
+// kOutputTrim id. `param_edit` is the processor's recordable editor write (a
+// complete host gesture outside a drag); a bare `param_set` moves the value
+// but leaves a host recording in Touch / Latch / Write nothing to record. An
+// id typed by hand somewhere else would write a different parameter and look
+// like it worked.
+if (!meterBody.includes('window.pulp.postMessage("param_edit",')) {
+  fail("the trim control does not write through param_edit");
+}
+if (meterBody.includes('window.pulp.postMessage("param_set",')) {
+  fail("the trim control still writes an unrecordable bare param_set");
 }
 if (!/id:\s*2\s*,\s*value: next/.test(meterBody)) {
   fail("the trim control does not write Spectr's kOutputTrim (id 2)");
@@ -1249,9 +1256,9 @@ if (!leafBlock) {
       // R6. THE TRIM REACHES THE HOST, at the right id, with the right value.
       posted.length = 0;
       trimNode().props.onChange({ target: { value: "6" } });
-      const write = posted.find((p) => p.type === "param_set");
+      const write = posted.find((p) => p.type === "param_edit");
       if (!write) {
-        fail("moving the trim wrote no param_set; the control is inert");
+        fail("moving the trim wrote no param_edit; the control is inert");
       } else if (write.payload.id !== 2 || write.payload.value !== 6) {
         fail(`the trim wrote ${JSON.stringify(write.payload)}, expected `
           + "{ id: 2, value: 6 }");
@@ -1262,7 +1269,7 @@ if (!leafBlock) {
       // The range is the parameter's own, so a value past it is refused.
       posted.length = 0;
       trimNode().props.onChange({ target: { value: "99" } });
-      const clamped = posted.find((p) => p.type === "param_set");
+      const clamped = posted.find((p) => p.type === "param_edit");
       if (!clamped || clamped.payload.value !== 24) {
         fail(`a +99 dB write was not clamped to the parameter's +24 dB `
           + `ceiling: ${JSON.stringify(clamped && clamped.payload)}`);

@@ -45,6 +45,13 @@ layout remain stored but do not enter the active spectral mask.
 The gain and mute names are zero-padded (`Band 01 Gain` through
 `Band 64 Gain`) so hosts that flatten groups still sort them correctly.
 
+## Display and recording
+
+LFO rate reads in a host's lane as beats ("4 beats", "1 beat"), and depth as a
+percentage ("50%"); typed values accept the same forms. LFO on/off, shape and
+target are discrete, labelled lanes. How each control records an edit gesture
+and follows playback is in [automation.md](automation.md).
+
 ## Freeze
 
 `3` holds the input spectrum. It is a boolean, automatable like any other
