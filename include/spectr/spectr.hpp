@@ -53,6 +53,7 @@
 #include "spectr/viewport.hpp"
 #include "spectr/editor_resize.hpp"
 #include "spectr/freeze_source.hpp"
+#include "spectr/freeze_keys.hpp"
 #include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
 
@@ -301,6 +302,12 @@ inline pulp::format::PluginDescriptor make_descriptor() {
 #endif
         .version      = SPECTR_PRODUCT_VERSION,
         .category     = pulp::format::PluginCategory::Effect,
+#if defined(SPECTR_FREEZE_KEYS)
+        // Freeze Keys plays the held sound from MIDI. An Effect that accepts
+        // MIDI is an AU music effect (aumf): build it only under a dev
+        // identity (see cmake/SpectrIdentity.cmake).
+        .accepts_midi = true,
+#endif
     };
 }
 
@@ -559,6 +566,26 @@ public:
         return freeze_source_;
     }
 
+    /// Freeze Keys (see freeze_keys.hpp): while frozen, MIDI notes play the
+    /// held sound chromatically. On by default only in a build that declares
+    /// MIDI input (SPECTR_FREEZE_KEYS); off, process() ignores MIDI entirely.
+    /// Any thread.
+    [[nodiscard]] bool freeze_keys_enabled() const noexcept {
+        return freeze_keys_enabled_.load(std::memory_order_relaxed);
+    }
+    void set_freeze_keys_enabled(bool enabled) noexcept {
+        freeze_keys_enabled_.store(enabled, std::memory_order_relaxed);
+    }
+    /// The key that plays the held sound at its own pitch (MIDI note).
+    [[nodiscard]] int freeze_keys_root_note() const noexcept {
+        return freeze_keys_root_.load(std::memory_order_relaxed);
+    }
+    void set_freeze_keys_root_note(int note) noexcept {
+        freeze_keys_root_.store(std::clamp(note, 0, 127), std::memory_order_relaxed);
+    }
+    /// Audio-thread state, as freeze_source().
+    [[nodiscard]] const FreezeKeys& freeze_keys() const noexcept { return freeze_keys_; }
+
     /// Accessor for the StateStore-level ABCompare. Lazily constructed
     /// the first time it's requested (after define_parameters has wired
     /// the store). Returns nullptr if the store isn't available yet.
@@ -796,6 +823,13 @@ private:
     // hold to the new realisation instead of dropping it. Prepared with the
     // processor; its members belong to the audio thread afterwards.
     FreezeSource                           freeze_source_{};
+    FreezeKeys                             freeze_keys_{freeze_source_};
+#if defined(SPECTR_FREEZE_KEYS)
+    std::atomic<bool> freeze_keys_enabled_{true};
+#else
+    std::atomic<bool> freeze_keys_enabled_{false};
+#endif
+    std::atomic<int> freeze_keys_root_{FreezeKeys::kDefaultRootNote};
     std::atomic<double> freeze_hold_seconds_{FreezeSource::kDefaultHoldSeconds};
     void preroll_surviving_hold_();
     std::array<const float*, kMaximumChannels> input_channels_{};

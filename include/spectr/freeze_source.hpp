@@ -325,6 +325,16 @@ public:
     [[nodiscard]] bool looping() const noexcept { return loop_mode_; }
     /// The latched loop's length in samples (0 before the first loop).
     [[nodiscard]] std::int64_t loop_length() const noexcept { return loop_length_; }
+    /// Where the playing loop is: the index of the next loop sample it plays.
+    [[nodiscard]] std::int64_t loop_position() const noexcept { return loop_position_; }
+    /// One sample of the latched loop as a pass after the first plays it (the
+    /// seam crossfaded in), for a reader that plays the loop on its own
+    /// schedule (FreezeKeys). `at` must be in [0, loop_length()). Audio
+    /// thread; valid while the hold is audible.
+    [[nodiscard]] float loop_sample(int channel, std::int64_t at) const noexcept {
+        return loop_value_(loop_.data() + static_cast<std::size_t>(channel) * loop_capacity_,
+                           at, true);
+    }
     /// True while any held content reaches the output.
     [[nodiscard]] bool hold_audible() const noexcept {
         return phase_ == Phase::engaging || phase_ == Phase::held

@@ -589,7 +589,14 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
     // Last: the pump above runs on this (control) thread while the audio
     // thread may be running the outgoing renderer through the same source, so
     // the source is attached only once nothing here will process again.
-    if (freeze_source_.prepared()) (void)renderer->set_wet_source(&freeze_source_);
+    // Through Freeze Keys, which runs the source and, only once a key has
+    // been played into a hold, replaces the held sound with its voices.
+    if (freeze_source_.prepared()) {
+        if (freeze_keys_.prepared())
+            (void)renderer->set_wet_source(&freeze_keys_);
+        else
+            (void)renderer->set_wet_source(&freeze_source_);
+    }
     return renderer;
 }
 
@@ -697,6 +704,10 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // channels does not throw a playing hold away.
     if (!freeze_source_.prepared_for(sample_rate_, channels_))
         (void)freeze_source_.prepare(sample_rate_, channels_);
+    // Freeze Keys plays from the source's hold; re-prepared with it (a
+    // re-prepare at the same geometry keeps the hold, and its voices stop).
+    if (freeze_source_.prepared())
+        (void)freeze_keys_.prepare(sample_rate_, channels_);
 
     // No audio thread can be running across a prepare, so the previous
     // renderer and anything a mode switch parked are free to go now.
@@ -1007,7 +1018,7 @@ struct RenderEpochScope {
 void Spectr::process(
     pulp::audio::BufferView<float>& output,
     const pulp::audio::BufferView<const float>& input,
-    pulp::midi::MidiBuffer& /*midi_in*/,
+    pulp::midi::MidiBuffer& midi_in,
     pulp::midi::MidiBuffer& /*midi_out*/,
     const pulp::format::ProcessContext& ctx)
 {
@@ -1065,6 +1076,23 @@ void Spectr::process(
         output_gain_.set_immediate(target_output_gain);
     }
     freeze_source_.set_hold_seconds(freeze_hold_seconds());
+
+    // Freeze Keys: notes stamped at their sample in this block. Off (every
+    // shipping build), MIDI is not read at all.
+    freeze_keys_.begin_block();
+    freeze_keys_.set_enabled(freeze_keys_enabled());
+    if (freeze_keys_.enabled()) {
+        freeze_keys_.set_root_note(freeze_keys_root_note());
+        for (const auto& event : midi_in) {
+            const int offset = std::max(0, static_cast<int>(event.sample_offset));
+            if (event.is_note_on())
+                (void)freeze_keys_.note_on(offset, event.note(), event.velocity());
+            else if (event.is_note_off())
+                (void)freeze_keys_.note_off(offset, event.note());
+            else if (event.is_cc() && (event.cc_number() == 123 || event.cc_number() == 120))
+                (void)freeze_keys_.all_notes_off(offset);
+        }
+    }
 
     // Gate on the pointer this block actually dereferences, not on a separate
     // bool that could in principle disagree with it.

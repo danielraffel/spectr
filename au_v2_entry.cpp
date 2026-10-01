@@ -26,7 +26,13 @@ PULP_AU_PLUGIN(SpectrWebViewReferenceAU, spectr::create_spectr)
 #elif defined(SPECTR_DEV_IDENTITY)
 // One level of indirection so SPECTR_DEV_AU_CLASS expands before the entry
 // macro pastes it into the factory name the Info.plist declares.
+#if defined(SPECTR_FREEZE_KEYS)
+// Freeze Keys takes MIDI: an aumf, whose factory must dispatch the
+// MusicDevice MIDI selectors (AUMIDIEffectFactory), or no note arrives.
+#define SPECTR_AU_ENTRY(ClassName, factory) PULP_AU_MIDI_PLUGIN(ClassName, factory)
+#else
 #define SPECTR_AU_ENTRY(ClassName, factory) PULP_AU_PLUGIN(ClassName, factory)
+#endif
 SPECTR_AU_ENTRY(SPECTR_DEV_AU_CLASS, spectr::create_spectr)
 #elif defined(SPECTR_NATIVE_PREVIEW_IDENTITY)
 PULP_AU_PLUGIN(SpectrNativePreviewAU, spectr::create_spectr)

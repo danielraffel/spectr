@@ -26,10 +26,30 @@
 #                vst3_entry.cpp for the shipping/preview identities
 #   AU_CLASS     the AU entry class; the SDK names the factory <TARGET>AUFactory
 #   KIND         shipping | preview | dev
+#   AU_TYPE      aufx, or aumf for a Freeze Keys build
+#   FREEZE_KEYS  ON when the build takes MIDI for Freeze Keys
+#
+# Freeze Keys (an optional fifth argument, ON/OFF; default: ON exactly when the
+# dev suffix is "Keys") makes the plugin accept MIDI. An effect that accepts
+# MIDI must be an AU music effect (aumf) -- Logic never sends MIDI to an aufx
+# -- and an AU's type is part of the identity a host saves, so Freeze Keys is
+# refused on the shipping and preview identities: it exists only as a dev
+# identity until the product decides how it ships.
 #
 # Pure: no targets, no cache writes, so a -P script can call it.
 function(spectr_resolve_identity out preview dev_suffix dev_au_subtype)
     set(_mfr "Pulp")
+    set(_keys "")
+    if(ARGC GREATER 4)
+        set(_keys "${ARGV4}")
+    endif()
+    if("${_keys}" STREQUAL "")
+        if("${dev_suffix}" STREQUAL "Keys")
+            set(_keys ON)
+        else()
+            set(_keys OFF)
+        endif()
+    endif()
     if(preview AND NOT "${dev_suffix}" STREQUAL "")
         message(FATAL_ERROR
             "SPECTR_NATIVE_PREVIEW_IDENTITY and SPECTR_DEV_IDENTITY are exclusive")
@@ -89,6 +109,20 @@ function(spectr_resolve_identity out preview dev_suffix dev_au_subtype)
         message(FATAL_ERROR
             "Spectr dev AU subtype '${_code}' collides with a shipped identity")
     endif()
+    if(_keys AND NOT _kind STREQUAL dev)
+        message(FATAL_ERROR
+            "SPECTR_FREEZE_KEYS changes the AU type to aumf; build it only under "
+            "a dev identity (e.g. -DSPECTR_DEV_IDENTITY=Keys)")
+    endif()
+    if(_keys)
+        set(_au_type aumf)
+        set(_keys ON)
+    else()
+        set(_au_type aufx)
+        set(_keys OFF)
+    endif()
+    set(${out}_AU_TYPE "${_au_type}" PARENT_SCOPE)
+    set(${out}_FREEZE_KEYS "${_keys}" PARENT_SCOPE)
     set(${out}_KIND "${_kind}" PARENT_SCOPE)
     set(${out}_TARGET "${_target}" PARENT_SCOPE)
     set(${out}_NAME "${_name}" PARENT_SCOPE)

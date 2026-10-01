@@ -351,9 +351,15 @@ set(SPECTR_DEV_IDENTITY "" CACHE STRING
     "Suffix for a side-by-side development identity (e.g. Freeze -> \"Spectr Freeze Dev\", com.pulp.spectr.freeze-dev, AU SpFz). Empty builds the shipping identity.")
 set(SPECTR_DEV_AU_SUBTYPE "" CACHE STRING
     "Optional 4-char AU subtype override for SPECTR_DEV_IDENTITY")
+set(SPECTR_FREEZE_KEYS "" CACHE STRING
+    "Freeze Keys (MIDI plays the frozen sound; AU type aumf): ON/OFF, empty = ON exactly for SPECTR_DEV_IDENTITY=Keys. Dev identities only.")
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpectrIdentity.cmake)
 spectr_resolve_identity(_spectr_id "${SPECTR_NATIVE_PREVIEW_IDENTITY}"
-    "${SPECTR_DEV_IDENTITY}" "${SPECTR_DEV_AU_SUBTYPE}")
+    "${SPECTR_DEV_IDENTITY}" "${SPECTR_DEV_AU_SUBTYPE}" "${SPECTR_FREEZE_KEYS}")
+set(_spectr_accepts_midi)
+if(_spectr_id_FREEZE_KEYS)
+    set(_spectr_accepts_midi ACCEPTS_MIDI)
+endif()
 set(SPECTR_NATIVE_PLUGIN_TARGET "${_spectr_id_TARGET}")
 set(SPECTR_NATIVE_PLUGIN_NAME "${_spectr_id_NAME}")
 set(SPECTR_NATIVE_BUNDLE_ID "${_spectr_id_BUNDLE_ID}")
@@ -362,7 +368,7 @@ set(SPECTR_NATIVE_MANUFACTURER_CODE "${_spectr_id_MFR_CODE}")
 if(_spectr_id_KIND STREQUAL "dev")
     list(JOIN _spectr_id_VST3_UID "-" _spectr_id_VST3_UID_TEXT)
     message(STATUS "Spectr: DEVELOPMENT identity '${SPECTR_NATIVE_PLUGIN_NAME}' "
-        "(${SPECTR_NATIVE_BUNDLE_ID}, AU aufx ${SPECTR_NATIVE_PLUGIN_CODE} "
+        "(${SPECTR_NATIVE_BUNDLE_ID}, AU ${_spectr_id_AU_TYPE} ${SPECTR_NATIVE_PLUGIN_CODE} "
         "${SPECTR_NATIVE_MANUFACTURER_CODE}, VST3 ${_spectr_id_VST3_UID_TEXT})")
 endif()
 set(SPECTR_NATIVE_CORE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Core")
@@ -373,6 +379,7 @@ set(SPECTR_NATIVE_CLAP_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_CLAP")
 
 pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     NATIVE_UI
+    ${_spectr_accepts_midi}
     FORMATS VST3 AU CLAP Standalone
     SOURCES ${SPECTR_NATIVE_SOURCES}
     PROCESSOR_FACTORY spectr::create_spectr
@@ -417,6 +424,10 @@ foreach(_spectr_native_target
                 SPECTR_DEV_VST3_UID1=0x${_spectr_uid1}
                 SPECTR_DEV_VST3_UID2=0x${_spectr_uid2}
                 SPECTR_DEV_VST3_UID3=0x${_spectr_uid3})
+        endif()
+        if(_spectr_id_FREEZE_KEYS)
+            target_compile_definitions(${_spectr_native_target} PRIVATE
+                SPECTR_FREEZE_KEYS=1)
         endif()
     endif()
 endforeach()
@@ -571,6 +582,7 @@ add_executable(Spectr-test
     test/test_freeze.cpp
     test/test_freeze_click.cpp
     test/test_freeze_level.cpp
+    test/test_freeze_keys.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE

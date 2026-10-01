@@ -12,6 +12,10 @@ if(DEFINED SPECTR_IDENTITY_CHECK_MODE)
         spectr_resolve_identity(x OFF "Freeze" "Spec")
     elseif(SPECTR_IDENTITY_CHECK_MODE STREQUAL "badsuffix")
         spectr_resolve_identity(x OFF "Freeze dev" "")
+    elseif(SPECTR_IDENTITY_CHECK_MODE STREQUAL "keys_shipping")
+        spectr_resolve_identity(x OFF "" "" ON)
+    elseif(SPECTR_IDENTITY_CHECK_MODE STREQUAL "keys_preview")
+        spectr_resolve_identity(x ON "" "" ON)
     endif()
     return()
 endif()
@@ -40,6 +44,8 @@ expect_eq("${ship_PLUGIN_CODE}" "Spec" "shipping AU subtype")
 expect_eq("${ship_MFR_CODE}" "Pulp" "shipping AU manufacturer")
 expect_eq("${ship_VST3_UID}" "" "shipping VST3 uid (pinned in vst3_entry.cpp)")
 expect_eq("${ship_AU_CLASS}" "SpectrAU" "shipping AU class")
+expect_eq("${ship_AU_TYPE}" "aufx" "shipping AU type")
+expect_eq("${ship_FREEZE_KEYS}" "OFF" "shipping takes no MIDI")
 
 # The shipping VST3 class id and AU entry live in source; pin them too.
 set(_ship_fuid "0xE0A36443, 0x43D1A08E, 0xC73C7FDC, 0xC7E5D370")
@@ -97,8 +103,22 @@ expect_ne("${other_VST3_UID}" "${dev_VST3_UID}" "two dev suffixes: VST3 uid")
 spectr_resolve_identity(over OFF "Freeze" "SpQq")
 expect_eq("${over_PLUGIN_CODE}" "SpQq" "AU subtype override")
 
+expect_eq("${dev_AU_TYPE}" "aufx" "a dev identity stays aufx")
+
+# Freeze Keys: the "Keys" dev identity takes MIDI, so it is an aumf.
+spectr_resolve_identity(keys OFF "Keys" "")
+expect_eq("${keys_NAME}" "Spectr Keys Dev" "keys name")
+expect_eq("${keys_BUNDLE_ID}" "com.pulp.spectr.keys-dev" "keys bundle id")
+expect_eq("${keys_PLUGIN_CODE}" "SpKz" "keys AU subtype")
+expect_eq("${keys_AU_TYPE}" "aumf" "keys AU type")
+expect_eq("${keys_FREEZE_KEYS}" "ON" "keys takes MIDI")
+spectr_resolve_identity(keys_off OFF "Keys" "" OFF)
+expect_eq("${keys_off_AU_TYPE}" "aufx" "keys suffix with Freeze Keys off")
+spectr_resolve_identity(keys_named OFF "Melody" "" ON)
+expect_eq("${keys_named_AU_TYPE}" "aumf" "Freeze Keys under another dev suffix")
+
 # Configurations that must be refused.
-foreach(_mode conflict collide badsuffix)
+foreach(_mode conflict collide badsuffix keys_shipping keys_preview)
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -DSPECTR_IDENTITY_CHECK_MODE=${_mode}
                 -P "${CMAKE_CURRENT_LIST_FILE}"
