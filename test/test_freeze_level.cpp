@@ -26,6 +26,7 @@
 #include "spectr/spectr.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -107,11 +108,12 @@ Stereo saw_chord(double seconds) {
 /// A synth pad: A minor, three detuned saws a note (beating, as pads do),
 /// through a gentle one-pole low-pass, voices spread across the image.
 /// `change_at` > 0 moves to F major there (for the long-hold rows).
-Stereo synth_pad(double seconds, double change_at = -1.0) {
+Stereo synth_pad(double seconds, double change_at = -1.0, bool detuned = true) {
     Stereo s; s.resize(samples(seconds));
     static constexpr double am[] = {220.0, 261.63, 329.63, 440.0};
     static constexpr double fm[] = {174.61, 220.0, 261.63, 349.23};
-    static constexpr double detune[] = {-0.004, 0.0, 0.0042};
+    static constexpr double spread[] = {-0.004, 0.0, 0.0042};
+    const double detune[] = {detuned ? spread[0] : 0.0, 0.0, detuned ? spread[2] : 0.0};
     double lp_l = 0, lp_r = 0;
     const double a = 1.0 - std::exp(-2 * kPi * 2500.0 / kRate);
     for (std::size_t n = 0; n < s.size(); ++n) {
@@ -735,9 +737,9 @@ struct Looped {
     Stereo out;
     std::int64_t length = 0;
     std::size_t engaged = 0; // the sample the engage fade starts at
-    /// Where the loop's first pass began: the latch, a hop before the fade
-    /// (the loop's start plays there on every later pass).
-    std::size_t origin() const { return engaged - std::size_t(FreezeSource::kHop); }
+    /// Where the loop's first pass began: the engage, which is the loop's
+    /// own seam (its start plays there on every later pass).
+    std::size_t origin() const { return engaged; }
 };
 
 Looped loop_source(const Stereo& in, std::size_t press, double hold, int crossfade = 0) {
@@ -895,4 +897,368 @@ TEST_CASE("Hold lengths below the loop hold the spectrum", "[freeze][loop]") {
         REQUIRE(source.hold_audible());
         CHECK(source.looping() == (hold >= FreezeSource::kLoopMinSeconds));
     }
+}
+
+// ── The engage's pitch, 5 ms at a time ─────────────────────────────────────
+
+namespace {
+
+/// Complex demodulation of `x` at `hz` with a 40 ms Hann window centred on
+/// `centre`: a partial's phasor there, little disturbed by partials more
+/// than 50 Hz away.
+std::complex<double> demodulate(const std::vector<float>& x, std::size_t centre, double hz) {
+    const std::size_t half = samples(0.02);
+    std::complex<double> z{};
+    for (std::size_t i = 0; i < 2 * half; ++i) {
+        const std::size_t n = centre - half + i;
+        const double w = 0.5 - 0.5 * std::cos(2 * kPi * double(i) / double(2 * half));
+        const double ph = -2 * kPi * hz * double(n) / kRate;
+        z += w * double(x[n]) * std::complex<double>(std::cos(ph), std::sin(ph));
+    }
+    return z;
+}
+
+/// The partial's frequency over [t, t + 5 ms], as cents from `hz`.
+double cents_at(const std::vector<float>& x, std::size_t t, double hz) {
+    const std::size_t step = samples(0.005);
+    double d = std::arg(demodulate(x, t + step, hz) / demodulate(x, t, hz));
+    return 1200.0 * std::log2((hz + d / (2 * kPi * 0.005)) / hz);
+}
+
+struct PitchTrace {
+    double worst = 0;             // largest |pressed - unpressed| over the trace, cents
+    std::vector<double> cents;    // per 5 ms, the worst partial's deviation
+};
+
+/// From 20 ms before the hold is first heard to 300 ms after, every 5 ms:
+/// each partial's frequency in the pressed render minus the same partial's in
+/// the unpressed one at the same moment. What the live input does by itself
+/// (beating, a neighbour's leakage) is in both and cancels; what the engage
+/// adds is left.
+PitchTrace pitch_trace(const Render& pressed, const Render& live, std::size_t engage,
+                       const std::vector<double>& partials) {
+    PitchTrace t;
+    for (std::size_t at = engage - samples(0.02); at < engage + samples(0.3); at += samples(0.005)) {
+        double worst = 0;
+        for (const double hz : partials) {
+            const double d = cents_at(pressed.out.l, at, hz) - cents_at(live.out.l, at, hz);
+            if (std::abs(d) > std::abs(worst)) worst = d;
+        }
+        t.cents.push_back(worst);
+        t.worst = std::max(t.worst, std::abs(worst));
+    }
+    return t;
+}
+
+const std::vector<double>& partials_of(const std::string& name) {
+    static const std::vector<double> sine{440.0}, chord{261.63, 329.63, 392.0},
+        pad{220.0, 261.63, 329.63, 440.0};
+    return name == "sine 440" ? sine : name == "saw chord" ? chord : pad;
+}
+
+} // namespace
+
+TEST_CASE("Freeze engage pitch and loudness trace", "[.][freeze-pitch-trace]") {
+    const std::size_t press = samples(3.0);
+    for (const auto& prog : programmes()) {
+        if (prog.peaks == 0 && std::string(prog.name) != "synth pad") continue;
+        const auto live = render_spectr(prog.audio, SIZE_MAX - 1, kHolds[0], MaskRenderMode::zero_latency);
+        for (const double hold : kHolds) {
+            const auto r = render_spectr(prog.audio, press, hold, MaskRenderMode::zero_latency);
+            const std::size_t engage = r.engaged_at - std::size_t(r.latency);
+            const auto p = pitch_trace(r, live, engage, partials_of(prog.name));
+            std::printf("%-10s %-6s pitch (cents, 5 ms) worst %5.2f |", prog.name, hold_name(hold), p.worst);
+            for (double c : p.cents) std::printf(" %+.1f", c);
+            const auto k = k_weighted(r.out);
+            const auto kl = k_weighted(live.out);
+            std::printf("\n%-10s %-6s loudness vs unpressed (dB, 10 ms) |", prog.name, hold_name(hold));
+            for (std::size_t at = engage - samples(0.02); at < engage + samples(0.3); at += samples(0.01))
+                std::printf(" %+.1f", lufs(k, at, samples(0.01)) - lufs(kl, at, samples(0.01)));
+            std::printf("\n");
+        }
+    }
+}
+
+// ── Repeats at the engage ──────────────────────────────────────────────────
+
+namespace {
+struct BandBiquad {
+    double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0;
+    static BandBiquad bandpass(double hz, double q) {
+        const double w = 2.0 * kPi * hz / kRate, alpha = std::sin(w) / (2.0 * q);
+        const double a0 = 1.0 + alpha;
+        BandBiquad f;
+        f.b0 = alpha / a0; f.b1 = 0.0; f.b2 = -alpha / a0;
+        f.a1 = -2.0 * std::cos(w) / a0; f.a2 = (1.0 - alpha) / a0;
+        return f;
+    }
+    void retune(double hz, double q) {
+        const auto n = bandpass(hz, q);
+        b0 = n.b0; b1 = n.b1; b2 = n.b2; a1 = n.a1; a2 = n.a2;
+    }
+    double operator()(double x) {
+        const double y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return y;
+    }
+};
+
+// 120 BPM: kick on 1 and 3, snare on 2 and 4, closed hats on eighths with an
+// open hat on the last one of each bar, and a sub bass line.
+Stereo drum_loop(double seconds) {
+    Stereo s; s.resize(samples(seconds));
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<double> u(-1.0, 1.0);
+    const double beat = 0.5;
+    const auto hit = [&](double at, auto&& voice, double length) {
+        const auto start = samples(at);
+        for (std::size_t i = 0; i < samples(length) && start + i < s.size(); ++i) {
+            const double t = double(i) / kRate;
+            const auto [l, r] = voice(t);
+            s.l[start + i] += float(l);
+            s.r[start + i] += float(r);
+        }
+    };
+    for (double bar = 0.0; bar < seconds; bar += 4 * beat) {
+        for (int b = 0; b < 4; ++b) {
+            const double at = bar + b * beat;
+            if (b % 2 == 0) {
+                double phase = 0.0;
+                hit(at, [&](double t) {
+                    const double f = 48.0 + 110.0 * std::exp(-t / 0.035);
+                    phase += 2.0 * kPi * f / kRate;
+                    const double v = 0.9 * std::sin(phase) * std::exp(-t / 0.28)
+                                   + (t < 0.003 ? 0.3 * u(rng) * (1.0 - t / 0.003) : 0.0);
+                    return std::pair{v, v};
+                }, 0.9);
+            } else {
+                BandBiquad body = BandBiquad::bandpass(1800.0, 0.7);
+                hit(at, [&](double t) {
+                    const double v = 0.55 * body(u(rng)) * std::exp(-t / 0.13)
+                                   + 0.3 * std::sin(2.0 * kPi * 185.0 * t) * std::exp(-t / 0.07);
+                    return std::pair{v * 0.95, v};
+                }, 0.6);
+            }
+        }
+        for (int e = 0; e < 8; ++e) {
+            const double at = bar + e * beat / 2.0 + (e % 2 ? 0.012 : 0.0); // a little swing
+            const double decay = e == 7 ? 0.18 : 0.025;
+            double prev = 0.0;
+            hit(at, [&](double t) {
+                const double x = u(rng);
+                const double v = 0.22 * (x - prev) * std::exp(-t / decay);
+                prev = x;
+                return std::pair{v * 0.7, v};
+            }, decay * 6);
+        }
+        // Sub bass, one note per beat.
+        static constexpr double notes[] = {55.0, 55.0, 65.41, 49.0};
+        for (int b = 0; b < 4; ++b) {
+            const double f = notes[b];
+            hit(bar + b * beat, [&](double t) {
+                const double env = std::min(1.0, t / 0.01) * std::exp(-t / 0.4);
+                const double v = 0.35 * env * std::sin(2.0 * kPi * f * t);
+                return std::pair{v, v};
+            }, beat);
+        }
+    }
+    normalise(s, 0.7);
+    add_room(s, 12);
+    return s;
+}
+
+// A voice-like source: a glottal pulse train with a moving pitch through three
+// formant resonators that step between vowels, syllable envelopes, and
+// fricative noise in the gaps.
+Stereo speech_like(double seconds) {
+    Stereo s; s.resize(samples(seconds));
+    static constexpr double vowels[][3] = {
+        {730, 1090, 2440}, {270, 2290, 3010}, {300, 870, 2240},
+        {530, 1840, 2480}, {570, 840, 2410}, {660, 1720, 2410}};
+    std::mt19937 rng(31);
+    std::uniform_real_distribution<double> u(-1.0, 1.0);
+    std::uniform_int_distribution<int> pick(0, 5);
+    std::array<BandBiquad, 3> formant{BandBiquad::bandpass(730, 8), BandBiquad::bandpass(1090, 10),
+                                  BandBiquad::bandpass(2440, 12)};
+    std::array<double, 3> f_now{730, 1090, 2440}, f_target = f_now;
+    double glottal_phase = 0.0, glottal = 0.0, fric_prev = 0.0;
+    double syllable_start = 0.0, syllable_length = 0.2;
+    bool voiced = true;
+    for (std::size_t n = 0; n < s.size(); ++n) {
+        const double t = double(n) / kRate;
+        if (t >= syllable_start + syllable_length) {
+            syllable_start = t;
+            voiced = (pick(rng) != 0);
+            syllable_length = voiced ? 0.12 + 0.04 * pick(rng) : 0.06 + 0.01 * pick(rng);
+            const auto& v = vowels[pick(rng)];
+            for (int k = 0; k < 3; ++k) f_target[k] = v[k];
+        }
+        for (int k = 0; k < 3; ++k) {
+            f_now[k] += 0.004 * (f_target[k] - f_now[k]);
+            if (n % 32 == 0) formant[k].retune(f_now[k], 6.0 + 3.0 * k);
+        }
+        const double f0 = 125.0 + 30.0 * std::sin(2.0 * kPi * 0.6 * t)
+                        + 12.0 * std::sin(2.0 * kPi * 3.1 * t);
+        glottal_phase += f0 / kRate;
+        double pulse = 0.0;
+        if (glottal_phase >= 1.0) { glottal_phase -= 1.0; pulse = 1.0; }
+        glottal = 0.96 * glottal + pulse;               // a soft glottal shape
+        const double into = glottal;
+        const double local = t - syllable_start;
+        const double env = std::min(1.0, local / 0.02)
+                         * std::min(1.0, (syllable_length - local) / 0.03);
+        double v = 0.0;
+        if (voiced)
+            v = env * (formant[0](into) * 1.0 + formant[1](into) * 0.6 + formant[2](into) * 0.35);
+        else {
+            const double x = u(rng);
+            v = env * 0.25 * (x - fric_prev);
+            fric_prev = x;
+            (void)formant[0](0.0); (void)formant[1](0.0); (void)formant[2](0.0);
+        }
+        s.l[n] = float(v);
+        s.r[n] = float(v);
+    }
+    normalise(s, 0.6);
+    add_room(s, 32);
+    return s;
+}
+
+
+/// 1 ms energies of the first difference of `x` (an HF envelope).
+std::vector<double> envelope_ms(const std::vector<float>& x, std::size_t from, std::size_t n) {
+    std::vector<double> e;
+    const std::size_t ms = samples(0.001);
+    for (std::size_t at = from; at + ms <= from + n; at += ms) {
+        double v = 0;
+        for (std::size_t i = at; i < at + ms; ++i) { const double d = double(x[i]) - x[i - 1]; v += d * d; }
+        e.push_back(std::log(v + 1e-12));
+    }
+    return e;
+}
+
+/// The strongest self-similarity of the HF envelope over [from, from + n):
+/// the largest correlation of the envelope with itself `lag` ms later, for
+/// lags 8-150 ms, and that lag.
+std::pair<double, int> self_similarity(const std::vector<float>& x, std::size_t from, std::size_t n) {
+    const auto e = envelope_ms(x, from, n + samples(0.15));
+    const std::size_t len = n / samples(0.001);
+    double best = -1; int at = 0;
+    for (int lag = 15; lag <= 200; ++lag) {
+        double ab = 0, aa = 0, bb = 0, ma = 0, mb = 0;
+        for (std::size_t i = 0; i < len; ++i) { ma += e[i]; mb += e[i + std::size_t(lag)]; }
+        ma /= double(len); mb /= double(len);
+        for (std::size_t i = 0; i < len; ++i) {
+            const double a = e[i] - ma, b = e[i + std::size_t(lag)] - mb;
+            ab += a * b; aa += a * a; bb += b * b;
+        }
+        const double c = ab / std::sqrt(aa * bb + 1e-30);
+        if (c > best) { best = c; at = lag; }
+    }
+    return {best, at};
+}
+
+} // namespace
+
+TEST_CASE("Freeze engage repeat report", "[.][freeze-repeat-report]") {
+    const std::size_t press = samples(3.0);
+    const std::pair<const char*, Stereo> material[] = {
+        {"drums", drum_loop(7.0)}, {"voice", speech_like(7.0)}, {"phrase", phrase(7.0)},
+        {"synth pad", synth_pad(7.0)}, {"saw chord", saw_chord(7.0)}, {"texture", texture(7.0)}};
+    for (const auto& [name, in] : material) {
+        const auto row = [&](const char* who, const Render& r) {
+            const std::size_t e = r.engaged_at ? r.engaged_at : press + std::size_t(r.latency);
+            const auto first = self_similarity(r.out.l, e + samples(0.06), samples(0.25));
+            const auto settled = self_similarity(r.out.l, e + samples(1.5), samples(0.25));
+            // Waveform: the first 60-310 ms against itself one lag later.
+            double best = -1; int best_lag = 0;
+            for (int lag = 10; lag <= 200; ++lag) {
+                const double c = correlation(r.out.l, e + samples(0.06), r.out.l, e + samples(0.06) + samples(lag / 1000.0), samples(0.25));
+                if (c > best) { best = c; best_lag = lag; }
+            }
+            double sbest = -1; int sbest_lag = 0;
+            for (int lag = 10; lag <= 200; ++lag) {
+                const double c = correlation(r.out.l, e + samples(1.5), r.out.l, e + samples(1.5) + samples(lag / 1000.0), samples(0.25));
+                if (c > sbest) { sbest = c; sbest_lag = lag; }
+            }
+            std::printf("   waveform: first %.2f at %d ms, settled %.2f at %d ms\n", best, best_lag, sbest, sbest_lag);
+            std::printf("%-9s %-14s first 300 ms: %.2f at %3d ms | settled: %.2f at %3d ms\n",
+                        name, who, first.first, first.second, settled.first, settled.second);
+        };
+        row("unpressed", render_spectr(in, SIZE_MAX - 1, kHolds[0], MaskRenderMode::zero_latency));
+        row("spectr 85 ms", render_spectr(in, press, kHolds[0], MaskRenderMode::zero_latency));
+        row("spectr 2 s", render_spectr(in, press, kHolds[1], MaskRenderMode::zero_latency));
+        row("bendr", render_bendr(in, press));
+    }
+}
+
+TEST_CASE("The engage bends no partial", "[freeze][level][pitch]") {
+    // Heard as a brief doubled, chorused sound at the press: the hold
+    // entering a quarter cycle away from the live partials, so the fade
+    // swept each partial's phase by 90 degrees over 48 ms -- a +20 cent
+    // glide on a 440 Hz sine, +37 on a saw chord. Each partial's frequency,
+    // every 5 ms from 20 ms before the hold is heard to 300 ms after, in the
+    // pressed render minus the unpressed one, must stay within 2 cents. The
+    // pad here is not detuned: a detuned pad beats, and a steady hold of it
+    // by design does not, so the two would differ for that reason alone.
+    // Control: a fade from the unpressed sine into itself 0.25 ms later
+    // (a 40 degree turn at 440 Hz) must read more than 2 cents.
+    const std::size_t press = samples(3.0);
+    const std::pair<const char*, Stereo> material[] = {
+        {"sine 440", sine_tone(6.0)}, {"saw chord", saw_chord(6.0)},
+        {"steady pad", synth_pad(6.0, -1.0, false)}};
+    for (const auto& [name, in] : material)
+        for (const auto mode : {MaskRenderMode::zero_latency, MaskRenderMode::linear_phase}) {
+            const auto live = render_spectr(in, SIZE_MAX - 1, kHolds[0], mode);
+            for (const double hold : kSpectralHolds) {
+                const auto r = render_spectr(in, press, hold, mode);
+                const auto p = pitch_trace(r, live, r.engaged_at, partials_of(
+                    std::string(name) == "steady pad" ? "synth pad" : name));
+                INFO(name << " at " << hold_name(hold) << ", "
+                     << (mode == MaskRenderMode::linear_phase ? "Mixing" : "Tracking")
+                     << ": worst partial " << p.worst << " cents");
+                CHECK(p.worst <= 2.0);
+            }
+        }
+    // The control.
+    auto live = render_spectr(material[0].second, SIZE_MAX - 1, kHolds[0], MaskRenderMode::zero_latency);
+    Render bent = live;
+    const std::size_t fade = samples(FreezeSource::kCrossfadeSeconds), delay = samples(0.00025);
+    for (std::size_t n = press; n < bent.out.size(); ++n) {
+        const double q = std::min(1.0, double(n - press) / double(fade));
+        const double a = std::cos(q * kPi / 2), b = std::sin(q * kPi / 2);
+        bent.out.l[n] = float(a * live.out.l[n] + b * live.out.l[n - delay]);
+    }
+    const auto c = pitch_trace(bent, live, press, {440.0});
+    INFO("planted 40 degree fade: " << c.worst << " cents");
+    CHECK(c.worst > 2.0);
+}
+
+TEST_CASE("A loop's engage is its own seam", "[freeze][loop]") {
+    // The engage fades the live input into the loop's start; every later
+    // pass fades the audio that followed the loop's end -- the same live
+    // input -- into the same start. With the loop ending where the engage
+    // begins, the first fade and the second pass's seam are the same samples.
+    // When the loop ended a hop before the engage, the engage blended the
+    // live input with audio a hop into the loop: two moments that were never
+    // matched, heard as a brief doubling at the press.
+    const std::pair<const char*, Stereo> material[] = {
+        {"phrase", phrase(8.0)}, {"synth pad", synth_pad(8.0)}, {"saw chord", saw_chord(8.0)}};
+    const std::size_t press = samples(3.0);
+    const std::size_t fade = samples(FreezeSource::kCrossfadeSeconds);
+    for (const auto& [name, input] : material)
+        for (const double hold : {0.5, 2.0}) {
+            const auto r = loop_source(input, press, hold);
+            const std::size_t e = r.engaged, seam = r.engaged + std::size_t(r.length);
+            double diff = 0, power = 0;
+            for (std::size_t i = 0; i < fade; ++i) {
+                const double a = r.out.l[e + i], b = r.out.l[seam + i];
+                diff += (a - b) * (a - b);
+                power += a * a;
+            }
+            const double db = 10 * std::log10(diff / (power + 1e-30) + 1e-30);
+            INFO(name << ", " << hold << " s: engage against the second pass's seam " << db << " dB");
+            CHECK(db < -60.0);
+        }
 }

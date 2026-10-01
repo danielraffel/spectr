@@ -34,8 +34,8 @@
 /// HOW IT ENGAGES. Nothing waits for an analysis latency. After the latch
 /// the output ring is pre-rolled with the frames that would already have been
 /// overlapping (the latched phases stepped forward hop by hop), so a full
-/// hold is present from the fade's first sample, and a short equal-power
-/// crossfade takes the output from live to held. The pre-roll is built over
+/// hold is present from the fade's first sample, and a short crossfade takes
+/// the output from live to held (see THE ENGAGE FADE). The pre-roll is built over
 /// the hop after the latch, a share of it per sample of audio, and the fade
 /// starts at the next hop boundary: done at once, it was several
 /// milliseconds of work in the one callback a tap lands in -- more than a
@@ -53,27 +53,38 @@
 /// peak's frequency, so the partial never decoheres; and every other bin
 /// starts at a uniformly random phase, the diffuse state it would drift into.
 ///
-/// NO GHOST, AND ORTHOGONAL TO THE LIVE SOUND. The latched frame's phases
-/// encode WHEN things happened inside it. Advanced bin by bin they replay
-/// that timing one analysis window later -- a drum hit that landed just
-/// before the press comes back as a tick just after it. The random phases of
-/// the non-tonal bins keep none of that timing. A locked lobe keeps its shape
-/// and turns as one by a quarter cycle, +90 or -90 degrees at random, the
-/// same on every channel (the image keeps its phase differences): that keeps
-/// its level, and makes the partial orthogonal to the same partial still
-/// sounding live, so the equal-power engage fade is level-flat for a steady
-/// tone as it is for noise, with no gain correction riding the waveform (one
-/// that followed the waveform's own power sample by sample modulated the fade
-/// at audio rate -- a click on drums). A locked lobe does not take the random
-/// walk, so it stays orthogonal for as long as it plays and the release fade
-/// is the same plain equal-power fade.
+/// NO GHOST. The latched frame's phases encode WHEN things happened inside
+/// it. Advanced bin by bin they replay that timing one analysis window later
+/// -- a drum hit that landed just before the press comes back as a tick just
+/// after it. The random phases of the non-tonal bins keep none of that
+/// timing, and a locked lobe takes a steady sinusoid's shape, which places
+/// its partial nowhere in particular.
+///
+/// THE ENGAGE FADE: THE SOUND CONTINUES. A locked lobe starts at the latched
+/// frame's phase and runs at its partial's measured frequency, so each held
+/// partial is the live partial carried on, in phase: nothing is turned or
+/// bent while the fade runs. (Turning the partials a quarter cycle, as an
+/// earlier version did to make them orthogonal to the live ones, swept each
+/// one's phase by 90 degrees over the fade -- a 20-40 cent glide heard as a
+/// brief doubled sound at the press.) The tonal partials and the noise-like
+/// rest are resynthesised into separate rings and fade by different laws
+/// under the one live gain cos: the partials by 1 - cos, so each partial's
+/// amplitude is exactly 1 throughout; the rest by sin, so the noise power is
+/// exactly 1 throughout. No gain rides the waveform (one that followed the
+/// waveform's own power sample by sample modulated the fade at audio rate --
+/// a click on drums). A locked lobe takes no random walk, so it stays in
+/// phase with a steady live partial for as long as it plays. A release is an
+/// equal-power fade normalised by the hold's and the live input's measured
+/// correlation over the hop before it: a steady tone still playing live
+/// (correlated) and anything new (not) both release level.
 ///
 /// LEVEL. Averaging magnitudes lowers noise-like material by a few dB; the
-/// hold is matched to the live level of the window it was taken from. The
-/// hold's level is predicted from its spectrum at the latch, before any of it
-/// is heard (see predict_hold_power_()), and the gain is fixed for as long as
-/// the hold plays: the hold is stationary, so nothing is left to follow, and
-/// a gain still settling after the engage would itself be heard.
+/// hold's noise-like rest is matched to the live level the tonal partials do
+/// not account for, and the partials themselves play at the input's level.
+/// The hold's level is predicted from its spectrum at the latch, before any
+/// of it is heard (see predict_hold_power_()), and the gain is fixed for as
+/// long as the hold plays: the hold is stationary, so nothing is left to
+/// follow, and a gain still settling after the engage would itself be heard.
 ///
 /// SILENCE. A freeze asked for over silence does not latch it: the request
 /// stays armed, and live (silent) input passes, until every hop of input the
@@ -130,7 +141,7 @@ public:
     static constexpr int kLevelThetaSteps = 1024;
     static constexpr int kLevelTaps = 32;
 
-    /// A tonal peak, for the hold's quarter-cycle turn: a local maximum this
+    /// A tonal peak, whose partial the hold carries on in phase: a local maximum this
     /// many times the mean magnitude of the bins within the neighbourhood,
     /// turned as one across its Hann main lobe.
     static constexpr float kPeakProminence = 4.0f;
@@ -150,10 +161,7 @@ public:
     /// the end; and how much audio that match compares.
     static constexpr double kLoopSearchSeconds = 0.005;
     static constexpr double kLoopMatchSeconds = 0.010;
-    /// The loop's preparation, in shares of the hop after the latch: the
-    /// seam search, then the copy of the loop.
-    static constexpr int kLoopSearchSteps = 8;
-    static constexpr int kLoopCopySteps = 8;
+
 
     /// Where the source is in a freeze.
     enum class Phase : std::uint8_t {
@@ -214,6 +222,8 @@ public:
         const auto channel_count = static_cast<std::size_t>(channels);
         input_ring_.assign(channel_count * per_channel, 0.0f);
         ola_.assign(channel_count * per_channel, 0.0f);
+        ola_tonal_.assign(channel_count * per_channel, 0.0f);
+        latched_.assign(channel_count * per_channel, {});
         spectra_.assign(channel_count * per_channel, {});
         frame_ptrs_.assign(channel_count, nullptr);
         for (std::size_t ch = 0; ch < channel_count; ++ch)
@@ -231,7 +241,6 @@ public:
 
         build_level_table_();
         lock_peak_.assign(static_cast<std::size_t>(bins_), 0);
-        rotation_.assign(static_cast<std::size_t>(bins_), 1);
         hold_phase_.assign(channel_count * static_cast<std::size_t>(bins_), 0.0);
         locked_.assign(static_cast<std::size_t>(bins_), 0);
         lock_mag_.assign(static_cast<std::size_t>(bins_), 0.0f);
@@ -247,8 +256,10 @@ public:
         // from the moment the stream starts; the loop plays from its own copy
         // so recording never stops.
         loop_search_ = static_cast<std::int64_t>(std::lround(kLoopSearchSeconds * sample_rate));
-        loop_match_ = std::max<std::int64_t>(
-            1, static_cast<std::int64_t>(std::lround(kLoopMatchSeconds * sample_rate)));
+        // The match is taken over the audio that arrives in the hop between
+        // the latch and the engage, so it fits in a hop.
+        loop_match_ = std::clamp<std::int64_t>(
+            static_cast<std::int64_t>(std::lround(kLoopMatchSeconds * sample_rate)), 1, kHop);
         loop_min_ = static_cast<std::int64_t>(std::lround(kLoopMinSeconds * sample_rate));
         // The seam search compares every `loop_stride_`-th sample, so its cost
         // is the same at any sample rate.
@@ -258,6 +269,9 @@ public:
         record_.assign(channel_count * record_length_, 0.0f);
         loop_capacity_ = static_cast<std::size_t>(longest + loop_search_ + crossfade_samples_ + kHop);
         loop_.assign(channel_count * loop_capacity_, 0.0f);
+        const auto candidates = static_cast<std::size_t>(2 * loop_search_ / loop_stride_ + 2);
+        search_cross_.assign(candidates, 0.0);
+        search_energy_.assign(candidates, 0.0);
 
         requested_hold_seconds_ = kDefaultHoldSeconds;
         applied_hold_seconds_ = kDefaultHoldSeconds;
@@ -280,6 +294,7 @@ public:
         hold_.reset();
         std::fill(input_ring_.begin(), input_ring_.end(), 0.0f);
         std::fill(ola_.begin(), ola_.end(), 0.0f);
+        std::fill(ola_tonal_.begin(), ola_tonal_.end(), 0.0f);
         write_pos_ = 0;
         hop_pos_ = 0;
         clear_energy_history_();
@@ -294,6 +309,9 @@ public:
         rng_ = kRngSeed;
         walk_rng_ = kWalkSeed;
         held_gain_ = 1.0f;
+        release_rho_ = 0.0f;
+        rho_cross_ = rho_live_ = rho_hold_ = 0.0;
+        last_rho_ = 0.0f;
     }
 
     /// A transport discontinuity: forget the input analysed so far, keep the
@@ -348,9 +366,16 @@ public:
     }
 
     [[nodiscard]] const pulp::signal::FreezeHold& hold() const noexcept { return hold_; }
-    /// The gain the hold plays at: its level matched, once, to the live
-    /// window it was taken from (for tests and diagnostics).
+    /// The gain the hold's noise-like part plays at: its level matched,
+    /// once, to the live window it was taken from (for tests and
+    /// diagnostics). Its tonal part always plays at the input's level.
     [[nodiscard]] float level_match() const noexcept { return held_gain_; }
+    /// Render only one part of a spectral hold (for tests): its tonal
+    /// partials, its noise-like rest, or both (the default).
+    void set_hold_parts(bool tonal, bool noise) noexcept {
+        play_tonal_ = tonal;
+        play_noise_ = noise;
+    }
 
     // SPECTR-RENDER-PATH BEGIN
     //
@@ -422,11 +447,8 @@ private:
             // This chunk's share of the engage work, by samples, so no host
             // block carries more of it than its length warrants.
             if (phase_ == Phase::preparing) {
-                if (loop_mode_)
-                    loop_prepare_until_(((kLoopSearchSteps + kLoopCopySteps) * (hop_pos_ + count)
-                                         + kHop - 1) / kHop);
-                else
-                    prepare_until_((prepare_steps_() * (hop_pos_ + count) + kHop - 1) / kHop);
+                if (loop_mode_) match_loop_end_(recorded_ - count, recorded_);
+                else prepare_until_((prepare_steps_() * (hop_pos_ + count) + kHop - 1) / kHop);
             }
             return;
         }
@@ -435,25 +457,46 @@ private:
         const int start_step = weight_step_;
         std::int64_t loop_at = loop_position_;
         bool seam = loop_seam_;
+        // A spectral engage: the hold's tonal partials continue the live
+        // ones in phase (correlated), its noise-like rest is unrelated to the
+        // live noise. One live gain, cos, serves both: the tonal hold comes
+        // in by 1 - cos, so each partial's amplitude stays exactly 1, and the
+        // noise by sin, so the noise power stays exactly 1. Nothing is turned
+        // or bent while it happens. Every other fade -- a release (the live
+        // sound after it is whatever the player is playing now), and the
+        // loop's engage -- is equal-power, normalised by the two sides'
+        // measured correlation.
+        const bool split = !loop_mode_ && phase_ == Phase::engaging;
+        const float rho = phase_ == Phase::releasing ? release_rho_ : fade_rho_;
+        double cross = 0.0, live_power = 0.0, hold_power = 0.0;
         for (int ch = 0; ch < channels_; ++ch) {
-            const float* held = ola_.data() + static_cast<std::size_t>(ch) * window
-                                + static_cast<std::size_t>(hop_pos_);
-            const float* loop = loop_.data() + static_cast<std::size_t>(ch) * loop_capacity_;
+            const float* noise = ola_.data() + static_cast<std::size_t>(ch) * window
+                                 + static_cast<std::size_t>(hop_pos_);
+            const float* tonal = ola_tonal_.data() + static_cast<std::size_t>(ch) * window
+                                 + static_cast<std::size_t>(hop_pos_);
+            float* loop = loop_.data() + static_cast<std::size_t>(ch) * loop_capacity_;
             const float* in = input[ch] + offset;
             float* out = wet[ch] + offset;
             int step = start_step;
             loop_at = loop_position_;
             seam = loop_seam_;
             for (int i = 0; i < count; ++i) {
-                float hold;
+                float hold, hold_tonal = 0.0f, hold_noise = 0.0f;
                 if (loop_mode_) {
-                    hold = loop_value_(loop, loop_at, seam);
+                    hold = loop_sample_(ch, loop, loop_at, seam);
                     if (++loop_at == loop_length_) { loop_at = 0; seam = true; }
                 } else {
-                    hold = held[i] * held_gain_;
+                    hold_tonal = play_tonal_ ? tonal[i] : 0.0f;
+                    hold_noise = play_noise_ ? noise[i] : 0.0f;
+                    hold = hold_tonal + hold_noise;
                 }
                 if (phase_ == Phase::held) {
                     out[i] = hold;
+                    // How alike the hold and the live input are, for the
+                    // release fade.
+                    cross += static_cast<double>(hold) * in[i];
+                    live_power += static_cast<double>(in[i]) * in[i];
+                    hold_power += static_cast<double>(hold) * hold;
                     continue;
                 }
                 step = std::clamp(step + direction, 0, crossfade_samples_);
@@ -462,15 +505,21 @@ private:
                 const float angle = p * 1.57079632679489662f;
                 const float g_hold = std::sin(angle);
                 const float g_live = std::cos(angle);
-                // Correlated sounds (an aligned loop and the live sound it
-                // repeats) sum above an equal-power fade's unity: take out
-                // what their measured correlation adds.
-                const float norm = fade_rho_ > 0.0f
-                    ? 1.0f / std::sqrt(1.0f + 2.0f * fade_rho_ * g_hold * g_live) : 1.0f;
+                if (split) {
+                    out[i] = g_live * in[i] + (1.0f - g_live) * hold_tonal + g_hold * hold_noise;
+                    continue;
+                }
+                // Correlated sounds sum above an equal-power fade's unity:
+                // take out what their measured correlation adds.
+                const float norm = rho != 0.0f
+                    ? 1.0f / std::sqrt(1.0f + 2.0f * rho * g_hold * g_live) : 1.0f;
                 out[i] = (g_live * in[i] + g_hold * hold) * norm;
             }
             if (ch == channels_ - 1) weight_step_ = step;
         }
+        rho_cross_ += cross;
+        rho_live_ += live_power;
+        rho_hold_ += hold_power;
         if (loop_mode_ && hold_audible()) {
             loop_position_ = loop_at;
             loop_seam_ = seam;
@@ -510,6 +559,16 @@ private:
         if (frames_since_clear_ < (1 << 30)) ++frames_since_clear_;
 
         if (hold_seconds_changed_()) hold_.set_capture_seconds(applied_hold_seconds_);
+        // The correlation of the hold with the live input over the hop just
+        // played (held only). Only a positive one is taken out of the fade:
+        // a negative reading over one hop of unrelated sounds is chance, and
+        // normalising for it would lift both sides mid-fade.
+        if (phase_ == Phase::held && rho_live_ > 0.0 && rho_hold_ > 0.0)
+            last_rho_ = static_cast<float>(std::clamp(
+                rho_cross_ / std::sqrt(rho_live_ * rho_hold_), 0.0, 1.0));
+        else if (phase_ != Phase::held)
+            last_rho_ = 0.0f;
+        rho_cross_ = rho_live_ = rho_hold_ = 0.0;
 
         // Request edges. A release commits the hold to fading out; a freeze
         // asked for mid-release waits for the release to finish.
@@ -525,9 +584,10 @@ private:
             } else if (phase_ == Phase::engaging || phase_ == Phase::held) {
                 phase_ = Phase::releasing;
                 hold_.set_frozen(false); // restarts the capture window
-                // The live sound after a release is not the one the hold
-                // repeats: a plain equal-power fade.
-                fade_rho_ = 0.0f;
+                // How alike the hold and the live sound were over the hop
+                // before: a steady tone still playing live is the hold's
+                // own partial, in phase; anything else is unrelated.
+                release_rho_ = last_rho_;
             }
         }
 
@@ -554,6 +614,10 @@ private:
             if (phase_ == Phase::arming)
                 hold_.set_frozen(!loop && window_has_signal_());
             const bool was_latched = hold_.is_latched();
+            // The frame a spectral latch would take, before FreezeHold mixes
+            // anything into it: the hold continues its partials in phase.
+            if (phase_ == Phase::arming && !loop)
+                std::copy(spectra_.begin(), spectra_.end(), latched_.begin());
             hold_.process_group(frame_ptrs_.data(), channels_, bins_);
             if (phase_ == Phase::arming) {
                 if (loop) {
@@ -607,78 +671,71 @@ private:
         return record_[static_cast<std::size_t>(ch) * record_length_ + at];
     }
 
+    // THE ENGAGE IS THE LOOP'S OWN SEAM. The loop ends exactly where the
+    // engage fade starts -- the hop boundary after the latch -- so the fade
+    // from the live input into the loop's start is the same seam every later
+    // pass makes from the audio that followed the end: the live input IS
+    // that audio. The start is matched against the 10 ms before the end
+    // (or a hop, if shorter) as those samples arrive during that hop, so no
+    // callback carries the search; the loop is copied out of the recording
+    // as its first pass plays (the recording keeps every sample of it for
+    // longer than a pass).
     void begin_loop_prepare_() noexcept {
-        const std::int64_t length = loop_length_for_latch_();
-        loop_end_ = recorded_;
-        // Candidate starts: Hold length before the end, give or take the
-        // search; each needs its match window inside the recorded history.
-        const std::int64_t earliest = loop_end_ - history_ + loop_match_;
+        loop_end_ = recorded_ + kHop;
+        const auto wanted = static_cast<std::int64_t>(std::llround(applied_hold_seconds_ * sample_rate_));
+        const std::int64_t history = history_ + kHop;
+        const std::int64_t length = std::min(wanted, history - loop_search_ - loop_match_);
+        // Candidate starts, every loop_stride_-th, each with its match window
+        // inside the recorded history.
+        const std::int64_t earliest = loop_end_ - history + loop_match_;
         search_first_ = std::max(loop_end_ - length - loop_search_, earliest);
-        search_last_ = std::min(loop_end_ - length + loop_search_, loop_end_ - loop_min_);
-        search_first_ = std::min(search_first_, search_last_);
-        best_start_ = loop_end_ - length;
-        best_score_ = -2.0;
+        const std::int64_t last = std::min(loop_end_ - length + loop_search_, loop_end_ - loop_min_);
+        search_count_ = std::clamp<std::int64_t>((last - search_first_) / loop_stride_ + 1, 1,
+                                                 static_cast<std::int64_t>(search_cross_.size()));
+        std::fill(search_cross_.begin(), search_cross_.end(), 0.0);
+        std::fill(search_energy_.begin(), search_energy_.end(), 0.0);
         end_energy_ = 0.0;
-        for (int ch = 0; ch < channels_; ++ch)
-            for (std::int64_t m = 0; m < loop_match_; m += loop_stride_) {
-                const double v = recorded_at_(ch, loop_end_ - loop_match_ + m);
-                end_energy_ += v * v;
-            }
         loop_mode_ = true;
         hold_.set_frozen(false);
-        prepare_step_ = 0;
         phase_ = Phase::preparing;
     }
 
-    void loop_prepare_until_(int target) noexcept {
-        target = std::min(target, kLoopSearchSteps + kLoopCopySteps);
-        for (; prepare_step_ < target; ++prepare_step_) {
-            if (prepare_step_ < kLoopSearchSteps) {
-                // A share of the candidate starts: normalised correlation of
-                // the audio before each with the audio before the end.
-                const std::int64_t span = search_last_ - search_first_ + 1;
-                const std::int64_t from = search_first_ + span * prepare_step_ / kLoopSearchSteps;
-                const std::int64_t to = search_first_ + span * (prepare_step_ + 1) / kLoopSearchSteps;
-                const std::int64_t first = from + (loop_stride_ - (from - search_first_) % loop_stride_) % loop_stride_;
-                for (std::int64_t start = first; start < to; start += loop_stride_) {
-                    double cross = 0.0, energy = 0.0;
-                    for (int ch = 0; ch < channels_; ++ch)
-                        for (std::int64_t m = 0; m < loop_match_; m += loop_stride_) {
-                            const double a = recorded_at_(ch, start - loop_match_ + m);
-                            const double b = recorded_at_(ch, loop_end_ - loop_match_ + m);
-                            cross += a * b;
-                            energy += a * a;
-                        }
-                    const double score = cross / std::sqrt(std::max(energy * end_energy_, 1.0e-30));
-                    if (score > best_score_) { best_score_ = score; best_start_ = start; }
-                }
-                continue;
-            }
-            // A share of the loop, copied out of the recording.
-            const std::int64_t length = loop_end_ - best_start_;
-            const int part = prepare_step_ - kLoopSearchSteps;
-            const std::int64_t from = length * part / kLoopCopySteps;
-            const std::int64_t to = length * (part + 1) / kLoopCopySteps;
+    // Samples [from, to) of the recording have arrived: those inside the
+    // match window before the loop's end add to every candidate's score.
+    void match_loop_end_(std::int64_t from, std::int64_t to) noexcept {
+        const std::int64_t window_start = loop_end_ - loop_match_;
+        for (std::int64_t t = std::max(from, window_start); t < std::min(to, loop_end_); ++t) {
+            const std::int64_t back = loop_end_ - t; // 1 .. loop_match_
+            if (back % loop_stride_ != 0) continue;
             for (int ch = 0; ch < channels_; ++ch) {
-                float* loop = loop_.data() + static_cast<std::size_t>(ch) * loop_capacity_;
-                for (std::int64_t n = from; n < to; ++n)
-                    loop[n] = recorded_at_(ch, best_start_ + n);
+                const double now = recorded_at_(ch, t);
+                end_energy_ += now * now;
+                for (std::int64_t j = 0; j < search_count_; ++j) {
+                    const double then = recorded_at_(ch, search_first_ + j * loop_stride_ - back);
+                    search_cross_[static_cast<std::size_t>(j)] += then * now;
+                    search_energy_[static_cast<std::size_t>(j)] += then * then;
+                }
             }
         }
     }
 
-    // The hop boundary after the latch: the loop is ready, and the fade into
-    // it starts. The loop's start lines up with its end, so the hop that
-    // passed since the latch is a hop into the loop.
+    // The engage: the best-matched start, and the fade into it.
     void finish_loop_prepare_() noexcept {
-        loop_prepare_until_(kLoopSearchSteps + kLoopCopySteps);
-        loop_length_ = loop_end_ - best_start_;
+        double best = -2.0;
+        std::int64_t start = search_first_;
+        for (std::int64_t j = 0; j < search_count_; ++j) {
+            const double score = search_cross_[static_cast<std::size_t>(j)]
+                / std::sqrt(std::max(search_energy_[static_cast<std::size_t>(j)] * end_energy_, 1.0e-30));
+            if (score > best) { best = score; start = search_first_ + j * loop_stride_; }
+        }
+        loop_start_ = start;
+        loop_length_ = loop_end_ - start;
         seam_length_ = std::min<std::int64_t>(
             crossfade_samples_, static_cast<std::int64_t>(loop_capacity_) - loop_length_);
-        loop_position_ = std::min<std::int64_t>(recorded_ - loop_end_, loop_length_ - 1);
+        loop_position_ = 0;
         loop_seam_ = false;
         loop_tail_ = false;
-        loop_rho_ = static_cast<float>(std::clamp(best_score_, 0.0, 1.0));
+        loop_rho_ = static_cast<float>(std::clamp(best, 0.0, 1.0));
         fade_rho_ = loop_rho_;
         held_gain_ = 1.0f;
         phase_ = Phase::engaging;
@@ -698,12 +755,17 @@ private:
         loop_tail_ = true;
     }
 
-    // One sample of the loop at `at`; across the seam (a pass after the
-    // first, within a crossfade of the start), the audio that followed the
-    // end fades into the start.
-    [[nodiscard]] float loop_value_(const float* loop, std::int64_t at, bool seam) const noexcept {
+    // One sample of the loop at `at`. The first pass reads the recording and
+    // keeps a copy; across each later seam (within a crossfade of the
+    // start) the audio that followed the end fades into the start.
+    float loop_sample_(int ch, float* loop, std::int64_t at, bool seam) noexcept {
+        if (!seam) {
+            const float v = recorded_at_(ch, loop_start_ + at);
+            loop[at] = v;
+            return v;
+        }
         const float start = loop[at];
-        if (!seam || !loop_tail_ || at >= seam_length_) return start;
+        if (!loop_tail_ || at >= seam_length_) return start;
         const float p = (static_cast<float>(at) + 0.5f) / static_cast<float>(seam_length_);
         const float a = std::sin(p * 1.57079632679489662f);
         const float b = std::cos(p * 1.57079632679489662f);
@@ -762,9 +824,11 @@ private:
         const auto window = static_cast<std::size_t>(kFftSize);
         const auto hop = static_cast<std::size_t>(kHop);
         for (int ch = 0; ch < channels_; ++ch) {
-            float* ola = ola_.data() + static_cast<std::size_t>(ch) * window;
-            std::copy(ola + hop, ola + window, ola);
-            std::fill(ola + window - hop, ola + window, 0.0f);
+            for (auto* ring : {&ola_, &ola_tonal_}) {
+                float* ola = ring->data() + static_cast<std::size_t>(ch) * window;
+                std::copy(ola + hop, ola + window, ola);
+                std::fill(ola + window - hop, ola + window, 0.0f);
+            }
         }
     }
 
@@ -772,20 +836,20 @@ private:
     // ring, as the frame placed `hops_back` hops before now: only its part
     // from now onward is added.
     void add_hold_frame_(int hops_back) noexcept {
-        add_hold_frame_to_(ola_.data(), static_cast<std::size_t>(kFftSize),
-                           -hops_back * kHop);
+        if (!write_frame_()) return;
+        synthesise_parts_(static_cast<std::size_t>(kFftSize), -hops_back * kHop);
     }
 
-    // The same, into `dest` (channels * `length`), with the frame's first
-    // sample at `at` (negative: that many samples of it are already past).
-    void add_hold_frame_to_(float* dest, std::size_t length, int at) noexcept {
-        if (!write_frame_()) return;
-        synthesise_to_(dest, length, at);
+    // The frame in `spectra_`, its tonal partials into the tonal ring and
+    // the rest into the noise ring, as the frame placed at `at`.
+    void synthesise_parts_(std::size_t length, int at) noexcept {
+        synthesise_to_(ola_tonal_.data(), length, at, true);
+        synthesise_to_(ola_.data(), length, at, false);
     }
 
     // Resynthesise the spectra already in `spectra_` and overlap-add them
-    // into `dest`, as add_hold_frame_to_() does after rendering the hold.
-    void synthesise_to_(float* dest, std::size_t length, int at) noexcept {
+    // into `dest`: the tonal partials' bins, or the rest's.
+    void synthesise_to_(float* dest, std::size_t length, int at, bool tonal) noexcept {
         const auto window = static_cast<std::size_t>(kFftSize);
         const auto half = static_cast<std::size_t>(kFftSize / 2);
         // Only the part of the frame from `dest`'s start to its end is added.
@@ -802,18 +866,21 @@ private:
             const auto* a = spectra_.data() + static_cast<std::size_t>(ch) * window;
             const auto* b = pair ? a + window : nullptr;
             for (std::size_t k = 1; k < half; ++k) {
-                // A quarter-cycle turn, one sign per peak region:
-                // ka = a * (i * turn), kb = b * (i * turn).
-                const float turn = static_cast<float>(rotation_[k]);
-                const float ka_re = -turn * a[k].imag(), ka_im = turn * a[k].real();
-                const float kb_re = pair ? -turn * b[k].imag() : 0.0f;
-                const float kb_im = pair ? turn * b[k].real() : 0.0f;
+                // Only this part's bins.
+                if ((locked_[k] != 0) != tonal) {
+                    time_[k] = {};
+                    time_[window - k] = {};
+                    continue;
+                }
+                const float ka_re = a[k].real(), ka_im = a[k].imag();
+                const float kb_re = pair ? b[k].real() : 0.0f;
+                const float kb_im = pair ? b[k].imag() : 0.0f;
                 // time[k] = ka + i kb; time[N - k] = conj(ka) + i conj(kb).
                 time_[k] = {ka_re - kb_im, ka_im + kb_re};
                 time_[window - k] = {ka_re + kb_im, kb_re - ka_im};
             }
-            // DC and Nyquist of a real signal are real; turned a quarter
-            // cycle, they have nothing left to carry.
+            // DC and Nyquist: a held phase there would not be real, and they
+            // carry nothing worth holding.
             time_[0] = {};
             time_[half] = {};
             fft_.inverse(time_.data());
@@ -892,10 +959,11 @@ private:
             if (prepare_step_ == 0) {
                 take_hold_();
                 std::fill(ola_.begin(), ola_.end(), 0.0f);
+                std::fill(ola_tonal_.begin(), ola_tonal_.end(), 0.0f);
                 // The pre-roll is built for the NEXT hop boundary. A frame
                 // placed `back` hops before it continues the latched frame by
-                // (hops_per_window + 1 - back) hops; the current phases are
-                // one hop on already, so the oldest (back = hops_per_window
+                // (hops_per_window + 1 - back) hops; take_hold_() leaves the
+                // phases one hop on, so the oldest (back = hops_per_window
                 // - 1) is one step further on.
                 advance_phases_(1, false);
                 prepare_have_hold_ = write_frame_();
@@ -904,7 +972,7 @@ private:
             }
             const int back = hops_per_window_ - prepare_step_;
             if (prepare_have_hold_)
-                synthesise_to_(ola_.data(), window, -back * kHop);
+                synthesise_parts_(window, -back * kHop);
             // Step on without the random walk inside the pre-roll.
             if (back > 0) {
                 advance_phases_(1, false);
@@ -921,22 +989,7 @@ private:
         advance_phases_(1, true);
         phase_ = Phase::engaging;
         weight_step_ = 0;
-        // The hold enters at its matched level and keeps it: it is
-        // stationary from its first frame, so there is nothing for a gain
-        // to follow, and a gain that went on following would itself be a
-        // second change after the engage.
-        double gain = std::clamp(
-            std::sqrt(live_reference_power_ / std::max(hold_power_, 1.0e-20)),
-            static_cast<double>(kMinLevelMatch), static_cast<double>(kMaxLevelMatch));
-        // Nor may the hold peak above the input it holds. Its random-phase
-        // bins make it close to Gaussian whatever the input's waveform was:
-        // on a mastered-loud input, with a small crest factor, a hold matched
-        // in power would peak several dB over it (and an engage fade summing
-        // the two would clip). There the hold is matched in peak instead,
-        // and plays that much quieter.
-        if (gain > 1.0 && hold_peak_ > 0.0)
-            gain = std::max(1.0, std::min(gain, static_cast<double>(live_peak_) / hold_peak_));
-        held_gain_ = static_cast<float>(std::max(gain, static_cast<double>(kMinLevelMatch)));
+        fade_rho_ = 0.0f;
     }
 
     // THE HOLD'S LEVEL, PREDICTED. A bin of the hold is one sinusoid: every
@@ -1076,10 +1129,8 @@ private:
     // Heard as the sound being frozen and then frozen again. So:
     //  - a tonal peak (a bin well above its neighbourhood) keeps its main
     //    lobe as one: every bin of the lobe advances at the peak's
-    //    frequency, so the partial never decoheres, and the lobe turns a
-    //    quarter cycle as one (+90 or -90 degrees at random), which keeps
-    //    its level and shape and makes it orthogonal to the same partial
-    //    still sounding live, so the equal-power fade is level-flat;
+    //    frequency, from the latched frame's phase, so the partial never
+    //    decoheres and carries the live partial on in phase;
     //  - every other bin starts at a uniformly random phase: the diffuse
     //    state it would drift into, from the first frame. No latched timing
     //    survives in them either, so nothing replays.
@@ -1088,17 +1139,18 @@ private:
     void take_hold_() noexcept {
         const auto bins = static_cast<std::size_t>(bins_);
         const auto freq = hold_.instantaneous_frequency();
-        for (int ch = 0; ch < channels_; ++ch) {
-            const auto phases = hold_.held_phases(ch);
-            std::copy(phases.begin(), phases.end(),
-                      hold_phase_.begin() + static_cast<std::ptrdiff_t>(static_cast<std::size_t>(ch) * bins));
-        }
+        // The latched frame's own phases: FreezeHold's have taken a step of
+        // its random walk since.
+        const auto window = static_cast<std::size_t>(kFftSize);
+        for (int ch = 0; ch < channels_; ++ch)
+            for (std::size_t k = 0; k < bins; ++k)
+                hold_phase_[static_cast<std::size_t>(ch) * bins + k] =
+                    static_cast<double>(std::arg(latched_[static_cast<std::size_t>(ch) * window + k]));
         std::copy(freq.begin(), freq.end(), hold_freq_.begin());
         for (std::size_t k = 0; k < bins; ++k) {
             float sum = 0.0f;
             for (int ch = 0; ch < channels_; ++ch) sum += hold_.held_magnitudes(ch)[k];
             magnitude_[k] = sum;
-            rotation_[k] = next_sign_();
             locked_[k] = 0;
         }
         // Local means over +-kPeakNeighbourhood bins, by a running sum.
@@ -1113,27 +1165,25 @@ private:
             const std::size_t hi = std::min(bins, k + reach + 1);
             const double mean = (prefix_[hi] - prefix_[lo]) / static_cast<double>(hi - lo);
             if (!(m > kPeakProminence * mean)) continue;
-            const std::int8_t sign = next_sign_();
             for (std::size_t j = k > lobe ? k - lobe : 0; j <= std::min(bins - 1, k + lobe); ++j) {
                 // A lobe shared with a stronger peak already claimed stays
                 // with that peak.
                 if (locked_[j] && lock_mag_[j] >= m) continue;
-                rotation_[j] = sign;
                 hold_freq_[j] = hold_freq_[k];
                 locked_[j] = 1;
                 lock_mag_[j] = m;
                 lock_peak_[j] = static_cast<std::int32_t>(k);
             }
         }
-        // A locked lobe is given the shape of a steady sinusoid's: with a
-        // periodic Hann window, bin j of a steady partial sits at
-        // -pi (j - k)(N - 1)/N from its peak bin k, whatever the partial's
+        // A locked lobe is given the shape of a steady sinusoid's: a periodic
+        // Hann window is symmetric about N/2, so bin j of a steady partial
+        // sits at -pi (j - k) from its peak bin k, whatever the partial's
         // frequency. The latched frame's own relative phases also say WHERE
         // in the window the partial's energy was; kept, a partial that was a
         // transient (a kick's body, a pluck) replays as a burst once every
         // window length for as long as the hold plays.
         constexpr double pi = 3.14159265358979323846;
-        const double slope = -pi * static_cast<double>(kFftSize - 1) / kFftSize;
+        const double slope = -pi;
         for (std::size_t k = 0; k < bins; ++k) {
             if (!locked_[k] || lock_peak_[k] == static_cast<std::int32_t>(k)) continue;
             const auto peak = static_cast<std::size_t>(lock_peak_[k]);
@@ -1151,16 +1201,44 @@ private:
             for (int ch = 0; ch < channels_; ++ch)
                 hold_phase_[static_cast<std::size_t>(ch) * bins + k] += offset;
         }
+        // Each bin a hop on from the latched frame, as FreezeHold's are.
+        for (std::size_t k = 0; k < bins; ++k)
+            for (int ch = 0; ch < channels_; ++ch)
+                hold_phase_[static_cast<std::size_t>(ch) * bins + k] +=
+                    hold_freq_[k] * static_cast<double>(kHop);
+
+        // THE LEVEL, set once. The tonal partials are the input's own,
+        // averaged over a window where they held steady: they play at gain 1,
+        // so a held tone is never re-levelled. Averaging magnitudes loses
+        // level only in the noise-like rest, so the match is taken there:
+        // the live power the partials do not account for, over the rest's
+        // predicted power.
         const auto predicted = predict_hold_power_();
         hold_power_ = predicted.tonal + predicted.noise;
-        // The hold's peak, estimated: its tonal part keeps the crest factor
-        // of the input it came from (the partials keep their shapes); its
-        // random-phase part is close to Gaussian whatever the input's was.
-        // The two peak together rarely, so they combine in power.
+        const double target = std::max(live_reference_power_ - predicted.tonal,
+                                        0.0);
+        double gain = std::clamp(
+            std::sqrt(target / std::max(predicted.noise, 1.0e-20)),
+            static_cast<double>(kMinLevelMatch), static_cast<double>(kMaxLevelMatch));
+        // Nor may the hold peak above the input it holds. Its random-phase
+        // bins make it close to Gaussian whatever the input's waveform was:
+        // on a mastered-loud input, with a small crest factor, a hold matched
+        // in power would peak several dB over it (and an engage fade summing
+        // the two would clip). There the boost stops where the estimated
+        // peak meets the input's: the tonal part keeps the input's crest
+        // factor, the random-phase part a Gaussian's, and the two combine in
+        // power.
         const double live_crest = static_cast<double>(live_peak_)
                                 / std::sqrt(std::max(live_reference_power_, 1.0e-20));
-        hold_peak_ = std::sqrt(predicted.tonal * live_crest * live_crest
-                               + predicted.noise * kNoiseCrest * kNoiseCrest);
+        const double tonal_peak2 = predicted.tonal * live_crest * live_crest;
+        const double noise_peak2 = predicted.noise * kNoiseCrest * kNoiseCrest;
+        if (gain > 1.0 && noise_peak2 > 0.0) {
+            const double room = static_cast<double>(live_peak_) * live_peak_ - tonal_peak2;
+            const double fit = room > 0.0 ? std::sqrt(room / noise_peak2) : 1.0;
+            gain = std::max(1.0, std::min(gain, fit));
+        }
+        held_gain_ = static_cast<float>(gain);
+        hold_peak_ = std::sqrt(tonal_peak2 + noise_peak2 * gain * gain);
     }
 
     // The hold frame at the current phases, into `spectra_`.
@@ -1174,7 +1252,8 @@ private:
             auto* out = spectra_.data() + static_cast<std::size_t>(ch) * window;
             for (std::size_t k = 0; k < bins; ++k) {
                 const auto p = static_cast<float>(phases[k]);
-                out[k] = {mags[k] * std::cos(p), mags[k] * std::sin(p)};
+                const float m = locked_[k] ? mags[k] : mags[k] * held_gain_;
+                out[k] = {m * std::cos(p), m * std::sin(p)};
             }
         }
         return true;
@@ -1191,9 +1270,8 @@ private:
             double advance = hold_freq_[k] * span;
             // The walk draws for every bin, so the stream does not depend on
             // the hold. A locked lobe does not walk: a steady partial cannot
-            // sound periodic, and a walk would turn it away from the quarter
-            // cycle that keeps it orthogonal to the live partial, which the
-            // release's equal-power fade relies on.
+            // sound periodic, and a walk would take it out of phase with the
+            // same partial still playing live.
             if (walk) {
                 const double draw = jitter_ * (2.0 * next_walk_() - 1.0);
                 if (!locked_[k]) advance += draw;
@@ -1208,13 +1286,7 @@ private:
 
     // xorshift64*: deterministic from the stream, so a bounce and real-time
     // playback turn the same hold the same way.
-    std::int8_t next_sign_() noexcept {
-        rng_ ^= rng_ >> 12;
-        rng_ ^= rng_ << 25;
-        rng_ ^= rng_ >> 27;
-        return ((rng_ * 0x2545f4914f6cdd1dull) >> 63) != 0 ? std::int8_t{1} : std::int8_t{-1};
-    }
-    // Uniform in [0, 1), from the same stream as the turns.
+    // Uniform in [0, 1): the noise-like bins' starting phases.
     double next_uniform_() noexcept {
         rng_ ^= rng_ >> 12;
         rng_ ^= rng_ << 25;
@@ -1238,7 +1310,13 @@ private:
     float synthesis_scale_ = 1.0f;
 
     std::vector<float> input_ring_;               // channels * kFftSize
-    std::vector<float> ola_;                      // channels * kFftSize
+    std::vector<float> ola_;                      // channels * kFftSize: the noise-like part
+    std::vector<float> ola_tonal_;                // channels * kFftSize: the tonal partials
+    std::vector<std::complex<float>> latched_;    // channels * kFftSize: the latched frame
+    bool play_tonal_ = true, play_noise_ = true;
+    float release_rho_ = 0.0f;                    // the release fade's two sides' correlation
+    float last_rho_ = 0.0f;                       // ...measured over the last held hop
+    double rho_cross_ = 0.0, rho_live_ = 0.0, rho_hold_ = 0.0;
     std::vector<std::complex<float>> spectra_;    // channels * kFftSize
     std::vector<std::complex<float>*> frame_ptrs_;
     std::vector<std::complex<float>> time_;       // kFftSize
@@ -1256,7 +1334,6 @@ private:
     int hops_per_window_ = 16;
 
     static constexpr std::uint64_t kRngSeed = 0x2545f4914f6cdd1dull;
-    std::vector<std::int8_t> rotation_;           // bins: +1 or -1 quarter cycle
     std::vector<std::complex<float>> hop_rotor_;  // bins: one hop's phase advance
     std::vector<float> magnitude_;                // bins, scratch
     std::vector<double> prefix_;                  // bins + 1, scratch
@@ -1297,8 +1374,9 @@ private:
     std::int64_t loop_search_ = 0, loop_match_ = 1, loop_min_ = 0, loop_stride_ = 1;
     std::int64_t seam_length_ = 1;
     std::int64_t loop_end_ = 0, loop_length_ = 0, loop_position_ = 0;
-    std::int64_t search_first_ = 0, search_last_ = 0, best_start_ = 0;
-    double best_score_ = 0.0, end_energy_ = 0.0;
+    std::int64_t search_first_ = 0, search_count_ = 1, loop_start_ = 0;
+    std::vector<double> search_cross_, search_energy_; // per candidate start
+    double end_energy_ = 0.0;
     bool loop_mode_ = false;
     bool loop_seam_ = false;                      // a pass after the first
     bool loop_tail_ = false;                      // the audio after the end is copied
