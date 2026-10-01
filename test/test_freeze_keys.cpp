@@ -468,6 +468,64 @@ TEST_CASE("Freeze Keys: a key pressed while the freeze arms sounds once the hold
     CHECK(std::abs(cents(220.0 * ratio(7), p[0].first)) < 3.0);
 }
 
+TEST_CASE("Freeze Keys: a voice reads the loop correctly before its first pass has copied it",
+          "[freeze-keys]") {
+    // The loop is copied out of the recording as its own first pass plays,
+    // so a key pressed during that pass reads samples the copy has not
+    // reached yet. Every loop sample read halfway through the first pass
+    // must equal the same sample read once the pass has wrapped and the
+    // whole loop is in the copy. Control: the half not yet copied carries
+    // the input's level, which a read of the unfilled copy would not.
+    const auto input = pad(4.0);
+    FreezeSource source;
+    REQUIRE(source.prepare(kRate, 2));
+    source.set_hold_seconds(kLoopHold);
+    Stereo out; out.resize(input.size());
+    std::vector<float> early[2], late[2];
+    std::int64_t early_position = -1, previous = -1;
+    bool wrapped = false;
+    for (std::size_t pos = 0; pos < input.size(); pos += 128) {
+        const auto n = std::min<std::size_t>(128, input.size() - pos);
+        source.set_frozen(pos >= at(2.0));
+        const float* i[] = {input.l.data() + pos, input.r.data() + pos};
+        float* o[] = {out.l.data() + pos, out.r.data() + pos};
+        source.process_block(i, o, 2, int(n));
+        if (!source.hold_audible() || !source.looping()) continue;
+        const std::int64_t length = source.loop_length();
+        const std::int64_t position = source.loop_position();
+        if (early_position < 0 && position >= length / 3) {
+            early_position = position;
+            for (int ch = 0; ch < 2; ++ch)
+                for (std::int64_t k = 0; k < length; ++k) early[ch].push_back(source.loop_sample(ch, k));
+        }
+        if (early_position >= 0 && previous >= 0 && position < previous) wrapped = true;
+        previous = position;
+        if (wrapped && position >= length / 3) {
+            for (int ch = 0; ch < 2; ++ch)
+                for (std::int64_t k = 0; k < length; ++k) late[ch].push_back(source.loop_sample(ch, k));
+            break;
+        }
+    }
+    REQUIRE(early_position > 0);
+    REQUIRE(wrapped);
+    const auto length = static_cast<std::int64_t>(early[0].size());
+    REQUIRE(early_position < length);
+    for (int ch = 0; ch < 2; ++ch) {
+        REQUIRE(late[ch].size() == early[ch].size());
+        float worst = 0.0f;
+        for (std::size_t k = 0; k < early[ch].size(); ++k)
+            worst = std::max(worst, std::abs(early[ch][k] - late[ch][k]));
+        CAPTURE(ch, worst);
+        CHECK(worst == 0.0f);
+        double ahead = 0.0;
+        for (std::int64_t k = early_position; k < length; ++k)
+            ahead += double(early[ch][std::size_t(k)]) * early[ch][std::size_t(k)];
+        const double rms = std::sqrt(ahead / double(length - early_position));
+        CAPTURE(rms);
+        CHECK(rms > 0.05);
+    }
+}
+
 TEST_CASE("Freeze Keys: notes start, stop and switch the bus without a click", "[freeze-keys]") {
     // A sine's second difference is tiny (0.3 (2 pi f / fs)^2: ~1e-4 at
     // 220 Hz); a step anywhere -- a note that starts or stops at full level,

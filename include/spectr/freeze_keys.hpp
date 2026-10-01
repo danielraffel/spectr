@@ -278,7 +278,7 @@ private:
         bool loop = false;
         int note = 0;
         std::uint64_t age = 0;
-        float level = 1.0f;     // velocity * the hold's level match
+        float level = 1.0f;     // velocity
         double ratio = 1.0;
         // Envelope: 0..1; it rises by attack_inc while held, and falls from
         // release_from to 0 over the release.
@@ -439,7 +439,6 @@ private:
             if (source_.loop_length() < 4) return;
             v.position = static_cast<double>(source_.loop_position());
         } else {
-            v.level *= source_.level_match();
             if (!analysed_) analyse_hold_();
             if (!analysed_) return;
             // Its frame plan and pre-roll are built over the next
@@ -653,11 +652,13 @@ private:
     }
 
     // A voice's frame plan at its ratio: noise bins read off the stretched
-    // envelope, partials drawn as scaled sinusoids.
+    // envelope, partials drawn as scaled sinusoids. As in the hold, the
+    // partials play at the input's level and only the noise-like rest
+    // carries the hold's level match.
     void layout_voice_(Voice& v) noexcept {
         const auto bins = static_cast<std::size_t>(bins_);
         const double r = v.ratio;
-        const float noise_scale = static_cast<float>(1.0 / std::sqrt(r));
+        const float noise_scale = static_cast<float>(1.0 / std::sqrt(r)) * source_.level_match();
         constexpr double two_pi = 6.28318530717958647692;
         const double hop = static_cast<double>(kVoiceHop);
         for (std::size_t j = 0; j < bins; ++j) {

@@ -349,9 +349,16 @@ public:
     /// seam crossfaded in), for a reader that plays the loop on its own
     /// schedule (FreezeKeys). `at` must be in [0, loop_length()). Audio
     /// thread; valid while the hold is audible.
+    ///
+    /// The loop is copied out of the recording as its own first pass plays,
+    /// so until that pass wraps only the samples before loop_position() are
+    /// in the copy; the rest are read from the recording, which keeps every
+    /// sample of the loop for longer than a pass.
     [[nodiscard]] float loop_sample(int channel, std::int64_t at) const noexcept {
-        return loop_value_(loop_.data() + static_cast<std::size_t>(channel) * loop_capacity_,
-                           at, true);
+        const float* loop = loop_.data() + static_cast<std::size_t>(channel) * loop_capacity_;
+        const bool copied = loop_seam_ || at < loop_position_;
+        const float start = copied ? loop[at] : recorded_at_(channel, loop_start_ + at);
+        return seam_value_(loop, start, at);
     }
     /// True while any held content reaches the output.
     [[nodiscard]] bool hold_audible() const noexcept {
@@ -774,7 +781,13 @@ private:
             loop[at] = v;
             return v;
         }
-        const float start = loop[at];
+        return seam_value_(loop, loop[at], at);
+    }
+
+    // Loop sample `at` as a pass after the first plays it: within the seam,
+    // once the audio that followed the end has been kept, that audio fades
+    // into the start.
+    [[nodiscard]] float seam_value_(const float* loop, float start, std::int64_t at) const noexcept {
         if (!loop_tail_ || at >= seam_length_) return start;
         const float p = (static_cast<float>(at) + 0.5f) / static_cast<float>(seam_length_);
         const float a = std::sin(p * 1.57079632679489662f);
