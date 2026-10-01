@@ -1699,6 +1699,12 @@ TEST_CASE("an enabled LFO visibly modulates the drawn bank without moving canoni
     rig.store.set_value(spectr::kParamLfoEnabled, 0.0f);
     REQUIRE(rig.processor.apply_surface_params(false));
     settle(rig.clock, 4);
+    // Switching off is a level ramp (spectr::kLfoLevelSlewSeconds), not a
+    // step, so let it run out before reading what "off" draws: 256-sample
+    // blocks at 48 kHz, plus the falling-edge pass.
+    feed_audio_blocks(rig, static_cast<int>(std::ceil(
+        spectr::kLfoLevelSlewSeconds * 48000.0 / 256.0)) + 2);
+    settle(rig.clock, 4);
     sample_modulated_bank(rig, 6, 6);
     rig.bridge().load_script(R"js((() => {
       const samples = globalThis.__spectrLfoSamples;
@@ -8157,6 +8163,346 @@ TEST_CASE("a freeze press goes to the host as one edit gesture",
             "spectr-freeze-gesture-control");
         settle(rig.clock, 8);
         CHECK(recorder.take() == "set 1");
+    }
+    storage.require_unchanged();
+}
+
+// ── The modulation controls record in host automation, and play back ────────
+//
+// The whole loop a user performs with the LFOs as an instrument: change them
+// in the editor while a host records, then play the lane back and watch the
+// editor follow. The recorder is what a format adapter sees -- the store's
+// gesture callbacks and its inline value listener, in order -- for the
+// modulation lanes only. A host in Touch, Latch or Write records the begin/end
+// bracket; a value with no bracket around it is an edit it cannot record.
+
+namespace {
+
+struct ModulationEditRecorder {
+    std::vector<std::string> events;
+    pulp::state::ListenerToken token;
+    static bool watched(pulp::state::ParamID id) {
+        return (id >= spectr::kParamLfoEnabled && id <= spectr::kParamLfoTarget)
+            || (id >= spectr::kParamLfo2Enabled && id <= spectr::kParamLfo2Depth)
+            || id == spectr::kOutputTrim || id == spectr::kParamMorph;
+    }
+    explicit ModulationEditRecorder(pulp::state::StateStore& store) {
+        store.set_gesture_callbacks(
+            [this](pulp::state::ParamID id) {
+                if (watched(id)) events.push_back("begin " + std::to_string(id));
+            },
+            [this](pulp::state::ParamID id) {
+                if (watched(id)) events.push_back("end " + std::to_string(id));
+            });
+        token = store.add_audio_listener([this](pulp::state::ParamID id, float value) {
+            if (!watched(id)) return;
+            char buf[48];
+            std::snprintf(buf, sizeof(buf), "set %u=%g", static_cast<unsigned>(id),
+                          static_cast<double>(value));
+            events.emplace_back(buf);
+        });
+    }
+    std::string take() {
+        std::string out;
+        for (const auto& e : events) out += (out.empty() ? "" : ", ") + e;
+        events.clear();
+        return out;
+    }
+};
+
+void open_band_menu(NativeEditorRig& rig) {
+    activate(rig, "[data-spectr-filter-surface]", "contextmenu",
+             R"js({clientX:660,clientY:430,offsetX:660,offsetY:430,button:2})js");
+    require_runtime_contract(rig, "document.querySelector('[data-spectr-band-context-menu]')",
+                             "the band menu did not open");
+    // The LFO rows live in its Modulation submenu.
+    activate(rig, "[data-spectr-band-action=\"modulation-toggle\"]");
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-enable\"]')",
+        "the Modulation submenu did not open");
+}
+
+// Press a band-menu slider track at `ratio` of its width and release it.
+void press_menu_slider(NativeEditorRig& rig, std::string_view action, double ratio) {
+    const auto track = std::string("[data-spectr-menu-slider-track=\"")
+        + std::string(action) + "\"]";
+    activate(rig, track, "pointerdown", slider_press_at(ratio, track));
+    activate(rig, track, "pointerup", slider_press_at(ratio, track));
+}
+
+}  // namespace
+
+TEST_CASE("every LFO edit in the band menu records as a host gesture",
+          "[native-n1][state-parity][modulation][automation]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    open_band_menu(rig);
+    ModulationEditRecorder recorder(rig.store);
+
+    activate(rig, "[data-spectr-band-action=\"lfo1-enable\"]");
+    CHECK(recorder.take() == "begin 4000, set 4000=1, end 4000");
+
+    activate(rig, "[data-spectr-band-action=\"lfo1-shape\"] [data-spectr-shape-option=\"2\"]",
+             "pointerdown");
+    CHECK(recorder.take() == "begin 4001, set 4001=2, end 4001");
+
+    // Rate moves over the musical rates (0.25 .. 16 beats, 7 stops): the far
+    // end of the track is 16 beats.
+    press_menu_slider(rig, "lfo1-rate", 1.0);
+    CHECK(recorder.take() == "begin 4002, set 4002=16, end 4002");
+
+    press_menu_slider(rig, "lfo1-depth", 0.25);
+    CHECK(recorder.take() == "begin 4003, set 4003=0.25, end 4003");
+
+    activate(rig, "[data-spectr-band-action=\"modulation-target-morph\"]");
+    CHECK(recorder.take() == "begin 4004, set 4004=3, end 4004");
+
+    activate(rig, "[data-spectr-band-action=\"lfo2-enable\"]");
+    CHECK(recorder.take() == "begin 4010, set 4010=1, end 4010");
+    activate(rig, "[data-spectr-modulation-source-action=\"2\"]");
+    activate(rig, "[data-spectr-band-action=\"lfo2-shape\"] [data-spectr-shape-option=\"3\"]",
+             "pointerdown");
+    CHECK(recorder.take() == "begin 4011, set 4011=3, end 4011");
+    press_menu_slider(rig, "lfo2-rate", 0.0);
+    CHECK(recorder.take() == "begin 4012, set 4012=0.25, end 4012");
+    press_menu_slider(rig, "lfo2-depth", 1.0);
+    CHECK(recorder.take() == "begin 4013, set 4013=1, end 4013");
+
+    // Off again: the toggle records its falling edge too.
+    activate(rig, "[data-spectr-band-action=\"lfo1-enable\"]");
+    CHECK(recorder.take() == "begin 4000, set 4000=0, end 4000");
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+TEST_CASE("every LFO edit in Settings records as a host gesture",
+          "[native-n1][state-parity][modulation][automation]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    activate(rig, "[data-spectr-settings-open]");
+    ModulationEditRecorder recorder(rig.store);
+
+    activate(rig, "[data-spectr-settings-modulation] [data-spectr-setting-toggle]");
+    CHECK(recorder.take() == "begin 4000, set 4000=1, end 4000");
+    settle(rig.clock, 8);
+    // Settings' LFO 1 rows, in document order: shape chips, then rate and
+    // depth sliders.
+    activate(rig, "[data-spectr-settings-modulation] [data-spectr-setting-option=\"3\"]");
+    CHECK(recorder.take() == "begin 4001, set 4001=3, end 4001");
+    const auto rate = std::string("[data-spectr-settings-modulation] [data-spectr-setting-slider]");
+    activate(rig, rate, "pointerdown", slider_press_at(1.0, rate));
+    activate(rig, rate, "pointerup", slider_press_at(1.0, rate));
+    CHECK(recorder.take() == "begin 4002, set 4002=16, end 4002");
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+TEST_CASE("host playback of the LFO lanes moves the band menu, even after an edit",
+          "[native-n1][state-parity][modulation][automation]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    open_band_menu(rig);
+
+    // The user sets depth to 37% by hand, which is a value a float cannot hold
+    // exactly. The processor reports it back as 0.3700000047683716.
+    press_menu_slider(rig, "lfo1-depth", 0.37);
+    REQUIRE(rig.store.get_value(spectr::kParamLfoDepth) == Catch::Approx(0.37f));
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-depth\"]')"
+        "?.getAttribute('aria-valuetext') === '37%'",
+        "the depth row does not show the edit");
+
+    // Now the host plays its lanes back.
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape, 3.0f);
+    rig.store.set_value(spectr::kParamLfoRate, 0.5f);
+    rig.store.set_value(spectr::kParamLfoDepth, 0.8f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-enable\"] [data-spectr-menu-switch]')"
+        "?.getAttribute('data-spectr-menu-switch') === 'on'",
+        "LFO 1 on/off did not follow host playback");
+    require_runtime_contract(rig,
+        "String(document.querySelector('[data-spectr-band-action=\"lfo1-shape\"]')"
+        "?.getAttribute('aria-valuenow')) === '3'",
+        "LFO 1 shape did not follow host playback");
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-rate\"]')"
+        "?.getAttribute('aria-valuetext') === '0.5 beats'",
+        "LFO 1 rate did not follow host playback");
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-depth\"]')"
+        "?.getAttribute('aria-valuetext') === '80%'",
+        "LFO 1 depth did not follow host playback after the user edited it");
+
+    // And back off: the switch follows the lane in both directions.
+    rig.store.set_value(spectr::kParamLfoEnabled, 0.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-enable\"] [data-spectr-menu-switch]')"
+        "?.getAttribute('data-spectr-menu-switch') === 'off'",
+        "LFO 1 off did not follow host playback");
+    storage.require_unchanged();
+}
+
+TEST_CASE("an Output trim or Morph edit records as a host gesture",
+          "[native-n1][state-parity][modulation][automation]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    ModulationEditRecorder recorder(rig.store);
+
+    // The trim is a native range input. Its change callback is driven the way
+    // the native slider drives it -- with the raw value as the argument -- and
+    // a value change outside a press is a complete bracket.
+    const auto change_trim = [&](double db) {
+        rig.bridge().load_script(std::string(R"js((() => {
+          const node = globalThis.__pulpFindMaterializedElement__('[data-spectr-output-trim]');
+          const id = node && (node.__pulpId || node.id);
+          const callback = globalThis.__pulpReactEventCallbacks__?.get?.(String(id) + ':change');
+          if (typeof callback !== 'function') throw new Error('trim has no change callback');
+          callback()js") + std::to_string(db) + R"js();
+          if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+            globalThis.__pulpRuntimeSettle__(8);
+        })();)js", "spectr-output-trim-change");
+        settle(rig.clock);
+    };
+    change_trim(-6.0);
+    CHECK(recorder.take() == "begin 2, set 2=-6, end 2");
+
+    // A press on the input opens the bracket, so a drag is one gesture.
+    activate(rig, "[data-spectr-output-trim]", "pointerdown");
+    change_trim(-3.0);
+    change_trim(-1.5);
+    activate(rig, "[data-spectr-output-trim]", "pointerup");
+    CHECK(recorder.take() == "begin 2, set 2=-3, set 2=-1.5, end 2");
+    CHECK(rig.store.open_gesture_count() == 0);
+
+    // Morph: capture two different snapshots, then drag. The derived Morph
+    // lane is written by the processor as the drag runs; the whole drag is ONE
+    // bracket on it.
+    const auto press_capture = [&](const char* id) {
+        rig.root->layout_children();
+        auto* button = rig.bridge().widget(id);
+        REQUIRE(button != nullptr);
+        const auto box = pulp::view::ViewInspector::absolute_bounds(*button);
+        rig.root->simulate_click({box.x + box.width * 0.5f, box.y + box.height * 0.5f});
+        settle(rig.clock, 12);
+    };
+    press_capture("spectr-snapshot-capture-a");
+    rig.processor.field().bands[3] = {12.0f, false};
+    press_capture("spectr-snapshot-capture-b");
+    require_app_state(rig, "s.snapshotStatus.A === true && s.snapshotStatus.B === true",
+                      "the two snapshots were not captured");
+    recorder.take();
+    const auto morph = std::string("[data-spectr-morph]");
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-morph]')"
+        "?.getAttribute('data-spectr-morph-state') === 'enabled'",
+        "morph never enabled after capturing both snapshots");
+    activate(rig, morph, "pointerdown", slider_press_at(0.25, morph));
+    activate(rig, morph, "pointermove", slider_press_at(0.5, morph));
+    activate(rig, morph, "pointermove", slider_press_at(0.75, morph));
+    activate(rig, morph, "pointerup", slider_press_at(0.75, morph));
+    const auto recorded = recorder.take();
+    INFO("morph drag recorded: " << recorded);
+    // One begin, one end, and the values in between.
+    CHECK(recorded.rfind("begin 3000, ", 0) == 0);
+    const std::string tail = ", end 3000";
+    REQUIRE(recorded.size() >= tail.size());
+    CHECK(recorded.substr(recorded.size() - tail.size()) == tail);
+    std::size_t begins = 0, ends = 0;
+    for (std::size_t at = recorded.find("begin 3000"); at != std::string::npos;
+         at = recorded.find("begin 3000", at + 1)) ++begins;
+    for (std::size_t at = recorded.find("end 3000"); at != std::string::npos;
+         at = recorded.find("end 3000", at + 1)) ++ends;
+    CHECK(begins == 1);
+    CHECK(ends == 1);
+    CHECK(recorded.find("set 3000=0.75") != std::string::npos);
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+
+TEST_CASE("a band paint drag is one host gesture per band it touches",
+          "[native-n1][state-parity][modulation][automation]") {
+    // The plot republishes the whole processing state on every pointer move,
+    // and the processor pushes each changed band lane. Without a drag bracket
+    // each of those pushes is its own begin/value/end, so a host in Touch sees
+    // the band released between every two moves and snaps back to the old
+    // lane in each gap. With one, each lane the drag touches opens once and
+    // closes on release.
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    std::map<pulp::state::ParamID, int> begins, ends, sets;
+    const auto band_lane = [](pulp::state::ParamID id) {
+        return id >= spectr::kParamBandGainBase && id < spectr::kParamBandMuteBase + 64;
+    };
+    rig.store.set_gesture_callbacks(
+        [&](pulp::state::ParamID id) { if (band_lane(id)) ++begins[id]; },
+        [&](pulp::state::ParamID id) { if (band_lane(id)) ++ends[id]; });
+    auto token = rig.store.add_audio_listener([&](pulp::state::ParamID id, float) {
+        if (band_lane(id)) ++sets[id];
+    });
+
+    const auto fire = [&](const char* type, int y, int buttons) {
+        activate(rig, "[data-spectr-filter-surface]", type,
+                 "{clientX:660,clientY:" + std::to_string(y)
+                 + ",pointerId:73,button:0,buttons:" + std::to_string(buttons) + "}");
+        settle(rig.clock, 4);
+    };
+    fire("pointerdown", 430, 1);
+    fire("pointermove", 380, 1);
+    fire("pointermove", 330, 1);
+    fire("pointermove", 280, 1);
+    fire("pointerup", 280, 0);
+    settle(rig.clock, 12);
+
+    // Control: the drag edited something, and edited it more than once, so a
+    // per-publication bracket would show up as more than one begin.
+    REQUIRE_FALSE(sets.empty());
+    int most_sets = 0;
+    for (const auto& [id, count] : sets) most_sets = std::max(most_sets, count);
+    INFO("lanes written: " << sets.size() << ", most writes to one lane: " << most_sets);
+    REQUIRE(most_sets >= 2);
+    for (const auto& [id, count] : sets) {
+        INFO("lane " << id << " written " << count << " times");
+        CHECK(begins[id] == 1);
+        CHECK(ends[id] == 1);
+    }
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+TEST_CASE("host playback of Morph moves the Morph slider",
+          "[native-n1][state-parity][modulation][automation]") {
+    // The bands Morph derives always followed playback; the slider did not, so
+    // a recorded morph sweep played back with the thumb parked wherever the
+    // user last left it.
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto thumb_value = [&] {
+        return runtime_value(rig,
+            "String(document.querySelector('[data-spectr-morph]')"
+            "?.getAttribute('aria-valuenow'))",
+            "spectr-native-morph-value");
+    };
+    REQUIRE(thumb_value() == "0");
+    for (const float t : {0.25f, 0.75f, 0.0f}) {
+        INFO("host morph " << t);
+        rig.store.set_value(spectr::kParamMorph, t);
+        REQUIRE(rig.processor.apply_surface_params(true));
+        settle(rig.clock, 8);
+        CHECK(std::stod(thumb_value()) == Catch::Approx(t).margin(1e-6));
     }
     storage.require_unchanged();
 }

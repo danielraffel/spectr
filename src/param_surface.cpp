@@ -487,6 +487,9 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         const float t = store->get_value(kParamMorph);
         if (t != applied_param_cache_[detail::kSlotMorph].load(std::memory_order_relaxed)) {
             applied_param_cache_[detail::kSlotMorph].store(t, std::memory_order_relaxed);
+            // The Morph slider shows the lane even before both snapshots
+            // exist, so a move is always news to the editor.
+            editor_changed = true;
             const bool has_a = snapshots_.has(SnapshotBank::Slot::A);
             const bool has_b = snapshots_.has(SnapshotBank::Slot::B);
             if (has_a && has_b) {

@@ -326,6 +326,10 @@ void add_history_and_macros_(choc::value::Value& payload, const Spectr& plugin,
         macros.addArrayElement(entry);
     }
     payload.addMember("macros", macros);
+    // The Morph lane, so the slider follows host playback. The bands it
+    // derives are projected on their own; this is the thumb.
+    payload.addMember("morph", static_cast<double>(
+        plugin.state().get_value(kParamMorph)));
 
 }
 
@@ -939,6 +943,25 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             if (!id) return EditorBridge::err_response("param id must be an integer");
             if (!plugin.end_editor_param_gesture(*id))
                 return EditorBridge::err_response("param is not editor-editable");
+            return EditorBridge::ok_response();
+        });
+
+    // A drag on a control the PROCESSOR writes as a derived value -- Morph,
+    // pushed by apply_morph_to_live as the snapshot derivation runs. The pair
+    // opens and closes the processor's gesture epoch, the same bracket a
+    // paint drag and `macro_drag_start`/`macro_drag_end` use: each parameter
+    // the drag writes opens its host gesture once and every one closes on
+    // release, so a host in Touch sees one gesture per drag instead of the
+    // control released between every two moves.
+    bridge.add_handler("param_drag_start",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            plugin.begin_param_gesture_epoch();
+            return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("param_drag_end",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            plugin.end_param_gesture_epoch();
             return EditorBridge::ok_response();
         });
 

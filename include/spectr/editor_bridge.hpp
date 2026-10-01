@@ -84,6 +84,17 @@
 //  type="mode_set"          — payload: {kind: motion|analyzer|edit|visualization,
 //                                       value: the corresponding editor label}
 //                             effect: StateStore::set_value(id, value)
+//  type="param_edit"        — payload: {id: int, value: float}
+//                             effect: Spectr::edit_param_from_editor -- Mix,
+//                             Output trim and the LFO lanes only; a complete
+//                             host gesture unless a drag bracket is open
+//  type="param_gesture_begin" / "param_gesture_end"
+//                           — payload: {id: int}
+//                             effect: open / close that parameter's drag bracket
+//  type="param_drag_start" / "param_drag_end"
+//                           — payload: {}
+//                             effect: open / close the processor's gesture
+//                             epoch for a drag on a derived control (Morph)
 //  type="freeze_hold_set"   — payload: {seconds: number}
 //                             effect: Spectr::set_freeze_hold_seconds(seconds);
 //                             the response carries the clamped value
