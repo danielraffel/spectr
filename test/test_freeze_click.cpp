@@ -664,7 +664,7 @@ struct Onset {
     int programme = 0;
     std::size_t press = 0; // programme sample
     Score engage_pressed, engage_control, engage_planted, engage_ideal, engage_steady;
-    Score release_pressed, release_control;
+    Score release_pressed, release_control, release_ideal;
 };
 
 /// A -30 dBFS waveform step at `at`: what a crossfade that jumps between two
@@ -734,6 +734,29 @@ std::vector<Onset> sweep(const Render& render, const std::function<int()>& laten
                          held_from - span.before, held_from + span.after));
         o.release_pressed = sc(pressed, release);
         o.release_control = sc(control, release);
+        // An ideal release: the same hold, never released, faded out into
+        // the live input by a plain equal-power fade from the release on.
+        // Where the hold's partials meet the same partials still playing
+        // live, even that fade reads above the hold's own fluctuation.
+        {
+            Take held_on = take;
+            held_on.release = take.length + 1;
+            const auto continued = render(held_on, true);
+            Stereo ideal = continued;
+            const std::size_t fade = samples(FreezeSource::kCrossfadeSeconds);
+            // From where the pressed render's own fade begins: the freeze
+            // source's first hop boundary after the release (its hops count
+            // from the start of the stream), plus the latency.
+            const auto hop = std::size_t(FreezeSource::kHop);
+            const std::size_t begins = (take.release + hop - 1) / hop * hop + l - 1;
+            for (std::size_t n = begins; n < ideal.size(); ++n) {
+                const double q = std::min(1.0, double(n - begins) / double(fade));
+                const double gh = std::cos(q * kPi / 2), gl = std::sin(q * kPi / 2);
+                ideal.l[n] = float(gh * continued.l[n] + gl * control.l[n]);
+                ideal.r[n] = float(gh * continued.r[n] + gl * control.r[n]);
+            }
+            o.release_ideal = sc(ideal, release);
+        }
         o.press = absolute;
         out.push_back(o);
     }
@@ -806,6 +829,7 @@ void report(const char* label, const std::vector<Onset>& onsets) {
             {"steady  hold    ", &Onset::engage_steady},
             {"engage  PRESSED ", &Onset::engage_pressed},
             {"release control ", &Onset::release_control},
+            {"release ideal xf", &Onset::release_ideal},
             {"release PRESSED ", &Onset::release_pressed}};
         for (const auto& [name, edge] : rows)
             std::printf("    %s %s\n", name,
@@ -891,12 +915,13 @@ TEST_CASE("Freeze click report: every variant on realistic material",
 
 namespace {
 
-/// One press through the freeze source, rendered three ways: unpressed, as
-/// shipped, and with a one-sample crossfade -- the hold alone from the engage
-/// on. It is the same hold in both pressed renders: the latch, the turn, the
-/// phases and their random walk do not depend on the fade.
+/// One press through the freeze source, rendered unpressed, as shipped, and
+/// with a one-sample crossfade -- the hold alone from the engage on, whole
+/// and as its tonal partials and its noise-like rest. It is the same hold in
+/// every pressed render: the latch, the phases and their random walk do not
+/// depend on the fade or on which part is played.
 struct SourceTake {
-    Stereo live, shipped, hold;
+    Stereo live, shipped, hold, tonal, noise;
     std::size_t engage = 0; // first sample the hold reaches
 };
 
@@ -908,10 +933,11 @@ SourceTake source_take(const Stereo& programme, std::size_t absolute) {
     take.release = take.press + samples(5.0);
     take.length = take.press + samples(0.4);
     SourceTake out;
-    const auto run = [&](bool pressed, int crossfade) {
+    const auto run = [&](bool pressed, int crossfade, bool tonal = true, bool noise = true) {
         FreezeSource source;
         REQUIRE(source.prepare(kRate, 2));
         if (crossfade > 0) source.set_crossfade_samples(crossfade);
+        source.set_hold_parts(tonal, noise);
         Stereo o; o.resize(take.length);
         walk(take, pressed, 64, [&](std::size_t pos, std::size_t n, bool frozen) {
             source.set_frozen(frozen);
@@ -924,6 +950,8 @@ SourceTake source_take(const Stereo& programme, std::size_t absolute) {
     out.live = run(false, 0);
     out.shipped = run(true, 0);
     out.hold = run(true, 1);
+    out.tonal = run(true, 1, true, false);
+    out.noise = run(true, 1, false, true);
     out.engage = take.press;
     while (out.engage < take.length && out.hold.l[out.engage] == out.live.l[out.engage]
            && out.hold.r[out.engage] == out.live.r[out.engage])
@@ -933,20 +961,23 @@ SourceTake source_take(const Stereo& programme, std::size_t absolute) {
 }
 
 /// Worst millisecond, across the engage fade, of what the shipped render
-/// adds beyond `fade(p)` applied to live and hold, in dB re the fade's mean
-/// power.
-double beyond_fade_db(const SourceTake& t, double (*g_live)(double), double (*g_hold)(double)) {
+/// adds beyond the fade laws applied to the live input and to the hold's
+/// tonal and noise-like parts, in dB re the fade's mean power.
+double beyond_fade_db(const SourceTake& t, double (*g_live)(double), double (*g_tonal)(double),
+                      double (*g_noise)(double)) {
     const std::size_t fade = samples(FreezeSource::kCrossfadeSeconds), step = samples(0.001);
     double worst = -300.0;
     for (int side = 0; side < 2; ++side) {
         const auto& L = side ? t.live.r : t.live.l;
         const auto& S = side ? t.shipped.r : t.shipped.l;
-        const auto& H = side ? t.hold.r : t.hold.l;
+        const auto& T = side ? t.tonal.r : t.tonal.l;
+        const auto& N = side ? t.noise.r : t.noise.l;
         double mean = 0.0;
         std::vector<double> u(fade);
         for (std::size_t i = 0; i < fade; ++i) {
             const double p = double(i + 1) / double(fade);
-            const double ideal = g_live(p) * L[t.engage + i] + g_hold(p) * H[t.engage + i];
+            const double ideal = g_live(p) * L[t.engage + i] + g_tonal(p) * T[t.engage + i]
+                               + g_noise(p) * N[t.engage + i];
             mean += ideal * ideal;
             u[i] = S[t.engage + i] - ideal;
         }
@@ -964,6 +995,7 @@ double cos_law(double p) { return std::cos(p * kPi / 2); }
 double sin_law(double p) { return std::sin(p * kPi / 2); }
 double linear_out(double p) { return 1.0 - p; }
 double linear_in(double p) { return p; }
+double cos_complement(double p) { return 1.0 - std::cos(p * kPi / 2); }
 
 std::vector<std::size_t> random_moments(int count, unsigned seed) {
     std::mt19937 rng(seed);
@@ -975,23 +1007,25 @@ std::vector<std::size_t> random_moments(int count, unsigned seed) {
 
 } // namespace
 
-TEST_CASE("The freeze engage is an equal-power fade into the hold and nothing else",
+TEST_CASE("The freeze engage is its fade into the hold and nothing else",
           "[freeze][click]") {
     // A gain that renormalises the fade sample by sample -- following the
     // waveform's own power -- modulates it at audio rate: on a drum loop that
     // is a burst of distortion as loud as the signal for the length of the
-    // fade, heard as a click. What the shipped engage plays beyond the plain
-    // equal-power fade of the live input into the hold must be nothing.
-    // Control: the same instrument against the WRONG fade law (linear) must
-    // read the difference, so a clean reading is not a blind one.
+    // fade, heard as a click. What the shipped engage plays beyond its fade
+    // must be nothing: the live input by cos, the hold's tonal partials
+    // (which continue the live ones in phase) by 1 - cos, its noise-like rest
+    // by sin. Control: the same instrument against the WRONG fade law
+    // (linear) must read the difference, so a clean reading is not a blind
+    // one.
     double worst = -300.0, wrong_law = 300.0;
     const auto moments = random_moments(60, 1);
     for (std::size_t i = 0; i < moments.size(); ++i) {
         const auto t = source_take(*programmes().at(int(i % 3)), moments[i]);
-        worst = std::max(worst, beyond_fade_db(t, cos_law, sin_law));
-        wrong_law = std::min(wrong_law, beyond_fade_db(t, linear_out, linear_in));
+        worst = std::max(worst, beyond_fade_db(t, cos_law, cos_complement, sin_law));
+        wrong_law = std::min(wrong_law, beyond_fade_db(t, linear_out, linear_in, linear_in));
     }
-    INFO("beyond the equal-power fade: worst " << worst << " dB; the linear-law control: least "
+    INFO("beyond the fade: worst " << worst << " dB; the linear-law control: least "
          << wrong_law << " dB");
     CHECK(worst < -90.0);
     CHECK(wrong_law > -40.0);
@@ -1082,7 +1116,13 @@ TEST_CASE("Freeze taps on a drum loop, chords and a voice add no click in either
              << worst(&Onset::release_pressed, &Score::overshoot) << "; the -30 dBFS planted step: "
              << above(&Onset::engage_planted) << " of " << onsets.size() << " seen");
         CHECK(above(&Onset::engage_pressed) == 0);
-        CHECK(above(&Onset::release_pressed) == 0);
+        // A release reads against the limit, or against an ideal equal-power
+        // release into the same live input, whichever is higher.
+        const auto release_over = std::count_if(onsets.begin(), onsets.end(), [&](const Onset& o) {
+            return o.release_pressed.overshoot > std::max(overshoot_limit, o.release_ideal.overshoot + 3.0);
+        });
+        INFO("releases over both: " << release_over);
+        CHECK(release_over == 0);
         // The instrument sees a planted step: this is what "zero" is not.
         CHECK(above(&Onset::engage_planted) > long(onsets.size()) / 2);
     }
