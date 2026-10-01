@@ -12,7 +12,8 @@ layout remain stored but do not enter the active spectral mask.
 | `1` | Mix |
 | `2` | Output trim |
 | `3` | Freeze (Live/Frozen) |
-| `4...999` | Reserved global controls |
+| `4` | Freeze Length (1 bar/2 bars/4 bars/8 bars/Custom) |
+| `5...999` | Reserved global controls |
 | `1000...1063` | Band 01...64 gain |
 | `1064...1999` | Reserved band-gain growth |
 | `2000...2063` | Band 01...64 mute |
@@ -44,6 +45,13 @@ layout remain stored but do not enter the active spectral mask.
 The gain and mute names are zero-padded (`Band 01 Gain` through
 `Band 64 Gain`) so hosts that flatten groups still sort them correctly.
 
+## Display and recording
+
+LFO rate reads in a host's lane as beats ("4 beats", "1 beat"), and depth as a
+percentage ("50%"); typed values accept the same forms. LFO on/off, shape and
+target are discrete, labelled lanes. How each control records an edit gesture
+and follows playback is in [automation.md](automation.md).
+
 ## Freeze
 
 `3` holds the input spectrum. It is a boolean, automatable like any other
@@ -53,10 +61,41 @@ LFOs keep acting on the held sound, and the dry leg of Mix stays live. While a
 freeze is requested or its hold is still audible, Spectr reports an infinite
 tail.
 
-How much input a freeze averages ("Hold length") is a Settings value persisted
-in the supplemental plugin-state blob as `freeze_hold_seconds`, not a lane. The
-held spectrum itself is not saved: a session that stored Freeze on re-arms and
-holds the first stretch of input it plays.
+## Freeze Length
+
+`4` is how much input the next freeze takes in, as a musical length: an enum
+of the header dropdown's common lengths (1, 2, 4, 8 bars) plus `Custom`, which
+selects the custom length the editor's Custom length… popover last committed.
+A length is exact: whole bars `0...128` plus one bar fraction from a fixed set
+(`include/spectr/freeze_length.hpp` is the only definition). The custom length
+persists in the supplemental plugin-state blob as
+`freeze_length: {bars: <int>, fraction: "<n/d>"}`, never as a float, so
+`1 1/12` round-trips exactly.
+
+Why an enum and not every length: there are 129 x 17 - 1 valid lengths, and a
+lane of 2,192 steps is unusable to draw automation on. The common lengths are
+one step apart, and anything else is still reachable by automating to Custom.
+The enum may grow only by appending before `Custom` would move, so it is
+frozen at five values; a new common length would need a new parameter.
+
+Seconds come from the host transport: bars x quarter notes per bar
+(`numerator x 4 / denominator`) x 60 / tempo. With no transport (the
+standalone, or a host that reports none) it is 120 BPM 4/4. A tempo or meter
+change applies to the next freeze; a hold that is playing keeps the loop it
+took. Below a quarter of a second the hold is spectral (a steady tone), from
+there up it loops the audio, exactly that many samples per pass. Loops are
+capped at 60 s (lower where 256 MB of loop memory would not cover 60 s at the
+instance's channel count and rate); the editor says so only when the cap
+bites.
+
+A session written before Freeze Length stored a seconds value,
+`freeze_hold_seconds`. Untouched (the old default) it opens at 1 bar;
+otherwise at the musical length nearest those seconds at the transport the
+instance has seen (120 BPM 4/4 if none, as a session usually loads before
+playback), selecting its common length or Custom.
+
+The held sound itself is not saved: a session that stored Freeze on re-arms
+and holds the first stretch of input it plays.
 
 ## Macros
 

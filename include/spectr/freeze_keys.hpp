@@ -196,6 +196,7 @@ public:
         pending_ = false;
         key_velocity_.fill(0);
         rng_ = kRngSeed;
+        source_.set_external_loop_readers(false);
     }
 
     /// Off: MIDI is ignored and the stage is a pass-through of the source.
@@ -246,6 +247,7 @@ public:
     void process_block(const float* const* input, float* const* wet,
                        int channels, int num_samples) noexcept override {
         if (!prepared_ || channels != channels_ || !enabled_) {
+            source_.set_external_loop_readers(false);
             source_.process_block(input, wet, channels, num_samples);
             clock_ += num_samples;
             return;
@@ -261,6 +263,9 @@ public:
             if (event_read_ < event_count_)
                 span = static_cast<int>(std::min<std::int64_t>(
                     span, std::max<std::int64_t>(1, events_[event_read_].time - clock_)));
+            // A loop voice reads the source's rings: while one sounds (a
+            // release tail can outlast the hold), the source keeps them.
+            source_.set_external_loop_readers(loop_voice_active_());
             if (!busy_()) {
                 // Nothing of the keys is sounding: the source alone, untouched.
                 offset_call_(input, wet, done, span);
@@ -359,6 +364,11 @@ private:
         const auto phase = source_.phase();
         return source_.frozen_requested()
             && (phase == FreezeSource::Phase::engaging || phase == FreezeSource::Phase::held);
+    }
+
+    [[nodiscard]] bool loop_voice_active_() const noexcept {
+        for (const auto& v : voices_) if (v.active && v.loop) return true;
+        return false;
     }
 
     [[nodiscard]] bool busy_() const noexcept {

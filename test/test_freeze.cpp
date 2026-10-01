@@ -11,14 +11,22 @@
 
 #include <pulp/format/headless.hpp>
 #include <pulp/state/parameter_event_queue.hpp>
+#include <choc/text/choc_JSON.h>
 
 #include "spectr/editor_bridge.hpp"
+#include "spectr/freeze_length.hpp"
 #include "spectr/freeze_source.hpp"
 #include "spectr/spectr.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <functional>
+#include <string_view>
+#include <thread>
+#include <memory>
+#include <chrono>
 #include <random>
 #include <string>
 #include <tuple>
@@ -189,7 +197,7 @@ TEST_CASE("Freeze holds the input ahead of the mask", "[freeze][spectral]") {
     for (const auto mode : kModes) {
         const auto render = [&](bool freeze) {
             Rig rig(mode);
-            rig.plugin->set_freeze_hold_seconds(hold);
+            rig.plugin->set_freeze_seconds_override(hold);
             rig.mute_all(true);
             return rig.run(at(3.5), tone(1000.0, 0.3f, /*stop=*/1.5),
                 [&](std::size_t n, auto&, auto&) {
@@ -217,7 +225,7 @@ TEST_CASE("The live mask and LFO keep acting on the held sound", "[freeze][modul
     for (const auto mode : kModes) {
         const auto swing = [&](float depth) {
             Rig rig(mode);
-            rig.plugin->set_freeze_hold_seconds(hold);
+            rig.plugin->set_freeze_seconds_override(hold);
             for (std::size_t band = 0; band < 32; ++band)
                 rig.set(spectr::band_gain_param_id(band), -12.0f);
             const auto out = rig.run(at(3.2), tone(1000.0, 0.3f, /*stop=*/1.0),
@@ -510,7 +518,7 @@ TEST_CASE("Below 100% Mix the dry leg stays live while the wet leg holds",
     for (const auto mode : kModes) {
         const auto render = [&](float mix) {
             Rig rig(mode);
-            rig.plugin->set_freeze_hold_seconds(hold);
+            rig.plugin->set_freeze_seconds_override(hold);
             rig.set(spectr::kMix, mix);
             return rig.run(at(2.2), stimulus, [&](std::size_t n, auto&, auto&) {
                 if (rig.hits(n, 0.5)) rig.set(spectr::kParamFreeze, 1.0f);
@@ -539,6 +547,9 @@ TEST_CASE("A freeze asked for over silence waits for signal", "[freeze][silence]
     };
     for (const auto mode : kModes) {
         Rig rig(mode);
+        // The spectral hold's silence check (the loop's is its own: it waits
+        // for signal over the loop, and then loops the stretch it took).
+        rig.plugin->set_freeze_seconds_override(FreezeSource::kDefaultHoldSeconds);
         rig.set(spectr::kParamFreeze, 1.0f);
         bool armed_through_silence = true;
         const auto out = rig.run(at(2.8), stimulus, {}, [&](std::size_t n) {
@@ -786,30 +797,349 @@ TEST_CASE("Freeze rides host automation events and reaches the editor's live pro
     CHECK_FALSE(project()["freeze"].hasObjectMember("hold_seconds"));
 }
 
-TEST_CASE("Hold length selects the capture window and persists with the session",
-          "[freeze][settings]") {
-    Rig rig(MaskRenderMode::zero_latency);
-    const auto frames_after = [&](double seconds) {
-        rig.plugin->set_freeze_hold_seconds(seconds);
-        rig.run(at(0.05), tone(1000.0, 0.3f));
-        return rig.plugin->freeze_source().capture_frames();
-    };
-    // Default: the reference timing, 8 hops of 512 at 48 kHz.
-    CHECK(rig.plugin->freeze_hold_seconds()
-          == Catch::Approx(FreezeSource::kDefaultHoldSeconds));
-    CHECK(frames_after(FreezeSource::kDefaultHoldSeconds) == 8);
-    CHECK(frames_after(0.5) == 47);
-    // Clamped to the advertised range.
-    CHECK(frames_after(10.0) == static_cast<int>(std::lround(
-              FreezeSource::kMaxHoldSeconds * kSampleRate / FreezeSource::kHop)));
-    CHECK(rig.plugin->freeze_hold_seconds() == Catch::Approx(FreezeSource::kMaxHoldSeconds));
-    CHECK(frames_after(0.0) == static_cast<int>(std::lround(
-              FreezeSource::kMinHoldSeconds * kSampleRate / FreezeSource::kHop)));
+// ── Freeze Length ──────────────────────────────────────────────────────────
 
-    rig.plugin->set_freeze_hold_seconds(0.75);
-    const auto blob = rig.plugin->serialize_plugin_state();
-    Rig other(MaskRenderMode::zero_latency);
-    REQUIRE(other.plugin->freeze_hold_seconds() != Catch::Approx(0.75));
-    REQUIRE(other.plugin->deserialize_plugin_state(blob));
-    CHECK(other.plugin->freeze_hold_seconds() == Catch::Approx(0.75));
+namespace {
+
+/// Seeded white noise: every stretch of it is unlike every other, so a
+/// correlation near 1 between two stretches means they are the same samples.
+Stimulus noise(std::uint32_t seed, float amplitude = 0.25f) {
+    auto samples = std::make_shared<std::vector<float>>();
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<float> u(-1.0f, 1.0f);
+    samples->resize(at(16.0));
+    for (auto& v : *samples) v = amplitude * u(rng);
+    return [samples](std::size_t n) {
+        const float v = n < samples->size() ? (*samples)[n] : 0.0f;
+        return std::pair<float, float>{v, v};
+    };
+}
+
+double correlation(const std::vector<float>& a, std::size_t a0,
+                   const std::vector<float>& b, std::size_t b0, std::size_t count) {
+    double ab = 0.0, aa = 0.0, bb = 0.0;
+    for (std::size_t i = 0; i < count; ++i) {
+        const double x = a[a0 + i], y = b[b0 + i];
+        ab += x * y; aa += x * x; bb += y * y;
+    }
+    return aa > 0.0 && bb > 0.0 ? ab / std::sqrt(aa * bb) : 0.0;
+}
+
+void transport(pulp::format::ProcessContext& ctx, double bpm, int numerator, int denominator) {
+    ctx.tempo_bpm = bpm;
+    ctx.time_sig_numerator = numerator;
+    ctx.time_sig_denominator = denominator;
+}
+
+} // namespace
+
+TEST_CASE("Freeze Length: 1 bar at 120 BPM loops exactly 2.0 s of the input",
+          "[freeze][freeze-length][render]") {
+    // The default Length is 1 bar; the transport says 120 BPM 4/4, so a bar
+    // is 2.0 s. Noise in, frozen at 3 s: the held output must repeat with a
+    // period of exactly 96000 samples (a second pass equal to the first),
+    // and the first pass must be the input from 2.0 s before it.
+    Rig rig(MaskRenderMode::zero_latency);
+    REQUIRE(rig.plugin->freeze_length() == spectr::kDefaultFreezeLength);
+    const auto input = noise(7);
+    std::vector<float> in_left(at(9.0));
+    for (std::size_t n = 0; n < in_left.size(); ++n) in_left[n] = input(n).first;
+    const auto out = rig.run(at(9.0), input,
+        [&](std::size_t n, auto&, pulp::format::ProcessContext& ctx) {
+            transport(ctx, 120.0, 4, 4);
+            if (rig.hits(n, 3.0)) rig.set(spectr::kParamFreeze, 1.0f);
+        });
+    REQUIRE(rig.plugin->freeze_source().looping());
+    CHECK(rig.plugin->freeze_source().loop_length() == at(2.0));
+
+    // Inside the first pass, clear of the engage fade, and the same span one
+    // loop later. The control: the same span one loop minus 10 ms later is
+    // unrelated noise.
+    const std::size_t from = at(3.3), span = at(1.2);
+    const double period = correlation(out.left, from, out.left, from + at(2.0), span);
+    const double off = correlation(out.left, from, out.left, from + at(1.99), span);
+    // The first pass is the input 2.0 s earlier, through the renderer's
+    // latency. Found by search over a few ms either side, then required.
+    double best = 0.0;
+    std::size_t best_lag = 0;
+    const auto latency = static_cast<std::size_t>(rig.latency());
+    for (std::size_t lag = at(2.0) + latency - 600; lag <= at(2.0) + latency + 600; ++lag) {
+        const double c = correlation(out.left, from, in_left, from - lag, span);
+        if (c > best) { best = c; best_lag = lag; }
+    }
+    INFO("period corr=" << period << " off-period corr=" << off << " input corr=" << best
+         << " at lag " << best_lag);
+    CHECK(period > 0.99);
+    CHECK(std::abs(off) < 0.2);
+    CHECK(best > 0.99);
+}
+
+TEST_CASE("Freeze Length follows the host tempo and meter, and grows its memory off the audio thread",
+          "[freeze][freeze-length][render]") {
+    struct Case { double bpm; int num, den; spectr::FreezeLength length; double seconds; };
+    using spectr::LengthFraction;
+    const Case cases[] = {
+        {100.0, 6, 8, {1, LengthFraction::zero}, 1.8},     // 3 quarters a bar
+        {90.0, 3, 4, {1, LengthFraction::f1_2}, 3.0},      // 1.5 bars of 2 s
+        {140.0, 4, 4, {2, LengthFraction::zero}, 8.0 * 60.0 / 140.0},
+        {60.0, 4, 4, {2, LengthFraction::zero}, 8.0},      // past the prepared 2 s
+    };
+    for (const auto& c : cases) {
+        INFO(c.bpm << " BPM " << c.num << "/" << c.den << " " << spectr::length_label(c.length));
+        Rig rig(MaskRenderMode::zero_latency);
+        REQUIRE(rig.plugin->set_freeze_length_from_editor(c.length));
+        const auto press = c.seconds + 1.5;
+        bool waited = false;
+        rig.run(at(press + 1.0), noise(11),
+            [&](std::size_t n, auto&, pulp::format::ProcessContext& ctx) {
+                transport(ctx, c.bpm, c.num, c.den);
+                if (rig.hits(n, press)) rig.set(spectr::kParamFreeze, 1.0f);
+            },
+            [&](std::size_t) {
+                // Let the storage worker answer before the history it needs
+                // is recorded (an offline render outruns any thread).
+                if (!waited) {
+                    waited = true;
+                    const auto& source = rig.plugin->freeze_source();
+                    for (int i = 0; i < 200 && !source.loop_storage_in_flight()
+                                    && source.loop_storage_longest()
+                                           < static_cast<std::int64_t>(at(c.seconds)); ++i)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+            });
+        CHECK(rig.plugin->transport_tempo_bpm() == c.bpm);
+        CHECK(rig.plugin->freeze_length_seconds() == Catch::Approx(c.seconds));
+        REQUIRE(rig.plugin->freeze_source().looping());
+        CHECK(rig.plugin->freeze_source().loop_length()
+              == static_cast<std::int64_t>(std::llround(c.seconds * kSampleRate)));
+    }
+}
+
+// THE PERIOD, MEASURED, ACROSS TEMPI, METERS AND LENGTHS.
+//
+// The host-transport matrix: 120 4/4, 90 4/4, 140 3/4 and 75 6/8, each with
+// 1/8, 1, 2, 1 1/8, 2 3/16 and 1/12 bar, plus a tempo change before the
+// engage. The transport is the ProcessContext the processor receives (tempo
+// in quarter notes per minute, as VST3, CLAP, AU and REAPER report it, so a
+// bar of 6/8 is 3 quarter notes). Common lengths go in through the host
+// parameter, custom ones through the editor's commit and then a session
+// save and restore into a fresh instance, which is what renders. The period
+// is MEASURED from the render: the lag, within 20 ms of the expected one, at
+// which the held noise best matches itself one pass later, refined to a
+// fraction of a sample. It must be bars x quarters-per-bar x 60 / tempo to
+// within 1 ms. A length under a quarter second is a spectral hold, which has
+// no period, and is checked as one.
+TEST_CASE("Freeze Length: the looped period matches the transport, measured",
+          "[freeze][freeze-length][render][matrix]") {
+    using spectr::FreezeLength;
+    using spectr::LengthFraction;
+    struct Transport { double bpm; int num, den; };
+    const Transport transports[] = {{120, 4, 4}, {90, 4, 4}, {140, 3, 4}, {75, 6, 8}};
+    const FreezeLength lengths[] = {
+        {0, LengthFraction::f1_8}, {1, LengthFraction::zero}, {2, LengthFraction::zero},
+        {1, LengthFraction::f1_8}, {2, LengthFraction::f3_16}, {0, LengthFraction::f1_12}};
+    const auto input = noise(23);
+    const auto measure = [&](const std::vector<float>& y, std::size_t engage, double expected,
+                             double& corr) {
+        const std::size_t start = engage + at(0.35);
+        const std::size_t win = at(0.4);
+        const auto exp = static_cast<long>(std::llround(expected * kSampleRate));
+        double best = -2.0;
+        long best_lag = exp;
+        std::vector<double> scores;
+        const long span = static_cast<long>(at(0.02));
+        for (long lag = exp - span; lag <= exp + span; ++lag) {
+            const double c = correlation(y, start, y, start + static_cast<std::size_t>(lag), win);
+            scores.push_back(c);
+            if (c > best) { best = c; best_lag = lag; }
+        }
+        const auto k = static_cast<std::size_t>(best_lag - (exp - span));
+        double frac = 0.0;
+        if (k > 0 && k + 1 < scores.size()) {
+            const double l = scores[k - 1], r = scores[k + 1];
+            const double d = l - 2.0 * best + r;
+            if (d != 0.0) frac = 0.5 * (l - r) / d;
+        }
+        corr = best;
+        return (static_cast<double>(best_lag) + frac) / kSampleRate;
+    };
+    struct Case { Transport t; FreezeLength length; double change_at = -1.0, change_bpm = 0.0; };
+    std::vector<Case> cases;
+    for (const auto& t : transports)
+        for (const auto& l : lengths) cases.push_back({t, l});
+    cases.push_back({{120, 4, 4}, {1, LengthFraction::zero}, 6.0, 90.0});
+    cases.push_back({{140, 3, 4}, {1, LengthFraction::f1_8}, 6.0, 100.0});
+    for (const auto& c : cases) {
+        const double final_bpm = c.change_at >= 0.0 ? c.change_bpm : c.t.bpm;
+        const double expected = spectr::length_seconds(c.length, final_bpm, c.t.num, c.t.den);
+        const double bar = spectr::length_seconds({1, LengthFraction::zero}, c.t.bpm, c.t.num, c.t.den);
+        const double engage = c.change_at >= 0.0 ? 10.0 : std::max(4.0 * bar, expected + 2.0);
+        const auto transport_at = [&](std::size_t n, pulp::format::ProcessContext& ctx) {
+            const bool changed = c.change_at >= 0.0 && n >= at(c.change_at);
+            transport(ctx, changed ? c.change_bpm : c.t.bpm, c.t.num, c.t.den);
+        };
+        INFO(c.t.bpm << " BPM " << c.t.num << "/" << c.t.den
+             << (c.change_at >= 0.0 ? " -> " + std::to_string(int(c.change_bpm)) + " BPM" : "")
+             << ", " << spectr::length_label(c.length) << ": expected " << expected << " s");
+        // Set the length the way it reaches a session: a common one on the
+        // host parameter, a custom one committed in the editor, saved, and
+        // restored into the instance that renders.
+        Rig rig(MaskRenderMode::zero_latency);
+        const int preset = spectr::preset_index_of(c.length);
+        if (preset >= 0) {
+            rig.set(spectr::kParamFreezeLength, static_cast<float>(preset));
+        } else {
+            Rig editor(MaskRenderMode::zero_latency);
+            REQUIRE(editor.plugin->set_freeze_length_from_editor(c.length));
+            const auto blob = editor.plugin->serialize_plugin_state();
+            rig.set(spectr::kParamFreezeLength,
+                    editor.host.state().get_value(spectr::kParamFreezeLength));
+            REQUIRE(rig.plugin->deserialize_plugin_state(blob));
+        }
+        REQUIRE(rig.plugin->freeze_length() == c.length);
+        const auto total = at(engage + 0.35 + 0.4 + expected * 1.05 + 0.3);
+        const auto out = rig.run(total, input,
+            [&](std::size_t n, auto&, pulp::format::ProcessContext& ctx) {
+                transport_at(n, ctx);
+                if (rig.hits(n, engage)) rig.set(spectr::kParamFreeze, 1.0f);
+            });
+        if (expected < FreezeSource::kLoopMinSeconds) {
+            CHECK(rig.plugin->freeze_source().hold_audible());
+            CHECK_FALSE(rig.plugin->freeze_source().looping());
+            if (std::getenv("SPECTR_LENGTH_TABLE") != nullptr)
+                std::printf("| %g %d/%d | %s | %s | %.6f | spectral hold | - | - |\n",
+                            c.t.bpm, c.t.num, c.t.den, spectr::length_label(c.length).c_str(),
+                            preset >= 0 ? "parameter" : "custom, saved + restored", expected);
+            continue;
+        }
+        REQUIRE(rig.plugin->freeze_source().looping());
+        double corr = 0.0;
+        const double period = measure(out.left, at(engage), expected, corr);
+        const double error_ms = (period - expected) * 1000.0;
+        CAPTURE(period, error_ms, corr);
+        CHECK(std::abs(error_ms) <= 1.0);
+        CHECK(corr > 0.99);
+        // The measured row, for the record (SPECTR_LENGTH_TABLE=1 prints it).
+        if (std::getenv("SPECTR_LENGTH_TABLE") != nullptr)
+            std::printf("| %g %d/%d%s | %s | %s | %.6f | %.6f | %+.4f | %.4f |\n",
+                        c.t.bpm, c.t.num, c.t.den,
+                        c.change_at >= 0.0
+                            ? (" -> " + std::to_string(int(c.change_bpm)) + " BPM before the engage").c_str()
+                            : "",
+                        spectr::length_label(c.length).c_str(),
+                        preset >= 0 ? "parameter" : "custom, saved + restored",
+                        expected, period, error_ms, corr);
+    }
+}
+
+TEST_CASE("Freeze Length below a quarter second holds the spectrum",
+          "[freeze][freeze-length]") {
+    // 1/16 bar at 120 BPM is 125 ms: under kLoopMinSeconds, a spectral hold.
+    Rig rig(MaskRenderMode::zero_latency);
+    REQUIRE(rig.plugin->set_freeze_length_from_editor({0, spectr::LengthFraction::f1_16}));
+    rig.run(at(2.5), tone(1000.0, 0.3f), [&](std::size_t n, auto&, auto& ctx) {
+        transport(ctx, 120.0, 4, 4);
+        if (rig.hits(n, 1.5)) rig.set(spectr::kParamFreeze, 1.0f);
+    });
+    CHECK(rig.plugin->freeze_source().hold_audible());
+    CHECK_FALSE(rig.plugin->freeze_source().looping());
+    CHECK(rig.plugin->freeze_length_seconds() == Catch::Approx(0.125));
+}
+
+TEST_CASE("Freeze Length round-trips exactly through the session, every fraction",
+          "[freeze][freeze-length][state]") {
+    Rig rig(MaskRenderMode::zero_latency);
+    for (int bars : {0, 1, 2, 127, 128})
+        for (std::size_t f = 0; f < spectr::kLengthFractions.size(); ++f) {
+            const auto length = spectr::make_length(bars, static_cast<int>(f));
+            if (!length) continue;
+            INFO(spectr::length_label(*length));
+            REQUIRE(rig.plugin->set_freeze_length_from_editor(*length));
+            const auto blob = rig.plugin->serialize_plugin_state();
+            const auto params = rig.host.state().get_value(spectr::kParamFreezeLength);
+            Rig other(MaskRenderMode::zero_latency);
+            other.set(spectr::kParamFreezeLength, params);
+            REQUIRE(other.plugin->deserialize_plugin_state(blob));
+            CHECK(other.plugin->freeze_length() == *length);
+            CHECK(spectr::length_units(other.plugin->freeze_length())
+                  == spectr::length_units(*length));
+        }
+    // The custom value is kept while a preset is selected, and returns.
+    REQUIRE(rig.plugin->set_freeze_length_from_editor({1, spectr::LengthFraction::f1_12}));
+    REQUIRE(rig.plugin->set_freeze_length_from_editor({4, spectr::LengthFraction::zero}));
+    CHECK(rig.plugin->freeze_custom_length()
+          == spectr::FreezeLength{1, spectr::LengthFraction::f1_12});
+    rig.set(spectr::kParamFreezeLength, static_cast<float>(spectr::kLengthPresetCustom));
+    CHECK(rig.plugin->freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_12});
+}
+
+TEST_CASE("an old session's Hold length in seconds opens as a musical Length",
+          "[freeze][freeze-length][state]") {
+    // A blob as a pre-Length Spectr wrote it: freeze_hold_seconds, no
+    // freeze_length. Loaded before any transport is seen: 120 BPM 4/4.
+    const auto legacy_blob = [](const std::vector<std::uint8_t>& current, double seconds) {
+        std::string json(current.begin(), current.end());
+        auto root = choc::json::parse(json);
+        auto rebuilt = choc::value::createObject("");
+        for (std::uint32_t i = 0; i < root.size(); ++i) {
+            const auto member = root.getObjectMemberAt(i);
+            if (std::string_view(member.name) == "freeze_length") continue;
+            rebuilt.addMember(member.name, member.value);
+        }
+        rebuilt.addMember("freeze_hold_seconds", seconds);
+        const auto text = choc::json::toString(rebuilt);
+        return std::vector<std::uint8_t>(text.begin(), text.end());
+    };
+    struct Case { double seconds; int preset; spectr::FreezeLength length; };
+    using spectr::LengthFraction;
+    const Case cases[] = {
+        {FreezeSource::kDefaultHoldSeconds, 0, {1, LengthFraction::zero}}, // untouched
+        {0.5, spectr::kLengthPresetCustom, {0, LengthFraction::f1_4}},
+        {1.0, spectr::kLengthPresetCustom, {0, LengthFraction::f1_2}},
+        {2.0, 0, {1, LengthFraction::zero}},
+        {4.0, 1, {2, LengthFraction::zero}},
+        {0.75, spectr::kLengthPresetCustom, {0, LengthFraction::f3_8}},
+        {0.05, spectr::kLengthPresetCustom, {0, LengthFraction::f1_32}},
+    };
+    for (const auto& c : cases) {
+        INFO("old Hold length " << c.seconds << " s");
+        Rig source(MaskRenderMode::zero_latency);
+        // Move the new instance off the default first, so the load is seen.
+        Rig rig(MaskRenderMode::zero_latency);
+        REQUIRE(rig.plugin->set_freeze_length_from_editor({8, LengthFraction::f7_8}));
+        REQUIRE(rig.plugin->deserialize_plugin_state(
+            legacy_blob(source.plugin->serialize_plugin_state(), c.seconds)));
+        CHECK(rig.plugin->freeze_length_preset() == c.preset);
+        CHECK(rig.plugin->freeze_length() == c.length);
+    }
+}
+
+TEST_CASE("a malformed Freeze Length in the session is refused or defaulted, never admitted",
+          "[freeze][freeze-length][state]") {
+    Rig rig(MaskRenderMode::zero_latency);
+    const auto blob_with = [&](const std::string& member) {
+        auto bytes = rig.plugin->serialize_plugin_state();
+        std::string json(bytes.begin(), bytes.end());
+        const auto at_member = json.find("\"freeze_length\":");
+        REQUIRE(at_member != std::string::npos);
+        const auto end = json.find('}', at_member);
+        json.replace(at_member, end + 1 - at_member, "\"freeze_length\":" + member);
+        return std::vector<std::uint8_t>(json.begin(), json.end());
+    };
+    // Well-formed but not a length this build accepts: the default.
+    for (const char* member : {R"({"bars":129,"fraction":"0"})", R"({"bars":1,"fraction":"1/5"})",
+                               R"({"bars":0,"fraction":"0"})", R"({"bars":-1,"fraction":"1/8"})"}) {
+        INFO(member);
+        Rig other(MaskRenderMode::zero_latency);
+        REQUIRE(other.plugin->set_freeze_length_from_editor({3, spectr::LengthFraction::f1_3}));
+        REQUIRE(other.plugin->deserialize_plugin_state(blob_with(member)));
+        CHECK(other.plugin->freeze_custom_length() == spectr::kDefaultFreezeLength);
+    }
+    // Wrongly typed: the blob is refused, as for every other member.
+    for (const char* member : {R"({"bars":"1","fraction":"0"})", R"({"bars":1,"fraction":8})",
+                               R"({"bars":1})", R"(4)"}) {
+        INFO(member);
+        Rig other(MaskRenderMode::zero_latency);
+        CHECK_FALSE(other.plugin->deserialize_plugin_state(blob_with(member)));
+    }
 }

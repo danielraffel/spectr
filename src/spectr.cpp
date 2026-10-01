@@ -702,8 +702,22 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // No audio thread runs across a prepare. Keep a prepared source whose
     // geometry still fits, so a host re-prepare with the same rate and
     // channels does not throw a playing hold away.
+    // The loop rings are sized for the Length at the last transport seen;
+    // the storage worker is joined first, so nothing it built for the old
+    // geometry can land in the new one.
+    freeze_storage_lane_.stop();
+    const double freeze_seconds = freeze_hold_seconds_at_(
+        transport_tempo_bpm(), transport_time_sig_numerator(),
+        transport_time_sig_denominator());
+    // A musical Length loops exactly that long, so the loop stays on the
+    // host's bar grid pass after pass.
+    freeze_source_.set_exact_loop_length(true);
     if (!freeze_source_.prepared_for(sample_rate_, channels_))
-        (void)freeze_source_.prepare(sample_rate_, channels_);
+        (void)freeze_source_.prepare(sample_rate_, channels_, freeze_seconds);
+    else
+        freeze_source_.ensure_loop_storage_while_stopped(freeze_seconds);
+    freeze_storage_collect_sent_ = false;
+    start_freeze_storage_lane_();
     // Freeze Keys plays from the source's hold; re-prepared with it (a
     // re-prepare at the same geometry keeps the hold, and its voices stop).
     if (freeze_source_.prepared())
@@ -769,6 +783,77 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
             "of the band surface will not reach the DSP");
     }
     configure_bridge_(ctx.output_channels);
+}
+
+// ── Freeze Length ────────────────────────────────────────────────────────
+
+FreezeLength Spectr::freeze_length() const noexcept {
+    const int preset = freeze_length_preset();
+    if (preset >= 0 && preset < kLengthPresetCustom)
+        return kLengthPresets[static_cast<std::size_t>(preset)];
+    return freeze_custom_length();
+}
+
+int Spectr::freeze_length_preset() const noexcept {
+    if (!param_store_) return kDefaultLengthPreset;
+    return length_preset_from_param(param_store_->get_value(kParamFreezeLength));
+}
+
+bool Spectr::set_freeze_custom_length(FreezeLength length) noexcept {
+    if (!valid_length(length)) return false;
+    freeze_custom_length_.store(pack_length(length), std::memory_order_relaxed);
+    return true;
+}
+
+bool Spectr::set_freeze_length_from_editor(FreezeLength length) noexcept {
+    auto* store = param_store_;
+    if (!store || !valid_length(length)) return false;
+    const int preset = preset_index_of(length);
+    // The custom value first, so the audio thread never reads "Custom" with
+    // the previous custom length behind it.
+    if (preset < 0) (void)set_freeze_custom_length(length);
+    store->begin_gesture(kParamFreezeLength);
+    store->set_value(kParamFreezeLength, static_cast<float>(
+        preset < 0 ? kLengthPresetCustom : preset));
+    store->end_gesture(kParamFreezeLength);
+    return true;
+}
+
+double Spectr::freeze_hold_seconds_at_(double tempo_bpm, int numerator,
+                                       int denominator) const noexcept {
+    const double override_seconds =
+        freeze_seconds_override_.load(std::memory_order_relaxed);
+    if (override_seconds >= 0.0) return override_seconds;
+    return length_seconds(freeze_length(), tempo_bpm, numerator, denominator);
+}
+
+double Spectr::freeze_length_seconds() const noexcept {
+    return length_seconds(freeze_length(), transport_tempo_bpm(),
+                          transport_time_sig_numerator(),
+                          transport_time_sig_denominator());
+}
+
+double Spectr::freeze_loop_cap_seconds() const noexcept {
+    return FreezeSource::loop_cap_seconds(sample_rate_ > 0.0 ? sample_rate_ : 48000.0,
+                                          std::max(1, channels_));
+}
+
+void Spectr::freeze_storage_trampoline_(void* ctx, const FreezeStorageTask& task) noexcept {
+    auto& source = static_cast<Spectr*>(ctx)->freeze_source_;
+    source.collect_retired_loop_storage();
+    if (task.seconds > 0.0) {
+        auto storage = source.allocate_loop_storage(task.seconds);
+        if (storage) source.offer_loop_storage(std::move(storage));
+    }
+}
+
+void Spectr::start_freeze_storage_lane_() {
+    if (!freeze_storage_lane_.start(&Spectr::freeze_storage_trampoline_, this,
+                                    pulp::format::BackgroundTaskPolicy::Ordered)) {
+        pulp::runtime::log_error(
+            "[Spectr] freeze storage worker failed to start; Freeze lengths "
+            "longer than the prepared loop memory will loop what it holds");
+    }
 }
 
 void Spectr::preroll_surviving_hold_() {
@@ -954,6 +1039,7 @@ void Spectr::release() {
     // Join the sync worker BEFORE touching the mask processor: an in-flight
     // apply publishes into it.
     param_sync_lane_.stop();
+    freeze_storage_lane_.stop();
     active_renderer_.store(nullptr, std::memory_order_release);
     std::unique_ptr<MaskRenderer> outgoing;
     {
@@ -1075,7 +1161,34 @@ void Spectr::process(
         freeze_source_.clear_history();
         output_gain_.set_immediate(target_output_gain);
     }
-    freeze_source_.set_hold_seconds(freeze_hold_seconds());
+    // Freeze's Length, in seconds at the host's tempo and meter. It only
+    // decides the NEXT latch: a hold already playing keeps the loop it
+    // took, so a tempo change never stretches or cuts a hold mid-phrase.
+    {
+        const double tempo = usable_tempo(ctx.tempo_bpm);
+        const bool meter = ctx.time_sig_numerator > 0 && ctx.time_sig_denominator > 0;
+        const int numerator = meter ? ctx.time_sig_numerator : 4;
+        const int denominator = meter ? ctx.time_sig_denominator : 4;
+        transport_tempo_bpm_.store(tempo, std::memory_order_relaxed);
+        transport_time_sig_numerator_.store(numerator, std::memory_order_relaxed);
+        transport_time_sig_denominator_.store(denominator, std::memory_order_relaxed);
+        const double seconds = freeze_hold_seconds_at_(tempo, numerator, denominator);
+        freeze_source_.set_hold_seconds(seconds);
+        // Longer than the rings reach: ask the worker for bigger ones. A
+        // lock-free spawn, at most once per size; the source adopts them at
+        // a hop boundary.
+        if (freeze_source_.wants_loop_storage(seconds)
+            && !freeze_storage_lane_.try_spawn(FreezeStorageTask{seconds}))
+            freeze_source_.forget_loop_storage_request();
+        // ...and hand back the rings it let go of, to be freed there.
+        if (freeze_source_.retired_loop_storage_pending()) {
+            if (!freeze_storage_collect_sent_)
+                freeze_storage_collect_sent_ =
+                    freeze_storage_lane_.try_spawn(FreezeStorageTask{0.0});
+        } else {
+            freeze_storage_collect_sent_ = false;
+        }
+    }
 
     // Freeze Keys: notes stamped at their sample in this block. Off (every
     // shipping build), MIDI is not read at all.
@@ -1125,8 +1238,13 @@ void Spectr::process(
         // lands, or miss it entirely. Reading the drifted store here through
         // the cursor makes the block that OBSERVES the drift also act on it.
         // The worker still runs: it owns canonical state for the editor.
+        // A level still ramping toward zero after the LFO was switched off
+        // keeps the branch alive too: the ramp IS the switch-off, and a host
+        // that sends nothing after the off event must still hear it finish.
+        const bool lfo_level_ramping =
+            audio_lfo_level_[0] > 0.0f || audio_lfo_level_[1] > 0.0f;
         if (has_events || modulation_enabled || modulated_field_was_active_
-            || surface_drift.audio) {
+            || lfo_level_ramping || surface_drift.audio) {
             std::array<pulp::format::ParamSnapshotEntry,
                        kSurfaceCacheSlots + 2> initial{};
             initial[0] = {kMix, audio_mix_percent_};
@@ -1288,6 +1406,34 @@ void Spectr::process(
                     audio_lfo_2_shape_fade_ = retarget_lfo_shape(
                         audio_lfo_2_shape_fade_,
                         modulation_settings.lfo2_shape);
+                    // Slew each LFO's audible level, then let the slewed
+                    // value stand in for enabled + depth everywhere below:
+                    // the modulation, the activity flag and the editor's
+                    // publication all see the same ramp, so the drawn overlay
+                    // fades exactly as the sound does.
+                    {
+                        const float targets[2] = {
+                            modulation_settings.enabled
+                                ? modulation_settings.depth : 0.0f,
+                            modulation_settings.lfo2_enabled
+                                ? modulation_settings.lfo2_depth : 0.0f};
+                        const double level_seconds =
+                            static_cast<double>(out_slice.num_samples())
+                            / (ctx.sample_rate > 0.0 ? ctx.sample_rate
+                                                     : sample_rate_);
+                        for (std::size_t lfo = 0; lfo < 2; ++lfo) {
+                            audio_lfo_level_[lfo] = audio_lfo_level_primed_
+                                ? slew_lfo_level(audio_lfo_level_[lfo],
+                                                 targets[lfo], level_seconds)
+                                : targets[lfo];
+                        }
+                        audio_lfo_level_primed_ = true;
+                        modulation_settings.enabled = audio_lfo_level_[0] > 0.0f;
+                        modulation_settings.depth = audio_lfo_level_[0];
+                        modulation_settings.lfo2_enabled =
+                            audio_lfo_level_[1] > 0.0f;
+                        modulation_settings.lfo2_depth = audio_lfo_level_[1];
+                    }
                     const float wave = lfo_value(
                         audio_lfo_shape_fade_, audio_modulation_phase_);
                     BandField audible = apply_internal_modulation(
@@ -1671,8 +1817,17 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // writer that predates it; readers treat absence as OFF, the default, so
     // an old session keeps the host's keys where a new instance would.
     root.addMember("keyboard_shortcuts_in_daw", keyboard_shortcuts_in_daw_);
-    // The Settings hold length. The held spectrum itself is not saved.
-    root.addMember("freeze_hold_seconds", freeze_hold_seconds());
+    // Freeze's CUSTOM length (the one the Freeze Length parameter's
+    // "Custom" selects; the parameter itself rides the base blob). Exact:
+    // whole bars and the fraction's own text, never a float. The held sound
+    // itself is not saved.
+    {
+        const auto custom = freeze_custom_length();
+        auto length = choc::value::createObject("FreezeLength");
+        length.addMember("bars", static_cast<int32_t>(custom.bars));
+        length.addMember("fraction", std::string(fraction_of(custom).text));
+        root.addMember("freeze_length", length);
+    }
     // Freeze Keys: do notes restart a loop hold from its top. Absent on a
     // writer that predates it; readers take absence as ON, the default, so
     // an old session plays keys as a new instance does.
@@ -2071,16 +2226,47 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_freeze_keys_restart_loop = flag.getBool();
     }
 
-    // Absent on a blob written before freeze existed: the default length.
-    double new_freeze_hold_seconds = FreezeSource::kDefaultHoldSeconds;
-    if (root.hasObjectMember("freeze_hold_seconds")) {
+    // Freeze's custom length. A wrongly TYPED member refuses the blob like
+    // every other member here; a well-formed one naming a length this build
+    // does not accept (a fraction outside the set, bars past the limit)
+    // falls back to the default rather than losing the whole session.
+    std::optional<FreezeLength> new_freeze_custom_length;
+    if (root.hasObjectMember("freeze_length")) {
+        const auto length = root["freeze_length"];
+        if (!length.isObject() || !length.hasObjectMember("bars")
+            || !length.hasObjectMember("fraction"))
+            return false;
+        const auto& bars = length["bars"];
+        const auto& fraction = length["fraction"];
+        if (!(bars.isInt32() || bars.isInt64()) || !fraction.isString()) return false;
+        const auto bars_value = bars.isInt32() ? static_cast<std::int64_t>(bars.getInt32())
+                                               : bars.getInt64();
+        const auto made = bars_value < -1 || bars_value > kMaxLengthBars + 1
+            ? std::nullopt
+            : make_length(static_cast<int>(bars_value),
+                          fraction_index_from_text(fraction.getString()));
+        new_freeze_custom_length = made ? *made : kDefaultFreezeLength;
+    }
+    // A session from before the musical Length kept a Hold length in
+    // seconds. Untouched (the old default) it opens at the new default,
+    // 1 bar; set by the user, it opens at the musical length nearest those
+    // seconds at the transport this instance last saw (120 BPM 4/4 when it
+    // has seen none -- a session usually loads before playback starts).
+    std::optional<FreezeLength> migrated_freeze_length;
+    if (!new_freeze_custom_length && root.hasObjectMember("freeze_hold_seconds")) {
         const auto& seconds = root["freeze_hold_seconds"];
-        if (seconds.isFloat64()) new_freeze_hold_seconds = seconds.getFloat64();
-        else if (seconds.isInt32()) new_freeze_hold_seconds = seconds.getInt32();
-        else if (seconds.isInt64()) new_freeze_hold_seconds =
-            static_cast<double>(seconds.getInt64());
+        double old_seconds = FreezeSource::kDefaultHoldSeconds;
+        if (seconds.isFloat64()) old_seconds = seconds.getFloat64();
+        else if (seconds.isInt32()) old_seconds = seconds.getInt32();
+        else if (seconds.isInt64()) old_seconds = static_cast<double>(seconds.getInt64());
         else return false;
-        if (!std::isfinite(new_freeze_hold_seconds)) return false;
+        if (!std::isfinite(old_seconds)) return false;
+        migrated_freeze_length =
+            std::abs(old_seconds - FreezeSource::kDefaultHoldSeconds) < 1.0e-9
+                ? kDefaultFreezeLength
+                : nearest_length(old_seconds, transport_tempo_bpm(),
+                                 transport_time_sig_numerator(),
+                                 transport_time_sig_denominator());
     }
 
     std::array<MacroMembership<kMaxBands>, kMacroCount> new_macro_members{};
@@ -2161,7 +2347,8 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_overrides_ = new_morph_overrides;
         morph_applies_viewport_ = new_morph_applies_viewport;
         keyboard_shortcuts_in_daw_ = new_keyboard_shortcuts_in_daw;
-        set_freeze_hold_seconds(new_freeze_hold_seconds);
+        if (new_freeze_custom_length)
+            (void)set_freeze_custom_length(*new_freeze_custom_length);
         set_freeze_keys_restart_loop(new_freeze_keys_restart_loop);
         macro_members_ = new_macro_members;
         // Re-derive the LFO lanes from the restored parameters before the
@@ -2202,6 +2389,14 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         // Host restore is listener-silent and may run off the UI thread; it
         // migrates values without synthesizing user gesture callbacks.
         sync_params_from_field(/*emit_gestures=*/false);
+    }
+    // The migrated Hold length lands on the Freeze Length parameter (its
+    // preset, or Custom). Listener-silent like the rest of a restore.
+    if (migrated_freeze_length && param_store_) {
+        const int preset = preset_index_of(*migrated_freeze_length);
+        if (preset < 0) (void)set_freeze_custom_length(*migrated_freeze_length);
+        param_store_->set_value(kParamFreezeLength, static_cast<float>(
+            preset < 0 ? kLengthPresetCustom : preset));
     }
     for (std::size_t slot = 0; param_store_ && slot < kSurfaceCacheSlots; ++slot) {
         applied_param_cache_[slot].store(

@@ -418,6 +418,8 @@ EditorReceipt EditorAuthority::apply_morph(
 void EditorAuthority::reset_transient_state() noexcept {
     edit_snapshot_.reset();
     processor_.end_param_gesture_epoch();
+    // A control drag the old realm opened has no editor left to release it.
+    processor_.end_editor_param_gestures();
     // An open gesture is transient state and dies with the realm. The
     // HISTORY is not: it survives an editor close/reopen, which is what lets
     // a user close the window, reopen it, and still undo their last drag.

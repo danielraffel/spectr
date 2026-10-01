@@ -14,6 +14,11 @@ PULP_SDK_SHA_EXPECTED="${PULP_SDK_SHA_EXPECTED:-}"
 SPECTR_SHA_EXPECTED="${SPECTR_SHA_EXPECTED:-}"
 APP_ID="${APP_ID:-}"
 INST_ID="${INST_ID:-}"
+# A side-by-side development identity (cmake -DSPECTR_DEV_IDENTITY=<Suffix>):
+# "Spectr <Suffix> Dev", its own bundle IDs, AU subtype and VST3 class, so it
+# installs next to Spectr rather than over it. Empty packages the shipping
+# identity. It must match the identity the build was configured with.
+SPECTR_DEV_IDENTITY="${SPECTR_DEV_IDENTITY:-}"
 
 [[ -n "$PULP_ROOT" && -x "$PULP_ROOT/tools/scripts/build_combined_installer.sh" ]] || {
   echo "PULP_ROOT must name a Pulp source checkout with build_combined_installer.sh" >&2
@@ -124,11 +129,32 @@ grep -q '^PULP_SDK_DISTRIBUTION_ELIGIBLE:INTERNAL=TRUE$' "$CACHE" || {
   exit 2
 }
 
+BUILD_DEV_IDENTITY="$(sed -n 's/^SPECTR_DEV_IDENTITY:[^=]*=//p' "$CACHE" | tail -1)"
+[[ "$BUILD_DEV_IDENTITY" == "$SPECTR_DEV_IDENTITY" ]] || {
+  echo "build identity mismatch: SPECTR_DEV_IDENTITY=${SPECTR_DEV_IDENTITY:-<shipping>}," >&2
+  echo "  but the build was configured with ${BUILD_DEV_IDENTITY:-<shipping>}" >&2
+  exit 2
+}
+if [[ -n "$SPECTR_DEV_IDENTITY" ]]; then
+  [[ "$SPECTR_DEV_IDENTITY" =~ ^[A-Za-z][A-Za-z0-9]*$ ]] || {
+    echo "SPECTR_DEV_IDENTITY must be alphanumeric: $SPECTR_DEV_IDENTITY" >&2; exit 2; }
+  # The names cmake/SpectrIdentity.cmake derives from the suffix.
+  TARGET="Spectr${SPECTR_DEV_IDENTITY}Dev"
+  PRODUCT="Spectr ${SPECTR_DEV_IDENTITY} Dev"
+  # The installer's package identifiers (com.pulp.<name>.*) and file name
+  # take no spaces; its title and welcome pane carry the product name.
+  PKG_NAME="Spectr-${SPECTR_DEV_IDENTITY}-Dev"
+else
+  TARGET="Spectr"
+  PRODUCT="Spectr"
+  PKG_NAME="Spectr"
+fi
+
 # Rebuild every payload named below from this exact clean head. The governor
 # leases a bounded share of the shared M5 rather than claiming the machine.
 "$PULP_ROOT/tools/ci/governed-build.sh" \
   cmake --build "$BUILD" \
-  --target Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP
+  --target "${TARGET}_Standalone" "${TARGET}_AU" "${TARGET}_VST3" "${TARGET}_CLAP"
 SPECTR_SHA_AFTER_BUILD="$(git -C "$ROOT" rev-parse --verify HEAD)"
 [[ "$SPECTR_SHA_AFTER_BUILD" == "$SPECTR_SHA_EXPECTED" ]] || {
   echo "Spectr source changed during package rebuild: expected $SPECTR_SHA_EXPECTED, got $SPECTR_SHA_AFTER_BUILD" >&2
@@ -144,10 +170,10 @@ SPECTR_SHA_CACHED_AFTER_BUILD="$(sed -n 's/^SPECTR_SOURCE_GIT_SHA:INTERNAL=//p' 
   exit 2
 }
 
-AU="$BUILD/AU/Spectr.component"
-VST3="$BUILD/VST3/Spectr.vst3"
-CLAP="$BUILD/CLAP/Spectr.clap"
-APP="$BUILD/Spectr.app"
+AU="$BUILD/AU/$PRODUCT.component"
+VST3="$BUILD/VST3/$PRODUCT.vst3"
+CLAP="$BUILD/CLAP/$PRODUCT.clap"
+APP="$BUILD/$PRODUCT.app"
 for artifact in "$AU" "$VST3" "$CLAP" "$APP"; do
   [[ -d "$artifact" ]] || { echo "missing installer input: $artifact" >&2; exit 2; }
 done
@@ -156,7 +182,7 @@ done
 # into sealed Resources. Preserve that evidence for the packaged artifacts.
 
 args=(
-  --name Spectr
+  --name "$PKG_NAME"
   --version "$VER"
   --sign-identity "$APP_ID"
   --installer-identity "$INST_ID"
@@ -179,7 +205,31 @@ if [[ -n "${DIAG_APP:-}" ]]; then
   args+=(--app "Diagnostics app" "$DIAG_APP" "$DIAG_ENT")
 fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
+if [[ -n "$SPECTR_DEV_IDENTITY" ]]; then
+  # Say what this is before anything installs: a development build, under
+  # its own name and identifiers, next to (never over) an installed Spectr.
+  WELCOME_DIR="$(mktemp -d)"
+  trap 'rm -rf "$WELCOME_DIR"' EXIT
+  AU_SUBTYPE="$(/usr/libexec/PlistBuddy -c 'Print :AudioComponents:0:subtype' "$AU/Contents/Info.plist")"
+  AU_TYPE="$(/usr/libexec/PlistBuddy -c 'Print :AudioComponents:0:type' "$AU/Contents/Info.plist")"
+  cat > "$WELCOME_DIR/welcome.html" <<HTML
+<!DOCTYPE html><html><head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, Helvetica, sans-serif; font-size: 13px">
+<h2>$PRODUCT $VER</h2>
+<p>A development build of Spectr, for trying a feature before it ships
+(source ${SPECTR_SHA_EXPECTED:0:10}).</p>
+<p><b>It installs alongside Spectr, not over it.</b> It is a separate plug-in
+named <b>$PRODUCT</b> with its own identifiers (AU $AU_TYPE $AU_SUBTYPE, its
+own VST3 class and CLAP id, bundle id
+$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$AU/Contents/Info.plist")), so an installed Spectr and the sessions saved with it are left
+untouched, and sessions saved with $PRODUCT open only in $PRODUCT.</p>
+<p>Remove it later by deleting the $PRODUCT plug-ins and app.</p>
+</body></html>
+HTML
+  args+=(--welcome "$WELCOME_DIR/welcome.html"
+         --product-title "$PRODUCT" "$PRODUCT (development build)")
+fi
 
 "$PULP_ROOT/tools/scripts/build_combined_installer.sh" "${args[@]}"
 python3 "$ROOT/tools/check_release_version.py" --expected "$VER" \
-  --pkg "$OUT/Spectr-$VER.pkg"
+  --title "$PKG_NAME" --pkg "$OUT/$PKG_NAME-$VER.pkg"

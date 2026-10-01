@@ -580,6 +580,7 @@ add_executable(Spectr-test
     test/test_tracking_transition_sweep.cpp
     test/test_render_mode.cpp
     test/test_freeze.cpp
+    test/test_freeze_length.cpp
     test/test_freeze_click.cpp
     test/test_freeze_level.cpp
     test/test_freeze_keys.cpp
@@ -1349,6 +1350,18 @@ add_test(NAME Spectr-standalone-band-menu-keyboard
         --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-standalone-band-menu-keyboard
         --keyboard)
 set_tests_properties(Spectr-standalone-band-menu-keyboard PROPERTIES
+    TIMEOUT 900
+    RESOURCE_LOCK spectr_native_materialized_editor)
+# The Freeze LENGTH control driven through the standalone's own host routes:
+# click, hover, arrows, Return, Escape, the Custom length editor's keys and
+# fields, Apply / Cancel, and the checked custom row, each read back from the
+# control and from the processor.
+add_test(NAME Spectr-standalone-freeze-length
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/length_scenario_check.py
+        --binary ${CMAKE_CURRENT_BINARY_DIR}/Spectr.app/Contents/MacOS/Spectr
+        --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-standalone-freeze-length)
+set_tests_properties(Spectr-standalone-freeze-length PROPERTIES
     TIMEOUT 900
     RESOURCE_LOCK spectr_native_materialized_editor)
 # A two-finger trackpad scroll over Settings carries a sideways component;
@@ -3807,23 +3820,32 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
     add_dependencies(Spectr-au-freeze-probe ${SPECTR_NATIVE_AU_TARGET})
     set(_spectr_au_bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
+    # A short Length (1/16 bar: 125 ms at the probe's 120 BPM) holds the
+    # spectrum: the engage's spectral pre-roll is what these two measure.
     add_test(NAME Spectr-au-freeze-host
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
-            --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
+            --length 1/16 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
             --forbid-render-notifications --quiet)
     add_test(NAME Spectr-au-freeze-host-mixing
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
-            --mode mixing --sr 44100 --block 256 --taps 6 --repeat 3
+            --length 1/16 --mode mixing --sr 44100 --block 256 --taps 6 --repeat 3
             --max-cost-ratio 6 --forbid-render-notifications --quiet)
-    # A Hold length long enough to loop the audio itself: the engage (a seam
-    # search and a copy of up to 2 s of audio, spread over a hop) must stay
+    # The default Length, 1 bar (2 s), loops the audio itself: the engage (a
+    # seam search and a copy of 2 s of audio, spread over a hop) must stay
     # inside the same budget.
     add_test(NAME Spectr-au-freeze-host-loop
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
-            --hold-seconds 2 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
+            --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
+            --forbid-render-notifications --quiet)
+    # 8 bars (16 s) is longer than the loop memory prepare() sets up: the
+    # bigger rings are built on the storage worker and adopted between
+    # hops, so no render call may pay for them.
+    add_test(NAME Spectr-au-freeze-host-long-loop
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --length 8 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
             --forbid-render-notifications --quiet)
     set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
-        Spectr-au-freeze-host-loop
+        Spectr-au-freeze-host-loop Spectr-au-freeze-host-long-loop
         PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
     # Freeze Keys (an aumf dev build): an 8-note chord into every hold, through
     # MusicDeviceMIDIEvent. It must reach the unit, stay inside the same cost
@@ -3831,14 +3853,14 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     if(_spectr_id_FREEZE_KEYS)
         add_test(NAME Spectr-au-freeze-keys-host
             COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}" --keys
-                --block 128 --taps 6 --repeat 3 --max-cost-ratio 6 --quiet)
+                --length 1/16 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6 --quiet)
         add_test(NAME Spectr-au-freeze-keys-host-mixing
             COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}" --keys
-                --mode mixing --sr 44100 --block 256 --taps 6 --repeat 3
+                --length 1/16 --mode mixing --sr 44100 --block 256 --taps 6 --repeat 3
                 --max-cost-ratio 6 --quiet)
         add_test(NAME Spectr-au-freeze-keys-host-loop
             COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}" --keys
-                --hold-seconds 2 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6 --quiet)
+                --block 128 --taps 6 --repeat 3 --max-cost-ratio 6 --quiet)
         set_tests_properties(Spectr-au-freeze-keys-host Spectr-au-freeze-keys-host-mixing
             Spectr-au-freeze-keys-host-loop
             PROPERTIES TIMEOUT 300 LABELS "freeze;au-host;freeze-keys")

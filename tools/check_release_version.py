@@ -76,12 +76,13 @@ def binary_version_errors(bundle: Path, expected: str) -> list[str]:
 FOREIGN_BUNDLE_IDS = {"com.pulp.spectr.diagnostics"}
 
 
-def distribution_errors(dist_xml: str, name: str, expected: str) -> list[str]:
+def distribution_errors(dist_xml: str, name: str, expected: str,
+                        product: str = "Spectr") -> list[str]:
     root = ET.fromstring(dist_xml)
     errors = []
     title = (root.findtext("title") or "").strip()
-    if title != f"Spectr {expected}":
-        errors.append(f"{name}: installer title is {title!r}, expected 'Spectr {expected}'")
+    if title != f"{product} {expected}":
+        errors.append(f"{name}: installer title is {title!r}, expected '{product} {expected}'")
     refs = [r for r in root.iter("pkg-ref") if r.get("version") is not None]
     if not refs:
         errors.append(f"{name}: no versioned pkg-ref")
@@ -100,14 +101,14 @@ def distribution_errors(dist_xml: str, name: str, expected: str) -> list[str]:
     return errors
 
 
-def pkg_errors(pkg: Path, expected: str) -> list[str]:
+def pkg_errors(pkg: Path, expected: str, product: str = "Spectr") -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "x"
         subprocess.run(["pkgutil", "--expand", str(pkg), str(out)], check=True)
         dist = out / "Distribution"
         if not dist.is_file():
             return [f"{pkg.name}: no Distribution"]
-        errors = distribution_errors(dist.read_text(), pkg.name, expected)
+        errors = distribution_errors(dist.read_text(), pkg.name, expected, product)
         infos = sorted(out.glob("*/PackageInfo"))
         if not infos:
             errors.append(f"{pkg.name}: no component PackageInfo")
@@ -167,6 +168,8 @@ def main() -> int:
     ap.add_argument("--bundle", action="append", default=[], type=Path)
     ap.add_argument("--binary-version-bundle", action="append", default=[], type=Path)
     ap.add_argument("--pkg", type=Path)
+    ap.add_argument("--title", default="Spectr",
+                    help="the installer's product name (a dev identity's, e.g. Spectr-Keys-Dev)")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     if args.self_test:
@@ -186,7 +189,7 @@ def main() -> int:
         errors += binary_version_errors(bundle, args.expected)
         checked += 1
     if args.pkg:
-        errors += pkg_errors(args.pkg, args.expected)
+        errors += pkg_errors(args.pkg, args.expected, args.title)
         checked += 1
     for e in errors:
         print("FAIL " + e)

@@ -37,6 +37,7 @@ std::vector<std::pair<std::uint32_t, std::string>> expected_host_parameters() {
         {spectr::kMix, "Mix"},
         {spectr::kOutputTrim, "Output"},
         {spectr::kParamFreeze, "Freeze"},
+        {spectr::kParamFreezeLength, "Freeze Length"},
     };
     for (std::size_t band = 0; band < spectr::kMaxBands; ++band) {
         char name[32];

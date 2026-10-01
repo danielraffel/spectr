@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 152;  // +4 macros, +freeze
+constexpr std::size_t kExpectedParamCount = 153;  // +4 macros, +freeze, +freeze length
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {
@@ -108,6 +108,21 @@ TEST_CASE("#34: the full static parameter surface is registered") {
     CHECK(freeze->name == "Freeze");
     CHECK(freeze->kind == pulp::state::ParamKind::Toggle);
     CHECK(freeze->range.default_value == 0.0f);
+
+    // Freeze Length follows it: the header's common lengths, then Custom,
+    // each named by the one length formatter.
+    const auto* length = find(w.store, 4);
+    REQUIRE(length != nullptr);
+    CHECK(length->name == "Freeze Length");
+    CHECK(length->kind == pulp::state::ParamKind::Enum);
+    CHECK(length->range.default_value == 0.0f);
+    CHECK(length->range.max == 4.0f);
+    REQUIRE(length->value_labels.size() == 5);
+    CHECK(length->value_labels[0] == "1 bar");
+    CHECK(length->value_labels[1] == "2 bars");
+    CHECK(length->value_labels[2] == "4 bars");
+    CHECK(length->value_labels[3] == "8 bars");
+    CHECK(length->value_labels[4] == "Custom");
 }
 
 TEST_CASE("#34: reserved ID ranges stay empty") {
@@ -117,7 +132,7 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     REQUIRE(find(w.store, 1) != nullptr);
 
     // Legacy global growth headroom between Freeze and the band block.
-    CHECK(find(w.store, 4) == nullptr);
+    CHECK(find(w.store, 5) == nullptr);
     CHECK(find(w.store, 99) == nullptr);
     // Reserved tails between the band blocks and the control block.
     CHECK(find(w.store, 1064) == nullptr);
@@ -340,6 +355,55 @@ TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
     CHECK(depth->range.max == Approx(1.0f));
     CHECK(target->kind == pulp::state::ParamKind::Enum);
     CHECK(target->value_labels.size() == 4);
+}
+
+TEST_CASE("LFO rate and depth read in a host's lane as the editor shows them",
+          "[modulation][automation]") {
+    Wired w;
+    for (const auto id : {spectr::kParamLfoRate, spectr::kParamLfo2Rate}) {
+        const auto* rate = find(w.store, id);
+        REQUIRE(rate != nullptr);
+        REQUIRE(rate->to_string);
+        REQUIRE(rate->from_string);
+        CHECK(rate->to_string(4.0f) == "4 beats");
+        CHECK(rate->to_string(0.25f) == "0.25 beats");
+        CHECK(rate->to_string(1.0f) == "1 beat");
+        CHECK(rate->from_string("2 beats") == Approx(2.0f));
+        CHECK(rate->from_string(rate->to_string(0.5f)) == Approx(0.5f));
+        // The string carries the unit, so a host that prints `units` after it
+        // must not print it twice.
+        CHECK(rate->unit.empty());
+    }
+    for (const auto id : {spectr::kParamLfoDepth, spectr::kParamLfo2Depth}) {
+        const auto* depth = find(w.store, id);
+        REQUIRE(depth != nullptr);
+        REQUIRE(depth->to_string);
+        REQUIRE(depth->from_string);
+        CHECK(depth->to_string(0.5f) == "50%");
+        CHECK(depth->to_string(0.0f) == "0%");
+        CHECK(depth->to_string(1.0f) == "100%");
+        CHECK(depth->from_string("37%") == Approx(0.37f));
+        CHECK(depth->from_string("37") == Approx(0.37f));
+        CHECK(depth->from_string("0.37") == Approx(0.37f));
+    }
+    // Toggles and shapes are discrete lanes with labels, so a host steps them
+    // rather than interpolating between "Sine" and "Square".
+    for (const auto id : {spectr::kParamLfoEnabled, spectr::kParamLfo2Enabled}) {
+        const auto* on = find(w.store, id);
+        REQUIRE(on != nullptr);
+        CHECK(on->kind == pulp::state::ParamKind::Toggle);
+        CHECK(on->range.step == Approx(1.0f));
+        REQUIRE(on->value_labels.size() == 2);
+        CHECK(on->value_labels[1] == "On");
+    }
+    for (const auto id : {spectr::kParamLfoShape, spectr::kParamLfo2Shape,
+                          spectr::kParamLfoTarget}) {
+        const auto* e = find(w.store, id);
+        REQUIRE(e != nullptr);
+        CHECK(e->kind == pulp::state::ParamKind::Enum);
+        CHECK(e->range.step == Approx(1.0f));
+        CHECK(e->value_labels.size() == 4);
+    }
 }
 
 TEST_CASE("#34: viewport parameters round-trip without inverted edges") {

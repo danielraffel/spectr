@@ -17,11 +17,27 @@
 /// either renderer, switching the Latency mode while frozen hands the SAME
 /// hold to the new renderer.
 ///
-/// TWO KINDS OF HOLD. Hold length is how much of the input is frozen. From
-/// kLoopMinSeconds up that audio itself is looped -- the last Hold-length
-/// seconds, repeated with a crossfaded, waveform-matched seam (see THE LOOP):
-/// you hear the phrase repeat. Below it a loop would be a buzz, so the hold
-/// is spectral: a steady resynthesis of the spectrum of that stretch.
+/// TWO KINDS OF HOLD. Hold length is how much of the input is frozen, in
+/// seconds; the processor derives it from the musical Length and the host
+/// tempo (see freeze_length.hpp). From kLoopMinSeconds up that audio itself
+/// is looped -- the last Hold-length seconds, repeated with a crossfaded,
+/// waveform-matched seam (see THE LOOP): you hear the phrase repeat. Below it
+/// a loop would be a buzz, so the hold is spectral: a steady resynthesis of
+/// the spectrum of that stretch.
+///
+/// LOOP MEMORY. A loop needs every sample of its length recorded, twice over
+/// (the always-running recording and the copy the loop plays from), and a
+/// musical length can run to minutes. So the two rings are not sized at
+/// prepare() for a worst case: they are sized for the Hold length in force
+/// (rounded up, see loop_storage_frames()), and a longer Hold length is
+/// served by a new pair allocated OFF the audio thread
+/// (allocate_loop_storage()), offered through an atomic slot and adopted at
+/// a hop boundary while no loop is being prepared or heard; the pair it
+/// replaces goes back through a second slot to be freed off the audio thread
+/// too. The recording starts empty in the new rings, so a freeze pressed
+/// before a loop's worth has been heard since loops what has been (as one
+/// pressed right after the stream starts always has). Loops are capped at
+/// loop_cap_seconds(); a longer Hold length loops that much.
 ///
 /// HOW IT HOLDS (spectral). The source runs its own short-hop analysis of the input
 /// (`kFftSize` points every `kHop` samples) into `pulp::signal::FreezeHoldT`,
@@ -91,7 +107,8 @@
 /// capture window analyses carries signal -- so a note that has only just
 /// started is not held as mostly silence either.
 ///
-/// Real-time: `prepare()` allocates; every other member is allocation-free,
+/// Real-time: `prepare()` and `allocate_loop_storage()` allocate (neither
+/// runs on the audio thread); every other member is allocation-free,
 /// lock-free and reads no clock. All members except `prepare()` belong to the
 /// audio thread.
 
@@ -100,7 +117,9 @@
 #include <pulp/signal/spectral_mask_processor.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <memory>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -122,7 +141,17 @@ public:
     static constexpr double kDefaultHoldSeconds =
         pulp::signal::FreezeHoldReferenceTiming::kCaptureSeconds;
     static constexpr double kMinHoldSeconds = 0.05;
+    /// The spectral capture's longest window (FreezeHold's history). A hold
+    /// that long loops; the spectral hold only ever uses the start of it.
     static constexpr double kMaxHoldSeconds = 2.0;
+    /// The longest loop: an implementation limit, met only by long lengths at
+    /// slow tempi (8 bars of 4/4 is 32 s at 60 BPM). Lowered further where
+    /// the two rings would pass kMaxLoopBytes (many channels, high rates).
+    static constexpr double kMaxLoopSeconds = 60.0;
+    static constexpr double kMaxLoopBytes = 256.0 * 1024.0 * 1024.0;
+    /// The smallest pair of rings prepare() sets up: what the old fixed
+    /// Hold-length range needed, so short lengths never reallocate.
+    static constexpr double kMinLoopStorageSeconds = 2.0;
 
     /// Time-domain engage/release crossfade.
     static constexpr double kCrossfadeSeconds = 0.048;
@@ -175,14 +204,144 @@ public:
 
     static double clamp_hold_seconds(double seconds) noexcept {
         if (!std::isfinite(seconds)) return kDefaultHoldSeconds;
-        return std::clamp(seconds, kMinHoldSeconds, kMaxHoldSeconds);
+        return std::clamp(seconds, kMinHoldSeconds, kMaxLoopSeconds);
+    }
+
+    /// The longest loop at this rate and channel count.
+    static double loop_cap_seconds(double sample_rate, int channels) noexcept {
+        if (!(sample_rate > 0.0) || channels < 1) return kMaxLoopSeconds;
+        // Two rings of floats per channel.
+        const double by_memory = kMaxLoopBytes
+            / (2.0 * sizeof(float) * static_cast<double>(channels) * sample_rate);
+        // Less the rings' fixed overhead (seam search, match, hops).
+        return std::max(kMinLoopStorageSeconds,
+                        std::min(kMaxLoopSeconds, std::floor(by_memory - 1.0)));
+    }
+
+    /// The two rings a loop plays from (see LOOP MEMORY). Built off the
+    /// audio thread by allocate_loop_storage().
+    struct LoopStorage {
+        std::vector<float> record;       // channels * record_length: every input sample
+        std::size_t record_length = 1;
+        std::vector<float> loop;         // channels * loop_capacity: the loop, then its tail
+        std::size_t loop_capacity = 0;
+        std::int64_t longest = 0;        // the longest loop it holds, in samples
+        double sample_rate = 0.0;
+        int channels = 0;
+    };
+
+    /// Frames of loop a ring pair is built for when `seconds` are wanted:
+    /// rounded up to a power-of-two number of seconds (at least
+    /// kMinLoopStorageSeconds), so a tempo drifting slower does not
+    /// reallocate every few BPM, and capped.
+    std::int64_t loop_storage_frames(double seconds) const noexcept {
+        const double cap = loop_cap_seconds(sample_rate_, channels_);
+        double want = std::clamp(std::isfinite(seconds) ? seconds : 0.0,
+                                 0.0, cap);
+        double rounded = kMinLoopStorageSeconds;
+        while (rounded < want) rounded *= 2.0;
+        rounded = std::min(rounded, cap);
+        return static_cast<std::int64_t>(std::ceil(rounded * sample_rate_));
+    }
+
+    /// Build a ring pair for `seconds` of loop at the prepared geometry.
+    /// Allocates: never on the audio thread. Returns null unprepared or out
+    /// of memory.
+    std::unique_ptr<LoopStorage> allocate_loop_storage(double seconds) const {
+        if (!prepared_) return nullptr;
+        const std::int64_t longest = loop_storage_frames(seconds);
+        auto storage = std::make_unique<LoopStorage>();
+        const auto channel_count = static_cast<std::size_t>(channels_);
+        storage->longest = longest;
+        storage->record_length = static_cast<std::size_t>(
+            longest + loop_search_ + loop_match_ + 4 * kHop);
+        storage->loop_capacity = static_cast<std::size_t>(
+            longest + loop_search_ + default_crossfade_samples_ + kHop);
+        try {
+            storage->record.assign(channel_count * storage->record_length, 0.0f);
+            storage->loop.assign(channel_count * storage->loop_capacity, 0.0f);
+        } catch (...) {
+            return nullptr;
+        }
+        storage->sample_rate = sample_rate_;
+        storage->channels = channels_;
+        return storage;
+    }
+
+    /// The longest loop the adopted rings hold, in samples.
+    [[nodiscard]] std::int64_t loop_storage_longest() const noexcept {
+        return storage_ ? storage_->longest : 0;
+    }
+
+    /// Hand a ring pair to the audio thread (any non-audio thread). It is
+    /// adopted at a hop boundary while no loop is being prepared or heard.
+    /// A pair offered earlier and not yet adopted is replaced and freed here.
+    void offer_loop_storage(std::unique_ptr<LoopStorage> storage) noexcept {
+        delete offered_.exchange(storage.release(), std::memory_order_acq_rel);
+    }
+    /// Free a pair the audio thread has let go of (any non-audio thread).
+    void collect_retired_loop_storage() noexcept {
+        delete retired_.exchange(nullptr, std::memory_order_acq_rel);
+    }
+    /// True while a pair waits to be adopted or freed.
+    [[nodiscard]] bool loop_storage_in_flight() const noexcept {
+        return offered_.load(std::memory_order_acquire) != nullptr
+            || retired_.load(std::memory_order_acquire) != nullptr;
+    }
+
+    /// Audio thread: whether `seconds` of loop want bigger rings than the
+    /// adopted ones (and bigger than any already asked for). A true answer
+    /// is remembered as asked-for; call forget_loop_storage_request() if the
+    /// request could not be sent.
+    bool wants_loop_storage(double seconds) noexcept {
+        if (!prepared_ || !(seconds >= kLoopMinSeconds)) return false;
+        const std::int64_t frames = loop_storage_frames(seconds);
+        if (frames <= loop_storage_longest() || frames <= requested_storage_frames_)
+            return false;
+        requested_storage_frames_ = frames;
+        return true;
+    }
+    void forget_loop_storage_request() noexcept { requested_storage_frames_ = 0; }
+    /// Keep every loop exactly Hold length long (a musical length must not
+    /// drift against the host's grid): no seam search moves its start. Off,
+    /// the start may move by up to kLoopSearchSeconds to a better-matched
+    /// seam. Takes effect at the next latch.
+    void set_exact_loop_length(bool exact) noexcept { exact_loop_length_ = exact; }
+    [[nodiscard]] bool exact_loop_length() const noexcept { return exact_loop_length_; }
+    /// True while a pair the audio thread let go of waits to be freed.
+    [[nodiscard]] bool retired_loop_storage_pending() const noexcept {
+        return retired_.load(std::memory_order_acquire) != nullptr;
+    }
+    /// Control thread, with no audio thread running (a re-prepare that kept
+    /// this source): grow the rings for `seconds` here and now, unless a
+    /// hold is being prepared or heard -- that hold keeps its rings, and a
+    /// later request grows them.
+    void ensure_loop_storage_while_stopped(double seconds) {
+        if (!prepared_ || !(seconds >= kLoopMinSeconds)) return;
+        if (phase_ != Phase::live && phase_ != Phase::arming) return;
+        if (loop_storage_frames(seconds) <= loop_storage_longest()) return;
+        auto next = allocate_loop_storage(seconds);
+        if (!next) return;
+        storage_ = std::move(next);
+        bind_storage_();
+        history_ = 0;
+        requested_storage_frames_ = 0;
+    }
+
+    FreezeSource() = default;
+    FreezeSource(const FreezeSource&) = delete;
+    FreezeSource& operator=(const FreezeSource&) = delete;
+    ~FreezeSource() override {
+        delete offered_.exchange(nullptr);
+        delete retired_.exchange(nullptr);
     }
 
     /// Allocate for a sample rate and channel count. Control thread; the
     /// audio thread must not be inside process_block(). Returns false (and
     /// leaves the source unprepared, a pass-through) for an unsupported
     /// geometry.
-    bool prepare(double sample_rate, int channels) {
+    bool prepare(double sample_rate, int channels,
+                 double loop_seconds = kMinLoopStorageSeconds) {
         prepared_ = false;
         if (!(sample_rate > 0.0) || channels < 1 || channels > kMaxChannels)
             return false;
@@ -251,6 +410,7 @@ public:
         prefix_.assign(static_cast<std::size_t>(bins_) + 1, 0.0);
         crossfade_samples_ = std::max(
             1, static_cast<int>(std::lround(kCrossfadeSeconds * sample_rate)));
+        default_crossfade_samples_ = crossfade_samples_;
 
         // The loop: every sample of input is recorded, so a loop can be taken
         // from the moment the stream starts; the loop plays from its own copy
@@ -264,11 +424,16 @@ public:
         // The seam search compares every `loop_stride_`-th sample, so its cost
         // is the same at any sample rate.
         loop_stride_ = std::max<std::int64_t>(1, std::llround(sample_rate / 48000.0));
-        const auto longest = static_cast<std::int64_t>(std::ceil(kMaxHoldSeconds * sample_rate));
-        record_length_ = static_cast<std::size_t>(longest + loop_search_ + loop_match_ + 4 * kHop);
-        record_.assign(channel_count * record_length_, 0.0f);
-        loop_capacity_ = static_cast<std::size_t>(longest + loop_search_ + crossfade_samples_ + kHop);
-        loop_.assign(channel_count * loop_capacity_, 0.0f);
+        // No audio thread runs across prepare(): drop any pair in flight
+        // (it was built for the old geometry) and build this one here.
+        delete offered_.exchange(nullptr);
+        delete retired_.exchange(nullptr);
+        requested_storage_frames_ = 0;
+        prepared_ = true; // allocate_loop_storage() reads the geometry
+        storage_ = allocate_loop_storage(loop_seconds);
+        prepared_ = false;
+        if (!storage_) return false;
+        bind_storage_();
         const auto candidates = static_cast<std::size_t>(2 * loop_search_ / loop_stride_ + 2);
         search_cross_.assign(candidates, 0.0);
         search_energy_.assign(candidates, 0.0);
@@ -303,7 +468,7 @@ public:
         pending_engage_ = false;
         loop_mode_ = false;
         fade_rho_ = 0.0f;
-        std::fill(record_.begin(), record_.end(), 0.0f);
+        if (storage_) std::fill(storage_->record.begin(), storage_->record.end(), 0.0f);
         recorded_ = 0;
         history_ = 0;
         rng_ = kRngSeed;
@@ -355,7 +520,7 @@ public:
     /// in the copy; the rest are read from the recording, which keeps every
     /// sample of the loop for longer than a pass.
     [[nodiscard]] float loop_sample(int channel, std::int64_t at) const noexcept {
-        const float* loop = loop_.data() + static_cast<std::size_t>(channel) * loop_capacity_;
+        const float* loop = loop_ + static_cast<std::size_t>(channel) * loop_capacity_;
         const bool copied = loop_seam_ || at < loop_position_;
         const float start = copied ? loop[at] : recorded_at_(channel, loop_start_ + at);
         return seam_value_(loop, start, at);
@@ -366,10 +531,18 @@ public:
     /// a later pass, as loop_sample(channel, at).
     [[nodiscard]] float loop_sample(int channel, std::int64_t at, bool seam) const noexcept {
         if (seam) return loop_sample(channel, at);
-        const float* loop = loop_.data() + static_cast<std::size_t>(channel) * loop_capacity_;
+        const float* loop = loop_ + static_cast<std::size_t>(channel) * loop_capacity_;
         const bool copied = loop_seam_ || at < loop_position_;
         return copied ? loop[at] : recorded_at_(channel, loop_start_ + at);
     }
+    /// A reader of the loop outside the source (FreezeKeys' voices, whose
+    /// release tails can outlast the hold's own) declares itself here before
+    /// each process_block(). While one is reading, the source keeps the ring
+    /// pair it has: an offered bigger pair is adopted only once no reader is
+    /// left, so a voice never plays out of rings that were swapped (and
+    /// would be freed) under it. Audio thread.
+    void set_external_loop_readers(bool reading) noexcept { external_loop_readers_ = reading; }
+    [[nodiscard]] bool external_loop_readers() const noexcept { return external_loop_readers_; }
     /// True while any held content reaches the output.
     [[nodiscard]] bool hold_audible() const noexcept {
         return phase_ == Phase::engaging || phase_ == Phase::held
@@ -436,7 +609,7 @@ private:
         const auto window = static_cast<std::size_t>(kFftSize);
         // Record the live input first: `wet` may alias `input`.
         for (int ch = 0; ch < channels_; ++ch) {
-            float* record = record_.data() + static_cast<std::size_t>(ch) * record_length_;
+            float* record = record_ + static_cast<std::size_t>(ch) * record_length_;
             const float* source = input[ch] + offset;
             auto at = static_cast<std::size_t>(recorded_ % static_cast<std::int64_t>(record_length_));
             for (int i = 0; i < count; ++i) {
@@ -501,7 +674,7 @@ private:
                                  + static_cast<std::size_t>(hop_pos_);
             const float* tonal = ola_tonal_.data() + static_cast<std::size_t>(ch) * window
                                  + static_cast<std::size_t>(hop_pos_);
-            float* loop = loop_.data() + static_cast<std::size_t>(ch) * loop_capacity_;
+            float* loop = loop_ + static_cast<std::size_t>(ch) * loop_capacity_;
             const float* in = input[ch] + offset;
             float* out = wet[ch] + offset;
             int step = start_step;
@@ -586,6 +759,7 @@ private:
         if (frames_since_clear_ < (1 << 30)) ++frames_since_clear_;
 
         if (hold_seconds_changed_()) hold_.set_capture_seconds(applied_hold_seconds_);
+        adopt_offered_storage_();
         // The correlation of the hold with the live input over the hop just
         // played (held only). Only a positive one is taken out of the fade:
         // a negative reading over one hop of unrelated sounds is chance, and
@@ -676,8 +850,14 @@ private:
 
     // The loop the next latch would take: its length, or 0 if there is not
     // yet enough input with signal in it.
+    // The loop's length in samples: Hold length, as far as the rings reach.
+    [[nodiscard]] std::int64_t wanted_loop_length_() const noexcept {
+        return std::min(static_cast<std::int64_t>(std::llround(applied_hold_seconds_ * sample_rate_)),
+                        loop_storage_longest());
+    }
+
     [[nodiscard]] std::int64_t loop_length_for_latch_() const noexcept {
-        const auto wanted = static_cast<std::int64_t>(std::llround(applied_hold_seconds_ * sample_rate_));
+        const auto wanted = wanted_loop_length_();
         const std::int64_t length = std::min(wanted, history_ - loop_search_ - loop_match_);
         if (length < loop_min_) return 0;
         // Signal over the loop: its mean power, from the per-hop record.
@@ -709,7 +889,7 @@ private:
     // longer than a pass).
     void begin_loop_prepare_() noexcept {
         loop_end_ = recorded_ + kHop;
-        const auto wanted = static_cast<std::int64_t>(std::llround(applied_hold_seconds_ * sample_rate_));
+        const auto wanted = wanted_loop_length_();
         const std::int64_t history = history_ + kHop;
         const std::int64_t length = std::min(wanted, history - loop_search_ - loop_match_);
         // Candidate starts, every loop_stride_-th, each with its match window
@@ -719,6 +899,9 @@ private:
         const std::int64_t last = std::min(loop_end_ - length + loop_search_, loop_end_ - loop_min_);
         search_count_ = std::clamp<std::int64_t>((last - search_first_) / loop_stride_ + 1, 1,
                                                  static_cast<std::int64_t>(search_cross_.size()));
+        // Exact only for a full-length loop: one pressed before Hold length
+        // has been heard is not on any grid, and keeps the matched seam.
+        planned_length_ = exact_loop_length_ && length == wanted ? length : 0;
         std::fill(search_cross_.begin(), search_cross_.end(), 0.0);
         std::fill(search_energy_.begin(), search_energy_.end(), 0.0);
         end_energy_ = 0.0;
@@ -756,7 +939,15 @@ private:
             if (score > best) { best = score; start = search_first_ + j * loop_stride_; }
         }
         loop_start_ = start;
-        loop_length_ = loop_end_ - start;
+        // EXACT LENGTH. The start still moves to the best-matched point, so
+        // the engage is seamless; the loop then runs exactly the planned
+        // length from it rather than to the engage point, so every pass
+        // lasts Hold length to the sample and a musical loop stays on the
+        // host's grid. Its own end is up to kLoopSearchSeconds either side of
+        // the engage, and the recurring seam (measured when its tail is
+        // recorded) is a seam of its own.
+        loop_length_ = planned_length_ > 0 ? planned_length_ : loop_end_ - start;
+        tail_from_ = planned_length_ > 0 ? start + loop_length_ : loop_end_;
         seam_length_ = std::min<std::int64_t>(
             crossfade_samples_, static_cast<std::int64_t>(loop_capacity_) - loop_length_);
         loop_position_ = 0;
@@ -773,12 +964,28 @@ private:
     // the seam fades out of it into the start.
     void copy_loop_tail_() noexcept {
         const std::int64_t tail = seam_length_;
-        if (loop_tail_ || recorded_ < loop_end_ + tail) return;
+        if (loop_tail_ || recorded_ < tail_from_ + tail) return;
+        double cross = 0.0, tail_power = 0.0, start_power = 0.0;
         for (int ch = 0; ch < channels_; ++ch) {
-            float* loop = loop_.data() + static_cast<std::size_t>(ch) * loop_capacity_;
-            for (std::int64_t n = 0; n < tail; ++n)
-                loop[loop_length_ + n] = recorded_at_(ch, loop_end_ + n);
+            float* loop = loop_ + static_cast<std::size_t>(ch) * loop_capacity_;
+            for (std::int64_t n = 0; n < tail; ++n) {
+                const float after_end = recorded_at_(ch, tail_from_ + n);
+                loop[loop_length_ + n] = after_end;
+                if (tail_from_ != loop_end_) {
+                    const double start = recorded_at_(ch, loop_start_ + n);
+                    cross += start * after_end;
+                    tail_power += static_cast<double>(after_end) * after_end;
+                    start_power += start * start;
+                }
+            }
         }
+        // An exact-length loop's recurring seam is not the engage's: its
+        // correlation is its own, measured here (only a positive one is
+        // taken out of the fade, as at the engage).
+        if (tail_from_ != loop_end_)
+            loop_rho_ = tail_power > 0.0 && start_power > 0.0
+                ? static_cast<float>(std::clamp(cross / std::sqrt(tail_power * start_power), 0.0, 1.0))
+                : 0.0f;
         loop_tail_ = true;
     }
 
@@ -804,6 +1011,36 @@ private:
         const float b = std::cos(p * 1.57079632679489662f);
         const float norm = 1.0f / std::sqrt(1.0f + 2.0f * loop_rho_ * a * b);
         return (a * start + b * loop[loop_length_ + at]) * norm;
+    }
+
+    // LOOP MEMORY: take an offered ring pair, if no loop is being prepared
+    // or heard and the slot for the outgoing pair is free. Two pointer swaps;
+    // nothing is allocated, freed or copied here.
+    void adopt_offered_storage_() noexcept {
+        if (offered_.load(std::memory_order_acquire) == nullptr) return;
+        if (phase_ != Phase::live && phase_ != Phase::arming) return;
+        if (external_loop_readers_) return;
+        if (retired_.load(std::memory_order_acquire) != nullptr) return;
+        LoopStorage* next = offered_.exchange(nullptr, std::memory_order_acq_rel);
+        if (next == nullptr) return;
+        if (next->sample_rate != sample_rate_ || next->channels != channels_
+            || next->longest <= loop_storage_longest()) {
+            retired_.store(next, std::memory_order_release); // stale: free it
+            return;
+        }
+        retired_.store(storage_.release(), std::memory_order_release);
+        storage_.reset(next);
+        bind_storage_();
+        // The new recording is empty.
+        history_ = 0;
+        if (requested_storage_frames_ <= next->longest) requested_storage_frames_ = 0;
+    }
+
+    void bind_storage_() noexcept {
+        record_ = storage_->record.data();
+        record_length_ = storage_->record_length;
+        loop_ = storage_->loop.data();
+        loop_capacity_ = storage_->loop_capacity;
     }
 
     bool hold_seconds_changed_() noexcept {
@@ -1397,12 +1634,21 @@ private:
     bool requested_ = false;
     bool pending_engage_ = false;
 
-    // The loop (see THE LOOP).
-    std::vector<float> record_;                   // channels * record_length_: every input sample
+    // The loop (see THE LOOP and LOOP MEMORY).
+    std::unique_ptr<LoopStorage> storage_;        // audio-owned after prepare()
+    std::atomic<LoopStorage*> offered_{nullptr};  // worker -> audio
+    std::atomic<LoopStorage*> retired_{nullptr};  // audio -> worker
+    std::int64_t requested_storage_frames_ = 0;   // audio: the largest pair asked for
+    bool exact_loop_length_ = false;
+    bool external_loop_readers_ = false;          // audio: see set_external_loop_readers()
+    std::int64_t planned_length_ = 0;             // an exact loop's length; 0: to the engage
+    std::int64_t tail_from_ = 0;                  // where the audio after the loop's end starts
+    int default_crossfade_samples_ = 1;
+    float* record_ = nullptr;                     // channels * record_length_: every input sample
     std::size_t record_length_ = 1;
     std::int64_t recorded_ = 0;                   // samples recorded since reset
     std::int64_t history_ = 0;                    // ...of them since the last clear
-    std::vector<float> loop_;                     // channels * loop_capacity_: the loop, then its tail
+    float* loop_ = nullptr;                       // channels * loop_capacity_: the loop, then its tail
     std::size_t loop_capacity_ = 0;
     std::int64_t loop_search_ = 0, loop_match_ = 1, loop_min_ = 0, loop_stride_ = 1;
     std::int64_t seam_length_ = 1;

@@ -84,9 +84,25 @@
 //  type="mode_set"          — payload: {kind: motion|analyzer|edit|visualization,
 //                                       value: the corresponding editor label}
 //                             effect: StateStore::set_value(id, value)
-//  type="freeze_hold_set"   — payload: {seconds: number}
-//                             effect: Spectr::set_freeze_hold_seconds(seconds);
-//                             the response carries the clamped value
+//  type="param_edit"        — payload: {id: int, value: float}
+//                             effect: Spectr::edit_param_from_editor -- Mix,
+//                             Output trim and the LFO lanes only; a complete
+//                             host gesture unless a drag bracket is open
+//  type="param_gesture_begin" / "param_gesture_end"
+//                           — payload: {id: int}
+//                             effect: open / close that parameter's drag bracket
+//  type="param_drag_start" / "param_drag_end"
+//                           — payload: {}
+//                             effect: open / close the processor's gesture
+//                             epoch for a drag on a derived control (Morph)
+//  type="freeze_length_set" — payload: {bars: integer, fraction: "1/8"}
+//                             effect: Spectr::set_freeze_length_from_editor;
+//                             an invalid length is refused and changes nothing
+//  type="freeze_length_get" — the freeze payload as it stands (its seconds
+//                             follow the host tempo)
+//  type="freeze_length_describe" — payload as freeze_length_set; commits
+//                             nothing, answers {valid, message, label, seconds,
+//                             capped, cap_seconds} for the editor's preview
 //  type="freeze_keys_restart_set" — payload: {enabled: bool}
 //                             effect: Spectr::set_freeze_keys_restart_loop(enabled);
 //                             hydration carries freeze_keys.restart_loop only in

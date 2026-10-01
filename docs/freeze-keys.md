@@ -60,11 +60,16 @@ identities.
 
 `include/spectr/freeze_keys.hpp` is a wet-source stage that wraps
 `FreezeSource`. It runs the source first and leaves it untouched, apart from
-two read-only accessors that were added (`loop_position()` and `loop_sample()`).
+two read-only accessors that were added (`loop_position()` and `loop_sample()`)
+and `set_external_loop_readers()`: while a loop voice sounds (a release tail
+can outlast the hold), the source does not adopt the bigger loop rings a long
+Length asks the storage worker for, so a voice never reads rings swapped (and
+freed) under it.
 After that, and only once a key has been played into a hold, it replaces the
 held sound with the sum of the voices.
 
-**Spectral hold** (Hold length below 0.25 s). The voice resynthesises the
+**Spectral hold** (the freeze Length, in seconds at the host tempo, below
+0.25 s: 1/16 bar at 120 BPM, say). The voice resynthesises the
 held spectrum with every frequency multiplied by the note's ratio.
 
 - Tonal peaks are found with the source's own lobe-locking prominence test.
@@ -89,7 +94,8 @@ Built all at once, an 8-note chord cost 2.9 ms in the single 128-frame callback
 it landed in, which is more than the 2.67 ms real-time budget. Spread out, the
 worst callback in the AU probe costs about 1.0 ms. See "Measured" below.
 
-**Loop hold** (Hold length 0.25 s or more). The voice plays the loop with
+**Loop hold** (the Length 0.25 s or more at the host tempo; the default,
+1 bar). The voice plays the loop with
 varispeed, like a sampler. It uses 4-point Hermite interpolation and crossfades
 the seam the way the source does. Pitch and loop duration change together.
 There is no note latency. Where a note starts is a setting,
@@ -100,7 +106,10 @@ There is no note latency. Where a note starts is a setting,
   for as long as the key is held, with the source's seam crossfade at each
   wrap. A chord, or notes played at different times, each start from the top.
   This is sampler behaviour: hold a key over a 2-bar loop and you hear those
-  2 bars from their downbeat, repeating.
+  2 bars from their downbeat, repeating. The loop is exactly the musical
+  Length (a Length loop does not move its end to a better-matched seam), so
+  a root note's period is the Length in seconds at the host tempo: 2 bars at
+  120 BPM 4/4 is 4.000 s, 1 1/8 bars at 90 BPM is 3.000 s.
 - **Off.** A note starts wherever the frozen loop is playing at the note-on,
   so the root key continues the running loop seamlessly. That makes the hold
   fade out under the first root note linearly, since it is the same audio;
@@ -113,7 +122,7 @@ as a new instance. It is not a host parameter: it adds nothing to the
 append-only automation surface, and it can be exposed later as an appended
 parameter if hosts need to automate it. The Settings group is its own
 (`marker: "freeze-keys"`), placed before APPEARANCE and independent of the
-FREEZE group and its Hold length row. It renders only where Freeze Keys plays
+FREEZE group (whose Hold length row the header LENGTH control replaced). It renders only where Freeze Keys plays
 (the hydration carries `freeze_keys` only then). The UI is applied by
 `tools/patch_materialized_freeze_keys_restart.py`.
 
@@ -150,7 +159,8 @@ sample.
 | Clicks (sine, note on/off, chord, first key, unfreeze) | worst second difference 0.0012 (0.30 with the envelopes removed) |
 | AU host, 8-note chord per tap (`Spectr-au-freeze-keys-host*`) | MIDI accepted (no −4); worst note-on call about 1.0 ms at 128 frames / 48 kHz, 3.6× the costliest call without freeze (gate 6×); loop voices 57 µs |
 | CLAP, VST3, AU through `pulp::host::PluginSlot` | 220.000 Hz held, then 329.628 Hz after note 67 |
-| Restart loop on note, on | a held root note's first Hold length (after its 10 ms attack) correlates 1.0000 with the loop's top; a second note 0.37 s later does too |
+| Restart loop on note, on, under a host transport | 2 bars at 120 BPM 4/4: the root's period, measured from the product render, 4.000 s (error < 1 ns); 1 1/8 bars at 90 BPM: 3.000 s; its first pass correlates 1.0000 with the loop's top at lag 0 (the loop 10 ms on: 0.0007) |
+| Restart loop on note, on | a held root note's first loop length (after its 10 ms attack) correlates 1.0000 with the loop's top; a second note 0.37 s later does too |
 | ...held for 2.5 loop lengths | equals the loop sample for sample (worst 1.7e-8): the plain top, then each later pass with the source's seam; sharpest step equals the plain hold's over the same span |
 | ...off (the control) | the same note correlates −0.008 with the top; the root equals the plain hold within 1e-5 |
 | ...saved state | round-trips; a blob without the member restores On |

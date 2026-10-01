@@ -40,6 +40,14 @@
 //                           so pass --bundle -- gets an 8-note chord through
 //                           MusicDeviceMIDIEvent while each tap holds; see
 //                           keys_check())
+//       [--length L]       (Freeze Length, as bars and/or a bar fraction:
+//                           "1", "8", "1/16", "1+1/8"; written into the
+//                           unit's saved state as the custom length and
+//                           selected through the Freeze Length parameter.
+//                           The probe gives no transport, so it runs at the
+//                           unit's 120 BPM 4/4: 1 bar is 2 s, 1/16 bar
+//                           125 ms -- a spectral hold. Default: the unit's
+//                           own, 1 bar)
 // Exit: 0 clean, 1 a problem (click, fade overshoot, dropout, slow edge,
 // render-thread tail notification), 2 setup error.
 
@@ -62,6 +70,8 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr AudioUnitParameterID kParamFreeze = 3;
+constexpr AudioUnitParameterID kParamFreezeLength = 4;
+constexpr AudioUnitParameterValue kFreezeLengthCustom = 4.0f;
 
 struct Options {
     double sr = 48000.0;
@@ -78,7 +88,7 @@ struct Options {
     std::string control_wav;
     bool quiet = false;
     bool notify_reset = false;
-    double hold_seconds = -1.0; // < 0: leave the unit's Hold length alone
+    std::string length; // empty: leave the unit's Freeze Length alone
 };
 
 struct Stereo {
@@ -451,8 +461,8 @@ struct Host {
         AudioUnitAddPropertyListener(au, kAudioUnitProperty_Latency, &Host::listener, this);
         if (AudioUnitInitialize(au) != noErr) { std::fprintf(stderr, "Initialize failed\n"); return false; }
         if (opt.mode == "mixing" && !set_mode("linear_phase")) return false;
-        if (opt.hold_seconds >= 0.0 && !set_number("freeze_hold_seconds", opt.hold_seconds)) {
-            std::fprintf(stderr, "could not set freeze_hold_seconds\n");
+        if (!opt.length.empty() && !set_length(opt.length)) {
+            std::fprintf(stderr, "could not set Freeze Length %s\n", opt.length.c_str());
             return false;
         }
         Float64 tail = -1; UInt32 size = sizeof(tail);
@@ -537,26 +547,53 @@ struct Host {
         return ok;
     }
 
-    // Rewrite a numeric member of the plugin JSON, e.g. freeze_hold_seconds.
-    bool set_number(const char* key, double value) {
-        const std::string needle = std::string("\"") + key + "\":";
-        return edit_state([&](std::string& json) {
-            const auto at = json.find(needle);
+    // Freeze Length "B", "N/D" or "B+N/D": the custom length in the plugin
+    // JSON (as a project reload restores it), then the parameter on Custom.
+    bool set_length(const std::string& text) {
+        int bars = 0;
+        std::string fraction = "0";
+        const auto plus = text.find('+');
+        if (plus != std::string::npos) {
+            bars = std::atoi(text.substr(0, plus).c_str());
+            fraction = text.substr(plus + 1);
+        } else if (text.find('/') != std::string::npos) {
+            fraction = text;
+        } else {
+            bars = std::atoi(text.c_str());
+        }
+        char member[96];
+        std::snprintf(member, sizeof(member), "\"freeze_length\":{\"bars\":%d,\"fraction\":\"%s\"}",
+                      bars, fraction.c_str());
+        const bool ok = edit_state([&](std::string& json) {
+            const auto at = json.find("\"freeze_length\":");
             if (at == std::string::npos) return false;
-            auto end = at + needle.size();
-            while (end < json.size() && std::strchr("0123456789.eE+- ", json[end])) ++end;
-            char text[64];
-            std::snprintf(text, sizeof(text), "%.17g", value);
-            json.replace(at + needle.size(), end - at - needle.size(), text);
+            const auto end = json.find('}', at);
+            if (end == std::string::npos) return false;
+            json.replace(at, end + 1 - at, member);
             return true;
         });
+        return ok && AudioUnitSetParameter(au, kParamFreezeLength, kAudioUnitScope_Global, 0,
+                                           kFreezeLengthCustom, 0) == noErr;
     }
 
-    double read_number(const char* key) {
+    // The custom length and the parameter, as the unit reports them.
+    std::string read_length() {
         const std::string json = state_json();
-        const std::string needle = std::string("\"") + key + "\":";
-        const auto at = json.find(needle);
-        return at == std::string::npos ? -1.0 : std::atof(json.c_str() + at + needle.size());
+        const auto at = json.find("\"freeze_length\":");
+        AudioUnitParameterValue preset = -1.0f;
+        AudioUnitGetParameter(au, kParamFreezeLength, kAudioUnitScope_Global, 0, &preset);
+        if (at == std::string::npos) return "?";
+        const auto end = json.find('}', at);
+        const auto bars_at = json.find("\"bars\":", at);
+        const auto fraction_at = json.find("\"fraction\":", at);
+        if (end == std::string::npos || bars_at > end || fraction_at > end) return "?";
+        const int bars = std::atoi(json.c_str() + bars_at + 7);
+        const auto f0 = json.find('"', fraction_at + 11) + 1;
+        const std::string fraction = json.substr(f0, json.find('"', f0) - f0);
+        char out[64];
+        std::snprintf(out, sizeof(out), "%s%d+%s", preset == kFreezeLengthCustom ? "" : "preset:",
+                      bars, fraction.c_str());
+        return out;
     }
 
     void close() {
@@ -585,9 +622,9 @@ struct RenderResult {
     std::vector<Notification> notes;
     int latency = 0;
     int resets = 0;
-    double hold_seconds_read_back = -1.0;
     int midi_errors = 0;
     OSStatus midi_status = noErr;
+    std::string length_read_back;
 };
 
 RenderResult render(const Options& o, const Stereo& input, const std::vector<Tap>* taps,
@@ -597,7 +634,7 @@ RenderResult render(const Options& o, const Stereo& input, const std::vector<Tap
     host.in = &input;
     if (!host.open()) std::exit(2);
     result.latency = int(std::lround(host.latency_seconds() * o.sr));
-    result.hold_seconds_read_back = host.read_number("freeze_hold_seconds");
+    result.length_read_back = host.read_length();
     const std::size_t total = input.size();
     result.out.resize(total);
     std::vector<float> l(4096), r(4096);
@@ -716,8 +753,10 @@ int hold_check(Options o) {
     for (const double offset : {0.05, 0.40}) {
         double a_share[2] = {0, 0};
         int column = 0;
-        for (const double hold : {0.085, 2.0}) {
-            o.hold_seconds = hold;
+        // 1/16 bar (125 ms at the probe's 120 BPM, a spectral hold) and
+        // 1 bar (2 s, a loop).
+        for (const char* hold : {"1/16", "1"}) {
+            o.length = hold;
             const std::vector<Tap> taps{{std::size_t((change + offset) * o.sr), std::size_t((change + offset + 2.0) * o.sr)}};
             const auto r = render(o, input, &taps);
             const std::size_t from = std::size_t((change + offset + 0.4) * o.sr) + std::size_t(r.latency);
@@ -726,11 +765,13 @@ int hold_check(Options o) {
             for (const double f : chord_a) ea += goertzel_power(r.out.l, from, n, f, o.sr);
             for (const double f : chord_b) eb += goertzel_power(r.out.l, from, n, f, o.sr);
             a_share[column++] = ea / (ea + eb + 1e-30);
-            std::printf("  press %+.2f s after the change, Hold length %.3f s (unit reads back %.3f s): "
+            const std::string expected = std::string(std::strchr(hold, '/') ? "0+" : "") + hold
+                + (std::strchr(hold, '/') ? "" : "+0");
+            std::printf("  press %+.2f s after the change, Length %s bar (unit reads back %s): "
                         "chord A %5.1f%% of the held chord energy (A %6.1f dB, B %6.1f dB)\n",
-                        offset, hold, r.hold_seconds_read_back, 100.0 * ea / (ea + eb + 1e-30),
+                        offset, hold, r.length_read_back.c_str(), 100.0 * ea / (ea + eb + 1e-30),
                         10.0 * std::log10(ea + 1e-30), 10.0 * std::log10(eb + 1e-30));
-            if (std::fabs(r.hold_seconds_read_back - hold) > 1e-6) ++bad;
+            if (r.length_read_back != expected) ++bad;
         }
         // Pressed well after the change, the short hold must carry almost
         // none of chord A, and the 2 s one -- a loop of the 2 s before the
@@ -739,7 +780,7 @@ int hold_check(Options o) {
         if (offset > 0.3 && !(a_share[0] < 0.05)) ++bad;
         if (offset > 0.3 && !(a_share[1] > 0.5)) ++bad;
     }
-    std::printf("%s: hold check (the unit read back every Hold length it was given)\n",
+    std::printf("%s: hold check (the unit read back every Length it was given)\n",
                 bad ? "FAIL" : "OK");
     return bad ? 1 : 0;
 }
@@ -864,8 +905,8 @@ int main(int argc, char** argv) {
         else if (a == "--forbid-render-notifications") forbid_notifications = true;
         else if (a == "--deadline") deadline = std::atof(next().c_str());
         else if (a == "--hold-check") check_hold = true;
-        else if (a == "--hold-seconds") o.hold_seconds = std::atof(next().c_str());
         else if (a == "--keys") check_keys = true;
+        else if (a == "--length") o.length = next();
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
 

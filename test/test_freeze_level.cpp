@@ -299,6 +299,7 @@ struct Render {
     Stereo out;
     int latency = 0;
     std::size_t engaged_at = 0; // output sample the hold first reached; 0 = never
+    std::int64_t loop_length = 0; // the loop's period, if it looped
 };
 
 /// The Spectr processor, Freeze pressed at `press` by a parameter event.
@@ -308,7 +309,7 @@ Render render_spectr(const Stereo& in, std::size_t press, double hold_seconds,
     auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
     REQUIRE(plugin != nullptr);
     REQUIRE(plugin->set_render_mode(mode));
-    plugin->set_freeze_hold_seconds(hold_seconds);
+    plugin->set_freeze_seconds_override(hold_seconds);
     host.prepare(kRate, block);
     Render r;
     r.latency = plugin->latency_samples();
@@ -336,6 +337,7 @@ Render render_spectr(const Stereo& in, std::size_t press, double hold_seconds,
         std::copy(ob.channel(0).begin(), ob.channel(0).end(), r.out.l.begin() + long(pos));
         std::copy(ob.channel(1).begin(), ob.channel(1).end(), r.out.r.begin() + long(pos));
     }
+    r.loop_length = plugin->freeze_source().looping() ? plugin->freeze_source().loop_length() : 0;
     return r;
 }
 
@@ -790,10 +792,17 @@ TEST_CASE("A long Hold length loops the last Hold-length seconds of the input", 
         }
         INFO((mode == MaskRenderMode::linear_phase ? "Mixing" : "Tracking") << ": loop of "
              << double(length) / kRate << " s");
+        // The processor keeps a loop to its length exactly (a musical
+        // Length must stay on the host's grid), so the period is 2 s to the
+        // sample; the first pass may start a few ms either side of 2 s back,
+        // where the engage's seam matched best.
+        INFO("loop period " << pressed.loop_length << " samples");
+        CHECK(pressed.loop_length == std::int64_t(samples(2.0)));
+        const auto period = std::size_t(pressed.loop_length);
         // First pass (after the engage fade), second pass (after its seam).
         const double first = correlation(pressed.out.l, p + samples(0.1), live.out.l,
                                          p + samples(0.1) - length, n);
-        const double second = correlation(pressed.out.l, p + length + samples(0.1), live.out.l,
+        const double second = correlation(pressed.out.l, p + period + samples(0.1), live.out.l,
                                           p + samples(0.1) - length, n);
         const double off = correlation(pressed.out.l, p + samples(0.1), live.out.l,
                                        p + samples(0.1) - length + samples(0.25), n);

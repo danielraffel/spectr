@@ -10,6 +10,7 @@
 // one, frozen against unfrozen), so a pass is a reading of the product.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 
 #include <pulp/format/headless.hpp>
 #include <pulp/signal/fft.hpp>
@@ -27,6 +28,7 @@
 #include <cstdlib>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 using spectr::FreezeKeys;
@@ -195,7 +197,7 @@ Render render(const Stereo& in, std::vector<Edge> edges, double hold_seconds,
     auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
     REQUIRE(plugin != nullptr);
     REQUIRE(plugin->set_render_mode(mode));
-    plugin->set_freeze_hold_seconds(hold_seconds);
+    plugin->set_freeze_seconds_override(hold_seconds);
     plugin->set_freeze_keys_enabled(keys);
     plugin->set_freeze_keys_restart_loop(g_restart_loop);
     host.prepare(kRate, block);
@@ -335,7 +337,23 @@ TEST_CASE("Freeze Keys: richer material transposes by the interval", "[freeze-ke
             REQUIRE(rp.size() == 1);
             // The same partial, a fifth up: the fifth render's peak nearest it.
             const double expected = rp[0].first * ratio(7);
-            const auto fp = peaks(fifth.out, window_start(fifth), kWindow, 12, 3000.0);
+            // A loop voice is a varispeed read: the fifth plays the same
+            // stretch of the loop as the root's window in 1/ratio the time.
+            // Read it over exactly that stretch, so both windows hold the
+            // same loop audio, a wrap and its seam (a musical Length loops
+            // exactly, its recurring seam unmatched) at the same place in
+            // each; over any other stretch, the beating detuned pad reads a
+            // few cents off either way. Both notes start at the same loop
+            // position (the top, or wherever the hold plays at the shared
+            // note-on). A spectral voice has no position: the same window.
+            std::size_t fifth_start = window_start(fifth), fifth_window = kWindow;
+            if (hold.seconds >= FreezeSource::kLoopMinSeconds) {
+                const double into = double(window_start(root) - std::size_t(root.latency) - at(1.5));
+                fifth_start = at(1.5) + std::size_t(fifth.latency)
+                    + std::size_t(std::llround(into / ratio(7)));
+                fifth_window = std::size_t(std::llround(double(kWindow) / ratio(7)));
+            }
+            const auto fp = peaks(fifth.out, fifth_start, fifth_window, 12, 3000.0);
             REQUIRE(!fp.empty());
             const auto near = std::min_element(fp.begin(), fp.end(), [&](auto& a, auto& b) {
                 return std::abs(a.first - expected) < std::abs(b.first - expected);
@@ -706,6 +724,207 @@ TEST_CASE("Freeze Keys: the restart setting persists in the plugin state, absent
     REQUIRE(restored->deserialize_plugin_state(
         std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(old.data()), old.size())));
     CHECK(restored->freeze_keys_restart_loop());
+}
+
+TEST_CASE("Freeze Keys: with Restart on, a note's loop period is the musical Length at host tempo",
+          "[freeze-keys][restart][freeze-length]") {
+    // The product, under a host transport: Length set in bars, Restart ON,
+    // the root held for 2.5 loops. Its period, MEASURED from the render, is
+    // the Length in seconds at the transport's tempo and meter to within
+    // 1 ms; its first pass is the loop from its top. Noise in, so every
+    // stretch of the loop is unlike every other: a voice that started
+    // anywhere but the top, or ran any other period, does not correlate.
+    using spectr::FreezeLength;
+    using spectr::LengthFraction;
+    struct Case { double bpm; int num, den; FreezeLength length; double seconds; };
+    const Case cases[] = {
+        {120.0, 4, 4, {2, LengthFraction::zero}, 4.0},  // 2 bars of 2 s
+        {90.0, 4, 4, {1, LengthFraction::f1_8}, 3.0},   // 1 1/8 bars of 2 2/3 s
+    };
+    for (const auto& c : cases) {
+        INFO(c.bpm << " BPM " << c.num << "/" << c.den << " " << spectr::length_label(c.length));
+        pulp::format::HeadlessHost host{spectr::create_spectr};
+        auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+        REQUIRE(plugin != nullptr);
+        REQUIRE(plugin->set_render_mode(MaskRenderMode::zero_latency));
+        plugin->set_freeze_keys_enabled(true);
+        plugin->set_freeze_keys_restart_loop(true);
+        constexpr int block = 256;
+        host.prepare(kRate, block);
+        REQUIRE(plugin->set_freeze_length_from_editor(c.length));
+        const int latency = plugin->latency_samples();
+
+        const double press = c.seconds + 1.5;
+        const std::size_t note_on = at(press + 0.6);
+        const std::size_t note_off = note_on + at(2.5 * c.seconds);
+        const std::size_t total = note_off + at(0.3);
+        std::mt19937 rng(31);
+        std::uniform_real_distribution<float> u(-1.0f, 1.0f);
+        Stereo in; in.resize(total);
+        for (std::size_t n = 0; n < total; ++n) in.l[n] = in.r[n] = 0.25f * u(rng);
+
+        Stereo out; out.resize(total);
+        pulp::midi::MidiBuffer mi, mo;
+        mi.reserve_events(16);
+        bool waited = false;
+        for (std::size_t pos = 0; pos < total; pos += std::size_t(block)) {
+            const auto n = std::min<std::size_t>(std::size_t(block), total - pos);
+            pulp::state::ParameterEventQueue events;
+            pulp::format::ProcessContext ctx;
+            ctx.tempo_bpm = c.bpm;
+            ctx.time_sig_numerator = c.num;
+            ctx.time_sig_denominator = c.den;
+            mi.clear();
+            const bool press_here = at(press) >= pos && at(press) < pos + n;
+            if (press_here)
+                REQUIRE(events.push({spectr::kParamFreeze, std::int32_t(at(press) - pos), 1.0f, 0}));
+            if (note_on >= pos && note_on < pos + n) {
+                auto m = pulp::midi::MidiEvent::note_on(0, 60, 127);
+                m.sample_offset = std::int32_t(note_on - pos);
+                mi.add(m);
+            }
+            if (note_off >= pos && note_off < pos + n) {
+                auto m = pulp::midi::MidiEvent::note_off(0, 60);
+                m.sample_offset = std::int32_t(note_off - pos);
+                mi.add(m);
+            }
+            pulp::audio::Buffer<float> ib(2, n), ob(2, n);
+            std::copy_n(in.l.begin() + long(pos), n, ib.channel(0).begin());
+            std::copy_n(in.r.begin() + long(pos), n, ib.channel(1).begin());
+            const float* ip[] = {ib.channel(0).data(), ib.channel(1).data()};
+            pulp::audio::BufferView<const float> iv(ip, 2, n);
+            auto ov = ob.view();
+            host.process(ov, iv, mi, mo, events, ctx);
+            if (press_here) host.state().set_value(spectr::kParamFreeze, 1.0f);
+            std::copy(ob.channel(0).begin(), ob.channel(0).end(), out.l.begin() + long(pos));
+            std::copy(ob.channel(1).begin(), ob.channel(1).end(), out.r.begin() + long(pos));
+            // A loop longer than the rings prepare() set up grows on the
+            // storage worker; an offline render outruns any thread, so let it
+            // answer before the history the loop needs is recorded.
+            if (!waited) {
+                waited = true;
+                const auto& source = plugin->freeze_source();
+                for (int i = 0; i < 200 && !source.loop_storage_in_flight()
+                                && source.loop_storage_longest()
+                                       < static_cast<std::int64_t>(at(c.seconds)); ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+        const auto& source = plugin->freeze_source();
+        CHECK(plugin->freeze_length_seconds() == Catch::Approx(c.seconds));
+        REQUIRE(source.looping());
+        const auto length = std::size_t(source.loop_length());
+        CHECK(length == at(c.seconds));
+
+        // THE PERIOD, measured: the lag, within 20 ms of the expected one, at
+        // which the voice best matches itself one pass later, refined to a
+        // fraction of a sample. Both windows are the voice alone (past its
+        // attack, before its release).
+        const std::size_t start = note_on + std::size_t(latency) + at(0.35);
+        const std::size_t win = at(0.4);
+        const long expected = long(at(c.seconds));
+        const long span = long(at(0.02));
+        std::vector<double> scores;
+        double best = -2.0;
+        long best_lag = expected;
+        for (long lag = expected - span; lag <= expected + span; ++lag) {
+            const std::vector<float> later(out.l.begin() + long(start) + lag,
+                                           out.l.begin() + long(start) + lag + long(win));
+            const double r = correlation(out.l, start, later, win);
+            scores.push_back(r);
+            if (r > best) { best = r; best_lag = lag; }
+        }
+        const auto k = std::size_t(best_lag - (expected - span));
+        double frac = 0.0;
+        if (k > 0 && k + 1 < scores.size()) {
+            const double d = scores[k - 1] - 2.0 * best + scores[k + 1];
+            if (d < 0.0) frac = 0.5 * (scores[k - 1] - scores[k + 1]) / d;
+        }
+        const double period = (double(best_lag) + frac) / kRate;
+        CAPTURE(period, best);
+        CHECK(best > 0.99);
+        CHECK(std::abs(period - c.seconds) < 0.001);
+
+        // THE FIRST PASS STARTS AT THE TOP: right after the note-on (through
+        // the renderer's latency), the output is the loop's plain first pass
+        // from sample 0. Searched a few ms either side of that alignment and
+        // required there; control: the same span of the loop 10 ms on.
+        const std::size_t attack = at(FreezeKeys::kAttackSeconds) + 1;
+        const std::size_t first_win = at(0.5);
+        std::vector<float> top(first_win), shifted(first_win);
+        for (std::size_t i = 0; i < first_win; ++i) {
+            top[i] = source.loop_sample(0, std::int64_t(attack + i), false);
+            shifted[i] = source.loop_sample(0, std::int64_t(attack + at(0.01) + i), false);
+        }
+        double top_best = -2.0;
+        long top_lag = 0;
+        for (long lag = -long(at(0.005)); lag <= long(at(0.005)); ++lag) {
+            const double r = correlation(out.l, std::size_t(long(note_on + attack) + latency + lag),
+                                         top, first_win);
+            if (r > top_best) { top_best = r; top_lag = lag; }
+        }
+        const double off = correlation(out.l, note_on + attack + std::size_t(latency), shifted,
+                                       first_win);
+        CAPTURE(top_best, top_lag, off, latency);
+        CHECK(top_best > 0.99);
+        CHECK(std::abs(top_lag) <= 2);
+        CHECK(std::abs(off) < 0.2);
+    }
+}
+
+TEST_CASE("Freeze Keys: a sounding loop voice keeps the source on the rings it reads",
+          "[freeze-keys][freeze-length]") {
+    // A long Length grows the loop rings on a worker; the source adopts the
+    // new pair once no loop is held -- but a voice's release tail outlasts
+    // the hold's own, and it reads those rings. Freeze, play the root, then
+    // unfreeze with a bigger pair on offer: the source must keep its rings
+    // while the voice still sounds and adopt the new pair once it has gone.
+    // Control: with no voice it adopts at the first hop the hold is gone.
+    const auto input = pad(4.0);
+    for (const bool with_voice : {true, false}) {
+        CAPTURE(with_voice);
+        FreezeSource source;
+        REQUIRE(source.prepare(kRate, 2));
+        source.set_hold_seconds(kLoopHold);
+        FreezeKeys keys{source};
+        REQUIRE(keys.prepare(kRate, 2));
+        keys.set_enabled(true);
+        const auto before = source.loop_storage_longest();
+        const std::size_t freeze_at = at(1.4), note_at = at(1.8), release_at = at(2.4);
+        bool offered = false, adopted_while_sounding = false, voice_outlived_hold = false;
+        std::size_t adopted_at = 0;
+        Stereo out; out.resize(input.size());
+        for (std::size_t pos = 0; pos < input.size(); pos += 128) {
+            const auto n = std::min<std::size_t>(128, input.size() - pos);
+            source.set_frozen(pos >= freeze_at && pos < release_at);
+            if (!offered && pos >= release_at) {
+                source.offer_loop_storage(source.allocate_loop_storage(8.0));
+                offered = true;
+            }
+            keys.begin_block();
+            if (with_voice && note_at >= pos && note_at < pos + n)
+                REQUIRE(keys.note_on(int(note_at - pos), 60, 127));
+            const bool sounding = keys.sounding_voices() > 0;
+            const float* i[] = {input.l.data() + pos, input.r.data() + pos};
+            float* o[] = {out.l.data() + pos, out.r.data() + pos};
+            keys.process_block(i, o, 2, int(n));
+            if (sounding && !source.hold_audible()) voice_outlived_hold = true;
+            if (!adopted_at && source.loop_storage_longest() > before) {
+                adopted_at = pos;
+                if (sounding) adopted_while_sounding = true;
+            }
+            source.collect_retired_loop_storage();
+        }
+        CAPTURE(adopted_at);
+        REQUIRE(adopted_at > 0);
+        CHECK_FALSE(adopted_while_sounding);
+        if (with_voice) {
+            CHECK(voice_outlived_hold);   // the window this guards exists
+            CHECK(adopted_at > release_at + at(FreezeKeys::kReleaseSeconds));
+        } else {
+            CHECK(adopted_at < release_at + at(FreezeSource::kCrossfadeSeconds) + 2048);
+        }
+    }
 }
 
 TEST_CASE("Freeze Keys: notes start, stop and switch the bus without a click", "[freeze-keys]") {
