@@ -192,7 +192,8 @@ struct Render {
 
 Render render(const Stereo& in, std::vector<Edge> edges, double hold_seconds,
               bool keys = true, int block = 256,
-              MaskRenderMode mode = MaskRenderMode::zero_latency) {
+              MaskRenderMode mode = MaskRenderMode::zero_latency,
+              std::vector<double>* block_ms = nullptr) {
     pulp::format::HeadlessHost host{spectr::create_spectr};
     auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
     REQUIRE(plugin != nullptr);
@@ -250,6 +251,7 @@ Render render(const Stereo& in, std::vector<Edge> edges, double hold_seconds,
         const double ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t0).count();
         r.max_block_ms = std::max(r.max_block_ms, ms);
+        if (block_ms) block_ms->push_back(ms);
         if (note_on_here) r.max_edge_ms = std::max(r.max_edge_ms, ms);
         if (freeze_after >= 0.0f) host.state().set_value(spectr::kParamFreeze, freeze_after);
         std::copy(ob.channel(0).begin(), ob.channel(0).end(), r.out.l.begin() + long(pos));
@@ -298,6 +300,192 @@ TEST_CASE("Freeze Keys: the root note plays the hold at its pitch, other keys tr
             const double expected = 220.0 * ratio(semitones);
             CAPTURE(p[0].first, expected);
             CHECK(std::abs(cents(expected, p[0].first)) < 3.0);
+        }
+    }
+}
+
+namespace {
+
+/// Amplitude of the component at `hz` in the left channel over
+/// [from, from + n): a Hann-windowed single-bin transform, scaled so a sine
+/// of amplitude A reads A.
+double level_at(const Stereo& s, std::size_t from, std::size_t n, double hz) {
+    double re = 0.0, im = 0.0, wsum = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const double w = 0.5 - 0.5 * std::cos(2 * kPi * double(i) / double(n));
+        const double ph = 2 * kPi * hz * double(i) / kRate;
+        re += w * s.l[from + i] * std::cos(ph);
+        im -= w * s.l[from + i] * std::sin(ph);
+        wsum += w;
+    }
+    return 2.0 * std::hypot(re, im) / wsum;
+}
+
+bool finite(const Stereo& s) {
+    for (std::size_t n = 0; n < s.size(); ++n)
+        if (!std::isfinite(s.l[n]) || !std::isfinite(s.r[n])) return false;
+    return true;
+}
+
+double peak(const Stereo& s, std::size_t from = 0) {
+    double m = 0.0;
+    for (std::size_t n = from; n < s.size(); ++n)
+        m = std::max({m, double(std::abs(s.l[n])), double(std::abs(s.r[n]))});
+    return m;
+}
+
+} // namespace
+
+TEST_CASE("Freeze Keys: notes are named as Logic and PlunderTube name them, MIDI 60 = C3",
+          "[freeze-keys]") {
+    const auto name = [](int note) {
+        char out[6];
+        FreezeKeys::note_name(note, out);
+        return std::string{out};
+    };
+    CHECK(FreezeKeys::kDefaultRootNote == 60);
+    CHECK(name(FreezeKeys::kDefaultRootNote) == "C3");
+    CHECK(name(0) == "C-2");
+    CHECK(name(11) == "B-2");
+    CHECK(name(12) == "C-1");
+    CHECK(name(24) == "C0");
+    CHECK(name(48) == "C2");
+    CHECK(name(61) == "C#3");
+    CHECK(name(69) == "A3");
+    CHECK(name(127) == "G8");
+    CHECK(FreezeKeys::kLowestNote == 0);
+    CHECK(FreezeKeys::kHighestNote == 127);
+}
+
+// Every MIDI note 0..127 plays, from the default root (60): 60 semitones down
+// (1/32x) to 67 up (47.9x). Two tones, so every note has an in-band reading:
+// 220 Hz carries the upper notes (note 127: 10.55 kHz), 1 kHz the lower (note
+// 0: 31.25 Hz). A reading counts where the expected pitch is in band
+// (30 Hz .. 0.4 fs); out of band (below 30 Hz, or past Nyquist) the output
+// must still be finite and bounded, and a tone carried past Nyquist must not
+// fold back (the next case measures that).
+TEST_CASE("Freeze Keys: every MIDI note 0..127 plays, at its pitch where it is in band",
+          "[freeze-keys]") {
+    static constexpr int kNotes[] = {0, 12, 24, 48, 60, 72, 96, 120, 127};
+    for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
+        CAPTURE(hold.name);
+        int in_band = 0;
+        for (double tone : {220.0, 1000.0}) {
+            const auto input = sine(tone, 3.0);
+            for (int note : kNotes) {
+                CAPTURE(tone, note);
+                const auto r = play(input, hold.seconds, {note});
+                REQUIRE(finite(r.out));
+                const double expected = tone * ratio(note - 60);
+                // A held key never makes more than the hold's level plus
+                // varispeed's power (a 1/32x read of a sine is still a sine).
+                CHECK(peak(r.out, at(1.0)) < 1.0);
+                if (expected >= 30.0 && expected <= 0.4 * kRate) {
+                    ++in_band;
+                    const auto p = peaks(r.out, window_start(r), kWindow, 1, 0.45 * kRate);
+                    REQUIRE(p.size() == 1);
+                    CAPTURE(expected, p[0].first);
+                    CHECK(std::abs(cents(expected, p[0].first)) < 3.0);
+                    // ...and at the hold's level, within 2 dB.
+                    const double level = level_at(r.out, window_start(r), kWindow, expected);
+                    CAPTURE(level);
+                    CHECK(std::abs(db(level / 0.3)) < 2.0);
+                    // No DC: the mean is a small fraction of the tone.
+                    double mean = 0.0;
+                    for (std::size_t n = window_start(r); n < window_start(r) + kWindow; ++n)
+                        mean += r.out.l[n];
+                    mean /= double(kWindow);
+                    CHECK(std::abs(mean) < 0.01);
+                }
+            }
+        }
+        // 220 Hz: notes 48..127 (note 24 is 27.5 Hz); 1 kHz: notes 0..96.
+        CHECK(in_band == 6 + 7);
+    }
+}
+
+// Upward transposition removes what it would push past Nyquist rather than
+// folding it back. A tone near 0.7 fs / ratio lands near 0.7 fs, so
+// unfiltered it folds to about 0.3 fs (14.4 kHz) at full level; the control,
+// a tone near 0.3 fs / ratio, lands near 0.3 fs in band and must read there
+// at the hold's level (the same measurement in the same place, so a
+// near-silent reading is the filter, not a deaf instrument). Tones are whole
+// cycles of the 0.5 s loop (even hertz), so a loop's seam adds no sidebands
+// and the measurement sits on its line. The limit: the fold at least 60 dB
+// below the control.
+TEST_CASE("Freeze Keys: an upward transposition does not fold past Nyquist",
+          "[freeze-keys]") {
+    const auto loop_tone = [](double hz) { return 2.0 * std::round(hz / 2.0); };
+    for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
+        CAPTURE(hold.name);
+        for (int note : {67, 72, 84, 96, 108, 120, 127}) {
+            CAPTURE(note);
+            const double rt = ratio(note - 60);
+            const double high = loop_tone(0.7 * kRate / rt), low = loop_tone(0.3 * kRate / rt);
+            const auto above = play(sine(high, 3.0), hold.seconds, {note});
+            const auto control = play(sine(low, 3.0), hold.seconds, {note});
+            REQUIRE(finite(above.out));
+            const double fold = kRate - high * rt;
+            CAPTURE(high, low, fold);
+            const double folded = level_at(above.out, window_start(above), kWindow, fold);
+            const double in_band = level_at(control.out, window_start(control), kWindow, low * rt);
+            const double total = rms(above.out, window_start(above), window_start(above) + kWindow);
+            CAPTURE(db(folded), db(in_band), db(total));
+            CHECK(std::abs(db(in_band / 0.3)) < 2.0);
+            CHECK(db(folded) < db(in_band) - 60.0);
+            // ...and nothing else of it is left anywhere in the spectrum.
+            CHECK(db(total) < db(in_band) - 55.0);
+            std::printf("fold %-9s note %3d ratio %6.2f: control %6.1f dBFS, fold %7.1f dBFS, "
+                        "all of it %7.1f dBFS\n", hold.name, note, rt, db(in_band), db(folded), db(total));
+        }
+    }
+}
+
+// The real-time gate at both ends of the range: an 8-note chord at the top
+// (notes 120..127, ratios 32x..48x: a band-limited loop voice passes over
+// every loop sample it skips) and at the bottom (0..7). Each block's cost is
+// the least of three renders (scheduling noise only ever adds); the chord's
+// costliest block may cost at most 6x the costliest block of the same freeze
+// without keys -- the AU host probe's gate.
+TEST_CASE("Freeze Keys: an 8-note chord at the top and bottom of the range keeps real time",
+          "[freeze-keys]") {
+    const auto input = pad(3.0);
+    constexpr int block = 128;
+    const auto least = [&](const std::vector<Edge>& edges, double seconds) {
+        std::vector<double> best;
+        for (int run = 0; run < 3; ++run) {
+            std::vector<double> ms;
+            (void)render(input, edges, seconds, true, block, MaskRenderMode::zero_latency, &ms);
+            if (best.empty()) best = ms;
+            for (std::size_t b = 0; b < best.size() && b < ms.size(); ++b) best[b] = std::min(best[b], ms[b]);
+        }
+        return best;
+    };
+    for (const auto& hold : kHolds) {
+        g_restart_loop = hold.restart;
+        CAPTURE(hold.name);
+        const auto plain = least({{Edge::freeze, at(0.6)}}, hold.seconds);
+        const double plain_max = *std::max_element(plain.begin(), plain.end());
+        for (int lowest : {120, 0}) {
+            CAPTURE(lowest);
+            std::vector<Edge> edges{{Edge::freeze, at(0.6)}};
+            for (int k = 0; k < 8; ++k) edges.push_back({Edge::on, at(1.5), lowest + k});
+            const auto chord = least(edges, hold.seconds);
+            // From the chord's note-on to the end: its preparation and the
+            // sustained voices.
+            const auto first = at(1.5) / std::size_t(block);
+            const double chord_max = *std::max_element(chord.begin() + long(first), chord.end());
+            double sum = 0.0;
+            for (std::size_t b = first; b < chord.size(); ++b) sum += chord[b];
+            const double mean = sum / double(chord.size() - first);
+            std::printf("cost %-9s chord %3d..%3d block %d: costliest %.3f ms, mean %.3f ms; "
+                        "freeze alone costliest %.3f ms; budget %.3f ms\n",
+                        hold.name, lowest, lowest + 7, block, chord_max, mean, plain_max,
+                        1000.0 * block / kRate);
+            CAPTURE(chord_max, mean, plain_max);
+            CHECK(chord_max <= 6.0 * plain_max);
         }
     }
 }

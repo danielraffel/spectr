@@ -13,7 +13,9 @@ start the loop from its top (ON, the default) or join it where it is playing
   so a shipping build renders nothing here; and writes through
   `freeze_keys_restart_set`;
 - keeps its own store (`globalThis.__spectrFreezeKeys`), apart from the
-  freeze store.
+  freeze store;
+- names the root key (the key that plays the held sound at its own pitch)
+  in its subtitle from `freeze_keys.root_name` (Logic naming, MIDI 60 = C3).
 
 The component is defined inside the Settings surface, beside the other
 Settings groups, so the Settings panel's own browser suite, which evaluates
@@ -40,15 +42,17 @@ MARKER = "function SpectrFreezeKeysSettings()"
 
 FUNCTION = '''// Settings > FREEZE KEYS. Present only where the processor plays Freeze Keys:
 // it reads freeze_keys from the hydration payload and renders nothing until
-// (or unless) that arrives. Not a host parameter.
+// (or unless) that arrives. Not a host parameter. The root key's name is the
+// processor's (Logic naming, MIDI 60 = C3).
 function spectrFreezeKeysStore() {
   const store = globalThis.__spectrFreezeKeys
-    || (globalThis.__spectrFreezeKeys = { restartLoop: null, listeners: [] });
+    || (globalThis.__spectrFreezeKeys = { restartLoop: null, rootName: "C3", listeners: [] });
   if (!store.subscribed && window.pulp && typeof window.pulp.on === "function") {
     store.subscribed = true;
     window.pulp.on("processing_state_hydrate", (message) => {
       const keys = message && message.payload && message.payload.freeze_keys;
       if (!keys || typeof keys.restart_loop !== "boolean") return;
+      if (typeof keys.root_name === "string") store.rootName = keys.root_name;
       if (keys.restart_loop === store.restartLoop) return;
       store.restartLoop = keys.restart_loop;
       store.listeners.slice().forEach((fn) => {
@@ -80,7 +84,7 @@ function SpectrFreezeKeysSettings() {
       { enabled: store.restartLoop }, "spectr-freeze-keys-restart")).catch((error) =>
         console.error("[Spectr] restart loop write failed", error));
   };
-  return /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "freeze-keys", title: "FREEZE KEYS", subtitle: "While frozen, MIDI notes play the held sound up and down the keyboard." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Restart loop on note", hint: "Each note plays a looped hold from its start" }, /* @__PURE__ */ React.createElement("div", { "data-spectr-freeze-keys-restart": store.restartLoop ? "on" : "off" }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { value: store.restartLoop, onChange: write }))));
+  return /* @__PURE__ */ React.createElement(SpectrSettingsGroup, { marker: "freeze-keys", title: "FREEZE KEYS", subtitle: "While frozen, MIDI notes play the held sound up and down the keyboard; " + store.rootName + " plays it at its own pitch." }, /* @__PURE__ */ React.createElement(SpectrSettingsField, { label: "Restart loop on note", hint: "Each note plays a looped hold from its start" }, /* @__PURE__ */ React.createElement("div", { "data-spectr-freeze-keys-restart": store.restartLoop ? "on" : "off", "data-spectr-freeze-keys-root": store.rootName }, /* @__PURE__ */ React.createElement(SpectrSettingsToggle, { value: store.restartLoop, onChange: write }))));
 }
 '''
 FUNCTION_ANCHOR = "// The close button owns its hover and press look, so pointer-enter and\n"

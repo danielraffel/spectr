@@ -8227,6 +8227,9 @@ TEST_CASE("the Restart loop on note setting reaches the processor",
         "the FREEZE KEYS group's Restart loop on note switch is missing");
     CHECK(runtime_value(rig, group + ".getAttribute('data-spectr-freeze-keys-restart')",
                          "spectr-native-freeze-keys-default") == "on");
+    // The root key, named as Logic and PlunderTube name it: MIDI 60 is C3.
+    CHECK(runtime_value(rig, group + ".getAttribute('data-spectr-freeze-keys-root')",
+                         "spectr-native-freeze-keys-root") == "C3");
     activate(rig, "[data-spectr-freeze-keys-restart] [data-spectr-setting-toggle]");
     settle(rig.clock, 4);
     CHECK_FALSE(rig.processor.freeze_keys_restart_loop());

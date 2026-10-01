@@ -12,10 +12,12 @@
 /// mask, its LFOs and Mix act on them exactly as on the held sound, and the
 /// dry leg stays live below 100% Mix.
 ///
-/// THE ROOT. The root note (default MIDI 60, C3 in Logic's naming) plays the
-/// frozen sound at its own pitch; every other key transposes by its distance
-/// from the root, in equal-tempered semitones. Notes more than kMaxTranspose
-/// semitones from the root are ignored.
+/// THE ROOT. The root note (default MIDI 60, named C3: octave = note / 12 - 2,
+/// the Logic Pro naming PlunderTube's Root Key uses, so MIDI 0 is C-2 and 127
+/// is G8) plays the frozen sound at its own pitch; every other key transposes
+/// by its distance from the root, in equal-tempered semitones. Every MIDI note
+/// 0..127 plays: from the default root that is 60 semitones down (1/32x) to
+/// 67 up (47.9x).
 ///
 /// KEYS MODE. Freeze alone behaves exactly as before: the hold plays. The
 /// first key played into a hold switches the frozen bus to keys mode -- the
@@ -45,8 +47,14 @@
 ///    host callback; that is the spectral voice's note latency (10.7 ms at
 ///    48 kHz). A loop voice sounds at its note-on.
 ///  - LOOP (Hold length from kLoopMinSeconds). The hold is audio, so a voice
-///    is a varispeed (sampler) read of the loop -- 4-point Hermite
-///    interpolation, the seam crossfaded as the source plays it. Where it
+///    is a varispeed (sampler) read of the loop, the seam crossfaded as the
+///    source plays it. At or below the root it is a 4-point Hermite read
+///    (slowing a loop down folds nothing). Above the root it is band-limited,
+///    so what a transposition would push past Nyquist is removed rather than
+///    folded back: a streaming cascade of half-band decimators takes the
+///    ratio down by octaves to a residual r in [1, 2), then a Kaiser-windowed
+///    sinc read at r, its cutoff scaled to 0.5 / r. Its cost grows with the
+///    ratio (it consumes every loop sample the voice passes over). Where it
 ///    starts is a setting (set_restart_loop):
 ///      ON, the default ("Restart loop on note"): every note starts its own
 ///      playhead at the TOP of the loop, its first pass the plain captured
@@ -86,8 +94,10 @@ namespace spectr {
 
 class FreezeKeys final : public pulp::signal::SpectralWetSourceStageT<float> {
 public:
+    /// MIDI 60, "C3" in the naming note_name() uses.
     static constexpr int kDefaultRootNote = 60;
-    static constexpr int kMaxTranspose = 36;
+    static constexpr int kLowestNote = 0;    ///< C-2
+    static constexpr int kHighestNote = 127; ///< G8
     static constexpr int kMaxVoices = 8;          ///< notes sounding at once
     static constexpr int kVoiceSlots = 12;        ///< + room for release tails
     static constexpr double kAttackSeconds = 0.010;
@@ -110,6 +120,39 @@ public:
     /// Successive voices start this far apart in their hop (mod kVoiceHop):
     /// eight in a row land on eight distinct eighths of it.
     static constexpr std::uint64_t kHopStagger = 640;
+
+    /// Band-limited loop read (notes above the root). Half-band decimating
+    /// stages, at most: 2^10.6 is the widest interval, root 0 to note 127.
+    static constexpr int kMaxStages = 11;
+    /// Ring of the last stage's output; and the longest stage history.
+    static constexpr int kStageRing = 64;
+    static constexpr int kStageHistory = 48;
+    /// Loop samples a band-limited voice takes in at a time (a whole number
+    /// of the last stage's samples, at most kMaxBatchFrames of them).
+    static constexpr int kBatchSamples = 2048;
+    static constexpr int kMaxBatchFrames = 16;
+    /// The final read's half-width in zero crossings of its sinc (a residual
+    /// r spans kSincZeros * r samples either side), and its Kaiser beta:
+    /// about 70 dB stop band, the transition 0.4 / r .. 0.6 / r cycles.
+    static constexpr int kSincZeros = 11;
+    static constexpr double kKaiserBeta = 6.76;
+    static constexpr int kSincTaps = 2 * kSincZeros * 2 + 2;
+
+    /// Logic Pro's note name for a MIDI note, octave = note / 12 - 2 (the
+    /// naming PlunderTube's Root Key uses): 0 "C-2", 60 "C3", 127 "G8".
+    /// Writes at most 5 characters and a terminator.
+    static void note_name(int note, char (&out)[6]) noexcept {
+        static constexpr const char* kNames[] = {"C", "C#", "D", "D#", "E", "F",
+                                                 "F#", "G", "G#", "A", "A#", "B"};
+        note = std::clamp(note, kLowestNote, kHighestNote);
+        const char* name = kNames[note % 12];
+        const int octave = note / 12 - 2;
+        std::size_t at = 0;
+        while (*name) out[at++] = *name++;
+        if (octave < 0) out[at++] = '-';
+        out[at++] = static_cast<char>('0' + std::abs(octave));
+        out[at] = '\0';
+    }
 
     static constexpr int kMaxEvents = 512;
     /// Longest stretch rendered at once while keys sound: the live leg's fade
@@ -147,6 +190,7 @@ public:
         for (auto& w : synthesis_window_) w = static_cast<float>(w / overlap);
         build_kernel_table_();
         build_unit_table_();
+        build_band_limit_tables_();
 
         time_.assign(n, {});
         frame_.assign(ch * bins, {});
@@ -171,8 +215,15 @@ public:
             v.entry_coeff.assign(entries * ch, {});
             v.partial_rotor.assign(static_cast<std::size_t>(kMaxPartials), {1.0, 0.0});
             v.partial_step.assign(static_cast<std::size_t>(kMaxPartials), {1.0, 0.0});
+            v.stage_hist.assign(static_cast<std::size_t>(kMaxStages) * ch * kStageHistory, 0.0f);
+            v.level_hist.assign(ch * kStageRing, 0.0f);
             v.active = false;
         }
+        // Two work buffers the band-limited voices' cascades run through, a
+        // stage's history ahead of a batch.
+        const std::size_t batch = static_cast<std::size_t>(kBatchSamples + kStageHistory);
+        work_a_.assign(ch * batch, 0.0f);
+        work_b_.assign(ch * batch, 0.0f);
         input_copy_.assign(ch * kMaxChunk, 0.0f);
         voice_sum_.assign(ch * kMaxChunk, 0.0f);
         attack_samples_ = std::max(1, static_cast<int>(std::lround(kAttackSeconds * sample_rate)));
@@ -307,6 +358,23 @@ private:
         // Still on its first pass from the loop's top (a restarting voice):
         // reads the plain start, with no seam crossfade from the end.
         bool first_pass = false;
+        // Band-limited loop voice (a note above the root): `stages` half-band
+        // decimators, then a sinc read at the residual ratio. raw_at is the
+        // next loop sample the cascade takes in (negative while it is primed
+        // with what precedes the voice's start); level_pos is the read
+        // position in the last stage's samples, level_count how many it has
+        // produced.
+        bool band_limited = false;
+        int stages = 0;
+        double residual = 1.0;
+        double level_pos = 0.0;
+        std::int64_t level_count = 0;
+        std::int64_t raw_at = 0;
+        bool raw_first = false;
+        int batch_frames = 1;
+        std::array<std::uint8_t, kMaxStages> stage_taps{};
+        std::vector<float> stage_hist;                   // stages * channels * history
+        std::vector<float> level_hist;                   // channels * ring
         // Spectral voice, before it sounds: samples to go, and how much of
         // its preparation (frame plan, then pre-roll frames) is done.
         int delay = 0;
@@ -418,7 +486,6 @@ private:
         }
         // Unfrozen, MIDI does nothing.
         if (!source_.frozen_requested()) return;
-        if (std::abs(note - root_note_) > kMaxTranspose) return;
         key_velocity_[static_cast<std::size_t>(note)] = e.velocity;
         if (!hold_playing_()) { pending_ = true; return; }
         // A key repeated while it still sounds restarts as a new voice.
@@ -464,6 +531,8 @@ private:
             if (source_.loop_length() < 4) return;
             v.first_pass = restart_loop_;
             v.position = restart_loop_ ? 0.0 : static_cast<double>(source_.loop_position());
+            v.band_limited = v.ratio > 1.0;
+            if (v.band_limited) start_band_limited_(v);
         } else {
             if (!analysed_) analyse_hold_();
             if (!analysed_) return;
@@ -547,6 +616,11 @@ private:
 
     void render_voice_(Voice& v, int count) noexcept {
         const auto stride = static_cast<std::size_t>(kMaxChunk);
+        if (v.loop && v.band_limited) {
+            if (source_.loop_length() < 4) { v.active = false; return; }
+            render_band_limited_(v, count);
+            return;
+        }
         if (v.loop) {
             const std::int64_t length = source_.loop_length();
             if (length < 4) { v.active = false; return; }
@@ -576,7 +650,7 @@ private:
                     voice_sum_[static_cast<std::size_t>(ch) * stride + static_cast<std::size_t>(i)] += gain * y;
                 }
                 v.position += v.ratio;
-                if (v.position >= len) { v.position -= len; v.first_pass = false; }
+                while (v.position >= len) { v.position -= len; v.first_pass = false; }
             }
             return;
         }
@@ -608,6 +682,222 @@ private:
                 }
                 synthesise_frame_(v, 0);
             }
+        }
+    }
+
+    // ── The band-limited loop voice ─────────────────────────────────────
+    //
+    // A note above the root reads the loop faster than it was recorded, so
+    // anything above fs / (2 ratio) in the loop would land past Nyquist and
+    // fold back. The voice streams the loop samples it passes over through
+    // `stages` half-band decimators (each halves the rate, so the ratio left
+    // is residual = ratio / 2^stages, in [1, 2)), then reads the last stage
+    // with a Kaiser-windowed sinc whose cutoff is 0.5 / residual. Each
+    // stage's taps are what its place in the cascade needs to keep the final
+    // pass band (0.4 fs at the output) free of its aliases: the last stage
+    // 47, then 19, 15, and 11 for the rest, all ~70 dB. The cascade runs a
+    // batch at a time (kBatchSamples loop samples), each stage over a work
+    // buffer that holds its history ahead of the batch.
+
+    // Taps of a stage `from_last` stages before the last.
+    [[nodiscard]] static int stage_taps_(int from_last) noexcept {
+        return from_last == 0 ? 47 : from_last == 1 ? 19 : from_last == 2 ? 15 : 11;
+    }
+
+    void start_band_limited_(Voice& v) noexcept {
+        int stages = 0;
+        double residual = v.ratio;
+        while (residual >= 2.0 && stages < kMaxStages) { residual *= 0.5; ++stages; }
+        v.stages = stages;
+        v.residual = residual;
+        const double scale = std::ldexp(1.0, stages);
+        // A stage's output m is centred on its input 2m + 1 - (taps - 1) / 2:
+        // in loop samples, the last stage's output m sits at
+        // start + offset + 2^stages m.
+        double offset = 0.0;
+        double span = 0.0;
+        for (int s = 1; s <= stages; ++s) {
+            const int taps = stage_taps_(stages - s);
+            v.stage_taps[static_cast<std::size_t>(s - 1)] = static_cast<std::uint8_t>(taps);
+            const double step = std::ldexp(1.0, s - 1);
+            offset += step * (1.0 - 0.5 * (taps - 1));
+            span += step * (taps - 1);
+        }
+        // Start far enough back that every sample the first output reads has
+        // a full history: what precedes the start (nothing, for a restarting
+        // voice; the loop's end, for one joining the loop).
+        const double reach = kSincZeros * residual * scale;
+        const auto start = static_cast<std::int64_t>(std::floor(v.position - reach - span)) - 2;
+        v.raw_at = start;
+        v.raw_first = v.first_pass;
+        v.level_pos = (v.position - (static_cast<double>(start) + offset)) / scale;
+        v.level_count = 0;
+        v.batch_frames = std::clamp(kBatchSamples >> stages, 1, kMaxBatchFrames);
+        std::fill(v.stage_hist.begin(), v.stage_hist.end(), 0.0f);
+    }
+
+    // One sample of the loop at the voice's raw cursor, every channel; the
+    // cursor advances.
+    void raw_frame_(Voice& v, float* out) noexcept {
+        const std::int64_t length = source_.loop_length();
+        std::int64_t at = v.raw_at;
+        if (at < 0) {
+            if (v.raw_first) {
+                for (int ch = 0; ch < channels_; ++ch) out[ch] = 0.0f;
+            } else {
+                at %= length;
+                if (at < 0) at += length;
+                for (int ch = 0; ch < channels_; ++ch) out[ch] = source_.loop_sample(ch, at, true);
+            }
+        } else {
+            if (at >= length) { at = 0; v.raw_at = 0; v.raw_first = false; }
+            for (int ch = 0; ch < channels_; ++ch) out[ch] = source_.loop_sample(ch, at, !v.raw_first);
+        }
+        if (++v.raw_at >= length) { v.raw_at = 0; v.raw_first = false; }
+    }
+
+    // The next batch_frames samples of the last stage, into level_hist:
+    // the loop samples they need, read once, then each stage over the work
+    // buffers in turn (a stage's history copied ahead of its input, the
+    // last of its input kept as the next batch's history).
+    void produce_batch_(Voice& v) noexcept {
+        const int frames = v.batch_frames;
+        const int raw = frames << v.stages;
+        const auto stride = static_cast<std::size_t>(kBatchSamples + kStageHistory);
+        const auto history = static_cast<std::size_t>(kStageHistory);
+        const auto chans = static_cast<std::size_t>(channels_);
+        float* in = work_a_.data();
+        float* out = work_b_.data();
+        // The loop samples, after the first stage's history.
+        const int first_hold = v.stages > 0 ? v.stage_taps[0] - 1 : 0;
+        float frame[FreezeSource::kMaxChannels];
+        for (int i = 0; i < raw; ++i) {
+            raw_frame_(v, frame);
+            for (std::size_t ch = 0; ch < chans; ++ch)
+                in[ch * stride + static_cast<std::size_t>(first_hold + i)] = frame[ch];
+        }
+        int n = raw;
+        for (int s = 1; s <= v.stages; ++s) {
+            const auto index = static_cast<std::size_t>(s - 1);
+            const int taps = v.stage_taps[index];
+            const int hold = taps - 1;
+            const int half_taps = hold / 2;
+            const float* coeff = taps == 47 ? half_band_47_.data()
+                               : taps == 19 ? half_band_19_.data()
+                               : taps == 15 ? half_band_15_.data() : half_band_11_.data();
+            const int next_hold = s < v.stages ? v.stage_taps[index + 1] - 1 : 0;
+            float* hist = v.stage_hist.data() + index * chans * history;
+            for (std::size_t ch = 0; ch < chans; ++ch) {
+                float* x = in + ch * stride;
+                float* h = hist + ch * history;
+                std::copy(h, h + hold, x);
+                float* y = out + ch * stride + static_cast<std::size_t>(next_hold);
+                // Output m: the input after its 2m + 1st new sample, centred
+                // half the taps back.
+                for (int m = 0; m < n / 2; ++m) {
+                    const float* c = x + (2 * m + 1 + hold - half_taps);
+                    float acc = 0.5f * c[0];
+                    for (int o = 1, k = 0; o <= half_taps; o += 2, ++k)
+                        acc += coeff[k] * (c[-o] + c[o]);
+                    y[m] = acc;
+                }
+                std::copy(x + n, x + n + hold, h);
+            }
+            n /= 2;
+            std::swap(in, out);
+        }
+        // `in` holds the last stage's samples (or the loop's, unstaged).
+        const auto ring = static_cast<std::size_t>(kStageRing);
+        for (int i = 0; i < n; ++i) {
+            const auto at = static_cast<std::size_t>(v.level_count + i) & (ring - 1);
+            for (std::size_t ch = 0; ch < chans; ++ch)
+                v.level_hist[ch * ring + at] = in[ch * stride + static_cast<std::size_t>(i)];
+        }
+        v.level_count += n;
+    }
+
+    void render_band_limited_(Voice& v, int count) noexcept {
+        const auto stride = static_cast<std::size_t>(kMaxChunk);
+        const auto ring = static_cast<std::size_t>(kStageRing);
+        const double r = v.residual;
+        const double inv_r = 1.0 / r;
+        const double reach = kSincZeros * r;
+        float weight[kSincTaps];
+        for (int i = 0; i < count; ++i) {
+            float gain = 0.0f;
+            if (!envelope_(v, gain, false)) { v.active = false; return; }
+            const double p = v.level_pos;
+            const auto lo = static_cast<std::int64_t>(std::ceil(p - reach));
+            const auto hi = static_cast<std::int64_t>(std::floor(p + reach));
+            while (v.level_count <= hi) produce_batch_(v);
+            const int taps = static_cast<int>(hi - lo + 1);
+            for (int k = 0; k < taps; ++k)
+                weight[k] = sinc_kernel_((static_cast<double>(lo + k) - p) * inv_r) * static_cast<float>(inv_r);
+            for (int ch = 0; ch < channels_; ++ch) {
+                const float* x = v.level_hist.data() + static_cast<std::size_t>(ch) * ring;
+                float y = 0.0f;
+                for (int k = 0; k < taps; ++k)
+                    y += weight[k] * x[static_cast<std::size_t>(lo + k) & (ring - 1)];
+                voice_sum_[static_cast<std::size_t>(ch) * stride + static_cast<std::size_t>(i)] += gain * y;
+            }
+            v.level_pos = p + r;
+        }
+    }
+
+    // The Kaiser-windowed sinc at u zero crossings from its centre.
+    [[nodiscard]] float sinc_kernel_(double u) const noexcept {
+        const double x = std::abs(u) * kSincSteps;
+        const auto i = static_cast<std::size_t>(x);
+        if (i + 1 >= sinc_table_.size()) return 0.0f;
+        const float f = static_cast<float>(x - static_cast<double>(i));
+        return sinc_table_[i] + f * (sinc_table_[i + 1] - sinc_table_[i]);
+    }
+
+    static double bessel_i0_(double x) noexcept {
+        double sum = 1.0, term = 1.0;
+        for (int k = 1; k < 64; ++k) {
+            term *= (x / (2.0 * k)) * (x / (2.0 * k));
+            sum += term;
+            if (term < 1e-17 * sum) break;
+        }
+        return sum;
+    }
+
+    // A Kaiser-windowed half-band low-pass: its centre is 0.5, every even
+    // offset 0, the odd offsets these (normalised to unity gain at DC).
+    template <std::size_t N>
+    static void design_half_band_(std::array<float, N>& out, int taps) noexcept {
+        constexpr double pi = 3.14159265358979323846;
+        const int half = (taps - 1) / 2;
+        double sum = 0.5;
+        std::array<double, N> c{};
+        for (int o = 1, k = 0; o <= half; o += 2, ++k) {
+            const double t = static_cast<double>(o) / half;
+            const double w = bessel_i0_(kKaiserBeta * std::sqrt(std::max(0.0, 1.0 - t * t)))
+                           / bessel_i0_(kKaiserBeta);
+            c[static_cast<std::size_t>(k)] = std::sin(0.5 * pi * o) / (pi * o) * w;
+            sum += 2.0 * c[static_cast<std::size_t>(k)];
+        }
+        // Keep the centre at exactly 0.5; scale the rest so DC is 1.
+        const double scale = 0.5 / (sum - 0.5);
+        for (std::size_t k = 0; k < N; ++k) out[k] = static_cast<float>(c[k] * scale);
+    }
+
+    void build_band_limit_tables_() {
+        design_half_band_(half_band_47_, 47);
+        design_half_band_(half_band_19_, 19);
+        design_half_band_(half_band_15_, 15);
+        design_half_band_(half_band_11_, 11);
+        constexpr double pi = 3.14159265358979323846;
+        sinc_table_.assign(static_cast<std::size_t>(kSincZeros * kSincSteps + 2), 0.0f);
+        const double norm = bessel_i0_(kKaiserBeta);
+        for (std::size_t i = 0; i < sinc_table_.size(); ++i) {
+            const double u = static_cast<double>(i) / kSincSteps;
+            if (u >= kSincZeros) { sinc_table_[i] = 0.0f; continue; }
+            const double t = u / kSincZeros;
+            const double w = bessel_i0_(kKaiserBeta * std::sqrt(1.0 - t * t)) / norm;
+            const double s = u == 0.0 ? 1.0 : std::sin(pi * u) / (pi * u);
+            sinc_table_[i] = static_cast<float>(s * w);
         }
     }
 
@@ -891,6 +1181,7 @@ private:
     }
     // SPECTR-RENDER-PATH END
 
+    static constexpr int kSincSteps = 512;
     static constexpr double kKernelSpan = kLobeReach + 1.0;
     static constexpr int kKernelSteps = 1024;
     /// Per-hop random walk of a noise bin's phase (radians, uniform +-):
@@ -904,6 +1195,13 @@ private:
     std::vector<float> synthesis_window_;
     std::vector<std::complex<double>> kernel_table_;
     std::array<std::complex<float>, 1024> unit_table_{};
+    std::array<float, 12> half_band_47_{};
+    std::array<float, 5> half_band_19_{};
+    std::array<float, 4> half_band_15_{};
+    std::array<float, 3> half_band_11_{};
+    std::vector<float> sinc_table_;
+    std::vector<float> work_a_;                    // channels * (batch + history)
+    std::vector<float> work_b_;
     std::vector<std::complex<float>> time_;
     std::vector<std::complex<float>> frame_;       // channels * bins
 

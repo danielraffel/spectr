@@ -300,6 +300,13 @@ choc::value::Value make_freeze_payload_(const Spectr& plugin, bool with_settings
 choc::value::Value make_freeze_keys_payload_(const Spectr& plugin) {
     auto keys = choc::value::createObject("SpectrFreezeKeys");
     keys.addMember("restart_loop", plugin.freeze_keys_restart_loop());
+    // The key that plays the held sound at its own pitch, and its name in
+    // Logic's naming (MIDI 60 = C3).
+    const int root = plugin.freeze_keys_root_note();
+    char name[6];
+    FreezeKeys::note_name(root, name);
+    keys.addMember("root_note", root);
+    keys.addMember("root_name", std::string{name});
     return keys;
 }
 

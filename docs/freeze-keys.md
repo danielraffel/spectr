@@ -27,11 +27,24 @@ identities.
 
 ## Behaviour
 
-- **Root key.** MIDI 60 (C3 in Logic's naming) plays the held sound at its own
-  pitch. Every other key transposes it by its distance from the root in
-  equal-tempered semitones. Keys more than 36 semitones from the root are
-  ignored. The root can be changed with `Spectr::set_freeze_keys_root_note`;
-  there is no Settings UI or saved state for it yet.
+- **Root key: MIDI 60, named C3.** The root key plays the held sound at its
+  own pitch. Every other key transposes it by its distance from the root in
+  equal-tempered semitones (`2^((note - root) / 12)`). Notes are named the way
+  Logic Pro names them, octave = `note / 12 - 2`, so MIDI 60 is **C3**, MIDI 0
+  is **C-2** and MIDI 127 is **G8** (`FreezeKeys::note_name`). This is the
+  same convention PlunderTube uses for the key that plays a sample at its
+  original pitch (see "Root key convention" below). Yamaha also calls MIDI 60
+  C3; Roland and scientific pitch notation call it C4. The number, 60, is what
+  matters; only the label differs between conventions.
+  The root can be changed with `Spectr::set_freeze_keys_root_note`; there is
+  no Settings control or saved state for it yet. The Settings FREEZE KEYS
+  subtitle names it ("...; C3 plays it at its own pitch."), from `root_name`
+  in the editor's `freeze_keys` payload, which also carries `root_note`.
+- **Range: every MIDI note, 0 to 127 (C-2 to G8).** From the default root
+  that is 60 semitones down (1/32×) to 67 up (47.9×), so Musical Typing can
+  shift across the whole MIDI range. Nothing is ignored. Notes far below the
+  root may be mostly sub-audible (a 220 Hz hold played at C-2 sounds at
+  6.9 Hz); see "The ends of the range" for what each voice does there.
 - **Freeze with no keys played** behaves exactly as before: the hold plays.
   The tests check this against the same render with Freeze Keys turned off.
 - **The first key played into a hold** switches the frozen bus to keys mode.
@@ -95,10 +108,27 @@ it landed in, which is more than the 2.67 ms real-time budget. Spread out, the
 worst callback in the AU probe costs about 1.0 ms. See "Measured" below.
 
 **Loop hold** (the Length 0.25 s or more at the host tempo; the default,
-1 bar). The voice plays the loop with
-varispeed, like a sampler. It uses 4-point Hermite interpolation and crossfades
-the seam the way the source does. Pitch and loop duration change together.
-There is no note latency. Where a note starts is a setting,
+1 bar). The voice plays the loop with varispeed, like a sampler, and
+crossfades the seam the way the source does. Pitch and loop duration change
+together. There is no note latency.
+
+- **At or below the root** it reads the loop with 4-point Hermite
+  interpolation. Slowing a loop down folds nothing back, so no filter is
+  needed; at the root the read is the loop sample for sample.
+- **Above the root** the read is band-limited. Reading a loop `ratio` times
+  faster pushes anything above `fs / (2 * ratio)` past Nyquist, where it
+  would fold back as inharmonic tones (measured below: at full level without
+  the filter). The voice streams every loop sample it passes over through a
+  cascade of half-band decimators, one per octave of the ratio, until the
+  ratio left is in [1, 2). It then reads the last stage with a
+  Kaiser-windowed sinc (11 zero crossings each side, β 6.76) whose cutoff is
+  scaled to `0.5 / residual`. Each half-band stage's length is what its place
+  in the cascade needs to keep the final pass band (0.4 fs at the output,
+  19.2 kHz at 48 kHz) clear of its aliases: 47 taps for the last, then 19, 15,
+  and 11 for the rest. The cascade runs in batches of up to 2048 loop
+  samples. Its cost grows with the ratio, because it consumes every loop
+  sample the voice skips over: at 47.9× that is 48 loop samples per output
+  sample per channel. Where a note starts is a setting,
 **Restart loop on note** (Settings > FREEZE KEYS):
 
 - **On (the default).** Each note-on starts its own playhead at the top of the
@@ -126,9 +156,6 @@ FREEZE group (whose Hold length row the header LENGTH control replaced). It rend
 (the hydration carries `freeze_keys` only then). The UI is applied by
 `tools/patch_materialized_freeze_keys_restart.py`.
 
-- Upward transposition applies no anti-alias filter. Content above
-  `fs / (2 * ratio)` folds back. This has not been measured. If it is audible
-  on bright material, the fix is a band-limited (polyphase) resampler.
 - The alternative is a time- and formant-preserving pitch shift, so the loop
   keeps its length at any pitch, for example the stretch tools in Pulp (`pulp::signal`
   phase vocoder / `RealtimePitchTimeProcessor`). That costs a pitch shifter per
@@ -136,10 +163,33 @@ FREEZE group (whose Hold length row the header LENGTH control replaced). It rend
   "harmoniser". Varispeed is the simpler choice and it sounds right for a
   frozen loop played from a keyboard.
 
+### The ends of the range
+
+- **Loop voices, far up (to 47.9×).** Band-limited as above. A tone the
+  transposition carries past Nyquist leaves about −80 dB relative to an
+  in-band tone of the same level; with the plain Hermite read it folded back
+  at full level (0 dB). The playhead wraps however many times a step crosses
+  the loop's end.
+- **Loop voices, far down (to 1/32×).** Hermite, unchanged. A step of 1/32 of
+  a sample is exact in the read position's double precision. The output is the
+  loop slowed down: finite, no DC, at the hold's level.
+- **Spectral voices, far up.** Each tonal partial is redrawn at its scaled
+  frequency only while its whole lobe is below Nyquist; a partial scaled past
+  it is dropped, and a noise bin whose scaled frequency reaches Nyquist is
+  silent. Nothing wraps: a tone carried past Nyquist leaves less than
+  −110 dBFS.
+- **Spectral voices, far down.** Noise bins read the held spectrum at
+  `j / ratio`, so at 1/32× only the lowest 1/32 of the bins sound, with power
+  kept as varispeed keeps it. Partials that land below 4 bins (23 Hz at
+  48 kHz) are dropped, as is DC. Notes whose fundamental falls there are
+  mostly sub-audible, by design.
+
 ## Real-time
 
 `prepare()` allocates every buffer, including 12 voice slots of OLA,
-spectrum plans and partial tables (about 4 MB in stereo). The audio thread does
+spectrum plans and partial tables (about 4 MB in stereo), plus each voice's
+band-limiting histories and two shared batch buffers for the cascade (about
+90 KB in stereo). The audio thread does
 not allocate, lock or read a clock. `tools/ci/check_render_path_clock.py` scans
 `freeze_keys.hpp` as ctest `Spectr-render-path-clock-freeze-keys`. Notes are
 queued with their sample offset (512-event ring per block) and applied at that
@@ -150,6 +200,10 @@ sample.
 | What | Result |
 |---|---|
 | Pitch, root and −12…+12 semitones, 220 Hz tone, both hold kinds | under 0.01 cent off (test tolerance 3 cents); e.g. +7: 329.6276 Hz against 329.6276 expected |
+| Range, notes 0, 12, 24, 48, 60, 72, 96, 120, 127, 220 Hz and 1 kHz tones, every hold kind | every output finite, peak under 1.0; all 13 readings whose pitch is in band (30 Hz to 0.4 fs; note 0 on 1 kHz is 31.25 Hz, note 127 on 220 Hz is 10.55 kHz) within 3 cents and within 2 dB of the hold's level, mean under 0.01 |
+| Fold-back, a tone carried to 0.7 fs, notes 67 to 127 (1.5× to 47.9×) | loop voices: about −80 dB under an in-band tone of the same level (−90.6 dBFS against −10.5); plain Hermite (before band-limiting): 0 dB. Spectral voices: −113 dBFS or less in total. Test limit: 60 dB under |
+| Cost, 8-note chord at the top (120–127) and bottom (0–7), 128 frames / 48 kHz, least of three runs (two sessions) | loop top: costliest call 0.45–0.69 ms, mean 0.40–0.60 ms (budget 2.67 ms; the unfiltered Hermite read cost 0.04 ms); loop bottom 0.03–0.05 ms; spectral top and bottom 0.50–0.82 ms costliest, against 0.46–0.73 ms for the freeze alone. Gate: at most 6× the freeze alone's costliest call (loop top: 2.6–3.2×) |
+| AU host, 8-note chord 48–72 (`Spectr-au-freeze-keys-host`), after band-limiting | worst note-on call 663 µs, 4.5× the costliest call without freeze (gate 6×) |
 | 3-note chord | three pitches, each within 3 cents and within 6 dB of the strongest |
 | Saw chord and pad, +7 | the strongest partial moves by a fifth within 3 cents, both hold kinds |
 | Level, root at velocity 127 against the hold | within 1.5 dB; velocity 64 sits at `(64/127)^2` within 0.5 dB |
@@ -168,6 +222,29 @@ sample.
 Renders to listen to (`Spectr-test "[.render]"` with
 `FREEZE_KEYS_WAV_DIR=/tmp/freeze-keys`): a melody and a chord played over a
 frozen pad in both hold modes, the same freeze without keys, and the input.
+
+## Root key convention
+
+Spectr follows PlunderTube, which assigns the key that plays a sample at its
+original pitch (its Root Key) like this:
+
+- The root is **MIDI 60** by default:
+  `Source/WaveformState.h:211` `int keyRangeRootKey = 60;    // Default to C3 (MIDI note 60) - the original pitch`,
+  and its `rootKey_N` parameter defaults to 60 (`Source/PluginProcessor.cpp:4297-4300`).
+- Other keys shift by `2^((note - root) / 12)`:
+  `Source/PluginProcessor.cpp:657-659`.
+- Its UI names notes in Logic Pro's convention, `octave = note / 12 - 2`, so
+  60 is "C3" and the range is C-2 to G8:
+  `Source/Visage/VisageWaveformEditor.cpp:3820-3823` (the Root Key menu,
+  "full MIDI note range from C-2 to G8") and `:12953-12957`
+  ("Logic Pro octave naming: MIDI note 60 = C3"); the "Root Key: X" label in
+  `Source/Visage/VisagePluginEditor.cpp:882-886`.
+
+One inconsistency in PlunderTube is deliberately not copied. Its host-facing
+parameter text uses JUCE's octave-4 naming
+(`getMidiNoteName(value, true, true, 4)`, `Source/PluginProcessor.cpp:4305`),
+so a DAW would show the same 60 as "C4". Spectr uses the Logic naming
+everywhere it names a note.
 
 ## Product decision: the AU type
 
@@ -208,6 +285,7 @@ Logic users ask for it.
 - Pulp has no voice or pitch primitive for this. Several pieces are generic
   and could move into `pulp::signal`: per-voice overlap-add resynthesis from a
   held magnitude/frequency spectrum, an exact fractional-bin Hann lobe, and a
-  polyphonic voice allocator with a spread-over-samples preparation budget. A
-  band-limited varispeed reader for loops would also fit there.
+  polyphonic voice allocator with a spread-over-samples preparation budget.
+  The band-limited varispeed loop reader (half-band cascade plus scaled
+  windowed sinc) would also fit there.
   `FreezeHold` exposes the held spectrum but has no "play it at ratio r".
