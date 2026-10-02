@@ -368,7 +368,7 @@ window.__spectrPolishStart = () => {
         // LFOs, which is exactly what makes reaching it from LFO 1 legitimate.
         const hintNodes = Array.from(panel.querySelectorAll('*')).filter(
           node => node.children.length === 0
-            && node.textContent.trim() === 'Both LFOs; overrides Target');
+            && node.textContent.trim() === 'Both LFOs; per-LFO in band menu');
         if (hintNodes.length !== 1)
           throw new Error('want one Destinations hint naming both LFOs, found '
             + hintNodes.length);
