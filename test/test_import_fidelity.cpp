@@ -31,7 +31,7 @@ constexpr std::string_view kTemplateDigest =
 // goes stale silently and surfaces ~9 minutes into the M5 acceptance gate as a
 // bare hash mismatch. The failure below names the remedy for that reason.
 constexpr std::string_view kAdapterDigest =
-    "de9f3f6dd81639c29e79a29bfd6c87efc17f13c9e49c844ca5cc9d0728947770";
+    "e82a58cba7d65acbd07ab7d614f1439db1417a381f279f2a47d7d06ef9a4e0fc";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -940,7 +940,7 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"selected-preset-identity", "const [selectedPatternId, setSelectedPatternId] = useAppS(null);"},
         ContractMarker{"selected-preset-authoritative-label", "[...window.Spectr.FACTORY_PATTERNS, ...userPatterns].find((pattern) => pattern.id === selectedPatternId)?.name || \\\"PRESETS\\\";"},
         ContractMarker{"selected-preset-applied-identity", "setSelectedPatternId(p.id);"},
-        ContractMarker{"build-info-component", "function SpectrBuildInfo() {"},
+        ContractMarker{"build-info-component", "function SpectrBuildInfo({ showGpuStats = true }) {"},
         ContractMarker{"build-info-get", "postMessage(\\\"build_info_get\\\""},
         ContractMarker{"build-info-copy", "postMessage(\\\"build_info_copy\\\""},
         ContractMarker{"build-info-copy-success", "settleCopyState(\\\"COPIED\\\")"},
