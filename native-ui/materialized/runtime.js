@@ -9074,7 +9074,7 @@ function createWidget(type, id, parentId, props) {
 
   // ../pulp-spectr-live-materialized-import-20260812/packages/pulp-react/src/index.ts
   var reconciler = (0, import_react_reconciler.default)(PulpHostConfig);
-  // @pulp/react runtime revision 3 (batched-host-callbacks), transplanted:
+  // Transplanted @pulp/react fix batched-host-callbacks (fingerprint rev. 3):
   // host-driven callbacks commit their state updates once.
   globalThis.__pulpBatchUpdates__ = (fn, arg) => reconciler.batchedUpdates(fn, arg);
   try {

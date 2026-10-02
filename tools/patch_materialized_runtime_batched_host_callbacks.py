@@ -43,7 +43,7 @@ PATH = os.path.join(REPO, "native-ui", "materialized", "runtime.js")
 MARKER = "globalThis.__pulpBatchUpdates__ ="
 ANCHOR = "  var reconciler = (0, import_react_reconciler.default)(PulpHostConfig);\n"
 INSERT = (
-    "  // @pulp/react runtime revision 3 (batched-host-callbacks), transplanted:\n"
+    "  // Transplanted @pulp/react fix batched-host-callbacks (fingerprint rev. 3):\n"
     "  // host-driven callbacks commit their state updates once.\n"
     "  globalThis.__pulpBatchUpdates__ = (fn, arg) => reconciler.batchedUpdates(fn, arg);\n"
 )
