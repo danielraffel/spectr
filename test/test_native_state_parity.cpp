@@ -10314,6 +10314,98 @@ TEST_CASE("header tooltips appear after a delay and hide on press without blocki
     storage.require_unchanged();
 }
 
+// RANGE: a full-height Sculpt drag writes exactly +-Range; a band already
+// past the Range keeps its value and is drawn pinned with an overflow marker;
+// switching Range touches no band.
+TEST_CASE("Range sets how far a full-height drag reaches and pins overflowing bands",
+          "[native-n1][state-parity][level][range]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto drag_band_to_top = [&](int band, double overshoot) {
+        const auto script = std::string{R"js((() => {
+          const selector = '[data-spectr-filter-surface]';
+          const surface = document.querySelector(selector);
+          if (!surface) throw new Error('filter surface missing');
+          const w = surface.clientWidth, h = surface.clientHeight;
+          const inner = { x: 56, y: 70, w: w - 112, h: h - 190 };
+          const zeroY = inner.y + inner.h * 0.55;
+          const plotHalfH = Math.min(zeroY - inner.y, inner.y + inner.h - zeroY);
+          const N = 32, bandW = (inner.w - 2 * (N - 1)) / N;
+          const band = )js"} + std::to_string(band) + R"js(;
+          const x = inner.x + band * (bandW + 2) + bandW / 2;
+          const fire = (type, y, buttons) => {
+            if (!globalThis.__pulpActivateMaterializedElement__(selector, type, {
+              clientX: x, clientY: y, pointerId: 91, button: 0, buttons }))
+              throw new Error('range drag activation failed: ' + type);
+            if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+              globalThis.__pulpRuntimeSettle__(4);
+          };
+          const top = zeroY - plotHalfH - )js" + std::to_string(overshoot) + R"js(;
+          fire('pointerdown', zeroY, 1);
+          fire('pointermove', (zeroY + top) / 2, 1);
+          fire('pointermove', top, 1);
+          fire('pointerup', top, 0);
+        })();)js";
+        rig.bridge().load_script(script, "spectr-native-range-drag");
+        settle(rig.clock, 12);
+    };
+    const auto set_range = [&](int db) {
+        rig.bridge().load_script("globalThis.spectrSetRangeDb(" + std::to_string(db) + ", true);",
+                                 "spectr-native-range-set");
+        settle(rig.clock, 12);
+    };
+    REQUIRE(rig.processor.editor_range_db() == 24);
+    // Range 6: a drag to (and past) the top edge writes exactly +6 dB.
+    set_range(6);
+    CHECK(rig.processor.editor_range_db() == 6);  // persisted through range_set
+    drag_band_to_top(10, 40.0);
+    CHECK(rig.store.get_value(spectr::band_gain_param_id(10)) == Catch::Approx(6.0f).margin(1e-4));
+    // Range 24: the same gesture reaches +24 dB.
+    set_range(24);
+    drag_band_to_top(12, 40.0);
+    CHECK(rig.store.get_value(spectr::band_gain_param_id(12)) == Catch::Approx(24.0f).margin(1e-4));
+    // Back at 6, the +24 band keeps its value: switching touches no band.
+    set_range(6);
+    CHECK(rig.store.get_value(spectr::band_gain_param_id(12)) == Catch::Approx(24.0f));
+    CHECK(rig.store.get_value(spectr::band_gain_param_id(10)) == Catch::Approx(6.0f).margin(1e-4));
+    // ...and is drawn pinned with the amber overflow marker under the top
+    // edge. Control: no marker over the in-range band beside it.
+    rig.root->layout_children();
+    REQUIRE(pulp::view::raw_rgba_render_available());
+    std::uint32_t width = 0, height = 0;
+    const auto frame = pulp::view::render_to_rgba(*rig.root, 1320, 860, 2.0f, &width, &height);
+    REQUIRE(!frame.empty());
+    auto geometry = runtime_string(rig, R"js((() => {
+      const surface = document.querySelector('[data-spectr-filter-surface]');
+      const box = surface.getBoundingClientRect();
+      const w = surface.clientWidth, h = surface.clientHeight;
+      const inner = { x: 56, y: 70, w: w - 112, h: h - 190 };
+      const zeroY = inner.y + inner.h * 0.55;
+      const plotHalfH = Math.min(zeroY - inner.y, inner.y + inner.h - zeroY);
+      const bandW = (inner.w - 62) / 32;
+      const cx = (i) => box.left + inner.x + i * (bandW + 2) + bandW / 2;
+      return [cx(12), cx(10), box.top + zeroY - plotHalfH].join(',');
+    })())js", "spectr-native-range-geometry");
+    float overflow_x = 0, inside_x = 0, edge_y = 0;
+    REQUIRE(std::sscanf(geometry.c_str(), "%f,%f,%f", &overflow_x, &inside_x, &edge_y) == 3);
+    const auto amber_near = [&](float x) {
+        int count = 0;
+        for (float y = edge_y; y < edge_y + 9.0f; y += 0.5f)
+            for (float dx = -4.0f; dx <= 4.0f; dx += 0.5f) {
+                const auto px = static_cast<std::size_t>((x + dx) * 2.0f);
+                const auto py = static_cast<std::size_t>(y * 2.0f);
+                const auto* p = &frame[(py * width + px) * 4];
+                if (p[0] > 200 && p[1] > 140 && p[1] < 215 && p[2] < 130) ++count;
+            }
+        return count;
+    };
+    CAPTURE(geometry);
+    CHECK(amber_near(overflow_x) > 6);
+    CHECK(amber_near(inside_x) == 0);
+    storage.require_unchanged();
+}
+
 TEST_CASE("an Output trim or Morph edit records as a host gesture",
           "[native-n1][state-parity][modulation][automation]") {
     PatternStoragePoison storage;
