@@ -118,7 +118,7 @@ const SEP = ',\n    ';
 const TARGET_ROW =
   '/* @__PURE__ */ React.createElement(SpectrSettingsField, { hidden: '
   + '!(value.enabled || value.lfo2Enabled), label: "Target", '
-  + 'hint: "Automatable; clears Destinations" }, '
+  + 'hint: "Both LFOs; one field target" }, '
   + '/* @__PURE__ */ React.createElement(SpectrSettingsChips, { value: value.target, '
   + 'onChange: (next) => publish("target", 4004, next), '
   + 'opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"] ] }))';
@@ -157,7 +157,7 @@ if (plantScope) {
                             'value: lfo2DepthUndeclared || 0', 'plant-scope');
 }
 if (plantHomograph) {
-  html = replaceExactlyOnce(html, 'label: "Destinations", hint: "Both LFOs; overrides Target"',
+  html = replaceExactlyOnce(html, 'label: "Destinations", hint: "Both LFOs; per-LFO in band menu"',
                             'label: "Targets", hint: "Destinations both LFOs modulate"',
                             'plant-homograph');
 }

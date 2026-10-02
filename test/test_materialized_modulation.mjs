@@ -162,6 +162,8 @@ function measureExcursion() {
       // Classic is what this rig measures: heights follow each frame.
       const modulationLookRef = { current: "classic" };
       const modTargetRef = { current: null };
+      // The audible-viewport overlay ref applyModulationFrame writes.
+      const modViewportRef = { current: null };
       const modEasedRef = { current: [] };
       const modVelRef = { current: [] };
       const trailRef = { current: [] };

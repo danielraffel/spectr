@@ -83,6 +83,13 @@ function mount(initial, height = 860, keepSeed = false) {
         if (payload.id === 4000) native.enabled = payload.value === 1;
         if (payload.id === 4010) native.lfo2_enabled = payload.value === 1;
         if (payload.id === 4004) { native.target = payload.value; native.target_mask = 1 << payload.value; }
+        if (payload.id >= 4020 && payload.id < 4060) {
+          const lfo = Math.floor((payload.id - 4020) / 20), slot = (payload.id - 4020) % 20;
+          native.routes = native.routes || [{ mask: 1, amounts: [1, 1, 1, 1, 1, 1] }, { mask: 1, amounts: [1, 1, 1, 1, 1, 1] }];
+          const route = native.routes[lfo];
+          if (slot < 6) route.mask = payload.value ? (route.mask | (1 << slot)) : (route.mask & ~(1 << slot));
+          else if (slot >= 10 && slot < 16) route.amounts[slot - 10] = payload.value;
+        }
         emit();
       }
       return Promise.resolve({});
@@ -134,12 +141,23 @@ function mount(initial, height = 860, keepSeed = false) {
   // container -- at which point capping this panel becomes correct again.
   assert.equal(menu().props.style.overflowY, undefined);
   assert.equal(menu().props.style.maxHeight, undefined);
-  return { button, click, calls, native, listeners, get closed() { return closed; },
+  return { button, click, calls, native, listeners, tree: () => tree, rerender: render, get closed() { return closed; },
     menu, submenu,
     async settle() { await Promise.resolve(); await Promise.resolve(); render(); },
     external(value) { Object.assign(native, value); emit(); render(); },
     unmount() { effects.forEach(effect => effect?.cleanup?.()); },
   };
+}
+
+function nodes2(test) {
+  const output = [];
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return;
+    output.push(node);
+    for (const child of node.children || []) walk(child);
+  };
+  walk(test.tree());
+  return output;
 }
 
 for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
@@ -164,22 +182,49 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   test.click('lfo2-enable');
   assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4010, value: lfo2_enabled ? 0 : 1 } });
   assert.equal(test.closed, 0);
-  test.external({ enabled, lfo2_enabled, target: 2, target_mask: 4 });
+  // Per-LFO routing arrives on the live projection as a mask + amounts per
+  // LFO; the toggles and Amount rows follow it.
+  test.external({ enabled, lfo2_enabled, target: 2, target_mask: 4,
+    routes: [{ mask: 0b010100, amounts: [1, 1, 0.4, 1, 1, 1] },
+             { mask: 0b000001, amounts: [0.5, 1, 1, 1, 1, 1] }] });
   assert.equal(test.button('lfo1-enable').props['aria-checked'], enabled);
   assert.equal(test.button('lfo2-enable').props['aria-checked'], lfo2_enabled);
   assert.equal(test.button('modulation-target-b').props['aria-checked'], true);
+  assert.equal(test.button('modulation-target-viewport-position').props['aria-checked'], true);
+  assert.equal(test.button('modulation-target-bank').props['aria-checked'], false);
+  assert.equal(test.button('modulation-amount-b').props['aria-valuetext'], '40%');
+  assert.equal(test.button('modulation-amount-b').props['aria-disabled'], 'false');
+  // An Amount row whose destination is off stays in place, dimmed and inert.
+  assert.equal(test.button('modulation-amount-bank').props['aria-disabled'], 'true');
   test.click('modulation-back');
   test.button('modulation-toggle');
   assert.equal(test.closed, 0);
   test.click('modulation-toggle');
+  // Several destinations at once: each toggle writes ITS lane (LFO 1: 4020+t)
+  // and leaves the others on.
   test.click('modulation-target-morph');
-  assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4004, value: 3 } });
+  assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4023, value: 1 } });
+  test.click('modulation-target-viewport-zoom');
+  assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4025, value: 1 } });
+  test.click('modulation-target-b');
+  assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4022, value: 0 } });
+  assert.equal(test.button('modulation-target-morph').props['aria-checked'], true);
+  assert.equal(test.button('modulation-target-viewport-zoom').props['aria-checked'], true);
+  assert.equal(test.button('modulation-target-viewport-position').props['aria-checked'], true);
+  // LFO 2's rows address LFO 2's lanes (4040+t).
+  const lfo2Tab = nodes2(test).find(n => n.props['data-spectr-modulation-source-action'] === 2);
+  lfo2Tab.props.onClick(); test.rerender();
+  assert.equal(test.button('modulation-target-bank').props['aria-checked'], true);
+  assert.equal(test.button('modulation-amount-bank').props['aria-valuetext'], '50%');
+  test.click('modulation-target-a');
+  assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4041, value: 1 } });
+  const lfo1Tab = nodes2(test).find(n => n.props['data-spectr-modulation-source-action'] === 1);
+  lfo1Tab.props.onClick(); test.rerender();
   // No modulation write ever goes out as a bare, unrecordable value.
   assert.equal(test.calls.filter(call => call.type === 'param_set').length, 0);
   // Target writes are deliberately non dismissive: Spotify-style submenu
   // navigation lets a user audition several targets without reopening it.
   assert.equal(test.closed, 0);
-  assert.equal(test.button('modulation-target-morph').props['aria-checked'], true);
   test.click('modulation-back');
   assert.equal(test.closed, 0);
   test.unmount();
