@@ -10219,6 +10219,101 @@ TEST_CASE("header level knobs record one host gesture per act and follow the hos
     storage.require_unchanged();
 }
 
+// HEADER TOOLTIPS appear after the hover delay, say what the control is,
+// hide on press, and never take the press themselves.
+TEST_CASE("header tooltips appear after a delay and hide on press without blocking a click",
+          "[native-n1][state-parity][level][tooltip]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto tip_text = [&] {
+        auto text = runtime_string(rig,
+            "String(document.querySelector('[data-spectr-header-tooltip]')"
+            "?.getAttribute('data-spectr-header-tooltip-text') ?? '')",
+            "spectr-tooltip-text");
+        text.erase(std::min(text.find('\n'), text.size()));
+        return text;
+    };
+    // Real time passes and the host frame loop runs, which is what fires the
+    // runtime's setTimeout queue (WidgetBridge::service_frame_callbacks).
+    const auto wait = [&](int ms) {
+        for (int waited = 0; waited < ms; waited += 20) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            rig.bridge().service_frame_callbacks();
+            settle(rig.clock, 1);
+        }
+    };
+    const auto hover = [&](const char* selector) {
+        activate(rig, selector, "pointerenter",
+                 knob_point(selector, 0.0));
+    };
+    hover("[data-spectr-intensity]");
+    wait(150);
+    CHECK(tip_text().empty());  // not before the delay
+    wait(700);
+    {
+        auto diag = runtime_string(rig,
+            "JSON.stringify(globalThis.__spectrHeaderTipRequest ?? null)", "spectr-tip-request");
+        INFO("request " << diag);
+        CHECK(tip_text() == "Intensity: how strong the effect is. 0% is flat.");
+    }
+    // Leave hides it.
+    activate(rig, "[data-spectr-intensity]", "pointerleave");
+    settle(rig.clock, 4);
+    CHECK(tip_text().empty());
+    // Every header control with a tip says what it is.
+    const std::pair<const char*, const char*> tips[] = {
+        {"[data-spectr-mix]", "Mix: blend Spectr's sound with the original. Great with Freeze."},
+        {"[data-spectr-output-trim]", "Output: final volume (dB)."},
+        {"[data-spectr-auto-gain]", "Auto Gain: keeps the level steady as you boost or cut."},
+        {"[data-spectr-freeze-length]", "Length: how much audio a freeze captures and loops, in bars."},
+        {"[data-spectr-output-peak]", "Peak: the level leaving Spectr. Click to clear."},
+    };
+    for (const auto& [selector, text] : tips) {
+        INFO(selector);
+        hover(selector);
+        wait(700);
+        CHECK(tip_text() == text);
+        activate(rig, selector, "pointerleave");
+        settle(rig.clock, 4);
+    }
+    // A press hides a showing tip and still does its job: the AUTO click
+    // toggles Auto Gain exactly as it does with no tip.
+    hover("[data-spectr-auto-gain]");
+    wait(700);
+    REQUIRE_FALSE(tip_text().empty());
+    const float before = rig.store.get_value(spectr::kParamAutoGain);
+    activate(rig, "[data-spectr-auto-gain]");
+    settle(rig.clock, 4);
+    CHECK(tip_text().empty());
+    CHECK(rig.store.get_value(spectr::kParamAutoGain) == 1.0f - before);
+    // Never a hit target: a press where the tip paints reaches what is under it.
+    hover("[data-spectr-output-trim]");
+    wait(700);
+    REQUIRE_FALSE(tip_text().empty());
+    {
+        auto id = runtime_string(rig,
+            "String(document.querySelector('[data-spectr-header-tooltip]').__pulpId)",
+            "spectr-tooltip-id");
+        id.erase(std::min(id.find('\n'), id.size()));
+        const std::function<const View*(const View&)> by_id = [&](const View& view) -> const View* {
+            if (view.id() == id) return &view;
+            for (std::size_t i = 0; i < view.child_count(); ++i)
+                if (const auto* match = by_id(*view.child_at(i))) return match;
+            return nullptr;
+        };
+        const auto* tip_view = by_id(*rig.root);
+        REQUIRE(tip_view != nullptr);
+        rig.root->layout_children();
+        const auto box = pulp::view::ViewInspector::absolute_bounds(*tip_view);
+        REQUIRE(box.width > 0.0f);
+        const View* hit = rig.root->hit_test({box.x + box.width * 0.5f, box.y + box.height * 0.5f});
+        for (const View* node = hit; node != nullptr; node = node->parent())
+            CHECK(node != tip_view);  // the press goes to whatever is under it
+    }
+    storage.require_unchanged();
+}
+
 TEST_CASE("an Output trim or Morph edit records as a host gesture",
           "[native-n1][state-parity][modulation][automation]") {
     PatternStoragePoison storage;
