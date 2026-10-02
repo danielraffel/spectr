@@ -162,6 +162,12 @@ struct ModulatedFieldSnapshot {
     /// almost-always.
     SnapshotBank       snapshots{};
     float              host_morph = 0.0f;
+    /// The viewport the audio owner modulated from (the user's window, after
+    /// any morph derivation) and the audible one it rendered. Equal when no
+    /// viewport destination is routed. The editor draws the audible one as an
+    /// overlay and keeps editing in `base_viewport`.
+    Viewport           base_viewport{};
+    Viewport           viewport{};
     double             phase = 0.0;   ///< LFO 1 phase at `published_ns`
     double             phase_2 = 0.0; ///< LFO 2 phase at `published_ns`
     double             phase_per_second = 0.0;
@@ -903,7 +909,7 @@ private:
     // enabled/shape/rate/depth/target at 136..140, LFO 2
     // enabled/shape/rate/depth at 141..144, Macro 1..4 at 145..148,
     // Freeze at 149 and Freeze Length at 150.
-    static constexpr std::size_t kSurfaceCacheSlots = 151;
+    static constexpr std::size_t kSurfaceCacheSlots = detail::kSurfaceSlots;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
     // The audio thread's OWN record of the surface values it last pushed into
@@ -939,6 +945,11 @@ private:
     // shape, so a session that opens with an LFO running starts on it.
     std::array<float, 2> audio_lfo_level_{};
     bool                 audio_lfo_level_primed_ = false;
+    // Each route's slewed level (enabled ? amount : 0), per LFO and
+    // destination, at the same rate as the LFO level: a destination toggled on
+    // or off, or an amount automated, fades its contribution rather than
+    // stepping it. Primed with the LFO level above.
+    std::array<std::array<float, kModulationTargetCount>, 2> audio_route_level_{};
     // Audio owner -> UI publication of the post-LFO band field, so the editor
     // can draw the modulation it is playing. Write-only on the audio thread,
     // read-only through read_modulated_field().

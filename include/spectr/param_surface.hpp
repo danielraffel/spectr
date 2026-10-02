@@ -71,6 +71,42 @@ inline constexpr pulp::state::ParamID kParamLfo2Shape   = 4011;
 inline constexpr pulp::state::ParamID kParamLfo2Rate    = 4012;
 inline constexpr pulp::state::ParamID kParamLfo2Depth   = 4013;
 
+// Per-LFO routing (appended; 4004 stays as the legacy single-target lane).
+// For LFO l (0 = LFO 1, 1 = LFO 2) and destination t (ModulationTarget order:
+// Bank, Snapshot A, Snapshot B, Morph, Viewport position, Viewport zoom):
+//   on/off  = 4020 + 20 l + t   (LFO 1: 4020..4025, LFO 2: 4040..4045)
+//   amount  = 4030 + 20 l + t   (LFO 1: 4030..4035, LFO 2: 4050..4055)
+// Each block of ten leaves four IDs of headroom for further destinations.
+inline constexpr pulp::state::ParamID kParamLfoRouteEnabledBase = 4020;
+inline constexpr pulp::state::ParamID kParamLfoRouteAmountBase  = 4030;
+inline constexpr pulp::state::ParamID kParamLfoRouteStride      = 20;
+inline constexpr std::size_t kRouteLfoCount = 2;
+inline constexpr std::size_t kRouteTargetCount = 6;
+inline constexpr std::size_t kRouteParamCount =
+    kRouteLfoCount * kRouteTargetCount * 2;
+
+constexpr pulp::state::ParamID lfo_route_enabled_param_id(
+    std::size_t lfo, std::size_t target) noexcept {
+    return kParamLfoRouteEnabledBase
+        + static_cast<pulp::state::ParamID>(lfo) * kParamLfoRouteStride
+        + static_cast<pulp::state::ParamID>(target);
+}
+constexpr pulp::state::ParamID lfo_route_amount_param_id(
+    std::size_t lfo, std::size_t target) noexcept {
+    return kParamLfoRouteAmountBase
+        + static_cast<pulp::state::ParamID>(lfo) * kParamLfoRouteStride
+        + static_cast<pulp::state::ParamID>(target);
+}
+/// Whether @p id is one of the routing lanes above.
+constexpr bool is_lfo_route_param(pulp::state::ParamID id) noexcept {
+    for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo)
+        for (std::size_t t = 0; t < kRouteTargetCount; ++t)
+            if (id == lfo_route_enabled_param_id(lfo, t)
+                || id == lfo_route_amount_param_id(lfo, t))
+                return true;
+    return false;
+}
+
 // ── Macros ───────────────────────────────────────────────────────────────
 // Four host-automatable offsets, each addressed to a user-chosen subset of
 // the 64 canonical band slots. The VALUE is an ordinary static parameter —
@@ -106,8 +142,8 @@ constexpr pulp::state::ParamID band_mute_param_id(std::size_t band) noexcept {
 
 /// Total registered parameters: 2 legacy + freeze + freeze length + 64 gain + 64 mute + 4
 /// control (morph, center, width, count) + 4 modes + 9 internal LFO controls
-/// + 4 macros.
-inline constexpr std::size_t kSurfaceParamCount = 153;
+/// + 4 macros + 24 LFO routing lanes (6 destinations x on/off + amount x 2 LFOs).
+inline constexpr std::size_t kSurfaceParamCount = 153 + kRouteParamCount;
 
 // ── Viewport log-frequency encoding ─────────────────────────────────────
 // The display mapping (pattern.cpp) spans log10(20)..log10(20000), so the
@@ -156,7 +192,17 @@ inline constexpr std::size_t kSlotLfo2Base   = 141;  // +0..3: enabled/shape/rat
 inline constexpr std::size_t kSlotMacroBase  = 145;  // +0..3: Macro 1..4
 inline constexpr std::size_t kSlotFreeze     = 149;
 inline constexpr std::size_t kSlotFreezeLength = 150;
-inline constexpr std::size_t kSurfaceSlots   = 151;
+/// +0..23: per LFO (12 each), the six on/off lanes then the six amounts.
+inline constexpr std::size_t kSlotRouteBase  = 151;
+inline constexpr std::size_t kSurfaceSlots   = 151 + kRouteParamCount;
+
+/// Cache slot of LFO @p lfo's destination @p target on/off (or amount) lane.
+constexpr std::size_t route_enabled_slot(std::size_t lfo, std::size_t target) noexcept {
+    return kSlotRouteBase + lfo * kRouteTargetCount * 2 + target;
+}
+constexpr std::size_t route_amount_slot(std::size_t lfo, std::size_t target) noexcept {
+    return kSlotRouteBase + lfo * kRouteTargetCount * 2 + kRouteTargetCount + target;
+}
 
 constexpr pulp::state::ParamID surface_slot_param_id(std::size_t slot) noexcept {
     if (slot < 64) return band_gain_param_id(slot);
@@ -169,6 +215,14 @@ constexpr pulp::state::ParamID surface_slot_param_id(std::size_t slot) noexcept 
         case kSlotFreeze:    return kParamFreeze;
         case kSlotFreezeLength: return kParamFreezeLength;
         default:
+            if (slot >= kSlotRouteBase) {
+                const std::size_t r = slot - kSlotRouteBase;
+                const std::size_t lfo = r / (kRouteTargetCount * 2);
+                const std::size_t within = r % (kRouteTargetCount * 2);
+                return within < kRouteTargetCount
+                    ? lfo_route_enabled_param_id(lfo, within)
+                    : lfo_route_amount_param_id(lfo, within - kRouteTargetCount);
+            }
             if (slot < kSlotLfoBase)
                 return kParamMotionMode
                     + static_cast<pulp::state::ParamID>(slot - kSlotModeBase);
