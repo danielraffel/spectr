@@ -36,6 +36,8 @@ materialized
 ^settings overflow
 Built Spectr
 Spectr editor
+# A backtick in an editor.html String.raw patch silently unmounts the mirror.
+^Spectr-editor-html-raw-templates$
 # The AU artifact case run with the parameter-adoption worker held back, so
 # it can only pass if a plain parameter WRITE reaches the DSP without that
 # thread. The plain run of the same case lives under `^Pulp host loads`, which

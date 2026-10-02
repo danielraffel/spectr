@@ -1813,6 +1813,15 @@ find_program(SPECTR_CHROME_EXECUTABLE
 # and toggles appeared to vanish because the panel closed instead of the toggle
 # flipping.
 if(SPECTR_NODE_EXECUTABLE)
+    # A backtick inside one of resources/editor.html's String.raw patch
+    # templates ends the template early, the adapter stops compiling and every
+    # browser oracle fails as an unexplained mount timeout. This browserless
+    # check names the line instead, and carries its own negative control.
+    add_test(NAME Spectr-editor-html-raw-templates
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_html_raw_templates.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html)
+    set_tests_properties(Spectr-editor-html-raw-templates PROPERTIES TIMEOUT 30)
     add_test(NAME Spectr-materialized-propagation
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_propagation.mjs
