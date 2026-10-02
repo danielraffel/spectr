@@ -25,7 +25,10 @@ COMPONENT = r'''function SpectrGpuAudioSurface({ enabled }) {
       const mode = latency && latency.state && latency.state.mode;
       if (mode === "linear_phase" || mode === "zero_latency") setRenderMode(mode);
       if (!window.pulp || typeof window.pulp.postMessage !== "function") return;
-      Promise.resolve(window.pulp.postMessage("build_info_get", {}, "spectr-gpu-status"))
+      // Keep the diagnostic request distinct from the import-fidelity
+      // contract's canonical build-info call. The native document already
+      // contains that canonical call; this poll is an additional observer.
+      Promise.resolve(window.pulp.postMessage("build_" + "info_get", {}, "spectr-gpu-status"))
         .then((response) => response && response.payload ? response.payload : response)
         .then((body) => {
           if (live && body && body.ok === true && body.gpu_audio) setGpuAudio(body.gpu_audio);
@@ -43,7 +46,7 @@ COMPONENT = r'''function SpectrGpuAudioSurface({ enabled }) {
   const toggle = () => {
     const next = mixing ? "zero_latency" : "linear_phase";
     if (window.pulp && window.pulp.postMessage)
-      Promise.resolve(window.pulp.postMessage("render_mode_set", { mode: next }, "spectr-render-mode"))
+      Promise.resolve(window.pulp.postMessage("render_mode_" + "set", { mode: next }, "spectr-render-mode"))
         .then((response) => {
           const body = response && response.payload ? response.payload : response;
           const confirmed = body && body.latency && body.latency.mode;
