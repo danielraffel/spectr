@@ -427,7 +427,7 @@ void register_surface_params(pulp::state::StateStore& store) {
     // 50 %, nothing else.
     static constexpr const char* kRouteNames[kRouteTargetCount] = {
         "Bank", "Snapshot A", "Snapshot B", "Morph",
-        "Band shift", "Band spread"};
+        "Band shift", "Band spread", "Freeze", "Length"};
     for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
         for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
             pulp::state::ParamInfo info;

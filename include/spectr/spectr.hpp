@@ -766,6 +766,19 @@ public:
     /// Latest post-LFO band field from the audio owner, for drawing only.
     /// Lock-free; always a complete frame. `active == false` means no
     /// modulator is running and the editor should draw canonical state.
+    /// Whether the audio owner is asking for a freeze right now, Freeze
+    /// target included, and whether an LFO's Freeze target drives it.
+    [[nodiscard]] bool freeze_effective() const noexcept {
+        return freeze_effective_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool freeze_gate_driven() const noexcept {
+        return freeze_gate_driven_.load(std::memory_order_relaxed);
+    }
+    /// The LENGTH-list index the next freeze takes under the Length target,
+    /// or -1 when no LFO drives Length.
+    [[nodiscard]] int freeze_modulated_length_index() const noexcept {
+        return freeze_modulated_length_index_.load(std::memory_order_relaxed);
+    }
     const ModulatedFieldSnapshot& read_modulated_field() {
         return modulated_field_publication_.read();
     }
@@ -885,6 +898,10 @@ private:
     static void freeze_storage_trampoline_(void* ctx, const FreezeStorageTask& task) noexcept;
     void start_freeze_storage_lane_();
     /// The seconds the next freeze takes in at a transport (or the override).
+    /// The next freeze's hold length with the Length target applied: the
+    /// LENGTH-list index the LFOs reach at this moment. Audio thread.
+    [[nodiscard]] double modulated_freeze_seconds_(double tempo_bpm, int numerator,
+                                                   int denominator) noexcept;
     [[nodiscard]] double freeze_hold_seconds_at_(double tempo_bpm, int numerator,
                                                  int denominator) const noexcept;
     void preroll_surviving_hold_();
@@ -951,6 +968,20 @@ private:
     // or off, or an amount automated, fades its contribution rather than
     // stepping it. Primed with the LFO level above.
     std::array<std::array<float, kModulationTargetCount>, 2> audio_route_level_{};
+    // The Freeze target. `freeze_gate_last_` / `freeze_param_last_` are the
+    // previous block's gate and Freeze-parameter values; a change of the
+    // parameter while a gate drives the freeze (the user's press, or host
+    // automation) takes effect until the gate's next transition.
+    bool freeze_gate_last_ = false;
+    bool freeze_param_last_ = false;
+    bool freeze_user_override_ = false;
+    // What the audio owner actually asked the freeze source for, and whether
+    // an LFO was driving it: the editor's LIVE/FROZEN face shows this.
+    std::atomic<bool> freeze_effective_{false};
+    std::atomic<bool> freeze_gate_driven_{false};
+    // The LENGTH-list index the next freeze takes while the Length target
+    // drives it, else -1 (diagnostics and tests).
+    std::atomic<int> freeze_modulated_length_index_{-1};
     // Audio owner -> UI publication of the post-LFO band field, so the editor
     // can draw the modulation it is playing. Write-only on the audio thread,
     // read-only through read_modulated_field().

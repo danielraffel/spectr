@@ -829,6 +829,53 @@ double Spectr::freeze_hold_seconds_at_(double tempo_bpm, int numerator,
     return length_seconds(freeze_length(), tempo_bpm, numerator, denominator);
 }
 
+double Spectr::modulated_freeze_seconds_(double tempo_bpm, int numerator,
+                                         int denominator) noexcept {
+    const double base = freeze_hold_seconds_at_(tempo_bpm, numerator, denominator);
+    auto* store = param_store_;
+    constexpr auto kLength = static_cast<std::size_t>(ModulationTarget::Length);
+    if (!store || freeze_seconds_override_.load(std::memory_order_relaxed) >= 0.0) {
+        freeze_modulated_length_index_.store(-1, std::memory_order_relaxed);
+        return base;
+    }
+    // The Length target's coordinate at this moment: each LFO that is on and
+    // routed to Length adds wave x Depth. The engage this block may perform
+    // takes the length the LFOs reach now; a hold already playing keeps its
+    // own (FreezeSource::set_hold_seconds only shapes the NEXT latch).
+    const pulp::state::ParamID enabled_ids[2] = {kParamLfoEnabled, kParamLfo2Enabled};
+    const LfoShapeFade* fades[2] = {&audio_lfo_shape_fade_, &audio_lfo_2_shape_fade_};
+    const double phases[2] = {audio_modulation_phase_, audio_modulation_phase_2_};
+    bool driven = false;
+    float coordinate = 0.0f;
+    for (std::size_t lfo = 0; lfo < 2; ++lfo) {
+        if (store->get_value(enabled_ids[lfo]) < 0.5f) continue;
+        if (store->get_value(lfo_route_enabled_param_id(lfo, kLength)) < 0.5f) continue;
+        driven = true;
+        coordinate += lfo_value(*fades[lfo], phases[lfo])
+            * std::clamp(store->get_value(lfo_route_amount_param_id(lfo, kLength)),
+                         0.0f, 1.0f);
+    }
+    if (!driven) {
+        freeze_modulated_length_index_.store(-1, std::memory_order_relaxed);
+        return base;
+    }
+    // The user's LENGTH is the centre: its list index, or for a custom length
+    // the list entry nearest it.
+    int centre = freeze_length_preset();
+    if (centre < 0 || centre >= kLengthPresetCustom) {
+        const double bars = length_in_bars(freeze_custom_length());
+        centre = 0;
+        for (int i = 1; i < kLengthPresetCustom; ++i)
+            if (std::abs(length_in_bars(kLengthPresets[static_cast<std::size_t>(i)]) - bars)
+                < std::abs(length_in_bars(kLengthPresets[static_cast<std::size_t>(centre)]) - bars))
+                centre = i;
+    }
+    const int index = modulated_length_index(centre, coordinate, kLengthPresetCustom);
+    freeze_modulated_length_index_.store(index, std::memory_order_relaxed);
+    return length_seconds(kLengthPresets[static_cast<std::size_t>(index)],
+                          tempo_bpm, numerator, denominator);
+}
+
 double Spectr::freeze_length_seconds() const noexcept {
     return length_seconds(freeze_length(), transport_tempo_bpm(),
                           transport_time_sig_numerator(),
@@ -1179,7 +1226,7 @@ void Spectr::process(
         transport_tempo_bpm_.store(tempo, std::memory_order_relaxed);
         transport_time_sig_numerator_.store(numerator, std::memory_order_relaxed);
         transport_time_sig_denominator_.store(denominator, std::memory_order_relaxed);
-        const double seconds = freeze_hold_seconds_at_(tempo, numerator, denominator);
+        const double seconds = modulated_freeze_seconds_(tempo, numerator, denominator);
         freeze_source_.set_hold_seconds(seconds);
         // Longer than the rings reach: ask the worker for bigger ones. A
         // lock-free spawn, at most once per size; the source adopts them at
@@ -1432,6 +1479,47 @@ void Spectr::process(
                     audio_lfo_2_shape_fade_ = retarget_lfo_shape(
                         audio_lfo_2_shape_fade_,
                         modulation_settings.lfo2_shape);
+                    // ── Freeze target ───────────────────────────────────
+                    // A gate per LFO (the target's Depth is the frozen duty),
+                    // OR-ed. Read before the level slew below: the freeze
+                    // source has its own engage/release crossfade, so the
+                    // gate is a clean on/off.
+                    {
+                        constexpr auto kFreeze =
+                            static_cast<std::size_t>(ModulationTarget::Freeze);
+                        bool driven = false, gate = false;
+                        const bool lfo_on[2] = {modulation_settings.enabled,
+                                                modulation_settings.lfo2_enabled};
+                        const LfoShapeFade* fades[2] = {&audio_lfo_shape_fade_,
+                                                        &audio_lfo_2_shape_fade_};
+                        const double phases[2] = {audio_modulation_phase_,
+                                                  audio_modulation_phase_2_};
+                        for (std::size_t lfo = 0; lfo < 2; ++lfo) {
+                            const auto& route = modulation_settings.routes[lfo][kFreeze];
+                            if (!lfo_on[lfo] || !route.enabled) continue;
+                            driven = true;
+                            gate = gate || lfo_freeze_gate(fades[lfo]->to, phases[lfo],
+                                                           route.amount);
+                        }
+                        const bool param_frozen = cursor.value(kParamFreeze) >= 0.5f;
+                        bool frozen = param_frozen;
+                        if (driven) {
+                            // The user's press (or the lane's automation)
+                            // holds until the gate next changes.
+                            if (param_frozen != freeze_param_last_)
+                                freeze_user_override_ = true;
+                            if (gate != freeze_gate_last_)
+                                freeze_user_override_ = false;
+                            frozen = freeze_user_override_ ? param_frozen : gate;
+                        } else {
+                            freeze_user_override_ = false;
+                        }
+                        freeze_gate_last_ = gate;
+                        freeze_param_last_ = param_frozen;
+                        freeze_source_.set_frozen(frozen);
+                        freeze_effective_.store(frozen, std::memory_order_relaxed);
+                        freeze_gate_driven_.store(driven, std::memory_order_relaxed);
+                    }
                     // Slew each LFO's audible level, then let the slewed
                     // value stand in for enabled + depth everywhere below:
                     // the modulation, the activity flag and the editor's
@@ -1633,7 +1721,6 @@ void Spectr::process(
                     }
                     renderer->set_mix(std::clamp(
                         cursor.value(kMix) / 100.0f, 0.0f, 1.0f));
-                    freeze_source_.set_frozen(cursor.value(kParamFreeze) >= 0.5f);
 
                     for (std::size_t channel = 0;
                          channel < out_slice.num_channels(); ++channel) {
@@ -1720,7 +1807,15 @@ void Spectr::process(
             output_channels_[channel] = output.channel(channel).data();
         }
         renderer->set_mix(std::clamp(mix, 0.0f, 1.0f));
-        freeze_source_.set_frozen(state().get_value(kParamFreeze) >= 0.5f);
+        {
+            // No LFO is running on this path, so nothing gates the freeze.
+            const bool frozen = state().get_value(kParamFreeze) >= 0.5f;
+            freeze_source_.set_frozen(frozen);
+            freeze_effective_.store(frozen, std::memory_order_relaxed);
+            freeze_gate_driven_.store(false, std::memory_order_relaxed);
+            freeze_param_last_ = frozen;
+            freeze_user_override_ = false;
+        }
         audio_mix_percent_ = mix * 100.0f;
         audio_output_trim_db_ = out_trim_db;
         const bool processed = renderer->process(

@@ -73,15 +73,17 @@ inline constexpr pulp::state::ParamID kParamLfo2Depth   = 4013;
 
 // Per-LFO routing (appended; 4004 stays as the legacy single-target lane).
 // For LFO l (0 = LFO 1, 1 = LFO 2) and destination t (ModulationTarget order:
-// Bank, Snapshot A, Snapshot B, Morph, Band shift, Band spread):
-//   on/off  = 4020 + 20 l + t   (LFO 1: 4020..4025, LFO 2: 4040..4045)
-//   amount  = 4030 + 20 l + t   (LFO 1: 4030..4035, LFO 2: 4050..4055)
-// Each block of ten leaves four IDs of headroom for further destinations.
+// Bank, Snapshot A, Snapshot B, Morph, Band shift, Band spread, Freeze,
+// Length):
+//   on/off  = 4020 + 20 l + t   (LFO 1: 4020..4027, LFO 2: 4040..4047)
+//   Depth   = 4030 + 20 l + t   (LFO 1: 4030..4037, LFO 2: 4050..4057)
+// Freeze and Length were appended after the first six; each block of ten
+// keeps two IDs of headroom.
 inline constexpr pulp::state::ParamID kParamLfoRouteEnabledBase = 4020;
 inline constexpr pulp::state::ParamID kParamLfoRouteAmountBase  = 4030;
 inline constexpr pulp::state::ParamID kParamLfoRouteStride      = 20;
 inline constexpr std::size_t kRouteLfoCount = 2;
-inline constexpr std::size_t kRouteTargetCount = 6;
+inline constexpr std::size_t kRouteTargetCount = 8;
 inline constexpr std::size_t kRouteParamCount =
     kRouteLfoCount * kRouteTargetCount * 2;
 
@@ -142,7 +144,7 @@ constexpr pulp::state::ParamID band_mute_param_id(std::size_t band) noexcept {
 
 /// Total registered parameters: 2 legacy + freeze + freeze length + 64 gain + 64 mute + 4
 /// control (morph, center, width, count) + 4 modes + 9 internal LFO controls
-/// + 4 macros + 24 LFO routing lanes (6 destinations x on/off + amount x 2 LFOs).
+/// + 4 macros + 32 LFO routing lanes (8 destinations x on/off + Depth x 2 LFOs).
 inline constexpr std::size_t kSurfaceParamCount = 153 + kRouteParamCount;
 
 // ── Viewport log-frequency encoding ─────────────────────────────────────
@@ -192,7 +194,7 @@ inline constexpr std::size_t kSlotLfo2Base   = 141;  // +0..3: enabled/shape/rat
 inline constexpr std::size_t kSlotMacroBase  = 145;  // +0..3: Macro 1..4
 inline constexpr std::size_t kSlotFreeze     = 149;
 inline constexpr std::size_t kSlotFreezeLength = 150;
-/// +0..23: per LFO (12 each), the six on/off lanes then the six amounts.
+/// Per LFO (16 each): the eight on/off lanes, then the eight Depths.
 inline constexpr std::size_t kSlotRouteBase  = 151;
 inline constexpr std::size_t kSurfaceSlots   = 151 + kRouteParamCount;
 

@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 177;  // +4 macros, +freeze, +freeze length, +24 LFO routing
+constexpr std::size_t kExpectedParamCount = 185;  // +4 macros, +freeze, +freeze length, +32 LFO routing
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {
@@ -158,19 +158,19 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     CHECK(find(w.store, 4005) == nullptr);
     CHECK(find(w.store, 4014) == nullptr);
     CHECK(find(w.store, 4019) == nullptr);
-    // LFO routing: on/off 4020..4025 / 4040..4045, amounts 4030..4035 /
-    // 4050..4055; the four IDs after each block are headroom.
+    // LFO routing: on/off 4020..4027 / 4040..4047, Depths 4030..4037 /
+    // 4050..4057; the two IDs after each block are headroom.
     for (std::size_t lfo = 0; lfo < 2; ++lfo)
-        for (std::size_t t = 0; t < 6; ++t) {
+        for (std::size_t t = 0; t < 8; ++t) {
             REQUIRE(find(w.store, spectr::lfo_route_enabled_param_id(lfo, t)) != nullptr);
             REQUIRE(find(w.store, spectr::lfo_route_amount_param_id(lfo, t)) != nullptr);
         }
-    CHECK(find(w.store, 4026) == nullptr);
+    CHECK(find(w.store, 4028) == nullptr);
     CHECK(find(w.store, 4029) == nullptr);
-    CHECK(find(w.store, 4036) == nullptr);
+    CHECK(find(w.store, 4038) == nullptr);
     CHECK(find(w.store, 4039) == nullptr);
-    CHECK(find(w.store, 4046) == nullptr);
-    CHECK(find(w.store, 4056) == nullptr);
+    CHECK(find(w.store, 4048) == nullptr);
+    CHECK(find(w.store, 4058) == nullptr);
     CHECK(find(w.store, 4100) == nullptr);
     CHECK(find(w.store, 4199) == nullptr);
     // Beyond the documented scheme entirely.

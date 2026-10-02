@@ -17,13 +17,17 @@ enum class LfoShape : std::uint8_t { Sine, Triangle, Square, Saw };
 /// and keep their values: the legacy single-target host lane (`4004`) indexes
 /// them directly. The two viewport targets were appended after them.
 enum class ModulationTarget : std::uint8_t {
-    WholeBank, SnapshotA, SnapshotB, Morph, ViewportPosition, ViewportZoom
+    WholeBank, SnapshotA, SnapshotB, Morph,
+    ViewportPosition,  ///< "Band shift" in the UI and the host
+    ViewportZoom,      ///< "Band spread"
+    Freeze,            ///< gates LIVE / FROZEN; Depth is the frozen duty
+    Length,            ///< steps the next freeze's loop length
 };
 
 /// Destinations the legacy single-target lane can name (Bank..Morph).
 inline constexpr std::size_t kLegacyModulationTargetCount = 4;
 /// Every routable destination.
-inline constexpr std::size_t kModulationTargetCount = 6;
+inline constexpr std::size_t kModulationTargetCount = 8;
 /// Internal LFOs.
 inline constexpr std::size_t kLfoCount = 2;
 
@@ -36,8 +40,8 @@ inline constexpr std::uint8_t kModulationTargetMaskUnset = 0xFF;
 
 /// Every LEGACY destination selected (Bank, A, B, Morph).
 inline constexpr std::uint8_t kModulationTargetMaskAll = 0x0F;
-/// Every routable destination selected, viewport targets included.
-inline constexpr std::uint8_t kModulationRouteMaskAll = 0x3F;
+/// Every routable destination selected.
+inline constexpr std::uint8_t kModulationRouteMaskAll = 0xFF;
 
 /// One LFO -> destination route. `amount` IS this destination's depth
 /// (effective modulation = wave x amount); there is no LFO-level depth, so one
@@ -182,7 +186,15 @@ inline constexpr double kViewportRouteSlewSeconds = 0.25;
 
 /// Seconds for a full-scale route-level move of @p target.
 inline constexpr double route_slew_seconds(std::size_t target) noexcept {
-    return target >= 4 ? kViewportRouteSlewSeconds : kLfoLevelSlewSeconds;
+    return (target == static_cast<std::size_t>(ModulationTarget::ViewportPosition)
+            || target == static_cast<std::size_t>(ModulationTarget::ViewportZoom))
+        ? kViewportRouteSlewSeconds : kLfoLevelSlewSeconds;
+}
+
+/// Destinations that shape the band field or the window, and so feed the
+/// modulated-field publication. Freeze and Length act on the freeze source.
+inline constexpr bool modulation_target_moves_field(std::size_t target) noexcept {
+    return target < static_cast<std::size_t>(ModulationTarget::Freeze);
 }
 
 /// The level @p seconds later, moving toward @p target at full scale per
@@ -391,9 +403,57 @@ inline Viewport apply_viewport_modulation(const Viewport& base,
 /// Whether @p routes drive anything at all: a destination enabled with a
 /// non-zero amount.
 inline bool lfo_routes_audible(const LfoRoutes& routes) noexcept {
-    for (const auto& route : routes)
-        if (route.enabled && route.amount > 0.0f) return true;
+    for (std::size_t t = 0; t < kModulationTargetCount; ++t)
+        if (modulation_target_moves_field(t) && routes[t].enabled
+            && routes[t].amount > 0.0f)
+            return true;
     return false;
+}
+
+// ── Freeze and Length ────────────────────────────────────────────────────
+
+/// The Freeze gate: whether an LFO at @p phase holds the freeze ON, with
+/// @p duty (the target's Depth) the fraction of each cycle that is frozen --
+/// 0 never, 0.5 half the cycle, 1 always. "Frozen while the LFO is above a
+/// threshold", with the threshold placed so the duty is exact for the shape:
+/// sine `cos(pi duty)`, triangle and saw (uniform over a cycle) `1 - 2 duty`.
+/// A square only takes two values, so its gate is the window of `duty` of a
+/// cycle centred on the middle of its high half (exactly the high half at
+/// 50 %).
+inline bool lfo_freeze_gate(LfoShape shape, double phase, float duty) noexcept {
+    const float d = std::clamp(duty, 0.0f, 1.0f);
+    if (d <= 0.0f) return false;
+    if (d >= 1.0f) return true;
+    phase -= std::floor(phase);
+    switch (shape) {
+        case LfoShape::Square: {
+            double from_centre = std::fabs(phase - 0.25);
+            if (from_centre > 0.5) from_centre = 1.0 - from_centre;
+            return from_centre < 0.5 * d;
+        }
+        case LfoShape::Triangle:
+        case LfoShape::Saw:
+            return lfo_value(shape, phase) > 1.0f - 2.0f * d;
+        case LfoShape::Sine:
+        default:
+            return lfo_value(shape, phase)
+                > static_cast<float>(std::cos(3.14159265358979323846 * d));
+    }
+}
+
+/// How far either way, in steps of the LENGTH list, a full-depth Length
+/// route moves the next freeze's loop length.
+inline constexpr int kLengthModulationSteps = 8;
+
+/// The LENGTH-list index a freeze engaging now takes: @p base_index (the
+/// user's LENGTH) moved by `round(coordinate x 8)` steps, clamped to the
+/// list. @p coordinate is the Length destination's summed `wave x Depth`.
+inline constexpr int modulated_length_index(int base_index, float coordinate,
+                                            int list_size) noexcept {
+    const float steps = coordinate * static_cast<float>(kLengthModulationSteps);
+    const int offset = static_cast<int>(steps < 0.0f ? steps - 0.5f : steps + 0.5f);
+    const int index = base_index + offset;
+    return index < 0 ? 0 : (index >= list_size ? list_size - 1 : index);
 }
 
 /// Whether @p settings move anything: an LFO that is on, has depth, and has a

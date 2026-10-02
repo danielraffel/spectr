@@ -551,6 +551,7 @@ endif()
 add_executable(Spectr-test
     test/test_spectr.cpp
     test/test_modulation_routing.cpp
+    test/test_modulation_freeze.cpp
     test/test_band_state.cpp
     test/test_viewport.cpp
     test/test_analyzer_bridge.cpp
