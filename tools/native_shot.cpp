@@ -1680,7 +1680,7 @@ int main(int argc, char** argv) {
         // SPECTR_ROUTE_FRAME_COST=1: the editor's per-frame cost (one audio
         // block, then one display tick: the modulation frame publication, the
         // JS overlay apply and the draw loop) with LFO 1 on Bank -- the
-        // shipping baseline -- against LFO 1 on Viewport position and on both.
+        // shipping baseline -- against LFO 1 on Band shift and on both.
         // Wall time of the tick, p50 / p95 / max over 400 frames after a
         // 60-frame warm-up, 64 bands. Headless, so it measures the editor's
         // own work, not a compositor.
@@ -1693,8 +1693,8 @@ int main(int argc, char** argv) {
             store.set_value(spectr::kParamLfoDepth, 0.6f);
             store.set_value(spectr::kParamLfoRate, 2.0f);
             struct Config { const char* name; unsigned mask; };
-            const Config configs[] = {{"bank", 0x01u}, {"viewport-position", 0x10u},
-                                      {"bank+viewport-position", 0x11u}, {"bank", 0x01u}};
+            const Config configs[] = {{"bank", 0x01u}, {"band-shift", 0x10u},
+                                      {"bank+band-shift", 0x11u}, {"bank", 0x01u}};
             for (const auto& config : configs) {
                 for (std::size_t t = 0; t < 6; ++t)
                     store.set_value(spectr::lfo_route_enabled_param_id(0, t),
@@ -1702,11 +1702,11 @@ int main(int argc, char** argv) {
                 rig.processor.apply_surface_params(false);
                 // Positive control: the frames this run delivers reach the
                 // document, and (for a viewport route) move the overlay.
-                rig.eval("(() => { globalThis.__routeFrames = 0; globalThis.__routeViews = new Set();"
+                rig.eval("(() => { globalThis.__routeFrames = 0;"
                          " if (!globalThis.__routeFrameHooked) { globalThis.__routeFrameHooked = true;"
-                         " window.pulp.on('modulation_frame', (m) => { globalThis.__routeFrames++;"
-                         " const p = m && m.payload; if (p && p.min_hz) globalThis.__routeViews.add(Math.round(p.min_hz)); }); } })();",
+                         " window.pulp.on('modulation_frame', () => { globalThis.__routeFrames++; }); } })();",
                          "spectr-route-frame-control");
+                std::vector<int> audible_windows;
                 std::vector<double> ms;
                 constexpr int block = 800;  // 60 Hz at 48 kHz
                 std::vector<float> in0(block), in1(block), out0(block), out1(block);
@@ -1723,14 +1723,19 @@ int main(int argc, char** argv) {
                     pulp::audio::BufferView<const float> input(inputs, 2, block);
                     pulp::audio::BufferView<float> output(outputs, 2, block);
                     rig.processor.process(output, input, midi_in, midi_out, context);
+                    audible_windows.push_back(static_cast<int>(std::lround(
+                        rig.processor.read_modulated_field().viewport.min_hz)));
                     const auto t0 = std::chrono::steady_clock::now();
                     rig.clock.tick(1.0f / 60.0f);
                     const auto t1 = std::chrono::steady_clock::now();
                     if (frame >= 60)
                         ms.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
                 }
-                rig.eval("console.log('[route-frame-cost] control frames=' + globalThis.__routeFrames"
-                         " + ' distinct audible windows=' + globalThis.__routeViews.size);",
+                std::sort(audible_windows.begin(), audible_windows.end());
+                const auto distinct = std::unique(audible_windows.begin(), audible_windows.end())
+                    - audible_windows.begin();
+                std::printf("[route-frame-cost] control: %td distinct audible windows rendered\n", distinct);
+                rig.eval("console.log('[route-frame-cost] control frames=' + globalThis.__routeFrames);",
                          "spectr-route-frame-control-read");
                 std::sort(ms.begin(), ms.end());
                 std::printf("[route-frame-cost] %-24s p50 %.3f ms  p95 %.3f ms  max %.3f ms  (n=%zu)\n",
@@ -1740,14 +1745,12 @@ int main(int argc, char** argv) {
             return g_failures == 0 ? 0 : 1;
         }
 
-        // ── LFO routing: the band menu's target rows, and the audible
-        //    viewport overlay ──────────────────────────────────────────
+        // ── LFO routing: the band menu's target rows ───────────────────
         //
         // SPECTR_MODULATION_ROUTE_SHOTS=1 captures the Modulation submenu with
-        // its six target switches + Amount rows at the default host size and
-        // at the minimum, prints the panel's rect against the space the menu
-        // may use, then captures a running viewport-position LFO so the
-        // overlay (minimap bracket, plot bracket) can be looked at.
+        // its six target switches + Depth rows at the default host size and
+        // at the minimum, and prints the panel's rect against the space the
+        // menu may use.
         if (std::getenv("SPECTR_MODULATION_ROUTE_SHOTS") != nullptr) {
             auto& store = rig.store;
             const auto set_routes = [&](std::size_t lfo, unsigned mask,
@@ -1783,19 +1786,19 @@ int main(int argc, char** argv) {
                     ) + name + " NO PANEL'); return; } const r = p.getBoundingClientRect(); "
                     "const rows = Array.from(document.querySelectorAll('[data-spectr-modulation-panel] [data-spectr-band-action]')); "
                     "const last = rows[rows.length - 1].getBoundingClientRect(); "
-                    "const amount = document.querySelector('[data-spectr-band-action=\"modulation-amount-bank\"]'); "
-                    "const depth = document.querySelector('[data-spectr-band-action=\"lfo1-depth\"]'); "
+                    "const amount = document.querySelector('[data-spectr-band-action=\"modulation-target-depth-bank\"]'); "
+                    "const depth = document.querySelector('[data-spectr-band-action=\"lfo1-rate\"]'); "
                     "const ah = amount ? amount.getBoundingClientRect().height : -1; "
                     "const dh = depth ? depth.getBoundingClientRect().height : -1; "
                     "console.log('[route-shot] " + name + " panel top=' + r.top.toFixed(1) "
                     "+ ' bottom=' + r.bottom.toFixed(1) + ' height=' + r.height.toFixed(1) "
                     "+ ' scrollHeight=' + p.scrollHeight + ' lastRowBottom=' + last.bottom.toFixed(1) "
-                    "+ ' rows=' + rows.length + ' amountRowH=' + ah.toFixed(1) "
-                    "+ ' depthRowH=' + dh.toFixed(1) + ' limit=' + (860 - 64 - 16)); })();",
+                    "+ ' rows=' + rows.length + ' targetDepthRowH=' + ah.toFixed(1) "
+                    "+ ' rateRowH=' + dh.toFixed(1) + ' limit=' + (860 - 64 - 16)); })();",
                     "spectr-route-shot-report");
                 settle(rig.clock, 2);
             };
-            // Default size: Bank on, Morph on at 40 %, Viewport position on at
+            // Default size: Bank on, Morph on at 40 %, Band shift on at
             // 75 % -- several on, several off, so lit and dimmed rows show.
             rig.resize(990.0f, 645.0f);
             set_routes(0, 0x19u, {1.0f, 1.0f, 1.0f, 0.4f, 0.75f, 1.0f});
@@ -1829,36 +1832,6 @@ int main(int argc, char** argv) {
             report("990x645-lfo2");
             capture(rig, dir, prefix + "modulation-routes-990x645-lfo2", backend, scale);
 
-            // Close the menu and run a viewport-position LFO.
-            rig.eval("(() => { document.dispatchEvent({ type: 'keydown', key: 'Escape', code: 'Escape',"
-                     " bubbles: true, cancelable: true, preventDefault() {}, stopPropagation() {} }); "
-                     "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
-                     "globalThis.__pulpRuntimeSettle__(8); })();", "spectr-route-shot-close");
-            settle(rig.clock, 16);
-            // Twice: the submenu, then the band menu.
-            for (int level = 0; level < 2; ++level) {
-                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
-                rig.service_runtime();
-            }
-            settle(rig.clock, 16);
-            store.set_value(spectr::kParamViewportCenter, 2.8f);
-            store.set_value(spectr::kParamViewportWidth, 1.0f);
-            store.set_value(spectr::kParamLfo2Enabled, 0.0f);
-            store.set_value(spectr::kParamLfoDepth, 0.6f);
-            store.set_value(spectr::kParamLfoRate, 4.0f);
-            set_routes(0, 0x10u, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
-            rig.processor.apply_surface_params(false);
-            for (int step = 0; step < 3; ++step) {
-                rig.feed_tone(48);
-                settle(rig.clock, 4);
-                rig.eval("(() => { const s = globalThis.__spectrTestHooks && globalThis.__spectrTestHooks.renderState"
-                         " ? globalThis.__spectrTestHooks.renderState() : null; "
-                         "console.log('[route-shot] overlay view=' + JSON.stringify(s && s.view) "
-                         "+ ' audible=' + JSON.stringify(s && s.audibleView)); })();",
-                         "spectr-route-shot-overlay");
-                capture(rig, dir, prefix + "viewport-overlay-" + std::to_string(step),
-                        backend, scale);
-            }
             return g_failures == 0 ? 0 : 1;
         }
 

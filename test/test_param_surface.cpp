@@ -645,7 +645,7 @@ TEST_CASE("host target automation reclaims the modulation destination") {
     Wired w;
     w.proc->apply_surface_params(false);  // settle the applied-parameter cache
 
-    // Routing per LFO: LFO 1 drives Bank + Morph + Viewport position, LFO 2
+    // Routing per LFO: LFO 1 drives Bank + Morph + Band shift, LFO 2
     // Snapshot A. Those are host lanes now.
     const auto route = [&](std::size_t lfo, spectr::ModulationTarget t, bool on) {
         w.store.set_value(spectr::lfo_route_enabled_param_id(
@@ -689,7 +689,7 @@ TEST_CASE("the legacy LFO Depth lanes set the Depth of every enabled target",
           "[modulation][routing]") {
     Wired w;
     w.proc->apply_surface_params(false);
-    // LFO 1: Bank (default) + Viewport zoom; LFO 2: Morph only.
+    // LFO 1: Bank (default) + Band spread; LFO 2: Morph only.
     w.store.set_value(spectr::lfo_route_enabled_param_id(0, 5), 1.0f);
     w.store.set_value(spectr::lfo_route_amount_param_id(0, 3), 0.33f);  // Morph off
     w.store.set_value(spectr::lfo_route_enabled_param_id(1, 0), 0.0f);

@@ -250,7 +250,7 @@ inline void preserve_authored_mutes(BandField& out,
 //     LFOs add, so the result does not depend on which LFO is visited first.
 //  2. APPLY each destination once, in a fixed order, clamping once:
 //       Morph -> Snapshot A -> Snapshot B -> Bank        (band levels)
-//       Viewport zoom, Viewport position                 (band frequencies)
+//       Band spread, Band shift                 (band frequencies)
 //     Morph and the snapshots RESHAPE the field (each is a blend between
 //     fields, so every band stays inside the range its inputs span); Bank then
 //     OFFSETS that shape, so a Bank wobble rides on top of a morphing shape
@@ -264,10 +264,10 @@ inline void preserve_authored_mutes(BandField& out,
 /// Full-depth excursions, per destination.
 inline constexpr float kModulationBankExcursionDb = 12.0f;
 inline constexpr float kModulationMorphExcursion = 0.5f;
-/// Viewport position: the window centre moves by up to one decade each way
+/// Band shift: the window centre moves by up to one decade each way
 /// (about 3.3 octaves), keeping its width.
 inline constexpr float kModulationViewportPositionDecades = 1.0f;
-/// Viewport zoom: the window width is scaled by up to 2x wider / 2x narrower
+/// Band spread: the window width is scaled by up to 2x wider / 2x narrower
 /// (in log-frequency), about its centre.
 inline constexpr float kModulationViewportZoomOctaves = 1.0f;
 

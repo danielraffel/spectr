@@ -164,8 +164,9 @@ struct ModulatedFieldSnapshot {
     float              host_morph = 0.0f;
     /// The viewport the audio owner modulated from (the user's window, after
     /// any morph derivation) and the audible one it rendered. Equal when no
-    /// viewport destination is routed. The editor draws the audible one as an
-    /// overlay and keeps editing in `base_viewport`.
+    /// viewport destination is routed. Viewport modulation is audible only --
+    /// the editor keeps drawing the user's window -- so these are the one
+    /// place the rendered window can be read back (tests, probes).
     Viewport           base_viewport{};
     Viewport           viewport{};
     double             phase = 0.0;   ///< LFO 1 phase at `published_ns`

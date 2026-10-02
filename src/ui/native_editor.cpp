@@ -1212,15 +1212,11 @@ void Spectr::publish_modulation_frame_() {
     if (unchanged) return;
 
     const BandField* drawn = &modulated.field;
-    Viewport drawn_viewport = modulated.viewport;
     if (reconstructable) {
-        const auto composed = compose_internal_modulation(
+        native_modulation_drawn_ = compose_internal_modulation(
             modulated.pre_field, modulated.snapshots, modulated.host_morph,
             modulated.settings, lfo_value(fade_1, phase_1),
-            lfo_value(fade_2, phase_2));
-        native_modulation_drawn_ = composed.field;
-        drawn_viewport = apply_viewport_modulation(modulated.base_viewport,
-                                                   composed.coords);
+            lfo_value(fade_2, phase_2)).field;
         drawn = &native_modulation_drawn_;
     }
 
@@ -1255,16 +1251,6 @@ void Spectr::publish_modulation_frame_() {
     payload.addMember("n_visible", static_cast<std::int32_t>(visible));
     payload.addMember("gain_db", gains);
     payload.addMember("muted", muted);
-    // The audible window, when a viewport destination moves it. The editor
-    // keeps the plot (and every pointer hit) on the user's window and draws
-    // this as an overlay; it is absent when the two are the same, which is
-    // the editor's cue to drop the overlay.
-    if (modulated.active
-        && (drawn_viewport.min_hz != modulated.base_viewport.min_hz
-            || drawn_viewport.max_hz != modulated.base_viewport.max_hz)) {
-        payload.addMember("min_hz", static_cast<double>(drawn_viewport.min_hz));
-        payload.addMember("max_hz", static_cast<double>(drawn_viewport.max_hz));
-    }
     try {
         native_scripted_ui_->bridge()->dispatch_native_message(
             "__spectrPublishNativeMessage",

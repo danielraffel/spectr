@@ -73,7 +73,7 @@ inline constexpr pulp::state::ParamID kParamLfo2Depth   = 4013;
 
 // Per-LFO routing (appended; 4004 stays as the legacy single-target lane).
 // For LFO l (0 = LFO 1, 1 = LFO 2) and destination t (ModulationTarget order:
-// Bank, Snapshot A, Snapshot B, Morph, Viewport position, Viewport zoom):
+// Bank, Snapshot A, Snapshot B, Morph, Band shift, Band spread):
 //   on/off  = 4020 + 20 l + t   (LFO 1: 4020..4025, LFO 2: 4040..4045)
 //   amount  = 4030 + 20 l + t   (LFO 1: 4030..4035, LFO 2: 4050..4055)
 // Each block of ten leaves four IDs of headroom for further destinations.

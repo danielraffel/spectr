@@ -9917,8 +9917,9 @@ TEST_CASE("every LFO edit in the band menu records as a host gesture",
     press_menu_slider(rig, "lfo1-rate", 1.0);
     CHECK(recorder.take() == "begin 4002, set 4002=16, end 4002");
 
-    press_menu_slider(rig, "lfo1-depth", 0.25);
-    CHECK(recorder.take() == "begin 4003, set 4003=0.25, end 4003");
+    // Depth is per target now (LFO 1 Bank's Depth lane is 4030).
+    press_menu_slider(rig, "modulation-target-depth-bank", 0.25);
+    CHECK(recorder.take() == "begin 4030, set 4030=0.25, end 4030");
 
     // A destination switch writes its own routing lane (LFO 1 Morph = 4023).
     activate(rig, "[data-spectr-band-action=\"modulation-target-morph\"]");
@@ -9932,8 +9933,8 @@ TEST_CASE("every LFO edit in the band menu records as a host gesture",
     CHECK(recorder.take() == "begin 4011, set 4011=3, end 4011");
     press_menu_slider(rig, "lfo2-rate", 0.0);
     CHECK(recorder.take() == "begin 4012, set 4012=0.25, end 4012");
-    press_menu_slider(rig, "lfo2-depth", 1.0);
-    CHECK(recorder.take() == "begin 4013, set 4013=1, end 4013");
+    press_menu_slider(rig, "modulation-target-depth-bank", 1.0);
+    CHECK(recorder.take() == "begin 4050, set 4050=1, end 4050");
 
     // Off again: the toggle records its falling edge too.
     activate(rig, "[data-spectr-band-action=\"lfo1-enable\"]");
@@ -9974,12 +9975,12 @@ TEST_CASE("host playback of the LFO lanes moves the band menu, even after an edi
 
     // The user sets depth to 37% by hand, which is a value a float cannot hold
     // exactly. The processor reports it back as 0.3700000047683716.
-    press_menu_slider(rig, "lfo1-depth", 0.37);
-    REQUIRE(rig.store.get_value(spectr::kParamLfoDepth) == Catch::Approx(0.37f));
+    press_menu_slider(rig, "modulation-target-depth-bank", 0.37);
+    REQUIRE(rig.store.get_value(spectr::lfo_route_amount_param_id(0, 0)) == Catch::Approx(0.37f));
     REQUIRE(rig.processor.apply_surface_params(false));
     settle(rig.clock, 8);
     require_runtime_contract(rig,
-        "document.querySelector('[data-spectr-band-action=\"lfo1-depth\"]')"
+        "document.querySelector('[data-spectr-band-action=\"modulation-target-depth-bank\"]')"
         "?.getAttribute('aria-valuetext') === '37%'",
         "the depth row does not show the edit");
 
@@ -9987,7 +9988,7 @@ TEST_CASE("host playback of the LFO lanes moves the band menu, even after an edi
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
     rig.store.set_value(spectr::kParamLfoShape, 3.0f);
     rig.store.set_value(spectr::kParamLfoRate, 0.5f);
-    rig.store.set_value(spectr::kParamLfoDepth, 0.8f);
+    rig.store.set_value(spectr::lfo_route_amount_param_id(0, 0), 0.8f);
     REQUIRE(rig.processor.apply_surface_params(false));
     settle(rig.clock, 8);
     require_runtime_contract(rig,
@@ -10003,7 +10004,7 @@ TEST_CASE("host playback of the LFO lanes moves the band menu, even after an edi
         "?.getAttribute('aria-valuetext') === '0.5 beats'",
         "LFO 1 rate did not follow host playback");
     require_runtime_contract(rig,
-        "document.querySelector('[data-spectr-band-action=\"lfo1-depth\"]')"
+        "document.querySelector('[data-spectr-band-action=\"modulation-target-depth-bank\"]')"
         "?.getAttribute('aria-valuetext') === '80%'",
         "LFO 1 depth did not follow host playback after the user edited it");
 
@@ -10205,15 +10206,15 @@ TEST_CASE("every routing edit in the band menu records as a host gesture",
     ModulationEditRecorder recorder(rig.store);
 
     // Several destinations on at once, each its own complete bracket.
-    activate(rig, "[data-spectr-band-action=\"modulation-target-viewport-position\"]");
+    activate(rig, "[data-spectr-band-action=\"modulation-target-band-shift\"]");
     CHECK(recorder.take() == "begin 4024, set 4024=1, end 4024");
     activate(rig, "[data-spectr-band-action=\"modulation-target-a\"]");
     CHECK(recorder.take() == "begin 4021, set 4021=1, end 4021");
     apply_and_settle(rig);
     CHECK(spectr::route_mask(rig.processor.modulation_settings().routes[0]) == 0x13);
 
-    // An Amount drag is ONE bracket with its values inside it.
-    drag_menu_slider(rig, "modulation-amount-viewport-position", {0.2, 0.5, 0.75});
+    // A Depth drag is ONE bracket with its values inside it.
+    drag_menu_slider(rig, "modulation-target-depth-band-shift", {0.2, 0.5, 0.75});
     const auto drag = recorder.take();
     INFO("amount drag recorded: " << drag);
     CHECK(drag.rfind("begin 4034, ", 0) == 0);
@@ -10227,26 +10228,26 @@ TEST_CASE("every routing edit in the band menu records as a host gesture",
     CHECK(ends == 1);
     CHECK(rig.store.get_value(spectr::lfo_route_amount_param_id(0, 4)) == Catch::Approx(0.75f));
 
-    // A disabled Amount row (its destination is off) ignores input entirely.
+    // A disabled Depth row (its destination is off) ignores input entirely.
     const float zoom_before = rig.store.get_value(spectr::lfo_route_amount_param_id(0, 5));
-    drag_menu_slider(rig, "modulation-amount-viewport-zoom", {0.1, 0.3});
+    drag_menu_slider(rig, "modulation-target-depth-band-spread", {0.1, 0.3});
     CHECK(recorder.take().find("4035") == std::string::npos);
     CHECK(rig.store.get_value(spectr::lfo_route_amount_param_id(0, 5)) == zoom_before);
 
     // LFO 2's rows address LFO 2's lanes.
     activate(rig, "[data-spectr-modulation-source-action=\"2\"]");
     settle(rig.clock, 8);
-    activate(rig, "[data-spectr-band-action=\"modulation-target-viewport-zoom\"]");
+    activate(rig, "[data-spectr-band-action=\"modulation-target-band-spread\"]");
     CHECK(recorder.take() == "begin 4045, set 4045=1, end 4045");
     apply_and_settle(rig);
-    drag_menu_slider(rig, "modulation-amount-viewport-zoom", {0.6, 0.4});
+    drag_menu_slider(rig, "modulation-target-depth-band-spread", {0.6, 0.4});
     const auto lfo2 = recorder.take();
     INFO("LFO 2 amount drag: " << lfo2);
     CHECK(lfo2.rfind("begin 4055, ", 0) == 0);
     CHECK(lfo2.substr(lfo2.size() - std::string("end 4055").size()) == "end 4055");
 
     // Off records its falling edge too.
-    activate(rig, "[data-spectr-band-action=\"modulation-target-viewport-zoom\"]");
+    activate(rig, "[data-spectr-band-action=\"modulation-target-band-spread\"]");
     CHECK(recorder.take() == "begin 4045, set 4045=0, end 4045");
     CHECK(rig.store.open_gesture_count() == 0);
     storage.require_unchanged();
@@ -10268,14 +10269,14 @@ TEST_CASE("host playback of the routing lanes moves the band menu",
             + action + "\"] [data-spectr-menu-switch]')?.getAttribute('data-spectr-menu-switch'))",
             action);
     };
-    // The user sets an amount by hand first (a value a float cannot hold).
+    // The user sets a Depth by hand first (a value a float cannot hold).
     activate(rig, "[data-spectr-band-action=\"modulation-target-morph\"]");
     apply_and_settle(rig);
-    press_menu_slider(rig, "modulation-amount-morph", 0.37);
+    press_menu_slider(rig, "modulation-target-depth-morph", 0.37);
     apply_and_settle(rig);
-    CHECK(row("modulation-amount-morph", "aria-valuetext") == "37%");
+    CHECK(row("modulation-target-depth-morph", "aria-valuetext") == "37%");
 
-    // Now the host plays its lanes back: the switches and Amount rows follow,
+    // Now the host plays its lanes back: the switches and Depth rows follow,
     // including the one the user just edited.
     rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
     rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 4), 1.0f);
@@ -10283,11 +10284,11 @@ TEST_CASE("host playback of the routing lanes moves the band menu",
     rig.store.set_value(spectr::lfo_route_amount_param_id(0, 3), 0.8f);
     apply_and_settle(rig);
     CHECK(sw("modulation-target-bank") == "off");
-    CHECK(sw("modulation-target-viewport-position") == "on");
-    CHECK(row("modulation-amount-viewport-position", "aria-valuetext") == "60%");
-    CHECK(row("modulation-amount-viewport-position", "aria-disabled") == "false");
-    CHECK(row("modulation-amount-morph", "aria-valuetext") == "80%");
-    CHECK(row("modulation-amount-bank", "aria-disabled") == "true");
+    CHECK(sw("modulation-target-band-shift") == "on");
+    CHECK(row("modulation-target-depth-band-shift", "aria-valuetext") == "60%");
+    CHECK(row("modulation-target-depth-band-shift", "aria-disabled") == "false");
+    CHECK(row("modulation-target-depth-morph", "aria-valuetext") == "80%");
+    CHECK(row("modulation-target-depth-bank", "aria-disabled") == "true");
 
     // The legacy single-target lane, played back, is the command it always
     // was: Snapshot B alone among the field destinations, viewport kept.
@@ -10296,7 +10297,7 @@ TEST_CASE("host playback of the routing lanes moves the band menu",
     settle(rig.clock, 8);
     CHECK(sw("modulation-target-b") == "on");
     CHECK(sw("modulation-target-morph") == "off");
-    CHECK(sw("modulation-target-viewport-position") == "on");
+    CHECK(sw("modulation-target-band-shift") == "on");
     storage.require_unchanged();
 }
 
@@ -10322,18 +10323,19 @@ TEST_CASE("viewport modulation never moves the band under the pointer",
     feed_audio_blocks(rig, 40);
     settle(rig.clock, 4);
 
-    // The overlay is running and the AUDIBLE window has moved away from the
-    // user's -- the premise of the test.
-    const auto premise = runtime_value(rig, R"js((() => {
-      const s = globalThis.__spectrTestHooks.renderState();
-      return JSON.stringify({ view: s.view, audible: s.audibleView });
-    })())js", "audible view");
-    INFO("plot vs audible: " << premise);
-    require_runtime_contract(rig,
-        "(() => { const s = globalThis.__spectrTestHooks.renderState();"
-        " return s.audibleView && Math.abs(s.audibleView.lmin - s.view.lmin) > 0.05; })()",
-        "the audible viewport overlay is not running");
-    // The plot itself is still on the user's window.
+    // The AUDIBLE window (what the audio owner rendered) has moved away from
+    // the user's -- the premise of the test.
+    {
+        const auto& published = rig.processor.read_modulated_field();
+        INFO("audible " << published.viewport.min_hz << ".." << published.viewport.max_hz
+             << " Hz, user " << published.base_viewport.min_hz << ".."
+             << published.base_viewport.max_hz << " Hz");
+        REQUIRE(published.active);
+        REQUIRE(std::abs(std::log10(published.viewport.min_hz)
+                         - std::log10(published.base_viewport.min_hz)) > 0.05);
+    }
+    // The plot itself is still on the user's window: viewport modulation is
+    // audible only.
     require_runtime_contract(rig,
         "(() => { const v = globalThis.__spectrTestHooks.renderState().view;"
         " return Math.abs(v.lmin - 2.3) < 1e-3 && Math.abs(v.lmax - 3.3) < 1e-3; })()",

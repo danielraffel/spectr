@@ -72,7 +72,7 @@ std::vector<std::pair<std::uint32_t, std::string>> expected_host_parameters() {
         expected.emplace_back(spectr::macro_param_id(macro), name);
     }
     static constexpr const char* kRouteNames[] = {
-        "Bank", "Snapshot A", "Snapshot B", "Morph", "Viewport Position", "Viewport Zoom"};
+        "Bank", "Snapshot A", "Snapshot B", "Morph", "Band shift", "Band spread"};
     for (std::size_t lfo = 0; lfo < spectr::kRouteLfoCount; ++lfo) {
         for (std::size_t t = 0; t < spectr::kRouteTargetCount; ++t) {
             const std::string base = "LFO " + std::to_string(lfo + 1) + " " + kRouteNames[t];

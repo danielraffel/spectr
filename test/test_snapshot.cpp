@@ -279,7 +279,7 @@ struct RoutedPlugin {
 } // namespace
 
 TEST_CASE("plugin state round-trips per-LFO routing, amounts included") {
-    // Bank + Morph + Viewport zoom on LFO 1, Snapshot A + Viewport position on
+    // Bank + Morph + Band spread on LFO 1, Snapshot A + Band shift on
     // LFO 2, with partial amounts: no single legacy target can express it.
     RoutedPlugin a;
     for (std::size_t t = 0; t < 6; ++t) {

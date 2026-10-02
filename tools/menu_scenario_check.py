@@ -399,7 +399,7 @@ def verify_64(steps):
     ok, issues = layout_reading(panel)
     require(ok, "modulation-panel:" + str(issues))
     require({"LFO 1", "LFO 2", "LFO 1 TARGETS", "Bank", "Snapshot A", "Snapshot B", "Morph",
-             "Viewport position", "Viewport zoom", "Amount"}
+             "Band shift", "Band spread", "Depth"}
             <= labels(panel), "modulation-panel:actions")
     require("Select all" not in labels(panel), "main-panel-hidden")
     lfo1 = step(steps, "lfo1_settled") or {}

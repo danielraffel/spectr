@@ -190,12 +190,12 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.equal(test.button('lfo1-enable').props['aria-checked'], enabled);
   assert.equal(test.button('lfo2-enable').props['aria-checked'], lfo2_enabled);
   assert.equal(test.button('modulation-target-b').props['aria-checked'], true);
-  assert.equal(test.button('modulation-target-viewport-position').props['aria-checked'], true);
+  assert.equal(test.button('modulation-target-band-shift').props['aria-checked'], true);
   assert.equal(test.button('modulation-target-bank').props['aria-checked'], false);
-  assert.equal(test.button('modulation-amount-b').props['aria-valuetext'], '40%');
-  assert.equal(test.button('modulation-amount-b').props['aria-disabled'], 'false');
-  // An Amount row whose destination is off stays in place, dimmed and inert.
-  assert.equal(test.button('modulation-amount-bank').props['aria-disabled'], 'true');
+  assert.equal(test.button('modulation-target-depth-b').props['aria-valuetext'], '40%');
+  assert.equal(test.button('modulation-target-depth-b').props['aria-disabled'], 'false');
+  // A Depth row whose destination is off stays in place, dimmed and inert.
+  assert.equal(test.button('modulation-target-depth-bank').props['aria-disabled'], 'true');
   test.click('modulation-back');
   test.button('modulation-toggle');
   assert.equal(test.closed, 0);
@@ -204,18 +204,18 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   // and leaves the others on.
   test.click('modulation-target-morph');
   assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4023, value: 1 } });
-  test.click('modulation-target-viewport-zoom');
+  test.click('modulation-target-band-spread');
   assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4025, value: 1 } });
   test.click('modulation-target-b');
   assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4022, value: 0 } });
   assert.equal(test.button('modulation-target-morph').props['aria-checked'], true);
-  assert.equal(test.button('modulation-target-viewport-zoom').props['aria-checked'], true);
-  assert.equal(test.button('modulation-target-viewport-position').props['aria-checked'], true);
+  assert.equal(test.button('modulation-target-band-spread').props['aria-checked'], true);
+  assert.equal(test.button('modulation-target-band-shift').props['aria-checked'], true);
   // LFO 2's rows address LFO 2's lanes (4040+t).
   const lfo2Tab = nodes2(test).find(n => n.props['data-spectr-modulation-source-action'] === 2);
   lfo2Tab.props.onClick(); test.rerender();
   assert.equal(test.button('modulation-target-bank').props['aria-checked'], true);
-  assert.equal(test.button('modulation-amount-bank').props['aria-valuetext'], '50%');
+  assert.equal(test.button('modulation-target-depth-bank').props['aria-valuetext'], '50%');
   test.click('modulation-target-a');
   assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4041, value: 1 } });
   const lfo1Tab = nodes2(test).find(n => n.props['data-spectr-modulation-source-action'] === 1);
