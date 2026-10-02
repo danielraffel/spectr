@@ -1175,6 +1175,15 @@ private:
     // editor_defers_document_load().
 
     void load_native_document_();
+    // Runs the post-load scripts once the session has (or has not) mounted
+    // the document; from the session's document-loaded callback on SDKs with
+    // view-first loading, directly otherwise.
+    void finish_native_document_load_(bool session_loaded, const std::string& error,
+                                      bool from_session);
+    // Destroys a session marked failed from inside its own callback.
+    void retire_failed_native_session_();
+    bool native_session_failed_ = false;
+    bool native_document_load_reported_ = false;
     void publish_native_layout_(std::uint32_t w, std::uint32_t h);
     void open_native_editor_(pulp::view::View& view);
     void close_native_editor_();

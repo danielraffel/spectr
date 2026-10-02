@@ -855,12 +855,19 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
         *native_scripted_ui_, "__spectrEditorDispatch");
 
     native_document_load_frames_ = 0;
+#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+    // Pulp holds view::ScopedDeferredDocumentLoad around this call for every
+    // host-embedded editor, so load_deferrable() returns the view first there.
+    native_document_load_pending_ = false;
+    load_native_document_();
+#else
     if (editor_defers_document_load()) {
         native_document_load_pending_ = true;
     } else {
         native_document_load_pending_ = false;
         load_native_document_();
     }
+#endif
 
     // ── Editor-owned resize grip ────────────────────────────────────────
     //
@@ -949,6 +956,35 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
 void Spectr::load_native_document_() {
     native_document_load_pending_ = false;
     if (!native_scripted_ui_) return;
+#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+    // Pulp decides when the document is evaluated. Inside a host's
+    // view-creation call (ViewBridge::Options::hosted_editor(), every plug-in
+    // format) load_deferrable() returns at once and the session evaluates on
+    // its second idle poll; standalone and in-process harnesses evaluate here.
+    // finish_native_document_load_ runs from the session's callback either way.
+    native_document_load_reported_ = false;
+    native_scripted_ui_->set_document_loaded_callback(
+        [this](bool loaded, const std::string& error) {
+            native_document_load_reported_ = true;
+            finish_native_document_load_(loaded, error, /*from_session=*/true);
+        });
+    std::string error;
+    bool accepted = false;
+    {
+        PULP_TRACE_SCOPE_NAMED("js", "spectr_session_load");
+        accepted = native_scripted_ui_->load_deferrable(&error);
+    }
+    // A script that cannot even be read fails before any evaluation, so the
+    // callback never ran for it.
+    if (!accepted && !native_document_load_reported_)
+        finish_native_document_load_(false, error, /*from_session=*/false);
+    retire_failed_native_session_();
+#else
+    // SDK 0.890.1 equivalent of Pulp's view-first load (the AU v2 entry point
+    // declares editor_defers_document_load and the frame clock calls this on
+    // the second frame). Delete this branch, set_editor_defers_document_load
+    // and native_document_load_pending_ on the SDK bump to the first Pulp
+    // release that defines PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD.
     PULP_TRACE_SCOPE_NAMED("state", "spectr_document_load");
     std::string error;
     bool session_loaded = false;
@@ -956,13 +992,36 @@ void Spectr::load_native_document_() {
         PULP_TRACE_SCOPE_NAMED("js", "spectr_session_load");
         session_loaded = native_scripted_ui_->load(&error);
     }
+    finish_native_document_load_(session_loaded, error, /*from_session=*/false);
+    retire_failed_native_session_();
+#endif
+}
+
+void Spectr::retire_failed_native_session_() {
+    if (!native_session_failed_) return;
+    native_session_failed_ = false;
+    native_scripted_ui_.reset();
+}
+
+void Spectr::finish_native_document_load_(bool session_loaded,
+                                          const std::string& error,
+                                          bool from_session) {
+    PULP_TRACE_SCOPE_NAMED("state", "spectr_document_bind");
+    // A failure reported from inside the session's own load must not destroy
+    // that session while its call is still on the stack; it is marked and
+    // retired by the caller or the next frame tick instead.
+    const auto fail_closed = [this, from_session] {
+        native_editor_bridge_.detach_native_runtime(
+            *native_scripted_ui_, "__spectrEditorDispatch");
+        native_session_failed_ = true;
+        if (!from_session) retire_failed_native_session_();
+    };
+    if (!native_scripted_ui_) return;
     if (!session_loaded) {
         pulp::runtime::log_error(
             "[Spectr native] materialized QuickJS load failed: {}; editor is fail-closed",
             error);
-        native_editor_bridge_.detach_native_runtime(
-            *native_scripted_ui_, "__spectrEditorDispatch");
-        native_scripted_ui_.reset();
+        fail_closed();
         std::error_code ec;
         std::filesystem::remove_all(native_package_path_, ec);
         native_package_path_.clear();
@@ -1164,12 +1223,24 @@ void Spectr::load_native_document_() {
             pulp::runtime::log_error(
                 "[Spectr native] DesignIR materialization failed: {}; editor is fail-closed",
                 error.what());
-            native_editor_bridge_.detach_native_runtime(
-                *native_scripted_ui_, "__spectrEditorDispatch");
-            native_scripted_ui_.reset();
+            fail_closed();
         }
     }
-
+#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+    // A deferred document mounts from the idle tick after the host already
+    // reported its size; publish it now that there is a document to lay out.
+    // (An immediate load runs inside create_view(), before the root is
+    // registered, and open_native_editor_ publishes instead.)
+    if (session_loaded && native_editor_root_ != nullptr && native_scripted_ui_
+        && native_scripted_ui_->bridge() != nullptr) {
+        on_view_resized(*native_editor_root_,
+                        native_host_width_ > 0 ? native_host_width_
+                                               : kEditorPreferredWidth,
+                        native_host_height_ > 0 ? native_host_height_
+                                                : kEditorPreferredHeight);
+        native_editor_root_->request_repaint();
+    }
+#endif
 }
 
 void Spectr::open_native_editor_(pulp::view::View& view) {
@@ -1386,6 +1457,13 @@ void Spectr::publish_modulation_frame_() {
 }
 
 bool Spectr::tick_native_analyzer_(float dt) {
+#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+    retire_failed_native_session_();
+    // Pulp's session evaluates a deferred document from its own idle poll;
+    // keep ticking until it has.
+    if (native_scripted_ui_ && native_scripted_ui_->document_load_pending())
+        return true;
+#endif
     if (native_document_load_pending_) {
         // A deferred editor (editor_defers_document_load): the host has its
         // correctly sized view already. Let the first frame paint the empty

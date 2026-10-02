@@ -7,11 +7,17 @@
 // window last ~1.4 s on an M5 Max and much longer under load
 // (tools/editor_open_probe.mm measures it through the real AU v2 Cocoa view).
 //
-// These tests pin the contract that removes that phase: with
-// set_editor_defers_document_load(true) -- which only the AU v2 entry point
-// declares -- create_view() hands back a correctly sized root whose session
-// has NOT evaluated anything yet, and the document mounts on the view's second
-// frame, at the size the host reported.
+// These tests pin the contract that removes that phase: inside a host's
+// view-creation call create_view() hands back a correctly sized root whose
+// session has NOT evaluated anything yet, and the document mounts on the
+// view's second frame, at the size the host reported.
+//
+// On an SDK with view-first loading (PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+// Pulp owns this: ViewBridge holds view::ScopedDeferredDocumentLoad around
+// create_view() for every plug-in format and the session evaluates from its
+// second idle poll. On SDK 0.890.1 the AU v2 entry point declares
+// set_editor_defers_document_load(true) and Spectr's frame tick evaluates;
+// that branch goes with the SDK bump.
 
 #include "spectr/spectr.hpp"
 #include "spectr/editor_resize.hpp"
@@ -24,6 +30,7 @@
 #include <pulp/view/widgets.hpp>
 
 #include <memory>
+#include <optional>
 #include <string_view>
 
 namespace {
@@ -64,13 +71,27 @@ struct EditorHarness {
     ~EditorHarness() {
         if (root) processor.on_view_closed(*root);
     }
-    void open_view() {
+    // `deferred` opens the view the way a plug-in host does: inside the
+    // view-creation guard Pulp's ViewBridge holds for hosted editors.
+    void open_view(bool deferred = false) {
+#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+        std::optional<pulp::view::ScopedDeferredDocumentLoad> guard;
+        if (deferred) guard.emplace();
+#else
+        (void)deferred;
+#endif
         root = processor.create_view();
         REQUIRE(root != nullptr);
         root->set_bounds({0, 0, 1320, 860});
         root->set_frame_clock(&clock);
         root->layout_children();
         processor.on_view_opened(*root);
+    }
+    // One host frame: the idle pump polls the session, then the frame clock
+    // ticks -- the order ViewBridge's idle pump and the GPU host run them.
+    void frame() {
+        if (auto* session = processor.active_scripted_ui()) session->poll();
+        clock.tick(1.0f / 60.0f);
     }
     pulp::view::WidgetBridge* bridge() {
         auto* session = processor.active_scripted_ui();
@@ -94,7 +115,7 @@ TEST_CASE("a deferred editor returns unevaluated and mounts on its second frame"
           "[editor-open]") {
     DeferralFlag defer{true};
     EditorHarness h;
-    h.open_view();
+    h.open_view(/*deferred=*/true);
 
     // Returned to the host before any script ran: a session exists (the
     // adapter needs it to wire the GPU surface), its realm does not.
@@ -107,13 +128,13 @@ TEST_CASE("a deferred editor returns unevaluated and mounts on its second frame"
     CHECK(h.bridge() == nullptr);
 
     // Frame 1 paints the empty editor; nothing is evaluated yet.
-    h.clock.tick(1.0f / 60.0f);
+    h.frame();
     CHECK(h.bridge() == nullptr);
 
     // Frame 2 evaluates the document.
-    h.clock.tick(1.0f / 60.0f);
+    h.frame();
     REQUIRE(h.bridge() != nullptr);
-    for (int frame = 0; frame < 16; ++frame) h.clock.tick(1.0f / 60.0f);
+    for (int frame = 0; frame < 16; ++frame) h.frame();
     CHECK(find_label(*h.root, "CLEAR") != nullptr);
     // Under the pinned viewport the root stays at the authored box whatever
     // host size was reported before the document existed.
@@ -125,8 +146,8 @@ TEST_CASE("a deferred editor closed before its second frame tears down cleanly",
           "[editor-open]") {
     DeferralFlag defer{true};
     EditorHarness h;
-    h.open_view();
-    h.clock.tick(1.0f / 60.0f);
+    h.open_view(/*deferred=*/true);
+    h.frame();
     h.processor.on_view_closed(*h.root);
     h.root.reset();
     // The analyzer subscription went with the editor; ticking must not reach
@@ -136,9 +157,9 @@ TEST_CASE("a deferred editor closed before its second frame tears down cleanly",
     CHECK(h.processor.active_scripted_ui() == nullptr);
 
     // And a reopen evaluates normally.
-    h.open_view();
-    h.clock.tick(1.0f / 60.0f);
-    h.clock.tick(1.0f / 60.0f);
+    h.open_view(/*deferred=*/true);
+    h.frame();
+    h.frame();
     CHECK(h.bridge() != nullptr);
 }
 
