@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 153;  // +4 macros, +freeze, +freeze length
+constexpr std::size_t kExpectedParamCount = 177;  // +4 macros, +freeze, +freeze length, +24 LFO routing
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {
@@ -156,7 +156,21 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     REQUIRE(find(w.store, spectr::kParamLfo2Rate) != nullptr);
     REQUIRE(find(w.store, spectr::kParamLfo2Depth) != nullptr);
     CHECK(find(w.store, 4005) == nullptr);
-    CHECK(find(w.store, 4031) == nullptr);
+    CHECK(find(w.store, 4014) == nullptr);
+    CHECK(find(w.store, 4019) == nullptr);
+    // LFO routing: on/off 4020..4025 / 4040..4045, amounts 4030..4035 /
+    // 4050..4055; the four IDs after each block are headroom.
+    for (std::size_t lfo = 0; lfo < 2; ++lfo)
+        for (std::size_t t = 0; t < 6; ++t) {
+            REQUIRE(find(w.store, spectr::lfo_route_enabled_param_id(lfo, t)) != nullptr);
+            REQUIRE(find(w.store, spectr::lfo_route_amount_param_id(lfo, t)) != nullptr);
+        }
+    CHECK(find(w.store, 4026) == nullptr);
+    CHECK(find(w.store, 4029) == nullptr);
+    CHECK(find(w.store, 4036) == nullptr);
+    CHECK(find(w.store, 4039) == nullptr);
+    CHECK(find(w.store, 4046) == nullptr);
+    CHECK(find(w.store, 4056) == nullptr);
     CHECK(find(w.store, 4100) == nullptr);
     CHECK(find(w.store, 4199) == nullptr);
     // Beyond the documented scheme entirely.
@@ -631,33 +645,44 @@ TEST_CASE("host target automation reclaims the modulation destination") {
     Wired w;
     w.proc->apply_surface_params(false);  // settle the applied-parameter cache
 
-    // The editor selects every destination. This is editor state: it has no
-    // parameter lane of its own.
-    REQUIRE(w.proc->set_modulation_target_mask(spectr::kModulationTargetMaskAll));
-    REQUIRE(mask_int(w.proc->modulation_settings().target_mask)
-            == mask_int(spectr::kModulationTargetMaskAll));
+    // Routing per LFO: LFO 1 drives Bank + Morph + Viewport position, LFO 2
+    // Snapshot A. Those are host lanes now.
+    const auto route = [&](std::size_t lfo, spectr::ModulationTarget t, bool on) {
+        w.store.set_value(spectr::lfo_route_enabled_param_id(
+                              lfo, static_cast<std::size_t>(t)), on ? 1.0f : 0.0f);
+    };
+    route(0, spectr::ModulationTarget::Morph, true);
+    route(0, spectr::ModulationTarget::ViewportPosition, true);
+    route(1, spectr::ModulationTarget::WholeBank, false);
+    route(1, spectr::ModulationTarget::SnapshotA, true);
+    REQUIRE(w.proc->apply_surface_params(false));
+    auto settings = w.proc->modulation_settings();
+    CHECK(mask_int(spectr::route_mask(settings.routes[0])) == 0x19);
+    CHECK(mask_int(spectr::route_mask(settings.routes[1])) == 0x02);
 
-    // An unrelated LFO parameter edit must not discard the selection. Before
-    // the fix, apply_surface_params() overwrote the whole settings struct with
-    // one rebuilt from parameters, silently resetting the mask.
+    // An unrelated LFO parameter edit leaves the routing alone.
     w.store.set_value(spectr::kParamLfoDepth, 0.75f);
     REQUIRE(w.proc->apply_surface_params(false));
     CHECK(w.proc->modulation_settings().depth == Approx(0.75f));
-    CHECK(mask_int(w.proc->modulation_settings().target_mask)
-          == mask_int(spectr::kModulationTargetMaskAll));
+    CHECK(mask_int(spectr::route_mask(w.proc->modulation_settings().routes[0])) == 0x19);
 
-    // Moving kParamLfoTarget does discard it: that lane is host-automatable
-    // and must never be silently swallowed by an earlier editor selection.
+    // Moving the legacy kParamLfoTarget lane is a command: it selects that one
+    // FIELD destination for both LFOs (the lane was shared), leaving viewport
+    // routes alone, and writes the routing lanes so they agree.
     w.store.set_value(spectr::kParamLfoTarget,
                       static_cast<float>(spectr::ModulationTarget::SnapshotB));
     REQUIRE(w.proc->apply_surface_params(false));
     const auto after = w.proc->modulation_settings();
     CHECK(after.target == spectr::ModulationTarget::SnapshotB);
-    CHECK(mask_int(after.target_mask)
-          == mask_int(spectr::kModulationTargetMaskUnset));
-    CHECK(mask_int(spectr::resolve_modulation_target_mask(after))
-          == mask_int(spectr::modulation_target_bit(
-                 spectr::ModulationTarget::SnapshotB)));
+    CHECK(mask_int(spectr::route_mask(after.routes[0])) == (0x10 | 0x04));
+    CHECK(mask_int(spectr::route_mask(after.routes[1])) == 0x04);
+    CHECK(w.store.get_value(spectr::lfo_route_enabled_param_id(0, 2)) == 1.0f);
+    CHECK(w.store.get_value(spectr::lfo_route_enabled_param_id(0, 0)) == 0.0f);
+    CHECK(w.store.get_value(spectr::lfo_route_enabled_param_id(0, 4)) == 1.0f);
+    CHECK(w.store.get_value(spectr::lfo_route_enabled_param_id(1, 1)) == 0.0f);
+    // The writes were stamped applied: the next pass sees no drift and does
+    // not re-run the command.
+    CHECK_FALSE(w.proc->apply_surface_params(false));
 }
 
 // An editor edit is authoritative right up to the moment the host starts
