@@ -11,6 +11,7 @@
 #include <dlfcn.h>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
@@ -47,7 +48,8 @@ struct Module {
 constexpr unsigned block=512, blocks=256, reset_block=128;
 constexpr int quantum=SPECTR_HOST_HOP/2;
 constexpr int expected_latency=SPECTR_HOST_FFT+SPECTR_HOST_HOP+5*quantum;
-constexpr int expected_tail=2*SPECTR_HOST_FFT+SPECTR_HOST_HOP+5*quantum;
+// Freeze can sustain output indefinitely, so CLAP reports the documented infinite tail.
+constexpr std::uint32_t expected_tail=std::numeric_limits<std::uint32_t>::max();
 void dump(const std::string& path,const pulp::audio::Buffer<float>& data){
     if(path.empty())return;
     std::ofstream f(path);require(bool(f),"capture open failed");f<<std::setprecision(9)<<"sample,left,right\n";
