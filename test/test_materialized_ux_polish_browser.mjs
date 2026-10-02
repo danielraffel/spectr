@@ -490,6 +490,10 @@ window.__spectrPolishStart = () => {
 
       const button = await waitFor(() =>
         panel.querySelector('[data-spectr-copy-build-info]'), 'Copy button');
+      const gpuStatus = panel.querySelector('[data-spectr-gpu-audio-status]');
+      if (!gpuStatus || !gpuStatus.textContent.includes('GPU BLOCKS')
+          || !gpuStatus.textContent.includes('124'))
+        throw new Error('experimental GPU audio status was not visible');
       if (button.textContent.trim() !== 'COPY')
         throw new Error('Copy button did not begin at COPY');
       centered(button);
@@ -540,6 +544,9 @@ window.pulp = {
       sdk_version: '0.829.0', sdk_sha: 'fedcba9876543210',
       sdk_provenance_exact: true, sdk_dirty: false,
       build_type: 'Release', build_time: '2026-09-02T12:00:00Z',
+      gpu_audio: { available: true, provider_state: 'shared_ready',
+        gpu_selected: '124', cpu_fallback: '0', cancelled: '0',
+        lost_terminal_records: '0' },
     } });
     if (type === 'build_info_copy') return new Promise(resolve => setTimeout(
       () => resolve({ ok: true, payload: { ok: true } }), 450));

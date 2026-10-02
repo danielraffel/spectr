@@ -1815,6 +1815,18 @@ function App() {`,
     ['BUILD', info.build_type || ''],
     ['BUILT', info.build_time],
   ].filter(row => row[1]) : [];
+  // The shared renderer is an experiment, so keep its live counters in the
+  // diagnostic surface instead of turning CPU/GPU into a product control.
+  // Normal builds report `available: false` and therefore retain the existing
+  // release layout unchanged.
+  const gpu = info && info.gpu_audio && info.gpu_audio.available ? info.gpu_audio : null;
+  const gpuRows = gpu ? [
+    ['ENGINE', gpu.provider_state || 'UNKNOWN'],
+    ['GPU BLOCKS', gpu.gpu_selected],
+    ['CPU FALLBACK', gpu.cpu_fallback],
+    ['CANCELLED', gpu.cancelled],
+    ['LOST RECORDS', gpu.lost_terminal_records],
+  ] : [];
   const settleCopyState = state => {
     if (!mountedRef.current) return;
     setCopyState(state);
@@ -1838,6 +1850,12 @@ function App() {`,
     rows.map(row => React.createElement('div', { key: row[0], style: { display: 'flex', gap: 12, alignItems: 'baseline' } },
       React.createElement('span', { style: { width: 72, flexShrink: 0, opacity: 0.45, fontSize: 9 } }, row[0]),
       React.createElement('span', { title: String(row[1]), style: { flex: 1, fontSize: 9.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, String(row[1])))),
+    gpu && React.createElement('div', { 'data-spectr-gpu-audio-status': true,
+      style: { marginTop: 8, paddingTop: 7, borderTop: '1px solid rgba(180,210,255,0.16)' } },
+      React.createElement('div', { style: { opacity: 0.65, fontSize: 9, letterSpacing: 0.8, marginBottom: 4 } }, 'GPU AUDIO'),
+      gpuRows.map(row => React.createElement('div', { key: row[0], style: { display: 'flex', gap: 12, alignItems: 'baseline' } },
+        React.createElement('span', { style: { width: 72, flexShrink: 0, opacity: 0.45, fontSize: 9 } }, row[0]),
+        React.createElement('span', { title: String(row[1]), style: { flex: 1, fontSize: 9.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, String(row[1]))))),
     info && React.createElement('button', { 'data-spectr-copy-build-info': true, onClick: copy, disabled: copyState === 'COPYING', style: {
       alignSelf: 'flex-start', width: 136, height: 26, padding: '0 10px', borderRadius: 3,
       border: '1px solid rgba(180,210,255,0.3)', background: 'rgba(120,180,255,0.10)',
