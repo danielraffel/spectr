@@ -77,7 +77,7 @@ std::vector<std::pair<std::uint32_t, std::string>> expected_host_parameters() {
         for (std::size_t t = 0; t < spectr::kRouteTargetCount; ++t) {
             const std::string base = "LFO " + std::to_string(lfo + 1) + " " + kRouteNames[t];
             expected.emplace_back(spectr::lfo_route_enabled_param_id(lfo, t), base);
-            expected.emplace_back(spectr::lfo_route_amount_param_id(lfo, t), base + " Amount");
+            expected.emplace_back(spectr::lfo_route_amount_param_id(lfo, t), base + " Depth");
         }
     }
     return expected;

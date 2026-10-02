@@ -1386,6 +1386,24 @@ void Spectr::process(
                         cursor.value(kParamLfo2Rate), 0.25f, 16.0f);
                     modulation_settings.lfo2_depth = std::clamp(
                         cursor.value(kParamLfo2Depth), 0.0f, 1.0f);
+                    // The LFO-level Depth lanes are COMMANDS too (see
+                    // apply_surface_params): each target carries its own
+                    // depth, and a move of an LFO's legacy Depth lane sets the
+                    // depth of every target that LFO currently drives. Applied
+                    // here at once, like the target lane, until the control
+                    // worker has written it into the target lanes.
+                    {
+                        const float lane[2] = {modulation_settings.depth,
+                                               modulation_settings.lfo2_depth};
+                        const float published[2] = {
+                            audio_modulation.settings.depth,
+                            audio_modulation.settings.lfo2_depth};
+                        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+                            if (lane[lfo] == published[lfo]) continue;
+                            for (auto& route : modulation_settings.routes[lfo])
+                                if (route.enabled) route.amount = lane[lfo];
+                        }
+                    }
                     if (should_reset_stream_history && block_offset == 0) {
                         audio_modulation_phase_ =
                             ctx.position_beats
@@ -1420,11 +1438,11 @@ void Spectr::process(
                     // publication all see the same ramp, so the drawn overlay
                     // fades exactly as the sound does.
                     {
+                        // An LFO's level is its on/off alone: how far it
+                        // moves each target is that target's own Depth.
                         const float targets[2] = {
-                            modulation_settings.enabled
-                                ? modulation_settings.depth : 0.0f,
-                            modulation_settings.lfo2_enabled
-                                ? modulation_settings.lfo2_depth : 0.0f};
+                            modulation_settings.enabled ? 1.0f : 0.0f,
+                            modulation_settings.lfo2_enabled ? 1.0f : 0.0f};
                         const double level_seconds =
                             static_cast<double>(out_slice.num_samples())
                             / (ctx.sample_rate > 0.0 ? ctx.sample_rate
@@ -1830,10 +1848,11 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // Per-LFO routing lives in its own parameter lanes (4020..4055) and rides
     // the base blob. This marker only says those lanes are authoritative; a
     // blob without it predates them and is migrated from the single target
-    // above. `modulation_target_mask` keeps being written (LFO 1's field
+    // and the LFO Depth above. `modulation_target_mask` keeps being written (LFO 1's field
     // destinations) so an older build opening this session hears the
     // nearest thing it can express.
-    root.addMember("lfo_routing", static_cast<int32_t>(1));
+    // 2: each target's Depth is absolute (no LFO-level depth multiplies it).
+    root.addMember("lfo_routing", static_cast<int32_t>(2));
 
     // Whether a morph also moves the viewport. A playback preference with no
     // parameter lane, so like the destination mask it would be silently lost
@@ -2313,6 +2332,12 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
 
     std::uint8_t new_target_mask = kModulationTargetMaskUnset;
     const bool has_lfo_routing = root.hasObjectMember("lfo_routing");
+    int lfo_routing_version = 0;
+    if (has_lfo_routing) {
+        const auto parsed = read_int_(root["lfo_routing"]);
+        if (!parsed) return false;
+        lfo_routing_version = *parsed;
+    }
     if (root.hasObjectMember("modulation_target_mask")) {
         const auto parsed_mask = read_int_(root["modulation_target_mask"]);
         if (!parsed_mask) return false;
@@ -2423,6 +2448,22 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     // routing lanes -- "that one on" for each LFO, full amount, no viewport --
     // so the session sounds as it did. Listener-silent, like the rest of a
     // restore.
+    // A blob from a development build that stored routing with amounts
+    // RELATIVE to an LFO-level depth (`lfo_routing: 1`): fold that depth into
+    // each target's Depth so it sounds as it was saved.
+    if (lfo_routing_version == 1 && param_store_) {
+        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+            const float depth = std::clamp(param_store_->get_value(
+                lfo == 0 ? kParamLfoDepth : kParamLfo2Depth), 0.0f, 1.0f);
+            for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+                const auto id = lfo_route_amount_param_id(lfo, t);
+                param_store_->set_value(id, param_store_->get_value(id) * depth);
+            }
+        }
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        modulation_ = modulation_from_store_();
+        publish_audio_modulation_state_();
+    }
     if (!has_lfo_routing && param_store_) {
         ModulationSettings legacy;
         legacy.target = static_cast<ModulationTarget>(std::clamp(
@@ -2431,10 +2472,16 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         legacy.target_mask = new_target_mask;
         const std::uint8_t mask = resolve_modulation_target_mask(legacy);
         for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+            // That session's LFO Depth becomes each enabled target's Depth;
+            // a target it did not drive takes the default.
+            const float depth = std::clamp(param_store_->get_value(
+                lfo == 0 ? kParamLfoDepth : kParamLfo2Depth), 0.0f, 1.0f);
             for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+                const bool on = ((mask >> t) & 1u) != 0;
                 param_store_->set_value(lfo_route_enabled_param_id(lfo, t),
-                                        ((mask >> t) & 1u) ? 1.0f : 0.0f);
-                param_store_->set_value(lfo_route_amount_param_id(lfo, t), 1.0f);
+                                        on ? 1.0f : 0.0f);
+                param_store_->set_value(lfo_route_amount_param_id(lfo, t),
+                                        on ? depth : 0.5f);
             }
         }
         std::lock_guard<std::mutex> lock(processing_state_mutex_);

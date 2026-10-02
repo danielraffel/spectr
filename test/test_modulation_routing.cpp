@@ -153,23 +153,32 @@ TEST_CASE("every stack stays inside the band range and keeps mutes", "[modulatio
     }
 }
 
-TEST_CASE("an amount scales its destination's modulation exactly", "[modulation][routing]") {
+TEST_CASE("a target's Depth alone scales its modulation", "[modulation][routing]") {
+    // No LFO-level depth: an LFO that is on contributes wave x target Depth.
     Bank b;
-    for (float amount : {0.0f, 0.25f, 0.5f, 1.0f}) {
-        INFO("amount " << amount);
+    for (float depth : {0.0f, 0.25f, 0.5f, 1.0f}) {
+        INFO("depth " << depth);
         const auto out = spectr::compose_internal_modulation(
             b.canonical, b.bank, 0.0f,
-            two_lfos(routes_of({ModulationTarget::WholeBank}, amount), 0.8f), 1.0f, 0.0f);
-        CHECK(out.field.bands[0].gain_db == Approx(-6.0f + 0.8f * amount * 12.0f));
+            two_lfos(routes_of({ModulationTarget::WholeBank}, depth), 1.0f), 1.0f, 0.0f);
+        CHECK(out.field.bands[0].gain_db == Approx(-6.0f + depth * 12.0f));
         const auto v = spectr::apply_viewport_modulation(
             spectr::Viewport{100.0f, 1000.0f},
             spectr::modulation_coordinates(
-                two_lfos(routes_of({ModulationTarget::ViewportPosition}, amount), 0.8f),
+                two_lfos(routes_of({ModulationTarget::ViewportPosition}, depth), 1.0f),
                 1.0f, 0.0f));
-        CHECK(std::log10(v.min_hz) == Approx(2.0f + 0.8f * amount).margin(1e-4));
-        CHECK(std::log10(v.max_hz) == Approx(3.0f + 0.8f * amount).margin(1e-4));
+        CHECK(std::log10(v.min_hz) == Approx(2.0f + depth).margin(1e-4));
+        CHECK(std::log10(v.max_hz) == Approx(3.0f + depth).margin(1e-4));
     }
-    // A disabled route ignores its amount.
+    // Two targets of one LFO at different depths move independently.
+    auto mixed = routes_of({ModulationTarget::WholeBank, ModulationTarget::ViewportPosition});
+    mixed[idx(ModulationTarget::WholeBank)].amount = 0.25f;
+    mixed[idx(ModulationTarget::ViewportPosition)].amount = 1.0f;
+    const auto both = spectr::compose_internal_modulation(
+        b.canonical, b.bank, 0.0f, two_lfos(mixed, 1.0f), 1.0f, 0.0f);
+    CHECK(both.field.bands[0].gain_db == Approx(-6.0f + 3.0f));
+    CHECK(both.coords[ModulationTarget::ViewportPosition] == Approx(1.0f));
+    // A disabled route ignores its Depth.
     auto r = routes_of({});
     r[idx(ModulationTarget::WholeBank)] = {false, 1.0f};
     const auto off = spectr::compose_internal_modulation(
@@ -273,12 +282,13 @@ Render render(std::size_t blocks, const Schedule& schedule, bool tracking = fals
     return r;
 }
 
+// LFO 1 on/off, shape and rate. No depth: each target's Depth is its own
+// lane (see route()), and the LFO-level Depth lane is a legacy command.
 void lfo1(pulp::state::ParameterEventQueue& e, spectr::LfoShape shape, float rate,
-          float depth, bool enabled = true) {
+          bool enabled = true) {
     REQUIRE(e.push({spectr::kParamLfoEnabled, 0, enabled ? 1.0f : 0.0f, 0}));
     REQUIRE(e.push({spectr::kParamLfoShape, 0, static_cast<float>(shape), 0}));
     REQUIRE(e.push({spectr::kParamLfoRate, 0, rate, 0}));
-    REQUIRE(e.push({spectr::kParamLfoDepth, 0, depth, 0}));
 }
 
 void route(pulp::state::ParameterEventQueue& e, std::size_t lfo, ModulationTarget t,
@@ -301,6 +311,28 @@ double rms_db(const std::vector<float>& x, std::size_t from, std::size_t to) {
 }
 
 }  // namespace
+
+TEST_CASE("the legacy LFO Depth lane sets every enabled target's Depth",
+          "[modulation][routing][automation]") {
+    // Old automation of 4003 still does something sensible: a move sets the
+    // Depth of each target LFO 1 drives, at the event's block.
+    const auto r = render(60, [](std::size_t b, pulp::state::ParameterEventQueue& e) {
+        REQUIRE(e.push({spectr::kParamViewportCenter, 0, 2.5f, 0}));
+        REQUIRE(e.push({spectr::kParamViewportWidth, 0, 1.0f, 0}));
+        lfo1(e, spectr::LfoShape::Square, 16.0f);
+        // The target lanes hold 20 % throughout; from block 30 the host plays
+        // a Depth-lane point at 90 % (held, as an automation lane is).
+        route(e, 0, ModulationTarget::WholeBank, true, 0.2f);
+        route(e, 0, ModulationTarget::ViewportPosition, true, 0.2f);
+        if (b >= 30) REQUIRE(e.push({spectr::kParamLfoDepth, 0, 0.9f, 0}));
+    });
+    // Square at phase 0 holds +1: band 0 at -12 + 12 x depth.
+    CHECK(r.band0_db[25] == Approx(-12.0f + 12.0f * 0.2f).margin(1e-3));
+    CHECK(r.band0_db.back() == Approx(-12.0f + 12.0f * 0.9f).margin(1e-3));
+    INFO("band 0 at block 25 " << r.band0_db[25] << ", last " << r.band0_db.back());
+    CHECK(r.center_log[25] == Approx(2.5f + 0.2f).margin(0.01f));
+    CHECK(r.center_log.back() == Approx(2.5f + 0.9f).margin(0.01f));
+}
 
 // A tone sits outside the base window (so in an attenuated edge band) and
 // inside one known band of the window the LFO moves it to. Only that band is
@@ -331,7 +363,7 @@ TEST_CASE("viewport destinations move the filter bank by the expected amount",
         const auto run = [&](bool on) {
             return render(150, [&](std::size_t, pulp::state::ParameterEventQueue& e) {
                 base(e);
-                lfo1(e, spectr::LfoShape::Square, 16.0f, 1.0f, on);
+                lfo1(e, spectr::LfoShape::Square, 16.0f, on);
                 route(e, 0, ModulationTarget::WholeBank, false);
                 route(e, 0, c.target, true, c.amount);
             }, false, std::pow(10.0f, c.tone_log), gains);
@@ -361,7 +393,7 @@ namespace {
 std::vector<float> routed_band_gain(std::size_t blocks,
                                     const std::function<void(std::size_t, pulp::state::ParameterEventQueue&)>& edit) {
     return render(blocks, [&](std::size_t b, pulp::state::ParameterEventQueue& e) {
-        lfo1(e, spectr::LfoShape::Sine, 1.0f, 1.0f);
+        lfo1(e, spectr::LfoShape::Sine, 1.0f);
         edit(b, e);
     }).band0_db;
 }
@@ -439,7 +471,7 @@ TEST_CASE("viewport routes automate smoothly", "[modulation][routing][viewport][
         return render(80, [&](std::size_t b, pulp::state::ParameterEventQueue& e) {
             REQUIRE(e.push({spectr::kParamViewportCenter, 0, 2.8f, 0}));
             REQUIRE(e.push({spectr::kParamViewportWidth, 0, 1.0f, 0}));
-            lfo1(e, spectr::LfoShape::Sine, 1.0f, 1.0f);
+            lfo1(e, spectr::LfoShape::Sine, 1.0f);
             route(e, 0, ModulationTarget::WholeBank, false);
             route(e, 0, ModulationTarget::ViewportPosition, on(b));
         }).center_log;
@@ -482,9 +514,9 @@ TEST_CASE("a swept viewport is click-free in both renderers",
             return render(200, [&](std::size_t, pulp::state::ParameterEventQueue& e) {
                 REQUIRE(e.push({spectr::kParamViewportCenter, 0, 2.8f, 0}));
                 REQUIRE(e.push({spectr::kParamViewportWidth, 0, 1.0f, 0}));
-                lfo1(e, spectr::LfoShape::Sine, 2.0f, t == ModulationTarget::WholeBank ? 1.0f : 0.5f);
+                lfo1(e, spectr::LfoShape::Sine, 2.0f);
                 route(e, 0, ModulationTarget::WholeBank, t == ModulationTarget::WholeBank);
-                route(e, 0, t, true);
+                route(e, 0, t, true, t == ModulationTarget::WholeBank ? 1.0f : 0.5f);
             }, tracking, 630.0f, bump, /*paced=*/true);
         };
         const auto score = [](const std::vector<float>& x) {
@@ -528,9 +560,9 @@ TEST_CASE("a viewport destination costs no more per callback than Bank",
             auto r = render(300, [&](std::size_t, pulp::state::ParameterEventQueue& e) {
                 REQUIRE(e.push({spectr::kParamViewportCenter, 0, 2.8f, 0}));
                 REQUIRE(e.push({spectr::kParamViewportWidth, 0, 1.0f, 0}));
-                lfo1(e, spectr::LfoShape::Sine, 1.0f, 0.5f);
+                lfo1(e, spectr::LfoShape::Sine, 1.0f);
                 route(e, 0, ModulationTarget::WholeBank, t == ModulationTarget::WholeBank);
-                route(e, 0, t, true);
+                route(e, 0, t, true, 0.5f);
             }, true);
             if (cheapest.empty()) cheapest.assign(r.block_us.begin() + 20, r.block_us.end());
             else

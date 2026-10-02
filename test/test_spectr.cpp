@@ -1003,6 +1003,9 @@ TEST_CASE("Spectr reports the display overlay inactive when depth is zero",
                                  0}));
             REQUIRE(events.push({spectr::kParamLfo2Rate, 0, 16.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfo2Depth, 0, lfo2_depth, 0}));
+            // Depth is per target: each LFO's Bank target carries it.
+            REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, lfo1_depth, 0}));
+            REQUIRE(events.push({spectr::lfo_route_amount_param_id(1, 0), 0, lfo2_depth, 0}));
             host.process(output, input, events);
         }
         const auto& snapshot = plugin->read_modulated_field();

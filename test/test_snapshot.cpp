@@ -326,8 +326,26 @@ TEST_CASE("a pre-routing session maps its single target onto both LFOs") {
         REQUIRE(b.proc.deserialize_plugin_state(legacy));
         CHECK(mask_int(b.mask(0)) == 0x09);
         CHECK(mask_int(b.mask(1)) == 0x09);
-        CHECK(b.proc.modulation_settings().routes[0][3].amount == Approx(1.0f));
+        // The session's LFO Depth (0.5 by default) is carried into each
+        // enabled target's Depth.
+        CHECK(b.proc.modulation_settings().routes[0][3].amount == Approx(0.5f));
         CHECK(b.store.get_value(spectr::lfo_route_enabled_param_id(1, 3)) == 1.0f);
+    }
+    SECTION("the LFO Depth is carried into each enabled target's Depth") {
+        RoutedPlugin b;
+        b.store.set_value(spectr::kParamLfoDepth, 0.3f);
+        b.store.set_value(spectr::kParamLfo2Depth, 0.8f);
+        auto params = b.store.serialize();
+        RoutedPlugin c;
+        REQUIRE(c.store.deserialize(params));
+        const std::vector<uint8_t> legacy(json.begin(), json.end());
+        REQUIRE(c.proc.deserialize_plugin_state(legacy));
+        const auto m = c.proc.modulation_settings();
+        CHECK(m.routes[0][0].enabled);
+        CHECK(m.routes[0][0].amount == Approx(0.3f));
+        CHECK(m.routes[1][0].amount == Approx(0.8f));
+        // A target the session did not drive keeps the default.
+        CHECK(m.routes[0][4].amount == Approx(0.5f));
     }
     SECTION("no mask: the enum lane names the one destination") {
         REQUIRE(erase_member(json, "modulation_target_mask"));

@@ -421,9 +421,10 @@ void register_surface_params(pulp::state::StateStore& store) {
 
     // LFO routing, appended after every lane that shipped before it so no
     // existing parameter moves. Each LFO drives any set of destinations at
-    // once; each destination has an on/off lane and an amount that scales the
-    // LFO's depth for it alone. Defaults reproduce a fresh 1.0.x instance:
-    // both LFOs on the whole bank at full amount, nothing else.
+    // once; each destination has an on/off lane and its own Depth (there is no
+    // LFO-level depth any more; 4003/4013 are command lanes onto these).
+    // Defaults reproduce a fresh 1.0.x instance: both LFOs on the whole bank at
+    // 50 %, nothing else.
     static constexpr const char* kRouteNames[kRouteTargetCount] = {
         "Bank", "Snapshot A", "Snapshot B", "Morph",
         "Viewport Position", "Viewport Zoom"};
@@ -442,8 +443,10 @@ void register_surface_params(pulp::state::StateStore& store) {
             pulp::state::ParamInfo info;
             info.id = lfo_route_amount_param_id(lfo, t);
             info.name = "LFO " + std::to_string(lfo + 1) + " " + kRouteNames[t]
-                + " Amount";
-            info.range = {0.0f, 1.0f, 1.0f};
+                + " Depth";
+            // 50 %: the LFO Depth a fresh 1.0.x instance opened with, so a new
+            // instance's LFO 1 on Bank sounds as it did.
+            info.range = {0.0f, 1.0f, 0.5f};
             info.group_id = kGroupModulation;
             info.to_string = [](float v) { return percent_string(v); };
             info.from_string = [](const std::string& text) { return parse_percent(text); };
@@ -545,6 +548,9 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     // routing writes go to the store after the lock is released.
     std::array<std::uint8_t, kRouteLfoCount> legacy_route_masks{};
     bool legacy_target_command = false;
+    struct LaneWrite { pulp::state::ParamID id; float value; };
+    std::array<LaneWrite, kRouteParamCount> legacy_depth_writes{};
+    std::size_t legacy_depth_write_count = 0;
 
     // Apply morph before individual band lanes. A host can automate morph and
     // a band in the same block; the explicit band value must remain reflected
@@ -679,16 +685,21 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         static_cast<float>(next_modulation.lfo2_shape),
         next_modulation.lfo2_beats_per_cycle,
         next_modulation.lfo2_depth};
-    // Offset of kParamLfoTarget within modulation_values above.
+    // Offsets of kParamLfoTarget, kParamLfoDepth and kParamLfo2Depth within
+    // modulation_values above.
     constexpr std::size_t kModulationTargetValueIndex = 4;
+    constexpr std::size_t kDepthValueIndex[kRouteLfoCount] = {3, 8};
     bool modulation_changed = false;
     bool target_lane_changed = false;
+    bool depth_lane_changed[kRouteLfoCount] = {false, false};
     for (std::size_t i = 0; i < modulation_values.size(); ++i) {
         auto& cached = applied_param_cache_[detail::kSlotLfoBase + i];
         if (cached.load(std::memory_order_relaxed) != modulation_values[i]) {
             cached.store(modulation_values[i], std::memory_order_relaxed);
             modulation_changed = true;
             if (i == kModulationTargetValueIndex) target_lane_changed = true;
+            for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo)
+                if (i == kDepthValueIndex[lfo]) depth_lane_changed[lfo] = true;
         }
     }
     // The routing lanes: the audio owner reads them straight off the cursor,
@@ -734,6 +745,23 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
             route_mask(next_modulation.routes[0]) & kModulationTargetMaskAll);
         legacy_target_command = true;
     }
+    // The LFO-level Depth lanes (4003, 4013) are commands as well: each target
+    // has its own Depth, and a host move of an LFO's Depth lane -- automation
+    // written before per-target depth existed -- sets the Depth of every target
+    // that LFO currently drives. Never written back.
+    for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+        if (!depth_lane_changed[lfo]) continue;
+        const float depth = lfo == 0 ? next_modulation.depth : next_modulation.lfo2_depth;
+        for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+            auto& route = next_modulation.routes[lfo][t];
+            if (!route.enabled) continue;
+            route.amount = depth;
+            applied_param_cache_[detail::route_amount_slot(lfo, t)].store(
+                depth, std::memory_order_relaxed);
+            legacy_depth_writes[legacy_depth_write_count++] =
+                {lfo_route_amount_param_id(lfo, t), depth};
+        }
+    }
     if (modulation_changed) {
         modulation_ = next_modulation;
         sound_changed = true;
@@ -776,6 +804,8 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
                 store->set_value(lfo_route_enabled_param_id(lfo, t),
                                  ((legacy_route_masks[lfo] >> t) & 1u) ? 1.0f : 0.0f);
     }
+    for (std::size_t k = 0; k < legacy_depth_write_count; ++k)
+        store->set_value(legacy_depth_writes[k].id, legacy_depth_writes[k].value);
     return sound_changed || editor_changed;
 }
 

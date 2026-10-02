@@ -685,6 +685,38 @@ TEST_CASE("host target automation reclaims the modulation destination") {
     CHECK_FALSE(w.proc->apply_surface_params(false));
 }
 
+TEST_CASE("the legacy LFO Depth lanes set the Depth of every enabled target",
+          "[modulation][routing]") {
+    Wired w;
+    w.proc->apply_surface_params(false);
+    // LFO 1: Bank (default) + Viewport zoom; LFO 2: Morph only.
+    w.store.set_value(spectr::lfo_route_enabled_param_id(0, 5), 1.0f);
+    w.store.set_value(spectr::lfo_route_amount_param_id(0, 3), 0.33f);  // Morph off
+    w.store.set_value(spectr::lfo_route_enabled_param_id(1, 0), 0.0f);
+    w.store.set_value(spectr::lfo_route_enabled_param_id(1, 3), 1.0f);
+    REQUIRE(w.proc->apply_surface_params(false));
+
+    w.store.set_value(spectr::kParamLfoDepth, 0.8f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(0, 0)) == Approx(0.8f));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(0, 5)) == Approx(0.8f));
+    // A target LFO 1 does not drive keeps its own Depth; LFO 2 is untouched.
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(0, 3)) == Approx(0.33f));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(1, 3)) == Approx(0.5f));
+
+    w.store.set_value(spectr::kParamLfo2Depth, 0.1f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(1, 3)) == Approx(0.1f));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(0, 0)) == Approx(0.8f));
+    // Stamped applied: the command does not run again.
+    CHECK_FALSE(w.proc->apply_surface_params(false));
+    // A target Depth edit does not move the legacy lane (never written back).
+    w.store.set_value(spectr::lfo_route_amount_param_id(0, 0), 0.4f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.store.get_value(spectr::kParamLfoDepth) == Approx(0.8f));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(0, 5)) == Approx(0.8f));
+}
+
 // An editor edit is authoritative right up to the moment the host starts
 // writing. The store carries the edited value, so a host that begins
 // recording latches onto it rather than onto the pre-edit value -- and the

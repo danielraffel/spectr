@@ -39,17 +39,18 @@ inline constexpr std::uint8_t kModulationTargetMaskAll = 0x0F;
 /// Every routable destination selected, viewport targets included.
 inline constexpr std::uint8_t kModulationRouteMaskAll = 0x3F;
 
-/// One LFO -> destination route. `amount` scales the LFO's depth for this
-/// destination alone (effective modulation = LFO depth x amount), so one LFO
-/// can sweep the viewport gently while it pumps the bank hard.
+/// One LFO -> destination route. `amount` IS this destination's depth
+/// (effective modulation = wave x amount); there is no LFO-level depth, so one
+/// LFO can sweep the viewport gently while it pumps the bank hard. (The legacy
+/// LFO Depth lanes are commands that set the amount of every enabled route.)
 struct ModulationRoute {
     bool  enabled = false;
-    float amount  = 1.0f;  ///< 0..1
+    float amount  = 0.5f;  ///< the destination's Depth, 0..1
 };
 using LfoRoutes = std::array<ModulationRoute, kModulationTargetCount>;
 
-/// A fresh LFO drives the whole bank at full amount: the destination the
-/// single-target lane defaults to, so a new instance sounds like 1.0.x did.
+/// A fresh LFO drives the whole bank at 50 % Depth: the destination and depth a
+/// 1.0.x instance opened with, so a new instance sounds as it did.
 inline constexpr LfoRoutes default_lfo_routes() noexcept {
     LfoRoutes routes{};
     routes[static_cast<std::size_t>(ModulationTarget::WholeBank)].enabled = true;
@@ -242,8 +243,9 @@ inline void preserve_authored_mutes(BandField& out,
 // level-safe whatever is stacked:
 //
 //  1. SUM per destination. Every (LFO, destination) route contributes
-//     `wave x depth x amount` to that destination's coordinate (unipolar
-//     `(wave + 1) / 2 x depth x amount` for the snapshot destinations, which
+//     `wave x Depth` to that destination's coordinate, where Depth is the
+//     route's own (`amount`) and the LFO's on/off ramp gates it (unipolar
+//     `(wave + 1) / 2 x Depth` for the snapshot destinations, which
 //     pull toward a captured shape and back). Contributions from the two
 //     LFOs add, so the result does not depend on which LFO is visited first.
 //  2. APPLY each destination once, in a fixed order, clamping once:
@@ -286,8 +288,9 @@ inline constexpr bool modulation_target_is_unipolar(ModulationTarget t) noexcept
     return t == ModulationTarget::SnapshotA || t == ModulationTarget::SnapshotB;
 }
 
-/// Add one LFO's contribution. @p level is the LFO's (slewed) depth, zero when
-/// it is off; @p wave its bipolar sample.
+/// Add one LFO's contribution. @p level is the LFO's (slewed) on/off level --
+/// 1 while on, 0 while off, ramping between; the depth of each destination is
+/// its route's `amount`. @p wave is the bipolar sample.
 inline void accumulate_modulation(ModulationCoordinates& coords,
                                   const LfoRoutes& routes, float level,
                                   float wave) noexcept {
@@ -404,8 +407,9 @@ inline bool modulation_audible(const ModulationSettings& settings) noexcept {
 }
 
 /// Both LFOs routed through @p settings.routes, evaluated at @p wave1 /
-/// @p wave2. `settings.depth` / `lfo2_depth` gate each LFO (zero, or the LFO
-/// disabled, contributes nothing). This is the ONE composition the audio owner
+/// @p wave2. `settings.depth` / `lfo2_depth` carry each LFO's on/off LEVEL
+/// here (the audio owner substitutes its slewed 0..1 level), which gates the
+/// per-route depths. This is the ONE composition the audio owner
 /// renders and the editor draws.
 struct ComposedModulation {
     BandField field{};
@@ -445,9 +449,10 @@ inline constexpr std::uint8_t resolve_modulation_target_mask(
     return static_cast<std::uint8_t>(settings.target_mask & kModulationTargetMaskAll);
 }
 
-/// Single-LFO compatibility path: LFO 1's enabled/depth with the LEGACY
-/// destination selection (`target` / `target_mask`), every route at full
-/// amount, through the same combination as `compose_internal_modulation`.
+/// Single-LFO compatibility path, in 1.0.6's terms: LFO 1's enabled/depth with
+/// the LEGACY destination selection (`target` / `target_mask`), every route at
+/// full depth scaled by that one LFO depth, through the same combination as
+/// `compose_internal_modulation`.
 /// Never mutates canonical state or snapshots.
 inline BandField apply_internal_modulation(const BandField& canonical,
                                            const SnapshotBank& snapshots,
@@ -456,6 +461,7 @@ inline BandField apply_internal_modulation(const BandField& canonical,
                                            float bipolar_lfo) noexcept {
     if (!settings.enabled || settings.depth <= 0.0f) return canonical;
     LfoRoutes routes{};
+    for (auto& route : routes) route.amount = 1.0f;
     set_route_mask(routes, resolve_modulation_target_mask(settings));
     ModulationCoordinates coords;
     accumulate_modulation(coords, routes, settings.depth, bipolar_lfo);
