@@ -1817,7 +1817,7 @@ function App() {`,
   ].filter(row => row[1]) : [];
   // The shared renderer is an experiment, so keep its live counters in the
   // diagnostic surface instead of turning CPU/GPU into a product control.
-  // Normal builds report `available: false` and therefore retain the existing
+  // Normal builds report available: false and therefore retain the existing
   // release layout unchanged.
   const gpu = info && info.gpu_audio && info.gpu_audio.available ? info.gpu_audio : null;
   const gpuRows = gpu ? [
