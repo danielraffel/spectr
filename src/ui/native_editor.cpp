@@ -1137,6 +1137,48 @@ void Spectr::dump_fixture_stage_(const std::string& stage) {
                  stage.c_str(), base.c_str(), fixture_now_ms_());
 }
 
+void Spectr::publish_freeze_display_() {
+    if (!native_scripted_ui_ || !native_scripted_ui_->bridge() || !param_store_) return;
+    const auto* store = param_store_;
+    const auto lfos_on = [&](std::size_t target) {
+        int bits = 0;
+        const pulp::state::ParamID enabled[2] = {kParamLfoEnabled, kParamLfo2Enabled};
+        for (std::size_t lfo = 0; lfo < 2; ++lfo)
+            if (store->get_value(enabled[lfo]) >= 0.5f
+                && store->get_value(lfo_route_enabled_param_id(lfo, target)) >= 0.5f)
+                bits |= 1 << lfo;
+        return bits;
+    };
+    const int freeze_lfos = lfos_on(static_cast<std::size_t>(ModulationTarget::Freeze));
+    const int length_lfos = lfos_on(static_cast<std::size_t>(ModulationTarget::Length));
+    // The audio owner's answer while it runs; the drivers from the lanes, so
+    // the editor knows who to name even before audio has run.
+    const bool driven = freeze_lfos != 0;
+    const bool frozen = driven ? freeze_effective() : store->get_value(kParamFreeze) >= 0.5f;
+    const int state = (frozen ? 1 : 0) | (driven ? 2 : 0) | (freeze_lfos << 2)
+        | (length_lfos << 4);
+    if (state == native_freeze_display_) return;
+    native_freeze_display_ = state;
+    auto payload = choc::value::createObject("SpectrFreezeDisplay");
+    payload.addMember("driven", driven);
+    payload.addMember("frozen", frozen);
+    auto freeze_list = choc::value::createEmptyArray();
+    auto length_list = choc::value::createEmptyArray();
+    for (int lfo = 0; lfo < 2; ++lfo) {
+        if (freeze_lfos & (1 << lfo)) freeze_list.addArrayElement(lfo + 1);
+        if (length_lfos & (1 << lfo)) length_list.addArrayElement(lfo + 1);
+    }
+    payload.addMember("freeze_lfos", freeze_list);
+    payload.addMember("length_lfos", length_list);
+    try {
+        native_scripted_ui_->bridge()->dispatch_native_message(
+            "__spectrPublishNativeMessage", "freeze_display", payload,
+            "spectr-freeze-display", "spectr-native-freeze-display");
+    } catch (const std::exception& error) {
+        pulp::runtime::log_error("[Spectr native] freeze display rejected: {}", error.what());
+    }
+}
+
 void Spectr::publish_modulation_frame_() {
     // Modulation overlay. The audio owner publishes the post-LFO band field
     // once per processed block; drawing it is what makes an LFO assigned to a
@@ -3349,6 +3391,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
         }
     }
     publish_modulation_frame_();
+    publish_freeze_display_();
 
     const float tick_seconds = std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
     native_analyzer_elapsed_ += tick_seconds;

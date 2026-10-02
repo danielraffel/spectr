@@ -9848,7 +9848,7 @@ struct ModulationEditRecorder {
     static bool watched(pulp::state::ParamID id) {
         return (id >= spectr::kParamLfoEnabled && id <= spectr::kParamLfoTarget)
             || (id >= spectr::kParamLfo2Enabled && id <= spectr::kParamLfo2Depth)
-            || spectr::is_lfo_route_param(id)
+            || spectr::is_lfo_route_param(id) || id == spectr::kParamFreeze
             || id == spectr::kOutputTrim || id == spectr::kParamMorph;
     }
     explicit ModulationEditRecorder(pulp::state::StateStore& store) {
@@ -10369,5 +10369,161 @@ TEST_CASE("viewport modulation never moves the band under the pointer",
     // The user's stored viewport is untouched by the modulation.
     CHECK(rig.store.get_value(spectr::kParamViewportCenter) == Catch::Approx(2.8f));
     CHECK(rig.store.get_value(spectr::kParamViewportWidth) == Catch::Approx(1.0f));
+    storage.require_unchanged();
+}
+
+// ── Freeze and Length targets in the editor ─────────────────────────────
+
+namespace {
+
+void drive_freeze_target(NativeEditorRig& rig, float rate_beats) {
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape, static_cast<float>(spectr::LfoShape::Square));
+    rig.store.set_value(spectr::kParamLfoRate, rate_beats);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 6), 1.0f);
+    rig.store.set_value(spectr::lfo_route_amount_param_id(0, 6), 0.5f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+}
+
+std::string freeze_face(NativeEditorRig& rig) {
+    return runtime_value(rig,
+        "String(document.querySelector('[data-spectr-freeze-toggle]')"
+        "?.getAttribute('data-spectr-freeze-state'))", "freeze face");
+}
+
+int freeze_toggle_renders(NativeEditorRig& rig) {
+    return std::stoi(runtime_value(rig,
+        "String(globalThis.__spectrFreezeToggleRenders || 0)", "freeze renders"));
+}
+
+}  // namespace
+
+TEST_CASE("LIVE/FROZEN follows the Freeze target without re-rendering",
+          "[native-n1][state-parity][modulation][freeze-target]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    drive_freeze_target(rig, 4.0f);  // 2 s cycle: frozen for the first second
+    const int renders_before = freeze_toggle_renders(rig);
+    std::vector<std::string> faces;
+    for (int step = 0; step < 16; ++step) {
+        feed_audio_blocks(rig, 47);  // ~0.25 s at 256-sample blocks
+        settle(rig.clock, 2);
+        faces.push_back(freeze_face(rig));
+        INFO("step " << step << " effective " << rig.processor.freeze_effective());
+        CHECK(faces.back() == (rig.processor.freeze_effective() ? "frozen" : "live"));
+    }
+    // Control: the gate really did switch both ways during the run.
+    CHECK(std::count(faces.begin(), faces.end(), "frozen") >= 4);
+    CHECK(std::count(faces.begin(), faces.end(), "live") >= 4);
+    // Paint-only: transitions re-rendered nothing.
+    CHECK(freeze_toggle_renders(rig) == renders_before);
+    // The label is painted too.
+    const auto label = runtime_value(rig,
+        "String(document.querySelector('[data-spectr-freeze-label]')?.textContent)", "label");
+    CHECK(label == (faces.back() == "frozen" ? "FROZEN" : "LIVE"));
+    storage.require_unchanged();
+}
+
+TEST_CASE("operating a modulated Freeze asks, and both answers do what they say",
+          "[native-n1][state-parity][modulation][freeze-target][automation]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    drive_freeze_target(rig, 4.0f);
+    feed_audio_blocks(rig, 20);
+    settle(rig.clock, 4);
+    const auto dialog_open = [&] {
+        return runtime_value(rig,
+            "String(!!document.querySelector('[data-spectr-override-dialog]'))", "dialog") == "true";
+    };
+    // One recorder: a store has one pair of gesture callbacks.
+    ModulationEditRecorder recorder(rig.store);
+    const auto has = [](const std::string& log, const std::string& what) {
+        return log.find(what) != std::string::npos;
+    };
+
+    // A press opens the dialog; nothing is written yet.
+    activate(rig, "[data-spectr-freeze-toggle]");
+    REQUIRE(dialog_open());
+    const auto prompt = runtime_value(rig,
+        "String(document.querySelector('[data-spectr-override-prompt]')?.textContent)", "prompt");
+    CHECK(prompt == "Freeze is being modulated by LFO 1. Turn off its Freeze target?");
+    CHECK(recorder.take().empty());
+
+    // KEEP MODULATING: the press applies, the target stays on.
+    activate(rig, "[data-spectr-manager-action=\"override-keep\"]");
+    CHECK_FALSE(dialog_open());
+    {
+        const auto log = recorder.take();
+        INFO(log);
+        CHECK(has(log, "begin 3, set 3="));
+        CHECK(has(log, "end 3"));
+        CHECK_FALSE(has(log, "4026"));
+    }
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 6)) == 1.0f);
+
+    // Escape is KEEP MODULATING.
+    activate(rig, "[data-spectr-freeze-toggle]");
+    REQUIRE(dialog_open());
+    REQUIRE(press_key(rig, pulp::view::KeyCode::escape));
+    CHECK_FALSE(dialog_open());
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 6)) == 1.0f);
+    recorder.take();
+
+    // TURN OFF (Return): the target lane goes off as one recorded gesture,
+    // then the press applies.
+    activate(rig, "[data-spectr-freeze-toggle]");
+    REQUIRE(dialog_open());
+    REQUIRE(press_key(rig, pulp::view::KeyCode::enter));
+    CHECK_FALSE(dialog_open());
+    {
+        // The target lane goes off first, then the press applies.
+        const auto log = recorder.take();
+        INFO(log);
+        CHECK(log.rfind("begin 4026, set 4026=0, end 4026, begin 3, set 3=", 0) == 0);
+    }
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 6)) == 0.0f);
+
+    // Don't ask again: on again, ask, tick the box, keep modulating -- the
+    // Setting goes off and the next press applies straight away.
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 6), 1.0f);
+    rig.processor.apply_surface_params(false);
+    feed_audio_blocks(rig, 4);
+    settle(rig.clock, 4);
+    activate(rig, "[data-spectr-freeze-toggle]");
+    REQUIRE(dialog_open());
+    activate(rig, "[data-spectr-override-dont-ask]");
+    activate(rig, "[data-spectr-manager-action=\"override-keep\"]");
+    CHECK_FALSE(dialog_open());
+    recorder.take();
+    activate(rig, "[data-spectr-freeze-toggle]");
+    CHECK_FALSE(dialog_open());
+    CHECK(has(recorder.take(), "begin 3, set 3="));
+    CHECK(runtime_value(rig, "String(globalThis.__spectrAskBeforeOverride)", "setting") == "false");
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+TEST_CASE("a press on a modulated Freeze flips what is shown until the gate's next change",
+          "[native-n1][state-parity][modulation][freeze-target]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.bridge().load_script("globalThis.__spectrAskBeforeOverride = false;", "no-ask");
+    drive_freeze_target(rig, 8.0f);  // 4 s cycle: frozen for the first 2 s
+    feed_audio_blocks(rig, 40);      // ~0.2 s in: the gate holds it frozen
+    settle(rig.clock, 4);
+    REQUIRE(rig.processor.freeze_effective());
+    REQUIRE(freeze_face(rig) == "frozen");
+    // The parameter was never set: the press must still unfreeze.
+    REQUIRE(rig.store.get_value(spectr::kParamFreeze) == 0.0f);
+    activate(rig, "[data-spectr-freeze-toggle]");
+    feed_audio_blocks(rig, 4);
+    settle(rig.clock, 4);
+    CHECK_FALSE(rig.processor.freeze_effective());
+    CHECK(freeze_face(rig) == "live");
     storage.require_unchanged();
 }

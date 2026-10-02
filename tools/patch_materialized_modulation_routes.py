@@ -52,7 +52,7 @@ EDITS = [
       if (!route || typeof route !== "object") return;
       const mask = Number(route.mask);
       const amounts = Array.isArray(route.amounts) ? route.amounts : [];
-      for (let t = 0; t < 6; t++) {
+      for (let t = 0; t < 8; t++) {
         if (Number.isFinite(mask)) next["routeOn" + (index + 1) + "_" + t] = ((mask >> t) & 1) === 1;
         const amount = Number(amounts[t]);
         if (Number.isFinite(amount)) next["routeAmt" + (index + 1) + "_" + t] = Math.max(0, Math.min(1, amount));
@@ -75,11 +75,19 @@ EDITS = [
         "the destinations the menu lists",
         '''  const spectrModulationShapes = ["Sin", "Tri", "Square", "Saw"];''',
         '''  const spectrModulationShapes = ["Sin", "Tri", "Square", "Saw"];
-  // [enum index, action key, label], in ModulationTarget order.
-  const spectrModulationRouteTargets = [
-    [0, "bank", "Bank"], [1, "a", "Snapshot A"], [2, "b", "Snapshot B"],
-    [3, "morph", "Morph"], [4, "band-shift", "Band shift"],
-    [5, "band-spread", "Band spread"]];''',
+  // Each target this build has: action key -> [ModulationTarget index,
+  // label]. Displayed most-modulated first, so the common ones show without
+  // scrolling. The order names targets a build may not have yet (Intensity
+  // and Output arrive with the gain controls); those are skipped.
+  const spectrModulationRouteTable = {
+    bank: [0, "Bank"], "band-shift": [4, "Band shift"], "band-spread": [5, "Band spread"],
+    morph: [3, "Morph"], freeze: [6, "Freeze"], length: [7, "Length"],
+    a: [1, "Snapshot A"], b: [2, "Snapshot B"]};
+  const spectrModulationRouteOrder = ["bank", "band-shift", "band-spread", "intensity",
+    "morph", "freeze", "length", "output", "a", "b"];
+  const spectrModulationRouteTargets = spectrModulationRouteOrder
+    .filter((key) => spectrModulationRouteTable[key])
+    .map((key) => [spectrModulationRouteTable[key][0], key, spectrModulationRouteTable[key][1]]);''',
     ),
     (
         "the LFO-level Depth row goes: each target carries its own",
@@ -144,7 +152,7 @@ EDITS = [
     (
         "the submenu estimate covers the target rows",
         '''const modulationTop = submenuTopFor(modulationH, 420, entryOffsets.modulation);''',
-        '''const modulationTop = submenuTopFor(modulationH, 620, entryOffsets.modulation);''',
+        '''const modulationTop = submenuTopFor(modulationH, 760, entryOffsets.modulation);''',
     ),
     (
         "the test hook names the band under a pointer",

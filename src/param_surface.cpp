@@ -1038,6 +1038,7 @@ bool Spectr::set_freeze_from_editor(bool frozen) noexcept {
     if (!store) return false;
     // Its own bracket even inside an open drag epoch: a press is a discrete
     // command, and the epoch closes only the parameters its drag touched.
+    freeze_press_request_.store(frozen ? 1 : 0, std::memory_order_relaxed);
     store->begin_gesture(kParamFreeze);
     store->set_value(kParamFreeze, frozen ? 1.0f : 0.0f);
     store->end_gesture(kParamFreeze);

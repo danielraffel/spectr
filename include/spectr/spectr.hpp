@@ -975,6 +975,13 @@ private:
     bool freeze_gate_last_ = false;
     bool freeze_param_last_ = false;
     bool freeze_user_override_ = false;
+    bool freeze_user_value_ = false;
+    // An editor press (button, key, chord) while the Freeze target drives the
+    // freeze: the value it asks for, or -1. Taken on the audio thread, where
+    // it holds the freeze there until the gate's next change -- even when the
+    // parameter already had that value, which is the usual case while a gate
+    // is showing the opposite state.
+    std::atomic<int> freeze_press_request_{-1};
     // What the audio owner actually asked the freeze source for, and whether
     // an LFO was driving it: the editor's LIVE/FROZEN face shows this.
     std::atomic<bool> freeze_effective_{false};
@@ -1172,6 +1179,9 @@ private:
     // Last modulated-field sequence projected to the editor, so a UI tick
     // that finds no new audio frame does not re-dispatch the same overlay.
     std::uint64_t native_modulation_sequence_ = 0;
+    // Last freeze display sent: bit 0 frozen, 1 driven, 2-3 Freeze LFOs,
+    // 4-5 Length LFOs; -1 before the first.
+    int native_freeze_display_ = -1;
     // Scratch for the display-time LFO reconstruction. A member rather than a
     // local so a BandField is not built on the stack every frame.
     BandField     native_modulation_drawn_{};
@@ -1192,6 +1202,9 @@ private:
     /// this frame's time from the audio owner's published inputs and hand it
     /// to the editor. Display only -- it never re-enters canonical state.
     void publish_modulation_frame_();
+    /// Tell the editor when the LFOs drive Freeze or Length, and the
+    /// LIVE/FROZEN state the audio owner is playing. Sent on change only.
+    void publish_freeze_display_();
     // Fixture-only. Writes the laid-out tree plus its depth sidecar under
     // SPECTR_DRAG_DUMP_PREFIX for one named stage of a gesture, so "during"
     // and "after" are two artifacts rather than one interpretation.

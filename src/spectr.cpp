@@ -1502,15 +1502,23 @@ void Spectr::process(
                                                            route.amount);
                         }
                         const bool param_frozen = cursor.value(kParamFreeze) >= 0.5f;
+                        const int press = freeze_press_request_.exchange(
+                            -1, std::memory_order_relaxed);
                         bool frozen = param_frozen;
                         if (driven) {
                             // The user's press (or the lane's automation)
                             // holds until the gate next changes.
-                            if (param_frozen != freeze_param_last_)
+                            if (param_frozen != freeze_param_last_) {
                                 freeze_user_override_ = true;
+                                freeze_user_value_ = param_frozen;
+                            }
+                            if (press >= 0) {
+                                freeze_user_override_ = true;
+                                freeze_user_value_ = press == 1;
+                            }
                             if (gate != freeze_gate_last_)
                                 freeze_user_override_ = false;
-                            frozen = freeze_user_override_ ? param_frozen : gate;
+                            frozen = freeze_user_override_ ? freeze_user_value_ : gate;
                         } else {
                             freeze_user_override_ = false;
                         }
