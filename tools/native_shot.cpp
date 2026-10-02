@@ -21,6 +21,7 @@
 // dimmed editor behind the modal alone. Read the per-capture statistics this
 // prints, and look at the image.
 
+#include "spectr/editor_resize.hpp"
 #include "spectr/param_surface.hpp"
 #include "spectr/spectr.hpp"
 
@@ -1670,6 +1671,128 @@ int main(int argc, char** argv) {
                 // JS tree, but the wider hit-test-leaf detector reads the
                 // layout snapshot, and it needs a RED of its own.
                 capture(rig, dir, prefix + "PLANT", backend, scale);
+            }
+            return g_failures == 0 ? 0 : 1;
+        }
+
+        // ── LFO routing: the band menu's target rows, and the audible
+        //    viewport overlay ──────────────────────────────────────────
+        //
+        // SPECTR_MODULATION_ROUTE_SHOTS=1 captures the Modulation submenu with
+        // its six target switches + Amount rows at the default host size and
+        // at the minimum, prints the panel's rect against the space the menu
+        // may use, then captures a running viewport-position LFO so the
+        // overlay (minimap bracket, plot bracket) can be looked at.
+        if (std::getenv("SPECTR_MODULATION_ROUTE_SHOTS") != nullptr) {
+            auto& store = rig.store;
+            const auto set_routes = [&](std::size_t lfo, unsigned mask,
+                                        std::initializer_list<float> amounts) {
+                std::size_t t = 0;
+                for (const float amount : amounts) {
+                    store.set_value(spectr::lfo_route_enabled_param_id(lfo, t),
+                                    (mask >> t) & 1u ? 1.0f : 0.0f);
+                    store.set_value(spectr::lfo_route_amount_param_id(lfo, t), amount);
+                    ++t;
+                }
+            };
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            store.set_value(spectr::kParamLfoDepth, 0.5f);
+            store.set_value(spectr::kParamLfoRate, 4.0f);
+            const auto open_menu = [&] {
+                rig.eval("(() => { if (!globalThis.__pulpActivateMaterializedElement__("
+                         "'[data-spectr-filter-surface]','contextmenu',"
+                         "{clientX:420,clientY:430,offsetX:420,offsetY:430,button:2})) "
+                         "throw new Error('no band menu'); "
+                         "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+                         "globalThis.__pulpRuntimeSettle__(8); })();",
+                         "spectr-route-shot-open");
+                settle(rig.clock, 16);
+                rig.activate("[data-spectr-band-action=\"modulation-toggle\"]");
+                settle(rig.clock, 16);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+            };
+            const auto report = [&](const char* name) {
+                rig.eval(std::string("(() => { const p = document.querySelector("
+                    "'[data-spectr-modulation-panel]'); if (!p) { console.log('[route-shot] "
+                    ) + name + " NO PANEL'); return; } const r = p.getBoundingClientRect(); "
+                    "const rows = Array.from(document.querySelectorAll('[data-spectr-modulation-panel] [data-spectr-band-action]')); "
+                    "const last = rows[rows.length - 1].getBoundingClientRect(); "
+                    "const amount = document.querySelector('[data-spectr-band-action=\"modulation-amount-bank\"]'); "
+                    "const depth = document.querySelector('[data-spectr-band-action=\"lfo1-depth\"]'); "
+                    "const ah = amount ? amount.getBoundingClientRect().height : -1; "
+                    "const dh = depth ? depth.getBoundingClientRect().height : -1; "
+                    "console.log('[route-shot] " + name + " panel top=' + r.top.toFixed(1) "
+                    "+ ' bottom=' + r.bottom.toFixed(1) + ' height=' + r.height.toFixed(1) "
+                    "+ ' scrollHeight=' + p.scrollHeight + ' lastRowBottom=' + last.bottom.toFixed(1) "
+                    "+ ' rows=' + rows.length + ' amountRowH=' + ah.toFixed(1) "
+                    "+ ' depthRowH=' + dh.toFixed(1) + ' limit=' + (860 - 64 - 16)); })();",
+                    "spectr-route-shot-report");
+                settle(rig.clock, 2);
+            };
+            // Default size: Bank on, Morph on at 40 %, Viewport position on at
+            // 75 % -- several on, several off, so lit and dimmed rows show.
+            rig.resize(990.0f, 645.0f);
+            set_routes(0, 0x19u, {1.0f, 1.0f, 1.0f, 0.4f, 0.75f, 1.0f});
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(8);
+            open_menu();
+            report("990x645-mixed");
+            capture(rig, dir, prefix + "modulation-routes-990x645-mixed", backend, scale);
+            // Every destination on: the tallest the panel gets.
+            set_routes(0, 0x3Fu, {1.0f, 0.25f, 0.5f, 0.4f, 0.75f, 0.6f});
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(4);
+            settle(rig.clock, 16);
+            rig.root->layout_children();
+            report("990x645-all-on");
+            capture(rig, dir, prefix + "modulation-routes-990x645-all-on", backend, scale);
+            // The minimum host size. The editor is pinned to its design box and
+            // scaled uniformly, so the menu has the same design-space room.
+            rig.resize(static_cast<float>(spectr::kEditorMinimumWidth), static_cast<float>(spectr::kEditorMinimumHeight));
+            settle(rig.clock, 16);
+            rig.root->layout_children();
+            report("minimum-all-on");
+            capture(rig, dir, prefix + "modulation-routes-minimum-all-on", backend, scale);
+            rig.resize(990.0f, 645.0f);
+            // LFO 2's rows: source switch.
+            set_routes(1, 0x21u, {0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.3f});
+            rig.processor.apply_surface_params(false);
+            rig.activate("[data-spectr-modulation-source-action=\"2\"]");
+            settle(rig.clock, 16);
+            rig.root->layout_children();
+            report("990x645-lfo2");
+            capture(rig, dir, prefix + "modulation-routes-990x645-lfo2", backend, scale);
+
+            // Close the menu and run a viewport-position LFO.
+            rig.eval("(() => { document.dispatchEvent({ type: 'keydown', key: 'Escape', code: 'Escape',"
+                     " bubbles: true, cancelable: true, preventDefault() {}, stopPropagation() {} }); "
+                     "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+                     "globalThis.__pulpRuntimeSettle__(8); })();", "spectr-route-shot-close");
+            settle(rig.clock, 16);
+            // Twice: the submenu, then the band menu.
+            for (int level = 0; level < 2; ++level) {
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                rig.service_runtime();
+            }
+            settle(rig.clock, 16);
+            store.set_value(spectr::kParamViewportCenter, 2.8f);
+            store.set_value(spectr::kParamViewportWidth, 1.0f);
+            store.set_value(spectr::kParamLfo2Enabled, 0.0f);
+            store.set_value(spectr::kParamLfoDepth, 0.6f);
+            store.set_value(spectr::kParamLfoRate, 4.0f);
+            set_routes(0, 0x10u, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
+            rig.processor.apply_surface_params(false);
+            for (int step = 0; step < 3; ++step) {
+                rig.feed_tone(48);
+                settle(rig.clock, 4);
+                rig.eval("(() => { const s = globalThis.__spectrTestHooks && globalThis.__spectrTestHooks.renderState"
+                         " ? globalThis.__spectrTestHooks.renderState() : null; "
+                         "console.log('[route-shot] overlay view=' + JSON.stringify(s && s.view) "
+                         "+ ' audible=' + JSON.stringify(s && s.audibleView)); })();",
+                         "spectr-route-shot-overlay");
+                capture(rig, dir, prefix + "viewport-overlay-" + std::to_string(step),
+                        backend, scale);
             }
             return g_failures == 0 ? 0 : 1;
         }
