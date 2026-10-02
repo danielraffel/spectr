@@ -948,6 +948,14 @@ set_tests_properties(Spectr-level-autogain-follow-output-negative-control PROPER
     TIMEOUT 300
     PASS_REGULAR_EXPRESSION "CHECK\\( spread <= 0\\.01 \\)")
 
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-level-help-pins
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py)
+    add_test(NAME Spectr-level-help-pins-negative-control
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py --plant)
+    set_tests_properties(Spectr-level-help-pins-negative-control PROPERTIES WILL_FAIL TRUE)
+endif()
+
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
     test/test_native_state_parity.cpp
