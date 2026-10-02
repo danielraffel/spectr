@@ -963,7 +963,12 @@ int Spectr::latency_samples() const {
     // early. Both paths are the same number for the same mode, which is what
     // makes a project recall with the same delay compensation everywhere.
     if (processor_prepared_ && renderer_) return renderer_->latency_samples();
-    const auto config=renderer_config_();
+    // Geometry only: an adapter may ask before any parameter store is wired.
+    // Pulp's AAX adapter builds its descriptor from a bare factory() instance
+    // and asks it for latency there; renderer_config_() reads the mix from
+    // state(), which is not yet bound, and crashed the plug-in at
+    // registration.
+    const auto config=latency_geometry_();
     auto latency=mask_render_latency_samples(render_mode_,config);
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     if(render_mode_==MaskRenderMode::linear_phase)
