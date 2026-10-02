@@ -29,6 +29,7 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 using spectr::FreezeKeys;
@@ -1204,4 +1205,105 @@ TEST_CASE("Freeze Keys: render a melody over a frozen pad to WAV", "[freeze-keys
         const auto plain = render(input, {{Edge::freeze, at(1.0)}, {Edge::unfreeze, at(10.0)}}, hold.seconds);
         write_wav(dir + "/frozen-pad-no-keys-" + hold.name + ".wav", plain.out, std::size_t(plain.latency));
     }
+}
+
+// A host that routes no MIDI to the effect sounds exactly like Freeze Keys
+// not working. The product therefore logs what it receives: one line per
+// note-on worth reporting (the first, and the first after Freeze changes),
+// saying what the note did. This drives the product through the host's MIDI
+// buffer and reads those lines back.
+TEST_CASE("Freeze Keys: note-ons are counted and reported to the host log, with what they did",
+          "[freeze-keys]") {
+    const auto input = sine(220.0, 2.6);
+    const auto run = [&](bool keys) {
+        pulp::format::HeadlessHost host{spectr::create_spectr};
+        auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+        REQUIRE(plugin != nullptr);
+        plugin->set_freeze_seconds_override(kLoopHold);
+        plugin->set_freeze_keys_enabled(keys);
+        constexpr int block = 256;
+        host.prepare(kRate, block);
+        pulp::midi::MidiBuffer mi, mo;
+        mi.reserve_events(16);
+        // Unfrozen at 0.2 s; Freeze at 0.6 s; then 67 at 1.5 s and 72 at
+        // 1.8 s (the same Freeze state: counted, not reported again).
+        const std::pair<std::size_t, int> notes[] = {{at(0.2), 67}, {at(1.5), 67}, {at(1.8), 72}};
+        for (std::size_t pos = 0; pos < input.size(); pos += block) {
+            const auto n = std::min<std::size_t>(block, input.size() - pos);
+            if (pos <= at(0.6) && at(0.6) < pos + n) host.state().set_value(spectr::kParamFreeze, 1.0f);
+            mi.clear();
+            for (const auto& [when, note] : notes)
+                if (when >= pos && when < pos + n) {
+                    auto m = pulp::midi::MidiEvent::note_on(0, std::uint8_t(note), 100);
+                    m.sample_offset = std::int32_t(when - pos);
+                    mi.add(m);
+                }
+            pulp::audio::Buffer<float> ib(2, n), ob(2, n);
+            std::copy_n(input.l.begin() + long(pos), n, ib.channel(0).begin());
+            std::copy_n(input.r.begin() + long(pos), n, ib.channel(1).begin());
+            const float* ip[] = {ib.channel(0).data(), ib.channel(1).data()};
+            pulp::audio::BufferView<const float> iv(ip, 2, n);
+            auto ov = ob.view();
+            pulp::state::ParameterEventQueue events;
+            pulp::format::ProcessContext ctx;
+            host.process(ov, iv, mi, mo, events, ctx);
+            // The report of the 1.5 s note is printed by a worker: give it
+            // time before the next one could be queued.
+            if (plugin->freeze_keys_note_ons() == 1 && pos > at(1.0)) {
+                for (int i = 0; i < 200 && plugin->freeze_keys_reports_logged() < 1; ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+        const std::uint64_t want = keys ? 2 : 0;
+        for (int i = 0; i < 400 && plugin->freeze_keys_reports_logged() < want; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        return std::tuple{plugin->freeze_keys_note_ons(), plugin->freeze_keys_reports_logged(),
+                          plugin->freeze_keys_last_report()};
+    };
+
+    SECTION("a Freeze Keys build counts every note-on and reports the first per Freeze state") {
+        auto [ons, logged, last] = run(true);
+        CHECK(ons == 3);
+        CHECK(logged == 2);
+        CAPTURE(last);
+        CHECK(last.find("[spectr-keys] note-on 67 (G3) vel 100") == 0);
+        CHECK(last.find("frozen=1") != std::string::npos);
+        CHECK(last.find("hold=loop") != std::string::npos);
+        CHECK(last.find("mode=keys voices=1") != std::string::npos);
+        CHECK(last.find("transpose=+7 st (root C3)") != std::string::npos);
+        CHECK(last.find("note-ons=2") != std::string::npos);
+        CHECK(last.find("-> playing") != std::string::npos);
+    }
+    SECTION("control: with Freeze Keys off nothing is read, counted or logged") {
+        auto [ons, logged, last] = run(false);
+        CHECK(ons == 0);
+        CHECK(logged == 0);
+        CHECK(last.empty());
+    }
+}
+
+TEST_CASE("Freeze Keys: the report line says why a note did nothing", "[freeze-keys]") {
+    spectr::FreezeKeysNoteReport r;
+    r.note_ons = 1;
+    r.note = 60;
+    r.velocity = 90;
+    r.sample_rate = 44100.0;
+    const auto off = spectr::freeze_keys_report_line(r);
+    CAPTURE(off);
+    CHECK(off.find("note-on 60 (C3) vel 90 at +0: frozen=0 phase=live") != std::string::npos);
+    CHECK(off.find("-> ignored: Freeze is off") != std::string::npos);
+    r.frozen = true;
+    r.phase = FreezeSource::Phase::arming;
+    const auto arming = spectr::freeze_keys_report_line(r);
+    CAPTURE(arming);
+    CHECK(arming.find("-> waiting: the hold is not audible yet") != std::string::npos);
+    r.phase = FreezeSource::Phase::held;
+    r.keys_mode = true;
+    r.voices = 2;
+    r.note = 48;
+    const auto playing = spectr::freeze_keys_report_line(r);
+    CAPTURE(playing);
+    CHECK(playing.find("note-on 48 (C2)") != std::string::npos);
+    CHECK(playing.find("transpose=-12 st") != std::string::npos);
+    CHECK(playing.find("-> playing") != std::string::npos);
 }

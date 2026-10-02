@@ -25,6 +25,48 @@ required for an `aumf` to receive notes. `SPECTR_FREEZE_KEYS=ON|OFF` overrides t
 default for any dev suffix. Configure refuses it on the shipping and preview
 identities.
 
+## Playing it in Logic Pro
+
+Logic sends MIDI to an AU MIDI-controlled effect only from the track chosen
+in the plug-in's MIDI side-chain menu. Playing keys (or Musical Typing) with
+the audio track selected sends Spectr nothing, and Freeze just keeps holding.
+
+1. Put the audio on an audio track and insert **Audio FX > AU MIDI-controlled
+   Effects > Pulp > Spectr Keys Dev** on it.
+2. Create a Software Instrument track (File > New Tracks > Software
+   Instrument). Any instrument, or none, will do; its MIDI is what Spectr
+   plays from.
+3. In Spectr's plug-in window header, open the **Side Chain** pop-up menu
+   and choose that instrument track.
+4. Select the instrument track (click its header) so your keyboard, or
+   Window > Show Musical Typing (Cmd-K), plays it. Click Logic's main
+   window first if the Spectr window has keyboard focus.
+5. Start playback, press **Freeze** in Spectr while the sound plays, then
+   play keys: C3 (MIDI 60) plays the hold at its own pitch, G3 a fifth up,
+   C2 an octave down. Releasing Freeze returns the live input.
+
+### Is MIDI arriving?
+
+Spectr Keys Dev writes what it receives to the system log, from inside
+Logic's out-of-process AU host too:
+
+```sh
+/usr/bin/log show --last 10m --predicate 'eventMessage CONTAINS "spectr-keys"' --style compact
+/usr/bin/log stream --predicate 'eventMessage CONTAINS "spectr-keys"' --style compact
+```
+
+- `[spectr-keys] ready: ...` is printed each time the host prepares the
+  plugin. No `ready` line: the loaded build is not a Freeze Keys build.
+- `[spectr-keys] note-on 67 (G3) vel 100 ...: frozen=1 phase=held hold=loop
+  mode=keys voices=1 ... -> playing` is printed for the first note-on, and for
+  the first after Freeze is switched on or off (at most 32 a session). The
+  end of the line says what the note did: `playing`, `ignored: Freeze is off`
+  or `waiting: the hold is not audible yet`.
+- A `ready` line and no `note-on` line while you play: the host is not
+  sending MIDI to the plugin. In Logic, check the Side Chain menu (step 3).
+
+The audio thread only records the note; a worker formats and logs it.
+
 ## Behaviour
 
 - **Root key: MIDI 60, named C3.** The root key plays the held sound at its
@@ -213,6 +255,9 @@ sample.
 | Clicks (sine, note on/off, chord, first key, unfreeze) | worst second difference 0.0012 (0.30 with the envelopes removed) |
 | AU host, 8-note chord per tap (`Spectr-au-freeze-keys-host*`) | MIDI accepted (no −4); worst note-on call about 1.0 ms at 128 frames / 48 kHz, 3.6× the costliest call without freeze (gate 6×); loop voices 57 µs |
 | CLAP, VST3, AU through `pulp::host::PluginSlot` | 220.000 Hz held, then 329.628 Hz after note 67 |
+| AU hosted as Logic hosts an `aumf` (`Spectr-au-freeze-keys-pitch-*`, `tools/au_keys_host_probe.cpp`): found by its `aumf SpKz Pulp` description, host beat/tempo and transport callbacks, the key sent through `MusicDeviceMIDIEvent` and through `MusicDeviceMIDIEventList` (UMP), transport playing and stopped; also `--out-of-process` (an AUHostingService process, as Logic loads AUs) against the installed component | 220.000 Hz held, 329.628 Hz while note 67 is held, every case. Negative control: the `aufx` Spectr Freeze Dev answers the note with −4 and stays at 220 Hz |
+| REAPER 7, offline render (`tools/reaper_freeze_keys.py`): sine on track 1 through Spectr Keys Dev, Freeze automated on at 2 s, a MIDI item on track 2 sent MIDI-only to track 1 | VST3, CLAP and the installed AU: hold 220.000 Hz; notes 67, 72, 55 at 329.628, 440.000, 164.814 Hz (within 0.03 cent); silent between notes |
+| Host log | each reported note-on prints one `[spectr-keys]` line from a worker; a build with Freeze Keys off reads, counts and logs nothing |
 | Restart loop on note, on, under a host transport | 2 bars at 120 BPM 4/4: the root's period, measured from the product render, 4.000 s (error < 1 ns); 1 1/8 bars at 90 BPM: 3.000 s; its first pass correlates 1.0000 with the loop's top at lag 0 (the loop 10 ms on: 0.0007) |
 | Restart loop on note, on | a held root note's first loop length (after its 10 ms attack) correlates 1.0000 with the loop's top; a second note 0.37 s later does too |
 | ...held for 2.5 loop lengths | equals the loop sample for sample (worst 1.7e-8): the plain top, then each later pass with the source's seam; sharpest step equals the plain hold's over the same span |
@@ -265,7 +310,7 @@ of these options:
 3. **Keep `aufx` and have no keys in Logic AU.** CLAP and VST3 already take
    notes as effects (shown here through `PluginSlot`), so Freeze Keys should work in
    hosts that route MIDI to effects, such as REAPER, Bitwig and Cubase, with
-   no identity change. It has not been tried in a DAW yet. Logic users would get it
+   no identity change. REAPER plays it in all three formats (see "Measured"). Logic users would get it
    only if option 1 ships.
 
 Recommendation: option 3 for the next release (CLAP and VST3 effects declare

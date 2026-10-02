@@ -3864,6 +3864,27 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         set_tests_properties(Spectr-au-freeze-keys-host Spectr-au-freeze-keys-host-mixing
             Spectr-au-freeze-keys-host-loop
             PROPERTIES TIMEOUT 300 LABELS "freeze;au-host;freeze-keys")
+        # Hosted as Logic hosts an aumf (host beat/tempo and transport
+        # callbacks, the unit found by its aumf description) with the key
+        # sent through each AU v2 MIDI call -- MusicDeviceMIDIEvent and the
+        # UMP MusicDeviceMIDIEventList -- and the transport playing or
+        # stopped: the key must sound at the hold's pitch transposed.
+        # tools/au_keys_host_probe.cpp --out-of-process does the same in an
+        # AUHostingService process, against an installed component.
+        add_executable(Spectr-au-keys-host-probe tools/au_keys_host_probe.cpp)
+        target_link_libraries(Spectr-au-keys-host-probe PRIVATE
+            "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation"
+            "-framework CoreMIDI")
+        add_dependencies(Spectr-au-keys-host-probe ${SPECTR_NATIVE_AU_TARGET})
+        foreach(_midi event list)
+            foreach(_transport playing stopped)
+                add_test(NAME Spectr-au-freeze-keys-pitch-${_midi}-${_transport}
+                    COMMAND Spectr-au-keys-host-probe --bundle "${_spectr_au_bundle}"
+                        --midi ${_midi} --transport ${_transport})
+                set_tests_properties(Spectr-au-freeze-keys-pitch-${_midi}-${_transport}
+                    PROPERTIES TIMEOUT 120 LABELS "freeze;au-host;freeze-keys")
+            endforeach()
+        endforeach()
     endif()
 endif()
 

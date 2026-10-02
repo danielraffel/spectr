@@ -88,6 +88,8 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 namespace spectr {
@@ -1244,5 +1246,61 @@ private:
     int bins_ = 0;
     std::uint64_t rng_ = kRngSeed;
 };
+
+/// One note-on as Freeze Keys took it, for the host's log. A host that never
+/// routes MIDI to the effect (Logic, with no MIDI side-chain source chosen)
+/// looks exactly like Freeze Keys not working; these lines tell the two
+/// apart. Filled on the audio thread one block after the note arrived (so it
+/// reports what the note did) and printed by a worker.
+struct FreezeKeysNoteReport {
+    std::uint64_t note_ons = 0;   ///< note-ons received since the plugin loaded
+    int note = 0;
+    int velocity = 0;
+    int offset = 0;               ///< sample offset inside its host block
+    int root_note = FreezeKeys::kDefaultRootNote;
+    bool frozen = false;          ///< Freeze switched on
+    FreezeSource::Phase phase = FreezeSource::Phase::live;
+    bool loop = false;            ///< loop hold (else spectral)
+    bool keys_mode = false;       ///< the hold has switched to keys
+    int voices = 0;               ///< voices sounding
+    double sample_rate = 0.0;
+};
+
+/// The log line for a report: `[spectr-keys] note-on 67 (G3) ...`, ending in
+/// what the note did or why it did nothing.
+inline std::string freeze_keys_report_line(const FreezeKeysNoteReport& r) {
+    char name[6];
+    FreezeKeys::note_name(r.note, name);
+    char root[6];
+    FreezeKeys::note_name(r.root_note, root);
+    const char* phase = "live";
+    switch (r.phase) {
+    case FreezeSource::Phase::live: phase = "live"; break;
+    case FreezeSource::Phase::arming: phase = "arming"; break;
+    case FreezeSource::Phase::preparing: phase = "preparing"; break;
+    case FreezeSource::Phase::engaging: phase = "engaging"; break;
+    case FreezeSource::Phase::held: phase = "held"; break;
+    case FreezeSource::Phase::releasing: phase = "releasing"; break;
+    }
+    const char* outcome = "";
+    if (!r.frozen)
+        outcome = "ignored: Freeze is off (MIDI plays only while Freeze holds a sound)";
+    else if (r.keys_mode && r.voices > 0)
+        outcome = "playing";
+    else if (r.phase == FreezeSource::Phase::arming || r.phase == FreezeSource::Phase::preparing)
+        outcome = "waiting: the hold is not audible yet; the key sounds when it is";
+    else
+        outcome = "no voice started";
+    const double semitones = static_cast<double>(r.note - r.root_note);
+    char line[320];
+    std::snprintf(line, sizeof(line),
+                  "[spectr-keys] note-on %d (%s) vel %d at +%d: frozen=%d phase=%s hold=%s "
+                  "mode=%s voices=%d transpose=%+.0f st (root %s) note-ons=%llu sr=%.0f -> %s",
+                  r.note, name, r.velocity, r.offset, r.frozen ? 1 : 0, phase,
+                  r.loop ? "loop" : "spectral", r.keys_mode ? "keys" : "hold", r.voices,
+                  semitones, root, static_cast<unsigned long long>(r.note_ons),
+                  r.sample_rate, outcome);
+    return line;
+}
 
 } // namespace spectr

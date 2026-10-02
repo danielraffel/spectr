@@ -783,6 +783,17 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
             "of the band surface will not reach the DSP");
     }
     configure_bridge_(ctx.output_channels);
+    if (freeze_keys_enabled()) {
+        char root[6];
+        FreezeKeys::note_name(freeze_keys_root_note(), root);
+        // The first line to look for when a host seems to send no notes: the
+        // build that loaded takes MIDI. Each note-on it receives is logged
+        // too (Spectr::print_keys_report_).
+        pulp::runtime::log_warn(
+            "[spectr-keys] ready: {} {} at {:.0f} Hz, {} ch; MIDI plays the hold "
+            "while Freeze is on (root {})",
+            descriptor().name, descriptor().version, sample_rate_, channels_, root);
+    }
 }
 
 // ── Freeze Length ────────────────────────────────────────────────────────
@@ -838,7 +849,62 @@ double Spectr::freeze_loop_cap_seconds() const noexcept {
                                           std::max(1, channels_));
 }
 
+void Spectr::complete_keys_report_() noexcept {
+    // A report the worker has not taken yet: ask it again (a full lane
+    // refused the last spawn), and hold any new one until it is free.
+    if (keys_report_spawn_due_)
+        keys_report_spawn_due_ =
+            !freeze_storage_lane_.try_spawn(FreezeStorageTask{0.0, true});
+    if (!keys_report_armed_
+        || keys_report_state_.load(std::memory_order_acquire) != 0)
+        return;
+    auto report = keys_report_pending_;
+    report.root_note = freeze_keys_.root_note();
+    report.frozen = freeze_source_.frozen_requested();
+    report.phase = freeze_source_.phase();
+    report.loop = freeze_source_.looping();
+    report.keys_mode = freeze_keys_.keys_mode();
+    report.voices = freeze_keys_.sounding_voices();
+    report.sample_rate = sample_rate_;
+    keys_report_ = report;
+    keys_report_state_.store(1, std::memory_order_release);
+    keys_report_armed_ = false;
+    keys_report_last_frozen_ = report.frozen;
+    ++keys_reports_queued_;
+    keys_report_spawn_due_ =
+        !freeze_storage_lane_.try_spawn(FreezeStorageTask{0.0, true});
+}
+
+void Spectr::print_keys_report_() noexcept {
+    if (keys_report_state_.load(std::memory_order_acquire) != 1) return;
+    std::string line;
+    try {
+        line = freeze_keys_report_line(keys_report_);
+    } catch (...) {
+        keys_report_state_.store(0, std::memory_order_release);
+        return;
+    }
+    keys_report_state_.store(0, std::memory_order_release);
+    // Warning level: os_log persists it, so `log show` finds it after the
+    // session (Info is kept in memory only).
+    pulp::runtime::log_warn("{}", line);
+    {
+        std::lock_guard<std::mutex> lock(keys_last_report_mutex_);
+        keys_last_report_ = line;
+    }
+    keys_reports_logged_.fetch_add(1, std::memory_order_release);
+}
+
+std::string Spectr::freeze_keys_last_report() const {
+    std::lock_guard<std::mutex> lock(keys_last_report_mutex_);
+    return keys_last_report_;
+}
+
 void Spectr::freeze_storage_trampoline_(void* ctx, const FreezeStorageTask& task) noexcept {
+    if (task.report_keys) {
+        static_cast<Spectr*>(ctx)->print_keys_report_();
+        return;
+    }
     auto& source = static_cast<Spectr*>(ctx)->freeze_source_;
     source.collect_retired_loop_storage();
     if (task.seconds > 0.0) {
@@ -1195,10 +1261,27 @@ void Spectr::process(
     freeze_keys_.begin_block();
     freeze_keys_.set_enabled(freeze_keys_enabled());
     if (freeze_keys_.enabled()) {
+        // Last block's note is applied by now: report what it did.
+        complete_keys_report_();
         freeze_keys_.set_root_note(freeze_keys_root_note());
         freeze_keys_.set_restart_loop(freeze_keys_restart_loop());
         for (const auto& event : midi_in) {
             const int offset = std::max(0, static_cast<int>(event.sample_offset));
+            if (event.is_note_on() && event.velocity() > 0) {
+                const auto count =
+                    keys_note_ons_.fetch_add(1, std::memory_order_relaxed) + 1;
+                // The first note-on, and the first after Freeze changes.
+                const bool frozen = freeze_source_.frozen_requested();
+                if (!keys_report_armed_ && keys_reports_queued_ < kMaxKeysReports
+                    && (count == 1 || frozen != keys_report_last_frozen_)) {
+                    keys_report_pending_ = {};
+                    keys_report_pending_.note_ons = count;
+                    keys_report_pending_.note = event.note();
+                    keys_report_pending_.velocity = event.velocity();
+                    keys_report_pending_.offset = offset;
+                    keys_report_armed_ = true;
+                }
+            }
             if (event.is_note_on())
                 (void)freeze_keys_.note_on(offset, event.note(), event.velocity());
             else if (event.is_note_off())

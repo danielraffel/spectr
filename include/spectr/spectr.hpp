@@ -626,6 +626,18 @@ public:
     }
     /// Audio-thread state, as freeze_source().
     [[nodiscard]] const FreezeKeys& freeze_keys() const noexcept { return freeze_keys_; }
+    /// Note-ons Freeze Keys has received since the plugin loaded, and how
+    /// many of them it has reported to the system log ("[spectr-keys]"
+    /// lines; see freeze_keys_report_line). Any thread. A host that routes no
+    /// MIDI to the effect leaves both at zero.
+    [[nodiscard]] std::uint64_t freeze_keys_note_ons() const noexcept {
+        return keys_note_ons_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t freeze_keys_reports_logged() const noexcept {
+        return keys_reports_logged_.load(std::memory_order_acquire);
+    }
+    /// The most recent report printed (empty before the first). Any thread.
+    [[nodiscard]] std::string freeze_keys_last_report() const;
 
     /// Accessor for the StateStore-level ABCompare. Lazily constructed
     /// the first time it's requested (after define_parameters has wired
@@ -917,11 +929,33 @@ private:
     // Audio -> worker: build bigger loop rings off the audio thread, and free
     // the ones the source let go of (FreezeSource LOOP MEMORY). Declared
     // after freeze_source_ so it is joined before the source is destroyed.
-    struct FreezeStorageTask { double seconds = 0.0; };
+    // report_keys: print the pending Freeze Keys note report instead.
+    struct FreezeStorageTask { double seconds = 0.0; bool report_keys = false; };
     pulp::format::BackgroundTaskLane<FreezeStorageTask, 8> freeze_storage_lane_;
     bool freeze_storage_collect_sent_ = false;   // audio thread
     static void freeze_storage_trampoline_(void* ctx, const FreezeStorageTask& task) noexcept;
     void start_freeze_storage_lane_();
+    // Freeze Keys MIDI diagnostics. The audio thread notes a note-on worth
+    // reporting (the first, the first after a Freeze change, up to
+    // kMaxKeysReports) in keys_report_pending_, completes it at the top of
+    // the next block, hands it over through keys_report_ (owned by whoever
+    // keys_report_state_ says: 0 the audio thread, 1 the worker) and spawns
+    // the storage lane to print it. Nothing on the audio thread formats,
+    // allocates or logs.
+    static constexpr std::uint64_t kMaxKeysReports = 32;
+    std::atomic<std::uint64_t> keys_note_ons_{0};
+    std::atomic<std::uint64_t> keys_reports_logged_{0};
+    std::atomic<int> keys_report_state_{0};
+    FreezeKeysNoteReport keys_report_{};
+    FreezeKeysNoteReport keys_report_pending_{};     // audio thread
+    bool keys_report_armed_ = false;                 // audio thread
+    bool keys_report_spawn_due_ = false;             // audio thread
+    std::uint64_t keys_reports_queued_ = 0;          // audio thread
+    bool keys_report_last_frozen_ = false;           // audio thread
+    mutable std::mutex keys_last_report_mutex_;
+    std::string keys_last_report_;
+    void complete_keys_report_() noexcept;           // audio thread
+    void print_keys_report_() noexcept;              // worker
     /// The seconds the next freeze takes in at a transport (or the override).
     [[nodiscard]] double freeze_hold_seconds_at_(double tempo_bpm, int numerator,
                                                  int denominator) const noexcept;
