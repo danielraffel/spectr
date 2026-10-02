@@ -188,18 +188,20 @@ older Spectr opening a new session plays the nearest thing it can express.
 
 ## Cost
 
-Audio-thread cost per 512-sample callback (Tracking renderer, M-series laptop,
-median / p99, 3 x 280 blocks; budget 10 667 us):
+Audio-thread cost per 512-sample callback (Tracking renderer, this
+development Mac; each block's cost is its cheapest over three identical
+renders, which removes scheduler preemption on a shared machine; budget
+10 667 us). Four runs side by side under 4x concurrent load, and one alone:
 
 | LFO 1 on | median | p99 |
 | --- | --- | --- |
-| Bank | 449 us | 944 us |
-| Viewport position | 460 us | 1 200 us |
-| Viewport zoom | 469 us | 1 033 us |
+| Bank | 376-431 us | 462-501 us |
+| Viewport position | 363-432 us | 464-471 us |
+| Viewport zoom | 370-432 us | 458-510 us |
 
 Both kinds restage the mask every block, so they cost the same order; the gate
 in `test_modulation_routing.cpp` holds the viewport median within 1.5x of Bank
-and its p99 under half the budget. The redesign itself runs on the renderer's
+and its p99 within 2x of Bank's. The redesign itself runs on the renderer's
 worker, as for every other mask change, and the audio path stays
 allocation-free (the route levels are a fixed array; `compose_internal_modulation`
 works on stack values).
