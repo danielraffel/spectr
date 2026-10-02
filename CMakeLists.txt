@@ -1822,6 +1822,11 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_audio_status_ui.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html)
     set_tests_properties(Spectr-gpu-audio-status-ui PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-gpu-audio-materialized-ui
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_audio_materialized_ui.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-gpu-audio-materialized-ui PROPERTIES TIMEOUT 30)
     add_test(NAME Spectr-materialized-propagation
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_propagation.mjs
