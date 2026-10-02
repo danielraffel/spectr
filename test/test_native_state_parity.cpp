@@ -1043,7 +1043,8 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // plug-in-only "Keyboard shortcuts in DAW" row, whose label wraps,
         // and 1960.58 -> 1846.58 when the MOTION group (the hidden LIVE /
         // PRECISION choice) left, and 1846.58 -> 1960.58 when the FREEZE group
-        // (Hold length) arrived. If you add a group and this fails, that is the window
+        // (Hold length) arrived, and 1960.58 -> 1846.58 when it left again for
+        // the header's LENGTH control. If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1053,7 +1054,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1881 && s.content_height < 2041"
+        " && s.content_height > 1767 && s.content_height < 1927"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
@@ -1699,6 +1700,12 @@ TEST_CASE("an enabled LFO visibly modulates the drawn bank without moving canoni
     rig.store.set_value(spectr::kParamLfoEnabled, 0.0f);
     REQUIRE(rig.processor.apply_surface_params(false));
     settle(rig.clock, 4);
+    // Switching off is a level ramp (spectr::kLfoLevelSlewSeconds), not a
+    // step, so let it run out before reading what "off" draws: 256-sample
+    // blocks at 48 kHz, plus the falling-edge pass.
+    feed_audio_blocks(rig, static_cast<int>(std::ceil(
+        spectr::kLfoLevelSlewSeconds * 48000.0 / 256.0)) + 2);
+    settle(rig.clock, 4);
     sample_modulated_bank(rig, 6, 6);
     rig.bridge().load_script(R"js((() => {
       const samples = globalThis.__spectrLfoSamples;
@@ -2034,8 +2041,8 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
     NativeEditorRig rig;
     require_home(rig);
 
-    const std::array<std::string_view, 5> menus{
-        "bands", "edit", "analyzer", "overflow", "pattern"};
+    const std::array<std::string_view, 6> menus{
+        "bands", "edit", "analyzer", "overflow", "pattern", "length"};
     const pulp::view::Point outside{660.0f, 430.0f};
     for (const auto menu : menus) {
         INFO("menu=" << menu);
@@ -2085,9 +2092,11 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
                 + js_string(options)
                 + "); const items = popup ? Array.from(document.querySelectorAll("
                 + js_string(options + " button") + ")) : []; "
+                  "const seed = Math.max(0, items.findIndex((n) => n.getAttribute('aria-selected') === 'true')); "
                   "return items.length >= 3 "
-                  "&& document.querySelector('[data-pulp-popup-active=\"true\"]') === items[0]; })()",
-            "ArrowDown did not open the dropdown with one visible highlight");
+                  "&& document.querySelector('[data-pulp-popup-active=\"true\"]') === items[seed]; })()",
+            "ArrowDown did not open the dropdown with one visible highlight (on the "
+            "selected row, where a menu marks one: LENGTH opens on 1 bar, its fifth)");
         REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
             *rig.root, static_cast<int>(pulp::view::KeyCode::down),
             pulp::view::kModNone, true));
@@ -2096,7 +2105,8 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
             rig,
             "(() => { const items = Array.from(document.querySelectorAll("
                 + js_string(options + " button") + ")); "
-                  "return document.querySelector('[data-pulp-popup-active=\"true\"]') === items[1]; })()",
+                  "const seed = Math.max(0, items.findIndex((n) => n.getAttribute('aria-selected') === 'true')); "
+                  "return document.querySelector('[data-pulp-popup-active=\"true\"]') === items[seed + 1]; })()",
             "ArrowDown did not move the authoritative dropdown highlight");
         REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
             *rig.root, static_cast<int>(pulp::view::KeyCode::up),
@@ -2106,7 +2116,8 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
             rig,
             "(() => { const items = Array.from(document.querySelectorAll("
                 + js_string(options + " button") + ")); "
-                  "return document.querySelector('[data-pulp-popup-active=\"true\"]') === items[0]; })()",
+                  "const seed = Math.max(0, items.findIndex((n) => n.getAttribute('aria-selected') === 'true')); "
+                  "return document.querySelector('[data-pulp-popup-active=\"true\"]') === items[seed]; })()",
             "ArrowUp did not move the authoritative dropdown highlight");
         const auto hover_point = runtime_string(
             rig,
@@ -2127,7 +2138,12 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
             "(() => { const items = Array.from(document.querySelectorAll("
                 + js_string(options + " button") + ")); const hovered = items[2]; "
                   "return document.querySelector('[data-pulp-popup-active=\"true\"]') === hovered "
-                  "&& hovered.style.backgroundColor === 'rgba(120,180,255,0.18)'; })()",
+                  // The fill the row PAINTS, read from its native view: Pulp's
+                  // popup owner writes it through the element's style, a menu
+                  // that owns its highlight (LENGTH) through its React style.
+                  "&& (typeof getBackground === 'function' "
+                  "    ? String(getBackground(hovered._id)).indexOf('rgba(120,180,255,0.18') === 0 "
+                  "    : hovered.style.backgroundColor === 'rgba(120,180,255,0.18)'); })()",
             "pointer hover did not move and visibly paint the dropdown highlight");
         REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
             *rig.root, static_cast<int>(pulp::view::KeyCode::enter),
@@ -5172,8 +5188,8 @@ TEST_CASE("native dropdown arrows reach every option and commit the highlighted 
     NativeEditorRig rig;
     require_home(rig);
 
-    const std::array<std::string_view, 5> menus{
-        "bands", "edit", "analyzer", "overflow", "pattern"};
+    const std::array<std::string_view, 6> menus{
+        "bands", "edit", "analyzer", "overflow", "pattern", "length"};
     for (const auto menu : menus) {
         INFO("menu=" << menu);
         const auto root = std::string{"[data-spectr-menu-root=\""}
@@ -5211,20 +5227,27 @@ TEST_CASE("native dropdown arrows reach every option and commit the highlighted 
         const auto count = std::stoi(runtime_string(
             rig, "String(" + items_js + ".length)", "spectr-arrow-option-count"));
         REQUIRE(count >= 3);
-        require_highlight_at(0, "opening ArrowDown did not highlight the first option");
+        // It opens on the checked option where the menu marks one (LENGTH
+        // opens on 1 bar, past its fractions), else on the first.
+        const auto seed_raw = runtime_string(
+            rig, "String(Math.max(0, " + items_js
+                 + ".findIndex((n) => n.getAttribute('aria-selected') === 'true')))",
+            "spectr-arrow-option-seed");
+        const int seed = std::stoi(seed_raw.substr(0, seed_raw.find_first_not_of("0123456789")));
+        require_highlight_at(seed, "opening ArrowDown did not highlight the checked option");
 
         // Walk the whole list. Every successive press must advance exactly one.
         for (int step = 1; step < count; ++step) {
             press(pulp::view::KeyCode::down);
-            require_highlight_at(step, "ArrowDown skipped or stalled");
+            require_highlight_at((seed + step) % count, "ArrowDown skipped or stalled");
         }
-        // One more wraps to the top rather than sticking at the end.
+        // One more comes back round rather than sticking at the end.
         press(pulp::view::KeyCode::down);
-        require_highlight_at(0, "ArrowDown did not wrap to the first option");
+        require_highlight_at(seed, "ArrowDown did not wrap round the list");
         // And the reverse direction walks back down the same path.
         for (int step = count - 1; step >= 0; --step) {
             press(pulp::view::KeyCode::up);
-            require_highlight_at(step, "ArrowUp skipped or stalled");
+            require_highlight_at((seed + step) % count, "ArrowUp skipped or stalled");
         }
         press(pulp::view::KeyCode::escape);
         settle(rig.clock, 8);
@@ -5627,6 +5650,11 @@ struct HostPressResult {
 
 HostPressResult host_click(NativeEditorRig& rig, Point point) {
     HostPressResult result;
+    // The pointer is where it presses: a host has delivered the move that
+    // brought it there (-mouseMoved:) before the press. A trigger forgets a
+    // dismissal of its own dropdown on pointer entry, so a press that never
+    // moved the pointer would read as the press that did the dismissing.
+    pulp::view::deliver_hover_move(*rig.root, point);
     const auto press =
         pulp::view::route_press_to_active_overlay(*rig.root, point);
     result.routing = press.routing;
@@ -5752,8 +5780,11 @@ TEST_CASE("switching native dropdowns costs one press",
             REQUIRE(switched.reached_tree);
             require_open_menu(rig, to.root);
 
-            // Leave the tree closed for the next pair.
+            // Leave the tree closed for the next pair, and the pointer off
+            // the trigger it pressed: a dismissal by the code is not a press,
+            // and a person reaches the next trigger by moving onto it.
             pulp::view::View::dismiss_active_overlay(*rig.root);
+            pulp::view::deliver_hover_move(*rig.root, {660.0f, 430.0f});
             settle(rig.clock, 30);
             require_open_menu(rig, "");
         }
@@ -5780,6 +5811,169 @@ TEST_CASE("switching native dropdowns costs one press",
     REQUIRE(to_settings.reached_tree);
     require_open_menu(rig, "");
     require_settings_open(rig, true);
+
+    storage.require_unchanged();
+}
+
+// A press on the trigger of the dropdown that is already open closes it, the
+// same as an outside press or Escape -- it never closes and reopens it in one
+// press. The other half of the trigger rule above: a press on a DIFFERENT
+// trigger still switches menus in one press. Real host order (overlay slot
+// first, then the tree), real pixel positions read from the document.
+TEST_CASE("pressing an open dropdown's own trigger closes it",
+          "[native-n1][state-parity][dropdown][overlay-trigger][trigger-toggle]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+
+    const auto centre_of = [&](const std::string& selector) {
+        const auto text = runtime_string(
+            rig,
+            "(() => { const n = document.querySelector(" + js_string(selector)
+                + "); if (!n) throw new Error('no ' + " + js_string(selector)
+                + "); const r = n.getBoundingClientRect(); "
+                  "return (r.left + r.width / 2) + ',' + (r.top + r.height / 2); })()",
+            "spectr-native-trigger-centre");
+        const auto comma = text.find(',');
+        REQUIRE(comma != std::string::npos);
+        return pulp::view::Point{std::stof(text.substr(0, comma)), std::stof(text.substr(comma + 1))};
+    };
+    const auto trigger_of = [](std::string_view menu) {
+        return "[data-spectr-menu-root=\"" + std::string(menu) + "\"] [data-spectr-menu-trigger]";
+    };
+
+    // A person's click: the pointer moves onto the control, then presses.
+    const auto move_click = [&](pulp::view::Point pt) {
+        pulp::view::deliver_hover_move(*rig.root, pt);
+        settle(rig.clock, 2);
+        return host_click(rig, pt);
+    };
+    const std::array<std::string_view, 7> menus{
+        "bands", "edit", "analyzer", "overflow", "pattern", "length", "help"};
+    for (const auto menu : menus) {
+        INFO("menu=" << menu);
+        require_open_menu(rig, "");
+        const auto at = centre_of(trigger_of(menu));
+        REQUIRE(move_click(at).reached_tree);
+        const auto require_help = [&](bool open) {
+            require_runtime_contract(rig,
+                std::string(open ? "" : "!") + "document.querySelector('[data-spectr-help-panel]')",
+                open ? "the help trigger did not open its popover"
+                     : "pressing the open help trigger left its popover open");
+        };
+        if (menu == "help") require_help(true);
+        else require_open_menu(rig, menu);
+        REQUIRE(rig.root->interaction().active_overlay != nullptr);
+
+        // The same trigger again: closed, and it stays closed.
+        host_click(rig, at);
+        settle(rig.clock, 30);
+        require_open_menu(rig, "");
+        require_help(false);
+        CHECK(rig.root->interaction().active_overlay == nullptr);
+
+        // And the next press on it opens it again: the close did not leave a
+        // swallowed press behind.
+        REQUIRE(host_click(rig, at).reached_tree);
+        if (menu == "help") require_help(true);
+        else require_open_menu(rig, menu);
+        REQUIRE(rig.root->interaction().active_overlay != nullptr);
+        // An outside press or Escape followed by a press on the same trigger
+        // reopens it: only the press that did the dismissing is ignored.
+        const auto outside = move_click({660.0f, 430.0f});
+        CHECK(outside.consumed);
+        require_open_menu(rig, "");
+        require_help(false);
+        REQUIRE(move_click(at).reached_tree);
+        if (menu == "help") require_help(true);
+        else require_open_menu(rig, menu);
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
+            pulp::view::kModNone, true));
+        settle(rig.clock, 30);
+        require_open_menu(rig, "");
+        require_help(false);
+        REQUIRE(host_click(rig, at).reached_tree);
+        if (menu == "help") require_help(true);
+        else require_open_menu(rig, menu);
+        REQUIRE(rig.root->interaction().active_overlay != nullptr);
+        pulp::view::View::dismiss_active_overlay(*rig.root);
+        settle(rig.clock, 30);
+        require_open_menu(rig, "");
+        require_help(false);
+    }
+
+    // Switching: open A, press B's trigger -- B opens in that one press.
+    for (const auto from : menus) {
+        for (const auto to : menus) {
+            if (from == to || from == "help" || to == "help") continue;
+            INFO("switching from " << from << " to " << to);
+            require_open_menu(rig, "");
+            REQUIRE(move_click(centre_of(trigger_of(from))).reached_tree);
+            require_open_menu(rig, from);
+            const auto switched = move_click(centre_of(trigger_of(to)));
+            REQUIRE(switched.reached_tree);
+            require_open_menu(rig, to);
+            pulp::view::View::dismiss_active_overlay(*rig.root);
+            pulp::view::deliver_hover_move(*rig.root, {660.0f, 430.0f});
+            settle(rig.clock, 30);
+        }
+    }
+    storage.require_unchanged();
+}
+
+// The LENGTH Custom editor closes from the LENGTH trigger (and does not open
+// the menu in the same press), and its Fraction list closes from the Fraction
+// trigger -- the same rule as the dropdowns above, for the two popovers that
+// open from inside the LENGTH control.
+TEST_CASE("pressing the LENGTH or Fraction trigger closes its open popover",
+          "[native-n1][state-parity][dropdown][overlay-trigger][trigger-toggle][freeze-length]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto centre_of = [&](const std::string& selector) {
+        const auto text = runtime_string(
+            rig,
+            "(() => { const n = document.querySelector(" + js_string(selector)
+                + "); if (!n) throw new Error('no ' + " + js_string(selector)
+                + "); const r = n.getBoundingClientRect(); "
+                  "return (r.left + r.width / 2) + ',' + (r.top + r.height / 2); })()",
+            "spectr-native-trigger-centre");
+        const auto comma = text.find(',');
+        REQUIRE(comma != std::string::npos);
+        return pulp::view::Point{std::stof(text.substr(0, comma)), std::stof(text.substr(comma + 1))};
+    };
+    const auto trigger_of = [](std::string_view menu) {
+        return "[data-spectr-menu-root=\"" + std::string(menu) + "\"] [data-spectr-menu-trigger]";
+    };
+    const auto length_trigger = centre_of(trigger_of("length"));
+    const auto mounted = [&](std::string_view selector) {
+        auto value = runtime_string(rig, "!!document.querySelector(" + js_string(selector) + ")",
+                                    "spectr-native-toggle-mounted");
+        return value.substr(0, value.find('\n')) == "true";
+    };
+    REQUIRE(host_click(rig, length_trigger).reached_tree);
+    require_open_menu(rig, "length");
+    activate(rig, "[data-spectr-length-option=\"custom-editor\"]");
+    settle(rig.clock, 8);
+    REQUIRE(mounted("[data-spectr-length-editor]"));
+    const auto fraction_trigger = centre_of("[data-spectr-length-fraction]");
+    REQUIRE(host_click(rig, fraction_trigger).reached_tree);
+    REQUIRE(mounted("[data-spectr-length-fraction-options]"));
+    host_click(rig, fraction_trigger);
+    CHECK_FALSE(mounted("[data-spectr-length-fraction-options]"));
+    CHECK(mounted("[data-spectr-length-editor]"));
+    REQUIRE(host_click(rig, fraction_trigger).reached_tree);
+    CHECK(mounted("[data-spectr-length-fraction-options]"));
+    host_click(rig, fraction_trigger);
+    CHECK_FALSE(mounted("[data-spectr-length-fraction-options]"));
+    host_click(rig, length_trigger);
+    CHECK_FALSE(mounted("[data-spectr-length-editor]"));
+    require_open_menu(rig, "");
+    REQUIRE(host_click(rig, length_trigger).reached_tree);
+    require_open_menu(rig, "length");
+    pulp::view::View::dismiss_active_overlay(*rig.root);
+    settle(rig.clock, 30);
 
     storage.require_unchanged();
 }
@@ -5812,6 +6006,8 @@ TEST_CASE("dismissing a native dropdown over ordinary content still consumes",
                     .reached_tree);
         require_open_menu(rig, "edit");
 
+        // The pointer moves to where it presses, as a host delivers it.
+        pulp::view::deliver_hover_move(*rig.root, point);
         const auto press =
             pulp::view::route_press_to_active_overlay(*rig.root, point);
         CHECK(press.routing == pulp::view::OverlayPressRouting::dismissed);
@@ -6374,24 +6570,43 @@ TEST_CASE("the header reads freeze, OUTPUT, trim, value, PEAK on the controls' l
     REQUIRE(toggle != nullptr);
     REQUIRE(peak_button != nullptr);
 
-    // ORDER AND SPACING. The toggle now fills PEAK's old slot, so its gap to
-    // OUTPUT is the old PEAK-to-OUTPUT gap; PEAK must keep that gap to the value.
+    // ORDER AND SPACING. [toggle] | LENGTH [length] | OUTPUT --o-- value
+    // [PEAK]: a divider 5pt either side of it, the caption 6pt from its
+    // dropdown, and the cluster's 14pt between OUTPUT, the track, the value
+    // and PEAK. All of it clear of the divider before BARS (x=839.5).
+    const auto* length_caption = header_label("LENGTH");
+    REQUIRE(length_caption != nullptr);
+    const auto* length_value = header_label("1 bar");
+    REQUIRE(length_value != nullptr);
+    const View* length_trigger = length_value->parent();
+    REQUIRE(length_trigger != nullptr);
     const auto toggle_box = box_of(*toggle);
+    const auto length_caption_box = box_of(*length_caption);
+    const auto length_box = box_of(*length_trigger);
     const auto output_box = box_of(*output);
     const auto value_box = box_of(*value);
     const auto peak_box = box_of(*peak_button);
     const auto caption_box = box_of(*caption);
-    CAPTURE(toggle_box.left, toggle_box.right, output_box.left, output_box.right,
+    CAPTURE(toggle_box.left, toggle_box.right, length_caption_box.left,
+            length_caption_box.right, length_box.left, length_box.right,
+            output_box.left, output_box.right,
             value_box.left, value_box.right, peak_box.left, peak_box.right);
-    CHECK(toggle_box.right < output_box.left);
+    CHECK(toggle_box.right < length_caption_box.left);
+    CHECK(length_caption_box.right < length_box.left);
+    CHECK(length_box.right < output_box.left);
     CHECK(output_box.right < value_box.left);
     CHECK(value_box.right < peak_box.left);
     CHECK(peak_box.right < caption_box.left);
-    const float old_gap = output_box.left - toggle_box.right;
+    CHECK(peak_box.right <= 839.5f - 14.0f);
+    // toggle, 5, divider, 5, LENGTH: 11; LENGTH, 6, [length]; [length], 5,
+    // divider, 5, OUTPUT: 11.
+    CHECK(length_caption_box.left - toggle_box.right == Catch::Approx(11.0f).margin(1.0f));
+    CHECK(length_box.left - length_caption_box.right == Catch::Approx(6.0f).margin(1.0f));
+    CHECK(output_box.left - length_box.right == Catch::Approx(11.0f).margin(1.0f));
+    CHECK(length_box.right - length_box.left == Catch::Approx(88.0f).margin(0.5f));
     const float peak_gap = peak_box.left - value_box.right;
-    CAPTURE(old_gap, peak_gap);
-    CHECK(old_gap == Catch::Approx(14.0f).margin(1.0f));
-    CHECK(peak_gap == Catch::Approx(old_gap).margin(1.0f));
+    CAPTURE(peak_gap);
+    CHECK(peak_gap == Catch::Approx(14.0f).margin(1.0f));
     CHECK(toggle_box.right - toggle_box.left == Catch::Approx(76.0f).margin(0.5f));
 
     // THE PIXELS.
@@ -6472,6 +6687,16 @@ TEST_CASE("the header reads freeze, OUTPUT, trim, value, PEAK on the controls' l
     };
     on_line(*live, frame, 1);
     on_line(*output, frame, 1);
+    on_line(*length_caption, frame, 1);
+    {
+        // The length's value is lower case at its own size, so it is centred
+        // on the line rather than sharing its cap top.
+        const auto words = word_ink(*length_value, frame);
+        REQUIRE(!words.empty());
+        const float centre = (words.front().top + words.front().bottom) * 0.5f;
+        CAPTURE(centre, line.top, line.bottom);
+        CHECK(centre == Catch::Approx((line.top + line.bottom) * 0.5f).margin(1.25f));
+    }
     on_line(*value, frame, 1);
     // "PEAK" only: the level beside it is "--" in a silent rig, which has no
     // cap height to compare.
@@ -7877,29 +8102,704 @@ TEST_CASE("host automation of Freeze turns the toggle over as a leaf",
     storage.require_unchanged();
 }
 
-// Settings > FREEZE > Hold length writes the processor's value, clamped, and
-// shows what it will use.
-TEST_CASE("the Hold length setting reaches the processor",
-          "[native-n1][state-parity][freeze-toggle][settings]") {
+
+
+// The Custom editor's Fraction list: one column of the seventeen fractions in
+// a viewport eight rows tall that scrolls by wheel and by the arrow keys,
+// opens with the chosen fraction in view, and takes a press on every row
+// through the host's own press route (overlay first, then mouse down / up).
+TEST_CASE("the Fraction list is one scrolling column whose every row takes a press",
+          "[native-n1][state-parity][freeze-length][fraction-list]") {
     PatternStoragePoison storage;
     NativeEditorRig rig;
     require_home(rig);
+    const auto value_of = [&](const std::string& expression) {
+        auto value = runtime_string(rig, expression, "spectr-native-fraction-value");
+        return value.substr(0, value.find('\n'));
+    };
+    const auto rect_of = [&](const std::string& selector) {
+        const auto text = value_of(
+            "(() => { const n = document.querySelector(" + js_string(selector)
+            + "); if (!n) return 'none'; const r = n.getBoundingClientRect(); "
+              "return [r.left, r.top, r.width, r.height].join(','); })()");
+        std::array<float, 4> r{};
+        if (text == "none") return std::optional<std::array<float, 4>>{};
+        std::stringstream in(text);
+        std::string part;
+        for (auto& v : r) { std::getline(in, part, ','); v = std::stof(part); }
+        return std::optional<std::array<float, 4>>{r};
+    };
+    // The host's press, in its order (window_host_mac.mm): the overlay slot
+    // first; a routed press goes to its target without bubbling; the click
+    // fires on mouse-up.
+    const auto host_press = [&](pulp::view::Point pt) {
+        auto& root = *rig.root;
+        const auto overlay = pulp::view::route_press_to_active_overlay(root, pt);
+        View* target = nullptr;
+        bool bubble = true;
+        if (overlay.routing == pulp::view::OverlayPressRouting::routed) {
+            target = overlay.target;
+            bubble = false;
+        } else if (overlay.consume_press) {
+            settle(rig.clock, 8);
+            return std::string{"consumed"};
+        } else {
+            target = root.hit_test(pt);
+        }
+        if (target == nullptr) return std::string{"no-target"};
+        pulp::view::deliver_mouse_down(root, target, pt, 0, 1, bubble);
+        std::string clicked{"<none>"};
+        pulp::view::MouseUpHost up;
+        up.fire_click = [&clicked](const std::function<void()>& handler,
+                                   const std::string& id, std::uint16_t) {
+            clicked = id.empty() ? std::string{"<anon>"} : id;
+            if (handler) handler();
+        };
+        pulp::view::deliver_mouse_up(root, target, pt, 0, 1, up);
+        settle(rig.clock, 8);
+        return clicked;
+    };
+    const auto centre = [](const std::array<float, 4>& r) {
+        return pulp::view::Point{r[0] + r[2] * 0.5f, r[1] + r[3] * 0.5f};
+    };
+    const auto offset = [&] {
+        return std::stoi(value_of(
+            "document.querySelector('[data-spectr-length-fraction-options]')"
+            ".getAttribute('data-spectr-length-fraction-offset')"));
+    };
+    const auto open_list = [&] {
+        REQUIRE(value_of("!!document.querySelector('[data-spectr-length-editor]')") == "true");
+        if (value_of("!!document.querySelector('[data-spectr-length-fraction-options]')") != "true")
+            host_press(centre(*rect_of("[data-spectr-length-fraction]")));
+        REQUIRE(value_of("!!document.querySelector('[data-spectr-length-fraction-options]')") == "true");
+    };
+    const auto key = [&](pulp::view::KeyCode code) {
+        (void)pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(code), pulp::view::kModNone, true);
+        settle(rig.clock, 8);
+    };
+
+    activate(rig, "[data-spectr-length-trigger]");
+    activate(rig, "[data-spectr-length-option=\"custom-editor\"]");
+    settle(rig.clock, 8);
+    // While the editor is open the trigger reads "Custom", in the bound mono
+    // face every other length label uses.
+    CHECK(find_label(*rig.root, "Custom") != nullptr);
+    CHECK(find_label(*rig.root, "Custom…") == nullptr);
+    // No fraction reads as an em dash on the trigger and in the list, never
+    // "0"; the model keeps "0".
+    CHECK(value_of("document.querySelector('[data-spectr-length-fraction]')"
+                   ".getAttribute('data-spectr-length-fraction')") == "0");
+    CHECK(value_of("document.querySelector('[data-spectr-length-fraction] span').textContent")
+          == "\u2014");
+    open_list();
+    CHECK(value_of("document.querySelector('[data-spectr-length-fraction-option=\"0\"] span')"
+                   ".textContent") == "\u2014");
+    CHECK(value_of("String(Array.from(document.querySelectorAll('[data-spectr-length-fraction-option] span'))"
+                   ".some((n) => n.textContent === '0'))") == "false");
+
+    const std::vector<std::string> fractions{
+        "0", "1/32", "1/16", "1/12", "1/8", "1/6", "3/16", "1/4", "1/3",
+        "3/8", "1/2", "5/8", "2/3", "3/4", "5/6", "7/8", "15/16"};
+    REQUIRE(value_of("JSON.stringify(Array.from(document.querySelectorAll("
+                     "'[data-spectr-length-fraction-option]')).map((n) => "
+                     "n.getAttribute('data-spectr-length-fraction-option')))")
+            == "[\"0\",\"1/32\",\"1/16\",\"1/12\",\"1/8\",\"1/6\",\"3/16\",\"1/4\",\"1/3\","
+               "\"3/8\",\"1/2\",\"5/8\",\"2/3\",\"3/4\",\"5/6\",\"7/8\",\"15/16\"]");
+    // One column: every row has the same left edge and width; eight rows show.
+    const auto viewport = *rect_of("[data-spectr-length-fraction-viewport]");
+    const auto first = *rect_of("[data-spectr-length-fraction-option=\"0\"]");
+    for (const auto& f : fractions) {
+        const auto r = *rect_of("[data-spectr-length-fraction-option=\"" + f + "\"]");
+        CHECK(r[0] == Catch::Approx(first[0]));
+        CHECK(r[2] == Catch::Approx(first[2]));
+        CHECK(r[3] == Catch::Approx(30.0f));
+    }
+    CHECK(viewport[3] == Catch::Approx(254.0f));
+    // Under the Fraction trigger, like a combo box: left edges aligned, the
+    // trigger's width, 3pt below it.
+    {
+        const auto list = *rect_of("[data-spectr-length-fraction-options]");
+        const auto trigger = *rect_of("[data-spectr-length-fraction]");
+        CHECK(list[0] == Catch::Approx(trigger[0]).margin(1.0));
+        CHECK(list[2] == Catch::Approx(trigger[2]).margin(0.5));
+        CHECK(list[1] == Catch::Approx(trigger[1] + trigger[3] + 3.0f).margin(0.5));
+    }
+    CHECK(rect_of("[data-spectr-length-fraction-scrollbar-thumb]").has_value());
+    // Opens on "0" at the top.
+    CHECK(offset() == 0);
+
+    // The wheel scrolls it, clamped at both ends. Pulp's wheel delta is
+    // positive downward (NSEvent's scrollingDeltaY negated).
+    const auto over = centre(viewport);
+    pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 40.0f, {});
+    settle(rig.clock, 8);
+    CHECK(offset() == 40);
+    for (int i = 0; i < 20; ++i)
+        pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 40.0f, {});
+    settle(rig.clock, 8);
+    CHECK(offset() == 17 * 32 - 2 - 254);
+    for (int i = 0; i < 20; ++i)
+        pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, -40.0f, {});
+    settle(rig.clock, 8);
+    CHECK(offset() == 0);
+    // The wheel moved the list, not the band plot behind it.
+    REQUIRE(value_of("!!document.querySelector('[data-spectr-length-fraction-options]')") == "true");
+
+    // Every row takes a press at its painted centre once scrolled into view,
+    // and the press picks exactly that fraction.
+    const auto pick = [&](const std::string& f) {
+        INFO("fraction=" << f);
+        open_list();
+        const auto sel = "[data-spectr-length-fraction-option=\"" + f + "\"]";
+        for (int i = 0; i < 40; ++i) {
+            const auto r = *rect_of(sel);
+            const auto vp = *rect_of("[data-spectr-length-fraction-viewport]");
+            if (r[1] >= vp[1] - 0.5f && r[1] + r[3] <= vp[1] + vp[3] + 0.5f) break;
+            pulp::view::deliver_mouse_wheel(*rig.root, centre(vp), 0.0f,
+                                            r[1] < vp[1] ? -30.0f : 30.0f, {});
+            settle(rig.clock, 4);
+        }
+        const auto r = *rect_of(sel);
+        const auto vp = *rect_of("[data-spectr-length-fraction-viewport]");
+        REQUIRE(r[1] >= vp[1] - 0.5f);
+        REQUIRE(r[1] + r[3] <= vp[1] + vp[3] + 0.5f);
+        // The list's own box is where the press is routed: the row's centre
+        // must resolve inside the open overlay.
+        auto* overlay = rig.root->interaction().active_overlay;
+        REQUIRE(overlay != nullptr);
+        CHECK(overlay->overlay_contains(centre(r)));
+        host_press(centre(r));
+        CHECK(value_of("document.querySelector('[data-spectr-length-fraction]')"
+                       ".getAttribute('data-spectr-length-fraction')") == f);
+        CHECK(value_of("!!document.querySelector('[data-spectr-length-fraction-options]')") == "false");
+    };
+    for (const auto& f : fractions) pick(f);
+
+    // Reopened on the last fraction, it is in view (scrolled to the end).
+    open_list();
+    CHECK(offset() == 17 * 32 - 2 - 254);
+    {
+        const auto r = *rect_of("[data-spectr-length-fraction-option=\"15/16\"]");
+        const auto vp = *rect_of("[data-spectr-length-fraction-viewport]");
+        CHECK(r[1] + r[3] <= vp[1] + vp[3] + 0.5f);
+    }
+    key(pulp::view::KeyCode::escape);
+    CHECK(value_of("!!document.querySelector('[data-spectr-length-fraction-options]')") == "false");
+    CHECK(value_of("!!document.querySelector('[data-spectr-length-editor]')") == "true");
+
+    // Pick "1/12" (centred on open), then walk the highlight down with the
+    // arrows: the highlighted row is always fully in view.
+    pick("1/12");
+    open_list();
+    const int centred = offset();
+    CHECK(centred == std::max(0, 3 * 32 - (254 - 30) / 2));
+    for (int step = 0; step < 16; ++step) {
+        key(pulp::view::KeyCode::down);
+        const auto active = value_of(
+            "(() => { const n = document.querySelector('[data-spectr-length-fraction-options] "
+            "[data-pulp-popup-active=\"true\"]'); return n ? "
+            "n.getAttribute('data-spectr-length-fraction-option') : 'none'; })()");
+        INFO("step=" << step << " active=" << active);
+        REQUIRE(active != "none");
+        const auto r = *rect_of("[data-spectr-length-fraction-option=\"" + active + "\"]");
+        const auto vp = *rect_of("[data-spectr-length-fraction-viewport]");
+        CHECK(r[1] >= vp[1] - 0.5f);
+        CHECK(r[1] + r[3] <= vp[1] + vp[3] + 0.5f);
+    }
+    key(pulp::view::KeyCode::escape);
+    storage.require_unchanged();
+}
+
+// THE LENGTH CONTROL, END TO END, THROUGH THE SHIPPING EDITOR.
+//
+// Header LENGTH [ 1 bar v ]: pick a common length; open Custom length...,
+// set 1 + 1/8 and Apply, and the collapsed control reads the resolved
+// "1 1/8 bars" while the menu shows it as a checked row under Custom
+// length...; Cancel and Escape leave the length alone; a length the model
+// refuses cannot be applied; the editor's keys (Up/Down, Tab, Return,
+// Escape) work and are stopped there, so Escape does not also clear a band
+// selection; and Settings no longer carries a Hold length.
+TEST_CASE("the LENGTH control picks, edits and shows a musical length",
+          "[native-n1][state-parity][freeze-length]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto attribute = [&](std::string_view name) {
+        return runtime_value(rig,
+            "document.querySelector('[data-spectr-freeze-length]').getAttribute('"
+                + std::string(name) + "')",
+            "spectr-native-length-attribute");
+    };
+    const auto shown = [&] { return attribute("data-spectr-freeze-length-label"); };
+    const auto key = [&](pulp::view::KeyCode code, std::uint16_t mods = pulp::view::kModNone) {
+        (void)pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(code), mods, true);
+        settle(rig.clock, 8);
+    };
+    const auto mounted = [&](std::string_view selector) {
+        return runtime_value(rig, "!!document.querySelector(" + js_string(selector) + ")",
+                              "spectr-native-length-mounted") == "true";
+    };
+    // Bars is typed into: click it, empty it, type each character.
+    const auto set_bars = [&](std::string_view text) {
+        activate(rig, "[data-spectr-length-bars]");
+        key(pulp::view::KeyCode::delete_);
+        for (const char c : text) key(static_cast<pulp::view::KeyCode>(c));
+    };
+    const auto bars_text = [&] {
+        return runtime_value(rig,
+            "document.querySelector('[data-spectr-length-bars]').getAttribute('data-spectr-length-bars')",
+            "spectr-native-length-bars-text");
+    };
+    const auto preview_valid = [&] {
+        return runtime_value(rig,
+            "document.querySelector('[data-spectr-length-preview]').getAttribute('data-spectr-length-valid')",
+            "spectr-native-length-valid") == "true";
+    };
+    const auto open_editor = [&] {
+        activate(rig, "[data-spectr-length-trigger]");
+        REQUIRE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+        activate(rig, "[data-spectr-length-option=\"custom-editor\"]");
+        settle(rig.clock, 8);
+        REQUIRE(mounted("[data-spectr-length-editor]"));
+        REQUIRE_FALSE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+    };
+
+    // SPECTR_LENGTH_SHOTS=<dir> saves the surfaces this walks through
+    // (Skia raster, the GPU compositor's reference).
+    const auto shot = [&](std::string_view name) {
+        const char* dir = std::getenv("SPECTR_LENGTH_SHOTS");
+        if (dir == nullptr) return;
+        rig.root->layout_children();
+        settle(rig.clock, 4);
+        const auto path = std::filesystem::path(dir) / (std::string(name) + ".png");
+        REQUIRE(pulp::view::render_to_file(*rig.root, 1320, 860, path.string(), 2.0f,
+                                           pulp::view::ScreenshotBackend::skia));
+    };
+
+    // Default, from the processor.
+    REQUIRE(shown() == "1 bar");
+    shot("1-collapsed");
+    REQUIRE(find_label(*rig.root, "LENGTH") != nullptr);
+    REQUIRE(find_label(*rig.root, "1 bar") != nullptr);
+
+    // Settings has no Hold length. Control: a Settings row that must be there.
     activate(rig, "[data-spectr-settings-open]");
-    require_runtime_contract(rig,
-        "document.querySelector('[data-spectr-settings-group=\"freeze\"] [data-spectr-freeze-hold]')",
-        "the FREEZE group's Hold length control is missing");
-    rig.bridge().load_script(
-        "window.pulp.postMessage('freeze_hold_set', { seconds: 0.5 }, 'test');",
-        "spectr-native-freeze-hold-write");
-    settle(rig.clock, 4);
-    CHECK(rig.processor.freeze_hold_seconds() == Catch::Approx(0.5));
-    rig.bridge().load_script(
-        "window.pulp.postMessage('freeze_hold_set', { seconds: 9 }, 'test');",
-        "spectr-native-freeze-hold-clamp");
-    settle(rig.clock, 4);
-    CHECK(rig.processor.freeze_hold_seconds()
-          == Catch::Approx(spectr::FreezeSource::kMaxHoldSeconds));
+    settle(rig.clock, 8);
+    REQUIRE(find_label(*rig.root, "Theme") != nullptr);
+    CHECK(find_label(*rig.root, "Hold length") == nullptr);
+    CHECK_FALSE(mounted("[data-spectr-settings-group=\"freeze\"]"));
+    CHECK_FALSE(mounted("[data-spectr-freeze-hold]"));
     activate(rig, "[data-spectr-settings-close]");
+    settle(rig.clock, 8);
+
+    // The menu, one flat list: every fraction of a bar, a separator, 1, 2,
+    // 4 and 8 bars, a separator, Custom length... -- and no custom row while
+    // no custom length is in force.
+    activate(rig, "[data-spectr-length-trigger]");
+    require_runtime_contract(rig,
+        "(() => { const rows = Array.from(document.querySelectorAll("
+        "'[data-spectr-menu-root=\"length\"] [data-spectr-menu-options] [data-spectr-length-option]'))"
+        ".map((n) => n.getAttribute('data-spectr-length-option'));"
+        " return JSON.stringify(rows) === JSON.stringify(['1/32 bar','1/16 bar','1/12 bar','1/8 bar','1/6 bar','3/16 bar','1/4 bar','1/3 bar','3/8 bar','1/2 bar','5/8 bar','2/3 bar','3/4 bar','5/6 bar','7/8 bar','15/16 bar','1 bar','2 bars','4 bars','8 bars','custom-editor'])"
+        " && document.querySelectorAll('[data-spectr-length-separator]').length === 2"
+        " && !!document.querySelector('[data-spectr-length-separator]')"
+        " && document.querySelector('[data-spectr-length-option=\"1 bar\"]').getAttribute('aria-selected') === 'true'; })()",
+        "the LENGTH menu does not list exactly the common lengths and Custom length...");
+    shot("2-open-dropdown");
+    activate(rig, "[data-spectr-length-option=\"2 bars\"]");
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-freeze-length]').getAttribute('data-spectr-freeze-length-label') === '2 bars'",
+        "picking 2 bars did not reach the control");
+    CHECK_FALSE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+    CHECK(rig.store.get_value(spectr::kParamFreezeLength) == 17.0f);
+    CHECK(rig.processor.freeze_length() == spectr::FreezeLength{2, spectr::LengthFraction::zero});
+
+    // Custom length...: 1 + 1/8, Apply. The editor opens on the custom
+    // length, 1 bar until one is set, so Bars already reads 1.
+    open_editor();
+    CHECK(find_label(*rig.root, "Custom") != nullptr);
+    CHECK(runtime_value(rig,
+              "document.querySelector('[data-spectr-length-bars]').getAttribute('data-spectr-length-bars')",
+              "spectr-native-length-bars-initial") == "1");
+
+    activate(rig, "[data-spectr-length-fraction]");
+    REQUIRE(mounted("[data-spectr-length-fraction-options]"));
+    activate(rig, "[data-spectr-length-fraction-option=\"1/8\"]");
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-length-preview]')?.getAttribute('data-spectr-length-valid') === 'true'",
+        "1 + 1/8 never became a valid preview");
+    CHECK(find_label(*rig.root, "= 1 1/8 bars") != nullptr);
+    shot("3-custom-editor");
+    activate(rig, "[data-spectr-length-apply]");
+    settle_until_contract(rig, "!document.querySelector('[data-spectr-length-editor]')",
+                          "Apply did not close the editor");
+    CHECK(shown() == "1 1/8 bars");
+    CHECK(find_label(*rig.root, "1 1/8 bars") != nullptr);
+    CHECK(find_label(*rig.root, "Custom") == nullptr);
+    CHECK(find_label(*rig.root, "Custom…") == nullptr);
+    shot("4-after-apply-collapsed");
+    CHECK(rig.store.get_value(spectr::kParamFreezeLength)
+          == static_cast<float>(spectr::kLengthPresetCustom));
+    CHECK(rig.processor.freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_8});
+    // ...and the menu shows it, checked, right above Custom length..., which
+    // stays.
+    activate(rig, "[data-spectr-length-trigger]");
+    require_runtime_contract(rig,
+        "(() => { const rows = Array.from(document.querySelectorAll("
+        "'[data-spectr-menu-root=\"length\"] [data-spectr-length-option]'));"
+        " const ids = rows.map((n) => n.getAttribute('data-spectr-length-option'));"
+        " const custom = document.querySelector('[data-spectr-length-option=\"custom\"]');"
+        " return JSON.stringify(ids) === JSON.stringify(['1/32 bar','1/16 bar','1/12 bar','1/8 bar','1/6 bar','3/16 bar','1/4 bar','1/3 bar','3/8 bar','1/2 bar','5/8 bar','2/3 bar','3/4 bar','5/6 bar','7/8 bar','15/16 bar','1 bar','2 bars','4 bars','8 bars','custom','custom-editor'])"
+        " && custom.getAttribute('aria-selected') === 'true'"
+        " && rows.filter((n) => n.getAttribute('aria-selected') === 'true').length === 1; })()",
+        "the applied custom length is not the one checked row under Custom length...");
+    shot("5-after-apply-menu");
+    key(pulp::view::KeyCode::escape);
+    CHECK_FALSE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+
+    // Cancel leaves it alone, and the editor opens on the custom length.
+    open_editor();
+    CHECK(runtime_value(rig, "document.querySelector('[data-spectr-length-bars]').getAttribute('data-spectr-length-bars')",
+                         "spectr-native-length-bars-value") == "1");
+    CHECK(runtime_value(rig,
+              "document.querySelector('[data-spectr-length-fraction]').getAttribute('data-spectr-length-fraction')",
+              "spectr-native-length-fraction-value") == "1/8");
+    set_bars("3");
+    activate(rig, "[data-spectr-length-cancel]");
+    settle(rig.clock, 8);
+    CHECK_FALSE(mounted("[data-spectr-length-editor]"));
+    CHECK(shown() == "1 1/8 bars");
+    CHECK(rig.processor.freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_8});
+
+    // Lengths the model refuses cannot be applied: past the limit, negative
+    // or not a number, empty, and nothing at all.
+    open_editor();
+    struct Refusal { const char* bars; const char* fraction; const char* message; };
+    const Refusal refusals[] = {
+        {"129", "0", "Up to 128 bars"},
+        {"9999", "1/2", "Up to 128 bars"},
+        {"", "0", "Enter a number of bars"},
+        {"0", "0", "Choose a length longer than 0"},
+    };
+    for (const auto& refusal : refusals) {
+        INFO("bars '" << refusal.bars << "' + " << refusal.fraction);
+        set_bars(refusal.bars);
+        activate(rig, "[data-spectr-length-fraction]");
+        activate(rig, std::string("[data-spectr-length-fraction-option=\"") + refusal.fraction + "\"]");
+        settle_until_contract(rig,
+            "document.querySelector('[data-spectr-length-preview]')?.getAttribute('data-spectr-length-valid') === 'false'",
+            "a refused length read as valid");
+        settle(rig.clock, 8);
+        CHECK(find_label(*rig.root, refusal.message) != nullptr);
+        CHECK_FALSE(preview_valid());
+        activate(rig, "[data-spectr-length-apply]");
+        settle(rig.clock, 8);
+        CHECK(mounted("[data-spectr-length-editor]"));
+        CHECK(rig.processor.freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_8});
+    }
+    // Only digits can be typed: a sign, a point, a letter never reach it.
+    set_bars("-1.5x");
+    CHECK(bars_text() == "15");
+    key(pulp::view::KeyCode::backspace);
+    CHECK(bars_text() == "1");
+    // The positive control for the refusals: the same field, a valid value.
+    set_bars("2");
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-length-preview]')?.getAttribute('data-spectr-length-valid') === 'true'",
+        "a valid length after the refusals did not read as valid");
+    // The loop memory's limit is mentioned only when it bites: 2 bars at
+    // the rig's 120 BPM (4 s) says nothing, 40 bars (80 s, past 60 s) does.
+    CHECK_FALSE(mounted("[data-spectr-length-cap-note]"));
+    set_bars("40");
+    settle_until_contract(rig, "!!document.querySelector('[data-spectr-length-cap-note]')",
+                          "a length past the loop memory did not say so");
+    CHECK(preview_valid());
+    shot("7-editor-cap-note");
+    activate(rig, "[data-spectr-length-cancel]");
+    settle(rig.clock, 8);
+
+    // THE KEYS. A band selection stands, so an Escape that leaked through
+    // the editor would clear it.
+#if defined(__APPLE__)
+    key(static_cast<pulp::view::KeyCode>('a'), pulp::view::kModCmd);
+#else
+    key(static_cast<pulp::view::KeyCode>('a'), pulp::view::kModCtrl);
+#endif
+    const auto selected = [&] {
+        return runtime_value(rig,
+            "globalThis.__spectrTestHooks.renderState().selection.length",
+            "spectr-native-length-selection");
+    };
+    REQUIRE(selected() != "0");
+    const auto before = selected();
+    // The menu's Escape closes the menu and nothing else.
+    activate(rig, "[data-spectr-length-trigger]");
+    REQUIRE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+    key(pulp::view::KeyCode::escape);
+    CHECK_FALSE(mounted("[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]"));
+    CHECK(selected() == before);
+    // The editor's Escape cancels it and nothing else.
+    open_editor();
+    key(pulp::view::KeyCode::escape);
+    CHECK_FALSE(mounted("[data-spectr-length-editor]"));
+    CHECK(selected() == before);
+    CHECK(shown() == "1 1/8 bars");
+
+    // Up/Down step Bars (focused on open); Tab moves to Fraction, where they
+    // step the fraction; Return applies.
+    open_editor();
+    key(pulp::view::KeyCode::up);
+    key(pulp::view::KeyCode::up);
+    key(pulp::view::KeyCode::down);
+    CHECK(runtime_value(rig, "document.querySelector('[data-spectr-length-bars]').getAttribute('data-spectr-length-bars')",
+                         "spectr-native-length-bars-stepped") == "2");
+    key(pulp::view::KeyCode::tab);
+    key(pulp::view::KeyCode::up);
+    CHECK(runtime_value(rig,
+              "document.querySelector('[data-spectr-length-fraction]').getAttribute('data-spectr-length-fraction')",
+              "spectr-native-length-fraction-stepped") == "1/6");
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-length-preview]')?.getAttribute('data-spectr-length-valid') === 'true'",
+        "2 + 1/6 never became a valid preview");
+    CHECK(find_label(*rig.root, "= 2 1/6 bars") != nullptr);
+    shot("6-editor-keyboard");
+    key(pulp::view::KeyCode::enter);
+    settle_until_contract(rig, "!document.querySelector('[data-spectr-length-editor]')",
+                          "Return did not apply and close the editor");
+    CHECK(shown() == "2 1/6 bars");
+    CHECK(rig.processor.freeze_length() == spectr::FreezeLength{2, spectr::LengthFraction::f1_6});
+    CHECK(selected() == before);
+
+    // Tab to CANCEL and Return there cancels; Shift+Tab walks back.
+    open_editor();
+    key(pulp::view::KeyCode::up);
+    key(pulp::view::KeyCode::tab);
+    key(pulp::view::KeyCode::tab);
+    key(pulp::view::KeyCode::tab);
+    key(pulp::view::KeyCode::tab, pulp::view::kModShift); // APPLY -> CANCEL
+    key(pulp::view::KeyCode::enter);
+    CHECK_FALSE(mounted("[data-spectr-length-editor]"));
+    CHECK(rig.processor.freeze_length() == spectr::FreezeLength{2, spectr::LengthFraction::f1_6});
+
+    // The host moves the parameter: the control follows.
+    rig.store.set_value(spectr::kParamFreezeLength, 18.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-freeze-length]').getAttribute('data-spectr-freeze-length-label') === '4 bars'",
+        "host automation of Freeze Length did not reach the control");
+    storage.require_unchanged();
+}
+
+
+
+// The LENGTH menu is one flat list: the sixteen fractions of a bar, a
+// separator, 1, 2, 4 and 8 bars, a separator, the checked compound length
+// when one is in force, and Custom length.... A fraction row is exactly
+// that fraction of one bar, on the host parameter. The menu is as tall as
+// its rows up to the room below the trigger, and scrolls past that: it
+// opens with the checked row in view, the wheel and the keys move it, and
+// every row takes a press once in view.
+TEST_CASE("the LENGTH menu lists every fraction, then the bars, and scrolls when it must",
+          "[native-n1][state-parity][freeze-length][length-menu]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto value = [&](const std::string& expression) {
+        return runtime_value(rig, expression, "spectr-native-length-menu");
+    };
+    const auto number = [&](const std::string& expression) {
+        return std::stof(value("String(" + expression + ")"));
+    };
+    const auto key = [&](pulp::view::KeyCode code) {
+        (void)pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(code), pulp::view::kModNone, true);
+        settle(rig.clock, 8);
+    };
+    const std::string menu = "[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]";
+    const auto open = [&] { return value("!!document.querySelector(" + js_string(menu) + ")") == "true"; };
+    const auto rect = [&](const std::string& selector) {
+        const auto text = value("(() => { const n = document.querySelector(" + js_string(selector)
+            + "); if (!n) return 'none'; const r = n.getBoundingClientRect();"
+              " return [r.left, r.top, r.width, r.height].join(','); })()");
+        REQUIRE(text != "none");
+        std::array<float, 4> r{};
+        std::stringstream in(text);
+        std::string part;
+        for (auto& v : r) { std::getline(in, part, ','); v = std::stof(part); }
+        return r;
+    };
+    const auto row = [](const std::string& option) {
+        return "[data-spectr-length-option=\"" + option + "\"]";
+    };
+    // A row is in view when it lies wholly inside the menu's viewport.
+    const auto in_view = [&](const std::string& option) {
+        const auto r = rect(row(option));
+        const auto vp = rect("[data-spectr-length-viewport-box]");
+        return r[1] >= vp[1] - 0.5f && r[1] + r[3] <= vp[1] + vp[3] + 0.5f;
+    };
+    // The host's press at a row's painted centre: the overlay first, the
+    // press to its routed target, the click on mouse-up.
+    const auto press_row = [&](const std::string& option) {
+        const auto r = rect(row(option));
+        const pulp::view::Point pt{r[0] + r[2] * 0.5f, r[1] + r[3] * 0.5f};
+        auto& root = *rig.root;
+        REQUIRE(root.interaction().active_overlay != nullptr);
+        CHECK(root.interaction().active_overlay->overlay_contains(pt));
+        pulp::view::deliver_hover_move(root, pt);
+        const auto routed = pulp::view::route_press_to_active_overlay(root, pt);
+        REQUIRE(routed.routing == pulp::view::OverlayPressRouting::routed);
+        // The click needs the tree's own hit test to find the pressed row
+        // again at mouse-up; a row it cannot reach is pressed but never
+        // clicked.
+        {
+            const View* hit = root.hit_test(pt);
+            bool same = false;
+            for (const View* n = routed.target; n && !same; n = n->parent()) same = n == hit;
+            for (const View* n = hit; n && !same; n = n->parent()) same = n == routed.target;
+            CHECK(same);
+        }
+        pulp::view::deliver_mouse_down(root, routed.target, pt, 0, 1, false);
+        pulp::view::MouseUpHost up;
+        up.fire_click = [](const std::function<void()>& handler, const std::string&, std::uint16_t) {
+            if (handler) handler();
+        };
+        pulp::view::deliver_mouse_up(root, routed.target, pt, 0, 1, up);
+        settle(rig.clock, 8);
+    };
+    const auto label = [&] {
+        return value("document.querySelector('[data-spectr-freeze-length]')"
+                     ".getAttribute('data-spectr-freeze-length-label')");
+    };
+
+    // The rows, in order, and where the two separators fall.
+    activate(rig, "[data-spectr-length-trigger]");
+    REQUIRE(open());
+    CHECK(value("JSON.stringify(Array.from(document.querySelectorAll(" + js_string(menu + " [data-spectr-length-option]")
+                + ")).concat(Array.from(document.querySelectorAll(" + js_string(menu + " [data-spectr-length-separator]")
+                + "))).map((n) => [n.getBoundingClientRect().top, n.getAttribute('data-spectr-length-option')"
+                  " || ('-' + n.getAttribute('data-spectr-length-separator'))]).sort((a, b) => a[0] - b[0])"
+                  ".map((p) => p[1]))")
+          == "[\"1/32 bar\",\"1/16 bar\",\"1/12 bar\",\"1/8 bar\",\"1/6 bar\",\"3/16 bar\",\"1/4 bar\","
+             "\"1/3 bar\",\"3/8 bar\",\"1/2 bar\",\"5/8 bar\",\"2/3 bar\",\"3/4 bar\",\"5/6 bar\","
+             "\"7/8 bar\",\"15/16 bar\",\"-bars\",\"1 bar\",\"2 bars\",\"4 bars\",\"8 bars\","
+             "\"-custom\",\"custom-editor\"]");
+    // At the authored size every row fits: no scrolling, no scrollbar.
+    CHECK(value("document.querySelector(" + js_string(menu) + ").getAttribute('data-spectr-length-offset')") == "0");
+    CHECK(value("!!document.querySelector('[data-spectr-length-scrollbar]')") == "false");
+    CHECK(in_view("1/32 bar"));
+    CHECK(in_view("custom-editor"));
+
+    // Each fraction row is bars 0 + exactly that fraction, a press away.
+    const std::vector<std::pair<std::string, spectr::LengthFraction>> fractions{
+        {"1/32 bar", spectr::LengthFraction::f1_32}, {"1/16 bar", spectr::LengthFraction::f1_16},
+        {"1/12 bar", spectr::LengthFraction::f1_12}, {"1/8 bar", spectr::LengthFraction::f1_8},
+        {"1/6 bar", spectr::LengthFraction::f1_6},   {"3/16 bar", spectr::LengthFraction::f3_16},
+        {"1/4 bar", spectr::LengthFraction::f1_4},   {"1/3 bar", spectr::LengthFraction::f1_3},
+        {"3/8 bar", spectr::LengthFraction::f3_8},   {"1/2 bar", spectr::LengthFraction::f1_2},
+        {"5/8 bar", spectr::LengthFraction::f5_8},   {"2/3 bar", spectr::LengthFraction::f2_3},
+        {"3/4 bar", spectr::LengthFraction::f3_4},   {"5/6 bar", spectr::LengthFraction::f5_6},
+        {"7/8 bar", spectr::LengthFraction::f7_8},   {"15/16 bar", spectr::LengthFraction::f15_16}};
+    for (std::size_t i = 0; i < fractions.size(); ++i) {
+        INFO("row " << fractions[i].first);
+        if (!open()) activate(rig, "[data-spectr-length-trigger]");
+        press_row(fractions[i].first);
+        CHECK_FALSE(open());
+        CHECK(label() == fractions[i].first);
+        CHECK(rig.store.get_value(spectr::kParamFreezeLength) == static_cast<float>(i));
+        CHECK(rig.processor.freeze_length() == spectr::FreezeLength{0, fractions[i].second});
+    }
+    for (const auto& [option, param] : std::vector<std::pair<std::string, float>>{
+             {"1 bar", 16.0f}, {"2 bars", 17.0f}, {"4 bars", 18.0f}, {"8 bars", 19.0f}}) {
+        INFO("row " << option);
+        activate(rig, "[data-spectr-length-trigger]");
+        press_row(option);
+        CHECK(label() == option);
+        CHECK(rig.store.get_value(spectr::kParamFreezeLength) == param);
+    }
+
+    // The tallest it gets -- a compound length in force, past the loop
+    // memory, so its checked row and the note are there too -- is more than
+    // the room below the trigger: it stops above the bottom rail and
+    // scrolls.
+    REQUIRE(rig.processor.set_freeze_length_from_editor({64, spectr::LengthFraction::f7_8}));
+    (void)rig.processor.apply_surface_params(false);
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-freeze-length]').getAttribute('data-spectr-freeze-length-label') === '64 7/8 bars'",
+        "the custom length did not reach the control");
+    activate(rig, "[data-spectr-length-trigger]");
+    REQUIRE(open());
+    const auto panel = rect(menu);
+    const auto rail = rect("[data-spectr-bottom-rail]");
+    CAPTURE(panel[1], panel[3], rail[1]);
+    CHECK(panel[1] + panel[3] < rail[1]);
+    REQUIRE(value("!!document.querySelector('[data-spectr-length-scrollbar]')") == "true");
+    REQUIRE(value("!!document.querySelector(" + js_string(menu) + " + ' [data-spectr-length-cap-note]')") == "true");
+    // It opened on the checked row, in view, the compound length right
+    // above Custom length....
+    CHECK(value("document.querySelector('[data-spectr-length-option=\"custom\"]').getAttribute('aria-selected')") == "true");
+    CHECK(in_view("custom"));
+    CHECK(number("document.querySelector('[data-spectr-length-option=\"custom-editor\"]').getBoundingClientRect().top"
+                 " - document.querySelector('[data-spectr-length-option=\"custom\"]').getBoundingClientRect().top")
+          == Catch::Approx(32.0f));
+    const auto offset = [&] {
+        return std::stoi(value("document.querySelector(" + js_string(menu) + ").getAttribute('data-spectr-length-offset')"));
+    };
+    CHECK(offset() > 0);
+    CHECK_FALSE(in_view("1/32 bar"));
+    // The wheel scrolls it (Pulp's delta is positive downward), clamped.
+    const auto vp = rect("[data-spectr-length-viewport-box]");
+    const pulp::view::Point over{vp[0] + vp[2] * 0.5f, vp[1] + vp[3] * 0.5f};
+    for (int i = 0; i < 40; ++i) pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, -40.0f, {});
+    settle(rig.clock, 8);
+    CHECK(offset() == 0);
+    CHECK(in_view("1/32 bar"));
+    // ...and a row scrolled into view by the wheel takes a press.
+    press_row("1/32 bar");
+    CHECK(label() == "1/32 bar");
+    // The host applies parameters every block; the rig applies them here.
+    (void)rig.processor.apply_surface_params(false);
+    // The keys keep the highlight in view: End, Home, PageDown, PageUp. The
+    // host selects Custom again; the custom length was kept.
+    rig.store.set_value(spectr::kParamFreezeLength, static_cast<float>(spectr::kLengthPresetCustom));
+    (void)rig.processor.apply_surface_params(false);
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-freeze-length]').getAttribute('data-spectr-freeze-length-label') === '64 7/8 bars'",
+        "the custom length did not come back");
+    rig.bridge().load_script("document.querySelector('[data-spectr-length-trigger]').focus()",
+                             "spectr-native-length-focus");
+    key(pulp::view::KeyCode::down);
+    REQUIRE(open());
+    const auto highlighted = [&] {
+        return value("(() => { const all = Array.from(document.querySelectorAll("
+                     "'[data-pulp-popup-active=\"true\"]')); return all.length === 1 ? "
+                     "all[0].getAttribute('data-spectr-length-option') : 'count=' + all.length; })()");
+    };
+    CHECK(highlighted() == "custom");
+    key(pulp::view::KeyCode::home);
+    CHECK(highlighted() == "1/32 bar");
+    CHECK(in_view("1/32 bar"));
+    key(pulp::view::KeyCode::end_);
+    CHECK(highlighted() == "custom-editor");
+    CHECK(in_view("custom-editor"));
+    key(pulp::view::KeyCode::home);
+    key(pulp::view::KeyCode::page_down);
+    const auto paged = highlighted();
+    CHECK(paged != "1/32 bar");
+    CHECK(in_view(paged));
+    key(pulp::view::KeyCode::page_up);
+    CHECK(highlighted() == "1/32 bar");
+    // Every row, walked by the arrow, is in view when it is highlighted.
+    for (int step = 0; step < 22; ++step) {
+        key(pulp::view::KeyCode::down);
+        const auto at = highlighted();
+        INFO("step " << step << " on " << at);
+        REQUIRE(at.rfind("count=", 0) != 0);
+        CHECK(in_view(at));
+    }
+    key(pulp::view::KeyCode::escape);
+    CHECK_FALSE(open());
     storage.require_unchanged();
 }
 
@@ -8157,6 +9057,346 @@ TEST_CASE("a freeze press goes to the host as one edit gesture",
             "spectr-freeze-gesture-control");
         settle(rig.clock, 8);
         CHECK(recorder.take() == "set 1");
+    }
+    storage.require_unchanged();
+}
+
+// ── The modulation controls record in host automation, and play back ────────
+//
+// The whole loop a user performs with the LFOs as an instrument: change them
+// in the editor while a host records, then play the lane back and watch the
+// editor follow. The recorder is what a format adapter sees -- the store's
+// gesture callbacks and its inline value listener, in order -- for the
+// modulation lanes only. A host in Touch, Latch or Write records the begin/end
+// bracket; a value with no bracket around it is an edit it cannot record.
+
+namespace {
+
+struct ModulationEditRecorder {
+    std::vector<std::string> events;
+    pulp::state::ListenerToken token;
+    static bool watched(pulp::state::ParamID id) {
+        return (id >= spectr::kParamLfoEnabled && id <= spectr::kParamLfoTarget)
+            || (id >= spectr::kParamLfo2Enabled && id <= spectr::kParamLfo2Depth)
+            || id == spectr::kOutputTrim || id == spectr::kParamMorph;
+    }
+    explicit ModulationEditRecorder(pulp::state::StateStore& store) {
+        store.set_gesture_callbacks(
+            [this](pulp::state::ParamID id) {
+                if (watched(id)) events.push_back("begin " + std::to_string(id));
+            },
+            [this](pulp::state::ParamID id) {
+                if (watched(id)) events.push_back("end " + std::to_string(id));
+            });
+        token = store.add_audio_listener([this](pulp::state::ParamID id, float value) {
+            if (!watched(id)) return;
+            char buf[48];
+            std::snprintf(buf, sizeof(buf), "set %u=%g", static_cast<unsigned>(id),
+                          static_cast<double>(value));
+            events.emplace_back(buf);
+        });
+    }
+    std::string take() {
+        std::string out;
+        for (const auto& e : events) out += (out.empty() ? "" : ", ") + e;
+        events.clear();
+        return out;
+    }
+};
+
+void open_band_menu(NativeEditorRig& rig) {
+    activate(rig, "[data-spectr-filter-surface]", "contextmenu",
+             R"js({clientX:660,clientY:430,offsetX:660,offsetY:430,button:2})js");
+    require_runtime_contract(rig, "document.querySelector('[data-spectr-band-context-menu]')",
+                             "the band menu did not open");
+    // The LFO rows live in its Modulation submenu.
+    activate(rig, "[data-spectr-band-action=\"modulation-toggle\"]");
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-enable\"]')",
+        "the Modulation submenu did not open");
+}
+
+// Press a band-menu slider track at `ratio` of its width and release it.
+void press_menu_slider(NativeEditorRig& rig, std::string_view action, double ratio) {
+    const auto track = std::string("[data-spectr-menu-slider-track=\"")
+        + std::string(action) + "\"]";
+    activate(rig, track, "pointerdown", slider_press_at(ratio, track));
+    activate(rig, track, "pointerup", slider_press_at(ratio, track));
+}
+
+}  // namespace
+
+TEST_CASE("every LFO edit in the band menu records as a host gesture",
+          "[native-n1][state-parity][modulation][automation]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    open_band_menu(rig);
+    ModulationEditRecorder recorder(rig.store);
+
+    activate(rig, "[data-spectr-band-action=\"lfo1-enable\"]");
+    CHECK(recorder.take() == "begin 4000, set 4000=1, end 4000");
+
+    activate(rig, "[data-spectr-band-action=\"lfo1-shape\"] [data-spectr-shape-option=\"2\"]",
+             "pointerdown");
+    CHECK(recorder.take() == "begin 4001, set 4001=2, end 4001");
+
+    // Rate moves over the musical rates (0.25 .. 16 beats, 7 stops): the far
+    // end of the track is 16 beats.
+    press_menu_slider(rig, "lfo1-rate", 1.0);
+    CHECK(recorder.take() == "begin 4002, set 4002=16, end 4002");
+
+    press_menu_slider(rig, "lfo1-depth", 0.25);
+    CHECK(recorder.take() == "begin 4003, set 4003=0.25, end 4003");
+
+    activate(rig, "[data-spectr-band-action=\"modulation-target-morph\"]");
+    CHECK(recorder.take() == "begin 4004, set 4004=3, end 4004");
+
+    activate(rig, "[data-spectr-band-action=\"lfo2-enable\"]");
+    CHECK(recorder.take() == "begin 4010, set 4010=1, end 4010");
+    activate(rig, "[data-spectr-modulation-source-action=\"2\"]");
+    activate(rig, "[data-spectr-band-action=\"lfo2-shape\"] [data-spectr-shape-option=\"3\"]",
+             "pointerdown");
+    CHECK(recorder.take() == "begin 4011, set 4011=3, end 4011");
+    press_menu_slider(rig, "lfo2-rate", 0.0);
+    CHECK(recorder.take() == "begin 4012, set 4012=0.25, end 4012");
+    press_menu_slider(rig, "lfo2-depth", 1.0);
+    CHECK(recorder.take() == "begin 4013, set 4013=1, end 4013");
+
+    // Off again: the toggle records its falling edge too.
+    activate(rig, "[data-spectr-band-action=\"lfo1-enable\"]");
+    CHECK(recorder.take() == "begin 4000, set 4000=0, end 4000");
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+TEST_CASE("every LFO edit in Settings records as a host gesture",
+          "[native-n1][state-parity][modulation][automation]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    activate(rig, "[data-spectr-settings-open]");
+    ModulationEditRecorder recorder(rig.store);
+
+    activate(rig, "[data-spectr-settings-modulation] [data-spectr-setting-toggle]");
+    CHECK(recorder.take() == "begin 4000, set 4000=1, end 4000");
+    settle(rig.clock, 8);
+    // Settings' LFO 1 rows, in document order: shape chips, then rate and
+    // depth sliders.
+    activate(rig, "[data-spectr-settings-modulation] [data-spectr-setting-option=\"3\"]");
+    CHECK(recorder.take() == "begin 4001, set 4001=3, end 4001");
+    const auto rate = std::string("[data-spectr-settings-modulation] [data-spectr-setting-slider]");
+    activate(rig, rate, "pointerdown", slider_press_at(1.0, rate));
+    activate(rig, rate, "pointerup", slider_press_at(1.0, rate));
+    CHECK(recorder.take() == "begin 4002, set 4002=16, end 4002");
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+TEST_CASE("host playback of the LFO lanes moves the band menu, even after an edit",
+          "[native-n1][state-parity][modulation][automation]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    open_band_menu(rig);
+
+    // The user sets depth to 37% by hand, which is a value a float cannot hold
+    // exactly. The processor reports it back as 0.3700000047683716.
+    press_menu_slider(rig, "lfo1-depth", 0.37);
+    REQUIRE(rig.store.get_value(spectr::kParamLfoDepth) == Catch::Approx(0.37f));
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-depth\"]')"
+        "?.getAttribute('aria-valuetext') === '37%'",
+        "the depth row does not show the edit");
+
+    // Now the host plays its lanes back.
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape, 3.0f);
+    rig.store.set_value(spectr::kParamLfoRate, 0.5f);
+    rig.store.set_value(spectr::kParamLfoDepth, 0.8f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-enable\"] [data-spectr-menu-switch]')"
+        "?.getAttribute('data-spectr-menu-switch') === 'on'",
+        "LFO 1 on/off did not follow host playback");
+    require_runtime_contract(rig,
+        "String(document.querySelector('[data-spectr-band-action=\"lfo1-shape\"]')"
+        "?.getAttribute('aria-valuenow')) === '3'",
+        "LFO 1 shape did not follow host playback");
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-rate\"]')"
+        "?.getAttribute('aria-valuetext') === '0.5 beats'",
+        "LFO 1 rate did not follow host playback");
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-depth\"]')"
+        "?.getAttribute('aria-valuetext') === '80%'",
+        "LFO 1 depth did not follow host playback after the user edited it");
+
+    // And back off: the switch follows the lane in both directions.
+    rig.store.set_value(spectr::kParamLfoEnabled, 0.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"lfo1-enable\"] [data-spectr-menu-switch]')"
+        "?.getAttribute('data-spectr-menu-switch') === 'off'",
+        "LFO 1 off did not follow host playback");
+    storage.require_unchanged();
+}
+
+TEST_CASE("an Output trim or Morph edit records as a host gesture",
+          "[native-n1][state-parity][modulation][automation]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    ModulationEditRecorder recorder(rig.store);
+
+    // The trim is a native range input. Its change callback is driven the way
+    // the native slider drives it -- with the raw value as the argument -- and
+    // a value change outside a press is a complete bracket.
+    const auto change_trim = [&](double db) {
+        rig.bridge().load_script(std::string(R"js((() => {
+          const node = globalThis.__pulpFindMaterializedElement__('[data-spectr-output-trim]');
+          const id = node && (node.__pulpId || node.id);
+          const callback = globalThis.__pulpReactEventCallbacks__?.get?.(String(id) + ':change');
+          if (typeof callback !== 'function') throw new Error('trim has no change callback');
+          callback()js") + std::to_string(db) + R"js();
+          if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+            globalThis.__pulpRuntimeSettle__(8);
+        })();)js", "spectr-output-trim-change");
+        settle(rig.clock);
+    };
+    change_trim(-6.0);
+    CHECK(recorder.take() == "begin 2, set 2=-6, end 2");
+
+    // A press on the input opens the bracket, so a drag is one gesture.
+    activate(rig, "[data-spectr-output-trim]", "pointerdown");
+    change_trim(-3.0);
+    change_trim(-1.5);
+    activate(rig, "[data-spectr-output-trim]", "pointerup");
+    CHECK(recorder.take() == "begin 2, set 2=-3, set 2=-1.5, end 2");
+    CHECK(rig.store.open_gesture_count() == 0);
+
+    // Morph: capture two different snapshots, then drag. The derived Morph
+    // lane is written by the processor as the drag runs; the whole drag is ONE
+    // bracket on it.
+    const auto press_capture = [&](const char* id) {
+        rig.root->layout_children();
+        auto* button = rig.bridge().widget(id);
+        REQUIRE(button != nullptr);
+        const auto box = pulp::view::ViewInspector::absolute_bounds(*button);
+        rig.root->simulate_click({box.x + box.width * 0.5f, box.y + box.height * 0.5f});
+        settle(rig.clock, 12);
+    };
+    press_capture("spectr-snapshot-capture-a");
+    rig.processor.field().bands[3] = {12.0f, false};
+    press_capture("spectr-snapshot-capture-b");
+    require_app_state(rig, "s.snapshotStatus.A === true && s.snapshotStatus.B === true",
+                      "the two snapshots were not captured");
+    recorder.take();
+    const auto morph = std::string("[data-spectr-morph]");
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-morph]')"
+        "?.getAttribute('data-spectr-morph-state') === 'enabled'",
+        "morph never enabled after capturing both snapshots");
+    activate(rig, morph, "pointerdown", slider_press_at(0.25, morph));
+    activate(rig, morph, "pointermove", slider_press_at(0.5, morph));
+    activate(rig, morph, "pointermove", slider_press_at(0.75, morph));
+    activate(rig, morph, "pointerup", slider_press_at(0.75, morph));
+    const auto recorded = recorder.take();
+    INFO("morph drag recorded: " << recorded);
+    // One begin, one end, and the values in between.
+    CHECK(recorded.rfind("begin 3000, ", 0) == 0);
+    const std::string tail = ", end 3000";
+    REQUIRE(recorded.size() >= tail.size());
+    CHECK(recorded.substr(recorded.size() - tail.size()) == tail);
+    std::size_t begins = 0, ends = 0;
+    for (std::size_t at = recorded.find("begin 3000"); at != std::string::npos;
+         at = recorded.find("begin 3000", at + 1)) ++begins;
+    for (std::size_t at = recorded.find("end 3000"); at != std::string::npos;
+         at = recorded.find("end 3000", at + 1)) ++ends;
+    CHECK(begins == 1);
+    CHECK(ends == 1);
+    CHECK(recorded.find("set 3000=0.75") != std::string::npos);
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+
+TEST_CASE("a band paint drag is one host gesture per band it touches",
+          "[native-n1][state-parity][modulation][automation]") {
+    // The plot republishes the whole processing state on every pointer move,
+    // and the processor pushes each changed band lane. Without a drag bracket
+    // each of those pushes is its own begin/value/end, so a host in Touch sees
+    // the band released between every two moves and snaps back to the old
+    // lane in each gap. With one, each lane the drag touches opens once and
+    // closes on release.
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    std::map<pulp::state::ParamID, int> begins, ends, sets;
+    const auto band_lane = [](pulp::state::ParamID id) {
+        return id >= spectr::kParamBandGainBase && id < spectr::kParamBandMuteBase + 64;
+    };
+    rig.store.set_gesture_callbacks(
+        [&](pulp::state::ParamID id) { if (band_lane(id)) ++begins[id]; },
+        [&](pulp::state::ParamID id) { if (band_lane(id)) ++ends[id]; });
+    auto token = rig.store.add_audio_listener([&](pulp::state::ParamID id, float) {
+        if (band_lane(id)) ++sets[id];
+    });
+
+    const auto fire = [&](const char* type, int y, int buttons) {
+        activate(rig, "[data-spectr-filter-surface]", type,
+                 "{clientX:660,clientY:" + std::to_string(y)
+                 + ",pointerId:73,button:0,buttons:" + std::to_string(buttons) + "}");
+        settle(rig.clock, 4);
+    };
+    fire("pointerdown", 430, 1);
+    fire("pointermove", 380, 1);
+    fire("pointermove", 330, 1);
+    fire("pointermove", 280, 1);
+    fire("pointerup", 280, 0);
+    settle(rig.clock, 12);
+
+    // Control: the drag edited something, and edited it more than once, so a
+    // per-publication bracket would show up as more than one begin.
+    REQUIRE_FALSE(sets.empty());
+    int most_sets = 0;
+    for (const auto& [id, count] : sets) most_sets = std::max(most_sets, count);
+    INFO("lanes written: " << sets.size() << ", most writes to one lane: " << most_sets);
+    REQUIRE(most_sets >= 2);
+    for (const auto& [id, count] : sets) {
+        INFO("lane " << id << " written " << count << " times");
+        CHECK(begins[id] == 1);
+        CHECK(ends[id] == 1);
+    }
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+TEST_CASE("host playback of Morph moves the Morph slider",
+          "[native-n1][state-parity][modulation][automation]") {
+    // The bands Morph derives always followed playback; the slider did not, so
+    // a recorded morph sweep played back with the thumb parked wherever the
+    // user last left it.
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto thumb_value = [&] {
+        return runtime_value(rig,
+            "String(document.querySelector('[data-spectr-morph]')"
+            "?.getAttribute('aria-valuenow'))",
+            "spectr-native-morph-value");
+    };
+    REQUIRE(thumb_value() == "0");
+    for (const float t : {0.25f, 0.75f, 0.0f}) {
+        INFO("host morph " << t);
+        rig.store.set_value(spectr::kParamMorph, t);
+        REQUIRE(rig.processor.apply_surface_params(true));
+        settle(rig.clock, 8);
+        CHECK(std::stod(thumb_value()) == Catch::Approx(t).margin(1e-6));
     }
     storage.require_unchanged();
 }

@@ -745,7 +745,10 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         // state, so each overlay dismisses through the same setter. This was
         // once forbidden, back when the menus owned independent booleans and
         // the shared setter closed the wrong one.
-        CHECK(count_occurrences(document, "onDismiss: () => setOpenMenu(null)") == 3);
+        // Each also reports its dismissal to the interim trigger-toggle
+        // helper (tools/patch_materialized_dropdown_trigger_toggle.py).
+        CHECK(count_occurrences(document, "onDismiss: () => setOpenMenu(null)") == 0);
+        CHECK(count_occurrences(document, "\"); setOpenMenu(null); },") == 3);
         CHECK(count_occurrences(
                   document,
                   "height: 26,\\n        display: \\\"inline-flex\\\",\\n"

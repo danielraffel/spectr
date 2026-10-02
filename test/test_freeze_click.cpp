@@ -451,6 +451,10 @@ struct ProcessorRender {
         auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
         REQUIRE(plugin != nullptr);
         REQUIRE(plugin->set_render_mode(mode));
+        // The spectral hold at its reference timing: what this file scores.
+        // (The product's default Length loops; its seams have their own
+        // tests in test_freeze_level.cpp.)
+        plugin->set_freeze_seconds_override(FreezeSource::kDefaultHoldSeconds);
         constexpr int block = 256;
         host.prepare(kRate, block);
         host.state().set_value(spectr::kMix, mix);

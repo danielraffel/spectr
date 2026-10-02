@@ -117,6 +117,41 @@ float parse_octaves(std::string_view text) {
     return octaves * kViewportMinWidthLog;
 }
 
+// LFO rate in the units the editor shows: "4 beats", "0.25 beats", "1 beat".
+std::string beats_string(float beats) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%g %s", static_cast<double>(beats),
+                  beats == 1.0f ? "beat" : "beats");
+    return buf;
+}
+
+float parse_beats(std::string_view text) {
+    std::string s(text);
+    float beats = 0.0f;
+    if (std::sscanf(s.c_str(), "%f", &beats) != 1 || !std::isfinite(beats))
+        return 0.0f;
+    return beats;
+}
+
+// LFO depth as the editor shows it: "50%". Typed input accepts "50%", "50",
+// or a fraction ("0.5"): a value above 1, or one with a percent sign, is a
+// percentage.
+std::string percent_string(float fraction) {
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%d%%",
+                  static_cast<int>(std::lround(fraction * 100.0f)));
+    return buf;
+}
+
+float parse_percent(std::string_view text) {
+    std::string s(text);
+    float value = 0.0f;
+    if (std::sscanf(s.c_str(), "%f", &value) != 1 || !std::isfinite(value))
+        return 0.0f;
+    if (s.find('%') != std::string::npos || value > 1.0f) value /= 100.0f;
+    return value;
+}
+
 void add_enum_labels(pulp::state::ParamInfo& info,
                      std::initializer_list<const char*> labels) {
     for (const char* label : labels) info.value_labels.emplace_back(label);
@@ -144,6 +179,24 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.group_id = kGroupGlobal;
         info.kind = pulp::state::ParamKind::Toggle;
         add_enum_labels(info, {"Live", "Frozen"});
+        store.add_parameter(info);
+    }
+    {
+        // How much the next freeze takes in. An enum of the header's common
+        // lengths plus "Custom" (the bars + fraction in the plugin state):
+        // a host can automate it, and like Freeze it moves neither latency
+        // nor topology. Every valid length (129 x 17) as one stepped lane
+        // would be unusable to draw automation on.
+        pulp::state::ParamInfo info;
+        info.id = kParamFreezeLength;
+        info.name = "Freeze Length";
+        info.range = {0.0f, static_cast<float>(kLengthPresetCustom),
+                      static_cast<float>(kDefaultLengthPreset), 1.0f};
+        info.group_id = kGroupGlobal;
+        info.kind = pulp::state::ParamKind::Enum;
+        for (const auto& preset : kLengthPresets)
+            info.value_labels.emplace_back(length_label(preset));
+        info.value_labels.emplace_back("Custom");
         store.add_parameter(info);
     }
 
@@ -274,9 +327,12 @@ void register_surface_params(pulp::state::StateStore& store) {
         pulp::state::ParamInfo info;
         info.id = kParamLfoRate;
         info.name = "LFO Rate";
-        info.unit = "beats";
+        // No separate unit: the display string carries it ("4 beats"), and
+        // VST3 hosts print `units` after that string, which would double it.
         info.range = {0.25f, 16.0f, 4.0f};
         info.group_id = kGroupModulation;
+        info.to_string = [](float v) { return beats_string(v); };
+        info.from_string = [](const std::string& t) { return parse_beats(t); };
         store.add_parameter(info);
     }
     {
@@ -285,6 +341,8 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.name = "LFO Depth";
         info.range = {0.0f, 1.0f, 0.5f};
         info.group_id = kGroupModulation;
+        info.to_string = [](float v) { return percent_string(v); };
+        info.from_string = [](const std::string& t) { return parse_percent(t); };
         store.add_parameter(info);
     }
     {
@@ -321,9 +379,12 @@ void register_surface_params(pulp::state::StateStore& store) {
         pulp::state::ParamInfo info;
         info.id = kParamLfo2Rate;
         info.name = "LFO 2 Rate";
-        info.unit = "beats";
+        // No separate unit: the display string carries it ("4 beats"), and
+        // VST3 hosts print `units` after that string, which would double it.
         info.range = {0.25f, 16.0f, 4.0f};
         info.group_id = kGroupModulation;
+        info.to_string = [](float v) { return beats_string(v); };
+        info.from_string = [](const std::string& t) { return parse_beats(t); };
         store.add_parameter(info);
     }
     {
@@ -332,6 +393,8 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.name = "LFO 2 Depth";
         info.range = {0.0f, 1.0f, 0.0f};
         info.group_id = kGroupModulation;
+        info.to_string = [](float v) { return percent_string(v); };
+        info.from_string = [](const std::string& t) { return parse_percent(t); };
         store.add_parameter(info);
     }
 
@@ -442,6 +505,9 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         const float t = store->get_value(kParamMorph);
         if (t != applied_param_cache_[detail::kSlotMorph].load(std::memory_order_relaxed)) {
             applied_param_cache_[detail::kSlotMorph].store(t, std::memory_order_relaxed);
+            // The Morph slider shows the lane even before both snapshots
+            // exist, so a move is always news to the editor.
+            editor_changed = true;
             const bool has_a = snapshots_.has(SnapshotBank::Slot::A);
             const bool has_b = snapshots_.has(SnapshotBank::Slot::B);
             if (has_a && has_b) {
@@ -537,6 +603,16 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     {
         const float value = store->get_value(kParamFreeze);
         auto& cached = applied_param_cache_[detail::kSlotFreeze];
+        if (value != cached.load(std::memory_order_relaxed)) {
+            cached.store(value, std::memory_order_relaxed);
+            editor_changed = true;
+        }
+    }
+    // Freeze Length likewise: the audio thread reads it each block, and a
+    // host-side change only has to reach the header's dropdown.
+    {
+        const float value = store->get_value(kParamFreezeLength);
+        auto& cached = applied_param_cache_[detail::kSlotFreezeLength];
         if (value != cached.load(std::memory_order_relaxed)) {
             cached.store(value, std::memory_order_relaxed);
             editor_changed = true;
@@ -815,6 +891,59 @@ bool Spectr::set_freeze_from_editor(bool frozen) noexcept {
     store->set_value(kParamFreeze, frozen ? 1.0f : 0.0f);
     store->end_gesture(kParamFreeze);
     return true;
+}
+
+bool Spectr::is_editor_plain_param(pulp::state::ParamID id) noexcept {
+    return id == kMix || id == kOutputTrim
+        || (id >= kParamLfoEnabled && id <= kParamLfoTarget)
+        || (id >= kParamLfo2Enabled && id <= kParamLfo2Depth);
+}
+
+bool Spectr::edit_param_from_editor(pulp::state::ParamID id,
+                                    float value) noexcept {
+    auto* store = param_store_;
+    if (!store || !is_editor_plain_param(id) || !std::isfinite(value))
+        return false;
+    const bool in_drag =
+        std::find(editor_param_gestures_.begin(), editor_param_gestures_.end(), id)
+        != editor_param_gestures_.end();
+    // The value only, with no applied-cache stamp: these lanes are read by the
+    // audio owner straight off the store, and the sync worker's drift sweep
+    // is what republishes the modulation settings and advances the editor's
+    // live projection -- exactly the path a host write takes.
+    if (!in_drag) store->begin_gesture(id);
+    store->set_value(id, value);
+    if (!in_drag) store->end_gesture(id);
+    return true;
+}
+
+bool Spectr::begin_editor_param_gesture(pulp::state::ParamID id) noexcept {
+    auto* store = param_store_;
+    if (!store || !is_editor_plain_param(id)) return false;
+    if (std::find(editor_param_gestures_.begin(), editor_param_gestures_.end(), id)
+        != editor_param_gestures_.end())
+        return true;
+    store->begin_gesture(id);
+    editor_param_gestures_.push_back(id);
+    return true;
+}
+
+bool Spectr::end_editor_param_gesture(pulp::state::ParamID id) noexcept {
+    auto* store = param_store_;
+    if (!store || !is_editor_plain_param(id)) return false;
+    const auto it = std::find(editor_param_gestures_.begin(),
+                              editor_param_gestures_.end(), id);
+    if (it == editor_param_gestures_.end()) return true;
+    editor_param_gestures_.erase(it);
+    store->end_gesture(id);
+    return true;
+}
+
+void Spectr::end_editor_param_gestures() noexcept {
+    auto* store = param_store_;
+    if (store)
+        for (const auto id : editor_param_gestures_) store->end_gesture(id);
+    editor_param_gestures_.clear();
 }
 
 void Spectr::begin_param_gesture_epoch() noexcept {

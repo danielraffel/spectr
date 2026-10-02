@@ -7,6 +7,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdint>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -21,6 +22,12 @@ std::unique_ptr<pulp::format::Processor> create_mixing_spectr() {
     auto processor = spectr::create_spectr();
     auto* plugin = static_cast<spectr::Spectr*>(processor.get());
     REQUIRE(plugin->set_render_mode(spectr::MaskRenderMode::linear_phase));
+    return processor;
+}
+std::unique_ptr<pulp::format::Processor> create_tracking_spectr() {
+    auto processor = spectr::create_spectr();
+    auto* plugin = static_cast<spectr::Spectr*>(processor.get());
+    REQUIRE(plugin->set_render_mode(spectr::MaskRenderMode::zero_latency));
     return processor;
 }
 }  // namespace
@@ -1210,6 +1217,211 @@ TEST_CASE("Spectr crossfades an LFO shape change instead of jumping",
     CHECK(largest_step < 0.15f * swing);
 }
 
+namespace {
+
+// Renders a held -12 dB bank under one sine LFO (1 beat per cycle at the
+// headless 120 BPM: a 0.5 s cycle) and records band 0's AUDIBLE gain per block
+// -- the modulated field while the modulator is running, the authored -12 dB
+// otherwise. `schedule(block)` returns the LFO enable and depth that block's
+// host automation carries, so a test can switch either one at an exact block.
+struct LfoLane { bool enabled; float depth; };
+
+std::vector<float> render_audible_band_gain(
+    std::size_t blocks, const std::function<LfoLane(std::size_t)>& schedule,
+    const std::function<float(std::size_t)>& rate_at = {}) {
+    constexpr std::size_t block_size = 512;
+    pulp::format::HeadlessHost host(create_mixing_spectr);
+    host.prepare(48000.0, block_size);
+    auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+    REQUIRE(plugin != nullptr);
+    pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+    const float* input_channels[] = {in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> input(input_channels, 2, block_size);
+    auto output = out.view();
+    std::vector<float> gains;
+    std::uint64_t last_sequence = 0;
+    for (std::size_t block = 0; block < blocks; ++block) {
+        const auto lane = schedule(block);
+        pulp::state::ParameterEventQueue events;
+        for (std::size_t band = 0; band < 32; ++band)
+            REQUIRE(events.push({spectr::band_gain_param_id(band), 0, -12.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoEnabled, 0, lane.enabled ? 1.0f : 0.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoShape, 0,
+                             static_cast<float>(spectr::LfoShape::Sine), 0}));
+        REQUIRE(events.push({spectr::kParamLfoRate, 0,
+                             rate_at ? rate_at(block) : 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoDepth, 0, lane.depth, 0}));
+        REQUIRE(events.push({spectr::kParamLfoTarget, 0,
+                             static_cast<float>(spectr::ModulationTarget::WholeBank), 0}));
+        host.process(output, input, events);
+        const auto& snapshot = plugin->read_modulated_field();
+        const bool fresh = snapshot.sequence != last_sequence;
+        last_sequence = snapshot.sequence;
+        gains.push_back(fresh && snapshot.active ? snapshot.field.bands[0].gain_db
+                                                 : -12.0f);
+    }
+    return gains;
+}
+
+float largest_block_step(const std::vector<float>& gains, std::size_t from,
+                         std::size_t to) {
+    float largest = 0.0f;
+    for (std::size_t block = from; block + 1 < gains.size() && block < to; ++block)
+        largest = std::max(largest, std::abs(gains[block + 1] - gains[block]));
+    return largest;
+}
+
+}  // namespace
+
+// Switching the LFO on or off, or jumping its depth, is something a user does
+// live and a host replays from automation. Like a shape change it must not land
+// as a step in the band gains: at a sine crest a full-depth LFO sits 12 dB off
+// the authored level, so an instant enable moves every band by 12 dB in one
+// block. The yardstick is the shape-fade test's: no block-to-block move larger
+// than 15% of the LFO's own 24 dB swing. A free-running sine at this rate moves
+// at most ~1.6 dB a block, so the threshold leaves the waveform's own motion
+// well clear and only a switch can trip it.
+TEST_CASE("Spectr ramps an LFO switched on, off, or re-depthed instead of jumping",
+          "[modulation][automation][rt]") {
+    constexpr float kSwing = 24.0f;
+    // Phase 0.25 of a 0.5 s cycle (the sine crest) falls in block 12, and
+    // phase 0.75 (the trough) in block 35, at 512 samples per block.
+    constexpr std::size_t kCrest = 12, kTrough = 35, kBlocks = 80;
+
+    SECTION("control: the free-running sine itself moves under the threshold") {
+        const auto gains = render_audible_band_gain(kBlocks, [](std::size_t) {
+            return LfoLane{true, 1.0f};
+        });
+        const auto [lo, hi] = std::minmax_element(gains.begin() + 4, gains.end());
+        REQUIRE(*hi - *lo > 0.9f * kSwing);
+        const float step = largest_block_step(gains, 4, kBlocks);
+        UNSCOPED_INFO("largest block step " << step << " dB");
+        CHECK(step < 0.15f * kSwing);
+    }
+    SECTION("enable at the crest") {
+        const auto gains = render_audible_band_gain(kBlocks, [&](std::size_t b) {
+            return LfoLane{b >= kCrest, 1.0f};
+        });
+        INFO("gain before " << gains[kCrest - 1] << " dB, after "
+             << gains[kCrest] << " dB");
+        // Control: the LFO did come on and reach its crest level.
+        REQUIRE(*std::max_element(gains.begin() + kCrest, gains.end()) > -1.0f);
+        const float step = largest_block_step(gains, kCrest - 2, kCrest + 12);
+        UNSCOPED_INFO("largest block step " << step << " dB");
+        CHECK(step < 0.15f * kSwing);
+    }
+    SECTION("disable at the trough") {
+        const auto gains = render_audible_band_gain(kBlocks, [&](std::size_t b) {
+            return LfoLane{b < kTrough, 1.0f};
+        });
+        REQUIRE(gains[kTrough - 1] < -20.0f);
+        // Control: once released the band returns to its authored level.
+        CHECK(gains.back() == Approx(-12.0f));
+        const float step = largest_block_step(gains, kTrough - 2, kTrough + 12);
+        UNSCOPED_INFO("largest block step " << step << " dB");
+        CHECK(step < 0.15f * kSwing);
+    }
+    SECTION("depth jump at the crest") {
+        const auto gains = render_audible_band_gain(kBlocks, [&](std::size_t b) {
+            return LfoLane{true, b < kCrest ? 0.1f : 1.0f};
+        });
+        REQUIRE(*std::max_element(gains.begin() + kCrest, gains.end()) > -1.0f);
+        const float step = largest_block_step(gains, kCrest - 2, kCrest + 12);
+        UNSCOPED_INFO("largest block step " << step << " dB");
+        CHECK(step < 0.15f * kSwing);
+    }
+    SECTION("a rate change keeps the phase, so it needs no ramp") {
+        // To a SLOWER rate, so the new waveform's own motion stays under the
+        // threshold and only a phase jump at the switch could trip it. A
+        // phase re-derived from the transport (beats / new rate) would land
+        // 4 blocks into a 0.5 s cycle at a quarter of the way through a 2 s
+        // one -- a jump of most of the swing.
+        const auto gains = render_audible_band_gain(
+            kBlocks, [](std::size_t) { return LfoLane{true, 1.0f}; },
+            [&](std::size_t b) { return b < kCrest + 4 ? 1.0f : 4.0f; });
+        const float step = largest_block_step(gains, kCrest, kCrest + 10);
+        UNSCOPED_INFO("largest block step " << step << " dB");
+        CHECK(step < 0.15f * kSwing);
+    }
+}
+
+// The same switch, heard. A 997 Hz tone through a full-depth sine LFO is
+// switched on at the LFO's crest, through both renderers: zero-latency
+// (Tracking) and linear-phase (Mixing). The score is the tone's envelope -- its
+// peak over each 1 ms -- and the largest jump between consecutive milliseconds,
+// in dB.
+//
+// Both renderers already spread a mask swap over several milliseconds, so even
+// an un-ramped 12 dB enable stays near 1-1.6 dB a millisecond here; the level
+// ramp roughly halves that in the zero-latency renderer. This is therefore a
+// guard on the composition rather than a reproduction of the block step above:
+// it fails if a renderer change or a lost ramp lets the switch through as a
+// step of several dB inside a millisecond.
+TEST_CASE("Spectr's LFO enable is a ramp in the audio, not a step",
+          "[modulation][automation][audio][rt]") {
+    constexpr std::size_t block_size = 512;
+    constexpr double sample_rate = 48000.0;
+    constexpr std::size_t enable_block = 12;   // the crest; see the test above
+    constexpr std::size_t blocks = 160;
+    for (const bool tracking : {true, false}) {
+        INFO((tracking ? "zero-latency renderer" : "linear-phase renderer"));
+        pulp::format::HeadlessHost host(tracking ? create_tracking_spectr
+                                                 : create_mixing_spectr);
+        host.prepare(sample_rate, block_size);
+        pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+        const float* input_channels[] = {in.channel(0).data(), in.channel(1).data()};
+        pulp::audio::BufferView<const float> input(input_channels, 2, block_size);
+        auto output = out.view();
+        std::vector<float> rendered;
+        std::uint64_t n = 0;
+        for (std::size_t block = 0; block < blocks; ++block) {
+            for (std::size_t i = 0; i < block_size; ++i, ++n) {
+                const float v = 0.25f * static_cast<float>(std::sin(
+                    2.0 * 3.14159265358979323846 * 997.0 * n / sample_rate));
+                in.channel(0)[i] = v;
+                in.channel(1)[i] = v;
+            }
+            pulp::state::ParameterEventQueue events;
+            for (std::size_t band = 0; band < 32; ++band)
+                REQUIRE(events.push({spectr::band_gain_param_id(band), 0, -12.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoEnabled, 0,
+                                 block >= enable_block ? 1.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
+            REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+            host.process(output, input, events);
+            rendered.insert(rendered.end(), out.channel(0).begin(), out.channel(0).end());
+        }
+        constexpr std::size_t ms = 48;
+        std::vector<float> envelope_db;
+        for (std::size_t at = 0; at + ms <= rendered.size(); at += ms) {
+            float peak = 1e-9f;
+            for (std::size_t i = at; i < at + ms; ++i)
+                peak = std::max(peak, std::abs(rendered[i]));
+            envelope_db.push_back(20.0f * std::log10(peak));
+        }
+        // From the enable to well past any renderer latency, skipping the
+        // start-up fill before the first settled output.
+        const std::size_t from = enable_block * block_size / ms - 2;
+        float largest = 0.0f;
+        for (std::size_t i = from; i + 1 < envelope_db.size(); ++i)
+            if (envelope_db[i] > -40.0f && envelope_db[i + 1] > -40.0f)
+                largest = std::max(largest,
+                                   std::abs(envelope_db[i + 1] - envelope_db[i]));
+        // Control: the LFO is audible -- the envelope swings by most of its
+        // 24 dB over the render.
+        float lo = 0.0f, hi = -200.0f;
+        for (std::size_t i = from; i < envelope_db.size(); ++i)
+            if (envelope_db[i] > -40.0f) {
+                lo = std::min(lo, envelope_db[i]);
+                hi = std::max(hi, envelope_db[i]);
+            }
+        UNSCOPED_INFO("envelope swing " << (hi - lo)
+                      << " dB, largest 1 ms jump " << largest << " dB");
+        REQUIRE(hi - lo > 15.0f);
+        CHECK(largest < 3.0f);
+    }
+}
+
 TEST_CASE("Spectr releases the modulation overlay without a parameter event",
           "[modulation][display][rt]") {
     // The falling edge is the editor's only cue to stop drawing the overlay
@@ -1252,7 +1464,18 @@ TEST_CASE("Spectr releases the modulation overlay without a parameter event",
     // is what a generic-UI or preset write looks like from here.
     plugin->state().set_value(spectr::kParamLfoEnabled, 0.0f);
     plugin->state().set_value(spectr::kParamLfoDepth, 0.0f);
-    for (std::size_t block = 0; block < 2; ++block) {
+    // The switch-off is a level ramp (spectr::kLfoLevelSlewSeconds), so the
+    // overlay is still live for the ramp and is released one pass after it.
+    // Every one of these blocks carries no events: the ramp alone has to keep
+    // the branch running to its end.
+    const auto ramp_blocks = static_cast<std::size_t>(std::ceil(
+        spectr::kLfoLevelSlewSeconds * sample_rate / block_size));
+    {
+        pulp::state::ParameterEventQueue events;
+        host.process(output, input, events);
+    }
+    CHECK(plugin->read_modulated_field().active);
+    for (std::size_t block = 0; block < ramp_blocks + 1; ++block) {
         pulp::state::ParameterEventQueue events;
         host.process(output, input, events);
     }

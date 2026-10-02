@@ -21,8 +21,9 @@
 //      scale. That wording is pinned here so it cannot drift back.
 //
 //   STATIC   one leaf, rendered by Chrome, subscribing to the native frame
-//            rather than polling; the trim written through the existing
-//            `param_set` verb at Spectr's own kOutputTrim id; OVER not CLIP.
+//            rather than polling; the trim written through `param_edit` --
+//            a recordable host gesture, never a bare `param_set` -- at
+//            Spectr's own kOutputTrim id; OVER not CLIP.
 //   RUNTIME  the leaf's own script block is evaluated in a vm with a hook
 //            runtime, a real frame queue and a controllable clock, then
 //            driven with published frames: the number must rise instantly,
@@ -30,7 +31,7 @@
 //            OVER must survive that same elapsed time; a click must clear the
 //            latch without blanking a meter that has signal in it; silence
 //            must read "--" and not "0.0"; the trim must reach the host as a
-//            param_set; and an externally published trim must move the
+//            param_edit; and an externally published trim must move the
 //            control.
 //
 // THIS SUITE DRIVES THE LEAF WITH `latchOver: true`. The overload half is a
@@ -170,7 +171,7 @@ const MONO_FAMILY = `'"${BOUND_MONO}", "JetBrains Mono", ui-monospace, monospace
 const READOUT_STYLE = 'style: { width: 31, textAlign: "left", '
   + `whiteSpace: "nowrap", flexShrink: 0, fontFamily: ${MONO_FAMILY}, `
   + 'fontSize: 10, color: "rgba(255,255,255,0.72)" }';
-const TRACK_STYLE = 'style: { width: 156, flexShrink: 0, '
+const TRACK_STYLE = 'style: { width: 96, flexShrink: 0, '
   + 'accentColor: "hsl(200,80%,60%)" }';
 const TRIM_LABEL_ELEMENT = '    /* @__PURE__ */ React.createElement("span", {\n'
   + '      "data-spectr-output-trim-label": true,\n'
@@ -360,11 +361,17 @@ if (/setInterval/.test(meterBody)) {
     + "only adds commits");
 }
 
-// S3. The trim reaches the host through the flat param verb that already
-// exists, at Spectr's own kOutputTrim id. An id typed by hand somewhere else
-// would write a different parameter and look like it worked.
-if (!meterBody.includes('window.pulp.postMessage("param_set",')) {
-  fail("the trim control does not write through param_set");
+// S3. The trim reaches the host through `param_edit`, at Spectr's own
+// kOutputTrim id. `param_edit` is the processor's recordable editor write (a
+// complete host gesture outside a drag); a bare `param_set` moves the value
+// but leaves a host recording in Touch / Latch / Write nothing to record. An
+// id typed by hand somewhere else would write a different parameter and look
+// like it worked.
+if (!meterBody.includes('window.pulp.postMessage("param_edit",')) {
+  fail("the trim control does not write through param_edit");
+}
+if (meterBody.includes('window.pulp.postMessage("param_set",')) {
+  fail("the trim control still writes an unrecordable bare param_set");
 }
 if (!/id:\s*2\s*,\s*value: next/.test(meterBody)) {
   fail("the trim control does not write Spectr's kOutputTrim (id 2)");
@@ -645,16 +652,12 @@ if (!sliderRow || !sliderReadout) {
   console.log("control   %s %s", "settings track".padEnd(16), settingsTrack);
   console.log("measured  trim track %dpt -> %s dB/pt, %s pt per %s dB step",
     width, dbPerPoint.toFixed(3), pointsPerStep.toFixed(2), step);
-  if (width < settingsTrack) {
-    fail(`the trim's ${width}pt track is shorter than the ${settingsTrack}pt `
-      + "track Spectr's own Settings sliders use under the same fixed thumb "
-      + `(${dbPerPoint.toFixed(2)} dB per point against `
-      + `${(span / settingsTrack).toFixed(2)}); it shipped at 58pt and was `
-      + "unusable for fine adjustment");
-  }
-  // Independent floor, in case the Settings row is ever shortened: one
-  // pointer point of travel must never skip a step, or consecutive device
-  // pixels land on non-adjacent values.
+  // The header shares its width with the Freeze LENGTH control, so the trim
+  // no longer matches the Settings sliders' 156pt track (that is reported
+  // above, for comparison). What it must keep is the floor: one pointer
+  // point of travel never skips a step, or consecutive device pixels land
+  // on non-adjacent values. The 58pt track that shipped broke it, and was
+  // unusable for fine adjustment.
   if (pointsPerStep < 1) {
     fail(`one ${step} dB step is ${pointsPerStep.toFixed(2)}pt of travel, so `
       + "a single-point pointer move skips values");
@@ -665,8 +668,10 @@ if (!sliderRow || !sliderReadout) {
 //
 // The cluster is absolutely positioned at x=282 in the header's empty span,
 // which runs to the divider before BARS at x=839.5 now that the LIVE /
-// PRECISION control is hidden. It reads freeze toggle, OUTPUT, track, value,
-// PEAK at one flex gap, and must end short of that divider by at least the
+// PRECISION control is hidden. It reads freeze toggle, | LENGTH [length] |,
+// OUTPUT, track, value, PEAK -- the controls at one flex gap, the dividers
+// and the LENGTH caption pulled in by their own negative margins -- and must
+// end short of that divider by at least the
 // header's own 18pt inter-group gap -- a cluster that crowds the divider reads
 // as part of the view controls. Computed from the cluster's own declarations
 // so it tracks any later edit to them.
@@ -681,10 +686,20 @@ const toggleBody = (() => {
 })();
 const toggleWidth = /style: \{ width: (\d+), minWidth: \1,/.exec(toggleBody);
 const readoutWidth = readoutStyle ? /width: (\d+)/.exec(readoutStyle[1]) : null;
+const lengthBody = (() => {
+  const at = html.indexOf("function SpectrFreezeLength(");
+  return at < 0 ? "" : html.slice(at, html.indexOf("function SpectrOutputMeter(", at));
+})();
+const lengthWidth = /width: (\d+), minWidth: \1, flexShrink: 0, height: 24/.exec(lengthBody);
+const dividerPull = /"data-spectr-header-divider": "freeze", style: \{[^}]*margin: "0 -(\d+)px"/
+  .exec(meterBody);
+const captionPull = /"LENGTH"/.test(meterBody)
+  ? /"data-spectr-freeze-length-caption": true,[\s\S]{0,400}?marginRight: -(\d+)/.exec(meterBody)
+  : null;
 const HEADER_DIVIDER = 839.5;
 const HEADER_GROUP_GAP = 18;
 if (!clusterLeft || !clusterGap || !peakWidth || !readoutWidth || !trackWidth
-    || !labelText || !toggleWidth) {
+    || !labelText || !toggleWidth || !lengthWidth || !dividerPull || !captionPull) {
   fail("the cluster's own geometry is unreadable, so whether it still fits "
     + "the header's measured gap cannot be answered");
 } else {
@@ -694,8 +709,14 @@ if (!clusterLeft || !clusterGap || !peakWidth || !readoutWidth || !trackWidth
   // of the shipping editor.
   const labelWidth = labelText[1].length * (glyph * 0.6 + 0.8);
   const gap = Number(clusterGap[1]);
+  // | LENGTH [length] |: each divider sits gap - pull from its neighbours,
+  // and the caption gap - its own pull from the dropdown.
+  const side = gap - Number(dividerPull[1]);
+  const lengthSegment = side + 1 + side
+    + "LENGTH".length * (glyph * 0.6 + 0.8) + (gap - Number(captionPull[1]))
+    + Number(lengthWidth[1]) + side + 1 + side;
   const right = Number(clusterLeft[1])
-    + Number(toggleWidth[1]) + gap
+    + Number(toggleWidth[1]) + lengthSegment
     + labelWidth + gap
     + Number(trackWidth[1]) + gap
     + Number(readoutWidth[1]) + gap
@@ -931,14 +952,19 @@ if (!leafBlock) {
           .filter((c) => c && typeof c === "object")
           .map((c) => typeof c.type === "function"
               && c.type.name === "SpectrFreezeToggle" ? "freeze"
+            : typeof c.type === "function"
+              && c.type.name === "SpectrFreezeLength" ? "length"
             : !c.props ? "?"
+            : c.props["data-spectr-header-divider"] ? "divider"
+            : c.props["data-spectr-freeze-length-caption"] ? "caption"
             : c.props["data-spectr-output-peak"] ? "peak"
             : c.props["data-spectr-output-trim-label"] ? "label"
             : c.props["data-spectr-output-trim"] ? "track"
             : c.props["data-spectr-output-trim-readout"] ? "readout" : "?");
-        if (kinds.join(",") !== "freeze,label,track,readout,peak") {
+        const expected = "freeze,divider,caption,length,divider,label,track,readout,peak";
+        if (kinds.join(",") !== expected) {
           fail(`the rendered cluster's children are ${kinds.join(",")}, `
-            + "expected freeze,label,track,readout,peak");
+            + `expected ${expected}`);
         }
       }
 
@@ -1230,9 +1256,9 @@ if (!leafBlock) {
       // R6. THE TRIM REACHES THE HOST, at the right id, with the right value.
       posted.length = 0;
       trimNode().props.onChange({ target: { value: "6" } });
-      const write = posted.find((p) => p.type === "param_set");
+      const write = posted.find((p) => p.type === "param_edit");
       if (!write) {
-        fail("moving the trim wrote no param_set; the control is inert");
+        fail("moving the trim wrote no param_edit; the control is inert");
       } else if (write.payload.id !== 2 || write.payload.value !== 6) {
         fail(`the trim wrote ${JSON.stringify(write.payload)}, expected `
           + "{ id: 2, value: 6 }");
@@ -1243,7 +1269,7 @@ if (!leafBlock) {
       // The range is the parameter's own, so a value past it is refused.
       posted.length = 0;
       trimNode().props.onChange({ target: { value: "99" } });
-      const clamped = posted.find((p) => p.type === "param_set");
+      const clamped = posted.find((p) => p.type === "param_edit");
       if (!clamped || clamped.payload.value !== 24) {
         fail(`a +99 dB write was not clamped to the parameter's +24 dB `
           + `ceiling: ${JSON.stringify(clamped && clamped.payload)}`);

@@ -77,7 +77,9 @@ function mount(initial, height = 860, keepSeed = false) {
     postMessage(type, payload) {
       calls.push({ type, payload });
       if (type === 'processing_state_get') return Promise.resolve({ payload: { modulation: { ...native } } });
-      if (type === 'param_set') {
+      // `param_edit`, not the bare `param_set`: every editor write of an LFO
+      // lane must reach the host as a recordable gesture.
+      if (type === 'param_edit') {
         if (payload.id === 4000) native.enabled = payload.value === 1;
         if (payload.id === 4010) native.lfo2_enabled = payload.value === 1;
         if (payload.id === 4004) { native.target = payload.value; native.target_mask = 1 << payload.value; }
@@ -153,14 +155,14 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.equal(test.submenu().props.style.overflowY, 'auto');
   assert.equal(test.button('lfo1-enable').props.disabled, true);
   test.click('lfo1-enable');
-  assert.equal(test.calls.filter(call => call.type === 'param_set').length, 0);
+  assert.equal(test.calls.filter(call => call.type === 'param_edit').length, 0);
   await test.settle();
   assert.equal(test.button('lfo1-enable').props['aria-checked'], enabled);
   assert.equal(test.button('lfo2-enable').props['aria-checked'], lfo2_enabled);
   test.click('lfo1-enable');
-  assert.deepEqual(test.calls.at(-1), { type: 'param_set', payload: { id: 4000, value: enabled ? 0 : 1 } });
+  assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4000, value: enabled ? 0 : 1 } });
   test.click('lfo2-enable');
-  assert.deepEqual(test.calls.at(-1), { type: 'param_set', payload: { id: 4010, value: lfo2_enabled ? 0 : 1 } });
+  assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4010, value: lfo2_enabled ? 0 : 1 } });
   assert.equal(test.closed, 0);
   test.external({ enabled, lfo2_enabled, target: 2, target_mask: 4 });
   assert.equal(test.button('lfo1-enable').props['aria-checked'], enabled);
@@ -171,7 +173,9 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.equal(test.closed, 0);
   test.click('modulation-toggle');
   test.click('modulation-target-morph');
-  assert.deepEqual(test.calls.at(-1), { type: 'param_set', payload: { id: 4004, value: 3 } });
+  assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4004, value: 3 } });
+  // No modulation write ever goes out as a bare, unrecordable value.
+  assert.equal(test.calls.filter(call => call.type === 'param_set').length, 0);
   // Target writes are deliberately non dismissive: Spotify-style submenu
   // navigation lets a user audition several targets without reopening it.
   assert.equal(test.closed, 0);
@@ -206,7 +210,7 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.equal(reopened.button('lfo1-enable').props.disabled, false);
   assert.equal(reopened.button('lfo1-enable').props['aria-checked'], true);
   reopened.click('lfo1-enable');
-  const writes = reopened.calls.filter(call => call.type === 'param_set'
+  const writes = reopened.calls.filter(call => call.type === 'param_edit'
                                             && call.payload.id === 4000);
   assert.equal(writes.length, 1);
   // Toggled from the reported value, not from the default `false`.
