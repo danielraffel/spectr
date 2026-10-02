@@ -307,7 +307,7 @@ window.__spectrPolishStart = () => {
           throw new Error('the old both-LFO Destinations chips are still mounted');
         // A Depth row whose target is off is dimmed and inert.
         const bankDepth = panel.querySelector('[data-spectr-settings-target-depth="bank"]');
-        if (!bankDepth || bankDepth.getAttribute('aria-disabled') !== 'true')
+        if (!bankDepth || bankDepth.getAttribute('data-spectr-settings-target-depth-state') !== 'off')
           throw new Error('the Bank Depth row is not inert while Bank is off');
 
         // WIRING: a switch writes its own lane as a recordable edit.

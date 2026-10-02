@@ -1050,7 +1050,11 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // and 1960.58 -> 1846.58 when the MOTION group (the hidden LIVE /
         // PRECISION choice) left, and 1846.58 -> 1960.58 when the FREEZE group
         // (Hold length) arrived, and 1960.58 -> 1846.58 when it left again for
-        // the header's LENGTH control. If you add a group and this fails, that is the window
+        // the header's LENGTH control, and 1846.58 -> 2686.58 when MODULATION
+        // traded its both-LFO Target / Destinations rows (and the LFO-level
+        // Depth rows) for the per-LFO target list: a switch and a Depth row
+        // per target, plus the LFO targets chips and Ask before overriding
+        // modulation. If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1060,7 +1064,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1767 && s.content_height < 1927"
+        " && s.content_height > 2607 && s.content_height < 2767"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",

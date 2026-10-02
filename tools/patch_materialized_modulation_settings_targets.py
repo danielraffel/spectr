@@ -47,7 +47,7 @@ NEW = r'''function SpectrModulationSettings() {
     const stored = value["routeAmt" + lfo + "_" + t];
     const depth = Number.isFinite(stored) ? stored : 0.5;
     rows.push(React.createElement(SpectrSettingsField, { key: key, label }, React.createElement("div", { "data-spectr-settings-target": key, "data-spectr-settings-target-state": on ? "on" : "off" }, React.createElement(SpectrSettingsToggle, { value: on, onChange: (next) => publish("routeOn" + lfo + "_" + t, 4020 + lane(t), next) }))));
-    rows.push(React.createElement(SpectrSettingsField, { key: key + "-depth", label: "Depth", hint: label }, React.createElement("div", { "data-spectr-settings-target-depth": key, "aria-disabled": on ? "false" : "true", style: { opacity: on ? 1 : 0.35, pointerEvents: on ? "auto" : "none" } }, React.createElement(SpectrSettingsSlider, { gestureId: on ? 4030 + lane(t) : undefined, value: depth, min: 0, max: 1, step: 0.01, fmt: (v) => Math.round(v * 100) + "%", onChange: (next) => { if (on) publish("routeAmt" + lfo + "_" + t, 4030 + lane(t), Math.round(next * 100) / 100); } }))));
+    rows.push(React.createElement(SpectrSettingsField, { key: key + "-depth", label: "Depth", hint: label }, React.createElement(SpectrSettingsSlider, { target: key, disabled: !on, gestureId: on ? 4030 + lane(t) : undefined, value: depth, min: 0, max: 1, step: 0.01, fmt: (v) => Math.round(v * 100) + "%", onChange: (next) => { if (on) publish("routeAmt" + lfo + "_" + t, 4030 + lane(t), Math.round(next * 100) / 100); } })));
   });
   return /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-tabs": true, style: {} },
     React.createElement(SpectrSettingsGroup, { marker: "modulation", title: "MODULATION", subtitle: "Tempo-synced movement layered over host automation. Each LFO sets the movement; each target has its own depth." },
@@ -69,9 +69,34 @@ def encode(text):
     return json.dumps(text, ensure_ascii=False)[1:-1]
 
 
+# The Settings slider learns a disabled state and the target it belongs to,
+# as props on its own outer node: a wrapper div around it takes the press
+# before the track does in the native tree, so the slider carries them itself.
+SLIDER_EDITS = [
+    ('function SpectrSettingsSlider({ value, min, max, step, onChange, fmt, gestureId }) {',
+     'function SpectrSettingsSlider({ value, min, max, step, onChange, fmt, gestureId, disabled, target }) {'),
+    ('  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, width: 200 } }, /* @__PURE__ */ React.createElement(',
+     '  return /* @__PURE__ */ React.createElement("div", { "data-spectr-settings-target-depth": target, "data-spectr-settings-target-depth-state": target ? (disabled ? "off" : "on") : undefined, style: { display: "flex", alignItems: "center", gap: 8, width: 200, opacity: disabled ? 0.35 : 1 } }, /* @__PURE__ */ React.createElement('),
+    ('''      onPointerDown: (event) => {
+        if (gestureId !== undefined) globalThis.spectrParamGesture && globalThis.spectrParamGesture(gestureId, true);
+        dragRef.current = event && event.currentTarget ? event.currentTarget : null;''',
+     '''      onPointerDown: (event) => {
+        if (disabled) return;
+        if (gestureId !== undefined) globalThis.spectrParamGesture && globalThis.spectrParamGesture(gestureId, true);
+        dragRef.current = event && event.currentTarget ? event.currentTarget : null;'''),
+]
+
+
 def main():
     raw = PATH.read_text(encoding="utf-8")
+    for old, new in SLIDER_EDITS:
+        if encode(new) in raw:
+            continue
+        if raw.count(encode(old)) != 1:
+            sys.exit("FAIL: Settings slider anchor: " + old[:60])
+        raw = raw.replace(encode(old), encode(new), 1)
     if encode(MARKER) in raw:
+        PATH.write_text(raw, encoding="utf-8")
         print("settings targets already applied")
         return 0
     start = raw.find(encode(START))
