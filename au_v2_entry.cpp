@@ -19,6 +19,15 @@ const bool g_au_v2_owns_resize_grip = [] {
     return true;
 }();
 
+// AU v2 hosts create the editor view synchronously and show only their own
+// window chrome until it returns -- in Logic, a header-only plug-in window.
+// Return a correctly sized view first and evaluate the document on its second
+// frame. See `spectr::set_editor_defers_document_load`.
+const bool g_au_v2_defers_document_load = [] {
+    spectr::set_editor_defers_document_load(true);
+    return true;
+}();
+
 }  // namespace
 
 #if defined(SPECTR_WEBVIEW_REFERENCE)

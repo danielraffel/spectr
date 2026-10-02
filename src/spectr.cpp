@@ -912,6 +912,9 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
     if (&view != native_editor_root_ || w == 0 || h == 0) return;
     native_host_width_ = w;
     native_host_height_ = h;
+    // A deferred editor has no document to lay out yet. Keep the host size;
+    // the frame that evaluates the document publishes it.
+    if (native_document_load_pending_) return;
     if (pulp::format::should_pin_design_viewport(view_size())) {
         // Pinned viewport: the HOST owns the scale, so the root stays at the
         // authored box at every host size and paint maps it onto the surface.
