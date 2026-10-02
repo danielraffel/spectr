@@ -203,3 +203,32 @@ and its p99 under half the budget. The redesign itself runs on the renderer's
 worker, as for every other mask change, and the audio path stays
 allocation-free (the route levels are a fixed array; `compose_internal_modulation`
 works on stack values).
+
+## The menu, measured
+
+Captured headless from the shipping editor
+(`SPECTR_MODULATION_ROUTE_SHOTS=1 Spectr-native-shot --backend=skia`), in
+[`evidence/2026-10-02-lfo-routing/`](evidence/2026-10-02-lfo-routing/):
+
+- With every destination on, the Modulation panel is 655 design px tall
+  (18 rows; each Amount row 29 px, the same as Rate and Depth) against the
+  780 px the menu may use (860 - 64 - 16), so it never needs to scroll and
+  never clips -- which matters, because the runtime cannot scroll an overflow
+  container. The editor is pinned to its 1320 x 860 design box and scaled
+  uniformly, so the panel is the same at the default 990 x 645 and the minimum
+  792 x 516 host sizes (the two captures differ only in the live spectrum).
+  The fallback of hiding the Amount rows of switched-off destinations was
+  therefore not needed: Amount rows always stay in place, dimmed while off.
+- `viewport-overlay.png`: a full-depth viewport-position LFO, the plot on the
+  user's 200 Hz - 2 kHz window, the audible window bracketed on the minimap and
+  across the top of the plot.
+
+Editor frame cost (`SPECTR_ROUTE_FRAME_COST=1 Spectr-native-shot`, 64 bands,
+one 800-sample audio block then one display tick, 400 frames; the delivery
+control confirms 460 of 460 modulation frames reached the document and the
+viewport runs carried 58-59 distinct audible windows): LFO on Bank p50 0.057 /
+p95 0.305 ms, on Viewport position 0.077 / 0.332 ms, on both 0.075 / 0.352 ms,
+Bank again 0.079 / 0.362 ms. No p95 regression beyond the run-to-run spread of
+the Bank baseline. This times the editor's own work (publication, the
+paint-only overlay apply, the draw loop); the raster of the two extra strokes
+the overlay adds happens in the compositor and is not in this number.
