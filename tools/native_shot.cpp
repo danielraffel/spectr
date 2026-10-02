@@ -1675,6 +1675,71 @@ int main(int argc, char** argv) {
             return g_failures == 0 ? 0 : 1;
         }
 
+        // ── LFO routing: UI frame cost ─────────────────────────────────
+        //
+        // SPECTR_ROUTE_FRAME_COST=1: the editor's per-frame cost (one audio
+        // block, then one display tick: the modulation frame publication, the
+        // JS overlay apply and the draw loop) with LFO 1 on Bank -- the
+        // shipping baseline -- against LFO 1 on Viewport position and on both.
+        // Wall time of the tick, p50 / p95 / max over 400 frames after a
+        // 60-frame warm-up, 64 bands. Headless, so it measures the editor's
+        // own work, not a compositor.
+        if (std::getenv("SPECTR_ROUTE_FRAME_COST") != nullptr) {
+            auto& store = rig.store;
+            store.set_value(spectr::kParamBandCount, 64.0f);
+            store.set_value(spectr::kParamViewportCenter, 2.8f);
+            store.set_value(spectr::kParamViewportWidth, 1.2f);
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            store.set_value(spectr::kParamLfoDepth, 0.6f);
+            store.set_value(spectr::kParamLfoRate, 2.0f);
+            struct Config { const char* name; unsigned mask; };
+            const Config configs[] = {{"bank", 0x01u}, {"viewport-position", 0x10u},
+                                      {"bank+viewport-position", 0x11u}, {"bank", 0x01u}};
+            for (const auto& config : configs) {
+                for (std::size_t t = 0; t < 6; ++t)
+                    store.set_value(spectr::lfo_route_enabled_param_id(0, t),
+                                    (config.mask >> t) & 1u ? 1.0f : 0.0f);
+                rig.processor.apply_surface_params(false);
+                // Positive control: the frames this run delivers reach the
+                // document, and (for a viewport route) move the overlay.
+                rig.eval("(() => { globalThis.__routeFrames = 0; globalThis.__routeViews = new Set();"
+                         " if (!globalThis.__routeFrameHooked) { globalThis.__routeFrameHooked = true;"
+                         " window.pulp.on('modulation_frame', (m) => { globalThis.__routeFrames++;"
+                         " const p = m && m.payload; if (p && p.min_hz) globalThis.__routeViews.add(Math.round(p.min_hz)); }); } })();",
+                         "spectr-route-frame-control");
+                std::vector<double> ms;
+                constexpr int block = 800;  // 60 Hz at 48 kHz
+                std::vector<float> in0(block), in1(block), out0(block), out1(block);
+                const float* inputs[2]{in0.data(), in1.data()};
+                float* outputs[2]{out0.data(), out1.data()};
+                pulp::midi::MidiBuffer midi_in, midi_out;
+                pulp::format::ProcessContext context;
+                context.sample_rate = 48000.0;
+                context.num_samples = block;
+                for (int frame = 0; frame < 460; ++frame) {
+                    for (int i = 0; i < block; ++i)
+                        in0[i] = in1[i] = 0.3f * static_cast<float>(
+                            std::sin(0.13 * (frame * block + i)));
+                    pulp::audio::BufferView<const float> input(inputs, 2, block);
+                    pulp::audio::BufferView<float> output(outputs, 2, block);
+                    rig.processor.process(output, input, midi_in, midi_out, context);
+                    const auto t0 = std::chrono::steady_clock::now();
+                    rig.clock.tick(1.0f / 60.0f);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    if (frame >= 60)
+                        ms.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+                }
+                rig.eval("console.log('[route-frame-cost] control frames=' + globalThis.__routeFrames"
+                         " + ' distinct audible windows=' + globalThis.__routeViews.size);",
+                         "spectr-route-frame-control-read");
+                std::sort(ms.begin(), ms.end());
+                std::printf("[route-frame-cost] %-24s p50 %.3f ms  p95 %.3f ms  max %.3f ms  (n=%zu)\n",
+                            config.name, ms[ms.size() / 2], ms[ms.size() * 95 / 100],
+                            ms.back(), ms.size());
+            }
+            return g_failures == 0 ? 0 : 1;
+        }
+
         // ── LFO routing: the band menu's target rows, and the audible
         //    viewport overlay ──────────────────────────────────────────
         //
