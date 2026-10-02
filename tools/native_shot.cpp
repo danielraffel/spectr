@@ -1801,14 +1801,14 @@ int main(int argc, char** argv) {
             // Default size: Bank on, Morph on at 40 %, Band shift on at
             // 75 % -- several on, several off, so lit and dimmed rows show.
             rig.resize(990.0f, 645.0f);
-            set_routes(0, 0x19u, {1.0f, 1.0f, 1.0f, 0.4f, 0.75f, 1.0f});
+            set_routes(0, 0x59u, {1.0f, 1.0f, 1.0f, 0.4f, 0.75f, 1.0f, 0.5f, 0.5f});
             rig.processor.apply_surface_params(false);
             rig.feed_tone(8);
             open_menu();
             report("990x645-mixed");
             capture(rig, dir, prefix + "modulation-routes-990x645-mixed", backend, scale);
             // Every destination on: the tallest the panel gets.
-            set_routes(0, 0x3Fu, {1.0f, 0.25f, 0.5f, 0.4f, 0.75f, 0.6f});
+            set_routes(0, 0xFFu, {1.0f, 0.25f, 0.5f, 0.4f, 0.75f, 0.6f, 0.5f, 0.3f});
             rig.processor.apply_surface_params(false);
             rig.feed_tone(4);
             settle(rig.clock, 16);
@@ -1824,7 +1824,7 @@ int main(int argc, char** argv) {
             capture(rig, dir, prefix + "modulation-routes-minimum-all-on", backend, scale);
             rig.resize(990.0f, 645.0f);
             // LFO 2's rows: source switch.
-            set_routes(1, 0x21u, {0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.3f});
+            set_routes(1, 0xA1u, {0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.3f, 0.5f, 0.25f});
             rig.processor.apply_surface_params(false);
             rig.activate("[data-spectr-modulation-source-action=\"2\"]");
             settle(rig.clock, 16);

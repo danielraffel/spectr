@@ -77,14 +77,14 @@ EDITS = [
         '''  const spectrModulationShapes = ["Sin", "Tri", "Square", "Saw"];
   // Each target this build has: action key -> [ModulationTarget index,
   // label]. Displayed most-modulated first, so the common ones show without
-  // scrolling. The order names targets a build may not have yet (Intensity
-  // and Output arrive with the gain controls); those are skipped.
+  // scrolling. The order names targets a build may not have yet (Intensity,
+  // Mix and Output arrive with the gain controls); those are skipped.
   const spectrModulationRouteTable = {
     bank: [0, "Bank"], "band-shift": [4, "Band shift"], "band-spread": [5, "Band spread"],
     morph: [3, "Morph"], freeze: [6, "Freeze"], length: [7, "Length"],
     a: [1, "Snapshot A"], b: [2, "Snapshot B"]};
   const spectrModulationRouteOrder = ["bank", "band-shift", "band-spread", "intensity",
-    "morph", "freeze", "length", "output", "a", "b"];
+    "mix", "morph", "freeze", "length", "output", "a", "b"];
   const spectrModulationRouteTargets = spectrModulationRouteOrder
     .filter((key) => spectrModulationRouteTable[key])
     .map((key) => [spectrModulationRouteTable[key][0], key, spectrModulationRouteTable[key][1]]);''',

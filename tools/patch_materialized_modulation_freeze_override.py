@@ -84,7 +84,12 @@ function spectrOverrideAsks() {
   return globalThis.__spectrAskBeforeOverride !== false;
 }
 // Run `action` for a control an LFO is driving: straight away when nobody
-// drives it or the Setting is off, else after the user has answered.
+// drives it or the Setting is off, else after the user has answered. Generic
+// over controls: `control` names it in the question ("Freeze", "Length", and
+// any knob that becomes a target, e.g. "Intensity"), `target` is its
+// ModulationTarget index (its lanes are 4020 + 20 (lfo - 1) + target), and
+// `lfos` are the LFO numbers driving it.
+window.spectrOverrideModulated = spectrOverrideModulated;
 function spectrOverrideModulated(control, target, lfos, action) {
   if (!lfos || !lfos.length || !spectrOverrideAsks()) { action(); return; }
   spectrAskOverride({ control, target, lfos: lfos.slice(), action });
