@@ -451,7 +451,7 @@ window.__spectrPolishStart = () => {
         theme: 'spectral', metaphor: 'columns', bloom: 1,
         spectrumIntensity: 1, bandCount: 32, muteStyle: 'cutout',
         showMinimap: true, showRulers: true, motionMode: 'live',
-        statusInfo: true, showBuildInfo: true,
+        statusInfo: true, showBuildInfo: true, showGpuStats: true,
       };
       const Harness = () => {
         const [settings, setSettings] = React.useState(defaults);
@@ -494,6 +494,9 @@ window.__spectrPolishStart = () => {
       if (!gpuStatus || !gpuStatus.textContent.includes('GPU BLOCKS')
           || !gpuStatus.textContent.includes('124'))
         throw new Error('experimental GPU audio status was not visible');
+      const gpuStatsToggle = panel.querySelector('[data-spectr-gpu-audio-stats-toggle]');
+      if (!gpuStatsToggle || gpuStatsToggle.getAttribute('aria-checked') !== 'true')
+        throw new Error('GPU stats visibility setting was not enabled');
       if (button.textContent.trim() !== 'COPY')
         throw new Error('Copy button did not begin at COPY');
       centered(button);

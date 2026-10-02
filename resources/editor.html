@@ -1772,7 +1772,7 @@ function App() {`,
 
     replaceSpectrSource(
       'function SettingsModal({ settings, setSettings, onClose }) {\n  const persist = (patch) => {',
-      String.raw`function SpectrBuildInfo() {
+      String.raw`function SpectrBuildInfo({ showGpuStats = true }) {
   const [info, setInfo] = React.useState(null);
   const [copyState, setCopyState] = React.useState('COPY');
   const [loadFailed, setLoadFailed] = React.useState(false);
@@ -1850,7 +1850,7 @@ function App() {`,
     rows.map(row => React.createElement('div', { key: row[0], style: { display: 'flex', gap: 12, alignItems: 'baseline' } },
       React.createElement('span', { style: { width: 72, flexShrink: 0, opacity: 0.45, fontSize: 9 } }, row[0]),
       React.createElement('span', { title: String(row[1]), style: { flex: 1, fontSize: 9.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, String(row[1])))),
-    gpu && React.createElement('div', { 'data-spectr-gpu-audio-status': true,
+    gpu && showGpuStats && React.createElement('div', { 'data-spectr-gpu-audio-status': true,
       style: { marginTop: 8, paddingTop: 7, borderTop: '1px solid rgba(180,210,255,0.16)' } },
       React.createElement('div', { style: { opacity: 0.65, fontSize: 9, letterSpacing: 0.8, marginBottom: 4 } }, 'GPU AUDIO'),
       gpuRows.map(row => React.createElement('div', { key: row[0], style: { display: 'flex', gap: 12, alignItems: 'baseline' } },
@@ -2018,12 +2018,13 @@ function SpectrSettingsSlider({ value, min, max, step, onChange, fmt }) {
     </span>
   </div>;
 }
-function SpectrSettingsToggle({ value, onChange, statusInfo = false, buildInfo = false }) {
+function SpectrSettingsToggle({ value, onChange, statusInfo = false, buildInfo = false, gpuAudioStats = false }) {
   return <button id={statusInfo ? 'spectr-status-info-toggle' : undefined}
     data-spectr-setting-toggle
     data-spectr-status-info-toggle={statusInfo ? 'true' : undefined}
     data-spectr-status-info-state={statusInfo ? (value ? 'on' : 'off') : undefined}
     data-spectr-build-info-toggle={buildInfo ? 'true' : undefined}
+    data-spectr-gpu-audio-stats-toggle={gpuAudioStats ? 'true' : undefined}
     data-spectr-build-info-state={buildInfo ? (value ? 'on' : 'off') : undefined}
     role="switch" aria-checked={value}
     onClick={() => onChange(!value)} style={{
@@ -2915,7 +2916,7 @@ window.PatternManager = PatternManager;`,
       'response ticks omit first and last edges');
     replaceSpectrSource(
       '  "showRulers": true,\n  "scheme": "midnight",',
-      '  "showRulers": true,\n  "statusInfo": true,\n  "showBuildInfo": true,\n  "scheme": "midnight",',
+      '  "showRulers": true,\n  "statusInfo": true,\n  "showBuildInfo": true,\n  "showGpuStats": true,\n  "scheme": "midnight",',
       'status info defaults on');
     replaceSpectrSource(
       String.raw`          <div>
@@ -2995,12 +2996,16 @@ window.PatternManager = PatternManager;`,
             <SpectrSettingsToggle statusInfo value={settings.statusInfo !== false}
               onChange={v => persist({ statusInfo: v })} />
           </SpectrSettingsField>
+          <SpectrSettingsField label="GPU stats" hint="Show the experimental audio counters">
+            <SpectrSettingsToggle gpuAudioStats value={settings.showGpuStats !== false}
+              onChange={v => persist({ showGpuStats: v })} />
+          </SpectrSettingsField>
           <SpectrSettingsField label="Build info" hint="Support and debugging details">
             <SpectrSettingsToggle buildInfo value={settings.showBuildInfo !== false}
               onChange={v => persist({ showBuildInfo: v })} />
           </SpectrSettingsField>
         </SpectrSettingsGroup>
-        {settings.showBuildInfo !== false && <SpectrBuildInfo />}`,
+        {settings.showBuildInfo !== false && <SpectrBuildInfo showGpuStats={settings.showGpuStats !== false} />}`,
       'status info is a normal scrollable settings field');
     // Medium is the shipping default. Small is the scale the pre-1.0 build
     // rendered at, kept as an option rather than as the default.
