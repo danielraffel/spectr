@@ -38,8 +38,10 @@ do three things in a DAW:
 | "Edit LFO 1 / 2" source switch | none (view state) | n/a | n/a | n/a |
 | Macro 1-4 value | `4200-4203` | One bracket per drag (`macro_drag_*`) | Yes | Yes |
 | Macro membership | none (supplemental state) | Not automatable, by design | n/a | n/a |
-| Output trim | `2` (dB) | One bracket per change; one per drag where the runtime delivers the input's pointer events | Sample-accurate, smoothed | Readout follows |
-| Mix | `1` (%) | No editor control | Yes | n/a |
+| Output trim | `2` (dB) | OUTPUT knob: one bracket per drag, key press or wheel event | Sample-accurate, smoothed | Readout follows |
+| Mix | `1` (%) | MIX knob: one bracket per drag, key press or wheel event | Yes | Knob follows |
+| Intensity | `5000` (%) | INTENSITY knob: one bracket per drag, key press or wheel event | Yes, slewed 100 ms | Knob follows |
+| Auto Gain | `5001` (Off/On) | AUTO pill: one complete bracket per press | Yes, 300 ms ramp | Pill follows |
 | Latency mode, morph-moves-viewport, keyboard shortcuts in DAW, appearance | none (Settings, plugin state) | Not automatable, by design | n/a | n/a |
 
 ## The modulation lanes as an instrument

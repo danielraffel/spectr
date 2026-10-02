@@ -41,6 +41,9 @@ layout remain stored but do not enter the active spectral mask.
 | `4014...4199` | Reserved modulation growth |
 | `4200...4203` | Macro 1...4 |
 | `4204...4299` | Reserved macro growth |
+| `5000` | Intensity, 0...100 % (scales the composed shape toward flat) |
+| `5001` | Auto Gain, Off/On |
+| `5002...5009` | Reserved level controls |
 
 The gain and mute names are zero-padded (`Band 01 Gain` through
 `Band 64 Gain`) so hosts that flatten groups still sort them correctly.
@@ -141,3 +144,21 @@ The viewport is encoded as center plus width in the same log-frequency domain
 used by the display. This makes pan and zoom independent automation lanes and
 prevents independently automated edges from crossing. Decoding clamps the
 window to 20 Hz...20 kHz and enforces a one-octave minimum width.
+
+## Level controls (5000...5009)
+
+Intensity and Auto Gain are appended in their own reserved block so they never
+collide with modulation growth (`4005...4199`). Like Mix and Output they are not
+in the surface slot cache: the audio owner reads them from the store or the
+block's parameter cursor. See `include/spectr/level_controls.hpp`.
+
+- **Intensity** (`5000`, default 100 %): `effective_db = intensity x composed_db`,
+  applied once after morph, macros and LFOs; a muted band's linear gain becomes
+  `1 - intensity`. Slewed at 100 ms full scale. 100 % is an exact identity.
+- **Auto Gain** (`5001`): a post gain before Output trim, `-10 log10(sum w g^2 / sum w)`
+  over the effective (pre-LFO) shape blended with Mix, weighted by a K-weighted
+  pink reference; clamped to -24...+12 dB; 300 ms ramp; exactly 1.0 when off.
+  New instances default On (`kAutoGainDefaultForNewInstances`); a session saved
+  without the `level_controls` marker opens with it Off.
+- **Range** is not a parameter: it is editor state (`editor_range_db` in the
+  supplemental blob, default 24) and never changes the sound.
