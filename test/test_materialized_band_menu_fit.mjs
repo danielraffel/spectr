@@ -71,7 +71,17 @@ function menuSource() {
     if (src[j] === "{") depth += 1;
     else if (src[j] === "}") { depth -= 1; if (!depth) break; }
   }
-  return src.slice(i, j + 1);
+  // The target list the menu lists, a sibling top-level function.
+  const LIST = "function spectrModulationRouteList() {";
+  const all = doc.html;
+  const k = all.indexOf(LIST);
+  if (k < 0) throw new Error("the shared target list is missing");
+  let depth2 = 0, m = all.indexOf("{", k);
+  for (; m < all.length; m += 1) {
+    if (all[m] === "{") depth2 += 1;
+    else if (all[m] === "}") { depth2 -= 1; if (!depth2) break; }
+  }
+  return all.slice(k, m + 1) + "\n" + src.slice(i, j + 1);
 }
 
 // A plant reverses one half of the fix. It must match exactly once.

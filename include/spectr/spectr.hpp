@@ -162,6 +162,13 @@ struct ModulatedFieldSnapshot {
     /// almost-always.
     SnapshotBank       snapshots{};
     float              host_morph = 0.0f;
+    /// The viewport the audio owner modulated from (the user's window, after
+    /// any morph derivation) and the audible one it rendered. Equal when no
+    /// viewport destination is routed. Viewport modulation is audible only --
+    /// the editor keeps drawing the user's window -- so these are the one
+    /// place the rendered window can be read back (tests, probes).
+    Viewport           base_viewport{};
+    Viewport           viewport{};
     double             phase = 0.0;   ///< LFO 1 phase at `published_ns`
     double             phase_2 = 0.0; ///< LFO 2 phase at `published_ns`
     double             phase_per_second = 0.0;
@@ -759,6 +766,19 @@ public:
     /// Latest post-LFO band field from the audio owner, for drawing only.
     /// Lock-free; always a complete frame. `active == false` means no
     /// modulator is running and the editor should draw canonical state.
+    /// Whether the audio owner is asking for a freeze right now, Freeze
+    /// target included, and whether an LFO's Freeze target drives it.
+    [[nodiscard]] bool freeze_effective() const noexcept {
+        return freeze_effective_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool freeze_gate_driven() const noexcept {
+        return freeze_gate_driven_.load(std::memory_order_relaxed);
+    }
+    /// The LENGTH-list index the next freeze takes under the Length target,
+    /// or -1 when no LFO drives Length.
+    [[nodiscard]] int freeze_modulated_length_index() const noexcept {
+        return freeze_modulated_length_index_.load(std::memory_order_relaxed);
+    }
     const ModulatedFieldSnapshot& read_modulated_field() {
         return modulated_field_publication_.read();
     }
@@ -878,6 +898,10 @@ private:
     static void freeze_storage_trampoline_(void* ctx, const FreezeStorageTask& task) noexcept;
     void start_freeze_storage_lane_();
     /// The seconds the next freeze takes in at a transport (or the override).
+    /// The next freeze's hold length with the Length target applied: the
+    /// LENGTH-list index the LFOs reach at this moment. Audio thread.
+    [[nodiscard]] double modulated_freeze_seconds_(double tempo_bpm, int numerator,
+                                                   int denominator) noexcept;
     [[nodiscard]] double freeze_hold_seconds_at_(double tempo_bpm, int numerator,
                                                  int denominator) const noexcept;
     void preroll_surviving_hold_();
@@ -903,7 +927,7 @@ private:
     // enabled/shape/rate/depth/target at 136..140, LFO 2
     // enabled/shape/rate/depth at 141..144, Macro 1..4 at 145..148,
     // Freeze at 149 and Freeze Length at 150.
-    static constexpr std::size_t kSurfaceCacheSlots = 151;
+    static constexpr std::size_t kSurfaceCacheSlots = detail::kSurfaceSlots;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
     // The audio thread's OWN record of the surface values it last pushed into
@@ -939,6 +963,32 @@ private:
     // shape, so a session that opens with an LFO running starts on it.
     std::array<float, 2> audio_lfo_level_{};
     bool                 audio_lfo_level_primed_ = false;
+    // Each route's slewed level (enabled ? amount : 0), per LFO and
+    // destination, at the same rate as the LFO level: a destination toggled on
+    // or off, or an amount automated, fades its contribution rather than
+    // stepping it. Primed with the LFO level above.
+    std::array<std::array<float, kModulationTargetCount>, 2> audio_route_level_{};
+    // The Freeze target. `freeze_gate_last_` / `freeze_param_last_` are the
+    // previous block's gate and Freeze-parameter values; a change of the
+    // parameter while a gate drives the freeze (the user's press, or host
+    // automation) takes effect until the gate's next transition.
+    bool freeze_gate_last_ = false;
+    bool freeze_param_last_ = false;
+    bool freeze_user_override_ = false;
+    bool freeze_user_value_ = false;
+    // An editor press (button, key, chord) while the Freeze target drives the
+    // freeze: the value it asks for, or -1. Taken on the audio thread, where
+    // it holds the freeze there until the gate's next change -- even when the
+    // parameter already had that value, which is the usual case while a gate
+    // is showing the opposite state.
+    std::atomic<int> freeze_press_request_{-1};
+    // What the audio owner actually asked the freeze source for, and whether
+    // an LFO was driving it: the editor's LIVE/FROZEN face shows this.
+    std::atomic<bool> freeze_effective_{false};
+    std::atomic<bool> freeze_gate_driven_{false};
+    // The LENGTH-list index the next freeze takes while the Length target
+    // drives it, else -1 (diagnostics and tests).
+    std::atomic<int> freeze_modulated_length_index_{-1};
     // Audio owner -> UI publication of the post-LFO band field, so the editor
     // can draw the modulation it is playing. Write-only on the audio thread,
     // read-only through read_modulated_field().
@@ -1129,6 +1179,9 @@ private:
     // Last modulated-field sequence projected to the editor, so a UI tick
     // that finds no new audio frame does not re-dispatch the same overlay.
     std::uint64_t native_modulation_sequence_ = 0;
+    // Last freeze display sent: bit 0 frozen, 1 driven, 2-3 Freeze LFOs,
+    // 4-5 Length LFOs; -1 before the first.
+    int native_freeze_display_ = -1;
     // Scratch for the display-time LFO reconstruction. A member rather than a
     // local so a BandField is not built on the stack every frame.
     BandField     native_modulation_drawn_{};
@@ -1149,6 +1202,9 @@ private:
     /// this frame's time from the audio owner's published inputs and hand it
     /// to the editor. Display only -- it never re-enters canonical state.
     void publish_modulation_frame_();
+    /// Tell the editor when the LFOs drive Freeze or Length, and the
+    /// LIVE/FROZEN state the audio owner is playing. Sent on change only.
+    void publish_freeze_display_();
     // Fixture-only. Writes the laid-out tree plus its depth sidecar under
     // SPECTR_DRAG_DUMP_PREFIX for one named stage of a gesture, so "during"
     // and "after" are two artifacts rather than one interpretation.

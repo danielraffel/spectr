@@ -550,6 +550,8 @@ endif()
 
 add_executable(Spectr-test
     test/test_spectr.cpp
+    test/test_modulation_routing.cpp
+    test/test_modulation_freeze.cpp
     test/test_band_state.cpp
     test/test_viewport.cpp
     test/test_analyzer_bridge.cpp
@@ -920,6 +922,18 @@ add_test(NAME Spectr-swap-fixed-fade-negative-control
         "A drag's fade spans the gap between publishes")
 set_tests_properties(Spectr-swap-fixed-fade-negative-control
     PROPERTIES TIMEOUT 300)
+
+# Routing-lane smoothness. The gate passes on the shipping binary; with
+# SPECTR_MODULATION_PLANT=route-step (destinations and amounts switch in one
+# block, as they did before the route ramp) the same tests must fail, so the
+# gate is proven able to see a step.
+add_test(NAME Spectr-route-smoothness-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_MODULATION_PLANT=route-step
+        $<TARGET_FILE:Spectr-test>
+        "routing lanes automate smoothly*" "viewport routes automate smoothly")
+set_tests_properties(Spectr-route-smoothness-negative-control
+    PROPERTIES WILL_FAIL TRUE TIMEOUT 300)
 
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
@@ -3844,6 +3858,21 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
         Spectr-au-freeze-host-loop Spectr-au-freeze-host-long-loop
         PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
+
+    # LFO routing automation through the same in-process AU host: an Amount
+    # ramp written per render call and destination switches flipped
+    # mid-render, sample-accurately scheduled, each edge scored for clicks and
+    # render-call cost against a steady-routing control render.
+    add_executable(Spectr-au-routes-probe tools/au_routes_probe.cpp)
+    target_link_libraries(Spectr-au-routes-probe PRIVATE
+        "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+    add_dependencies(Spectr-au-routes-probe ${SPECTR_NATIVE_AU_TARGET})
+    add_test(NAME Spectr-au-routes-host
+        COMMAND Spectr-au-routes-probe --bundle "${_spectr_au_bundle}"
+            --block 128 --max-cost-ratio 6)
+    set_tests_properties(Spectr-au-routes-host
+        PROPERTIES TIMEOUT 300 LABELS "modulation;au-host")
+
 endif()
 
 # Artifact-level host proof: load the built CLAP, VST3 and AU through

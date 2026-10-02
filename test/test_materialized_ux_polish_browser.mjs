@@ -31,14 +31,17 @@ assert.doesNotMatch(shippingSurface, /position: "sticky"/, 'Settings relies on u
 assert.match(shippingSurface, /data-spectr-settings-header[\s\S]*flexShrink: 0/, 'Settings header is not a fixed flex sibling');
 assert.match(shippingSurface, /data-spectr-settings-tabs[\s\S]*flexShrink: 0/, 'Settings tabs are not fixed with the header');
 assert.match(shippingSurface, /label: "LFO 2"/, 'second internal LFO controls missing');
-assert.match(shippingSurface, /data-spectr-modulation-select.*all/, 'modulation select-all control missing');
-assert.match(shippingSurface, /data-spectr-modulation-select.*none/, 'modulation select-none control missing');
-for (const target of ['bank', 'snapshot-a', 'snapshot-b', 'morph']) {
-  assert.match(modulationSurface, new RegExp(`['"]${target}['"]`),
+// The per-LFO target list: one shared list, a switch and a Depth lane per
+// target. The both-LFO ALL/NONE Destinations chips are gone.
+assert.doesNotMatch(modulationSurface, /data-spectr-modulation-select/,
+  'the old both-LFO Destinations ALL/NONE chips are still in Settings');
+assert.match(modulationSurface, /spectrModulationRouteList\(\)/,
+  'Settings does not list the shared target list');
+for (const target of ['bank', 'band-shift', 'band-spread', 'morph', 'freeze', 'length']) {
+  assert.match(shippingSurface, new RegExp(`['"]${target}['"]`),
     `individual modulation target ${target} missing`);
 }
-assert.match(modulationSurface, /targetMask/, 'modulation target mask state is not preserved');
-assert.match(shippingSurface, /modulation_targets_set/, 'modulation target selection is not bridge-backed');
+assert.match(modulationSurface, /4030 \+ lane\(t\)/, 'target Depth lanes are not written');
 assert.match(shippingSurface, /lfo2Enabled|lfo2_enabled/, 'second LFO state is not represented in the bridge surface');
 const shortDwell = shippingSurface.replace(
   'const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;',
@@ -277,166 +280,56 @@ window.__spectrPolishStart = () => {
         const panel = await waitFor(() =>
           document.querySelector('#__spectr_polish_mount [data-spectr-settings-panel]'),
         'Settings panel');
-        const names = ['bank', 'snapshot-a', 'snapshot-b', 'morph'];
-        const buttonFor = key => panel.querySelector(
-          '[data-spectr-modulation-target="' + key + '"]');
-        // Every row in the group is MOUNTED at mount and closed with
-        // display:none, because the native widget bridge has no insert-at-index
-        // and no move -- a row that mounts late is appended rather than placed,
-        // which is what made the group re-order itself as toggles were flipped.
-        // So EXISTENCE no longer distinguishes a closed disclosure from an open
-        // one; a rendered box does. Everything below asks whether the user can
-        // SEE the control, which is the question the disclosure is actually
-        // making a promise about.
-        const shownButtonFor = key => {
-          const el = buttonFor(key);
+        // Settings > MODULATION lists the band menu's per-LFO targets: a
+        // switch row and a Depth row per target, for the LFO the "LFO
+        // targets" chips select. Every row is mounted at mount (the native
+        // bridge appends a late-mounted widget), and the list is shown
+        // whether or not an LFO is on, so targets can be set up first.
+        const order = ['bank', 'band-shift', 'band-spread', 'morph', 'freeze',
+                       'length', 'a', 'b'];
+        const rowFor = key => panel.querySelector(
+          '[data-spectr-settings-target="' + key + '"]');
+        const shown = el => {
           if (!el) return null;
           for (let node = el; node && node !== document.body; node = node.parentElement)
             if (getComputedStyle(node).display === 'none') return null;
           const box = el.getBoundingClientRect();
           return box.width > 0 && box.height > 0 ? el : null;
         };
-        // Drive the real control instead of reaching past it: the toggle
-        // carries no unique attribute, so find it by the field label a user
-        // reads.
-        const toggles = Array.from(
-          panel.querySelectorAll('[data-spectr-setting-toggle]'));
-        // POSITIVE CONTROL for the LFO 2 lookup below. A panel that rendered no
-        // toggles at all would make "found 0 LFO 2 toggles" read as a product
-        // defect when the instrument is what broke.
-        if (toggles.length === 0)
-          throw new Error('no settings toggles rendered at all; '
-            + 'the LFO 2 lookup below would be blind');
-        const labelled = toggles.filter(toggle => {
-          for (let node = toggle.parentElement, hops = 0;
-               node && hops < 4; node = node.parentElement, ++hops) {
-            const heading = node.firstElementChild
-              && node.firstElementChild.firstElementChild;
-            if (heading && heading.textContent.trim() === 'LFO 2') return true;
-          }
-          return false;
-        });
-        if (labelled.length !== 1)
-          throw new Error('want exactly one LFO 2 toggle, found ' + labelled.length
-            + ' among ' + toggles.length + ' settings toggles');
-        const lfo2 = labelled[0];
-        if (lfo2.getAttribute('aria-checked') !== 'false')
-          throw new Error('LFO 2 did not start off, so opening it proves nothing');
-        // NEGATIVE CONTROL for the disclosure itself: if the destination chips
-        // are VISIBLE before the click, the gate below is not gating and every
-        // later assertion would pass without the disclosure ever working.
-        // They must nonetheless EXIST -- that is what fixes their position
-        // before any toggle moves -- so assert both halves. Asserting only
-        // "not visible" would also pass against a row that is simply absent,
-        // which is the arrangement this design replaces.
-        if (!buttonFor('bank'))
-          throw new Error('destination chips are not mounted with both LFOs off; '
-            + 'a row that mounts later is appended by the native bridge, not placed');
-        if (shownButtonFor('bank'))
-          throw new Error('Destinations visible with both LFOs off; '
-            + 'disclosure not gating');
+        const got = Array.from(panel.querySelectorAll('[data-spectr-settings-target]'))
+          .map(el => el.getAttribute('data-spectr-settings-target'));
+        if (got.join(',') !== order.join(','))
+          throw new Error('Settings target order [' + got + '] want [' + order + ']');
+        if (!shown(rowFor('bank')))
+          throw new Error('the target list is not visible with both LFOs off');
+        if (panel.querySelector('[data-spectr-modulation-target]')
+            || panel.querySelector('[data-spectr-modulation-select]'))
+          throw new Error('the old both-LFO Destinations chips are still mounted');
+        // A Depth row whose target is off is dimmed and inert.
+        const bankDepth = panel.querySelector('[data-spectr-settings-target-depth="bank"]');
+        if (!bankDepth || bankDepth.getAttribute('data-spectr-settings-target-depth-state') !== 'off')
+          throw new Error('the Bank Depth row is not inert while Bank is off');
 
-        // The Targets row publishes target_mask, and the audio path applies that
-        // one mask to BOTH LFOs, so a patch running only LFO 1 must still be
-        // able to reach it. Drive LFO 1 alone and require the row to appear.
-        const lfo1Matches = toggles.filter(toggle => {
-          for (let node = toggle.parentElement, hops = 0;
-               node && hops < 4; node = node.parentElement, ++hops) {
-            const heading = node.firstElementChild
-              && node.firstElementChild.firstElementChild;
-            if (heading && heading.textContent.trim() === 'LFO') return true;
-          }
-          return false;
-        });
-        if (lfo1Matches.length !== 1)
-          throw new Error('want exactly one LFO 1 toggle, found '
-            + lfo1Matches.length + ' among ' + toggles.length
-            + ' settings toggles');
-        const lfo1 = lfo1Matches[0];
-        if (lfo1.getAttribute('aria-checked') !== 'false')
-          throw new Error('LFO 1 did not start off, so opening it proves nothing');
-        lfo1.click();
-        const lfo1Bank = await waitFor(() => shownButtonFor('bank'),
-          'Destinations control visible with LFO 1 on and LFO 2 still off');
-        if (lfo2.getAttribute('aria-checked') !== 'false')
-          throw new Error('LFO 2 came on by itself; the LFO-1-only case that the '
-            + 'gate defect broke was never exercised');
-        const lfo1Box = lfo1Bank.getBoundingClientRect();
-        if (lfo1Box.width <= 0 || lfo1Box.height <= 0)
-          throw new Error('LFO-1-only Destinations control has no rendered box');
-        // The hint is the only thing telling the user this one row governs both
-        // LFOs, which is exactly what makes reaching it from LFO 1 legitimate.
-        const hintNodes = Array.from(panel.querySelectorAll('*')).filter(
-          node => node.children.length === 0
-            && node.textContent.trim() === 'Both LFOs; overrides Target');
-        if (hintNodes.length !== 1)
-          throw new Error('want one Destinations hint naming both LFOs, found '
-            + hintNodes.length);
-        // NEGATIVE CONTROL for the widened gate: turning every LFO back off must
-        // hide the row again, or the gate is not gating and the assertion above
-        // would pass against a permanently visible Destinations row.
-        lfo1.click();
-        await waitFor(() => !shownButtonFor('bank'),
-          'Destinations control to hide once every LFO is off again');
-        // ...while STAYING mounted. A disclosure that unmounts is the defect
-        // this design exists to prevent.
-        if (!buttonFor('bank'))
-          throw new Error('closing the disclosure unmounted the destination '
-            + 'chips; they must only be hidden, or the native bridge will '
-            + 'append them in the wrong place when they come back');
-
-        lfo2.click();
-        const bank = await waitFor(() => shownButtonFor('bank'),
-          'bank target control visible after opening the LFO 2 disclosure');
-
-        // REACHABILITY. Mounted is not reachable: an ancestor display:none
-        // renders every static source assertion vacuous.
-        for (let node = bank; node && node !== document.body; node = node.parentElement) {
-          if (getComputedStyle(node).display === 'none')
-            throw new Error('modulation controls are hidden by an ancestor '
-              + 'display:none: ' + (node.getAttribute('data-spectr-settings-tabs')
-                ? 'data-spectr-settings-tabs' : node.tagName));
-        }
-        const box = bank.getBoundingClientRect();
-        if (box.width <= 0 || box.height <= 0)
-          throw new Error('modulation target control has no rendered box');
-
-        // WIRING. Assert the delta, not an absolute mask: the mount effect
-        // defaults the mask to all-selected when the host reports no targets.
-        const pressed = () => names.filter(key =>
-          buttonFor(key).getAttribute('aria-pressed') === 'true');
-        const before = pressed();
-        // The bridge carries unrelated traffic (editor_ready and friends), so
-        // filter to the message this control owns. Waiting on raw call count
-        // lets an unrelated message satisfy the wait and mask a dead handler.
-        const modCalls = () => window.__spectrBridgeCalls.filter(
-          entry => entry.type === 'modulation_targets_set');
+        // WIRING: a switch writes its own lane as a recordable edit.
+        const edits = () => window.__spectrBridgeCalls.filter(
+          entry => entry.type === 'param_edit');
         window.__spectrBridgeCalls.length = 0;
-        bank.click();
-        await waitFor(() => modCalls().length >= 1, 'bank click bridge write');
-        const call = modCalls()[0];
-        const expected = before.includes('bank')
-          ? before.filter(key => key !== 'bank')
-          : before.concat(['bank']);
-        const sortedJoin = list => list.slice().sort().join(',');
-        if (sortedJoin(call.payload.targets) !== sortedJoin(expected))
-          throw new Error('bank click sent [' + call.payload.targets
-            + '] want [' + expected + ']');
-        if (sortedJoin(pressed()) !== sortedJoin(expected))
-          throw new Error('bank click did not restyle its own control');
-
-        const none = panel.querySelector('[data-spectr-modulation-select="none"]');
-        if (!none) throw new Error('NONE control missing');
-        none.click();
-        await waitFor(() => modCalls().length >= 2, 'NONE bridge write');
-        if (modCalls()[1].payload.targets.length !== 0)
-          throw new Error('NONE left targets selected');
-        const all = panel.querySelector('[data-spectr-modulation-select="all"]');
-        if (!all) throw new Error('ALL control missing');
-        all.click();
-        await waitFor(() => modCalls().length >= 3, 'ALL bridge write');
-        if (sortedJoin(modCalls()[2].payload.targets) !== sortedJoin(names))
-          throw new Error('ALL selected [' + modCalls()[2].payload.targets + ']');
+        rowFor('bank').querySelector('[data-spectr-setting-toggle]').click();
+        await waitFor(() => edits().length >= 1, 'bank switch bridge write');
+        if (edits()[0].payload.id !== 4020 || edits()[0].payload.value !== 1)
+          throw new Error('bank switch sent ' + JSON.stringify(edits()[0].payload)
+            + ', want {id: 4020, value: 1}');
+        // LFO 2's rows write LFO 2's lanes.
+        const chips = panel.querySelector('[data-spectr-settings-targets-lfo]');
+        if (!chips) throw new Error('LFO targets chips missing');
+        chips.querySelector('[data-spectr-setting-option="2"]').click();
+        await waitFor(() => panel.querySelector(
+          '[data-spectr-settings-targets-lfo="2"]'), 'LFO 2 targets selected');
+        rowFor('freeze').querySelector('[data-spectr-setting-toggle]').click();
+        await waitFor(() => edits().length >= 2, 'LFO 2 freeze switch bridge write');
+        if (edits()[1].payload.id !== 4046)
+          throw new Error('LFO 2 Freeze switch wrote lane ' + edits()[1].payload.id
+            + ', want 4046');
         await assertFinalSurface();
         result.textContent = 'SPECTR_MODULATION_OK';
         return;
@@ -465,7 +358,10 @@ window.__spectrPolishStart = () => {
       'Settings panel');
       const body = panel.querySelector('[data-spectr-settings-body]');
       if (!body) throw new Error('Settings body scroll owner missing');
-      const shouldOverflow = innerHeight < 1200;
+      // With the per-LFO target list (a switch and a Depth row per target) the
+      // body is taller than the panel's 1500px cap at any window height, so
+      // it scrolls at every size; the check is that the scroll range is real.
+      const shouldOverflow = true;
       const actuallyOverflows = body.scrollHeight > body.clientHeight + 1;
       if (actuallyOverflows !== shouldOverflow)
         throw new Error('Settings overflow mismatch: height=' + innerHeight
@@ -624,13 +520,12 @@ assert.equal(negativeStatus.status, 0, negativeStatus.stderr.slice(-2000));
 assert.equal(oracleText(negativeStatus),
   'SPECTR_POLISH_ORACLE_ERROR: status dwell schedule mismatch: 220,280');
 
-// The fitting probe is a normal build: its GPU audio status reports
-// unavailable, so Settings keeps the release layout and its whole body fits
-// under the panel's 1500px cap. The experimental status rows are proven at
-// the overflowing size, where the body scrolls anyway; shown, they take the
-// body past that cap at any window height.
+// The tall probe is a normal build: its GPU audio status reports
+// unavailable, so Settings keeps the release layout. Since the MODULATION
+// group lists every target for the selected LFO, the body passes the panel's
+// 1500px cap at any window height and scrolls at both sizes.
 for (const [label, height, gpuAudioAvailable] of [
-  ['overflowing', 860, true], ['fitting', 1800, false]]) {
+  ['overflowing', 860, true], ['tall', 1800, false]]) {
   const settings = run({
     componentSource: shippingSurface, mode: 'settings', width: 1320, height,
     gpuAudioAvailable,
@@ -652,8 +547,8 @@ assert.equal(oracleText(modulation), 'SPECTR_MODULATION_OK');
 // emitted source text. This severs the target button's handler and requires the
 // driven oracle to notice, so a future weakening turns this green->red.
 const deadTargets = shippingSurface.replace(
-  'onClick: () => publishTargetMask((value.targetMask || 0) ^ bit)',
-  'onClick: () => {}');
+  'onChange: (next) => publish("routeOn" + lfo + "_" + t, 4020 + lane(t), next)',
+  'onChange: () => {}');
 assert.notEqual(deadTargets, shippingSurface,
   'modulation target handler needle did not match; the negative control would be blind');
 const deadModulation = run({
@@ -661,7 +556,7 @@ const deadModulation = run({
 });
 assert.equal(deadModulation.status, 0, deadModulation.stderr.slice(-2000));
 assert.equal(oracleText(deadModulation),
-  'SPECTR_POLISH_ORACLE_ERROR: timed out waiting for bank click bridge write');
+  'SPECTR_POLISH_ORACLE_ERROR: timed out waiting for bank switch bridge write');
 
 // TEXT SIZE. Driven, not read: the panel is mounted with the SHIPPED defaults
 // and the assertion is the scale that reaches the native call site, plus the

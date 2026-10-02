@@ -398,7 +398,8 @@ def verify_64(steps):
     panel = step(steps, "modulation_settled") or {}
     ok, issues = layout_reading(panel)
     require(ok, "modulation-panel:" + str(issues))
-    require({"LFO 1", "LFO 2", "SHARED TARGET", "Bank", "Snapshot A", "Snapshot B", "Morph"}
+    require({"LFO 1", "LFO 2", "LFO 1 TARGETS", "Bank", "Snapshot A", "Snapshot B", "Morph",
+             "Band shift", "Band spread", "Depth"}
             <= labels(panel), "modulation-panel:actions")
     require("Select all" not in labels(panel), "main-panel-hidden")
     lfo1 = step(steps, "lfo1_settled") or {}
@@ -414,8 +415,13 @@ def verify_64(steps):
     target = step(steps, "target_settled") or {}
     target_before = step(steps, "target_open_settled") or {}
     reopened = step(steps, "target_reopened") or {}
-    require(target_before.get("lfo_target") in (0, 1, 3) and
-            target.get("lfo_target") == 2 and target.get("lfo_target_mask") == 4 and
+    # Snapshot B is a per-LFO switch now: pressing it turns LFO 1's Snapshot B
+    # route ON alongside whatever was already on (the legacy enum lane does
+    # not move), so the field mask gains bit 2 and keeps the others.
+    before_mask = target_before.get("lfo_target_mask")
+    require(isinstance(before_mask, int) and not (before_mask & 4) and
+            target.get("lfo_target_mask") == (before_mask | 4) and
+            target.get("lfo_target") == target_before.get("lfo_target") and
             target.get("menu_mounted") is True, "target:processor-effect-and-stays-open")
     esc1 = step(steps, "target_esc1") or {}
     esc2 = step(steps, "target_esc2") or {}

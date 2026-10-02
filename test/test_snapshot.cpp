@@ -234,75 +234,142 @@ TEST_CASE("an unset target mask follows the automatable target enum") {
     CHECK(audible.bands[0].gain_db == Catch::Approx(12.0f));
 }
 
-TEST_CASE("plugin state round-trips the modulation target mask") {
-    // Bank + Morph: a selection no single enum value can express, so a reader
-    // that quietly fell back to the enum could not fake it.
-    constexpr std::uint8_t kMask =
-        static_cast<std::uint8_t>((std::uint8_t{1} << 0) | (std::uint8_t{1} << 3));
+namespace {
 
-    Spectr a;
-    pulp::state::StateStore store_a;
-    a.set_state_store(&store_a);
-    a.define_parameters(store_a);
-    REQUIRE(a.set_modulation_target_mask(kMask));
-    REQUIRE(mask_int(a.modulation_settings().target_mask) == mask_int(kMask));
-    const auto blob = a.serialize_plugin_state();
-    REQUIRE_FALSE(blob.empty());
-
-    Spectr b;
-    pulp::state::StateStore store_b;
-    b.set_state_store(&store_b);
-    b.define_parameters(store_b);
-    REQUIRE(mask_int(b.modulation_settings().target_mask)
-            == mask_int(spectr::kModulationTargetMaskUnset));
-    REQUIRE(b.deserialize_plugin_state(blob));
-    CHECK(mask_int(b.modulation_settings().target_mask) == mask_int(kMask));
-}
-
-TEST_CASE("a plugin state blob without a target mask loads as unset") {
-    // A writer that predates the Targets control emits no mask member. Such a
-    // blob must restore the pre-control behaviour — follow the enum — and must
-    // NOT read as an explicit empty selection, which would silence modulation.
-    Spectr a;
-    pulp::state::StateStore store_a;
-    a.set_state_store(&store_a);
-    a.define_parameters(store_a);
-    const auto blob = a.serialize_plugin_state();
-    std::string json(blob.begin(), blob.end());
-
-    const auto key = std::string("\"modulation_target_mask\":");
+// Remove one top-level member from a serialized plugin-state blob, leaving
+// valid JSON. Returns false when the member was not there to remove.
+bool erase_member(std::string& json, const std::string& name) {
+    const auto key = "\"" + name + "\":";
     auto at = json.find(key);
-    REQUIRE(at != std::string::npos);  // control: the field is there to remove
+    if (at == std::string::npos) return false;
     auto end = json.find_first_of(",}", at);
-    REQUIRE(end != std::string::npos);
+    if (end == std::string::npos) return false;
     if (json[end] == ',') {
-        ++end;  // this member, plus the separator that follows it
+        ++end;
     } else {
-        // Last member: walk back over the separator that precedes it instead,
-        // otherwise the erase leaves a trailing comma and invalid JSON.
         while (at > 0 && std::isspace(static_cast<unsigned char>(json[at - 1])))
             --at;
-        REQUIRE(at > 0);
-        REQUIRE(json[at - 1] == ',');
+        if (at == 0 || json[at - 1] != ',') return false;
         --at;
     }
     json.erase(at, end - at);
-    REQUIRE(json.find(key) == std::string::npos);
-    // Control: the surgery must leave a payload the reader still accepts, so a
-    // rejection below is about the missing member, not about broken JSON.
+    return json.find(key) == std::string::npos;
+}
+
+void set_member_int(std::string& json, const std::string& name, int value) {
+    const auto key = "\"" + name + "\":";
+    const auto at = json.find(key);
+    REQUIRE(at != std::string::npos);
+    const auto end = json.find_first_of(",}", at);
+    json.replace(at + key.size(), end - at - key.size(), std::to_string(value));
+}
+
+struct RoutedPlugin {
+    Spectr proc;
+    pulp::state::StateStore store;
+    RoutedPlugin() {
+        proc.set_state_store(&store);
+        proc.define_parameters(store);
+    }
+    std::uint8_t mask(std::size_t lfo) const {
+        return spectr::route_mask(proc.modulation_settings().routes[lfo]);
+    }
+};
+
+} // namespace
+
+TEST_CASE("plugin state round-trips per-LFO routing, amounts included") {
+    // Bank + Morph + Band spread on LFO 1, Snapshot A + Band shift on
+    // LFO 2, with partial amounts: no single legacy target can express it.
+    RoutedPlugin a;
+    for (std::size_t t = 0; t < 6; ++t) {
+        a.store.set_value(spectr::lfo_route_enabled_param_id(0, t),
+                          (0x29u >> t) & 1u ? 1.0f : 0.0f);
+        a.store.set_value(spectr::lfo_route_enabled_param_id(1, t),
+                          (0x12u >> t) & 1u ? 1.0f : 0.0f);
+    }
+    a.store.set_value(spectr::lfo_route_amount_param_id(0, 5), 0.4f);
+    a.store.set_value(spectr::lfo_route_amount_param_id(1, 1), 0.25f);
+    a.proc.apply_surface_params(false);
+    REQUIRE(mask_int(a.mask(0)) == 0x29);
+    REQUIRE(mask_int(a.mask(1)) == 0x12);
+    const auto params = a.store.serialize();
+    const auto blob = a.proc.serialize_plugin_state();
+
+    RoutedPlugin b;
+    REQUIRE(mask_int(b.mask(0)) == 0x01);  // control: a fresh instance differs
+    REQUIRE(b.store.deserialize(params));
+    REQUIRE(b.proc.deserialize_plugin_state(blob));
+    CHECK(mask_int(b.mask(0)) == 0x29);
+    CHECK(mask_int(b.mask(1)) == 0x12);
+    CHECK(b.proc.modulation_settings().routes[0][5].amount == Approx(0.4f));
+    CHECK(b.proc.modulation_settings().routes[1][1].amount == Approx(0.25f));
+}
+
+TEST_CASE("a pre-routing session maps its single target onto both LFOs") {
+    // A 1.0.6 session: no `lfo_routing` marker, one selection for both LFOs.
+    RoutedPlugin a;
+    const auto params_template = a.store.serialize();
+    const auto blob = a.proc.serialize_plugin_state();
+    std::string json(blob.begin(), blob.end());
+    REQUIRE(erase_member(json, "lfo_routing"));
     REQUIRE(choc::json::parse(json).isObject());
 
-    Spectr b;
-    pulp::state::StateStore store_b;
-    b.set_state_store(&store_b);
-    b.define_parameters(store_b);
-    // Start from an explicit empty selection so a reader that simply left the
-    // member alone, or zeroed it, would be caught.
-    REQUIRE(b.set_modulation_target_mask(0));
-    const std::vector<uint8_t> legacy(json.begin(), json.end());
-    REQUIRE(b.deserialize_plugin_state(legacy));
-    CHECK(mask_int(b.modulation_settings().target_mask)
-          == mask_int(spectr::kModulationTargetMaskUnset));
+    SECTION("the Destinations mask wins over the enum, like 1.0.6") {
+        set_member_int(json, "modulation_target_mask", 0x09);  // Bank + Morph
+        RoutedPlugin b;
+        // Leftover routing in the instance must not survive the migration.
+        b.store.set_value(spectr::lfo_route_enabled_param_id(0, 4), 1.0f);
+        b.store.set_value(spectr::lfo_route_amount_param_id(0, 3), 0.1f);
+        REQUIRE(b.store.deserialize(params_template));
+        const std::vector<uint8_t> legacy(json.begin(), json.end());
+        REQUIRE(b.proc.deserialize_plugin_state(legacy));
+        CHECK(mask_int(b.mask(0)) == 0x09);
+        CHECK(mask_int(b.mask(1)) == 0x09);
+        // The session's LFO Depth (0.5 by default) is carried into each
+        // enabled target's Depth.
+        CHECK(b.proc.modulation_settings().routes[0][3].amount == Approx(0.5f));
+        CHECK(b.store.get_value(spectr::lfo_route_enabled_param_id(1, 3)) == 1.0f);
+    }
+    SECTION("the LFO Depth is carried into each enabled target's Depth") {
+        RoutedPlugin b;
+        b.store.set_value(spectr::kParamLfoDepth, 0.3f);
+        b.store.set_value(spectr::kParamLfo2Depth, 0.8f);
+        auto params = b.store.serialize();
+        RoutedPlugin c;
+        REQUIRE(c.store.deserialize(params));
+        const std::vector<uint8_t> legacy(json.begin(), json.end());
+        REQUIRE(c.proc.deserialize_plugin_state(legacy));
+        const auto m = c.proc.modulation_settings();
+        CHECK(m.routes[0][0].enabled);
+        CHECK(m.routes[0][0].amount == Approx(0.3f));
+        CHECK(m.routes[1][0].amount == Approx(0.8f));
+        // A target the session did not drive keeps the default.
+        CHECK(m.routes[0][4].amount == Approx(0.5f));
+    }
+    SECTION("no mask: the enum lane names the one destination") {
+        REQUIRE(erase_member(json, "modulation_target_mask"));
+        RoutedPlugin b;
+        b.store.set_value(spectr::kParamLfoTarget, 2.0f);  // Snapshot B
+        auto params = b.store.serialize();
+        RoutedPlugin c;
+        REQUIRE(c.store.deserialize(params));
+        const std::vector<uint8_t> legacy(json.begin(), json.end());
+        REQUIRE(c.proc.deserialize_plugin_state(legacy));
+        CHECK(mask_int(c.mask(0)) == 0x04);
+        CHECK(mask_int(c.mask(1)) == 0x04);
+    }
+    SECTION("control: a current session is NOT migrated") {
+        RoutedPlugin src;
+        src.store.set_value(spectr::lfo_route_enabled_param_id(0, 4), 1.0f);
+        src.proc.apply_surface_params(false);
+        const auto params = src.store.serialize();
+        const auto current = src.proc.serialize_plugin_state();
+        RoutedPlugin c;
+        REQUIRE(c.store.deserialize(params));
+        REQUIRE(c.proc.deserialize_plugin_state(current));
+        CHECK(mask_int(c.mask(0)) == 0x11);
+    }
 }
 
 TEST_CASE("tempo LFO waveform is deterministic and bounded") {

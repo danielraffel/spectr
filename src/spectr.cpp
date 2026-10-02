@@ -23,11 +23,24 @@
 #include <sstream>
 #include <limits>
 #include <string>
+#include <cstdlib>
 #include <string_view>
 
 namespace spectr {
 
 namespace {
+
+/// Negative-control seam for the route ramp: `SPECTR_MODULATION_PLANT=route-step`
+/// switches destinations and amounts in one block, the behaviour before routes
+/// were slewed. Read once per process; unset in every shipping run.
+bool modulation_plants_route_step() noexcept {
+    static const bool planted = [] {
+        const char* value = std::getenv("SPECTR_MODULATION_PLANT");
+        return value != nullptr && std::string_view(value) == "route-step";
+    }();
+    return planted;
+}
+
 // See set_editor_is_standalone: asserted by the standalone entry points only.
 std::atomic<bool> g_editor_is_standalone{false};
 }  // namespace
@@ -816,6 +829,53 @@ double Spectr::freeze_hold_seconds_at_(double tempo_bpm, int numerator,
     return length_seconds(freeze_length(), tempo_bpm, numerator, denominator);
 }
 
+double Spectr::modulated_freeze_seconds_(double tempo_bpm, int numerator,
+                                         int denominator) noexcept {
+    const double base = freeze_hold_seconds_at_(tempo_bpm, numerator, denominator);
+    auto* store = param_store_;
+    constexpr auto kLength = static_cast<std::size_t>(ModulationTarget::Length);
+    if (!store || freeze_seconds_override_.load(std::memory_order_relaxed) >= 0.0) {
+        freeze_modulated_length_index_.store(-1, std::memory_order_relaxed);
+        return base;
+    }
+    // The Length target's coordinate at this moment: each LFO that is on and
+    // routed to Length adds wave x Depth. The engage this block may perform
+    // takes the length the LFOs reach now; a hold already playing keeps its
+    // own (FreezeSource::set_hold_seconds only shapes the NEXT latch).
+    const pulp::state::ParamID enabled_ids[2] = {kParamLfoEnabled, kParamLfo2Enabled};
+    const LfoShapeFade* fades[2] = {&audio_lfo_shape_fade_, &audio_lfo_2_shape_fade_};
+    const double phases[2] = {audio_modulation_phase_, audio_modulation_phase_2_};
+    bool driven = false;
+    float coordinate = 0.0f;
+    for (std::size_t lfo = 0; lfo < 2; ++lfo) {
+        if (store->get_value(enabled_ids[lfo]) < 0.5f) continue;
+        if (store->get_value(lfo_route_enabled_param_id(lfo, kLength)) < 0.5f) continue;
+        driven = true;
+        coordinate += lfo_value(*fades[lfo], phases[lfo])
+            * std::clamp(store->get_value(lfo_route_amount_param_id(lfo, kLength)),
+                         0.0f, 1.0f);
+    }
+    if (!driven) {
+        freeze_modulated_length_index_.store(-1, std::memory_order_relaxed);
+        return base;
+    }
+    // The user's LENGTH is the centre: its list index, or for a custom length
+    // the list entry nearest it.
+    int centre = freeze_length_preset();
+    if (centre < 0 || centre >= kLengthPresetCustom) {
+        const double bars = length_in_bars(freeze_custom_length());
+        centre = 0;
+        for (int i = 1; i < kLengthPresetCustom; ++i)
+            if (std::abs(length_in_bars(kLengthPresets[static_cast<std::size_t>(i)]) - bars)
+                < std::abs(length_in_bars(kLengthPresets[static_cast<std::size_t>(centre)]) - bars))
+                centre = i;
+    }
+    const int index = modulated_length_index(centre, coordinate, kLengthPresetCustom);
+    freeze_modulated_length_index_.store(index, std::memory_order_relaxed);
+    return length_seconds(kLengthPresets[static_cast<std::size_t>(index)],
+                          tempo_bpm, numerator, denominator);
+}
+
 double Spectr::freeze_length_seconds() const noexcept {
     return length_seconds(freeze_length(), transport_tempo_bpm(),
                           transport_time_sig_numerator(),
@@ -1166,7 +1226,7 @@ void Spectr::process(
         transport_tempo_bpm_.store(tempo, std::memory_order_relaxed);
         transport_time_sig_numerator_.store(numerator, std::memory_order_relaxed);
         transport_time_sig_denominator_.store(denominator, std::memory_order_relaxed);
-        const double seconds = freeze_hold_seconds_at_(tempo, numerator, denominator);
+        const double seconds = modulated_freeze_seconds_(tempo, numerator, denominator);
         freeze_source_.set_hold_seconds(seconds);
         // Longer than the rings reach: ask the worker for bigger ones. A
         // lock-free spawn, at most once per size; the source adopts them at
@@ -1217,6 +1277,8 @@ void Spectr::process(
         // A level still ramping toward zero after the LFO was switched off
         // keeps the branch alive too: the ramp IS the switch-off, and a host
         // that sends nothing after the off event must still hear it finish.
+        // (A route level only matters while its LFO level is non-zero, so
+        // this also covers a destination fading out.)
         const bool lfo_level_ramping =
             audio_lfo_level_[0] > 0.0f || audio_lfo_level_[1] > 0.0f;
         if (has_events || modulation_enabled || modulated_field_was_active_
@@ -1334,17 +1396,34 @@ void Spectr::process(
                         static_cast<ModulationTarget>(std::clamp(
                             static_cast<int>(std::lround(
                                 cursor.value(kParamLfoTarget))), 0, 3));
-                    // An explicit destination selection is editor state and
-                    // only reaches this thread through the published snapshot,
-                    // one control-thread pass behind the automation lane. When
-                    // the lane has moved past the target the selection was
-                    // reconciled against, the automated enum wins immediately
+                    // Per-LFO routing, straight off the cursor like every
+                    // other LFO lane, so automating a destination on/off or
+                    // its amount lands at its event's sample offset.
+                    for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+                        for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+                            auto& route = modulation_settings.routes[lfo][t];
+                            route.enabled = cursor.value(
+                                lfo_route_enabled_param_id(lfo, t)) >= 0.5f;
+                            route.amount = std::clamp(cursor.value(
+                                lfo_route_amount_param_id(lfo, t)), 0.0f, 1.0f);
+                        }
+                    }
+                    // The legacy single-target lane is a COMMAND (see
+                    // apply_surface_params): a move selects that one field
+                    // destination for both LFOs. The control worker turns it
+                    // into routing-lane writes one pass later; until then the
+                    // published target still names the value the routing was
+                    // reconciled against, and the moved lane wins here at once
                     // rather than being swallowed until that pass lands.
-                    modulation_settings.target_mask =
-                        modulation_settings.target
-                                == audio_modulation.settings.target
-                            ? audio_modulation.settings.target_mask
-                            : kModulationTargetMaskUnset;
+                    if (modulation_settings.target
+                        != audio_modulation.settings.target) {
+                        const auto bit = modulation_target_bit(
+                            modulation_settings.target);
+                        for (auto& routes : modulation_settings.routes)
+                            set_route_mask(routes, static_cast<std::uint8_t>(
+                                (route_mask(routes) & ~kModulationTargetMaskAll)
+                                | bit));
+                    }
                     modulation_settings.lfo2_enabled =
                         cursor.value(kParamLfo2Enabled) >= 0.5f;
                     modulation_settings.lfo2_shape = static_cast<LfoShape>(
@@ -1354,6 +1433,24 @@ void Spectr::process(
                         cursor.value(kParamLfo2Rate), 0.25f, 16.0f);
                     modulation_settings.lfo2_depth = std::clamp(
                         cursor.value(kParamLfo2Depth), 0.0f, 1.0f);
+                    // The LFO-level Depth lanes are COMMANDS too (see
+                    // apply_surface_params): each target carries its own
+                    // depth, and a move of an LFO's legacy Depth lane sets the
+                    // depth of every target that LFO currently drives. Applied
+                    // here at once, like the target lane, until the control
+                    // worker has written it into the target lanes.
+                    {
+                        const float lane[2] = {modulation_settings.depth,
+                                               modulation_settings.lfo2_depth};
+                        const float published[2] = {
+                            audio_modulation.settings.depth,
+                            audio_modulation.settings.lfo2_depth};
+                        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+                            if (lane[lfo] == published[lfo]) continue;
+                            for (auto& route : modulation_settings.routes[lfo])
+                                if (route.enabled) route.amount = lane[lfo];
+                        }
+                    }
                     if (should_reset_stream_history && block_offset == 0) {
                         audio_modulation_phase_ =
                             ctx.position_beats
@@ -1382,17 +1479,66 @@ void Spectr::process(
                     audio_lfo_2_shape_fade_ = retarget_lfo_shape(
                         audio_lfo_2_shape_fade_,
                         modulation_settings.lfo2_shape);
+                    // ── Freeze target ───────────────────────────────────
+                    // A gate per LFO (the target's Depth is the frozen duty),
+                    // OR-ed. Read before the level slew below: the freeze
+                    // source has its own engage/release crossfade, so the
+                    // gate is a clean on/off.
+                    {
+                        constexpr auto kFreeze =
+                            static_cast<std::size_t>(ModulationTarget::Freeze);
+                        bool driven = false, gate = false;
+                        const bool lfo_on[2] = {modulation_settings.enabled,
+                                                modulation_settings.lfo2_enabled};
+                        const LfoShapeFade* fades[2] = {&audio_lfo_shape_fade_,
+                                                        &audio_lfo_2_shape_fade_};
+                        const double phases[2] = {audio_modulation_phase_,
+                                                  audio_modulation_phase_2_};
+                        for (std::size_t lfo = 0; lfo < 2; ++lfo) {
+                            const auto& route = modulation_settings.routes[lfo][kFreeze];
+                            if (!lfo_on[lfo] || !route.enabled) continue;
+                            driven = true;
+                            gate = gate || lfo_freeze_gate(fades[lfo]->to, phases[lfo],
+                                                           route.amount);
+                        }
+                        const bool param_frozen = cursor.value(kParamFreeze) >= 0.5f;
+                        const int press = freeze_press_request_.exchange(
+                            -1, std::memory_order_relaxed);
+                        bool frozen = param_frozen;
+                        if (driven) {
+                            // The user's press (or the lane's automation)
+                            // holds until the gate next changes.
+                            if (param_frozen != freeze_param_last_) {
+                                freeze_user_override_ = true;
+                                freeze_user_value_ = param_frozen;
+                            }
+                            if (press >= 0) {
+                                freeze_user_override_ = true;
+                                freeze_user_value_ = press == 1;
+                            }
+                            if (gate != freeze_gate_last_)
+                                freeze_user_override_ = false;
+                            frozen = freeze_user_override_ ? freeze_user_value_ : gate;
+                        } else {
+                            freeze_user_override_ = false;
+                        }
+                        freeze_gate_last_ = gate;
+                        freeze_param_last_ = param_frozen;
+                        freeze_source_.set_frozen(frozen);
+                        freeze_effective_.store(frozen, std::memory_order_relaxed);
+                        freeze_gate_driven_.store(driven, std::memory_order_relaxed);
+                    }
                     // Slew each LFO's audible level, then let the slewed
                     // value stand in for enabled + depth everywhere below:
                     // the modulation, the activity flag and the editor's
                     // publication all see the same ramp, so the drawn overlay
                     // fades exactly as the sound does.
                     {
+                        // An LFO's level is its on/off alone: how far it
+                        // moves each target is that target's own Depth.
                         const float targets[2] = {
-                            modulation_settings.enabled
-                                ? modulation_settings.depth : 0.0f,
-                            modulation_settings.lfo2_enabled
-                                ? modulation_settings.lfo2_depth : 0.0f};
+                            modulation_settings.enabled ? 1.0f : 0.0f,
+                            modulation_settings.lfo2_enabled ? 1.0f : 0.0f};
                         const double level_seconds =
                             static_cast<double>(out_slice.num_samples())
                             / (ctx.sample_rate > 0.0 ? ctx.sample_rate
@@ -1402,6 +1548,23 @@ void Spectr::process(
                                 ? slew_lfo_level(audio_lfo_level_[lfo],
                                                  targets[lfo], level_seconds)
                                 : targets[lfo];
+                            // Each route the same way, and the slewed level
+                            // stands in for enabled + amount below.
+                            for (std::size_t t = 0; t < kModulationTargetCount; ++t) {
+                                auto& route = modulation_settings.routes[lfo][t];
+                                const float target_level =
+                                    route.enabled ? route.amount : 0.0f;
+                                float& level = audio_route_level_[lfo][t];
+                                level = (audio_lfo_level_primed_
+                                         && !modulation_plants_route_step())
+                                    ? slew_lfo_level(level, target_level,
+                                                     level_seconds
+                                                         * kLfoLevelSlewSeconds
+                                                         / route_slew_seconds(t))
+                                    : target_level;
+                                route.enabled = level > 0.0f;
+                                route.amount = level;
+                            }
                         }
                         audio_lfo_level_primed_ = true;
                         modulation_settings.enabled = audio_lfo_level_[0] > 0.0f;
@@ -1412,23 +1575,35 @@ void Spectr::process(
                     }
                     const float wave = lfo_value(
                         audio_lfo_shape_fade_, audio_modulation_phase_);
-                    BandField audible = apply_internal_modulation(
+                    const float wave2 = lfo_value(
+                        audio_lfo_2_shape_fade_, audio_modulation_phase_2_);
+                    // Both LFOs, every routed destination, one composition:
+                    // the same pure function the editor evaluates at frame
+                    // time, so what is drawn is what is heard.
+                    const auto composed = compose_internal_modulation(
                         host_field, audio_modulation.snapshots, host_morph,
-                        modulation_settings, wave);
-                    if (modulation_settings.lfo2_enabled) {
-                        const float wave2 = lfo_value(
-                            audio_lfo_2_shape_fade_,
-                            audio_modulation_phase_2_);
-                        ModulationSettings second = modulation_settings;
-                        second.enabled = true;
-                        second.shape = modulation_settings.lfo2_shape;
-                        second.beats_per_cycle =
-                            modulation_settings.lfo2_beats_per_cycle;
-                        second.depth = modulation_settings.lfo2_depth;
-                        audible = apply_internal_modulation(
-                            audible, audio_modulation.snapshots, host_morph,
-                            second, wave2);
-                    }
+                        modulation_settings, wave, wave2);
+                    const BandField& audible = composed.field;
+
+                    const auto authored_viewport = decode_viewport(
+                        cursor.value(kParamViewportCenter),
+                        cursor.value(kParamViewportWidth));
+                    // Gated on `morph_derived` for the same reason the bands
+                    // are, and it has to be the SAME gate: the window and the
+                    // shape drawn inside it must come from one derivation, or
+                    // the mask is built for a window the bands were never
+                    // mapped to.
+                    const auto base_viewport =
+                        (morph_has_both
+                         && audio_modulation.morph_derived
+                         && audio_modulation.morph_applies_viewport)
+                        ? morph_viewports(
+                              audio_modulation.snapshots.a.viewport,
+                              audio_modulation.snapshots.b.viewport,
+                              host_morph)
+                        : authored_viewport;
+                    const Viewport audible_viewport =
+                        apply_viewport_modulation(base_viewport, composed.coords);
 
                     // Hand the post-LFO field to the editor so it can draw the
                     // modulation it is playing. Without this the modulator is
@@ -1447,10 +1622,7 @@ void Spectr::process(
                     // state. This guard is the one apply_internal_modulation
                     // already applies per LFO.
                     const bool modulation_active =
-                        (modulation_settings.enabled
-                         && modulation_settings.depth > 0.0f)
-                        || (modulation_settings.lfo2_enabled
-                            && modulation_settings.lfo2_depth > 0.0f);
+                        modulation_audible(modulation_settings);
                     // While running, every block is a new frame. On the falling
                     // edge one last frame carries active=false, which is the
                     // editor's cue to release the overlay and draw canonical
@@ -1492,6 +1664,8 @@ void Spectr::process(
                                 slot.settings  = modulation_settings;
                                 slot.snapshots = audio_modulation.snapshots;
                                 slot.host_morph = host_morph;
+                                slot.base_viewport = base_viewport;
+                                slot.viewport = audible_viewport;
                                 slot.phase     = phase_1;
                                 slot.phase_2   = phase_2;
                                 slot.phase_per_second   = rate_1;
@@ -1519,23 +1693,11 @@ void Spectr::process(
                     // the strobe range, and remapping every band's frequency
                     // span per block is a different order of cost from the
                     // gain-only modulation they were built for.
-                    const auto authored_viewport = decode_viewport(
-                        cursor.value(kParamViewportCenter),
-                        cursor.value(kParamViewportWidth));
-                    // Gated on `morph_derived` for the same reason the bands
-                    // are, and it has to be the SAME gate: the window and the
-                    // shape drawn inside it must come from one derivation, or
-                    // the mask is built for a window the bands were never
-                    // mapped to.
-                    const auto automated_viewport =
-                        (morph_has_both
-                         && audio_modulation.morph_derived
-                         && audio_modulation.morph_applies_viewport)
-                        ? morph_viewports(
-                              audio_modulation.snapshots.a.viewport,
-                              audio_modulation.snapshots.b.viewport,
-                              host_morph)
-                        : authored_viewport;
+                    // The internal LFOs reach the window only through the
+                    // two viewport destinations, which modulate AROUND the
+                    // window above (see apply_viewport_modulation) -- never
+                    // the stored viewport lanes.
+                    const auto& automated_viewport = audible_viewport;
                     automated.min_hz = automated_viewport.min_hz;
                     automated.max_hz = automated_viewport.max_hz;
                     automated.spacing =
@@ -1567,7 +1729,6 @@ void Spectr::process(
                     }
                     renderer->set_mix(std::clamp(
                         cursor.value(kMix) / 100.0f, 0.0f, 1.0f));
-                    freeze_source_.set_frozen(cursor.value(kParamFreeze) >= 0.5f);
 
                     for (std::size_t channel = 0;
                          channel < out_slice.num_channels(); ++channel) {
@@ -1654,7 +1815,15 @@ void Spectr::process(
             output_channels_[channel] = output.channel(channel).data();
         }
         renderer->set_mix(std::clamp(mix, 0.0f, 1.0f));
-        freeze_source_.set_frozen(state().get_value(kParamFreeze) >= 0.5f);
+        {
+            // No LFO is running on this path, so nothing gates the freeze.
+            const bool frozen = state().get_value(kParamFreeze) >= 0.5f;
+            freeze_source_.set_frozen(frozen);
+            freeze_effective_.store(frozen, std::memory_order_relaxed);
+            freeze_gate_driven_.store(false, std::memory_order_relaxed);
+            freeze_param_last_ = frozen;
+            freeze_user_override_ = false;
+        }
         audio_mix_percent_ = mix * 100.0f;
         audio_output_trim_db_ = out_trim_db;
         const bool processed = renderer->process(
@@ -1779,6 +1948,14 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // empty selection that would silence modulation.
     root.addMember("modulation_target_mask",
                    static_cast<int32_t>(modulation_.target_mask));
+    // Per-LFO routing lives in its own parameter lanes (4020..4055) and rides
+    // the base blob. This marker only says those lanes are authoritative; a
+    // blob without it predates them and is migrated from the single target
+    // and the LFO Depth above. `modulation_target_mask` keeps being written (LFO 1's field
+    // destinations) so an older build opening this session hears the
+    // nearest thing it can express.
+    // 2: each target's Depth is absolute (no LFO-level depth multiplies it).
+    root.addMember("lfo_routing", static_cast<int32_t>(2));
 
     // Whether a morph also moves the viewport. A playback preference with no
     // parameter lane, so like the destination mask it would be silently lost
@@ -2257,6 +2434,13 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     }
 
     std::uint8_t new_target_mask = kModulationTargetMaskUnset;
+    const bool has_lfo_routing = root.hasObjectMember("lfo_routing");
+    int lfo_routing_version = 0;
+    if (has_lfo_routing) {
+        const auto parsed = read_int_(root["lfo_routing"]);
+        if (!parsed) return false;
+        lfo_routing_version = *parsed;
+    }
     if (root.hasObjectMember("modulation_target_mask")) {
         const auto parsed_mask = read_int_(root["modulation_target_mask"]);
         if (!parsed_mask) return false;
@@ -2321,9 +2505,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         // target left over from before the restore would make it discard the
         // selection this blob just carried.
         if (param_store_) {
-            const std::uint8_t restored_mask = new_target_mask;
             modulation_ = modulation_from_store_();
-            modulation_.target_mask = restored_mask;
         } else {
             modulation_.target_mask = new_target_mask;
         }
@@ -2361,6 +2543,53 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         if (preset < 0) (void)set_freeze_custom_length(*migrated_freeze_length);
         param_store_->set_value(kParamFreezeLength, static_cast<float>(
             preset < 0 ? kLengthPresetCustom : preset));
+    }
+    // Per-LFO routing arrived after 1.0.6. A blob without the marker was
+    // written by a build where ONE target selection (the 4004 lane, or the
+    // "Destinations" mask that overrode it) drove BOTH LFOs, and its routing
+    // lanes hold whatever this instance had. Map that selection onto the
+    // routing lanes -- "that one on" for each LFO, full amount, no viewport --
+    // so the session sounds as it did. Listener-silent, like the rest of a
+    // restore.
+    // A blob from a development build that stored routing with amounts
+    // RELATIVE to an LFO-level depth (`lfo_routing: 1`): fold that depth into
+    // each target's Depth so it sounds as it was saved.
+    if (lfo_routing_version == 1 && param_store_) {
+        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+            const float depth = std::clamp(param_store_->get_value(
+                lfo == 0 ? kParamLfoDepth : kParamLfo2Depth), 0.0f, 1.0f);
+            for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+                const auto id = lfo_route_amount_param_id(lfo, t);
+                param_store_->set_value(id, param_store_->get_value(id) * depth);
+            }
+        }
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        modulation_ = modulation_from_store_();
+        publish_audio_modulation_state_();
+    }
+    if (!has_lfo_routing && param_store_) {
+        ModulationSettings legacy;
+        legacy.target = static_cast<ModulationTarget>(std::clamp(
+            static_cast<int>(std::lround(param_store_->get_value(kParamLfoTarget))),
+            0, 3));
+        legacy.target_mask = new_target_mask;
+        const std::uint8_t mask = resolve_modulation_target_mask(legacy);
+        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+            // That session's LFO Depth becomes each enabled target's Depth;
+            // a target it did not drive takes the default.
+            const float depth = std::clamp(param_store_->get_value(
+                lfo == 0 ? kParamLfoDepth : kParamLfo2Depth), 0.0f, 1.0f);
+            for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+                const bool on = ((mask >> t) & 1u) != 0;
+                param_store_->set_value(lfo_route_enabled_param_id(lfo, t),
+                                        on ? 1.0f : 0.0f);
+                param_store_->set_value(lfo_route_amount_param_id(lfo, t),
+                                        on ? depth : 0.5f);
+            }
+        }
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        modulation_ = modulation_from_store_();
+        publish_audio_modulation_state_();
     }
     for (std::size_t slot = 0; param_store_ && slot < kSurfaceCacheSlots; ++slot) {
         applied_param_cache_[slot].store(

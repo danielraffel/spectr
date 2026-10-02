@@ -21,6 +21,7 @@
 // dimmed editor behind the modal alone. Read the per-capture statistics this
 // prints, and look at the image.
 
+#include "spectr/editor_resize.hpp"
 #include "spectr/param_surface.hpp"
 #include "spectr/spectr.hpp"
 
@@ -1671,6 +1672,234 @@ int main(int argc, char** argv) {
                 // layout snapshot, and it needs a RED of its own.
                 capture(rig, dir, prefix + "PLANT", backend, scale);
             }
+            return g_failures == 0 ? 0 : 1;
+        }
+
+        // ── LFO routing: UI frame cost ─────────────────────────────────
+        //
+        // SPECTR_ROUTE_FRAME_COST=1: the editor's per-frame cost (one audio
+        // block, then one display tick: the modulation frame publication, the
+        // JS overlay apply and the draw loop) with LFO 1 on Bank -- the
+        // shipping baseline -- against LFO 1 on Band shift and on both.
+        // Wall time of the tick, p50 / p95 / max over 400 frames after a
+        // 60-frame warm-up, 64 bands. Headless, so it measures the editor's
+        // own work, not a compositor.
+        if (std::getenv("SPECTR_ROUTE_FRAME_COST") != nullptr) {
+            auto& store = rig.store;
+            store.set_value(spectr::kParamBandCount, 64.0f);
+            store.set_value(spectr::kParamViewportCenter, 2.8f);
+            store.set_value(spectr::kParamViewportWidth, 1.2f);
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            store.set_value(spectr::kParamLfoDepth, 0.6f);
+            store.set_value(spectr::kParamLfoRate, 2.0f);
+            struct Config { const char* name; unsigned mask; };
+            const Config configs[] = {{"bank", 0x01u}, {"band-shift", 0x10u},
+                                      {"bank+band-shift", 0x11u}, {"bank", 0x01u}};
+            for (const auto& config : configs) {
+                for (std::size_t t = 0; t < 6; ++t)
+                    store.set_value(spectr::lfo_route_enabled_param_id(0, t),
+                                    (config.mask >> t) & 1u ? 1.0f : 0.0f);
+                rig.processor.apply_surface_params(false);
+                // Positive control: the frames this run delivers reach the
+                // document, and (for a viewport route) move the overlay.
+                rig.eval("(() => { globalThis.__routeFrames = 0;"
+                         " if (!globalThis.__routeFrameHooked) { globalThis.__routeFrameHooked = true;"
+                         " window.pulp.on('modulation_frame', () => { globalThis.__routeFrames++; }); } })();",
+                         "spectr-route-frame-control");
+                std::vector<int> audible_windows;
+                std::vector<double> ms;
+                constexpr int block = 800;  // 60 Hz at 48 kHz
+                std::vector<float> in0(block), in1(block), out0(block), out1(block);
+                const float* inputs[2]{in0.data(), in1.data()};
+                float* outputs[2]{out0.data(), out1.data()};
+                pulp::midi::MidiBuffer midi_in, midi_out;
+                pulp::format::ProcessContext context;
+                context.sample_rate = 48000.0;
+                context.num_samples = block;
+                for (int frame = 0; frame < 460; ++frame) {
+                    for (int i = 0; i < block; ++i)
+                        in0[i] = in1[i] = 0.3f * static_cast<float>(
+                            std::sin(0.13 * (frame * block + i)));
+                    pulp::audio::BufferView<const float> input(inputs, 2, block);
+                    pulp::audio::BufferView<float> output(outputs, 2, block);
+                    rig.processor.process(output, input, midi_in, midi_out, context);
+                    audible_windows.push_back(static_cast<int>(std::lround(
+                        rig.processor.read_modulated_field().viewport.min_hz)));
+                    const auto t0 = std::chrono::steady_clock::now();
+                    rig.clock.tick(1.0f / 60.0f);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    if (frame >= 60)
+                        ms.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+                }
+                std::sort(audible_windows.begin(), audible_windows.end());
+                const auto distinct = std::unique(audible_windows.begin(), audible_windows.end())
+                    - audible_windows.begin();
+                std::printf("[route-frame-cost] control: %td distinct audible windows rendered\n", distinct);
+                rig.eval("console.log('[route-frame-cost] control frames=' + globalThis.__routeFrames);",
+                         "spectr-route-frame-control-read");
+                std::sort(ms.begin(), ms.end());
+                std::printf("[route-frame-cost] %-24s p50 %.3f ms  p95 %.3f ms  max %.3f ms  (n=%zu)\n",
+                            config.name, ms[ms.size() / 2], ms[ms.size() * 95 / 100],
+                            ms.back(), ms.size());
+            }
+            return g_failures == 0 ? 0 : 1;
+        }
+
+        // ── LFO routing: the band menu's target rows ───────────────────
+        //
+        // SPECTR_MODULATION_ROUTE_SHOTS=1 captures the Modulation submenu with
+        // its six target switches + Depth rows at the default host size and
+        // at the minimum, and prints the panel's rect against the space the
+        // menu may use.
+        if (std::getenv("SPECTR_MODULATION_ROUTE_SHOTS") != nullptr) {
+            auto& store = rig.store;
+            const auto set_routes = [&](std::size_t lfo, unsigned mask,
+                                        std::initializer_list<float> amounts) {
+                std::size_t t = 0;
+                for (const float amount : amounts) {
+                    store.set_value(spectr::lfo_route_enabled_param_id(lfo, t),
+                                    (mask >> t) & 1u ? 1.0f : 0.0f);
+                    store.set_value(spectr::lfo_route_amount_param_id(lfo, t), amount);
+                    ++t;
+                }
+            };
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            store.set_value(spectr::kParamLfoDepth, 0.5f);
+            store.set_value(spectr::kParamLfoRate, 4.0f);
+            const auto open_menu = [&] {
+                rig.eval("(() => { if (!globalThis.__pulpActivateMaterializedElement__("
+                         "'[data-spectr-filter-surface]','contextmenu',"
+                         "{clientX:420,clientY:430,offsetX:420,offsetY:430,button:2})) "
+                         "throw new Error('no band menu'); "
+                         "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+                         "globalThis.__pulpRuntimeSettle__(8); })();",
+                         "spectr-route-shot-open");
+                settle(rig.clock, 16);
+                rig.activate("[data-spectr-band-action=\"modulation-toggle\"]");
+                settle(rig.clock, 16);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+            };
+            const auto report = [&](const char* name) {
+                rig.eval(std::string("(() => { const p = document.querySelector("
+                    "'[data-spectr-modulation-panel]'); if (!p) { console.log('[route-shot] "
+                    ) + name + " NO PANEL'); return; } const r = p.getBoundingClientRect(); "
+                    "const rows = Array.from(document.querySelectorAll('[data-spectr-modulation-panel] [data-spectr-band-action]')); "
+                    "const last = rows[rows.length - 1].getBoundingClientRect(); "
+                    "const amount = document.querySelector('[data-spectr-band-action=\"modulation-target-depth-bank\"]'); "
+                    "const depth = document.querySelector('[data-spectr-band-action=\"lfo1-rate\"]'); "
+                    "const ah = amount ? amount.getBoundingClientRect().height : -1; "
+                    "const dh = depth ? depth.getBoundingClientRect().height : -1; "
+                    "console.log('[route-shot] " + name + " panel top=' + r.top.toFixed(1) "
+                    "+ ' bottom=' + r.bottom.toFixed(1) + ' height=' + r.height.toFixed(1) "
+                    "+ ' scrollHeight=' + p.scrollHeight + ' lastRowBottom=' + last.bottom.toFixed(1) "
+                    "+ ' rows=' + rows.length + ' targetDepthRowH=' + ah.toFixed(1) "
+                    "+ ' rateRowH=' + dh.toFixed(1) + ' limit=' + (860 - 64 - 16)); })();",
+                    "spectr-route-shot-report");
+                settle(rig.clock, 2);
+            };
+            // Default size: Bank on, Morph on at 40 %, Band shift on at
+            // 75 % -- several on, several off, so lit and dimmed rows show.
+            rig.resize(990.0f, 645.0f);
+            set_routes(0, 0x59u, {1.0f, 1.0f, 1.0f, 0.4f, 0.75f, 1.0f, 0.5f, 0.5f});
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(8);
+            open_menu();
+            report("990x645-mixed");
+            capture(rig, dir, prefix + "modulation-routes-990x645-mixed", backend, scale);
+            // Every destination on: the tallest the panel gets.
+            set_routes(0, 0xFFu, {1.0f, 0.25f, 0.5f, 0.4f, 0.75f, 0.6f, 0.5f, 0.3f});
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(4);
+            settle(rig.clock, 16);
+            rig.root->layout_children();
+            report("990x645-all-on");
+            capture(rig, dir, prefix + "modulation-routes-990x645-all-on", backend, scale);
+            // The minimum host size. The editor is pinned to its design box and
+            // scaled uniformly, so the menu has the same design-space room.
+            rig.resize(static_cast<float>(spectr::kEditorMinimumWidth), static_cast<float>(spectr::kEditorMinimumHeight));
+            settle(rig.clock, 16);
+            rig.root->layout_children();
+            report("minimum-all-on");
+            capture(rig, dir, prefix + "modulation-routes-minimum-all-on", backend, scale);
+            rig.resize(990.0f, 645.0f);
+            // LFO 2's rows: source switch.
+            set_routes(1, 0xA1u, {0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.3f, 0.5f, 0.25f});
+            rig.processor.apply_surface_params(false);
+            rig.activate("[data-spectr-modulation-source-action=\"2\"]");
+            settle(rig.clock, 16);
+            rig.root->layout_children();
+            report("990x645-lfo2");
+            capture(rig, dir, prefix + "modulation-routes-990x645-lfo2", backend, scale);
+
+            // Settings > MODULATION: the same targets, for LFO 1. The body is
+            // a native ScrollView; scroll it so the target list is in view.
+            for (int level = 0; level < 2; ++level) {
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                rig.service_runtime();
+            }
+            // The override question: LFO 1 driving Freeze, then a press.
+            store.set_value(spectr::lfo_route_enabled_param_id(0, 6), 1.0f);
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(16);
+            settle(rig.clock, 8);
+            rig.activate("[data-spectr-freeze-toggle]");
+            settle(rig.clock, 16);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            capture(rig, dir, prefix + "override-dialog", backend, scale);
+            (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+            rig.service_runtime();
+            rig.eval("(() => { const b = document.querySelector('[data-spectr-manager-action=\"override-keep\"]');"
+                     " if (b) globalThis.__pulpActivateMaterializedElement__("
+                     "'[data-spectr-manager-action=\"override-keep\"]', 'click', null); })();",
+                     "spectr-route-shot-keep");
+            settle(rig.clock, 16);
+            rig.activate("[data-spectr-settings-open]");
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            {
+                std::vector<pulp::view::ScrollView*> scrolls;
+                collect_scroll_views(*rig.root, scrolls);
+                pulp::view::ScrollView* body = nullptr;
+                for (auto* scroll : scrolls)
+                    if (scroll->content_size().height > scroll->bounds().height + 400.0f)
+                        body = scroll;
+                for (const float fraction : {0.62f, 0.82f}) {
+                    if (body != nullptr) {
+                        const float max_y = body->content_size().height - body->bounds().height;
+                        body->set_scroll(body->scroll_x(), max_y * fraction);
+                    }
+                    settle(rig.clock, 8);
+                    char name[64];
+                    std::snprintf(name, sizeof name, "settings-modulation-%02d",
+                                  static_cast<int>(fraction * 100.0f));
+                    capture(rig, dir, prefix + name, backend, scale);
+                }
+            }
+            rig.activate("[data-spectr-settings-close]");
+            settle(rig.clock, 16);
+            // The help guide's Movement section.
+            rig.activate("[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+            settle(rig.clock, 24);
+            rig.activate("[data-spectr-help-learn-more]");
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            rig.eval("(() => { const c = document.querySelector('[data-spectr-help-scroll-content]');"
+                     " if (!c) { console.log('[route-shot] no guide'); return; }"
+                     " const all = Array.from(c.querySelectorAll('*'));"
+                     " const h = all.find((n) => n.children.length === 0 && n.textContent.trim() === 'Movement');"
+                     " if (!h) { console.log('[route-shot] no Movement heading'); return; }"
+                     " const dy = h.getBoundingClientRect().top - c.getBoundingClientRect().top;"
+                     " c.style.marginTop = -(dy - 12);"
+                     " console.log('[route-shot] guide scrolled to Movement, dy=' + dy); })();",
+                     "spectr-route-shot-help");
+            settle(rig.clock, 8);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            capture(rig, dir, prefix + "help-movement", backend, scale);
             return g_failures == 0 ? 0 : 1;
         }
 
