@@ -10708,9 +10708,20 @@ function restoreMaterializedLayout(node, bridge) {
         g5.setFlex(String(id), "height", height);
         return true;
       };
+      // The footer follows the factory rows rather than the capture's
+      // offsets: a 24pt FACTORY heading and 31pt per row (menuItem's 30pt
+      // minHeight on the 1pt gap). Pinned at the capture's 264 it covered the
+      // last factory row's bottom 8pt once the rows were 30pt. The popup
+      // grows upward from the same bottom edge.
+      const patternFactoryRows = Array.isArray(globalThis.Spectr?.FACTORY_PATTERNS)
+        ? globalThis.Spectr.FACTORY_PATTERNS.length
+        : globalThis.document?.querySelectorAll?.(
+            '[data-spectr-menu-root="pattern"] [data-spectr-pattern-menu-id^="factory:"]')?.length || 8;
+      const patternMenuContent = 24 + 31 * patternFactoryRows;
+      const patternPopupHeight = patternMenuContent + 78;
       const patternReceipt = {
-        popup: setBox(popup, 0, -336, 220, 334),
-        footer: setBox(footer, 5, 264, 210, 63),
+        popup: setBox(popup, 0, -(patternPopupHeight + 2), 220, patternPopupHeight),
+        footer: setBox(footer, 5, patternMenuContent + 5, 210, 63),
         save: setBox(save, 0, 3, 210, 28),
         manage: setBox(manage, 0, 33, 210, 28)
       };

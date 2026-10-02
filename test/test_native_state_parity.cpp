@@ -3615,7 +3615,7 @@ TEST_CASE("every control on every editor surface resolves a press anywhere in it
               const selectors = ['button', 'input', '[role="option"]',
                 '[role="slider"]', '[role="switch"]', '[role="menuitem"]',
                 '[role="menuitemradio"]', '[role="menuitemcheckbox"]',
-                '[role="tab"]', '[data-spectr-setting-slider]',
+                '[role="tab"]', '[role="spinbutton"]', '[data-spectr-setting-slider]',
                 '[data-spectr-menu-trigger]'];
               const ids = new Set();
               for (const selector of selectors)
@@ -3686,9 +3686,16 @@ TEST_CASE("every control on every editor surface resolves a press anywhere in it
         return false;
     };
     int occluded = 0;
+    // Every control the sweep probed at least once, so a case can prove a
+    // control it names was really reached.
+    std::vector<const View*> swept;
     const auto directory = atlas_directory();
+    // `clip`: a list that scrolls by moving its rows inside a clipping
+    // viewport (the LENGTH menu, the Fraction list) paints only there, so a
+    // sample outside it is not a press on that row.
     const auto sweep = [&](std::string_view surface,
-                           const View* scope = nullptr) {
+                           const View* scope = nullptr,
+                           std::optional<RootRect> clip = std::nullopt) {
         settle(rig.clock, 24);
         ++surfaces;
         {
@@ -3707,6 +3714,9 @@ TEST_CASE("every control on every editor surface resolves a press anywhere in it
             // painted control at this scroll position.
             if (box.right <= 0.0f || box.bottom <= 0.0f || box.left >= 1320.0f
                 || box.top >= 860.0f)
+                continue;
+            if (clip && (box.bottom <= clip->top || box.top >= clip->bottom
+                         || box.right <= clip->left || box.left >= clip->right))
                 continue;
             const auto painted = painted_extent(*control);
             INFO("control " << describe_control(*control));
@@ -3735,6 +3745,10 @@ TEST_CASE("every control on every editor surface resolves a press anywhere in it
                         || point.x < viewport.left || point.x > viewport.right)
                         continue;
                 }
+                if (clip && (point.y < clip->top || point.y > clip->bottom
+                             || point.x < clip->left || point.x > clip->right))
+                    continue;
+                if (swept.empty() || swept.back() != control) swept.push_back(control);
                 ++probed;
                 auto* hit = press_target(point);
                 const auto* resolved = nearest_click_target(hit);
@@ -3827,12 +3841,121 @@ TEST_CASE("every control on every editor surface resolves a press anywhere in it
     activate(rig, "[data-spectr-settings-close]");
     close_overlay();
 
+    // LENGTH. The trigger is a home-surface control; the home sweep above
+    // must have reached it.
+    {
+        const auto* trigger = native_view_for("[data-spectr-length-trigger]");
+        REQUIRE(trigger != nullptr);
+        CHECK(std::find(swept.begin(), swept.end(), trigger) != swept.end());
+    }
+    const auto attribute_of = [&](std::string_view selector, std::string_view name) {
+        auto value = runtime_string(
+            rig, "document.querySelector(" + js_string(selector) + ").getAttribute("
+                     + js_string(name) + ")",
+            "spectr-native-sweep-attribute");
+        return value.substr(0, value.find('\n'));
+    };
+    // A list that scrolls inside a clipping viewport: swept at every wheel
+    // position from the top to the end, each pass clipped to the viewport,
+    // and it must have reached every row it holds.
+    const auto sweep_scrolling_list = [&](const std::string& name, const std::string& list,
+                                          const std::string& viewport_selector,
+                                          const std::string& offset_attribute,
+                                          const std::string& row_selector) {
+        const auto* viewport = native_view_for(viewport_selector);
+        REQUIRE(viewport != nullptr);
+        const auto vp = root_rect(*viewport);
+        const pulp::view::Point over{(vp.left + vp.right) * 0.5f, (vp.top + vp.bottom) * 0.5f};
+        for (int i = 0; i < 40; ++i)
+            pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, -60.0f, {});
+        settle(rig.clock, 8);
+        REQUIRE(attribute_of(list, offset_attribute) == "0");
+        int pass = 0;
+        for (std::string previous;; ++pass) {
+            const auto offset = attribute_of(list, offset_attribute);
+            if (offset == previous) break;
+            previous = offset;
+            sweep(name + " at offset " + offset, nullptr, root_rect(*native_view_for(viewport_selector)));
+            pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 90.0f, {});
+            settle(rig.clock, 8);
+            REQUIRE(pass < 30);
+        }
+        // Every row of the list was reached at one of those positions.
+        std::vector<std::string> ids;
+        try {
+            rig.bridge().load_script(
+                std::string{"(() => { const out = Array.from(document.querySelectorAll("}
+                    + js_string(list + " " + row_selector)
+                    + ")).map((n) => n.__pulpId || n.id || ''); "
+                      "throw new Error('ROWIDS:' + out.join('|') + ':END'); })();",
+                "spectr-native-sweep-rows");
+        } catch (const std::exception& error) {
+            const std::string message = error.what();
+            const auto begin = message.find("ROWIDS:");
+            const auto end = message.find(":END");
+            if (begin != std::string::npos && end != std::string::npos) {
+                std::stringstream rows(message.substr(begin + 7, end - begin - 7));
+                for (std::string id; std::getline(rows, id, '|');) ids.push_back(id);
+            }
+        }
+        INFO(name);
+        CHECK_FALSE(ids.empty());
+        for (const auto& id : ids) {
+            const auto* row = find_view_id(*rig.root, id);
+            INFO("row " << id);
+            REQUIRE(row != nullptr);
+            CHECK(std::find(swept.begin(), swept.end(), row) != swept.end());
+        }
+        return pass;
+    };
+    const auto sweep_length_menu = [&](const std::string& name) {
+        activate(rig, "[data-spectr-menu-root=\"length\"] [data-spectr-menu-trigger]");
+        REQUIRE(rig.root->interaction().active_overlay != nullptr);
+        return sweep_scrolling_list(
+            name, "[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]",
+            "[data-spectr-length-viewport-box]", "data-spectr-length-offset",
+            "[data-spectr-length-option]");
+    };
+    // The editor scales the authored 1320x860 layout, so the 21 rows fit
+    // below the trigger at this size as they do there: one pass.
+    CHECK(sweep_length_menu("menu length") == 1);
+    close_overlay();
+    // A compound length past the loop memory adds its checked row and the
+    // cap note, and the list scrolls: every row at every scroll position.
+    REQUIRE(rig.processor.set_freeze_length_from_editor({64, spectr::LengthFraction::f7_8}));
+    (void)rig.processor.apply_surface_params(false);
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-freeze-length]').getAttribute('data-spectr-freeze-length-label') === '64 7/8 bars'",
+        "the compound length did not reach the LENGTH control");
+    CHECK(sweep_length_menu("menu length, scrolling") > 1);
+    activate(rig, "[data-spectr-length-option=\"custom-editor\"]");
+    REQUIRE(native_view_for("[data-spectr-length-editor]") != nullptr);
+    sweep("length custom editor");
+    for (const auto* selector : {"[data-spectr-length-bars]", "[data-spectr-length-bars-step=\"up\"]",
+                                 "[data-spectr-length-bars-step=\"down\"]",
+                                 "[data-spectr-length-fraction]", "[data-spectr-length-cancel]",
+                                 "[data-spectr-length-apply]"}) {
+        INFO("custom editor control " << selector);
+        const auto* control = native_view_for(selector);
+        REQUIRE(control != nullptr);
+        CHECK(std::find(swept.begin(), swept.end(), control) != swept.end());
+    }
+    activate(rig, "[data-spectr-length-fraction]");
+    REQUIRE(native_view_for("[data-spectr-length-fraction-options]") != nullptr);
+    CHECK(sweep_scrolling_list(
+              "length fraction list", "[data-spectr-length-fraction-options]",
+              "[data-spectr-length-fraction-viewport]", "data-spectr-length-fraction-offset",
+              "[data-spectr-length-fraction-option]") > 1);
+    close_overlay();  // the Fraction list
+    close_overlay();  // the Custom editor
+    require_home(rig);
+
     activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
     activate(rig, "[data-spectr-pattern-manage]");
     sweep("preset manager");
     close_overlay();
 
-    CHECK(surfaces >= 10);
+    CHECK(surfaces >= 14);
     // Control: the sweep actually probed a population, so an empty `dead` list
     // is a reading, not an instrument that measured nothing.
     CHECK(probed > 1000);
@@ -3840,28 +3963,12 @@ TEST_CASE("every control on every editor surface resolves a press anywhere in it
     // samples the sweep has stopped measuring what it claims to.
     INFO("occluded samples " << occluded << " of " << probed);
     CHECK(static_cast<std::size_t>(occluded) * 20 < probed);
-    // ONE known dead band, not excused: named here so it cannot hide and so a
-    // fix is forced to delete this line. The preset menu's SAVE CURRENT /
-    // MANAGE section is laid out 13px above where the reflowed factory rows
-    // end, so it covers the bottom 8px of the last factory row: its top 4px
-    // hit the section (no handler) and the next 4px hit SAVE CURRENT. Its
-    // cause is in the menu's native layout (it survives dropping the captured
-    // layout bindings and the panel's height cap), and it is tracked apart
-    // from the tap-target work that added this sweep.
-    const auto is_known = [](const std::string& entry) {
-        return entry.rfind("menu pattern: ", 0) == 0
-               && entry.find("'AIR LIFT (4k+)'") != std::string::npos;
-    };
-    std::vector<std::string> unexpected;
-    int known = 0;
-    for (const auto& entry : dead) {
-        if (is_known(entry)) ++known;
-        else unexpected.push_back(entry);
-    }
-    for (const auto& entry : unexpected) UNSCOPED_INFO(entry);
-    CHECK(unexpected.empty());
-    // Fails once the preset menu is fixed: delete `is_known` with it.
-    CHECK(known == 1);
+    // No dead band anywhere. The preset menu used to cover the bottom 8pt of
+    // AIR LIFT (4k+) with its SAVE CURRENT / MANAGE footer, pinned at the
+    // capture's offset by runtime.js; the footer now follows the rows
+    // (tools/patch_materialized_runtime_pattern_menu_footer.py).
+    for (const auto& entry : dead) UNSCOPED_INFO(entry);
+    CHECK(dead.empty());
 }
 
 // ── Editor-owned resize grip (AU v2) ─────────────────────────────────────────
@@ -8622,6 +8729,355 @@ TEST_CASE("the Fraction list is one scrolling column whose every row takes a pre
         CHECK(r[1] + r[3] <= vp[1] + vp[3] + 0.5f);
     }
     key(pulp::view::KeyCode::escape);
+    storage.require_unchanged();
+}
+
+// A LENGTH row, a Fraction row and every Custom editor button take the FIRST
+// press, through the plug-in host's own press route, wherever the press lands
+// in the row and with the small slip a real click has.
+//
+// The route is plugin_view_host_mac.mm's: the pointer moves there first, the
+// open overlay is consulted, a routed press goes to its target without
+// bubbling, and the click fires on mouse-up ONLY when the tree's hit test at
+// the release point finds the very view the press went to
+// (deliver_mouse_up's same-view rule). Two ways a row missed that, measured
+// in this rig before tools/patch_materialized_length_first_press.py (112 of
+// these 165 presses missed):
+//   * Below ~534pt the hit test only reached the LENGTH menu through the
+//     header wrappers' downward reach (hitSlop), which covered the trigger's
+//     88pt width and not the 146pt menu. The right part of 15/16 bar, 1, 2, 4
+//     and 8 bars and Custom length... took the press and never clicked.
+//   * A row's check mark and caption are their own views. A press on the
+//     caption released 1-3pt off it (or the reverse) resolved to two
+//     different views, so the click was dropped.
+// Each variant opens the menu afresh and presses once; a miss leaves the
+// menu open, which is what the user saw as "it needed another tap".
+TEST_CASE("every LENGTH row, Fraction row and Custom editor button takes the first press",
+          "[native-n1][state-parity][freeze-length][first-press]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto value_of = [&](const std::string& expression) {
+        auto value = runtime_string(rig, expression, "spectr-native-first-press-value");
+        return value.substr(0, value.find('\n'));
+    };
+    const auto mounted = [&](const std::string& selector) {
+        return value_of("!!document.querySelector(" + js_string(selector) + ")") == "true";
+    };
+    struct Box { float left, top, right, bottom; };
+    const auto box_of = [&](const std::string& selector) -> std::optional<Box> {
+        const auto text = value_of(
+            "(() => { const n = document.querySelector(" + js_string(selector)
+            + "); if (!n) return 'none'; const r = n.getBoundingClientRect(); "
+              "return [r.left, r.top, r.right, r.bottom].join(','); })()");
+        if (text == "none") return std::nullopt;
+        std::array<float, 4> v{};
+        std::stringstream in(text);
+        std::string part;
+        for (auto& f : v) { std::getline(in, part, ','); f = std::stof(part); }
+        return Box{v[0], v[1], v[2], v[3]};
+    };
+    // One click, the plug-in host's way. `frames` frames pass between the
+    // press and the release (the host presents frames while the button is
+    // down); a release away from the press is preceded by a drag there.
+    const auto host_click_at = [&](pulp::view::Point down, pulp::view::Point up, int frames) {
+        auto& root = *rig.root;
+        pulp::view::deliver_hover_move(root, down);
+        const auto routed = pulp::view::route_press_to_active_overlay(root, down);
+        if (routed.consume_press) { settle(rig.clock, 8); return false; }
+        const bool overlay = routed.routing == pulp::view::OverlayPressRouting::routed;
+        pulp::view::ViewCapture capture;
+        capture.set(overlay ? routed.target : root.hit_test(down));
+        if (capture.live_in(root) == nullptr
+            || !pulp::view::transfer_input_focus(root, capture.live_in(root)))
+            return false;
+        if (!pulp::view::deliver_mouse_down(root, capture.live_in(root), down, 0, 1,
+                                            /*bubble=*/!overlay))
+            return false;
+        if (frames > 0) settle(rig.clock, frames);
+        if (up.x != down.x || up.y != down.y)
+            pulp::view::deliver_mouse_drag(root, capture.live_in(root), up, 0, 1);
+        auto* live = capture.live_in(root);
+        if (live == nullptr) return false;
+        bool clicked = false;
+        pulp::view::MouseUpHost host;
+        host.fire_click = [&clicked](const std::function<void()>& handler,
+                                     const std::string&, std::uint16_t) {
+            clicked = static_cast<bool>(handler);
+            if (handler) handler();
+        };
+        pulp::view::deliver_mouse_up(root, live, up, 0, 1, host);
+        settle(rig.clock, 8);
+        return clicked;
+    };
+    const auto centre = [](const Box& b) {
+        return pulp::view::Point{(b.left + b.right) * 0.5f, (b.top + b.bottom) * 0.5f};
+    };
+    const std::string menu = "[data-spectr-menu-root=\"length\"] [data-spectr-menu-options]";
+    const auto open_menu = [&](int frames_after_open) {
+        if (mounted(menu)) return;
+        const auto trigger = *box_of("[data-spectr-length-trigger]");
+        REQUIRE(host_click_at(centre(trigger), centre(trigger), 0));
+        REQUIRE(mounted(menu));
+        if (frames_after_open > 0) settle(rig.clock, frames_after_open);
+    };
+    const auto label = [&] {
+        return value_of("document.querySelector('[data-spectr-freeze-length]')"
+                        ".getAttribute('data-spectr-freeze-length-label')");
+    };
+    const auto options = [&] {
+        const auto text = value_of(
+            "Array.from(document.querySelectorAll(" + js_string(menu + " [data-spectr-length-option]")
+            + ")).map((n) => n.getAttribute('data-spectr-length-option')).join('|')");
+        std::vector<std::string> out;
+        std::stringstream in(text);
+        for (std::string part; std::getline(in, part, '|');) out.push_back(part);
+        return out;
+    };
+    // The places on a row a press lands and where the slip takes the release.
+    struct Variant { const char* name; int frames_after_open; int frames_held; };
+    const auto variants_for = [&](const Box& row, const Box& caption, const Box& check) {
+        const float mid = (row.top + row.bottom) * 0.5f;
+        std::vector<std::tuple<std::string, pulp::view::Point, pulp::view::Point, int, int>> out;
+        out.push_back({"right side, still", {row.right - 10.0f, mid}, {row.right - 10.0f, mid}, 0, 0});
+        out.push_back({"right side, slip 2pt", {row.right - 14.0f, mid - 3.0f},
+                       {row.right - 12.0f, mid - 2.0f}, 2, 3});
+        out.push_back({"caption, released below it", centre(caption),
+                       {(caption.left + caption.right) * 0.5f, caption.bottom + 2.0f}, 0, 2});
+        out.push_back({"above caption, released on it", {caption.left + 4.0f, caption.top - 1.5f},
+                       {caption.left + 4.0f, caption.top + 1.5f}, 1, 0});
+        out.push_back({"check, released beside it", centre(check),
+                       {check.right + 3.0f, (check.top + check.bottom) * 0.5f}, 0, 1});
+        out.push_back({"left padding, slip 1pt", {row.left + 4.0f, row.top + 5.0f},
+                       {row.left + 5.0f, row.top + 6.0f}, 30, 0});
+        return out;
+    };
+
+    int presses = 0;
+    std::vector<std::string> missed;
+    open_menu(0);
+    const auto rows = options();
+    REQUIRE(rows.size() == 21);
+    for (const auto& option : rows) {
+        const std::string row_sel = "[data-spectr-length-option=\"" + option + "\"]";
+        open_menu(0);
+        const auto row = box_of(row_sel);
+        REQUIRE(row.has_value());
+        const auto caption = *box_of(row_sel + " span");
+        const auto check = *box_of(row_sel + " svg");
+        for (const auto& [name, down, up, frames_after_open, frames_held] :
+             variants_for(*row, caption, check)) {
+            open_menu(frames_after_open);
+            // The row must be in view where it was measured: the menu opens
+            // at the same offset every time at this size.
+            const auto now = *box_of(row_sel);
+            REQUIRE(now.top == Catch::Approx(row->top).margin(0.5));
+            ++presses;
+            const bool clicked = host_click_at(down, up, frames_held);
+            const bool took = option == "custom-editor"
+                ? mounted("[data-spectr-length-editor]") && !mounted(menu)
+                : !mounted(menu) && label() == option;
+            if (!clicked || !took) {
+                missed.push_back(option + " / " + name + " (press " + std::to_string(down.x) + ","
+                                 + std::to_string(down.y) + ")");
+            }
+            if (mounted("[data-spectr-length-editor]")) {
+                pulp::view::View::dismiss_active_overlay(*rig.root);
+                settle(rig.clock, 12);
+            }
+            if (mounted(menu)) {
+                pulp::view::View::dismiss_active_overlay(*rig.root);
+                settle(rig.clock, 12);
+            }
+        }
+    }
+
+    // The Custom editor: its buttons and every Fraction row, the same way.
+    const auto open_editor = [&] {
+        if (mounted("[data-spectr-length-editor]")) return;
+        open_menu(0);
+        const auto custom = *box_of("[data-spectr-length-option=\"custom-editor\"]");
+        REQUIRE(host_click_at(centre(custom), centre(custom), 0));
+        REQUIRE(mounted("[data-spectr-length-editor]"));
+    };
+    const auto bars = [&] {
+        return value_of("document.querySelector('[data-spectr-length-bars]')"
+                        ".getAttribute('data-spectr-length-bars')");
+    };
+    for (const std::string step : {"up", "down"}) {
+        open_editor();
+        const auto button = *box_of("[data-spectr-length-bars-step=\"" + step + "\"]");
+        const auto glyph = *box_of("[data-spectr-length-bars-step=\"" + step + "\"] svg");
+        const auto before = std::stoi(bars());
+        ++presses;
+        // On the chevron, released just off it.
+        const bool clicked = host_click_at(centre(glyph), {glyph.right + 2.0f, centre(glyph).y}, 1);
+        const int expected = step == "up" ? before + 1 : std::max(0, before - 1);
+        if (!clicked || std::stoi(bars()) != expected) missed.push_back("bars " + step);
+        (void)button;
+    }
+    const auto fraction_list = std::string{"[data-spectr-length-fraction-options]"};
+    const auto fraction_of = [&] {
+        return value_of("document.querySelector('[data-spectr-length-fraction]')"
+                        ".getAttribute('data-spectr-length-fraction')");
+    };
+    const auto open_fractions = [&] {
+        open_editor();
+        if (mounted(fraction_list)) return;
+        const auto trigger = *box_of("[data-spectr-length-fraction]");
+        const auto text = *box_of("[data-spectr-length-fraction] span");
+        ++presses;
+        // On the trigger's text, released just below it.
+        if (!host_click_at(centre(text), {centre(text).x, text.bottom + 2.0f}, 0)
+            || !mounted(fraction_list))
+            missed.push_back("fraction trigger");
+        if (!mounted(fraction_list)) REQUIRE(host_click_at(centre(trigger), centre(trigger), 0));
+        REQUIRE(mounted(fraction_list));
+    };
+    const std::vector<std::string> fractions{
+        "0", "1/32", "1/16", "1/12", "1/8", "1/6", "3/16", "1/4", "1/3",
+        "3/8", "1/2", "5/8", "2/3", "3/4", "5/6", "7/8", "15/16"};
+    for (const auto& f : fractions) {
+        open_fractions();
+        const std::string sel = "[data-spectr-length-fraction-option=\"" + f + "\"]";
+        // Scroll it into view with the wheel, as a user would.
+        for (int i = 0; i < 40; ++i) {
+            const auto r = *box_of(sel);
+            const auto vp = *box_of("[data-spectr-length-fraction-viewport]");
+            if (r.top >= vp.top - 0.5f && r.bottom <= vp.bottom + 0.5f) break;
+            pulp::view::deliver_mouse_wheel(*rig.root, centre(vp), 0.0f,
+                                            r.top < vp.top ? -30.0f : 30.0f, {});
+            settle(rig.clock, 4);
+        }
+        const auto r = *box_of(sel);
+        const auto text = *box_of(sel + " span");
+        ++presses;
+        // On the caption, released below it; then (if that one took) the
+        // right side is covered by the menu rows above.
+        const bool clicked = host_click_at(centre(text), {centre(text).x, text.bottom + 2.0f}, 1);
+        if (!clicked || fraction_of() != f || mounted(fraction_list))
+            missed.push_back("fraction " + f);
+        (void)r;
+        if (mounted(fraction_list)) {
+            pulp::view::View::dismiss_active_overlay(*rig.root);
+            settle(rig.clock, 12);
+        }
+    }
+    // CANCEL closes the editor; APPLY applies 2 + 1/8.
+    open_editor();
+    {
+        const auto cancel = *box_of("[data-spectr-length-cancel]");
+        ++presses;
+        // Pressed on its caption, released 2pt lower.
+        const auto c = centre(cancel);
+        if (!host_click_at(c, {c.x + 1.0f, c.y + 2.0f}, 1) || mounted("[data-spectr-length-editor]"))
+            missed.push_back("cancel");
+    }
+    open_editor();
+    {
+        // A draft set through the editor's own Fraction list.
+        open_fractions();
+        const auto eighth = *box_of("[data-spectr-length-fraction-option=\"1/8\"]");
+        REQUIRE(host_click_at(centre(eighth), centre(eighth), 0));
+        REQUIRE(fraction_of() == "1/8");
+        const auto applied_draft = bars() + " 1/8";
+        const auto apply = *box_of("[data-spectr-length-apply]");
+        ++presses;
+        const auto c = centre(apply);
+        const bool clicked = host_click_at(c, {c.x - 2.0f, c.y + 1.0f}, 2);
+        if (!clicked || mounted("[data-spectr-length-editor]")) missed.push_back("apply");
+        CAPTURE(applied_draft, label());
+    }
+
+    CHECK(presses > 150);
+    std::string misses;
+    for (const auto& m : missed) misses += "\n  missed: " + m;
+    INFO(missed.size() << " of " << presses << " presses missed" << misses);
+    CHECK(missed.empty());
+    if (mounted("[data-spectr-length-editor]") || mounted(menu)) {
+        pulp::view::View::dismiss_active_overlay(*rig.root);
+        settle(rig.clock, 12);
+    }
+    storage.require_unchanged();
+}
+
+// The preset menu's SAVE CURRENT / MANAGE footer sits below its last factory
+// row and inside the menu, at the editor's default size and its authored size.
+// It was pinned at the browser capture's offset (runtime.js), 13pt above where
+// the 30pt rows now end, and covered the bottom 8pt of AIR LIFT (4k+).
+TEST_CASE("the preset menu's footer sits below its last factory row",
+          "[native-n1][state-parity][preset-menu][tap-targets]") {
+    PatternStoragePoison storage;
+    const auto check_footer = [](NativeEditorRig& rig, std::size_t rows_expected) {
+        activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+        settle(rig.clock, 24);
+        const auto text = runtime_string(rig, R"js((() => {
+          const q = (sel) => document.querySelector(sel);
+          const menu = '[data-spectr-menu-root="pattern"] ';
+          const panel = q(menu + '[data-spectr-menu-options]');
+          const rows = Array.from(document.querySelectorAll(menu + '[data-spectr-pattern-menu-id]'));
+          const save = q('[data-spectr-save-current]');
+          const manage = q('[data-spectr-pattern-manage]');
+          const footer = save.parentElement || save._parentElement;
+          const trigger = q(menu + '[data-spectr-menu-trigger]');
+          const r = (n) => n.getBoundingClientRect();
+          const factory = rows.filter((n) => String(n.getAttribute('data-spectr-pattern-menu-id')).startsWith('factory:'));
+          const last = r(factory[factory.length - 1]);
+          return [rows.length, last.bottom, r(footer).top, r(save).top, r(save).bottom,
+                  r(manage).bottom, r(panel).top, r(panel).bottom,
+                  factory[factory.length - 1].getAttribute('data-spectr-pattern-menu-id'),
+                  r(trigger).top].join(',');
+        })())js", "spectr-native-preset-footer");
+        std::stringstream in(text.substr(0, text.find('\n')));
+        std::vector<std::string> v;
+        for (std::string part; std::getline(in, part, ',');) v.push_back(part);
+        REQUIRE(v.size() == 10);
+        CAPTURE(text);
+        CHECK(v[0] == std::to_string(rows_expected));
+        // The last factory row is AIR LIFT (4k+).
+        CHECK(v[8] == "factory:air");
+        const float last_bottom = std::stof(v[1]);
+        const float footer_top = std::stof(v[2]);
+        const float save_top = std::stof(v[3]);
+        const float manage_bottom = std::stof(v[5]);
+        const float panel_top = std::stof(v[6]);
+        const float panel_bottom = std::stof(v[7]);
+        // The footer starts after the last factory row: the 1pt gap and its
+        // 4pt margin.
+        CHECK(footer_top >= last_bottom);
+        CHECK(footer_top == Catch::Approx(last_bottom + 5.0f).margin(0.5));
+        CHECK(save_top > last_bottom);
+        // Everything it holds is inside the menu, which still ends 2pt above
+        // the trigger and grows upward to hold it.
+        CHECK(manage_bottom <= panel_bottom);
+        CHECK(panel_top < last_bottom);
+        CHECK(panel_bottom == Catch::Approx(std::stof(v[9]) - 2.0f).margin(0.5));
+        pulp::view::View::dismiss_active_overlay(*rig.root);
+        settle(rig.clock, 12);
+    };
+    for (const auto [width, height] : {std::pair{990, 645}, std::pair{1320, 860}}) {
+        INFO("editor " << width << "x" << height);
+        NativeEditorRig rig;
+        rig.resize(width, height);
+        settle(rig.clock, 96);
+        // The eight factory rows; the last is AIR LIFT (4k+).
+        check_footer(rig, 8);
+    }
+    // With a user preset the factory rows are still clear of the footer.
+    // (The USER heading and rows after them are not: the footer still covers
+    // them, as it did before -- see
+    // tools/patch_materialized_runtime_pattern_menu_footer.py.)
+    NativeEditorRig rig;
+    settle(rig.clock, 96);
+    activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-save-current]");
+    require_state(rig, "save-dialog");
+    activate(rig, "#spectr-save-name", "change",
+             R"js({value:'FOOTER CHECK',target:{value:'FOOTER CHECK'},currentTarget:{value:'FOOTER CHECK'}})js");
+    activate(rig, "[data-spectr-manager-action=\"save-submit\"]");
+    REQUIRE(rig.processor.patterns().user().size() == 1);
+    settle(rig.clock, 24);
+    check_footer(rig, 9);
     storage.require_unchanged();
 }
 
