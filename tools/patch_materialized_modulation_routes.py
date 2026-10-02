@@ -32,7 +32,6 @@ import sys
 from pathlib import Path
 
 PATH = Path(__file__).resolve().parents[1] / "native-ui/materialized/materialized-document.runtime.json"
-MARKER = "function spectrReadModulationRoutes("
 
 EDITS = [
     (
@@ -246,6 +245,29 @@ EDITS = [
   function drawEdgeWalls(ctx, g) {''',
     ),
     (
+        "the test hook reports the audible window",
+        '''      view: { ...viewRef.current },
+      reactView: { ...reactView },''',
+        '''      view: { ...viewRef.current },
+      audibleView: modViewportRef.current ? { ...modViewportRef.current } : null,
+      reactView: { ...reactView },''',
+    ),
+    (
+        "the test hook names the band under a pointer",
+        '''    window.__spectrTestHooks.minimapHit = (x, y) => minimapHit(x, y, getGeom());
+''',
+        '''    window.__spectrTestHooks.minimapHit = (x, y) => minimapHit(x, y, getGeom());
+    // The band a press at clientX lands on, through the same transform and
+    // findBand the pointer handlers use.
+    window.__spectrTestHooks.bandAtClientX = (clientX) => {
+      const g = getGeom(), wrap = wrapRef.current;
+      if (!g || !wrap) return null;
+      const rect = wrap.getBoundingClientRect();
+      return findBand((clientX - rect.left) * wrap.clientWidth / rect.width, g);
+    };
+''',
+    ),
+    (
         "Settings says what the legacy target controls now do",
         '''label: "Target", hint: "Automatable; clears Destinations" }''',
         '''label: "Target", hint: "Both LFOs; one field target" }''',
@@ -264,17 +286,23 @@ def encode(text):
 
 def main():
     raw = PATH.read_text(encoding="utf-8")
-    if encode(MARKER) in raw:
-        print("modulation routes already applied")
-        return 0
+    applied = 0
     for name, old, new in EDITS:
+        # Per edit, so a document patched by an earlier version of this script
+        # takes only the edits it is missing.
+        if encode(new) in raw:
+            continue
         count = raw.count(encode(old))
         if count != 1:
             sys.exit("FAIL: %s anchor occurs %d times, expected 1" % (name, count))
         raw = raw.replace(encode(old), encode(new), 1)
+        applied += 1
+    if applied == 0:
+        print("modulation routes already applied")
+        return 0
     json.loads(raw)
     PATH.write_text(raw, encoding="utf-8")
-    print("modulation routes applied")
+    print("modulation routes applied (%d edits)" % applied)
     return 0
 
 

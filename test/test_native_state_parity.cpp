@@ -9848,6 +9848,7 @@ struct ModulationEditRecorder {
     static bool watched(pulp::state::ParamID id) {
         return (id >= spectr::kParamLfoEnabled && id <= spectr::kParamLfoTarget)
             || (id >= spectr::kParamLfo2Enabled && id <= spectr::kParamLfo2Depth)
+            || spectr::is_lfo_route_param(id)
             || id == spectr::kOutputTrim || id == spectr::kParamMorph;
     }
     explicit ModulationEditRecorder(pulp::state::StateStore& store) {
@@ -9919,8 +9920,9 @@ TEST_CASE("every LFO edit in the band menu records as a host gesture",
     press_menu_slider(rig, "lfo1-depth", 0.25);
     CHECK(recorder.take() == "begin 4003, set 4003=0.25, end 4003");
 
+    // A destination switch writes its own routing lane (LFO 1 Morph = 4023).
     activate(rig, "[data-spectr-band-action=\"modulation-target-morph\"]");
-    CHECK(recorder.take() == "begin 4004, set 4004=3, end 4004");
+    CHECK(recorder.take() == "begin 4023, set 4023=1, end 4023");
 
     activate(rig, "[data-spectr-band-action=\"lfo2-enable\"]");
     CHECK(recorder.take() == "begin 4010, set 4010=1, end 4010");
@@ -10168,5 +10170,202 @@ TEST_CASE("host playback of Morph moves the Morph slider",
         settle(rig.clock, 8);
         CHECK(std::stod(thumb_value()) == Catch::Approx(t).margin(1e-6));
     }
+    storage.require_unchanged();
+}
+
+// ── Per-LFO routing in the band menu ─────────────────────────────────────
+
+namespace {
+
+void apply_and_settle(NativeEditorRig& rig) {
+    rig.processor.apply_surface_params(false);
+    settle(rig.clock, 8);
+}
+
+// A real drag of a band-menu slider: press, two moves, release.
+void drag_menu_slider(NativeEditorRig& rig, std::string_view action,
+                      std::initializer_list<double> ratios) {
+    const auto track = std::string("[data-spectr-menu-slider-track=\"")
+        + std::string(action) + "\"]";
+    auto it = ratios.begin();
+    activate(rig, track, "pointerdown", slider_press_at(*it, track));
+    for (++it; it != ratios.end(); ++it)
+        activate(rig, track, "pointermove", slider_press_at(*it, track));
+    activate(rig, track, "pointerup", slider_press_at(*(ratios.end() - 1), track));
+}
+
+}  // namespace
+
+TEST_CASE("every routing edit in the band menu records as a host gesture",
+          "[native-n1][state-parity][modulation][automation][routing]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    open_band_menu(rig);
+    ModulationEditRecorder recorder(rig.store);
+
+    // Several destinations on at once, each its own complete bracket.
+    activate(rig, "[data-spectr-band-action=\"modulation-target-viewport-position\"]");
+    CHECK(recorder.take() == "begin 4024, set 4024=1, end 4024");
+    activate(rig, "[data-spectr-band-action=\"modulation-target-a\"]");
+    CHECK(recorder.take() == "begin 4021, set 4021=1, end 4021");
+    apply_and_settle(rig);
+    CHECK(spectr::route_mask(rig.processor.modulation_settings().routes[0]) == 0x13);
+
+    // An Amount drag is ONE bracket with its values inside it.
+    drag_menu_slider(rig, "modulation-amount-viewport-position", {0.2, 0.5, 0.75});
+    const auto drag = recorder.take();
+    INFO("amount drag recorded: " << drag);
+    CHECK(drag.rfind("begin 4034, ", 0) == 0);
+    CHECK(drag.size() > std::string("begin 4034, end 4034").size());
+    CHECK(drag.find("set 4034=0.75") != std::string::npos);
+    CHECK(drag.substr(drag.size() - std::string("end 4034").size()) == "end 4034");
+    std::size_t begins = 0, ends = 0;
+    for (std::size_t at = 0; (at = drag.find("begin ", at)) != std::string::npos; ++at) ++begins;
+    for (std::size_t at = 0; (at = drag.find("end ", at)) != std::string::npos; ++at) ++ends;
+    CHECK(begins == 1);
+    CHECK(ends == 1);
+    CHECK(rig.store.get_value(spectr::lfo_route_amount_param_id(0, 4)) == Catch::Approx(0.75f));
+
+    // A disabled Amount row (its destination is off) ignores input entirely.
+    const float zoom_before = rig.store.get_value(spectr::lfo_route_amount_param_id(0, 5));
+    drag_menu_slider(rig, "modulation-amount-viewport-zoom", {0.1, 0.3});
+    CHECK(recorder.take().find("4035") == std::string::npos);
+    CHECK(rig.store.get_value(spectr::lfo_route_amount_param_id(0, 5)) == zoom_before);
+
+    // LFO 2's rows address LFO 2's lanes.
+    activate(rig, "[data-spectr-modulation-source-action=\"2\"]");
+    settle(rig.clock, 8);
+    activate(rig, "[data-spectr-band-action=\"modulation-target-viewport-zoom\"]");
+    CHECK(recorder.take() == "begin 4045, set 4045=1, end 4045");
+    apply_and_settle(rig);
+    drag_menu_slider(rig, "modulation-amount-viewport-zoom", {0.6, 0.4});
+    const auto lfo2 = recorder.take();
+    INFO("LFO 2 amount drag: " << lfo2);
+    CHECK(lfo2.rfind("begin 4055, ", 0) == 0);
+    CHECK(lfo2.substr(lfo2.size() - std::string("end 4055").size()) == "end 4055");
+
+    // Off records its falling edge too.
+    activate(rig, "[data-spectr-band-action=\"modulation-target-viewport-zoom\"]");
+    CHECK(recorder.take() == "begin 4045, set 4045=0, end 4045");
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+TEST_CASE("host playback of the routing lanes moves the band menu",
+          "[native-n1][state-parity][modulation][automation][routing]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    open_band_menu(rig);
+    const auto row = [&](const char* action, const char* attr) {
+        return runtime_value(rig, std::string("String(document.querySelector('[data-spectr-band-action=\"")
+            + action + "\"]')?.getAttribute('" + attr + "'))", action);
+    };
+    // A switch row's state is its drawn switch, as for the LFO 1 / 2 rows.
+    const auto sw = [&](const char* action) {
+        return runtime_value(rig, std::string("String(document.querySelector('[data-spectr-band-action=\"")
+            + action + "\"] [data-spectr-menu-switch]')?.getAttribute('data-spectr-menu-switch'))",
+            action);
+    };
+    // The user sets an amount by hand first (a value a float cannot hold).
+    activate(rig, "[data-spectr-band-action=\"modulation-target-morph\"]");
+    apply_and_settle(rig);
+    press_menu_slider(rig, "modulation-amount-morph", 0.37);
+    apply_and_settle(rig);
+    CHECK(row("modulation-amount-morph", "aria-valuetext") == "37%");
+
+    // Now the host plays its lanes back: the switches and Amount rows follow,
+    // including the one the user just edited.
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 4), 1.0f);
+    rig.store.set_value(spectr::lfo_route_amount_param_id(0, 4), 0.6f);
+    rig.store.set_value(spectr::lfo_route_amount_param_id(0, 3), 0.8f);
+    apply_and_settle(rig);
+    CHECK(sw("modulation-target-bank") == "off");
+    CHECK(sw("modulation-target-viewport-position") == "on");
+    CHECK(row("modulation-amount-viewport-position", "aria-valuetext") == "60%");
+    CHECK(row("modulation-amount-viewport-position", "aria-disabled") == "false");
+    CHECK(row("modulation-amount-morph", "aria-valuetext") == "80%");
+    CHECK(row("modulation-amount-bank", "aria-disabled") == "true");
+
+    // The legacy single-target lane, played back, is the command it always
+    // was: Snapshot B alone among the field destinations, viewport kept.
+    rig.store.set_value(spectr::kParamLfoTarget, 2.0f);
+    apply_and_settle(rig);
+    settle(rig.clock, 8);
+    CHECK(sw("modulation-target-b") == "on");
+    CHECK(sw("modulation-target-morph") == "off");
+    CHECK(sw("modulation-target-viewport-position") == "on");
+    storage.require_unchanged();
+}
+
+TEST_CASE("viewport modulation never moves the band under the pointer",
+          "[native-n1][state-parity][modulation][routing][viewport]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    for (std::size_t index = 0; index < spectr::kMaxBands; ++index) {
+        rig.store.set_value(spectr::band_gain_param_id(index), 0.0f);
+        rig.store.set_value(spectr::band_mute_param_id(index), 0.0f);
+    }
+    // A one-decade window, swept by a full-depth position LFO.
+    rig.store.set_value(spectr::kParamViewportCenter, 2.8f);
+    rig.store.set_value(spectr::kParamViewportWidth, 1.0f);
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoRate, 1.0f);
+    rig.store.set_value(spectr::kParamLfoDepth, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 4), 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    feed_audio_blocks(rig, 40);
+    settle(rig.clock, 4);
+
+    // The overlay is running and the AUDIBLE window has moved away from the
+    // user's -- the premise of the test.
+    const auto premise = runtime_value(rig, R"js((() => {
+      const s = globalThis.__spectrTestHooks.renderState();
+      return JSON.stringify({ view: s.view, audible: s.audibleView });
+    })())js", "audible view");
+    INFO("plot vs audible: " << premise);
+    require_runtime_contract(rig,
+        "(() => { const s = globalThis.__spectrTestHooks.renderState();"
+        " return s.audibleView && Math.abs(s.audibleView.lmin - s.view.lmin) > 0.05; })()",
+        "the audible viewport overlay is not running");
+    // The plot itself is still on the user's window.
+    require_runtime_contract(rig,
+        "(() => { const v = globalThis.__spectrTestHooks.renderState().view;"
+        " return Math.abs(v.lmin - 2.3) < 1e-3 && Math.abs(v.lmax - 3.3) < 1e-3; })()",
+        "viewport modulation moved the editable plot");
+
+    // Drag at x = 660 while it keeps sweeping. The band edited is the one
+    // drawn under the pointer in the user's window.
+    std::map<pulp::state::ParamID, int> sets;
+    auto token = rig.store.add_audio_listener([&](pulp::state::ParamID id, float) {
+        if (id >= spectr::kParamBandGainBase && id < spectr::kParamBandGainBase + 64) ++sets[id];
+    });
+    const auto expected = std::stoi(runtime_value(rig,
+        "String(globalThis.__spectrTestHooks.bandAtClientX(660))", "band under pointer"));
+    REQUIRE(expected >= 0);
+    const auto fire = [&](const char* type, int y, int buttons) {
+        activate(rig, "[data-spectr-filter-surface]", type,
+                 "{clientX:660,clientY:" + std::to_string(y)
+                 + ",pointerId:91,button:0,buttons:" + std::to_string(buttons) + "}");
+        feed_audio_blocks(rig, 4);
+        settle(rig.clock, 4);
+    };
+    fire("pointerdown", 430, 1);
+    fire("pointermove", 380, 1);
+    fire("pointermove", 330, 1);
+    fire("pointerup", 330, 0);
+    settle(rig.clock, 12);
+    REQUIRE(sets.size() == 1);
+    const auto edited = static_cast<int>(sets.begin()->first - spectr::kParamBandGainBase);
+    INFO("band under the pointer " << expected << ", band edited " << edited);
+    CHECK(edited == expected);
+    // The user's stored viewport is untouched by the modulation.
+    CHECK(rig.store.get_value(spectr::kParamViewportCenter) == Catch::Approx(2.8f));
+    CHECK(rig.store.get_value(spectr::kParamViewportWidth) == Catch::Approx(1.0f));
     storage.require_unchanged();
 }
