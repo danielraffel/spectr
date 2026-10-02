@@ -3776,16 +3776,12 @@ window.PatternManager = PatternManager;`,
     // provider snapshot agrees. Clicking the indicator uses the existing
     // native render-mode command; the UI never changes mode optimistically.
     replaceSpectrSource(
-      '        analyzerMode={analyzerMode}\n        snapshotStatus={snapshotStatus}',
-      '        analyzerMode={analyzerMode}\n        renderMode={renderMode}\n        gpuAudio={gpuAudio}\n        onRenderModeChange={setRenderModeFromUi}\n        snapshotStatus={snapshotStatus}',
+      '        status={status}\n        selectedPatternName={selectedPatternName}\n        dspMode={dspMode}',
+      '        status={status}\n        selectedPatternName={selectedPatternName}\n        renderMode={renderMode}\n        gpuAudio={gpuAudio}\n        onRenderModeChange={setRenderModeFromUi}\n        dspMode={dspMode}',
       'GPU status receives app projection');
     replaceSpectrSource(
-      '        analyzerMode={analyzerMode}\n        visualizationMode={visualizationMode}\n        snapshotStatus={snapshotStatus}',
-      '        analyzerMode={analyzerMode}\n        visualizationMode={visualizationMode}\n        renderMode={renderMode}\n        gpuAudio={gpuAudio}\n        onRenderModeChange={setRenderModeFromUi}\n        snapshotStatus={snapshotStatus}',
-      'GPU status receives visualization-enabled app projection');
-    replaceSpectrSource(
       'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
-      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, renderMode, gpuAudio, onRenderModeChange, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
+      'function Chrome({ settings, setSettings, bankRef, info, status, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, renderMode, gpuAudio, onRenderModeChange, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
       'GPU chrome receives native mode and delivery status');
     replaceSpectrSource(
       '      <StatusBanner message={status} />',
