@@ -32,13 +32,21 @@ layout remain stored but do not enter the active spectral mask.
 | `4001` | Internal LFO shape (sine/triangle/square/saw) |
 | `4002` | Internal LFO rate (beats per cycle) |
 | `4003` | Internal LFO depth |
-| `4004` | Internal LFO target (whole bank/snapshot A/snapshot B/morph) |
+| `4004` | Internal LFO target (whole bank/snapshot A/snapshot B/morph): legacy command lane, see [modulation.md](modulation.md) |
 | `4005...4009` | Reserved modulation growth |
 | `4010` | Internal LFO 2 enabled |
 | `4011` | Internal LFO 2 shape (sine/triangle/square/saw) |
 | `4012` | Internal LFO 2 rate (beats per cycle) |
 | `4013` | Internal LFO 2 depth |
-| `4014...4199` | Reserved modulation growth |
+| `4014...4019` | Reserved modulation growth |
+| `4020...4025` | LFO 1 routes on/off: Bank, Snapshot A, Snapshot B, Morph, Viewport Position, Viewport Zoom |
+| `4026...4029` | Reserved LFO 1 route growth |
+| `4030...4035` | LFO 1 route amounts (0-1, shown "100%"), same order |
+| `4036...4039` | Reserved LFO 1 route growth |
+| `4040...4045` | LFO 2 routes on/off, same order |
+| `4046...4049` | Reserved LFO 2 route growth |
+| `4050...4055` | LFO 2 route amounts, same order |
+| `4056...4199` | Reserved modulation growth |
 | `4200...4203` | Macro 1...4 |
 | `4204...4299` | Reserved macro growth |
 
@@ -49,7 +57,10 @@ The gain and mute names are zero-padded (`Band 01 Gain` through
 
 LFO rate reads in a host's lane as beats ("4 beats", "1 beat"), and depth as a
 percentage ("50%"); typed values accept the same forms. LFO on/off, shape and
-target are discrete, labelled lanes. How each control records an edit gesture
+target are discrete, labelled lanes, as are the per-LFO route switches
+("LFO 1 Viewport Zoom"); route amounts read as percentages ("LFO 2 Morph
+Amount"). Routing defaults reproduce a fresh 1.0.x instance: both LFOs on Bank
+at 100 %, every other route off, every amount 100 %. How each control records an edit gesture
 and follows playback is in [automation.md](automation.md).
 
 ## Freeze

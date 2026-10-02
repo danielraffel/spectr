@@ -32,9 +32,11 @@ do three things in a DAW:
 | **LFO 1 shape** (Sin / Tri / Square / Saw) | `4001` (enum, labelled) | One bracket per pick | 150 ms crossfade | Shape row follows |
 | **LFO 1 rate** | `4002`, 0.25-16 beats, shown "4 beats" | One bracket per drag | Phase-continuous | Rate row follows |
 | **LFO 1 depth** | `4003`, 0-1, shown "50%" | One bracket per drag | 60 ms level ramp | Depth row follows, including after a hand edit |
-| **Shared target** (Bank / Snapshot A / Snapshot B / Morph) | `4004` (enum) | One bracket per pick | Yes; takes authority back from a Destinations selection | Yes |
+| **LFO 1 / 2 target switches** (Bank / Snapshot A / Snapshot B / Morph / Viewport position / Viewport zoom; band menu > Modulation > LFO n TARGETS) | `4020-4025`, `4040-4045` (toggle) | One bracket per press (`param_edit`) | 60 ms route ramp; several at once | Switch follows |
+| **LFO 1 / 2 target Amount** (row under each switch; inert while the switch is off) | `4030-4035`, `4050-4055`, 0-1, shown "100%" | One bracket per drag (`param_gesture_begin` / `end`) | 60 ms route ramp | Amount row follows, including after a hand edit |
+| Legacy single target (Settings "Target") | `4004` (enum) | One bracket per pick | A change selects that one field destination for both LFOs ([modulation.md](modulation.md)) | Target switches follow |
 | **LFO 2 on/off, shape, rate, depth** | `4010-4013` | As for LFO 1 | As for LFO 1 | As for LFO 1 |
-| Destinations multi-select (Settings) | none (editor state, `modulation_targets_set`) | Not automatable | n/a | n/a |
+| Destinations multi-select (Settings) | writes the route switches of both LFOs (`modulation_targets_set`) | One bracket per changed switch | As the switches | As the switches |
 | "Edit LFO 1 / 2" source switch | none (view state) | n/a | n/a | n/a |
 | Macro 1-4 value | `4200-4203` | One bracket per drag (`macro_drag_*`) | Yes | Yes |
 | Macro membership | none (supplemental state) | Not automatable, by design | n/a | n/a |
@@ -56,6 +58,10 @@ that can change at any sample:
   over 150 ms (`LfoShapeFade`).
 - **Rate** is a phase accumulator, so a new rate changes how fast the phase
   moves and never where it is.
+- **Target switches and Amounts** each drive one slewed route level per LFO
+  per destination, on the same 60 ms ramp, so switching a destination on at a
+  crest fades it in. Measurements and the fail-before numbers are in
+  [modulation.md](modulation.md#smoothness).
 
 ## Editor protocol (for anyone adding a control)
 
@@ -92,5 +98,11 @@ bracket it opened.
   refusals) with a host-side recorder.
 - `test_spectr.cpp`: the LFO level ramp in the modulated field and in the
   audio, for both renderers.
+- `test_modulation_routing.cpp`: route combination, viewport destinations,
+  route-ramp smoothness (with `Spectr-route-smoothness-negative-control`),
+  click-free viewport sweep, per-callback cost.
+- `test_native_state_parity.cpp`: "every routing edit in the band menu records
+  as a host gesture", "host playback of the routing lanes moves the band menu",
+  "viewport modulation never moves the band under the pointer".
 - `test_param_surface.cpp`: display strings, steps and labels of the LFO
   lanes.
