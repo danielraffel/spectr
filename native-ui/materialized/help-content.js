@@ -106,7 +106,7 @@ A freeze pressed over silence waits for sound before it holds anything, so it ne
 
 Two LFOs can move things on their own, in time with your project tempo. An LFO only sets the movement: its **Shape** and its **Rate** in beats. What it moves, and how far, you choose per target.
 
-Right-click a band, open **Modulation**, and under **LFO 1 Targets** (or LFO 2) switch on as many targets as you like. Each one has its own **Depth**, so one LFO can push the bands hard and nudge the frequencies gently at the same time. Both LFOs can drive the same target; their movements add.
+Right-click a band, open **Modulation**, and under **LFO 1 Targets** (or LFO 2) switch on as many targets as you like. The same list is in Settings, under Modulation; change it in either place and the other follows. Each one has its own **Depth**, so one LFO can push the bands hard and nudge the frequencies gently at the same time. Both LFOs can drive the same target; their movements add.
 
 - **Bank** moves all the band levels up and down together.
 - **Band shift** slides the whole set of bands up and down in frequency, keeping its width. You hear the sweep; the display stays where you set it, so you can keep drawing.
@@ -118,7 +118,7 @@ Right-click a band, open **Modulation**, and under **LFO 1 Targets** (or LFO 2) 
 
 A and B do nothing if that snapshot is empty, and Morph needs both.
 
-**Touching something an LFO is driving.** The LFO keeps running. Press LIVE / FROZEN while Freeze is modulated and your press holds until the LFO next switches; pick a LENGTH and it becomes the new centre. With **Ask before overriding** on (Settings, under Modulation look, on by default) Spectr asks first: **Keep modulating** does what you asked and leaves the LFO running, **Turn off** switches that LFO's target off and then does it. Return turns off, Escape keeps modulating, and **Don't ask again** turns the question off.
+**Touching something an LFO is driving.** The LFO keeps running. Press LIVE / FROZEN while Freeze is modulated and your press holds until the LFO next switches; pick a LENGTH and it becomes the new centre. With **Ask before overriding modulation** on (Settings, under Modulation, on by default) Spectr asks first: **Keep modulating** does what you asked and leaves the LFO running, **Turn off** switches that LFO's target off and then does it. Return turns off, Escape keeps modulating, and **Don't ask again** turns the question off.
 
 ## Automation
 
