@@ -80,25 +80,39 @@ inline constexpr pulp::state::ParamID kParamLfo2Depth   = 4013;
 //   Depth   = 4030 + 20 l + t   (LFO 1: 4030..4037, LFO 2: 4050..4057)
 // Freeze and Length were appended after the first six; each block of ten
 // keeps two IDs of headroom.
+//
+// The level destinations (Intensity, Mix, Output; ModulationTarget 8..10)
+// came later and take a block of their own rather than that headroom, so the
+// first block's layout stays exactly as shipped:
+//   on/off  = 4060 + 20 l + (t - 8)   (LFO 1: 4060..4062, LFO 2: 4080..4082)
+//   Depth   = 4070 + 20 l + (t - 8)   (LFO 1: 4070..4072, LFO 2: 4090..4092)
+// Depth is on/off + 10 for every target. 4063..4069, 4073..4079, 4083..4089
+// and 4093..4099 are headroom for further destinations.
 inline constexpr pulp::state::ParamID kParamLfoRouteEnabledBase = 4020;
 inline constexpr pulp::state::ParamID kParamLfoRouteAmountBase  = 4030;
 inline constexpr pulp::state::ParamID kParamLfoRouteStride      = 20;
+/// Destinations 0..7 live in the first block; 8.. in the level block.
+inline constexpr std::size_t kRouteFirstBlockTargets = 8;
+inline constexpr pulp::state::ParamID kParamLfoLevelRouteEnabledBase = 4060;
+inline constexpr pulp::state::ParamID kParamLfoLevelRouteAmountBase  = 4070;
 inline constexpr std::size_t kRouteLfoCount = 2;
-inline constexpr std::size_t kRouteTargetCount = 8;
+inline constexpr std::size_t kRouteTargetCount = 11;
 inline constexpr std::size_t kRouteParamCount =
     kRouteLfoCount * kRouteTargetCount * 2;
 
 constexpr pulp::state::ParamID lfo_route_enabled_param_id(
     std::size_t lfo, std::size_t target) noexcept {
+    if (target >= kRouteFirstBlockTargets)
+        return kParamLfoLevelRouteEnabledBase
+            + static_cast<pulp::state::ParamID>(lfo) * kParamLfoRouteStride
+            + static_cast<pulp::state::ParamID>(target - kRouteFirstBlockTargets);
     return kParamLfoRouteEnabledBase
         + static_cast<pulp::state::ParamID>(lfo) * kParamLfoRouteStride
         + static_cast<pulp::state::ParamID>(target);
 }
 constexpr pulp::state::ParamID lfo_route_amount_param_id(
     std::size_t lfo, std::size_t target) noexcept {
-    return kParamLfoRouteAmountBase
-        + static_cast<pulp::state::ParamID>(lfo) * kParamLfoRouteStride
-        + static_cast<pulp::state::ParamID>(target);
+    return lfo_route_enabled_param_id(lfo, target) + 10;
 }
 /// Whether @p id is one of the routing lanes above.
 constexpr bool is_lfo_route_param(pulp::state::ParamID id) noexcept {
@@ -145,7 +159,7 @@ constexpr pulp::state::ParamID band_mute_param_id(std::size_t band) noexcept {
 
 /// Total registered parameters: 2 legacy + freeze + freeze length + 64 gain + 64 mute + 4
 /// control (morph, center, width, count) + 4 modes + 9 internal LFO controls
-/// + 4 macros + 32 LFO routing lanes (8 destinations x on/off + Depth x 2 LFOs)
+/// + 4 macros + 44 LFO routing lanes (11 destinations x on/off + Depth x 2 LFOs)
 /// + the level controls (Intensity, Auto Gain; level_controls.hpp).
 inline constexpr std::size_t kSurfaceParamCount =
     153 + kRouteParamCount + kLevelParamCount;
@@ -197,7 +211,7 @@ inline constexpr std::size_t kSlotLfo2Base   = 141;  // +0..3: enabled/shape/rat
 inline constexpr std::size_t kSlotMacroBase  = 145;  // +0..3: Macro 1..4
 inline constexpr std::size_t kSlotFreeze     = 149;
 inline constexpr std::size_t kSlotFreezeLength = 150;
-/// Per LFO (16 each): the eight on/off lanes, then the eight Depths.
+/// Per LFO (22 each): the eleven on/off lanes, then the eleven Depths.
 inline constexpr std::size_t kSlotRouteBase  = 151;
 inline constexpr std::size_t kSurfaceSlots   = 151 + kRouteParamCount;
 

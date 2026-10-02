@@ -22,12 +22,15 @@ enum class ModulationTarget : std::uint8_t {
     ViewportZoom,      ///< "Band spread"
     Freeze,            ///< gates LIVE / FROZEN; Depth is the frozen duty
     Length,            ///< steps the next freeze's loop length
+    Intensity,         ///< scales the Intensity amount toward flat (unipolar)
+    Mix,               ///< pulls Mix toward dry (unipolar): the freeze blend
+    Output,            ///< moves Output trim in dB, after Auto Gain (bipolar)
 };
 
 /// Destinations the legacy single-target lane can name (Bank..Morph).
 inline constexpr std::size_t kLegacyModulationTargetCount = 4;
 /// Every routable destination.
-inline constexpr std::size_t kModulationTargetCount = 8;
+inline constexpr std::size_t kModulationTargetCount = 11;
 /// Internal LFOs.
 inline constexpr std::size_t kLfoCount = 2;
 
@@ -40,8 +43,9 @@ inline constexpr std::uint8_t kModulationTargetMaskUnset = 0xFF;
 
 /// Every LEGACY destination selected (Bank, A, B, Morph).
 inline constexpr std::uint8_t kModulationTargetMaskAll = 0x0F;
-/// Every routable destination selected.
-inline constexpr std::uint8_t kModulationRouteMaskAll = 0xFF;
+/// Every routable destination selected. Routing masks are 16-bit: there are
+/// more destinations than the 8 bits the legacy `target_mask` uses.
+inline constexpr std::uint16_t kModulationRouteMaskAll = 0x07FF;
 
 /// One LFO -> destination route. `amount` IS this destination's depth
 /// (effective modulation = wave x amount); there is no LFO-level depth, so one
@@ -85,16 +89,16 @@ struct ModulationSettings {
                                             default_lfo_routes()};
 };
 
-/// The destinations @p routes enables, as a 6-bit mask in enum order.
-inline constexpr std::uint8_t route_mask(const LfoRoutes& routes) noexcept {
-    std::uint8_t mask = 0;
+/// The destinations @p routes enables, as a bit mask in enum order.
+inline constexpr std::uint16_t route_mask(const LfoRoutes& routes) noexcept {
+    std::uint16_t mask = 0;
     for (std::size_t t = 0; t < kModulationTargetCount; ++t)
-        if (routes[t].enabled) mask = static_cast<std::uint8_t>(mask | (1u << t));
+        if (routes[t].enabled) mask = static_cast<std::uint16_t>(mask | (1u << t));
     return mask;
 }
 
 /// Replace the enabled flags of @p routes with @p mask (amounts untouched).
-inline constexpr void set_route_mask(LfoRoutes& routes, std::uint8_t mask) noexcept {
+inline constexpr void set_route_mask(LfoRoutes& routes, std::uint16_t mask) noexcept {
     for (std::size_t t = 0; t < kModulationTargetCount; ++t)
         routes[t].enabled = (mask >> t) & 1u;
 }
@@ -184,8 +188,16 @@ inline constexpr double kLfoLevelSlewSeconds = 0.06;
 /// sweep's own speed and still reads as immediate.
 inline constexpr double kViewportRouteSlewSeconds = 0.25;
 
+/// The Intensity destination's route level slews like the Intensity knob
+/// (level_controls.hpp, kIntensitySlewSeconds): a full-depth Intensity route
+/// switched on at a crest moves every band at once, and over 60 ms that
+/// restages faster than the AU-measured yardstick allows.
+inline constexpr double kIntensityRouteSlewSeconds = 0.2;
+
 /// Seconds for a full-scale route-level move of @p target.
 inline constexpr double route_slew_seconds(std::size_t target) noexcept {
+    if (target == static_cast<std::size_t>(ModulationTarget::Intensity))
+        return kIntensityRouteSlewSeconds;
     return (target == static_cast<std::size_t>(ModulationTarget::ViewportPosition)
             || target == static_cast<std::size_t>(ModulationTarget::ViewportZoom))
         ? kViewportRouteSlewSeconds : kLfoLevelSlewSeconds;
@@ -297,7 +309,66 @@ struct ModulationCoordinates {
 };
 
 inline constexpr bool modulation_target_is_unipolar(ModulationTarget t) noexcept {
-    return t == ModulationTarget::SnapshotA || t == ModulationTarget::SnapshotB;
+    return t == ModulationTarget::SnapshotA || t == ModulationTarget::SnapshotB
+        || t == ModulationTarget::Intensity || t == ModulationTarget::Mix;
+}
+
+// ── Level destinations: Intensity, Mix, Output ──────────────────────────
+//
+// These move a level control around the user's setting and never write it:
+// the knob keeps its value, the host lane keeps its automation.
+//
+//   Intensity  unipolar `(wave + 1) / 2 x Depth` pulls the Intensity amount
+//              toward 0 (flat) in proportion: effective = Intensity x (1 - c).
+//              At Depth 100 % the shape breathes between what is drawn and
+//              flat once per cycle, whatever the knob is set to.
+//   Mix        the same pull toward dry: effective = Mix x (1 - c). Over a
+//              frozen sound this is the freeze blend -- frozen and live
+//              alternate at the LFO rate.
+//   Output     bipolar `wave x Depth` x kModulationOutputExcursionDb added to
+//              the Output trim, clamped to the trim's range. Applied after
+//              Auto Gain, which never sees it: Auto Gain compensates the
+//              drawn shape, and a level LFO stays audible as level.
+//
+// Auto Gain is computed from the UNMODULATED Intensity and Mix as well, so
+// no LFO on a level target is cancelled by it.
+
+/// Full-depth Output excursion, dB each way (12 dB peak to peak).
+inline constexpr float kModulationOutputExcursionDb = 6.0f;
+/// The Output trim range (spectr.cpp registers the lane with it).
+inline constexpr float kOutputTrimMinDb = -24.0f;
+inline constexpr float kOutputTrimMaxDb = 24.0f;
+
+/// The 0..1 pull a unipolar level destination's coordinate asks for.
+inline float level_pull(const ModulationCoordinates& coords,
+                        ModulationTarget target) noexcept {
+    const float c = coords[target];
+    return std::isfinite(c) ? std::clamp(c, 0.0f, 1.0f) : 0.0f;
+}
+
+/// Intensity (0..1 factor) after the Intensity destination.
+inline float modulated_intensity(float base, const ModulationCoordinates& coords) noexcept {
+    return std::clamp(base, 0.0f, 1.0f)
+        * (1.0f - level_pull(coords, ModulationTarget::Intensity));
+}
+
+/// Mix (0..1, 1 = wet) after the Mix destination.
+inline float modulated_mix(float base, const ModulationCoordinates& coords) noexcept {
+    return std::clamp(base, 0.0f, 1.0f)
+        * (1.0f - level_pull(coords, ModulationTarget::Mix));
+}
+
+/// The Output destination's offset in dB, before the trim-range clamp.
+inline float output_modulation_db(const ModulationCoordinates& coords) noexcept {
+    const float c = coords[ModulationTarget::Output];
+    return std::isfinite(c) ? c * kModulationOutputExcursionDb : 0.0f;
+}
+
+/// Output trim in dB after the Output destination, clamped to the lane range.
+inline float modulated_output_trim_db(float base_db,
+                                      const ModulationCoordinates& coords) noexcept {
+    return std::clamp(base_db + output_modulation_db(coords),
+                      kOutputTrimMinDb, kOutputTrimMaxDb);
 }
 
 /// Add one LFO's contribution. @p level is the LFO's (slewed) on/off level --

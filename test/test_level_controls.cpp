@@ -19,6 +19,7 @@
 #include <choc/text/choc_JSON.h>
 
 #include "spectr/level_controls.hpp"
+#include "spectr/modulation.hpp"
 #include "spectr/param_surface.hpp"
 #include "spectr/render_mode.hpp"
 #include "spectr/spectr.hpp"
@@ -706,5 +707,264 @@ TEST_CASE("Mix blends the latency-aligned dry signal with the wet in both modes"
                         dry_gain, worst_db);
             CHECK(worst_db < -90.0);
         }
+    }
+}
+
+// ── LFO level destinations: Intensity, Mix, Output ───────────────────────
+//
+// docs/modulation.md, "Level targets". Each destination moves its control
+// around the user's setting without writing it; Auto Gain is computed from the
+// unmodulated controls, so it never cancels an LFO on any of them.
+//
+//   SPECTR_MODULATION_PLANT=level-target-step  the Output destination lands
+//                                              once per block (no ramp)
+
+namespace {
+
+using spectr::ModulationTarget;
+
+std::size_t target_index(ModulationTarget t) { return static_cast<std::size_t>(t); }
+
+// LFO 1 on, square at 16 beats: +1 for the first 8 beats (4 s at 120 BPM), so
+// a render shorter than that sees the destination at full positive swing.
+// Every route off except @p target (a fresh instance drives Bank).
+void route_only(Rig& rig, ModulationTarget target, float depth,
+                spectr::LfoShape shape = spectr::LfoShape::Square, float rate = 16.0f) {
+    rig.set(spectr::kParamLfoEnabled, 1.0f);
+    rig.set(spectr::kParamLfoShape, static_cast<float>(shape));
+    rig.set(spectr::kParamLfoRate, rate);
+    for (std::size_t lfo = 0; lfo < spectr::kRouteLfoCount; ++lfo)
+        for (std::size_t t = 0; t < spectr::kRouteTargetCount; ++t)
+            rig.set(spectr::lfo_route_enabled_param_id(lfo, t), 0.0f);
+    if (depth > 0.0f) {
+        rig.set(spectr::lfo_route_enabled_param_id(0, target_index(target)), 1.0f);
+        rig.set(spectr::lfo_route_amount_param_id(0, target_index(target)), depth);
+    }
+}
+
+// Largest change of the 1 ms RMS envelope (48 samples, exactly one cycle of
+// a 1 kHz tone) between neighbouring windows over [from, to), in dB.
+double largest_ms_step_db(const std::vector<float>& x, std::size_t from, std::size_t to) {
+    constexpr std::size_t w = 48;
+    double worst = 0.0, previous = 0.0;
+    bool first = true;
+    for (std::size_t at = from; at + w <= to; at += w) {
+        double e = 0.0;
+        for (std::size_t i = at; i < at + w; ++i) e += static_cast<double>(x[i]) * x[i];
+        const double db = 10.0 * std::log10(std::max(e / w, 1e-30));
+        if (!first) worst = std::max(worst, std::abs(db - previous));
+        previous = db;
+        first = false;
+    }
+    return worst;
+}
+
+} // namespace
+
+TEST_CASE("Level destinations: the pure mapping",
+          "[level][modulation][routing]") {
+    using spectr::ModulationCoordinates;
+    const auto at = [](ModulationTarget t, float c) {
+        ModulationCoordinates coords;
+        coords.value[target_index(t)] = c;
+        return coords;
+    };
+    // Intensity and Mix pull toward 0 in proportion; identity at 0.
+    CHECK(spectr::modulated_intensity(0.8f, at(ModulationTarget::Intensity, 0.0f)) == 0.8f);
+    CHECK(spectr::modulated_intensity(0.8f, at(ModulationTarget::Intensity, 0.5f))
+          == Approx(0.4f));
+    CHECK(spectr::modulated_intensity(0.8f, at(ModulationTarget::Intensity, 1.7f)) == 0.0f);
+    CHECK(spectr::modulated_mix(1.0f, at(ModulationTarget::Mix, 0.25f)) == Approx(0.75f));
+    CHECK(spectr::modulated_mix(0.6f, at(ModulationTarget::Mix, -0.3f)) == Approx(0.6f));
+    // Output: +-6 dB per unit, clamped with the trim into the lane's range.
+    CHECK(spectr::output_modulation_db(at(ModulationTarget::Output, -0.5f)) == Approx(-3.0f));
+    CHECK(spectr::modulated_output_trim_db(2.0f, at(ModulationTarget::Output, 1.0f))
+          == Approx(8.0f));
+    CHECK(spectr::modulated_output_trim_db(22.0f, at(ModulationTarget::Output, 1.0f))
+          == Approx(24.0f));
+    // Intensity and Mix are unipolar like the snapshots; Output is bipolar.
+    CHECK(spectr::modulation_target_is_unipolar(ModulationTarget::Intensity));
+    CHECK(spectr::modulation_target_is_unipolar(ModulationTarget::Mix));
+    CHECK_FALSE(spectr::modulation_target_is_unipolar(ModulationTarget::Output));
+    spectr::LfoRoutes routes{};
+    for (const auto t : {ModulationTarget::Intensity, ModulationTarget::Mix,
+                         ModulationTarget::Output}) {
+        routes[target_index(t)].enabled = true;
+        routes[target_index(t)].amount = 0.5f;
+    }
+    ModulationCoordinates coords;
+    spectr::accumulate_modulation(coords, routes, 1.0f, -1.0f);  // trough
+    CHECK(coords[ModulationTarget::Intensity] == 0.0f);
+    CHECK(coords[ModulationTarget::Mix] == 0.0f);
+    CHECK(coords[ModulationTarget::Output] == Approx(-0.5f));
+    // None of them moves the band field or makes the overlay active.
+    CHECK_FALSE(spectr::lfo_routes_audible(routes));
+    // A route mask holds all eleven destinations.
+    CHECK(spectr::route_mask(routes) == ((1u << 8) | (1u << 9) | (1u << 10)));
+    spectr::set_route_mask(routes, spectr::kModulationRouteMaskAll);
+    for (const auto& route : routes) CHECK(route.enabled);
+}
+
+TEST_CASE("The Output target moves the level after Auto Gain, which never sees it",
+          "[level][modulation][routing][autogain][audio]") {
+    const double hz = band_centre(15);
+    const auto in = tone(hz, 0.05, static_cast<std::size_t>(kRate * 3.0));
+    const std::size_t from = static_cast<std::size_t>(kRate * 1.5), to = in.size();
+    const auto measure = [&](float depth, float* applied_db) {
+        Rig rig;
+        rig.set(spectr::kParamAutoGain, 1.0f);
+        rig.shape([](std::size_t, spectr::Band& b) { b.gain_db = -12.0f; });
+        route_only(rig, ModulationTarget::Output, depth);
+        const auto out = rig.render(in);
+        if (applied_db) *applied_db = rig.plugin->auto_gain_applied_db();
+        return 20.0 * std::log10(tone_amplitude(out.l, hz, from, to));
+    };
+    float off_gain = 0.0f, full_gain = 0.0f, half_gain = 0.0f;
+    const double off = measure(0.0f, &off_gain);
+    const double full = measure(1.0f, &full_gain);
+    const double half = measure(0.5f, &half_gain);
+    std::printf("[level-target] Output: off %.2f dBFS, Depth 100%% %+.3f dB, 50%% %+.3f dB; "
+                "Auto Gain %+.3f / %+.3f / %+.3f dB\n", off, full - off, half - off,
+                off_gain, full_gain, half_gain);
+    REQUIRE(off_gain > 3.0f);  // Auto Gain is really making up the -12 dB shape
+    CHECK(full - off == Approx(6.0).margin(0.1));
+    CHECK(half - off == Approx(3.0).margin(0.1));
+    CHECK(full_gain == Approx(off_gain).margin(0.01));
+    CHECK(half_gain == Approx(off_gain).margin(0.01));
+}
+
+TEST_CASE("The Intensity target pulls the shape toward flat; Auto Gain holds",
+          "[level][modulation][routing][intensity][audio]") {
+    const double hz = band_centre(15);
+    const auto in = tone(hz, 0.05, static_cast<std::size_t>(kRate * 3.0));
+    const std::size_t from = static_cast<std::size_t>(kRate * 1.5), to = in.size();
+    const double dry = tone_amplitude(in.l, hz, from, to);
+    const auto measure = [&](float depth, bool auto_gain, float* applied_db) {
+        Rig rig;
+        rig.set(spectr::kParamAutoGain, auto_gain ? 1.0f : 0.0f);
+        rig.shape([](std::size_t i, spectr::Band& b) {
+            b.gain_db = (i >= 6 && i <= 25) ? 12.0f : 0.0f;
+        });
+        route_only(rig, ModulationTarget::Intensity, depth);
+        const auto out = rig.render(in);
+        if (applied_db) *applied_db = rig.plugin->auto_gain_applied_db();
+        return 20.0 * std::log10(tone_amplitude(out.l, hz, from, to) / dry);
+    };
+    const double off = measure(0.0f, false, nullptr);
+    const double full = measure(1.0f, false, nullptr);  // pull 1: flat
+    const double half = measure(0.5f, false, nullptr);  // pull 0.5: half the shape
+    float ag_off = 0.0f, ag_full = 0.0f;
+    (void)measure(0.0f, true, &ag_off);
+    (void)measure(1.0f, true, &ag_full);
+    std::printf("[level-target] Intensity: off %+.3f dB, Depth 100%% %+.3f dB, 50%% %+.3f dB; "
+                "Auto Gain %+.3f / %+.3f dB\n", off, full, half, ag_off, ag_full);
+    CHECK(off == Approx(12.0).margin(0.15));
+    CHECK(full == Approx(0.0).margin(0.15));
+    CHECK(half == Approx(6.0).margin(0.15));
+    REQUIRE(ag_off < -3.0f);  // Auto Gain is really cutting the boosted shape
+    CHECK(ag_full == Approx(ag_off).margin(0.01));
+}
+
+TEST_CASE("The Mix target pulls toward dry: the freeze blend",
+          "[level][modulation][routing][mix][audio]") {
+    const double hz = band_centre(15);
+    const auto in = tone(hz, 0.05, static_cast<std::size_t>(kRate * 3.0));
+    const std::size_t from = static_cast<std::size_t>(kRate * 1.5), to = in.size();
+    const double dry = tone_amplitude(in.l, hz, from, to);
+    const auto measure = [&](float depth) {
+        Rig rig;
+        rig.set(spectr::kParamAutoGain, 0.0f);
+        rig.shape([](std::size_t, spectr::Band& b) { b.gain_db = -30.0f; });
+        route_only(rig, ModulationTarget::Mix, depth);
+        const auto out = rig.render(in);
+        return 20.0 * std::log10(tone_amplitude(out.l, hz, from, to) / dry);
+    };
+    const double off = measure(0.0f), full = measure(1.0f), half = measure(0.5f);
+    std::printf("[level-target] Mix: off %+.2f dB, Depth 100%% %+.3f dB, 50%% %+.3f dB\n",
+                off, full, half);
+    CHECK(off < -20.0);                       // control: fully wet, the cut is heard
+    CHECK(full == Approx(0.0).margin(0.1));   // pulled all the way to dry
+    CHECK(half > -6.5);                       // half dry, half (cut) wet
+    CHECK(half < -5.0);
+}
+
+TEST_CASE("Level targets are smooth: a running LFO and a switch at the crest",
+          "[level][modulation][routing][audio][rt]") {
+    // A 1 kHz tone (one cycle per 1 ms window) through a flat shape, so only
+    // the destination moves the level.
+    const auto in = tone(1000.0, 0.1, static_cast<std::size_t>(kRate * 2.5));
+    // Output, Depth 100 %, sine at 1 beat: the steepest a running Output LFO
+    // gets is 6 dB x 2 pi / 0.5 s = 0.075 dB/ms. A per-block landing (the
+    // `level-target-step` plant) jumps ~0.8 dB at a block edge.
+    constexpr double kOutputGateDbPerMs = 0.2;
+    {
+        Rig rig;
+        rig.set(spectr::kParamAutoGain, 0.0f);
+        rig.shape([](std::size_t, spectr::Band& b) { b.gain_db = 0.0f; });
+        route_only(rig, ModulationTarget::Output, 1.0f, spectr::LfoShape::Sine, 1.0f);
+        const auto out = rig.render(in);
+        const double worst = largest_ms_step_db(out.l, static_cast<std::size_t>(kRate * 0.5),
+                                                out.size());
+        double lo = 1e9, hi = -1e9;
+        for (std::size_t b = 50; b < 100; ++b) {
+            lo = std::min(lo, block_rms_db(out.l, b));
+            hi = std::max(hi, block_rms_db(out.l, b));
+        }
+        const double swing = hi - lo;
+        std::printf("[level-target] Output LFO running: max 1 ms step %.3f dB "
+                    "(gate %.2f), swing %.2f dB\n", worst, kOutputGateDbPerMs, swing);
+        CHECK(swing > 10.0);  // the LFO really swings the level, +-6 dB
+        CHECK(worst <= kOutputGateDbPerMs);
+    }
+    // Output switched on at a crest (Depth 100 %): the route level ramps over
+    // 60 ms, 0.1 dB/ms.
+    {
+        Rig rig;
+        rig.set(spectr::kParamAutoGain, 0.0f);
+        rig.shape([](std::size_t, spectr::Band& b) { b.gain_db = 0.0f; });
+        route_only(rig, ModulationTarget::Output, 0.0f, spectr::LfoShape::Sine, 1.0f);
+        constexpr std::size_t kCrest = 105;  // 1.12 s: the sine's third crest
+        const auto out = rig.render(in, [&](std::size_t block) {
+            if (block == kCrest) {
+                rig.set(spectr::lfo_route_enabled_param_id(
+                    0, target_index(ModulationTarget::Output)), 1.0f);
+                rig.set(spectr::lfo_route_amount_param_id(
+                    0, target_index(ModulationTarget::Output)), 1.0f);
+            }
+        });
+        const double worst = largest_ms_step_db(out.l, (kCrest - 4) * kBlock,
+                                                (kCrest + 20) * kBlock);
+        std::printf("[level-target] Output on at the crest: max 1 ms step %.3f dB\n", worst);
+        CHECK(worst <= kOutputGateDbPerMs);
+    }
+    // Intensity switched on at a crest, Depth 100 %, on a +12 dB shape: the
+    // route slews like the Intensity knob, inside the Bank-LFO yardstick.
+    {
+        constexpr double kGateDbPerBlock = 2.3;
+        const double hz = band_centre(15);
+        const auto boosted = tone(hz, 0.05, static_cast<std::size_t>(kRate * 2.5));
+        Rig rig;
+        rig.set(spectr::kParamAutoGain, 0.0f);
+        rig.shape([](std::size_t, spectr::Band& b) { b.gain_db = 12.0f; });
+        route_only(rig, ModulationTarget::Intensity, 0.0f, spectr::LfoShape::Sine, 1.0f);
+        constexpr std::size_t kCrest = 105;
+        const auto out = rig.render(boosted, [&](std::size_t block) {
+            if (block == kCrest) {
+                rig.set(spectr::lfo_route_enabled_param_id(
+                    0, target_index(ModulationTarget::Intensity)), 1.0f);
+                rig.set(spectr::lfo_route_amount_param_id(
+                    0, target_index(ModulationTarget::Intensity)), 1.0f);
+            }
+        }, /*paced=*/true);
+        double worst = 0.0;
+        for (std::size_t b = kCrest - 4; b < kCrest + 60; ++b)
+            worst = std::max(worst, std::abs(block_rms_db(out.l, b + 1) - block_rms_db(out.l, b)));
+        const double swing = block_rms_db(out.l, kCrest - 2)
+            - std::min({block_rms_db(out.l, kCrest + 40), block_rms_db(out.l, kCrest + 41),
+                        block_rms_db(out.l, kCrest + 47), block_rms_db(out.l, kCrest + 48)});
+        std::printf("[level-target] Intensity on at the crest: max step %.2f dB/block "
+                    "(gate %.2f), swing %.2f dB\n", worst, kGateDbPerBlock, swing);
+        CHECK(swing > 6.0);  // it really pulled the boost down
+        CHECK(worst <= kGateDbPerBlock);
     }
 }

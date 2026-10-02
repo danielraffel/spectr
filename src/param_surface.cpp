@@ -427,7 +427,8 @@ void register_surface_params(pulp::state::StateStore& store) {
     // 50 %, nothing else.
     static constexpr const char* kRouteNames[kRouteTargetCount] = {
         "Bank", "Snapshot A", "Snapshot B", "Morph",
-        "Band shift", "Band spread", "Freeze", "Length"};
+        "Band shift", "Band spread", "Freeze", "Length",
+        "Intensity", "Mix", "Output"};
     for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
         for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
             pulp::state::ParamInfo info;
@@ -546,7 +547,7 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     bool editor_changed = false;
     // A move of the legacy single-target lane is a command: see below. Its
     // routing writes go to the store after the lock is released.
-    std::array<std::uint8_t, kRouteLfoCount> legacy_route_masks{};
+    std::array<std::uint16_t, kRouteLfoCount> legacy_route_masks{};
     bool legacy_target_command = false;
     struct LaneWrite { pulp::state::ParamID id; float value; };
     std::array<LaneWrite, kRouteParamCount> legacy_depth_writes{};
@@ -732,9 +733,10 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         // agree with what is heard.
         const auto bit = modulation_target_bit(next_modulation.target);
         for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
-            const std::uint8_t keep = static_cast<std::uint8_t>(
-                route_mask(next_modulation.routes[lfo]) & ~kModulationTargetMaskAll);
-            legacy_route_masks[lfo] = static_cast<std::uint8_t>(keep | bit);
+            const std::uint16_t keep = static_cast<std::uint16_t>(
+                route_mask(next_modulation.routes[lfo])
+                & ~static_cast<std::uint16_t>(kModulationTargetMaskAll));
+            legacy_route_masks[lfo] = static_cast<std::uint16_t>(keep | bit);
             set_route_mask(next_modulation.routes[lfo], legacy_route_masks[lfo]);
             for (std::size_t t = 0; t < kRouteTargetCount; ++t)
                 applied_param_cache_[detail::route_enabled_slot(lfo, t)].store(
@@ -856,12 +858,13 @@ bool Spectr::set_modulation_target_mask(std::uint8_t mask) noexcept {
     // written as its own host gesture so a host records it; the viewport
     // routes are left as they are.
     mask = static_cast<std::uint8_t>(mask & kModulationTargetMaskAll);
-    std::array<std::uint8_t, kRouteLfoCount> masks{};
+    std::array<std::uint16_t, kRouteLfoCount> masks{};
     {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
-            masks[lfo] = static_cast<std::uint8_t>(
-                (route_mask(modulation_.routes[lfo]) & ~kModulationTargetMaskAll)
+            masks[lfo] = static_cast<std::uint16_t>(
+                (route_mask(modulation_.routes[lfo])
+                 & ~static_cast<std::uint16_t>(kModulationTargetMaskAll))
                 | mask);
             set_route_mask(modulation_.routes[lfo], masks[lfo]);
         }

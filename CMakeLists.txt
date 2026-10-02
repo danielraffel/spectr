@@ -961,6 +961,14 @@ add_test(NAME Spectr-level-autogain-follow-output-negative-control
 set_tests_properties(Spectr-level-autogain-follow-output-negative-control PROPERTIES
     TIMEOUT 300
     PASS_REGULAR_EXPRESSION "CHECK\\( spread <= 0\\.01 \\)")
+# The Output LFO destination lands once per block (no ramp): its smoothness
+# gate must catch the per-block zipper.
+add_test(NAME Spectr-level-target-step-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_MODULATION_PLANT=level-target-step
+        $<TARGET_FILE:Spectr-test> "Level targets are smooth: a running LFO and a switch at the crest")
+set_tests_properties(Spectr-level-target-step-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( worst <= kOutputGateDbPerMs \\)")
 
 if(Python3_Interpreter_FOUND)
     add_test(NAME Spectr-level-help-pins

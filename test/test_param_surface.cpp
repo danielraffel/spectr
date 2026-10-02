@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 187;  // +4 macros, +freeze, +freeze length, +32 LFO routing, +intensity, +auto gain
+constexpr std::size_t kExpectedParamCount = 199;  // +4 macros, +freeze, +freeze length, +44 LFO routing, +intensity, +auto gain
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {
@@ -159,12 +159,31 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     CHECK(find(w.store, 4014) == nullptr);
     CHECK(find(w.store, 4019) == nullptr);
     // LFO routing: on/off 4020..4027 / 4040..4047, Depths 4030..4037 /
-    // 4050..4057; the two IDs after each block are headroom.
+    // 4050..4057; the two IDs after each block are headroom. The level
+    // destinations (Intensity, Mix, Output) take their own block: on/off
+    // 4060..4062 / 4080..4082, Depths 4070..4072 / 4090..4092.
     for (std::size_t lfo = 0; lfo < 2; ++lfo)
-        for (std::size_t t = 0; t < 8; ++t) {
+        for (std::size_t t = 0; t < 11; ++t) {
             REQUIRE(find(w.store, spectr::lfo_route_enabled_param_id(lfo, t)) != nullptr);
             REQUIRE(find(w.store, spectr::lfo_route_amount_param_id(lfo, t)) != nullptr);
         }
+    // The first block is exactly as it shipped; the level block is appended.
+    CHECK(spectr::lfo_route_enabled_param_id(0, 7) == 4027);
+    CHECK(spectr::lfo_route_amount_param_id(1, 7) == 4057);
+    const std::pair<std::size_t, pulp::state::ParamID> level_ids[] = {
+        {8, 4060}, {9, 4061}, {10, 4062}};
+    for (const auto& [t, id] : level_ids) {
+        CHECK(spectr::lfo_route_enabled_param_id(0, t) == id);
+        CHECK(spectr::lfo_route_amount_param_id(0, t) == id + 10);
+        CHECK(spectr::lfo_route_enabled_param_id(1, t) == id + 20);
+        CHECK(spectr::lfo_route_amount_param_id(1, t) == id + 30);
+    }
+    CHECK(find(w.store, 4060)->name == "LFO 1 Intensity");
+    CHECK(find(w.store, 4071)->name == "LFO 1 Mix Depth");
+    CHECK(find(w.store, 4082)->name == "LFO 2 Output");
+    CHECK(find(w.store, 4092)->name == "LFO 2 Output Depth");
+    for (const pulp::state::ParamID id : {4063, 4069, 4073, 4079, 4083, 4093, 4099})
+        CHECK(find(w.store, id) == nullptr);
     CHECK(find(w.store, 4028) == nullptr);
     CHECK(find(w.store, 4029) == nullptr);
     CHECK(find(w.store, 4038) == nullptr);

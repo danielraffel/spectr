@@ -235,7 +235,7 @@ using Schedule = std::function<void(std::size_t block, pulp::state::ParameterEve
 Render render(std::size_t blocks, const Schedule& schedule, bool tracking = false,
               float tone_hz = 997.0f,
               const std::function<float(std::size_t band)>& gain_of = {},
-              bool paced = false) {
+              bool paced = false, bool auto_gain = false) {
     constexpr std::size_t block_size = 512;
     constexpr double sr = 48000.0;
     pulp::format::HeadlessHost host(tracking ? create_tracking : create_mixing);
@@ -263,6 +263,10 @@ Render render(std::size_t blocks, const Schedule& schedule, bool tracking = fals
         for (std::size_t band = 0; band < 32; ++band)
             REQUIRE(events.push({spectr::band_gain_param_id(band), 0,
                                  gain_of ? gain_of(band) : -12.0f, 0}));
+        // These cases measure the mask and the routing, so Auto Gain (on for
+        // a new instance) is off unless a case asks for it: its make-up
+        // would otherwise lift a deliberately attenuated control render.
+        REQUIRE(events.push({spectr::kParamAutoGain, 0, auto_gain ? 1.0f : 0.0f, 0}));
         schedule(block, events);
         const auto t0 = std::chrono::steady_clock::now();
         host.process(output, input, events);

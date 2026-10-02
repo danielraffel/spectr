@@ -914,6 +914,10 @@ private:
     // Slewed Intensity factor (0..1) and whether it has adopted its first
     // value; plus the cursor baselines, like audio_mix_percent_.
     float                                  audio_intensity_ = 1.0f;
+    /// The Output LFO destination's dB at the end of the last slice: the
+    /// start of the next slice's ramp (modulation.hpp, level destinations).
+    float                                  audio_output_mod_db_ = 0.0f;
+    bool                                   audio_output_mod_primed_ = false;
     bool                                   audio_intensity_primed_ = false;
     float                                  audio_intensity_percent_ = kIntensityDefaultPercent;
     float                                  audio_auto_gain_param_ =

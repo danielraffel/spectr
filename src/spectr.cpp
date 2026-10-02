@@ -41,6 +41,17 @@ bool modulation_plants_route_step() noexcept {
     return planted;
 }
 
+// SPECTR_MODULATION_PLANT=level-target-step: the Output destination's gain
+// lands once per block instead of ramping across it, the per-block zipper the
+// ramp exists to prevent. The Output-target smoothness gate must fail with it.
+bool modulation_plants_level_target_step() noexcept {
+    static const bool planted = [] {
+        const char* value = std::getenv("SPECTR_MODULATION_PLANT");
+        return value != nullptr && std::string_view(value) == "level-target-step";
+    }();
+    return planted;
+}
+
 // See set_editor_is_standalone: asserted by the standalone entry points only.
 std::atomic<bool> g_editor_is_standalone{false};
 }  // namespace
@@ -809,6 +820,8 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     auto_gain_target_db_ = 0.0f;
     auto_gain_primed_ = false;
     audio_intensity_primed_ = false;
+    audio_output_mod_primed_ = false;
+    audio_output_mod_db_ = 0.0f;
     audio_intensity_percent_ = state().get_value(kParamIntensity);
     audio_auto_gain_param_ = state().get_value(kParamAutoGain);
     auto_gain_applied_db_.store(0.0f, std::memory_order_relaxed);
@@ -1271,6 +1284,8 @@ void Spectr::process(
         // Level controls re-adopt their values on the next composed block.
         auto_gain_primed_ = false;
         audio_intensity_primed_ = false;
+        audio_output_mod_primed_ = false;
+        audio_output_mod_db_ = 0.0f;
     }
     // Freeze's Length, in seconds at the host's tempo and meter. It only
     // decides the NEXT latch: a hold already playing keeps the loop it
@@ -1494,8 +1509,9 @@ void Spectr::process(
                         const auto bit = modulation_target_bit(
                             modulation_settings.target);
                         for (auto& routes : modulation_settings.routes)
-                            set_route_mask(routes, static_cast<std::uint8_t>(
-                                (route_mask(routes) & ~kModulationTargetMaskAll)
+                            set_route_mask(routes, static_cast<std::uint16_t>(
+                                (route_mask(routes)
+                                 & ~static_cast<std::uint16_t>(kModulationTargetMaskAll))
                                 | bit));
                     }
                     modulation_settings.lfo2_enabled =
@@ -1807,8 +1823,12 @@ void Spectr::process(
                                              slice_seconds_level)
                             : intensity_goal;
                         audio_intensity_primed_ = true;
+                        // The Intensity destination pulls the slewed knob value
+                        // toward flat. Auto Gain below still sees the knob
+                        // alone, so it never cancels the LFO.
                         if (!level_plant("intensity-ignored"))
-                            apply_intensity(automated, audio_intensity_);
+                            apply_intensity(automated, modulated_intensity(
+                                audio_intensity_, composed.coords));
 
                         // Auto Gain compensates the shape the user DREW (the
                         // pre-LFO field, after morph and macros) at this
@@ -1854,8 +1874,55 @@ void Spectr::process(
                         last_staged_layout_ = automated;
                         last_staged_layout_valid_ = true;
                     }
-                    renderer->set_mix(std::clamp(
-                        cursor.value(kMix) / 100.0f, 0.0f, 1.0f));
+                    // The Mix destination pulls Mix toward dry (the freeze
+                    // blend); the mixer's own ramp carries each block's move.
+                    renderer->set_mix(modulated_mix(
+                        std::clamp(cursor.value(kMix) / 100.0f, 0.0f, 1.0f),
+                        composed.coords));
+                    // The Output destination, in dB, at the end of this
+                    // slice. Ramped from the previous slice's value across
+                    // the samples below, so a running LFO is a smooth gain
+                    // rather than a per-block step.
+                    // The END of the slice, so consecutive slices meet:
+                    // `composed` is evaluated at the slice's first sample,
+                    // and ramping toward that would lag by a slice and steepen
+                    // wherever slice lengths differ.
+                    float output_mod_end_db = 0.0f;
+                    {
+                        const auto output_route = static_cast<std::size_t>(
+                            ModulationTarget::Output);
+                        const bool routed =
+                            modulation_settings.routes[0][output_route].enabled
+                            || modulation_settings.routes[1][output_route].enabled;
+                        if (routed) {
+                            const double slice_beats =
+                                static_cast<double>(out_slice.num_samples())
+                                * (ctx.tempo_bpm > 0.0 ? ctx.tempo_bpm : 120.0)
+                                / (60.0 * (ctx.sample_rate > 0.0 ? ctx.sample_rate
+                                                                 : sample_rate_));
+                            const float wave_end = lfo_value(
+                                audio_lfo_shape_fade_,
+                                audio_modulation_phase_ + slice_beats / std::max(
+                                    0.0625, static_cast<double>(
+                                        modulation_settings.beats_per_cycle)));
+                            const float wave2_end = lfo_value(
+                                audio_lfo_2_shape_fade_,
+                                audio_modulation_phase_2_ + slice_beats / std::max(
+                                    0.0625, static_cast<double>(
+                                        modulation_settings.lfo2_beats_per_cycle)));
+                            output_mod_end_db = output_modulation_db(
+                                modulation_coordinates(modulation_settings,
+                                                       wave_end, wave2_end));
+                        }
+                    }
+                    const float output_mod_start_db =
+                        (audio_output_mod_primed_
+                         && !modulation_plants_level_target_step())
+                        ? audio_output_mod_db_ : output_mod_end_db;
+                    audio_output_mod_db_ = output_mod_end_db;
+                    audio_output_mod_primed_ = true;
+                    const bool output_modulated =
+                        output_mod_start_db != 0.0f || output_mod_end_db != 0.0f;
 
                     for (std::size_t channel = 0;
                          channel < out_slice.num_channels(); ++channel) {
@@ -1922,7 +1989,24 @@ void Spectr::process(
                                     output_gain_.set_target(trim_target);
                                 trim_gain = output_gain_.next();
                             }
-                            const float gain = trim_gain * auto_gain_.next();
+                            float gain = trim_gain * auto_gain_.next();
+                            // The Output destination rides on top of Auto
+                            // Gain and the trim: Auto Gain never sees it, and
+                            // the trim plus the LFO stay inside the lane's
+                            // range.
+                            if (output_modulated) {
+                                const float along =
+                                    static_cast<float>(sample + 1)
+                                    / static_cast<float>(out_slice.num_samples());
+                                const float mod_db = output_mod_start_db
+                                    + (output_mod_end_db - output_mod_start_db) * along;
+                                const float trim_db =
+                                    cursor.value_at(kOutputTrim, absolute_sample);
+                                const float applied_db = std::clamp(
+                                    trim_db + mod_db, kOutputTrimMinDb,
+                                    kOutputTrimMaxDb) - trim_db;
+                                gain *= std::pow(10.0f, applied_db * 0.05f);
+                            }
                             for (std::size_t channel = 0;
                                  channel < out_slice.num_channels(); ++channel)
                                 output_channels_[channel][sample] *= gain;

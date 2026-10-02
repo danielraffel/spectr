@@ -271,7 +271,7 @@ struct RoutedPlugin {
         proc.set_state_store(&store);
         proc.define_parameters(store);
     }
-    std::uint8_t mask(std::size_t lfo) const {
+    std::uint16_t mask(std::size_t lfo) const {
         return spectr::route_mask(proc.modulation_settings().routes[lfo]);
     }
 };

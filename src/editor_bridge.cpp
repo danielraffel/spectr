@@ -337,8 +337,9 @@ choc::value::Value make_modulation_payload_(const Spectr& plugin) {
     // enum destination that is actually being modulated.
     modulation.addMember("target_mask", static_cast<std::int32_t>(
         resolve_modulation_target_mask(modulation_state)));
-    // Per-LFO routing: each LFO's enabled destinations as a 6-bit mask (enum
-    // order Bank, A, B, Morph, Band shift, Band spread) and each
+    // Per-LFO routing: each LFO's enabled destinations as a bit mask (enum
+    // order Bank, A, B, Morph, Band shift, Band spread, Freeze, Length,
+    // Intensity, Mix, Output) and each
     // destination's amount. These are host lanes, so they ride the live
     // projection and the editor's toggles and Amount rows follow playback.
     auto routes = choc::value::createEmptyArray();
