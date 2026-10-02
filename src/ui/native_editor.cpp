@@ -2258,6 +2258,12 @@ bool Spectr::tick_native_analyzer_(float dt) {
     //                  by which a key reaches the document's own listeners.
     //                  It deliberately does not then run the native Escape
     //                  policy, so a dismissal it observes is the document's.
+    //   fkey:SPEC      the same key through the macOS host's WHOLE order:
+    //                  -performKeyEquivalent: (focused view, then root hook)
+    //                  before -keyDown: (inspector, root hook, navigation
+    //                  claim, script, overlay Escape, focused view). The
+    //                  result names the stage that took it and the focused
+    //                  view at the end.
     //   escape         the host's own Escape route for an active overlay
     //   outside:x,y    the host's own outside-press route
     //   param:ID=V     a host parameter write (arrangement, never a verdict).
@@ -2270,6 +2276,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
     //   resize:w,h     a host window resize, through `on_view_resized`
     //   psel:SELECTOR  a left click at the painted centre of the element a
     //                  CSS selector names, measured from the live layout
+    //   fpsel:SELECTOR as psel, but input focus moves to the pressed view
+    //                  first, as the macOS host's -mouseDown: does
     //   hsel:SELECTOR  a pointer move there (-mouseMoved:)
     //   wsel:SELECTOR|DY|N  N wheel steps of DY (Pulp's sign: positive scrolls
     //                  down) at the centre of the element a selector names
@@ -2340,7 +2348,11 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 //   * the CLICK is fired by mouseUp's MouseUpHost::fire_click.
                 //     With a default-constructed host nothing fires, every row
                 //     reads inert, and the run looks like a product failure.
-                const auto click_at = [&root](pulp::view::Point pt) {
+                // `host_focus`: also transfer input focus to the pressed view
+                // before delivering the press, as the macOS window host's
+                // -mouseDown: does (prepareDragTarget). The `f*` verbs set it.
+                bool host_focus = false;
+                const auto click_at = [&root, &host_focus](pulp::view::Point pt) {
                     pulp::view::ViewCapture capture;
                     std::string route = "hit-test";
                     bool bubble = true;
@@ -2355,6 +2367,12 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         return std::string{"dismiss-consumed-press"};
                     } else {
                         capture.set(root.hit_test(pt));
+                    }
+                    if (host_focus) {
+                        auto* candidate = capture.live_in(root);
+                        if (candidate == nullptr
+                            || !pulp::view::transfer_input_focus(root, candidate))
+                            return route + ":focus-refused";
                     }
                     auto* target = capture.live_in(root);
                     if (target == nullptr) return route + ":no-target";
@@ -2456,7 +2474,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         pulp::view::deliver_hover_move(root, pt);
                         detail = "hovered";
                     }
-                } else if (kind == "key" || kind == "pkey") {
+                } else if (kind == "key" || kind == "pkey" || kind == "fkey") {
                     // Same spec grammar as the SPECTR_KEY fixture above.
                     // `key` replays the standalone window's -keyDown: order;
                     // `pkey` replays the embedded plugin editor's, which is the
@@ -2498,6 +2516,54 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     }
                     if (bad_mod || code == pulp::view::KeyCode::unknown) {
                         detail = "bad-arg";
+                    } else if (kind == "fkey") {
+                        // The WHOLE AppKit order for one key press in the
+                        // macOS standalone, not just -keyDown:'s tail.
+                        // NSApplication offers every key down to
+                        // -performKeyEquivalent: first, whose FIRST stage is
+                        // the focused view's own on_key_event; only when
+                        // that and the root hook decline does -keyDown: run
+                        // (inspector hook, root hook, navigation claim,
+                        // script fan-out, overlay Escape, focused view).
+                        // `key` starts at the root hook, so a focused view
+                        // that swallows a key is invisible to it.
+                        pulp::view::KeyEvent down;
+                        down.key = code;
+                        down.modifiers = key_mods;
+                        down.is_down = true;
+                        std::string stage;
+                        if (auto* fv = pulp::view::focused_input_under_root(root);
+                            fv != nullptr && fv->on_key_event(down)) {
+                            stage = "pke-focused";
+                        } else if (root.on_global_key && root.on_global_key(down)) {
+                            stage = "pke-root";
+                        } else if (pulp::view::View::call_inspector_key_hook(down)) {
+                            stage = "inspector";
+                        } else if (root.on_global_key && root.on_global_key(down)) {
+                            stage = "root";
+                        } else if (root.accepts_navigation_input()
+                                   && root.on_navigation_key
+                                   && root.on_navigation_key(down)) {
+                            stage = "navigation";
+                        } else {
+                            pulp::view::script_events::dispatch_global_key(
+                                static_cast<int>(code), key_mods, /*is_down=*/true);
+                            stage = "script";
+                            if (code == pulp::view::KeyCode::escape
+                                && pulp::view::route_escape_to_active_overlay(
+                                       root, key_mods, false)
+                                       != pulp::view::OverlayEscapeResult::none) {
+                                stage = "script+overlay";
+                            } else if (auto* fv2 =
+                                           pulp::view::focused_input_under_root(root)) {
+                                stage += fv2->on_key_event(down) ? "+focused" : "";
+                            }
+                        }
+                        const auto* fv_now = pulp::view::focused_input_under_root(root);
+                        detail = stage + "|focused="
+                            + (fv_now ? (fv_now->id().empty() ? std::string{"<anon>"}
+                                                              : fv_now->id())
+                                      : std::string{"<none>"});
                     } else if (kind == "pkey") {
                         // PluginViewHost -keyDown: -- route_plugin_key, then
                         // the root-scoped script delivery, and whatever
@@ -2819,7 +2885,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         press_x = pt.x; press_y = pt.y;
                         detail = "wheeled";
                     }
-                } else if (kind == "psel" || kind == "hsel") {
+                } else if (kind == "psel" || kind == "hsel" || kind == "fpsel") {
                     // A left click (psel) or a pointer move (hsel) at the
                     // painted centre of the element a CSS selector names,
                     // measured from the live layout at that moment -- the
@@ -2850,6 +2916,11 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         auto* hit = root.hit_test(pt);
                         attributable = hit != nullptr;
                         if (kind == "psel") detail = click_at(pt);
+                        else if (kind == "fpsel") {
+                            host_focus = true;
+                            detail = click_at(pt);
+                            host_focus = false;
+                        }
                         else { pulp::view::deliver_hover_move(root, pt); detail = "hovered"; }
                     }
                 } else if (kind == "exists") {

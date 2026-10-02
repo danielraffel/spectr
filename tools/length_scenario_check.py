@@ -95,6 +95,14 @@ def scenario(shots):
     add("open3", "psel:" + TRIGGER)
     add("esc3", "key:escape")
     add("p_esc3", "lenprobe")
+    # The same Escape through the macOS host's WHOLE order: the press moves
+    # input focus as -mouseDown: does, and the key is offered to the focused
+    # view by -performKeyEquivalent: before -keyDown: ever runs. `key` above
+    # starts at the root hook and cannot see a focused view that swallows it.
+    add("open3f", "fpsel:" + TRIGGER)
+    add("p_open3f", "lenprobe")
+    add("esc3f", "fkey:escape")
+    add("p_esc3f", "lenprobe")
     # Custom length...: Bars by its arrows, by keys, typed; invalid values.
     add("open4", "psel:" + TRIGGER)
     add("custom4", "psel:" + opt("custom-editor"))
@@ -275,6 +283,9 @@ def main():
                              "the last bars row: 8 bars", r)
     r = P("p_close2"); check(r["menu"] is None and r["label"] == "4 bars", "a press outside closes it", r)
     r = P("p_esc3"); check(r["menu"] is None and r["label"] == "4 bars", "Escape closes it, nothing changes", r)
+    r = P("p_open3f"); check(r["menu"] is not None, "a host-order press (focus moves) opens it", r)
+    r = P("p_esc3f"); check(r["menu"] is None and r["label"] == "4 bars",
+                            "Escape in the host's full key order (focused view first) closes it", r)
     r = P("p_editor"); check(r["editor"] and r["bars"] == "1" and r["fraction"] == "0"
                              and r["focus"] == "bars", "Custom length... opens the editor on Bars", r)
     r = P("p_kup"); check(r["bars"] == "3", "Up steps Bars (1 -> 3)", r)
