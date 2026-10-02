@@ -170,6 +170,29 @@ void Spectr::define_parameters(pulp::state::StateStore& store) {
         .range = {-24.0f, 24.0f, 0.0f},
         .group_id = 1,
     });
+    // Level controls (level_controls.hpp; IDs 5000..5009 reserved). Static
+    // like every other lane: registered unconditionally, appended, never moved.
+    store.add_parameter({
+        .id    = kParamIntensity,
+        .name  = "Intensity",
+        .unit  = "%",
+        .range = {kIntensityMinPercent, kIntensityMaxPercent,
+                  kIntensityDefaultPercent},
+        .group_id = 1,
+    });
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamAutoGain;
+        info.name = "Auto Gain";
+        info.range = {0.0f, 1.0f, kAutoGainDefaultForNewInstances ? 1.0f : 0.0f, 1.0f};
+        info.group_id = 1;
+        info.kind = pulp::state::ParamKind::Toggle;
+        info.to_string = [](float v) { return std::string(v >= 0.5f ? "On" : "Off"); };
+        info.from_string = [](const std::string& text) {
+            return (text == "On" || text == "on" || text == "1") ? 1.0f : 0.0f;
+        };
+        store.add_parameter(info);
+    }
 
     // spectr#34 — the full static host-automation surface (64 band gains,
     // 64 band mutes, morph, viewport center/width, band count, 4 modes).
@@ -302,6 +325,11 @@ Spectr::OutputLevelReading Spectr::read_output_level() {
     reading.trim_db = param_store_
         ? param_store_->get_value(kOutputTrim)
         : 0.0f;
+    if (param_store_) {
+        reading.intensity_percent = param_store_->get_value(kParamIntensity);
+        reading.auto_gain = param_store_->get_value(kParamAutoGain) >= 0.5f;
+    }
+    reading.auto_gain_db = auto_gain_applied_db();
 
     float peak = 0.0f;
     bool  over = false;
@@ -363,6 +391,12 @@ pulp::signal::SpectralBandLayout Spectr::make_mask_layout_() const noexcept {
         mask_layout.bands[i].gain_db = audible.bands[i].gain_db;
         mask_layout.bands[i].muted = audible.bands[i].muted;
     }
+    // Intensity, last, exactly as the audio owner applies it to the mask it
+    // stages, so the two publications agree once the slew has settled. An
+    // identity at 100 %.
+    if (param_store_)
+        apply_intensity(mask_layout,
+                        intensity_factor(param_store_->get_value(kParamIntensity)));
     return mask_layout;
 }
 
@@ -753,6 +787,17 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     output_gain_.set_ramp_time(0.01f, static_cast<float>(sample_rate_));
     output_gain_.set_immediate(std::pow(
         10.0f, state().get_value(kOutputTrim) * 0.05f));
+    // Level controls: the reference spectrum belongs to the rate, and the
+    // first block adopts Intensity and the Auto Gain level without a ramp.
+    auto_gain_reference_.prepare(sample_rate_);
+    auto_gain_.set_ramp_time(kAutoGainRampSeconds, static_cast<float>(sample_rate_));
+    auto_gain_.set_immediate(1.0f);
+    auto_gain_target_db_ = 0.0f;
+    auto_gain_primed_ = false;
+    audio_intensity_primed_ = false;
+    audio_intensity_percent_ = state().get_value(kParamIntensity);
+    audio_auto_gain_param_ = state().get_value(kParamAutoGain);
+    auto_gain_applied_db_.store(0.0f, std::memory_order_relaxed);
     // spectr#34: adopt any parameter state written before prepare (a host
     // may restore a session before audio starts). Morph is excluded — the
     // restored field already encodes it; re-deriving would erase post-morph
@@ -1142,6 +1187,14 @@ void Spectr::process(
     const float mix        = state().get_value(kMix) / 100.0f;
     const float out_trim_db= state().get_value(kOutputTrim);
     const float target_output_gain = std::pow(10.0f, out_trim_db * 0.05f);
+    // Intensity and Auto Gain live on the block-composed path below: either
+    // one engaged -- or still ramping out -- keeps that path running, so the
+    // mask it stages and the post gain it applies are this block's.
+    const bool level_engaged =
+        intensity_factor(state().get_value(kParamIntensity)) < 1.0f
+        || audio_intensity_ < 1.0f
+        || state().get_value(kParamAutoGain) >= 0.5f
+        || auto_gain_.is_smoothing() || auto_gain_.current() != 1.0f;
 
     // An explicit reset or unexpected seek is a hard DSP-history boundary.
     // Preserve the continuously hot WOLA/dry-delay history across an ordinary
@@ -1154,6 +1207,9 @@ void Spectr::process(
         // else: a playing hold keeps playing across it.
         freeze_source_.clear_history();
         output_gain_.set_immediate(target_output_gain);
+        // Level controls re-adopt their values on the next composed block.
+        auto_gain_primed_ = false;
+        audio_intensity_primed_ = false;
     }
     // Freeze's Length, in seconds at the host's tempo and meter. It only
     // decides the NEXT latch: a hold already playing keeps the loop it
@@ -1220,9 +1276,9 @@ void Spectr::process(
         const bool lfo_level_ramping =
             audio_lfo_level_[0] > 0.0f || audio_lfo_level_[1] > 0.0f;
         if (has_events || modulation_enabled || modulated_field_was_active_
-            || lfo_level_ramping || surface_drift.audio) {
+            || lfo_level_ramping || surface_drift.audio || level_engaged) {
             std::array<pulp::format::ParamSnapshotEntry,
-                       kSurfaceCacheSlots + 2> initial{};
+                       kSurfaceCacheSlots + 2 + kLevelParamCount> initial{};
             initial[0] = {kMix, audio_mix_percent_};
             initial[1] = {kOutputTrim, audio_output_trim_db_};
             for (std::size_t slot = 0; slot < kSurfaceCacheSlots; ++slot) {
@@ -1230,6 +1286,8 @@ void Spectr::process(
                     detail::surface_slot_param_id(slot),
                     applied_param_cache_[slot].load(std::memory_order_relaxed)};
             }
+            initial[kSurfaceCacheSlots + 2] = {kParamIntensity, audio_intensity_percent_};
+            initial[kSurfaceCacheSlots + 3] = {kParamAutoGain, audio_auto_gain_param_};
 
             pulp::format::ParamCursor params(
                 state(), events,
@@ -1553,6 +1611,59 @@ void Spectr::process(
                         automated.bands[band].muted =
                             audible.bands[band].muted;
                     }
+                    // ── Intensity + Auto Gain (level_controls.hpp) ──────
+                    // Intensity scales the COMPOSED shape -- morph, macros
+                    // and LFOs included -- toward flat, once, here. Slewed
+                    // per sub-block like an LFO level, so a jump restages
+                    // in steps the IR crossfade can carry.
+                    {
+                        const double slice_seconds_level =
+                            static_cast<double>(out_slice.num_samples())
+                            / (ctx.sample_rate > 0.0 ? ctx.sample_rate
+                                                     : sample_rate_);
+                        const float intensity_goal = intensity_factor(
+                            cursor.value(kParamIntensity));
+                        audio_intensity_ = audio_intensity_primed_
+                                && !level_plant("intensity-step")
+                            ? slew_intensity(audio_intensity_, intensity_goal,
+                                             slice_seconds_level)
+                            : intensity_goal;
+                        audio_intensity_primed_ = true;
+                        if (!level_plant("intensity-ignored"))
+                            apply_intensity(automated, audio_intensity_);
+
+                        // Auto Gain compensates the shape the user DREW (the
+                        // pre-LFO field, after morph and macros) at this
+                        // Intensity and Mix. Computed from the shape, never
+                        // from the output, so a static shape is a constant
+                        // gain and nothing can pump.
+                        float target_db = 0.0f;
+                        if (cursor.value(kParamAutoGain) >= 0.5f
+                            && !level_plant("autogain-follow-output")) {
+                            pulp::signal::SpectralBandLayout shape = automated;
+                            for (std::size_t band = 0;
+                                 band < shape.active_bands; ++band) {
+                                shape.bands[band].gain_db =
+                                    host_field.bands[band].gain_db;
+                                shape.bands[band].muted =
+                                    host_field.bands[band].muted;
+                            }
+                            apply_intensity(shape, audio_intensity_);
+                            target_db = auto_gain_reference_.compensation_db(
+                                shape, std::clamp(cursor.value(kMix) / 100.0f,
+                                                  0.0f, 1.0f));
+                        }
+                        if (!auto_gain_primed_) {
+                            auto_gain_.set_immediate(
+                                std::pow(10.0f, target_db * 0.05f));
+                            auto_gain_target_db_ = target_db;
+                            auto_gain_primed_ = true;
+                        } else if (target_db != auto_gain_target_db_) {
+                            auto_gain_.set_target(
+                                std::pow(10.0f, target_db * 0.05f));
+                            auto_gain_target_db_ = target_db;
+                        }
+                    }
                     // Stage only a mask that is not already live, so a held
                     // automation value does not queue a redesign per block.
                     // Like the publication gate above this is about cost, not
@@ -1580,20 +1691,45 @@ void Spectr::process(
                         input_channels_.data(), output_channels_.data(),
                         static_cast<int>(out_slice.num_samples()));
                     if (!processed) {
+                        auto_gain_.skip(static_cast<int>(out_slice.num_samples()));
                         for (std::size_t channel = 0;
                              channel < out_slice.num_channels(); ++channel) {
                             auto dst = out_slice.channel(channel);
                             std::fill(dst.begin(), dst.end(), 0.0f);
                         }
                     } else {
+                        if (level_plant("autogain-follow-output")
+                            && cursor.value(kParamAutoGain) >= 0.5f) {
+                            // The rejected design: match the output's level
+                            // to the input's, block by block.
+                            double in_e = 0.0, out_e = 0.0;
+                            for (std::size_t channel = 0;
+                                 channel < out_slice.num_channels(); ++channel)
+                                for (std::size_t sample = 0;
+                                     sample < out_slice.num_samples(); ++sample) {
+                                    const double a = input_channels_[channel][sample];
+                                    const double b = output_channels_[channel][sample];
+                                    in_e += a * a;
+                                    out_e += b * b;
+                                }
+                            const float follow_db = (in_e > 0.0 && out_e > 0.0)
+                                ? static_cast<float>(std::clamp(
+                                      10.0 * std::log10(in_e / out_e), -24.0, 12.0))
+                                : 0.0f;
+                            auto_gain_.set_immediate(std::pow(10.0f, follow_db * 0.05f));
+                            auto_gain_target_db_ = follow_db;
+                        }
                         for (std::size_t sample = 0;
                              sample < out_slice.num_samples(); ++sample) {
                             const auto absolute_sample = static_cast<int32_t>(
                                 block_offset + sample);
+                            // Auto Gain sits before Output trim: the trim
+                            // stays the user's last word on level. Exactly
+                            // 1.0f when off and settled, an identity.
                             const float gain = std::pow(
                                 10.0f,
                                 cursor.value_at(kOutputTrim, absolute_sample)
-                                    * 0.05f);
+                                    * 0.05f) * auto_gain_.next();
                             for (std::size_t channel = 0;
                                  channel < out_slice.num_channels(); ++channel)
                                 output_channels_[channel][sample] *= gain;
@@ -1633,6 +1769,14 @@ void Spectr::process(
                 output.num_samples() > 0 ? output.num_samples() - 1 : 0);
             audio_mix_percent_ = params.value_at(kMix, last_sample);
             audio_output_trim_db_ = params.value_at(kOutputTrim, last_sample);
+            audio_intensity_percent_ = params.value_at(kParamIntensity, last_sample);
+            audio_auto_gain_param_ = params.value_at(kParamAutoGain, last_sample);
+            {
+                const float applied = auto_gain_.current();
+                auto_gain_applied_db_.store(
+                    applied > 0.0f ? 20.0f * std::log10(applied) : 0.0f,
+                    std::memory_order_relaxed);
+            }
 
             const auto nc = output.num_channels();
             if (nc > 0 && nc <= 8) {
@@ -1657,6 +1801,8 @@ void Spectr::process(
         freeze_source_.set_frozen(state().get_value(kParamFreeze) >= 0.5f);
         audio_mix_percent_ = mix * 100.0f;
         audio_output_trim_db_ = out_trim_db;
+        audio_intensity_percent_ = state().get_value(kParamIntensity);
+        audio_auto_gain_param_ = state().get_value(kParamAutoGain);
         const bool processed = renderer->process(
             input_channels_.data(), output_channels_.data(),
             static_cast<int>(output.num_samples()));
@@ -1793,6 +1939,13 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // writer that predates it; readers treat absence as OFF, the default, so
     // an old session keeps the host's keys where a new instance would.
     root.addMember("keyboard_shortcuts_in_daw", keyboard_shortcuts_in_daw_);
+    // Level controls. `level_controls` marks a writer that knows Intensity
+    // and Auto Gain: a session WITHOUT it predates them, and opens with Auto
+    // Gain off so its level does not change on reload (the parameters
+    // themselves ride the base blob). `editor_range_db` is the editor's
+    // Range -- editor state with no parameter lane; absent reads as +-24.
+    root.addMember("level_controls", static_cast<int32_t>(1));
+    root.addMember("editor_range_db", static_cast<int32_t>(editor_range_db_));
     // Freeze's CUSTOM length (the one the Freeze Length parameter's
     // "Custom" selects; the parameter itself rides the base blob). Exact:
     // whole bars and the fraction's own text, never a float. The held sound
@@ -1999,6 +2152,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             if (param_store_) modulation_ = modulation_from_store_();
             else modulation_.target_mask = kModulationTargetMaskUnset;
             morph_applies_viewport_ = true;
+            editor_range_db_ = kEditorRangeDefaultDb;
             morph_derived_ = false;
             morph_overrides_.reset();
             for (auto& members : macro_members_) members.reset();
@@ -2020,6 +2174,9 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         }
         // Outside the lock, for the same reason as the main path below.
         (void)set_render_mode(kDefaultRenderMode);
+        // A bare parameter blob predates the level controls by construction:
+        // it opens at the level it was mixed at.
+        if (param_store_) param_store_->set_value(kParamAutoGain, 0.0f);
         return true;
     }
 
@@ -2191,6 +2348,22 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_keyboard_shortcuts_in_daw = flag.getBool();
     }
 
+    // Level controls (see serialize_plugin_state). A malformed Range falls
+    // back to the default rather than losing the session: it is a view.
+    const bool knows_level_controls = root.hasObjectMember("level_controls");
+    int new_editor_range_db = kEditorRangeDefaultDb;
+    if (root.hasObjectMember("editor_range_db")) {
+        const auto& range = root["editor_range_db"];
+        if (range.isInt32() && valid_editor_range_db(range.getInt32()))
+            new_editor_range_db = range.getInt32();
+        else if (range.isInt64()
+                 && valid_editor_range_db(static_cast<int>(range.getInt64())))
+            new_editor_range_db = static_cast<int>(range.getInt64());
+        else if (range.isFloat64()
+                 && valid_editor_range_db(static_cast<int>(range.getFloat64())))
+            new_editor_range_db = static_cast<int>(range.getFloat64());
+    }
+
     // Freeze's custom length. A wrongly TYPED member refuses the blob like
     // every other member here; a well-formed one naming a length this build
     // does not accept (a fraction outside the set, bars past the limit)
@@ -2312,6 +2485,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_overrides_ = new_morph_overrides;
         morph_applies_viewport_ = new_morph_applies_viewport;
         keyboard_shortcuts_in_daw_ = new_keyboard_shortcuts_in_daw;
+        editor_range_db_ = new_editor_range_db;
         if (new_freeze_custom_length)
             (void)set_freeze_custom_length(*new_freeze_custom_length);
         macro_members_ = new_macro_members;
@@ -2346,6 +2520,12 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         render_mode_unknown_on_load_ = true;
     }
+    // A session saved before Intensity and Auto Gain existed was mixed at the
+    // level it plays at; Auto Gain must not change that on reload, whatever
+    // the new-instance default is. Its Intensity lane is absent and keeps the
+    // 100 % default, which is an identity.
+    if (!knows_level_controls && param_store_)
+        param_store_->set_value(kParamAutoGain, 0.0f);
 
     if (version < 3) {
         // Migrate legacy supplemental live state into the new parameter-owned

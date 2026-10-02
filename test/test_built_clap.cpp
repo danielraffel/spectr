@@ -71,6 +71,10 @@ std::vector<std::pair<std::uint32_t, std::string>> expected_host_parameters() {
         std::snprintf(name, sizeof(name), "Macro %zu", macro + 1);
         expected.emplace_back(spectr::macro_param_id(macro), name);
     }
+    expected.insert(expected.end(), {
+        {spectr::kParamIntensity, "Intensity"},
+        {spectr::kParamAutoGain, "Auto Gain"},
+    });
     return expected;
 }
 
