@@ -70,6 +70,8 @@ TEST_CASE("Spectr renders scheduled band automation without control-worker laten
     constexpr std::size_t block_size = 512;
     constexpr double sample_rate = 48000.0;
     pulp::format::HeadlessHost host(create_mixing_spectr);
+    // Measures the mask itself, so no Auto Gain make-up (on by default).
+    host.state().set_value(spectr::kParamAutoGain, 0.0f);
     host.prepare(sample_rate, block_size);
 
     pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
@@ -289,6 +291,8 @@ TEST_CASE("Spectr keeps host band automation and internal modulation both audibl
     constexpr double sample_rate = 48000.0;
     const auto render_peak = [](bool modulation_enabled, float band_db) {
         pulp::format::HeadlessHost host(create_mixing_spectr);
+        // Measures the mask itself, so no Auto Gain make-up (on by default).
+        host.state().set_value(spectr::kParamAutoGain, 0.0f);
         host.prepare(sample_rate, block_size);
         pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
         const float* input_channels[] = {
@@ -606,6 +610,8 @@ TEST_CASE("Spectr isolates three nonadjacent stereo frequency islands") {
     };
 
     pulp::format::HeadlessHost host(create_mixing_spectr);
+    // Measures the mask itself, so no Auto Gain make-up (on by default).
+    host.state().set_value(spectr::kParamAutoGain, 0.0f);
     host.prepare(sample_rate, block_size);
     auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
     REQUIRE(plugin != nullptr);

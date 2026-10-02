@@ -970,7 +970,8 @@ TEST_CASE("native analyzer and output meter frames are dispatched, not compiled"
           throw new Error(`analyzer_frame ${name} trace changed: ${keys(trace)}`);
       }
       const meter = seen.meter[seen.meter.length - 1];
-      if (keys(meter) !== 'over,peak_db,schema_version,trim_db')
+      // The level knobs ride this publication (intensity, mix, Auto Gain).
+      if (keys(meter) !== 'auto_gain,auto_gain_db,intensity_pct,mix_pct,over,peak_db,schema_version,trim_db')
         throw new Error(`output_meter members changed: ${keys(meter)}`);
       if (meter.schema_version !== 1 || typeof meter.over !== 'boolean'
           || !Number.isFinite(meter.peak_db) || meter.trim_db !== 0)

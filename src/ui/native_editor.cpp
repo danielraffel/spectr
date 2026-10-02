@@ -536,6 +536,19 @@ choc::value::Value make_output_meter_payload(float peak_db, bool over,
     return payload;
 }
 
+// The header's level knobs ride the meter's publication: Intensity, Mix and
+// Auto Gain are host parameters, so automation must move them, and the
+// applied Auto Gain level is what the AUTO pill's tooltip reports.
+choc::value::Value make_output_meter_payload(
+    const spectr::Spectr::OutputLevelReading& level) {
+    auto payload = make_output_meter_payload(level.peak_db, level.over, level.trim_db);
+    payload.addMember("intensity_pct", static_cast<double>(level.intensity_percent));
+    payload.addMember("mix_pct", static_cast<double>(level.mix_percent));
+    payload.addMember("auto_gain", level.auto_gain);
+    payload.addMember("auto_gain_db", static_cast<double>(level.auto_gain_db));
+    return payload;
+}
+
 } // namespace
 
 namespace {
@@ -3430,12 +3443,21 @@ bool Spectr::tick_native_analyzer_(float dt) {
         const auto quantised = std::isfinite(level.peak_db)
             ? std::round(level.peak_db * 10.0f)
             : std::numeric_limits<float>::lowest();
+        const float auto_gain_db = std::round(level.auto_gain_db * 10.0f);
         const bool moved = quantised != native_output_level_peak_
             || level.over != native_output_level_over_
-            || level.trim_db != native_output_level_trim_db_;
+            || level.trim_db != native_output_level_trim_db_
+            || level.intensity_percent != native_output_level_intensity_
+            || level.mix_percent != native_output_level_mix_
+            || static_cast<int>(level.auto_gain) != native_output_level_auto_gain_
+            || auto_gain_db != native_output_level_auto_gain_db_;
         native_output_level_peak_ = quantised;
         native_output_level_over_ = level.over;
         native_output_level_trim_db_ = level.trim_db;
+        native_output_level_intensity_ = level.intensity_percent;
+        native_output_level_mix_ = level.mix_percent;
+        native_output_level_auto_gain_ = static_cast<int>(level.auto_gain);
+        native_output_level_auto_gain_db_ = auto_gain_db;
 
         // Only the publication is skipped, never the rest of the tick: the
         // analyzer frame below has its own cadence and its own guard.
@@ -3445,8 +3467,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 native_scripted_ui_->bridge()->dispatch_native_message(
                     "__spectrPublishNativeMessage",
                     "output_meter",
-                    make_output_meter_payload(level.peak_db, level.over,
-                                              level.trim_db),
+                    make_output_meter_payload(level),
                     "spectr-output-meter",
                     "spectr-native-output-meter");
             } catch (const std::exception& error) {
@@ -3519,6 +3540,10 @@ void Spectr::close_native_editor_() {
     native_output_level_peak_ = std::numeric_limits<float>::max();
     native_output_level_over_ = false;
     native_output_level_trim_db_ = std::numeric_limits<float>::max();
+    native_output_level_intensity_ = std::numeric_limits<float>::max();
+    native_output_level_mix_ = std::numeric_limits<float>::max();
+    native_output_level_auto_gain_ = -1;
+    native_output_level_auto_gain_db_ = std::numeric_limits<float>::max();
     native_host_automation_revision_ = host_automation_revision();
     editor_authority().reset_transient_state();
 #if defined(SPECTR_ENABLE_PERF_FIXTURES)

@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 185;  // +4 macros, +freeze, +freeze length, +32 LFO routing
+constexpr std::size_t kExpectedParamCount = 187;  // +4 macros, +freeze, +freeze length, +32 LFO routing, +intensity, +auto gain
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {

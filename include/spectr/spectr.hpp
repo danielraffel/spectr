@@ -12,6 +12,7 @@
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
 #include <pulp/signal/smoothed_value.hpp>
+#include "spectr/level_controls.hpp"
 #include <pulp/runtime/triple_buffer.hpp>
 #include <pulp/view/ab_compare.hpp>
 #include <pulp/view/visualization_bridge.hpp>
@@ -541,6 +542,20 @@ public:
     [[nodiscard]] bool keyboard_shortcuts_in_daw() const noexcept;
     void set_keyboard_shortcuts_in_daw(bool enabled) noexcept;
 
+    /// The editor's Range: the plot's vertical scale and the reach of a
+    /// full-height edit, in dB (3, 6, 12 or 24; level_controls.hpp). Editor
+    /// state persisted in the supplemental blob, never a host parameter, and
+    /// never part of what the plug-in sounds like.
+    [[nodiscard]] int editor_range_db() const noexcept;
+    /// Refuses (false) anything but one of kEditorRangeChoicesDb.
+    bool set_editor_range_db(int range_db) noexcept;
+
+    /// Auto Gain compensation the audio owner is applying now, in dB. Any
+    /// thread; a reading, not a control.
+    [[nodiscard]] float auto_gain_applied_db() const noexcept {
+        return auto_gain_applied_db_.load(std::memory_order_relaxed);
+    }
+
     /// Freeze's musical Length: how much of the incoming sound the next
     /// freeze takes in (freeze_length.hpp). Host parameter 4 (Freeze Length)
     /// picks one of the header's common lengths or "Custom", the custom
@@ -760,6 +775,14 @@ public:
         /// The Output trim in force, dB, so the editor's control and its
         /// meter cannot disagree about which gain produced the reading.
         float trim_db = 0.0f;
+        /// Intensity (param 5000), percent, as the store holds it.
+        float intensity_percent = kIntensityDefaultPercent;
+        /// Auto Gain (param 5001) switch, and the compensation the audio
+        /// owner is applying right now (dB; 0 when off and settled).
+        bool  auto_gain = false;
+        float auto_gain_db = 0.0f;
+        /// Mix (param 1), percent, for the editor's MIX knob.
+        float mix_percent = 100.0f;
     };
     OutputLevelReading read_output_level();
 
@@ -879,6 +902,25 @@ private:
         return config;
     }
     pulp::signal::SmoothedValue<float>     output_gain_{1.0f};
+    // ── Level controls (level_controls.hpp) ──────────────────────────────
+    // Audio thread only, except the reference (built in prepare) and the
+    // published reading.
+    AutoGainReference                      auto_gain_reference_{};
+    // Linear Auto Gain multiplier, ramped over kAutoGainRampSeconds. Exactly
+    // 1.0f once Auto Gain is off and settled, so the multiply is an identity.
+    pulp::signal::SmoothedValue<float>     auto_gain_{1.0f};
+    float                                  auto_gain_target_db_ = 0.0f;
+    bool                                   auto_gain_primed_ = false;
+    // Slewed Intensity factor (0..1) and whether it has adopted its first
+    // value; plus the cursor baselines, like audio_mix_percent_.
+    float                                  audio_intensity_ = 1.0f;
+    bool                                   audio_intensity_primed_ = false;
+    float                                  audio_intensity_percent_ = kIntensityDefaultPercent;
+    float                                  audio_auto_gain_param_ =
+        kAutoGainDefaultForNewInstances ? 1.0f : 0.0f;
+    std::atomic<float>                     auto_gain_applied_db_{0.0f};
+    // Editor Range, dB. Guarded by processing_state_mutex_.
+    int                                    editor_range_db_ = kEditorRangeDefaultDb;
     bool                                   processor_prepared_ = false;
     // Owned here, not by a renderer, so a Latency switch hands the running
     // hold to the new realisation instead of dropping it. Prepared with the
@@ -1175,6 +1217,12 @@ private:
     float native_output_level_peak_ = std::numeric_limits<float>::max();
     bool  native_output_level_over_ = false;
     float native_output_level_trim_db_ = std::numeric_limits<float>::max();
+    // The level controls ride the same publication (Intensity, Mix, Auto
+    // Gain and the gain it applies, held at 0.1 dB).
+    float native_output_level_intensity_ = std::numeric_limits<float>::max();
+    float native_output_level_mix_ = std::numeric_limits<float>::max();
+    int   native_output_level_auto_gain_ = -1;
+    float native_output_level_auto_gain_db_ = std::numeric_limits<float>::max();
     std::uint64_t native_analyzer_sequence_ = 0;
     // Last modulated-field sequence projected to the editor, so a UI tick
     // that finds no new audio frame does not re-dispatch the same overlay.

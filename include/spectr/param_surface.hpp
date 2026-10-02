@@ -19,6 +19,7 @@
 // without updating that document.
 
 #include "spectr/band_state.hpp"
+#include "spectr/level_controls.hpp"
 #include "spectr/viewport.hpp"
 
 #include <pulp/state/parameter.hpp>
@@ -144,8 +145,10 @@ constexpr pulp::state::ParamID band_mute_param_id(std::size_t band) noexcept {
 
 /// Total registered parameters: 2 legacy + freeze + freeze length + 64 gain + 64 mute + 4
 /// control (morph, center, width, count) + 4 modes + 9 internal LFO controls
-/// + 4 macros + 32 LFO routing lanes (8 destinations x on/off + Depth x 2 LFOs).
-inline constexpr std::size_t kSurfaceParamCount = 153 + kRouteParamCount;
+/// + 4 macros + 32 LFO routing lanes (8 destinations x on/off + Depth x 2 LFOs)
+/// + the level controls (Intensity, Auto Gain; level_controls.hpp).
+inline constexpr std::size_t kSurfaceParamCount =
+    153 + kRouteParamCount + kLevelParamCount;
 
 // ── Viewport log-frequency encoding ─────────────────────────────────────
 // The display mapping (pattern.cpp) spans log10(20)..log10(20000), so the

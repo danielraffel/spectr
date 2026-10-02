@@ -188,6 +188,7 @@ set(SPECTR_SOURCES
     src/pattern.cpp
     src/preset_format.cpp
     src/snapshot.cpp
+    src/level_controls.cpp
     src/ui/editor_view.cpp
 )
 
@@ -203,6 +204,7 @@ set(SPECTR_HEADERS
     include/spectr/editor_bridge.hpp
     include/spectr/preset_format.hpp
     include/spectr/snapshot.hpp
+    include/spectr/level_controls.hpp
     include/spectr/ui/editor_view.hpp
 )
 
@@ -222,6 +224,7 @@ set(SPECTR_NATIVE_SOURCES
     src/pattern.cpp
     src/preset_format.cpp
     src/snapshot.cpp
+    src/level_controls.cpp
     src/ui/native_editor.cpp
 )
 if(APPLE)
@@ -574,6 +577,7 @@ add_executable(Spectr-test
     test/test_freeze_length.cpp
     test/test_freeze_click.cpp
     test/test_freeze_level.cpp
+    test/test_level_controls.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
@@ -934,6 +938,37 @@ add_test(NAME Spectr-route-smoothness-negative-control
         "routing lanes automate smoothly*" "viewport routes automate smoothly")
 set_tests_properties(Spectr-route-smoothness-negative-control
     PROPERTIES WILL_FAIL TRUE TIMEOUT 300)
+
+# Level controls (test/test_level_controls.cpp). Each row re-creates the
+# defect its gate exists to catch and must be caught by THAT gate: the pass
+# expression names the failed assertion, so a crash or an unrelated failure
+# does not read as a working control.
+add_test(NAME Spectr-level-intensity-ignored-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=intensity-ignored
+        $<TARGET_FILE:Spectr-test> "Intensity 50 % turns a +12 dB shape into +6.0 dB")
+set_tests_properties(Spectr-level-intensity-ignored-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( half == Approx\\(6\\.0\\)")
+add_test(NAME Spectr-level-intensity-step-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=intensity-step
+        $<TARGET_FILE:Spectr-test> "An Intensity jump ramps: no block moves more than the LFO yardstick")
+set_tests_properties(Spectr-level-intensity-step-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( worst <= kGateDbPerBlock \\)")
+add_test(NAME Spectr-level-autogain-follow-output-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-follow-output
+        $<TARGET_FILE:Spectr-test> "Auto Gain does not pump: a static shape is a constant gain")
+set_tests_properties(Spectr-level-autogain-follow-output-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( spread <= 0\\.01 \\)")
+
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-level-help-pins
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py)
+    add_test(NAME Spectr-level-help-pins-negative-control
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py --plant)
+    set_tests_properties(Spectr-level-help-pins-negative-control PROPERTIES WILL_FAIL TRUE)
+endif()
 
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
@@ -3826,6 +3861,17 @@ endif()
 # engage that did several milliseconds of work in one callback, past a
 # 128-frame buffer's real-time budget, so a live host dropped that buffer.
 if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
+    # Intensity and Auto Gain as a DAW sees them: parameter info, scheduled
+    # automation playback (smoothness vs the LFO yardstick), a set-parameter
+    # jump, and Auto Gain's level, all through the built AU in-process.
+    add_executable(Spectr-au-level-probe tools/au_level_probe.cpp)
+    target_link_libraries(Spectr-au-level-probe PRIVATE
+        "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+    add_dependencies(Spectr-au-level-probe ${SPECTR_NATIVE_AU_TARGET})
+    add_test(NAME Spectr-au-level-host
+        COMMAND Spectr-au-level-probe
+            --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
+    set_tests_properties(Spectr-au-level-host PROPERTIES TIMEOUT 300)
     add_executable(Spectr-au-freeze-probe tools/au_freeze_probe.cpp)
     target_link_libraries(Spectr-au-freeze-probe PRIVATE
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")

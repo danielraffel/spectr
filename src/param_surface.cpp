@@ -1047,6 +1047,7 @@ bool Spectr::set_freeze_from_editor(bool frozen) noexcept {
 
 bool Spectr::is_editor_plain_param(pulp::state::ParamID id) noexcept {
     return id == kMix || id == kOutputTrim
+        || id == kParamIntensity || id == kParamAutoGain
         || (id >= kParamLfoEnabled && id <= kParamLfoTarget)
         || (id >= kParamLfo2Enabled && id <= kParamLfo2Depth)
         || is_lfo_route_param(id);

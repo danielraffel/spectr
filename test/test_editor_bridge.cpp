@@ -1031,6 +1031,8 @@ TEST_CASE("CLI proof: JS field dispatch reaches C++ DSP and produces digital sil
 TEST_CASE("CLI proof: zoomed viewport passes its island and mutes outside") {
     const auto render_peak = [](float frequency_hz) {
         Rig r;
+        // The mask's own isolation, without Auto Gain make-up.
+        r.store.set_value(spectr::kParamAutoGain, 0.0f);
         pulp::format::PrepareContext prepare;
         prepare.sample_rate = 48000.0;
         prepare.max_buffer_size = 512;

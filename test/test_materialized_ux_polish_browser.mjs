@@ -359,7 +359,7 @@ window.__spectrPolishStart = () => {
       const body = panel.querySelector('[data-spectr-settings-body]');
       if (!body) throw new Error('Settings body scroll owner missing');
       // With the per-LFO target list (a switch and a Depth row per target) the
-      // body is taller than the panel's 1500px cap at any window height, so
+      // body is taller than the panel's height cap at any window height, so
       // it scrolls at every size; the check is that the scroll range is real.
       const shouldOverflow = true;
       const actuallyOverflows = body.scrollHeight > body.clientHeight + 1;
