@@ -3780,8 +3780,8 @@ window.PatternManager = PatternManager;`,
       '        status={status}\n        selectedPatternName={selectedPatternName}\n        renderMode={renderMode}\n        gpuAudio={gpuAudio}\n        onRenderModeChange={setRenderModeFromUi}\n        dspMode={dspMode}',
       'GPU status receives app projection');
     replaceSpectrSource(
-      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
-      'function Chrome({ settings, setSettings, bankRef, info, status, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, renderMode, gpuAudio, onRenderModeChange, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
+      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
+      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, renderMode, gpuAudio, onRenderModeChange, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
       'GPU chrome receives native mode and delivery status');
     replaceSpectrSource(
       '      <StatusBanner message={status} />',
