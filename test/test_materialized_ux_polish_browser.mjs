@@ -491,9 +491,13 @@ window.__spectrPolishStart = () => {
       const button = await waitFor(() =>
         panel.querySelector('[data-spectr-copy-build-info]'), 'Copy button');
       const gpuStatus = panel.querySelector('[data-spectr-gpu-audio-status]');
-      if (!gpuStatus || !gpuStatus.textContent.includes('GPU BLOCKS')
-          || !gpuStatus.textContent.includes('124'))
-        throw new Error('experimental GPU audio status was not visible');
+      if (window.__spectrGpuAudioAvailable) {
+        if (!gpuStatus || !gpuStatus.textContent.includes('GPU BLOCKS')
+            || !gpuStatus.textContent.includes('124'))
+          throw new Error('experimental GPU audio status was not visible');
+      } else if (gpuStatus) {
+        throw new Error('GPU audio status shown although the build reports it unavailable');
+      }
       const gpuStatsToggle = panel.querySelector('[data-spectr-gpu-audio-stats-toggle]');
       if (!gpuStatsToggle || gpuStatsToggle.getAttribute('aria-checked') !== 'true')
         throw new Error('GPU stats visibility setting was not enabled');
@@ -525,11 +529,12 @@ window.__spectrPolishStart = () => {
 setTimeout(window.__spectrPolishStart, 0);
 </script>`;
 
-const run = ({ componentSource, mode, width, height, settings }) => {
+const run = ({ componentSource, mode, width, height, settings, gpuAudioAvailable = true }) => {
   let html = fs.readFileSync(browserHtmlPath, 'utf8');
   const mock = `<script>
 window.spectrPublishMode = () => {};
 window.__spectrBridgeCalls = [];
+window.__spectrGpuAudioAvailable = ${gpuAudioAvailable ? 'true' : 'false'};
 // Stand in for WidgetBridge::set_imported_text_scale, which no released SDK
 // exposes yet. Recording it here is what lets the driven scenario below read
 // the scale Spectr asks the native render for.
@@ -547,7 +552,7 @@ window.pulp = {
       sdk_version: '0.829.0', sdk_sha: 'fedcba9876543210',
       sdk_provenance_exact: true, sdk_dirty: false,
       build_type: 'Release', build_time: '2026-09-02T12:00:00Z',
-      gpu_audio: { available: true, provider_state: 'shared_ready',
+      gpu_audio: { available: window.__spectrGpuAudioAvailable, provider_state: 'shared_ready',
         gpu_selected: '124', cpu_fallback: '0', cancelled: '0',
         lost_terminal_records: '0' },
     } });
@@ -619,9 +624,16 @@ assert.equal(negativeStatus.status, 0, negativeStatus.stderr.slice(-2000));
 assert.equal(oracleText(negativeStatus),
   'SPECTR_POLISH_ORACLE_ERROR: status dwell schedule mismatch: 220,280');
 
-for (const [label, height] of [['overflowing', 860], ['fitting', 1800]]) {
+// The fitting probe is a normal build: its GPU audio status reports
+// unavailable, so Settings keeps the release layout and its whole body fits
+// under the panel's 1500px cap. The experimental status rows are proven at
+// the overflowing size, where the body scrolls anyway; shown, they take the
+// body past that cap at any window height.
+for (const [label, height, gpuAudioAvailable] of [
+  ['overflowing', 860, true], ['fitting', 1800, false]]) {
   const settings = run({
     componentSource: shippingSurface, mode: 'settings', width: 1320, height,
+    gpuAudioAvailable,
   });
   assert.equal(settings.error, undefined, settings.error && settings.error.message);
   assert.equal(settings.status, 0, settings.stderr.slice(-2000));
