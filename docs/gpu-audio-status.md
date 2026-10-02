@@ -43,3 +43,40 @@ output.
 The existing Copy action includes the same interpretation alongside product
 and SDK provenance. Native and legacy editor bridges use the same projection;
 no additional network or diagnostic ABI is exposed.
+
+## Workload and UI direction
+
+Spectr has two separate resolutions. The processing resolution is the FFT/bin
+grid; the editing resolution is the number of control bands drawn in the
+editor. The current product profile is an 8192-point FFT with a 2048-sample
+hop and 32--64 editable bands. More editable bands must not be presented as
+an FFT quality setting, and increasing the FFT size does not require exposing
+more hit targets in the editor.
+
+The shared renderer is currently selected for the `linear_phase` (Mixing)
+path. Tracking remains the low-latency CPU path. This is intentional: the
+first useful GPU opportunity is more parallel work with explicit latency
+budget, not replacing a small CPU operation with a GPU submission.
+
+The preferred product policy is automatic selection. A future policy can keep
+Tracking on the CPU and select the shared GPU path for Mixing, larger FFT
+profiles, multiple spectral layers, or long Freeze work when the provider is
+ready. CPU processing remains continuously prepared and owns a block whenever
+GPU output is late or unavailable. The UI should report the selected engine
+and those outcomes; it should not imply that a GPU label guarantees that every
+part of the plugin ran on the GPU.
+
+Forced CPU/GPU selection remains useful for developer A/B runs, but belongs
+behind an experimental control until a real backend mode-setting seam exists.
+The compact status surface may be hidden independently through the GPU stats
+setting. Build information remains the place for provenance and detailed
+diagnostics.
+
+Before adding a high-band-count control, measure the existing 64-band editor
+with progressively heavier workloads. The first matrix is 8192-point CPU,
+8192-point GPU, and 16384-point GPU, followed by multiple 16384-point layers
+and longer Freeze holds. A 32768-point profile is a separate future build
+experiment because the current supported profile list ends at 16384. Each
+step needs both an acoustic reason to exist and realtime evidence: output
+parity, CPU/GPU work time, p99.9 deadline behavior, fallback rate, and the
+effect of simultaneous rendering load.
