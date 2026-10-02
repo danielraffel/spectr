@@ -302,11 +302,11 @@ int main(int argc, char** argv) {
     for (std::size_t s = 0; s <= at(2.0); s += o.block)
         automated.push_back({s, route_amount(0), float(double(s) / double(at(2.0)))});
     automated.push_back({at(2.625), route_on(0), 0.0f}); edges.push_back({"Bank off (crest)", 2.625, kBank});
-    automated.push_back({at(3.125), route_on(4), 1.0f}); edges.push_back({"Position on (crest)", 3.125, kPosition});
-    automated.push_back({at(3.875), route_on(4), 0.0f}); edges.push_back({"Position off (trough)", 3.875, kPosition});
-    automated.push_back({at(4.625), route_on(5), 1.0f}); edges.push_back({"Zoom on (crest)", 4.625, kZoom});
-    automated.push_back({at(5.125), route_amount(5), 0.2f}); edges.push_back({"Zoom amount 100->20%", 5.125, kZoom});
-    automated.push_back({at(5.875), route_on(5), 0.0f}); edges.push_back({"Zoom off (trough)", 5.875, kZoom});
+    automated.push_back({at(3.125), route_on(4), 1.0f}); edges.push_back({"Band shift on (crest)", 3.125, kPosition});
+    automated.push_back({at(3.875), route_on(4), 0.0f}); edges.push_back({"Band shift off (trough)", 3.875, kPosition});
+    automated.push_back({at(4.625), route_on(5), 1.0f}); edges.push_back({"Band spread on (crest)", 4.625, kZoom});
+    automated.push_back({at(5.125), route_amount(5), 0.2f}); edges.push_back({"Band spread Depth 100->20%", 5.125, kZoom});
+    automated.push_back({at(5.875), route_on(5), 0.0f}); edges.push_back({"Band spread off (trough)", 5.875, kZoom});
     automated.push_back({at(6.625), route_on(0), 1.0f}); edges.push_back({"Bank on (crest)", 6.625, kBank});
 
     const auto reference = [&](int t) {
@@ -321,7 +321,7 @@ int main(int argc, char** argv) {
     const Render autom = render(o, ai, automated);
     double ref_step[3];
     for (int r = 0; r < 3; ++r) ref_step[r] = ms_step_db(refs[r].out, at(1.0), at(7.5), o.sr);
-    std::printf("free-running largest 1 ms step: Bank %.2f dB, Position %.2f dB, Zoom %.2f dB\n",
+    std::printf("free-running largest 1 ms step: Bank %.2f dB, Band shift %.2f dB, Band spread %.2f dB\n",
                 ref_step[0], ref_step[1], ref_step[2]);
     if (const char* dump = std::getenv("SPECTR_ROUTES_DUMP")) {
         FILE* f = std::fopen(dump, "w");
@@ -370,7 +370,7 @@ int main(int argc, char** argv) {
     // same span (both carry the same LFO motion once the ramp is up).
     const double ramp_step = ms_step_db(autom.out, at(0.3), at(2.4), o.sr);
     const double ctrl_step = ref_step[kBank];
-    std::printf("Amount ramp 0->100%% over 2 s: largest 1 ms step %.2f dB (control %.2f dB)\n",
+    std::printf("Depth ramp 0->100%% over 2 s: largest 1 ms step %.2f dB (control %.2f dB)\n",
                 ramp_step, ctrl_step);
     if (ramp_step > ctrl_step + 0.5) { ++bad; std::printf("  RAMP STEP\n"); }
     std::printf("control p99 render call %.0f us (budget %.0f us)\n", ctrl_max,

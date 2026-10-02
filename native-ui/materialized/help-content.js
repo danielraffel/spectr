@@ -114,7 +114,7 @@ Right-click a band, open **Modulation**, and under **LFO 1 Targets** (or LFO 2) 
 - **Morph** rocks the A/B morph back and forth around where the slider sits.
 - **Freeze** switches between LIVE and FROZEN. Depth is how much of each cycle is frozen, and every freeze captures fresh sound. Try a square wave on a short rate for rhythmic stutters.
 - **Length** picks each new freeze's loop length around your LENGTH setting. Depth is how many steps either way it can go. A loop that is already playing is never resized.
-- **Snapshot A** and **Snapshot B** blend toward that snapshot and back again.
+- **Snapshot A / B** blend toward that snapshot and back again.
 
 A and B do nothing if that snapshot is empty, and Morph needs both.
 

@@ -310,7 +310,7 @@ function SpectrModulationOverrideDialog({ settings, setSettings }) {
       "data-spectr-override-dont-ask": dontAsk ? "on" : "off",
       role: "checkbox", "aria-checked": dontAsk,
       onClick: () => setDontAsk(!dontAsk),
-      style: { display: "flex", alignItems: "center", gap: 8, marginTop: 12, padding: 0,
+      style: { display: "flex", alignItems: "center", alignSelf: "flex-start", gap: 8, marginTop: 12, padding: 0,
         background: "transparent", border: "none", color: "rgba(255,255,255,0.72)",
         fontFamily: "var(--mono)", fontSize: 10, letterSpacing: 0.5, cursor: "pointer" }
     }, React.createElement("span", { style: { width: 12, height: 12, borderRadius: 2, flexShrink: 0,

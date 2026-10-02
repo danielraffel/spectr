@@ -1832,6 +1832,74 @@ int main(int argc, char** argv) {
             report("990x645-lfo2");
             capture(rig, dir, prefix + "modulation-routes-990x645-lfo2", backend, scale);
 
+            // Settings > MODULATION: the same targets, for LFO 1. The body is
+            // a native ScrollView; scroll it so the target list is in view.
+            for (int level = 0; level < 2; ++level) {
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                rig.service_runtime();
+            }
+            // The override question: LFO 1 driving Freeze, then a press.
+            store.set_value(spectr::lfo_route_enabled_param_id(0, 6), 1.0f);
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(16);
+            settle(rig.clock, 8);
+            rig.activate("[data-spectr-freeze-toggle]");
+            settle(rig.clock, 16);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            capture(rig, dir, prefix + "override-dialog", backend, scale);
+            (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+            rig.service_runtime();
+            rig.eval("(() => { const b = document.querySelector('[data-spectr-manager-action=\"override-keep\"]');"
+                     " if (b) globalThis.__pulpActivateMaterializedElement__("
+                     "'[data-spectr-manager-action=\"override-keep\"]', 'click', null); })();",
+                     "spectr-route-shot-keep");
+            settle(rig.clock, 16);
+            rig.activate("[data-spectr-settings-open]");
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            {
+                std::vector<pulp::view::ScrollView*> scrolls;
+                collect_scroll_views(*rig.root, scrolls);
+                pulp::view::ScrollView* body = nullptr;
+                for (auto* scroll : scrolls)
+                    if (scroll->content_size().height > scroll->bounds().height + 400.0f)
+                        body = scroll;
+                for (const float fraction : {0.62f, 0.82f}) {
+                    if (body != nullptr) {
+                        const float max_y = body->content_size().height - body->bounds().height;
+                        body->set_scroll(body->scroll_x(), max_y * fraction);
+                    }
+                    settle(rig.clock, 8);
+                    char name[64];
+                    std::snprintf(name, sizeof name, "settings-modulation-%02d",
+                                  static_cast<int>(fraction * 100.0f));
+                    capture(rig, dir, prefix + name, backend, scale);
+                }
+            }
+            rig.activate("[data-spectr-settings-close]");
+            settle(rig.clock, 16);
+            // The help guide's Movement section.
+            rig.activate("[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+            settle(rig.clock, 24);
+            rig.activate("[data-spectr-help-learn-more]");
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            rig.eval("(() => { const c = document.querySelector('[data-spectr-help-scroll-content]');"
+                     " if (!c) { console.log('[route-shot] no guide'); return; }"
+                     " const all = Array.from(c.querySelectorAll('*'));"
+                     " const h = all.find((n) => n.children.length === 0 && n.textContent.trim() === 'Movement');"
+                     " if (!h) { console.log('[route-shot] no Movement heading'); return; }"
+                     " const dy = h.getBoundingClientRect().top - c.getBoundingClientRect().top;"
+                     " c.style.marginTop = -(dy - 12);"
+                     " console.log('[route-shot] guide scrolled to Movement, dy=' + dy); })();",
+                     "spectr-route-shot-help");
+            settle(rig.clock, 8);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            capture(rig, dir, prefix + "help-movement", backend, scale);
             return g_failures == 0 ? 0 : 1;
         }
 
