@@ -967,6 +967,16 @@ TEST_CASE("Freeze Length: the looped period matches the transport, measured",
     std::vector<Case> cases;
     for (const auto& t : transports)
         for (const auto& l : lengths) cases.push_back({t, l});
+    // The dotted (3/16, 3/8, 3/4 bar) and triplet-derived (1/12, 1/6, 1/3,
+    // 2/3, 5/6 bar) fractions at 120 4/4: each alone, as its own preset on
+    // the parameter, and after one whole bar, a custom length committed in
+    // the editor and carried through a session save and restore.
+    for (const auto f : {LengthFraction::f3_16, LengthFraction::f3_8, LengthFraction::f3_4,
+                         LengthFraction::f1_12, LengthFraction::f1_6, LengthFraction::f1_3,
+                         LengthFraction::f2_3, LengthFraction::f5_6}) {
+        cases.push_back({{120, 4, 4}, {0, f}});
+        cases.push_back({{120, 4, 4}, {1, f}});
+    }
     cases.push_back({{120, 4, 4}, {1, LengthFraction::zero}, 6.0, 90.0});
     cases.push_back({{140, 3, 4}, {1, LengthFraction::f1_8}, 6.0, 100.0});
     for (const auto& c : cases) {
@@ -1092,14 +1102,17 @@ TEST_CASE("an old session's Hold length in seconds opens as a musical Length",
     };
     struct Case { double seconds; int preset; spectr::FreezeLength length; };
     using spectr::LengthFraction;
+    // Every fraction of a bar alone is a preset of its own; a compound
+    // length (1 1/8 bars) lands on Custom.
     const Case cases[] = {
-        {FreezeSource::kDefaultHoldSeconds, 0, {1, LengthFraction::zero}}, // untouched
-        {0.5, spectr::kLengthPresetCustom, {0, LengthFraction::f1_4}},
-        {1.0, spectr::kLengthPresetCustom, {0, LengthFraction::f1_2}},
-        {2.0, 0, {1, LengthFraction::zero}},
-        {4.0, 1, {2, LengthFraction::zero}},
-        {0.75, spectr::kLengthPresetCustom, {0, LengthFraction::f3_8}},
-        {0.05, spectr::kLengthPresetCustom, {0, LengthFraction::f1_32}},
+        {FreezeSource::kDefaultHoldSeconds, 16, {1, LengthFraction::zero}}, // untouched
+        {0.5, 6, {0, LengthFraction::f1_4}},
+        {1.0, 9, {0, LengthFraction::f1_2}},
+        {2.0, 16, {1, LengthFraction::zero}},
+        {4.0, 17, {2, LengthFraction::zero}},
+        {0.75, 8, {0, LengthFraction::f3_8}},
+        {0.05, 0, {0, LengthFraction::f1_32}},
+        {2.25, spectr::kLengthPresetCustom, {1, LengthFraction::f1_8}},
     };
     for (const auto& c : cases) {
         INFO("old Hold length " << c.seconds << " s");

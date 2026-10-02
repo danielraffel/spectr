@@ -77,14 +77,12 @@ TEST_CASE("Freeze Length labels read the way the header shows them", "[freeze-le
     };
     for (const auto& row : rows)
         CHECK(spectr::length_label({row.bars, row.fraction}) == row.label);
-    const char* presets[] = {"1 bar", "2 bars", "4 bars", "8 bars"};
-    REQUIRE(spectr::kLengthPresets.size() == std::size(presets));
-    for (std::size_t i = 0; i < spectr::kLengthPresets.size(); ++i) {
-        CHECK(spectr::length_label(spectr::kLengthPresets[i]) == presets[i]);
+    // The presets' labels are the same formatter's (their order is pinned by
+    // "the parameter value selects a preset or Custom").
+    for (std::size_t i = 0; i < spectr::kLengthPresets.size(); ++i)
         CHECK(spectr::preset_index_of(spectr::kLengthPresets[i]) == static_cast<int>(i));
-    }
     CHECK(spectr::preset_index_of({1, LengthFraction::f1_8}) == -1);
-    CHECK(spectr::preset_index_of({0, LengthFraction::f1_2}) == -1);
+    CHECK(spectr::preset_index_of({0, LengthFraction::f1_2}) == 9);
 }
 
 TEST_CASE("Freeze Length is exact: every valid length is distinct and packs losslessly",
@@ -122,13 +120,38 @@ TEST_CASE("Freeze Length in seconds follows tempo and meter", "[freeze-length][m
 
 TEST_CASE("Freeze Length: the parameter value selects a preset or Custom",
           "[freeze-length][model]") {
-    CHECK(spectr::kDefaultLengthPreset == 0);
-    CHECK(spectr::kLengthPresets[spectr::kDefaultLengthPreset] == spectr::kDefaultFreezeLength);
+    // Menu order: every fraction of a bar on its own, then 1, 2, 4 and 8
+    // bars -- ascending throughout -- then Custom.
+    using spectr::kLengthPresets;
+    REQUIRE(kLengthPresets.size() == 20);
+    const char* labels[] = {
+        "1/32 bar", "1/16 bar", "1/12 bar", "1/8 bar", "1/6 bar", "3/16 bar", "1/4 bar",
+        "1/3 bar", "3/8 bar", "1/2 bar", "5/8 bar", "2/3 bar", "3/4 bar", "5/6 bar",
+        "7/8 bar", "15/16 bar", "1 bar", "2 bars", "4 bars", "8 bars"};
+    for (std::size_t i = 0; i < kLengthPresets.size(); ++i) {
+        CHECK(spectr::length_label(kLengthPresets[i]) == labels[i]);
+        CHECK(spectr::valid_length(kLengthPresets[i]));
+        CHECK(spectr::preset_index_of(kLengthPresets[i]) == static_cast<int>(i));
+        if (i > 0)
+            CHECK(spectr::length_units(kLengthPresets[i - 1])
+                  < spectr::length_units(kLengthPresets[i]));
+    }
+    // Every fraction of a bar but "0" is a preset of its own, exactly.
+    for (std::size_t f = 1; f < spectr::kLengthFractions.size(); ++f)
+        CHECK(spectr::preset_index_of({0, static_cast<LengthFraction>(f)})
+              == static_cast<int>(f) - 1);
+    CHECK(spectr::kLengthPresetCustom == 20);
+    CHECK(spectr::kDefaultLengthPreset == 16);
+    CHECK(kLengthPresets[spectr::kDefaultLengthPreset] == spectr::kDefaultFreezeLength);
+    // A compound length is not a preset.
+    CHECK(spectr::preset_index_of({1, LengthFraction::f1_8}) == -1);
+    CHECK(spectr::preset_index_of({3, LengthFraction::zero}) == -1);
     CHECK(spectr::length_preset_from_param(0.0f) == 0);
-    CHECK(spectr::length_preset_from_param(2.0f) == 2);
-    CHECK(spectr::length_preset_from_param(2.4f) == 2);
-    CHECK(spectr::length_preset_from_param(3.6f) == spectr::kLengthPresetCustom);
-    CHECK(spectr::length_preset_from_param(4.0f) == spectr::kLengthPresetCustom);
+    CHECK(spectr::length_preset_from_param(16.0f) == 16);
+    CHECK(spectr::length_preset_from_param(16.4f) == 16);
+    CHECK(spectr::length_preset_from_param(19.4f) == 19);
+    CHECK(spectr::length_preset_from_param(19.6f) == spectr::kLengthPresetCustom);
+    CHECK(spectr::length_preset_from_param(20.0f) == spectr::kLengthPresetCustom);
     CHECK(spectr::length_preset_from_param(99.0f) == spectr::kLengthPresetCustom);
     CHECK(spectr::length_preset_from_param(-3.0f) == 0);
 }

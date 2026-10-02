@@ -2271,6 +2271,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
     //   psel:SELECTOR  a left click at the painted centre of the element a
     //                  CSS selector names, measured from the live layout
     //   hsel:SELECTOR  a pointer move there (-mouseMoved:)
+    //   wsel:SELECTOR|DY|N  N wheel steps of DY (Pulp's sign: positive scrolls
+    //                  down) at the centre of the element a selector names
     //   exists:SELECTOR  whether the selector matches anything (a reading)
     //   lenprobe       the Freeze LENGTH control and the processor's length
     //   shot:PATH      a Skia raster of the editor, written to PATH
@@ -2780,6 +2782,43 @@ bool Spectr::tick_native_analyzer_(float dt) {
                             "spectr-modulation-frame", "spectr-native-modulation-frame");
                         detail = "dispatched";
                     } catch (const std::exception&) { detail = "rejected"; }
+                } else if (kind == "wsel") {
+                    // A wheel over the element a selector names, through the
+                    // host's wheel route, aimed like psel.
+                    const auto bar1 = arg.find('|');
+                    const auto bar2 = bar1 == std::string::npos ? bar1 : arg.find('|', bar1 + 1);
+                    pulp::view::Point pt{};
+                    bool aimed = false;
+                    if (bar2 != std::string::npos) {
+                        try {
+                            native_scripted_ui_->bridge()->load_script(
+                                "(() => { const n = document.querySelector(\"" + spectr_menu_probe::json_escape(arg.substr(0, bar1)) + "\""
+                                + "); const r = n && n.getBoundingClientRect ? "
+                                  "n.getBoundingClientRect() : null; throw new Error('PULPVALUE:' "
+                                  "+ (r && r.width > 0 && r.height > 0 ? (r.left + r.width / 2) + ',' "
+                                  "+ (r.top + r.height / 2) : 'none')); })();",
+                                "spectr-scenario-wheel-aim");
+                        } catch (const std::exception& e) {
+                            const std::string msg = e.what();
+                            const auto at = msg.find("PULPVALUE:");
+                            if (at != std::string::npos) {
+                                const auto value = msg.substr(
+                                    at + 10, msg.find_first_of("\n\"", at + 10) - (at + 10));
+                                aimed = value != "none" && point_of(value, pt);
+                            }
+                        }
+                    }
+                    if (bar2 == std::string::npos) detail = "bad-arg";
+                    else if (!aimed) detail = "selector-absent";
+                    else {
+                        const float dy = std::strtof(arg.substr(bar1 + 1, bar2 - bar1 - 1).c_str(), nullptr);
+                        const int count = std::max(1, std::atoi(arg.substr(bar2 + 1).c_str()));
+                        pulp::view::WheelHost wheel_host;
+                        for (int i = 0; i < count; ++i)
+                            pulp::view::deliver_mouse_wheel(root, pt, 0.0f, dy, wheel_host);
+                        press_x = pt.x; press_y = pt.y;
+                        detail = "wheeled";
+                    }
                 } else if (kind == "psel" || kind == "hsel") {
                     // A left click (psel) or a pointer move (hsel) at the
                     // painted centre of the element a CSS selector names,

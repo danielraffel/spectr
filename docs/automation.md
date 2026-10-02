@@ -20,7 +20,7 @@ do three things in a DAW:
 | Control | Host parameter | Records (editor → host) | Plays back: DSP | Plays back: editor |
 | --- | --- | --- | --- | --- |
 | LIVE / FROZEN toggle, Q, freeze chord | `3` Freeze (toggle) | One bracket per press (`freeze_set`) | Per sub-block | Toggle face follows |
-| Freeze Length (header LENGTH: 1/2/4/8 bars or Custom) | `4` (enum, labelled) | One bracket per pick or Apply (`freeze_length_set`; the custom bars + fraction ride the plugin state) | Next freeze; a playing hold keeps its loop | Dropdown follows |
+| Freeze Length (header LENGTH: 1/32 ... 15/16 bar, 1/2/4/8 bars, or Custom) | `4` (enum, labelled) | One bracket per pick or Apply (`freeze_length_set`; the custom bars + fraction ride the plugin state) | Next freeze; a playing hold keeps its loop | Dropdown follows |
 | Band gain (paint, Level/Boost/Flare/Glide, group drags) | `1000-1063` | One bracket per touched band per drag (plot drag epoch) | Sample-accurate | Bars follow |
 | Band mute (click, menu, selection) | `2000-2063` (toggle) | One bracket per change | Sample-accurate | Mute badge follows |
 | Band count | `3003` (stepped) | One bracket per change | Yes | Yes |

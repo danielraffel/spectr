@@ -64,7 +64,8 @@ tail.
 ## Freeze Length
 
 `4` is how much input the next freeze takes in, as a musical length: an enum
-of the header dropdown's common lengths (1, 2, 4, 8 bars) plus `Custom`, which
+of the header dropdown's lengths -- the sixteen fractions of a bar alone
+(1/32 ... 15/16), then 1, 2, 4 and 8 bars, ascending -- plus `Custom`, which
 selects the custom length the editor's Custom length… popover last committed.
 A length is exact: whole bars `0...128` plus one bar fraction from a fixed set
 (`include/spectr/freeze_length.hpp` is the only definition). The custom length

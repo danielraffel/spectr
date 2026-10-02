@@ -109,20 +109,24 @@ TEST_CASE("#34: the full static parameter surface is registered") {
     CHECK(freeze->kind == pulp::state::ParamKind::Toggle);
     CHECK(freeze->range.default_value == 0.0f);
 
-    // Freeze Length follows it: the header's common lengths, then Custom,
-    // each named by the one length formatter.
+    // Freeze Length follows it: the header's lengths (every fraction of a
+    // bar alone, then 1, 2, 4 and 8 bars), then Custom, each named by the
+    // one length formatter.
     const auto* length = find(w.store, 4);
     REQUIRE(length != nullptr);
     CHECK(length->name == "Freeze Length");
     CHECK(length->kind == pulp::state::ParamKind::Enum);
-    CHECK(length->range.default_value == 0.0f);
-    CHECK(length->range.max == 4.0f);
-    REQUIRE(length->value_labels.size() == 5);
-    CHECK(length->value_labels[0] == "1 bar");
-    CHECK(length->value_labels[1] == "2 bars");
-    CHECK(length->value_labels[2] == "4 bars");
-    CHECK(length->value_labels[3] == "8 bars");
-    CHECK(length->value_labels[4] == "Custom");
+    CHECK(length->range.default_value == 16.0f); // 1 bar
+    CHECK(length->range.max == 20.0f);
+    REQUIRE(length->value_labels.size() == 21);
+    CHECK(length->value_labels[0] == "1/32 bar");
+    CHECK(length->value_labels[5] == "3/16 bar");
+    CHECK(length->value_labels[15] == "15/16 bar");
+    CHECK(length->value_labels[16] == "1 bar");
+    CHECK(length->value_labels[17] == "2 bars");
+    CHECK(length->value_labels[18] == "4 bars");
+    CHECK(length->value_labels[19] == "8 bars");
+    CHECK(length->value_labels[20] == "Custom");
 }
 
 TEST_CASE("#34: reserved ID ranges stay empty") {

@@ -14,7 +14,7 @@ counts quarter notes per minute, so 6/8 at 75 BPM is 3 quarters = 2.4 s a
 bar. Lengths under 0.25 s are a spectral hold by design and are not timed.
 
 Common lengths are selected with the Freeze Length parameter (automation, in
-the lane's own range: 0..1 for VST3, the plain 0..4 for CLAP). Custom lengths
+the lane's own range: 0..1 for VST3, the plain 0..20 for CLAP). Custom lengths
 are written into the plugin's own saved state inside the project (the Pulp
 PLST envelope: the CLAP <STATE> block, or the component state inside REAPER's
 VST3 chunk), the way a saved session carries them. Save/reopen: one REAPER
@@ -401,9 +401,9 @@ def selftest_state(rpp: str) -> None:
 def _envelope_value(header: str, preset: int) -> float:
     """The automation value for a Freeze Length preset index, in the lane's
     own range: REAPER writes a VST3 lane 0..1 (normalised) and a CLAP lane
-    in the parameter's plain range (0..4 here)."""
+    in the parameter's plain range (0..20 here)."""
     lo, hi = (float(v) for v in header.split()[1:3])
-    plain_max = 4.0  # kLengthPresetCustom
+    plain_max = 20.0  # kLengthPresetCustom
     return lo + (hi - lo) * preset / plain_max if hi <= 1.0 else float(preset)
 
 
@@ -583,7 +583,12 @@ def run(args) -> int:
                 cases.append((bpm, num, den, bars, frac, None))
         cases.append((120, 4, 4, 1, "0", (6.0, 90)))     # tempo change before engage
         cases.append((140, 3, 4, 1, "1/8", (6.0, 100)))
-        presets = {(1, "0"): 0, (2, "0"): 1, (4, "0"): 2, (8, "0"): 3}
+        # kLengthPresets: the sixteen fractions of a bar alone (0..15), then
+        # 1, 2, 4 and 8 bars (16..19); 20 is Custom.
+        fractions = ["1/32", "1/16", "1/12", "1/8", "1/6", "3/16", "1/4", "1/3", "3/8",
+                     "1/2", "5/8", "2/3", "3/4", "5/6", "7/8", "15/16"]
+        presets = {(0, f): i for i, f in enumerate(fractions)}
+        presets.update({(1, "0"): 16, (2, "0"): 17, (4, "0"): 18, (8, "0"): 19})
 
         rows, worst = [], 0.0
         failures = 0
@@ -605,7 +610,7 @@ def run(args) -> int:
             proj = out / f"case{i:02d}.rpp"
             rendered = out / f"case{i:02d}.wav"
             rpp = make_case(base, wav, 40.0, bpm, num, den, engage,
-                            preset if preset is not None else 4, rendered, change)
+                            preset if preset is not None else 20, rendered, change)
             if preset is None:
                 rpp = write_custom_length(rpp, bars, frac)
             proj.write_text(rpp)

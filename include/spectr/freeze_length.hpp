@@ -157,18 +157,28 @@ inline std::string length_label(const FreezeLength& length) {
     return std::to_string(length.bars) + " " + std::string(f.text) + unit;
 }
 
-/// The header dropdown's common values, in menu order. The Freeze Length
-/// host parameter is an index into this list, with kLengthPresetCustom
-/// meaning "the custom length in the plugin state". Shipped values: an
-/// index is part of saved sessions and automation, so the list may only
-/// grow at the end (before Custom moves, sessions would need migrating).
-inline constexpr std::array<FreezeLength, 4> kLengthPresets{{
-    {1, LengthFraction::zero}, {2, LengthFraction::zero},
-    {4, LengthFraction::zero}, {8, LengthFraction::zero},
+/// The header dropdown's values, in menu order: every fraction of a bar on
+/// its own (bars = 0), shortest first, then 1, 2, 4 and 8 bars -- ascending
+/// throughout. The Freeze Length host parameter is an index into this list,
+/// with kLengthPresetCustom meaning "the custom length in the plugin state"
+/// (a compound length such as 1 1/8 bars). Once shipped, an index is part of
+/// saved sessions and automation, so the order is fixed: the list may only
+/// grow at the end, and moving Custom would need a session migration.
+inline constexpr std::array<FreezeLength, 20> kLengthPresets{{
+    {0, LengthFraction::f1_32}, {0, LengthFraction::f1_16}, {0, LengthFraction::f1_12},
+    {0, LengthFraction::f1_8},  {0, LengthFraction::f1_6},  {0, LengthFraction::f3_16},
+    {0, LengthFraction::f1_4},  {0, LengthFraction::f1_3},  {0, LengthFraction::f3_8},
+    {0, LengthFraction::f1_2},  {0, LengthFraction::f5_8},  {0, LengthFraction::f2_3},
+    {0, LengthFraction::f3_4},  {0, LengthFraction::f5_6},  {0, LengthFraction::f7_8},
+    {0, LengthFraction::f15_16},
+    {1, LengthFraction::zero},  {2, LengthFraction::zero},
+    {4, LengthFraction::zero},  {8, LengthFraction::zero},
 }};
 inline constexpr int kLengthPresetCustom = static_cast<int>(kLengthPresets.size());
-inline constexpr int kDefaultLengthPreset = 0; // 1 bar
+inline constexpr int kDefaultLengthPreset = 16; // 1 bar
 inline constexpr FreezeLength kDefaultFreezeLength{1, LengthFraction::zero};
+static_assert(kLengthPresets[kDefaultLengthPreset] == kDefaultFreezeLength,
+              "the default preset is the default length");
 
 /// The preset a length is, or -1.
 constexpr int preset_index_of(const FreezeLength& length) noexcept {

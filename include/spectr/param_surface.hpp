@@ -37,9 +37,9 @@ namespace spectr {
 /// Freeze: hold the input spectrum and keep the live mask acting on it.
 /// A boolean global, automatable; see FreezeSource.
 inline constexpr pulp::state::ParamID kParamFreeze = 3;
-/// Freeze Length: which of the header's common lengths (1/16 bar .. 8 bars)
-/// the next freeze takes in, or "Custom" -- the custom bars + fraction kept
-/// in the plugin state. An enum indexing kLengthPresets (freeze_length.hpp).
+/// Freeze Length: which of the header's lengths (1/32 bar .. 15/16 bar, 1, 2,
+/// 4, 8 bars) the next freeze takes in, or "Custom" -- the custom bars +
+/// fraction kept in the plugin state. An enum indexing kLengthPresets (freeze_length.hpp).
 inline constexpr pulp::state::ParamID kParamFreezeLength = 4;
 
 /// A/B snapshot morph position, 0 = A .. 1 = B.

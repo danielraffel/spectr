@@ -98,7 +98,7 @@ Press **LIVE** in the header, or Q, to freeze the sound coming in. Spectr holds 
 
 Below 100% Mix only the processed part is frozen, so the untouched part stays live and you can play over the held sound.
 
-**LENGTH**, beside the button, sets how much of the incoming sound a freeze takes in, in bars of your DAW's tempo and time signature: 1, 2, 4 or 8 bars, or **Custom length…** for whole bars plus a fraction of a bar, such as 1 1/8 bars. Spectr loops exactly that long, so what you freeze stays on the beat and maps onto your loops. A length shorter than a quarter of a second holds the moment you press as a steady tone instead. Without a DAW tempo, a bar is two seconds (120 BPM in 4/4). A change of tempo applies to the next freeze, never to one that is playing. Very long lengths at slow tempos loop at most the last minute.
+**LENGTH**, beside the button, sets how much of the incoming sound a freeze takes in, in bars of your DAW's tempo and time signature: a fraction of a bar from 1/32 to 15/16 (dotted and triplet values such as 3/16 and 1/3 included), 1, 2, 4 or 8 bars, or **Custom length…** for whole bars plus a fraction of a bar, such as 1 1/8 bars. Spectr loops exactly that long, so what you freeze stays on the beat and maps onto your loops. A length shorter than a quarter of a second holds the moment you press as a steady tone instead. Without a DAW tempo, a bar is two seconds (120 BPM in 4/4). A change of tempo applies to the next freeze, never to one that is playing. Very long lengths at slow tempos loop at most the last minute.
 
 A freeze pressed over silence waits for sound before it holds anything, so it never holds silence.
 
@@ -156,7 +156,7 @@ The list your DAW shows is long, because every band is in it. The ones worth kno
 - **Viewport Center** and **Viewport Width** slide and widen the frequency range the bands cover. Automating the centre sweeps your whole shape up and down the spectrum.
 - **LFO Rate**, **LFO Depth**, and the same pair on **LFO 2**, let you modulate the modulators from outside.
 - **Band 01 Gain** through **Band 64 Gain**, and **Band 01 Mute** through **Band 64 Mute**, for one band at a time.
-- **Freeze** is the LIVE / FROZEN button, so your DAW can freeze and release the sound on the beat. **Freeze Length** is the LENGTH control: 1, 2, 4 or 8 bars, or Custom, the custom length you last set.
+- **Freeze** is the LIVE / FROZEN button, so your DAW can freeze and release the sound on the beat. **Freeze Length** is the LENGTH control: each fraction of a bar from 1/32 to 15/16, 1, 2, 4 or 8 bars, or Custom, the custom length you last set.
 - **Mix** blends Spectr against the untouched signal. **Output** trims the level on the way out, by up to 24 dB either way.
 - **Macro 1** through **Macro 4**, in a Macros group of their own, are four spare lanes each worth up to 24 dB either way. A macro is an offset: it rides on top of whatever its member bands are already drawn at, rather than replacing them. They are listed in every build so your host never has to rescan to find them, and they stay inert until bands are assigned to one, which this version has no way to do yet. Four lanes that currently move nothing, and worth recognising rather than hunting for.
 

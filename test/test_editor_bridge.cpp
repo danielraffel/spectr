@@ -1597,8 +1597,10 @@ TEST_CASE("freeze: hydration carries the toggle and the Length; freeze_length_se
         CHECK(fractions[i].getString() == spectr::kLengthFractions[i].text);
     const auto presets = payload["freeze"]["length_presets"];
     REQUIRE(presets.size() == spectr::kLengthPresets.size());
-    CHECK(std::string(presets[0]["label"].getString()) == "1 bar");
-    CHECK(std::string(presets[3]["label"].getString()) == "8 bars");
+    CHECK(std::string(presets[0]["label"].getString()) == "1/32 bar");
+    CHECK(std::string(presets[15]["label"].getString()) == "15/16 bar");
+    CHECK(std::string(presets[16]["label"].getString()) == "1 bar");
+    CHECK(std::string(presets[19]["label"].getString()) == "8 bars");
     CHECK(payload["freeze"]["length_max_bars"].getInt32() == 128);
 
     // The toggle is the host parameter, written the way the editor writes it.
@@ -1618,7 +1620,7 @@ TEST_CASE("freeze: hydration carries the toggle and the Length; freeze_length_se
     REQUIRE(gestures.size() == 2);
     CHECK(gestures[0] == std::pair<char, pulp::state::ParamID>{'b', spectr::kParamFreezeLength});
     CHECK(gestures[1] == std::pair<char, pulp::state::ParamID>{'e', spectr::kParamFreezeLength});
-    CHECK(r.store.get_value(spectr::kParamFreezeLength) == 1.0f);
+    CHECK(r.store.get_value(spectr::kParamFreezeLength) == 17.0f);
     CHECK(r.proc->freeze_length() == spectr::FreezeLength{2, spectr::LengthFraction::zero});
     // Anything else is the custom length, selected by "Custom".
     const auto custom = r.dispatch(
