@@ -171,3 +171,32 @@ TEST_CASE("without deferral the document is mounted when create_view returns",
     h.open_view();
     CHECK(h.bridge() != nullptr);
 }
+
+#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+#include <pulp/view/js_engine.hpp>
+
+TEST_CASE("an editor open evaluates the document once and a reopen reuses its bytecode",
+          "[editor-open]") {
+    // Counts, not wall time: a first load must not also evaluate the
+    // document on a throwaway probe realm, and a reopen in the same process
+    // must read the runtime bundle's compiled bytecode instead of parsing it.
+    EditorHarness h;
+    h.open_view(/*deferred=*/true);
+    h.frame();
+    h.frame();
+    REQUIRE(h.bridge() != nullptr);
+    CHECK(h.processor.active_scripted_ui()->probe_realm_evaluations() == 0);
+
+    h.processor.on_view_closed(*h.root);
+    h.root.reset();
+    const auto before = pulp::view::script_bytecode_cache_stats();
+    h.open_view(/*deferred=*/true);
+    h.frame();
+    h.frame();
+    REQUIRE(h.bridge() != nullptr);
+    const auto after = pulp::view::script_bytecode_cache_stats();
+    CHECK(after.hits > before.hits);
+    CHECK(after.compiles == before.compiles);
+    CHECK(h.processor.active_scripted_ui()->probe_realm_evaluations() == 0);
+}
+#endif
