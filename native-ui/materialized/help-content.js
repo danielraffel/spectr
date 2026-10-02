@@ -104,15 +104,21 @@ A freeze pressed over silence waits for sound before it holds anything, so it ne
 
 ## Movement
 
-Two LFOs can move things on their own, in time with your project tempo. Each one has a shape, a rate in beats, and a depth.
+Two LFOs can move things on their own, in time with your project tempo. An LFO only sets the movement: its **Shape** and its **Rate** in beats. What it moves, and how far, you choose per target.
 
-Point an LFO at:
+Right-click a band, open **Modulation**, and under **LFO 1 Targets** (or LFO 2) switch on as many targets as you like. Each one has its own **Depth**, so one LFO can push the bands hard and nudge the frequencies gently at the same time. Both LFOs can drive the same target; their movements add.
 
-- **Bank** to move all the bands up and down together.
-- **A** or **B** to move toward that snapshot and back again.
-- **Morph** to rock the morph slider back and forth on its own.
+- **Bank** moves all the band levels up and down together.
+- **Band shift** slides the whole set of bands up and down in frequency, keeping its width. You hear the sweep; the display stays where you set it, so you can keep drawing.
+- **Band spread** spreads the bands wider or narrower around their centre.
+- **Morph** rocks the A/B morph back and forth around where the slider sits.
+- **Freeze** switches between LIVE and FROZEN. Depth is how much of each cycle is frozen, and every freeze captures fresh sound. Try a square wave on a short rate for rhythmic stutters.
+- **Length** picks each new freeze's loop length around your LENGTH setting. Depth is how many steps either way it can go. A loop that is already playing is never resized.
+- **Snapshot A** and **Snapshot B** blend toward that snapshot and back again.
 
-A and B do nothing if that snapshot is empty. Morph requires both snapshots. You can choose more than one destination at a time.
+A and B do nothing if that snapshot is empty, and Morph needs both.
+
+**Touching something an LFO is driving.** The LFO keeps running. Press LIVE / FROZEN while Freeze is modulated and your press holds until the LFO next switches; pick a LENGTH and it becomes the new centre. With **Ask before overriding** on (Settings, under Modulation look, on by default) Spectr asks first: **Keep modulating** does what you asked and leaves the LFO running, **Turn off** switches that LFO's target off and then does it. Return turns off, Escape keeps modulating, and **Don't ask again** turns the question off.
 
 ## Automation
 
@@ -122,7 +128,9 @@ MIDI CC is a different mechanism, and Spectr does not listen to it. It is an aud
 
 There is no right-click path for this either. Right-clicking a band gives you band actions, mute, solo, reset to 0 dB, select. Assigning a modulator is something your host does, not something Spectr does.
 
-Three exceptions worth knowing, and they are the only ones. An LFO's **Target** can be automated by your DAW; **Destinations**, which is how you pick more than one at a time, is set in the plugin only. **Morph moves the view** is likewise plugin-only. So is **Latency**, and for a reason worth stating: switching it rebuilds the processor and moves your DAW's delay compensation, which is not something a lane should be able to ask for once per block. It is saved with your project and recalled with it, but your DAW cannot sweep it.
+Every LFO target's on/off and its Depth are plug-in parameters too, so you can record them and play them back like anything else: **LFO 1 Band shift**, **LFO 1 Band shift Depth**, and so on for each target and both LFOs. Sessions from earlier versions sound as they did: an old LFO Depth is carried into the Depth of each target that LFO was driving, and old automation of **LFO Target** or **LFO Depth** still works, applying to the targets that LFO drives.
+
+Two exceptions worth knowing, and they are the only ones. **Morph moves the view** is plugin-only. So is **Latency**, and for a reason worth stating: switching it rebuilds the processor and moves your DAW's delay compensation, which is not something a lane should be able to ask for once per block. It is saved with your project and recalled with it, but your DAW cannot sweep it.
 
 ## Modulating a range of bands
 
@@ -146,7 +154,7 @@ Three things to know before you lean on it.
 
 The morph is one parameter, so it gives you one range at a time. Two ranges moving independently means two instances of Spectr in series. And the path each band takes is fixed once you have drawn the two ends: you shape where it goes, and your modulator's own shape decides how it gets there.
 
-The LFO **Target** control is not a second route to this. Its choices are Bank, A, B and Morph, and none of those is a range of bands. An LFO pointed at A or B is range-selective in the same way the morph is, but an LFO is always moving, so driving its **Depth** from your DAW scales an oscillation rather than placing the bands where you want them.
+An LFO is not a second route to this. Its targets move the whole bank, the frequencies, or the morph, and none of those is a range of bands. An LFO pointed at A or B is range-selective in the same way the morph is, but an LFO is always moving, so driving a target's **Depth** from your DAW scales an oscillation rather than placing the bands where you want them.
 
 ## What you can automate
 
@@ -154,7 +162,7 @@ The list your DAW shows is long, because every band is in it. The ones worth kno
 
 - **A/B Morph** blends the whole bank between the two snapshots. The most musical single target in the plugin.
 - **Viewport Center** and **Viewport Width** slide and widen the frequency range the bands cover. Automating the centre sweeps your whole shape up and down the spectrum.
-- **LFO Rate**, **LFO Depth**, and the same pair on **LFO 2**, let you modulate the modulators from outside.
+- **LFO Rate** and **LFO 2 Rate**, and each target's on/off and **Depth** (**LFO 1 Bank Depth** and so on), let you modulate the modulators from outside.
 - **Band 01 Gain** through **Band 64 Gain**, and **Band 01 Mute** through **Band 64 Mute**, for one band at a time.
 - **Freeze** is the LIVE / FROZEN button, so your DAW can freeze and release the sound on the beat. **Freeze Length** is the LENGTH control: each fraction of a bar from 1/32 to 15/16, 1, 2, 4 or 8 bars, or Custom, the custom length you last set.
 - **Mix** blends Spectr against the untouched signal. **Output** trims the level on the way out, by up to 24 dB either way.
