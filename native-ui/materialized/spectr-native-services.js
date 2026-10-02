@@ -292,7 +292,16 @@
     const message = { type, payload, id };
     const callbacks = listeners.get(type);
     if (!callbacks) return;
-    for (const callback of [...callbacks]) callback(message);
+    // One native message is one batch: every listener's state updates commit
+    // once when the fan-out returns. Outside a batch the LegacyRoot commits
+    // each setState on the spot, and each commit re-applies the captured
+    // document (the post-mount hydrate alone was 13 commits).
+    const deliver = () => {
+      for (const callback of [...callbacks]) callback(message);
+    };
+    const batch = globalThis.__pulpBatchUpdates__;
+    if (typeof batch === 'function') batch(deliver);
+    else deliver();
   };
 
   const dispatch = (type, payload, id) => {
