@@ -154,7 +154,7 @@ block's parameter cursor. See `include/spectr/level_controls.hpp`.
 
 - **Intensity** (`5000`, default 100 %): `effective_db = intensity x composed_db`,
   applied once after morph, macros and LFOs; a muted band's linear gain becomes
-  `1 - intensity`. Slewed at 100 ms full scale. 100 % is an exact identity.
+  `1 - intensity`. Slewed at 200 ms full scale. 100 % is an exact identity.
 - **Auto Gain** (`5001`): a post gain before Output trim, `-10 log10(sum w g^2 / sum w)`
   over the effective (pre-LFO) shape blended with Mix, weighted by a K-weighted
   pink reference; clamped to -24...+12 dB; 300 ms ramp; exactly 1.0 when off.

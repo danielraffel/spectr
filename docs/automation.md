@@ -40,7 +40,7 @@ do three things in a DAW:
 | Macro membership | none (supplemental state) | Not automatable, by design | n/a | n/a |
 | Output trim | `2` (dB) | OUTPUT knob: one bracket per drag, key press or wheel event | Sample-accurate, smoothed | Readout follows |
 | Mix | `1` (%) | MIX knob: one bracket per drag, key press or wheel event | Yes | Knob follows |
-| Intensity | `5000` (%) | INTENSITY knob: one bracket per drag, key press or wheel event | Yes, slewed 100 ms | Knob follows |
+| Intensity | `5000` (%) | INTENSITY knob: one bracket per drag, key press or wheel event | Yes, slewed 200 ms full scale | Knob follows |
 | Auto Gain | `5001` (Off/On) | AUTO pill: one complete bracket per press | Yes, 300 ms ramp | Pill follows |
 | Latency mode, morph-moves-viewport, keyboard shortcuts in DAW, appearance | none (Settings, plugin state) | Not automatable, by design | n/a | n/a |
 

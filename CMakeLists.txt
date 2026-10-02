@@ -3847,6 +3847,17 @@ endif()
 # engage that did several milliseconds of work in one callback, past a
 # 128-frame buffer's real-time budget, so a live host dropped that buffer.
 if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
+    # Intensity and Auto Gain as a DAW sees them: parameter info, scheduled
+    # automation playback (smoothness vs the LFO yardstick), a set-parameter
+    # jump, and Auto Gain's level, all through the built AU in-process.
+    add_executable(Spectr-au-level-probe tools/au_level_probe.cpp)
+    target_link_libraries(Spectr-au-level-probe PRIVATE
+        "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+    add_dependencies(Spectr-au-level-probe ${SPECTR_NATIVE_AU_TARGET})
+    add_test(NAME Spectr-au-level-host
+        COMMAND Spectr-au-level-probe
+            --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
+    set_tests_properties(Spectr-au-level-host PROPERTIES TIMEOUT 300)
     add_executable(Spectr-au-freeze-probe tools/au_freeze_probe.cpp)
     target_link_libraries(Spectr-au-freeze-probe PRIVATE
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")

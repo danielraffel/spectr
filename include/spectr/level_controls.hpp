@@ -61,10 +61,12 @@ inline constexpr float kIntensityDefaultPercent = 100.0f;
 inline constexpr bool kAutoGainDefaultForNewInstances = true;
 
 /// Full-scale (0 -> 100 %) Intensity slew. Longer than the LFO level's 60 ms
-/// because Intensity moves EVERY band at once: at 60 ms a +12 dB shape stepped
-/// 2.5 dB per 512-sample block measured on the audio (over the 2.3 dB Bank-LFO
-/// yardstick); 100 ms keeps it near 1.3 dB and still feels immediate on a knob.
-inline constexpr double kIntensitySlewSeconds = 0.1;
+/// because Intensity moves EVERY band at once and each step is a mask
+/// restage: measured through the AU host (tools/au_level_probe.cpp, an
+/// unpaced offline render), a 0 -> 100 % jump on a +12 dB shape stepped
+/// 2.6 dB per 512-frame block at 100 ms, over the 2.3 dB Bank-LFO yardstick,
+/// and 1.3 dB at 200 ms. Still well under a quarter second on a knob.
+inline constexpr double kIntensitySlewSeconds = 0.2;
 
 /// Auto Gain's ramp to a new compensation target.
 inline constexpr float kAutoGainRampSeconds = 0.3f;

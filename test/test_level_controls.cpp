@@ -675,3 +675,36 @@ TEST_CASE("Range is editor state: validated, persisted, and never audible",
     CHECK(control == 0);  // the comparison is meaningful only if it is
     CHECK(mismatches == 0);
 }
+
+// ── Mix (param 1), now an editor knob ───────────────────────────────────
+
+TEST_CASE("Mix blends the latency-aligned dry signal with the wet in both modes",
+          "[level][mix][audio]") {
+    // Every band muted: the wet path is silence, so the output must be exactly
+    // (1 - mix) x the dry input, delayed by the reported latency. A misaligned
+    // dry path, or a mix law that is not linear, leaves a residual.
+    for (const auto mode : spectr::kRenderModes) {
+        for (const float mix : {0.0f, 50.0f}) {
+            INFO("mode " << spectr::render_mode_token(mode) << " mix " << mix);
+            Rig rig(mode, /*prepare_now=*/false);
+            rig.set(spectr::kParamAutoGain, 0.0f);
+            rig.set(spectr::kMix, mix);
+            rig.shape_params([](std::size_t, spectr::Band& b) { b.muted = true; });
+            rig.prepare();
+            const auto in = pink(static_cast<std::size_t>(kRate * 1.5), 13u, 0.1);
+            const auto out = rig.render(in);
+            const auto d = static_cast<std::size_t>(rig.plugin->latency_samples());
+            const double dry_gain = 1.0 - mix / 100.0;
+            double worst = 0.0;
+            for (std::size_t i = static_cast<std::size_t>(kRate * 0.6); i < out.size(); ++i) {
+                const double expected = i >= d ? dry_gain * in.l[i - d] : 0.0;
+                worst = std::max(worst, std::abs(out.l[i] - expected));
+            }
+            const double worst_db = 20.0 * std::log10(std::max(worst, 1e-30));
+            std::printf("[mix] %s mix %.0f%%: residual vs aligned dry x %.2f = %.1f dBFS\n",
+                        std::string(spectr::render_mode_token(mode)).c_str(), mix,
+                        dry_gain, worst_db);
+            CHECK(worst_db < -90.0);
+        }
+    }
+}

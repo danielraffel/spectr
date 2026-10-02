@@ -1287,8 +1287,23 @@ void Spectr::process(
                     detail::surface_slot_param_id(slot),
                     applied_param_cache_[slot].load(std::memory_order_relaxed)};
             }
-            initial[kSurfaceCacheSlots + 2] = {kParamIntensity, audio_intensity_percent_};
-            initial[kSurfaceCacheSlots + 3] = {kParamAutoGain, audio_auto_gain_param_};
+            // The level controls take the previous block's end value only when
+            // this block carries events for them. A store write with no event
+            // (AudioUnitSetParameter, an editor knob) would otherwise be
+            // shadowed by that baseline for as long as OTHER lanes keep
+            // sending events -- measured through the AU: Auto Gain switched
+            // off by set-parameter stayed on under scheduled Intensity
+            // automation.
+            bool intensity_events = false, auto_gain_events = false;
+            if (has_events)
+                for (const auto& event : events->events()) {
+                    intensity_events |= event.param_id == kParamIntensity;
+                    auto_gain_events |= event.param_id == kParamAutoGain;
+                }
+            initial[kSurfaceCacheSlots + 2] = {kParamIntensity, intensity_events
+                ? audio_intensity_percent_ : state().get_value(kParamIntensity)};
+            initial[kSurfaceCacheSlots + 3] = {kParamAutoGain, auto_gain_events
+                ? audio_auto_gain_param_ : state().get_value(kParamAutoGain)};
 
             pulp::format::ParamCursor params(
                 state(), events,
@@ -1728,18 +1743,25 @@ void Spectr::process(
                             // Auto Gain sits before Output trim: the trim
                             // stays the user's last word on level. Exactly
                             // 1.0f when off and settled, an identity.
-                            // The trim rides the same 10 ms smoother as the
-                            // block path: a store write (an editor knob, an
-                            // AU parameter set) lands between blocks with no
-                            // event, and without it this path would step.
+                            // Scheduled automation (events) is sample-exact,
+                            // as before. A store write with no event (an
+                            // editor knob, an AU set-parameter) rides the
+                            // block path's 10 ms smoother: this path now runs
+                            // whenever a level control is engaged, and it must
+                            // not step where the block path would not.
                             const float trim_target = std::pow(
                                 10.0f,
                                 cursor.value_at(kOutputTrim, absolute_sample)
                                     * 0.05f);
-                            if (trim_target != output_gain_.target())
-                                output_gain_.set_target(trim_target);
-                            const float gain =
-                                output_gain_.next() * auto_gain_.next();
+                            float trim_gain = trim_target;
+                            if (has_events) {
+                                output_gain_.set_immediate(trim_target);
+                            } else {
+                                if (trim_target != output_gain_.target())
+                                    output_gain_.set_target(trim_target);
+                                trim_gain = output_gain_.next();
+                            }
+                            const float gain = trim_gain * auto_gain_.next();
                             for (std::size_t channel = 0;
                                  channel < out_slice.num_channels(); ++channel)
                                 output_channels_[channel][sample] *= gain;
