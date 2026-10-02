@@ -639,6 +639,23 @@ std::string slider_press_at(
           " })()";
 }
 
+// A pointer at a header knob's centre, @p dy points below it (negative is up),
+// optionally with Shift held for the fine drag.
+std::string knob_point(std::string_view selector, double dy, bool shift = false) {
+    return std::string{
+        "(() => {"
+        " const node = globalThis.__pulpFindMaterializedElement__("}
+        + js_string(selector) + ");"
+        " const box = node && node.getBoundingClientRect"
+        " ? node.getBoundingClientRect() : null;"
+        " if (!box || !(box.width > 0)) throw new Error("
+        "'knob has no layout box to press: ' + " + js_string(selector) + ");"
+        " return { clientX: box.left + box.width * 0.5, clientY: box.top"
+        " + box.height * 0.5 + (" + std::to_string(dy) + "), pointerId: 1,"
+        " button: 0, shiftKey: " + (shift ? "true" : "false") + " };"
+        " })()";
+}
+
 void require_state(NativeEditorRig& rig, std::string_view id) {
     const auto script = std::string{R"js((() => {
       const d = globalThis.__pulpMaterializedMetadataDiagnostics__;
@@ -1050,7 +1067,9 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // and 1960.58 -> 1846.58 when the MOTION group (the hidden LIVE /
         // PRECISION choice) left, and 1846.58 -> 1960.58 when the FREEZE group
         // (Hold length) arrived, and 1960.58 -> 1846.58 when it left again for
-        // the header's LENGTH control. If you add a group and this fails, that is the window
+        // the header's LENGTH control, and 1846.58 -> 2044.58 when Appearance
+        // gained Display (BARS / RESPONSE / BOTH, out of the header) and
+        // Structure gained Range. If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1060,7 +1079,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 1767 && s.content_height < 1927"
+        " && s.content_height > 1965 && s.content_height < 2125"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
@@ -1815,7 +1834,9 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
     capture(rig, directory, "band-header-closed");
 
     const auto* band_label = find_label(*rig.root, "32 BANDS ▾");
-    const auto* peer_label = find_label(*rig.root, "BOTH");
+    // The peer: the LENGTH dropdown, the header's other menu trigger (the BOTH
+    // tab it used to be measured against is in Settings now).
+    const auto* peer_label = find_label(*rig.root, "1 bar");
     REQUIRE(band_label != nullptr);
     REQUIRE(peer_label != nullptr);
     const auto clickable_ancestor = [](const View* view) {
@@ -1832,8 +1853,10 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
     const auto peer_top = root_point(*peer_button, 0.0f, 0.0f);
     const auto peer_bottom = root_point(
         *peer_button, 0.0f, peer_button->bounds().height);
-    CHECK(band_top.y == Catch::Approx(peer_top.y).margin(0.01f));
-    CHECK(band_bottom.y == Catch::Approx(peer_bottom.y).margin(0.01f));
+    // Different heights (22 vs 24), one line: the centres agree to the half
+    // point every header control is held to.
+    CHECK(0.5f * (band_top.y + band_bottom.y)
+          == Catch::Approx(0.5f * (peer_top.y + peer_bottom.y)).margin(0.5f));
 
     const auto dispatch = [&](pulp::view::KeyCode key) {
         REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
@@ -1858,9 +1881,9 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
           .filter(entry => entry.text === '·'
             && entry.rect.left >= trigger.getBoundingClientRect().right - 0.5)
           .sort((a, b) => a.rect.left - b.rect.left)[0]?.rect,
-        peer: Array.from(document.querySelectorAll(
-          '[data-spectr-visualization] button')).find(
-          button => button.textContent.trim() === 'BOTH')?.getBoundingClientRect(),
+        // The header line's reference chip (the BOTH tab it used to be is in
+        // Settings now): PEAK, whose box is centred on the controls' line.
+        peer: document.querySelector('[data-spectr-output-peak]')?.getBoundingClientRect(),
         zoom: Array.from(document.querySelectorAll('span')).find(
           span => span.textContent.trim().endsWith('× ZOOM'))?.getBoundingClientRect()
       };
@@ -1918,8 +1941,8 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
           || Math.abs(triggerRect.width - before.trigger.width) > 0.5)
         throw new Error('band popup reflowed its header');
       if (!before.peer
-          || Math.abs(triggerRect.top - before.peer.top) > 0.5
-          || Math.abs(triggerRect.bottom - before.peer.bottom) > 0.5)
+          || Math.abs((triggerRect.top + triggerRect.bottom) / 2
+                      - (before.peer.top + before.peer.bottom) / 2) > 0.5)
         throw new Error('band trigger missed segmented-control rail: trigger='
           + triggerRect.top + '..' + triggerRect.bottom + ' peer='
           + before.peer?.top + '..' + before.peer?.bottom);
@@ -2002,13 +2025,28 @@ TEST_CASE("native selected tabs inherit hover through their label ancestry",
     NativeEditorRig rig;
     require_home(rig);
 
-    const auto* label = find_label(*rig.root, "BOTH");
+    // The selected visualization tab is Settings > Display's "Both" chip
+    // (the header's BARS / RESPONSE / BOTH tabs moved there).
+    rig.root->layout_children();
+    settle(rig.clock, 4);
+#if defined(__APPLE__)
+    constexpr auto settings_modifier = pulp::view::kModCmd;
+#else
+    constexpr auto settings_modifier = pulp::view::kModCtrl;
+#endif
+    REQUIRE(rig.root->on_global_key({
+        .key = static_cast<pulp::view::KeyCode>(','),
+        .modifiers = settings_modifier,
+        .is_down = true}));
+    settle(rig.clock, 16);
+    require_state(rig, "settings");
+    const auto* label = find_label(*rig.root, "Both");
     REQUIRE(label != nullptr);
     const View* button = nearest_click_target(label);
     REQUIRE(button != nullptr);
     CHECK(button->opacity() == Catch::Approx(1.0f));
     require_app_state(rig, "s.visualizationMode === 'both'",
-                      "the selected visualization tab was not BOTH");
+                      "the selected visualization chip was not Both");
 
     const auto point = root_point(
         *label, label->bounds().width * 0.5f, label->bounds().height * 0.5f);
@@ -6591,7 +6629,10 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
     })();)js", "spectr-native-zoom-readout-box");
 
     const auto* zoom = find_label(*rig.root, "1.00× ZOOM");
-    const auto* caption = find_label(*rig.root, "BOTH");
+    // The reference caption: LENGTH. BARS / RESPONSE / BOTH, which used to be
+    // the reference, now live in Settings as Display. All capitals, so its
+    // ink rows are the cap height every header caption shares.
+    const auto* caption = find_label(*rig.root, "LENGTH");
     const auto* bands = find_label(*rig.root, "32 BANDS ▾");
     REQUIRE(zoom != nullptr);
     REQUIRE(caption != nullptr);
@@ -6761,6 +6802,52 @@ TEST_CASE("the zoom readout's text sits on the header controls' line",
     check_words(*peak_label, output_frame, 2);
     check_words(*trim_readout, output_frame, 1);
 
+    // THE LEVEL KNOBS SHARE THE LINE. MIX and INTENSITY captions and their
+    // readouts sit on the captions' rows like OUTPUT's; the AUTO pill's
+    // smaller capitals are centred on that line; and every knob's centre is
+    // on the line the PEAK chip is centred on.
+    const auto* mix_caption = label_at("[data-spectr-mix-label]");
+    const auto* mix_readout = label_at("[data-spectr-mix-readout]");
+    const auto* intensity_caption = label_at("[data-spectr-intensity-label]");
+    const auto* intensity_readout = label_at("[data-spectr-intensity-readout]");
+    const auto* auto_label = label_at("[data-spectr-auto-gain] span");
+    CHECK(mix_caption->text() == "MIX");
+    CHECK(mix_readout->text() == "100%");
+    CHECK(intensity_caption->text() == "INTENSITY");
+    CHECK(intensity_readout->text() == "100%");
+    CHECK(auto_label->text() == "AUTO");
+    check_words(*mix_caption, output_frame, 1);
+    check_words(*mix_readout, output_frame, 1);
+    check_words(*intensity_caption, output_frame, 1);
+    check_words(*intensity_readout, output_frame, 1);
+    {
+        const auto words = word_ink(*auto_label, output_frame);
+        REQUIRE_FALSE(words.empty());
+        const float auto_centre = 0.5f * (words[0].top + words[0].bottom);
+        const float caption_centre = 0.5f * (caption_ink.top + caption_ink.bottom);
+        CAPTURE(auto_centre, caption_centre);
+        CHECK(auto_centre == Catch::Approx(caption_centre).margin(0.5f));
+    }
+    const auto box_centre_y = [&](const char* selector) {
+        auto id = runtime_string(
+            rig, std::string{"String(document.querySelector('"} + selector
+                     + "').__pulpId)",
+            "spectr-header-box-id");
+        id.erase(std::min(id.find('\n'), id.size()));
+        const auto* view = by_id(*rig.root, id);
+        INFO(selector << " id=" << id);
+        REQUIRE(view != nullptr);
+        const auto box = pulp::view::ViewInspector::absolute_bounds(*view);
+        return box.y + box.height * 0.5f;
+    };
+    const float line = box_centre_y("[data-spectr-output-peak]");
+    for (const char* knob : {"[data-spectr-mix]", "[data-spectr-intensity]",
+                             "[data-spectr-output-trim]",
+                             "[data-spectr-auto-gain]"}) {
+        INFO(knob);
+        CHECK(box_centre_y(knob) == Catch::Approx(line).margin(0.5f));
+    }
+
     // The bands trigger's caption shares the same line, both as captured and
     // after its text changes -- a changed caption no longer matches its capture
     // and is laid out natively, which is the state a user who picked another
@@ -6920,7 +7007,9 @@ TEST_CASE("the LIVE / PRECISION control is hidden from the header, Settings and 
     settle(rig.clock, 16);
     require_state(rig, "settings");
     REQUIRE(find_label(*rig.root, "Mute style") != nullptr);
-    CHECK(find_label(*rig.root, "Response") == nullptr);
+    // "Response" is legitimately in Settings now, as a Display choice
+    // (tools/patch_materialized_display_setting.py); the MOTION group's own
+    // words are what must stay gone.
     CHECK(find_label(*rig.root, "MOTION") == nullptr);
     CHECK(find_label(*rig.root, "Precision") == nullptr);
     storage.require_unchanged();
@@ -6968,7 +7057,14 @@ TEST_CASE("the header reads freeze, OUTPUT, trim, value, PEAK on the controls' l
     const auto* live = header_label("LIVE");
     const auto* output = header_label("OUTPUT");
     const auto* value = header_label("0.0");
-    const auto* caption = header_label("BOTH");
+    // The line reference is the LENGTH caption (BARS / RESPONSE / BOTH moved
+    // to Settings as Display), and the right-hand bound is the band-count
+    // menu the header now runs up to.
+    const auto* caption = header_label("LENGTH");
+    const auto* bands_label = header_label("32 BANDS ▾");
+    const auto* auto_label = header_label("AUTO");
+    REQUIRE(bands_label != nullptr);
+    REQUIRE(auto_label != nullptr);
     REQUIRE(live != nullptr);
     REQUIRE(output != nullptr);
     REQUIRE(value != nullptr);
@@ -7016,16 +7112,43 @@ TEST_CASE("the header reads freeze, OUTPUT, trim, value, PEAK on the controls' l
     CHECK(length_caption_box.right < length_box.left);
     CHECK(length_box.right < output_box.left);
     CHECK(output_box.right < value_box.left);
-    CHECK(value_box.right < peak_box.left);
-    CHECK(peak_box.right < caption_box.left);
-    CHECK(peak_box.right <= 839.5f - 14.0f);
+    const auto auto_box = box_of(*auto_label->parent());
+    const auto bands_box = box_of(*bands_label);
+    CAPTURE(auto_box.left, auto_box.right, bands_box.left);
+    CHECK(value_box.right < auto_box.left);
+    CHECK(auto_box.right < peak_box.left);
+    CHECK(peak_box.right <= bands_box.left - 14.0f);
     // toggle, 5, divider, 5, LENGTH: 11; LENGTH, 6, [length]; [length], 5,
-    // divider, 5, OUTPUT: 11.
+    // divider, 5, MIX: 11 -- the first knob takes LENGTH's spacing.
+    const auto* mix_caption = header_label("MIX");
+    REQUIRE(mix_caption != nullptr);
+    const auto mix_box = box_of(*mix_caption);
     CHECK(length_caption_box.left - toggle_box.right == Catch::Approx(11.0f).margin(1.0f));
     CHECK(length_box.left - length_caption_box.right == Catch::Approx(6.0f).margin(1.0f));
-    CHECK(output_box.left - length_box.right == Catch::Approx(11.0f).margin(1.0f));
+    CHECK(mix_box.left - length_box.right == Catch::Approx(11.0f).margin(1.0f));
+    // Inside a knob group: caption, 6, knob, 6, readout (6, AUTO); between
+    // groups and before PEAK, the cluster's 14. Read off the laid-out boxes.
+    rig.bridge().load_script(R"js((() => {
+      const r = (q) => document.querySelector(q)?.getBoundingClientRect();
+      const near = (a, b, what) => { if (!(Math.abs(a - b) <= 0.5))
+        throw new Error(what + ' gap ' + a + ' expected ' + b); };
+      for (const name of ['mix', 'intensity', 'output-trim']) {
+        const label = r('[data-spectr-' + name + '-label]');
+        const knob = r('[data-spectr-' + name + ']');
+        const readout = r('[data-spectr-' + name + '-readout]');
+        if (!label || !knob || !readout) throw new Error(name + ' parts missing');
+        near(knob.left - label.right, 6, name + ' caption->knob');
+        near(readout.left - knob.right, 6, name + ' knob->readout');
+      }
+      near(r('[data-spectr-intensity-label]').left - r('[data-spectr-mix-readout]').right,
+           14, 'MIX->INTENSITY');
+      near(r('[data-spectr-output-trim-label]').left - r('[data-spectr-intensity-readout]').right,
+           14, 'INTENSITY->OUTPUT');
+      near(r('[data-spectr-auto-gain]').left - r('[data-spectr-output-trim-readout]').right,
+           6, 'readout->AUTO');
+    })();)js", "spectr-native-level-knob-spacing");
     CHECK(length_box.right - length_box.left == Catch::Approx(88.0f).margin(0.5f));
-    const float peak_gap = peak_box.left - value_box.right;
+    const float peak_gap = peak_box.left - auto_box.right;
     CAPTURE(peak_gap);
     CHECK(peak_gap == Catch::Approx(14.0f).margin(1.0f));
     CHECK(toggle_box.right - toggle_box.left == Catch::Approx(76.0f).margin(0.5f));
@@ -7148,15 +7271,6 @@ TEST_CASE("the header reads freeze, OUTPUT, trim, value, PEAK on the controls' l
         REQUIRE(!words.empty());
         return std::pair{words.front().left, words.back().right};
     };
-    {
-        const auto [ink_left, ink_right] = value_ink(*value, frame);
-        const float track_right = track_end(frame, ink_left - 1.0f);
-        CAPTURE(track_right, ink_left, ink_right);
-        REQUIRE(track_right > 0.0f);
-        CHECK(ink_left - track_right == Catch::Approx(14.0f).margin(1.5f));
-        CHECK(peak_box.left - value_box.right
-              == Catch::Approx(14.0f).margin(1.0f));
-    }
     // ...AND PEAK HOLDS STILL as the number runs its whole range. The host
     // writes the trim, the meter publication carries it to the readout, and
     // PEAK's box and the number's first glyph must not move.
@@ -9848,7 +9962,9 @@ struct ModulationEditRecorder {
     static bool watched(pulp::state::ParamID id) {
         return (id >= spectr::kParamLfoEnabled && id <= spectr::kParamLfoTarget)
             || (id >= spectr::kParamLfo2Enabled && id <= spectr::kParamLfo2Depth)
-            || id == spectr::kOutputTrim || id == spectr::kParamMorph;
+            || id == spectr::kOutputTrim || id == spectr::kParamMorph
+            || id == spectr::kMix || id == spectr::kParamIntensity
+            || id == spectr::kParamAutoGain;
     }
     explicit ModulationEditRecorder(pulp::state::StateStore& store) {
         store.set_gesture_callbacks(
@@ -10016,6 +10132,93 @@ TEST_CASE("host playback of the LFO lanes moves the band menu, even after an edi
     storage.require_unchanged();
 }
 
+// THE HEADER LEVEL KNOBS: MIX (1), INTENSITY (5000), OUTPUT (2) and AUTO
+// (5001). Every way a person moves one is a host gesture a DAW can record --
+// one bracket per drag, one per key press, one per wheel burst -- and the
+// values are the knob's own arithmetic (160pt of travel for the full range,
+// ten times finer with Shift). Host automation moves them back.
+TEST_CASE("header level knobs record one host gesture per act and follow the host",
+          "[native-n1][state-parity][automation][level]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    ModulationEditRecorder recorder(rig.store);
+    const auto pause_past_double_press = [&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    };
+    const auto value_of = [&](const char* selector) {
+        auto text = runtime_string(rig, std::string{"String(document.querySelector('"}
+            + selector + "').getAttribute('aria-valuenow'))", "spectr-knob-value");
+        text.erase(std::min(text.find('\n'), text.size()));
+        return std::stod(text);
+    };
+
+    // MIX: a vertical drag, 80pt down = half the range.
+    const auto mix = std::string("[data-spectr-mix]");
+    activate(rig, mix, "pointerdown", knob_point(mix, 0.0));
+    activate(rig, mix, "pointermove", knob_point(mix, 80.0));
+    activate(rig, mix, "pointerup", knob_point(mix, 80.0));
+    CHECK(recorder.take() == "begin 1, set 1=50, end 1");
+    CHECK(rig.store.get_value(spectr::kMix) == Catch::Approx(50.0f));
+    CHECK(value_of("[data-spectr-mix]") == Catch::Approx(50.0));
+    pause_past_double_press();
+
+    // INTENSITY: Shift is ten times finer -- 40pt down is 2.5 %, not 25 %.
+    const auto intensity = std::string("[data-spectr-intensity]");
+    activate(rig, intensity, "pointerdown", knob_point(intensity, 0.0, true));
+    activate(rig, intensity, "pointermove", knob_point(intensity, 40.0, true));
+    activate(rig, intensity, "pointerup", knob_point(intensity, 40.0, true));
+    CHECK(recorder.take() == "begin 5000, set 5000=97.5, end 5000");
+    pause_past_double_press();
+
+    // Keys: one complete gesture per press, on the knob's 1 % grid.
+    activate(rig, intensity, "keydown", R"js({key:"ArrowDown"})js");
+    CHECK(recorder.take() == "begin 5000, set 5000=97, end 5000");
+    activate(rig, intensity, "keydown", R"js({key:"End"})js");
+    CHECK(recorder.take() == "begin 5000, set 5000=100, end 5000");
+
+    // Wheel: a notch down moves a quarter of the range, each event its own
+    // complete gesture (no timer has to fire to close one).
+    activate(rig, intensity, "wheel", R"js({deltaY:40})js");
+    activate(rig, intensity, "wheel", R"js({deltaY:40})js");
+    CHECK(recorder.take()
+          == "begin 5000, set 5000=75, end 5000, begin 5000, set 5000=50, end 5000");
+    CHECK(rig.store.open_gesture_count() == 0);
+    pause_past_double_press();
+
+    // Double press resets to the default inside its own bracket.
+    activate(rig, intensity, "pointerdown", knob_point(intensity, 0.0));
+    activate(rig, intensity, "pointerup", knob_point(intensity, 0.0));
+    activate(rig, intensity, "pointerdown", knob_point(intensity, 0.0));
+    activate(rig, intensity, "pointerup", knob_point(intensity, 0.0));
+    CHECK(recorder.take() == "begin 5000, end 5000, begin 5000, set 5000=100, end 5000");
+    pause_past_double_press();
+
+    // AUTO toggles Auto Gain, one complete gesture. New instances start on.
+    REQUIRE(rig.store.get_value(spectr::kParamAutoGain) == 1.0f);
+    activate(rig, "[data-spectr-auto-gain]");
+    CHECK(recorder.take() == "begin 5001, set 5001=0, end 5001");
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-auto-gain]')"
+        "?.getAttribute('data-spectr-auto-gain-state') === 'off'",
+        "AUTO did not show its new state");
+
+    // Host automation moves every knob and the pill.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    rig.store.set_value(spectr::kParamIntensity, 30.0f);
+    rig.store.set_value(spectr::kMix, 70.0f);
+    rig.store.set_value(spectr::kOutputTrim, -6.0f);
+    rig.store.set_value(spectr::kParamAutoGain, 1.0f);
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-intensity]')?.getAttribute('aria-valuenow') === '30'"
+        " && document.querySelector('[data-spectr-mix]')?.getAttribute('aria-valuenow') === '70'"
+        " && document.querySelector('[data-spectr-output-trim]')?.getAttribute('aria-valuenow') === '-6'"
+        " && document.querySelector('[data-spectr-auto-gain]')?.getAttribute('data-spectr-auto-gain-state') === 'on'",
+        "the level knobs did not follow host automation");
+    CHECK(recorder.take().find("begin") == std::string::npos);  // no echo gestures
+    storage.require_unchanged();
+}
+
 TEST_CASE("an Output trim or Morph edit records as a host gesture",
           "[native-n1][state-parity][modulation][automation]") {
     PatternStoragePoison storage;
@@ -10023,30 +10226,14 @@ TEST_CASE("an Output trim or Morph edit records as a host gesture",
     require_home(rig);
     ModulationEditRecorder recorder(rig.store);
 
-    // The trim is a native range input. Its change callback is driven the way
-    // the native slider drives it -- with the raw value as the argument -- and
-    // a value change outside a press is a complete bracket.
-    const auto change_trim = [&](double db) {
-        rig.bridge().load_script(std::string(R"js((() => {
-          const node = globalThis.__pulpFindMaterializedElement__('[data-spectr-output-trim]');
-          const id = node && (node.__pulpId || node.id);
-          const callback = globalThis.__pulpReactEventCallbacks__?.get?.(String(id) + ':change');
-          if (typeof callback !== 'function') throw new Error('trim has no change callback');
-          callback()js") + std::to_string(db) + R"js();
-          if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
-            globalThis.__pulpRuntimeSettle__(8);
-        })();)js", "spectr-output-trim-change");
-        settle(rig.clock);
-    };
-    change_trim(-6.0);
-    CHECK(recorder.take() == "begin 2, set 2=-6, end 2");
-
-    // A press on the input opens the bracket, so a drag is one gesture.
-    activate(rig, "[data-spectr-output-trim]", "pointerdown");
-    change_trim(-3.0);
-    change_trim(-1.5);
-    activate(rig, "[data-spectr-output-trim]", "pointerup");
-    CHECK(recorder.take() == "begin 2, set 2=-3, set 2=-1.5, end 2");
+    // The trim is the OUTPUT knob: a drag opens one bracket on press and
+    // closes it on release, whatever happens in between.
+    const auto knob = std::string("[data-spectr-output-trim]");
+    activate(rig, knob, "pointerdown", knob_point(knob, 0.0));
+    activate(rig, knob, "pointermove", knob_point(knob, -20.0));
+    activate(rig, knob, "pointermove", knob_point(knob, -40.0));
+    activate(rig, knob, "pointerup", knob_point(knob, -40.0));
+    CHECK(recorder.take() == "begin 2, set 2=6, set 2=12, end 2");
     CHECK(rig.store.open_gesture_count() == 0);
 
     // Morph: capture two different snapshots, then drag. The derived Morph

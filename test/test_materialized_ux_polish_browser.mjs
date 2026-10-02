@@ -465,7 +465,7 @@ window.__spectrPolishStart = () => {
       'Settings panel');
       const body = panel.querySelector('[data-spectr-settings-body]');
       if (!body) throw new Error('Settings body scroll owner missing');
-      const shouldOverflow = innerHeight < 1200;
+      const shouldOverflow = innerHeight < 1400;
       const actuallyOverflows = body.scrollHeight > body.clientHeight + 1;
       if (actuallyOverflows !== shouldOverflow)
         throw new Error('Settings overflow mismatch: height=' + innerHeight
@@ -626,11 +626,11 @@ assert.equal(oracleText(negativeStatus),
 
 // The fitting probe is a normal build: its GPU audio status reports
 // unavailable, so Settings keeps the release layout and its whole body fits
-// under the panel's 1500px cap. The experimental status rows are proven at
+// under the panel's 1700px cap. The experimental status rows are proven at
 // the overflowing size, where the body scrolls anyway; shown, they take the
 // body past that cap at any window height.
 for (const [label, height, gpuAudioAvailable] of [
-  ['overflowing', 860, true], ['fitting', 1800, false]]) {
+  ['overflowing', 860, true], ['fitting', 2000, false]]) {
   const settings = run({
     componentSource: shippingSurface, mode: 'settings', width: 1320, height,
     gpuAudioAvailable,

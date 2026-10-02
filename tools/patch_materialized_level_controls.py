@@ -25,8 +25,7 @@ pointer-events none, so the first press lands on the knob itself.
   * Double press (500 ms, the AppKit interval; detected from the press stream
     because React `onDoubleClick` never fires in this runtime) resets to the
     parameter default: Mix 100 %, Intensity 100 %, Output 0.0 dB.
-  * Wheel / trackpad: steps the value; consecutive wheel events share one
-    gesture that closes 350 ms after the last one.
+  * Wheel / trackpad: steps the value, one complete gesture per event.
   * Arrow keys when focused (Shift for fine), Home/End: one complete gesture
     per press.
   * Host automation moves it: the values ride the `output_meter` publication
@@ -57,7 +56,9 @@ PATH = os.path.join(REPO, "native-ui", "materialized",
 
 
 def escaped(value):
-    return json.dumps(value)[1:-1]
+    # ensure_ascii=False: the artifact stores non-ASCII literally (see
+    # tools/git/merge_materialized_runtime.py), so must every edit.
+    return json.dumps(value, ensure_ascii=False)[1:-1]
 
 
 KNOB_COMPONENT = r'''// ── Header level knobs (tools/patch_materialized_level_controls.py) ──
@@ -93,13 +94,11 @@ function SpectrKnob({ paramId, name, label, value, min, max, step, fineStep,
   const TRAVEL = 160;
   const FINE = 0.1;
   const DOUBLE_PRESS_MS = 500;
-  const WHEEL_IDLE_MS = 350;
   const span = max - min;
   const valueRef = React.useRef(value);
   valueRef.current = value;
   const dragRef = React.useRef(null);
   const lastPressRef = React.useRef(0);
-  const wheelRef = React.useRef({ open: false, timer: 0 });
   const quantise = (v, q) => {
     const snapped = Math.round((v - min) / q) * q + min;
     return Math.max(min, Math.min(max, Number(snapped.toFixed(6))));
@@ -118,7 +117,7 @@ function SpectrKnob({ paramId, name, label, value, min, max, step, fineStep,
     dragRef.current = null;
     gesture(false);
   };
-  const onPointerDown = (e) => {
+  const onKnobPointerDown = (e) => {
     const node = e && e.currentTarget;
     if (node && node.setPointerCapture && e.pointerId !== undefined) {
       try { node.setPointerCapture(e.pointerId); } catch (err) {}
@@ -140,7 +139,7 @@ function SpectrKnob({ paramId, name, label, value, min, max, step, fineStep,
       from: valueRef.current, fine: isFine(e)
     };
   };
-  const onPointerMove = (e) => {
+  const onKnobPointerMove = (e) => {
     const d = dragRef.current;
     if (!d || !e) return;
     const x = typeof e.clientX === "number" ? e.clientX : d.x;
@@ -155,30 +154,24 @@ function SpectrKnob({ paramId, name, label, value, min, max, step, fineStep,
     const travel = (d.y - y) + (x - d.x);
     write(d.from + travel / TRAVEL * span * (fine ? FINE : 1), fine);
   };
-  const onWheel = (e) => {
+  // One complete gesture per wheel event. A burst-shared bracket would need
+  // a timer to close it, and a timer that never fires (a host that does not
+  // pump this runtime's timers) would leave the host's Touch lane held open.
+  const onKnobWheel = (e) => {
     const dy = e && typeof e.deltaY === "number" ? e.deltaY : 0;
     if (!dy) return;
     if (typeof e.preventDefault === "function") e.preventDefault();
     if (typeof e.stopPropagation === "function") e.stopPropagation();
     const fine = isFine(e);
-    const w = wheelRef.current;
-    const canIdle = typeof setTimeout === "function";
-    if (!w.open) { gesture(true); w.open = true; }
     // A line-stepped wheel moves one step per notch; a trackpad's small
     // deltas move in proportion, never by less than the finest step.
     const amount = Math.min(Math.abs(dy), 40) / TRAVEL * span * (fine ? FINE : 1);
     const q = fine ? (fineStep || step) : step;
+    gesture(true);
     write(valueRef.current - Math.sign(dy) * Math.max(q, amount), fine);
-    if (canIdle) {
-      if (w.timer && typeof clearTimeout === "function") clearTimeout(w.timer);
-      w.timer = setTimeout(() => { w.timer = 0; w.open = false; gesture(false); },
-                           WHEEL_IDLE_MS);
-    } else {
-      w.open = false;
-      gesture(false);
-    }
+    gesture(false);
   };
-  const onKeyDown = (e) => {
+  const onKnobKeyDown = (e) => {
     if (!e) return;
     const fine = isFine(e);
     const q = fine ? (fineStep || step) : step;
@@ -197,9 +190,6 @@ function SpectrKnob({ paramId, name, label, value, min, max, step, fineStep,
     gesture(false);
   };
   React.useEffect(() => () => {
-    const w = wheelRef.current;
-    if (w.timer && typeof clearTimeout === "function") clearTimeout(w.timer);
-    if (w.open) gesture(false);
     if (dragRef.current) gesture(false);
   }, []);
   const fraction = span > 0 ? Math.max(0, Math.min(1, (value - min) / span)) : 0;
@@ -234,13 +224,13 @@ function SpectrKnob({ paramId, name, label, value, min, max, step, fineStep,
       "aria-valuenow": value,
       "aria-valuetext": text,
       title,
-      onPointerDown,
-      onPointerMove,
+      onPointerDown: onKnobPointerDown,
+      onPointerMove: onKnobPointerMove,
       onPointerUp: endDrag,
       onPointerCancel: endDrag,
       onLostPointerCapture: () => { if (dragRef.current) endDrag(); },
-      onWheel,
-      onKeyDown,
+      onWheel: onKnobWheel,
+      onKeyDown: onKnobKeyDown,
       style: {
         position: "relative", width: SIZE, height: SIZE, flexShrink: 0,
         borderRadius: SIZE / 2, boxSizing: "border-box",

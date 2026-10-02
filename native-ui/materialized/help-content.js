@@ -102,6 +102,21 @@ Below 100% Mix only the processed part is frozen, so the untouched part stays li
 
 A freeze pressed over silence waits for sound before it holds anything, so it never holds silence.
 
+## Level: Mix, Intensity, Output and AUTO
+
+Three knobs in the header set how much you hear and how loud it is. Drag up or right to turn one up, hold Shift or Option for fine steps, scroll over it, or use the arrow keys once it has focus. Double-click a knob to reset it.
+
+- **Intensity** is how strong the effect is. At 100% you hear the shape exactly as drawn; at 50% every boost and cut is half as deep in dB; at 0% Spectr is flat. A muted band fades back in as Intensity comes down. It is the cleanest way to make the filtering subtler.
+- **Mix** blends Spectr's sound with the original input. It is most useful with Freeze: below 100% you hear the frozen sound layered over the live input. To make the filtering itself gentler, reach for Intensity instead: a part-way Mix adds the untouched signal back rather than softening the shape.
+- **Output** is the final volume, in dB, up to 24 either way.
+- **AUTO** keeps the level steady as you boost or cut. It works out how much louder or quieter your shape makes typical audio and makes up the difference, before Output, so Output still has the last word. It follows the shape you draw, Intensity and Mix, never the sound itself, so it does not pump. It does not follow the LFOs: a level LFO stays audible as level. It is tuned for full-range material; on something very narrow, such as a single voice, boosting a range the sound does not reach is not something it can predict. New instances start with AUTO on. A project saved before AUTO existed opens with it off, so it sounds exactly as it did.
+
+## Range and Display
+
+**Range** in Settings, under Structure, sets how far a full-height drag reaches: plus or minus 3, 6, 12 or 24 dB. At 6 dB the whole height of the plot is 6 dB either way, which gives the fine control mixing and mastering moves need. It does not change the sound. A band already beyond the range keeps its value and is drawn pinned to the edge with an amber marker; your next edit to it brings it inside. Range is saved with your project.
+
+**Display**, under Appearance, chooses whether the plot draws the bands, the response curve, or both. It is the same setting the header used to carry, and your DAW can still automate it as **Visualization**.
+
 ## Movement
 
 Two LFOs can move things on their own, in time with your project tempo. Each one has a shape, a rate in beats, and a depth.
@@ -157,7 +172,7 @@ The list your DAW shows is long, because every band is in it. The ones worth kno
 - **LFO Rate**, **LFO Depth**, and the same pair on **LFO 2**, let you modulate the modulators from outside.
 - **Band 01 Gain** through **Band 64 Gain**, and **Band 01 Mute** through **Band 64 Mute**, for one band at a time.
 - **Freeze** is the LIVE / FROZEN button, so your DAW can freeze and release the sound on the beat. **Freeze Length** is the LENGTH control: each fraction of a bar from 1/32 to 15/16, 1, 2, 4 or 8 bars, or Custom, the custom length you last set.
-- **Mix** blends Spectr against the untouched signal. **Output** trims the level on the way out, by up to 24 dB either way.
+- **Mix** blends Spectr with the original input. **Intensity** scales the whole shape toward flat. **Output** trims the level on the way out, by up to 24 dB either way. **Auto Gain** is the AUTO switch.
 - **Macro 1** through **Macro 4**, in a Macros group of their own, are four spare lanes each worth up to 24 dB either way. A macro is an offset: it rides on top of whatever its member bands are already drawn at, rather than replacing them. They are listed in every build so your host never has to rescan to find them, and they stay inert until bands are assigned to one, which this version has no way to do yet. Four lanes that currently move nothing, and worth recognising rather than hunting for.
 
 Band numbers count from the left, so Band 01 is the lowest. Which frequency that actually is depends on where you are zoomed and how many bands you are showing, so the same lane means something different at 32 bands than at 64. Settle the band count before writing any band automation. **Band Count** is automatable itself, but changing it re-lays out the whole bank underneath your existing lanes, so treat it as a setup choice rather than a move.

@@ -1693,6 +1693,7 @@ void Spectr::process(
                         static_cast<int>(out_slice.num_samples()));
                     if (!processed) {
                         auto_gain_.skip(static_cast<int>(out_slice.num_samples()));
+                        output_gain_.skip(static_cast<int>(out_slice.num_samples()));
                         for (std::size_t channel = 0;
                              channel < out_slice.num_channels(); ++channel) {
                             auto dst = out_slice.channel(channel);
@@ -1727,10 +1728,18 @@ void Spectr::process(
                             // Auto Gain sits before Output trim: the trim
                             // stays the user's last word on level. Exactly
                             // 1.0f when off and settled, an identity.
-                            const float gain = std::pow(
+                            // The trim rides the same 10 ms smoother as the
+                            // block path: a store write (an editor knob, an
+                            // AU parameter set) lands between blocks with no
+                            // event, and without it this path would step.
+                            const float trim_target = std::pow(
                                 10.0f,
                                 cursor.value_at(kOutputTrim, absolute_sample)
-                                    * 0.05f) * auto_gain_.next();
+                                    * 0.05f);
+                            if (trim_target != output_gain_.target())
+                                output_gain_.set_target(trim_target);
+                            const float gain =
+                                output_gain_.next() * auto_gain_.next();
                             for (std::size_t channel = 0;
                                  channel < out_slice.num_channels(); ++channel)
                                 output_channels_[channel][sample] *= gain;

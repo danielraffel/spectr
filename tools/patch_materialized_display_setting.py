@@ -31,7 +31,9 @@ PATH = os.path.join(REPO, "native-ui", "materialized",
 
 
 def escaped(value):
-    return json.dumps(value)[1:-1]
+    # ensure_ascii=False: the artifact stores non-ASCII literally (see
+    # tools/git/merge_materialized_runtime.py), so must every edit.
+    return json.dumps(value, ensure_ascii=False)[1:-1]
 
 
 EDITS = [
@@ -41,6 +43,12 @@ EDITS = [
     ("and so is the divider in front of it (the one after it now leads the band-count menu)",
      '/* @__PURE__ */ React.createElement("div", { style: { width: 1, height: 20, background: "rgba(255,255,255,0.08)" } }), /* @__PURE__ */ React.createElement("div", { "data-spectr-visualization": true,',
      '/* @__PURE__ */ React.createElement("div", { "data-spectr-visualization-divider": true, style: { width: 1, height: 20, background: "rgba(255,255,255,0.08)", display: "none" } }), /* @__PURE__ */ React.createElement("div", { "data-spectr-visualization": true,'),
+    # Display (here) and Range (patch_materialized_range.py) add two rows, so
+    # the panel's tall-window cap grows to keep the release layout unscrolled
+    # where it was before (test/test_materialized_ux_polish_browser.mjs).
+    ("the Settings panel's tall-window cap fits the two new rows",
+     'height: "min(92vh, 1500px)",',
+     'height: "min(92vh, 1700px)",'),
     ("Settings receives the visualization mode",
      '''    SettingsModal,
     {

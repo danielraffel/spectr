@@ -37,7 +37,9 @@ PATH = os.path.join(REPO, "native-ui", "materialized",
 
 
 def escaped(value):
-    return json.dumps(value)[1:-1]
+    # ensure_ascii=False: the artifact stores non-ASCII literally (see
+    # tools/git/merge_materialized_runtime.py), so must every edit.
+    return json.dumps(value, ensure_ascii=False)[1:-1]
 
 
 RANGE_STORE = r'''  // Range (tools/patch_materialized_range.py): the editor's vertical
@@ -86,12 +88,19 @@ RANGE_STORE = r'''  // Range (tools/patch_materialized_range.py): the editor's v
 '''
 
 SETTINGS_ROW = r'''function SpectrRangeSetting() {
-  const [db, setDb] = React.useState(() => globalThis.spectrRangeDb());
-  React.useEffect(() => globalThis.spectrOnRange(setDb), []);
+  const [db, setDb] = React.useState(() => typeof globalThis.spectrRangeDb === "function"
+    ? globalThis.spectrRangeDb() : 24);
+  React.useEffect(() => typeof globalThis.spectrOnRange === "function"
+    ? globalThis.spectrOnRange(setDb) : void 0, []);
   return /* @__PURE__ */ React.createElement("div", { "data-spectr-range-setting": String(db) },
     /* @__PURE__ */ React.createElement(SpectrSettingsChips, {
       value: String(db),
-      onChange: (v) => globalThis.spectrSetRangeDb(parseInt(v, 10), true),
+      onChange: (v) => {
+        const next = parseInt(v, 10);
+        if (typeof globalThis.spectrSetRangeDb === "function")
+          globalThis.spectrSetRangeDb(next, true);
+        else setDb(next);
+      },
       opts: [["3", "\xB13"], ["6", "\xB16"], ["12", "\xB112"], ["24", "\xB124 dB"]]
     }));
 }
@@ -100,7 +109,8 @@ SETTINGS_ROW = r'''function SpectrRangeSetting() {
 OVERFLOW_PASS = r'''  // Bands past the Range keep their value; they draw pinned to the edge,
   // and this marks which edge they overflow (tools/patch_materialized_range.py).
   function drawRangeOverflow(ctx, g) {
-    const limit = globalThis.spectrRangeLimit();
+    const limit = typeof globalThis.spectrRangeLimit === "function"
+      ? globalThis.spectrRangeLimit() : 1;
     if (limit >= 1) return;
     const tg = targetGainsRef.current;
     ctx.save();
@@ -144,19 +154,20 @@ EDITS = [
      "    // normalised 24 dB unit at this Range, so every gain<->y mapping\n"
      "    // scales with it (tools/patch_materialized_range.py).\n"
      "    const plotHalfH = Math.min(zeroY - inner.y, inner.y + inner.h - zeroY);\n"
-     "    const halfH = plotHalfH * (24 / rangeDb);\n"
+     "    const halfH = plotHalfH * (24 / (typeof globalThis.spectrRangeDb === 'function' ? globalThis.spectrRangeDb() : 24));\n"
      "    const bandGap = 2;\n"
      "    const bandW = (inner.w - bandGap * (N - 1)) / N;\n"
      "    return { w, h, pad, inner, zeroY, halfH, plotHalfH, bandW, bandGap };\n"
-     "  }, [N, rangeDb]);\n"),
+     "  }, [N, globalThis.__spectrRange && globalThis.__spectrRange.db]);\n"),
     ("FilterBank follows the Range",
      "function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, visualizationMode, onEditModeChange, nativeHydrated, onNativeState }) {\n",
      "function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, visualizationMode, onEditModeChange, nativeHydrated, onNativeState }) {\n"
-     "  const [rangeDb, setRangeDb] = React.useState(() => globalThis.spectrRangeDb());\n"
-     "  React.useEffect(() => globalThis.spectrOnRange(setRangeDb), []);\n"),
+     "  const [, setRangeDb] = React.useState(0);\n"
+     "  React.useEffect(() => typeof globalThis.spectrOnRange === 'function'\n"
+     "    ? globalThis.spectrOnRange((db) => setRangeDb(db)) : void 0, []);\n"),
     ("the frame redraws on a Range change",
      "  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, selection, snapshots, morph, dspMode, visualizationMode]);\n",
-     "  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, selection, snapshots, morph, dspMode, visualizationMode, rangeDb]);\n"),
+     "  }, [view, N, bloom, spectrumIntensity, muteStyle, motionMode, metaphor, showMinimap, showRulers, theme, selection, snapshots, morph, dspMode, visualizationMode, globalThis.__spectrRange && globalThis.__spectrRange.db]);\n"),
     ("overflow markers draw last",
      '    if (visualizationMode !== "bars") drawMaskResponse(ctx, g);\n    octx.clearRect(0, 0, w, h);\n',
      '    if (visualizationMode !== "bars") drawMaskResponse(ctx, g);\n    drawRangeOverflow(ctx, g);\n    octx.clearRect(0, 0, w, h);\n'),
@@ -166,40 +177,40 @@ EDITS = [
     ("grid lines in quarters of the Range",
      "    for (let db = -24; db <= 24; db += 6) {\n"
      "      const y = g.zeroY - db / 24 * g.halfH + 0.5;\n",
-     "    const gridRange = globalThis.spectrRangeDb();\n"
+     "    const gridRange = (typeof globalThis.spectrRangeDb === 'function' ? globalThis.spectrRangeDb() : 24);\n"
      "    for (let db = -gridRange; db <= gridRange; db += gridRange / 4) {\n"
-     "      const y = g.zeroY - db / gridRange * g.plotHalfH + 0.5;\n"),
+     "      const y = g.zeroY - db / gridRange * (g.plotHalfH ?? g.halfH) + 0.5;\n"),
     ("ruler labels in quarters of the Range",
      "    for (let db = -24; db <= 24; db += 6) {\n"
      "      const y = g.zeroY - db / 24 * g.halfH;\n"
      "      ctx.fillStyle = db === 0 ? \"rgba(255,255,255,0.65)\" : \"rgba(255,255,255,0.30)\";\n"
      "      ctx.fillText((db > 0 ? \"+\" : \"\") + db, inner.x - 8, y);\n",
-     "    const rulerRange = globalThis.spectrRangeDb();\n"
+     "    const rulerRange = (typeof globalThis.spectrRangeDb === 'function' ? globalThis.spectrRangeDb() : 24);\n"
      "    for (let db = -rulerRange; db <= rulerRange; db += rulerRange / 4) {\n"
-     "      const y = g.zeroY - db / rulerRange * g.plotHalfH;\n"
+     "      const y = g.zeroY - db / rulerRange * (g.plotHalfH ?? g.halfH);\n"
      "      ctx.fillStyle = db === 0 ? \"rgba(255,255,255,0.65)\" : \"rgba(255,255,255,0.30)\";\n"
      "      ctx.fillText((db > 0 ? \"+\" : \"\") + (Number.isInteger(db) ? db : db.toFixed(1)), inner.x - 8, y);\n"),
     ("the analyzer ticks keep the plot's own height",
      "      const y = window.SpectrAnalyzer.project(amount, g.zeroY, g.halfH);\n",
-     "      const y = window.SpectrAnalyzer.project(amount, g.zeroY, g.plotHalfH);\n"),
+     "      const y = window.SpectrAnalyzer.project(amount, g.zeroY, (g.plotHalfH ?? g.halfH));\n"),
     ("the -inf label stays at the plot floor",
      '    ctx.fillText("\\u2212\\u221E", inner.x - 8, g.zeroY + g.halfH + 10);\n',
-     '    ctx.fillText("\\u2212\\u221E", inner.x - 8, g.zeroY + g.plotHalfH + 10);\n'),
+     '    ctx.fillText("\\u2212\\u221E", inner.x - 8, g.zeroY + (g.plotHalfH ?? g.halfH) + 10);\n'),
     ("the analyzer trace keeps the plot's own height",
      "    const { inner, zeroY, halfH } = g;\n    const t = timeRef.current;\n",
-     "    const { inner, zeroY, plotHalfH: halfH } = g;\n    const t = timeRef.current;\n"),
+     "    const { inner, zeroY } = g; const halfH = g.plotHalfH ?? g.halfH;\n    const t = timeRef.current;\n"),
     ("the response curve pins at the edge",
      "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -1, 1) : 0;\n",
-     "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -globalThis.spectrRangeLimit(), globalThis.spectrRangeLimit()) : 0;\n"),
+     "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -(typeof globalThis.spectrRangeLimit === 'function' ? globalThis.spectrRangeLimit() : 1), (typeof globalThis.spectrRangeLimit === 'function' ? globalThis.spectrRangeLimit() : 1)) : 0;\n"),
     ("bars pin at the edge",
      "      const gval = effectiveGains[i];\n      const targetMuted = isMuted(tg[i]);\n",
-     "      const gval = clamp(effectiveGains[i], -globalThis.spectrRangeLimit(), globalThis.spectrRangeLimit());\n      const targetMuted = isMuted(tg[i]);\n"),
+     "      const gval = clamp(effectiveGains[i], -(typeof globalThis.spectrRangeLimit === 'function' ? globalThis.spectrRangeLimit() : 1), (typeof globalThis.spectrRangeLimit === 'function' ? globalThis.spectrRangeLimit() : 1));\n      const targetMuted = isMuted(tg[i]);\n"),
     ("the stair-step pins at the edge",
      "        y: zeroY - effectiveGains[i] * halfH\n",
-     "        y: zeroY - clamp(effectiveGains[i], -globalThis.spectrRangeLimit(), globalThis.spectrRangeLimit()) * halfH\n"),
+     "        y: zeroY - clamp(effectiveGains[i], -(typeof globalThis.spectrRangeLimit === 'function' ? globalThis.spectrRangeLimit() : 1), (typeof globalThis.spectrRangeLimit === 'function' ? globalThis.spectrRangeLimit() : 1)) * halfH\n"),
     ("modulation looks pin at the edge",
      "    const yOf = (v, i) => zeroY - clamp(macroAdjustedGain(v, i), -1.02, 1.02) * halfH;\n",
-     "    const yOf = (v, i) => zeroY - clamp(macroAdjustedGain(v, i), -1.02 * globalThis.spectrRangeLimit(), 1.02 * globalThis.spectrRangeLimit()) * halfH;\n"),
+     "    const yOf = (v, i) => zeroY - clamp(macroAdjustedGain(v, i), -1.02 * (typeof globalThis.spectrRangeLimit === 'function' ? globalThis.spectrRangeLimit() : 1), 1.02 * (typeof globalThis.spectrRangeLimit === 'function' ? globalThis.spectrRangeLimit() : 1)) * halfH;\n"),
     ("muted bars sit at the plot floor",
      "function gainToY(g, zeroY, halfH) {\n  if (isMuted(g)) return zeroY + halfH;\n  return zeroY - g * halfH;\n",
      "function gainToY(g, zeroY, halfH) {\n"
@@ -208,7 +219,7 @@ EDITS = [
      "  return zeroY - Math.max(-limit, Math.min(limit, g)) * halfH;\n"),
     ("an edit never reaches past the Range",
      "  const pxToGain = (y, g) => clamp((g.zeroY - y) / g.halfH, -1, 1);\n",
-     "  const pxToGain = (y, g) => clamp((g.zeroY - y) / g.halfH, -globalThis.spectrRangeLimit(), globalThis.spectrRangeLimit());\n"),
+     "  const pxToGain = (y, g) => clamp((g.zeroY - y) / g.halfH, -(typeof globalThis.spectrRangeLimit === 'function' ? globalThis.spectrRangeLimit() : 1), (typeof globalThis.spectrRangeLimit === 'function' ? globalThis.spectrRangeLimit() : 1));\n"),
     ("Settings has a Range row component",
      "function SettingsModal(",
      SETTINGS_ROW + "function SettingsModal("),

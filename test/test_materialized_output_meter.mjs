@@ -168,22 +168,11 @@ const BOUND_MONO = (() => {
   return faces.length === 1 ? faces[0].runtime_family : "<no bound face>";
 })();
 const MONO_FAMILY = `'"${BOUND_MONO}", "JetBrains Mono", ui-monospace, monospace'`;
-const READOUT_STYLE = 'style: { width: 31, textAlign: "left", '
-  + `whiteSpace: "nowrap", flexShrink: 0, fontFamily: ${MONO_FAMILY}, `
-  + 'fontSize: 10, color: "rgba(255,255,255,0.72)" }';
-const TRACK_STYLE = 'style: { width: 96, flexShrink: 0, '
-  + 'accentColor: "hsl(200,80%,60%)" }';
-const TRIM_LABEL_ELEMENT = '    /* @__PURE__ */ React.createElement("span", {\n'
-  + '      "data-spectr-output-trim-label": true,\n'
-  + '      // Declares its own face, size, tracking and colour. A control that\n'
-  + '      // declares no type inherits the document body default, which is\n'
-  + '      // how the readout beside it shipped 47% taller than every other\n'
-  + '      // readout in this header.\n'
-  + `      style: { fontFamily: ${MONO_FAMILY}, fontSize: 10, `
-  + 'letterSpacing: 0.8, color: "rgba(255,255,255,0.72)", '
-  + 'whiteSpace: "nowrap", flexShrink: 0 }\n'
-  + '    }, "OUTPUT"),\n';
-
+// The level knobs (tools/patch_materialized_level_controls.py) share one
+// caption style and one knob component; the Output trim is the OUTPUT knob.
+const KNOB_CAPTION_TYPE = 'fontFamily: SPECTR_HEADER_MONO, fontSize: 10, letterSpacing: 0.8,';
+const OUTPUT_KNOB_LABEL = 'name: "output-trim", label: "OUTPUT",';
+const KNOB_TRAVEL = "  const TRAVEL = 160;\n";
 function plant(label, from, to) {
   const hits = html.split(from).length - 1;
   if (hits !== 1) {
@@ -243,16 +232,16 @@ if (plantClipLabel) {
     '(over ? "CLIP " : "PEAK ") + peakText');
 }
 if (plantUntypedReadout) {
-  plant("a trim readout with no type of its own", READOUT_STYLE,
-    'style: { width: 31, textAlign: "left", whiteSpace: "nowrap", '
-    + "flexShrink: 0 }");
+  plant("knob captions and readouts with no type of their own", KNOB_CAPTION_TYPE,
+    "letterSpacing: 0.8,");
 }
 if (plantUnlabelledTrim) {
-  plant("a trim with no on-screen label", TRIM_LABEL_ELEMENT, "");
+  plant("an OUTPUT knob with no on-screen label", OUTPUT_KNOB_LABEL,
+    'name: "output-trim", label: "",');
 }
 if (plantShortTrack) {
-  plant("the 58pt track that shipped", TRACK_STYLE,
-    'style: { width: 58, flexShrink: 0, accentColor: "hsl(200,80%,60%)" }');
+  plant("a knob so coarse a point of travel skips a step", KNOB_TRAVEL,
+    "  const TRAVEL = 20;\n");
 }
 
 const failures = [];
@@ -345,7 +334,7 @@ if (!/zIndex: 6/.test(meterBody)) {
   fail("the cluster does not outrank the top bar's own zIndex, so it is "
     + "painted but not pressable");
 }
-if (!/position: "absolute"/.test(meterBody) || !/left: 282/.test(meterBody)) {
+if (!/position: "absolute"/.test(meterBody) || !/left: (SPECTR_HEADER_SHOW_TAGLINE \? )?282/.test(meterBody)) {
   fail("the cluster is not absolutely placed in the header's measured gap "
     + "(x=281.7..669.5); in the flex row it either renumbers bindings or runs "
     + "off the 1320pt canvas");
@@ -464,26 +453,19 @@ if (!peakLabelStyle) {
   }
 }
 
-// S5. THE TRIM READOUT CARRIES ITS OWN TYPE, and it is the PEAK button's.
+// S5-S8. THE OUTPUT TRIM IS THE OUTPUT KNOB.
 //
-// This is the half of the cluster nobody looked at. The readout declared
-// width/textAlign/whiteSpace/flexShrink and no font at all, so it inherited
-// the document body default while its sibling 14pt away declared
-// var(--mono)/10/rgba(255,255,255,0.72). Rastered through the shipping native
-// editor (`Spectr-native-shot --backend=skia`, authored 1320x860 box) the
-// glyph ink measured 11.0pt against 7.5pt for PEAK, LIVE, BARS, BOTH,
-// `32 bands` and `1.00x zoom` alike -- 47% taller than every other readout in
-// the row, taller than the SPECTR wordmark, and the brightest non-brand
-// element in a header where it is the one control with no on-screen label.
-//
-// It also overflowed: at the extremes the inherited face painted `+12.0` as a
-// 37pt run inside a 34pt box. `tools/appearance_invariants.py` is the detector
-// for exactly that, and it cannot see this one -- it adjudicates a checked-in
-// Settings dump and never sees the header.
-//
-// Asserted against the sibling's declarations rather than against literals, so
-// a deliberate retype of the cluster moves both halves or fails here.
-// A family is written either "..." or '...' (a quoted face list).
+// The 96pt slider became a knob beside MIX and INTENSITY
+// (tools/patch_materialized_level_controls.py). The same four properties the
+// slider was held to still hold, now read off the knob:
+//   S5 its readout carries the PEAK button's own type and a box that holds
+//      the widest value it can print ("-24.0");
+//   S6 it has a visible label, "OUTPUT" (the host parameter's own name);
+//   S7 one point of drag travel never skips a 0.5 dB step;
+//   S8 the cluster sits in the header's measured gap. Whether the whole row
+//      fits and shares one line is measured on the rendered editor by
+//      test_native_state_parity.cpp ("the zoom readout's text sits on the
+//      header controls' line"), which reads pixels rather than estimates.
 const FAMILY = /fontFamily: (?:"([^"]+)"|'([^']+)')/;
 const familyOf = (text) => {
   const match = FAMILY.exec(text);
@@ -491,243 +473,66 @@ const familyOf = (text) => {
 };
 const peakFontFamily = familyOf(meterBody);
 const peakFontSize = /fontSize: (\d+)/.exec(meterBody);
-const readoutStyle = /"data-spectr-output-trim-readout": true,[\s\S]{0,400}?style: \{([^}]*)\}/
+const knobBody = (() => {
+  const at = html.indexOf("function SpectrKnob(");
+  return at < 0 ? "" : html.slice(at, html.indexOf("function SpectrAutoGainPill(", at));
+})();
+const headerMono = /const SPECTR_HEADER_MONO = (?:"([^"]+)"|'([^']+)');/.exec(html);
+const captionStyle = /const caption = \{([\s\S]*?)\};/.exec(knobBody);
+const outputKnob = /name: "output-trim", label: "([^"]*)",[\s\S]{0,200}?min: (-?\d+), max: (-?\d+), step: ([\d.]+)[\s\S]{0,300}?readoutWidth: (\d+)/
   .exec(meterBody);
-if (!peakFontFamily || !peakFontSize) {
+const travel = /const TRAVEL = (\d+);/.exec(knobBody);
+if (!knobBody || !captionStyle || !headerMono) {
+  fail("the level knob component, its caption style or its face is missing");
+} else if (!peakFontFamily || !peakFontSize) {
   fail("the PEAK button declares no fontFamily/fontSize, so there is no "
-    + "sibling treatment for the trim readout to match");
-} else if (!readoutStyle) {
-  fail("no style object found on the trim readout");
+    + "sibling treatment for the knob readouts to match");
 } else {
-  const style = readoutStyle[1];
-  const family = familyOf(style);
+  const style = captionStyle[1];
+  const face = headerMono[1] || headerMono[2];
+  if (!/fontFamily: SPECTR_HEADER_MONO/.test(style) || face !== peakFontFamily[1])
+    fail("the knob captions and readouts do not declare the PEAK button's font "
+      + `family (${JSON.stringify(peakFontFamily[1])})`);
   const size = /fontSize: (\d+)/.exec(style);
-  if (!family || family[1] !== peakFontFamily[1]) {
-    fail("the trim readout does not declare the PEAK button's font family "
-      + `(${JSON.stringify(peakFontFamily[1])}); unstated it inherits the `
-      + "document body face and renders in a different typeface from the "
-      + "number beside it");
-  }
-  if (!size || size[1] !== peakFontSize[1]) {
-    fail("the trim readout does not declare the PEAK button's font size "
-      + `(${peakFontSize[1]}); unstated it inherits the document body size `
-      + "and rendered 47% taller than every other readout in the header");
-  }
-  if (!/color: "/.test(style)) {
-    fail("the trim readout declares no colour, so it inherits the body "
-      + "default and outshines every other readout in the row");
-  }
-  // The box must hold the widest value the control can print. min/max are
-  // +-24 and the format is one optional sign, two digits, a point and a
-  // decimal -- five glyphs. A mono advance is ~0.6em, which is what made the
-  // inherited face overflow this same 34pt box at 37pt.
-  const width = /width: (\d+)/.exec(style);
-  const declared = size ? Number(size[1]) : Number(peakFontSize[1]);
-  const widest = 5 * declared * 0.6;
-  if (!width) {
-    fail("the trim readout declares no width, so its box cannot be checked "
-      + "against the widest value it can print");
-  } else if (Number(width[1]) < widest) {
-    fail(`the trim readout's ${width[1]}pt box cannot hold the widest value `
-      + `it can print ("-24.0", ~${widest.toFixed(1)}pt at ${declared}pt `
-      + "mono); the run paints outside its own box");
-  }
+  if (!size || size[1] !== peakFontSize[1])
+    fail("the knob captions and readouts do not declare the PEAK button's font "
+      + `size (${peakFontSize[1]})`);
+  if (!/color: "/.test(style))
+    fail("the knob captions declare no colour, so they inherit the body default");
+  if (!/whiteSpace: "nowrap"/.test(style))
+    fail("the knob captions can wrap inside a 26pt-tall header row");
 }
-
-// S6. THE TRIM HAS AN ON-SCREEN LABEL, AND IT LABELS THE TRACK.
-//
-// Every other control in this header is labelled -- the freeze toggle, BARS,
-// RESPONSE, BOTH, the band chip, the zoom readout. The trim shipped carrying
-// only `aria-label` and `title`. Neither is drawn: in a DAW a user met an
-// unlabelled slider beside a meter and had to guess what it moved.
-//
-// The word is asserted to be the host parameter's own name. kOutputTrim is
-// exposed to the host as "Output", so somebody automating it in their DAW
-// reads the same word in both places; a label that said TRIM or GAIN would
-// be a second name for one parameter.
-const labelStyle =
-  /"data-spectr-output-trim-label": true,[\s\S]{0,600}?style: \{([^}]*)\}/
-    .exec(meterBody);
-const labelText =
-  /"data-spectr-output-trim-label": true,[\s\S]{0,900}?\}, "([^"]*)"\)/
-    .exec(meterBody);
-if (!labelStyle || !labelText) {
-  fail("the trim carries no on-screen label; aria-label and title are not "
-    + "drawn, so in a DAW this is an unlabelled slider beside a meter");
+if (!outputKnob) {
+  fail("the OUTPUT knob is missing, or declares no label/min/max/step/readout width");
 } else {
-  if (labelText[1] !== "OUTPUT") {
-    fail(`the trim's visible label reads ${JSON.stringify(labelText[1])}; it `
-      + 'must read "OUTPUT", the name the host already shows for kOutputTrim, '
-      + "or one parameter has two names");
-  }
-  // Same defect class as S5, on the element added to fix a different one: a
-  // control that declares no type inherits the document body default.
-  const style = labelStyle[1];
-  const family = familyOf(style);
-  const size = /fontSize: (\d+)/.exec(style);
-  if (!peakFontFamily || !peakFontSize) {
-    // already reported by S5
-  } else {
-    if (!family || family[1] !== peakFontFamily[1]) {
-      fail("the trim label does not declare the PEAK button's font family "
-        + `(${JSON.stringify(peakFontFamily[1])}); unstated it inherits the `
-        + "document body face and reads as a different kind of thing from "
-        + "every other word in the header");
-    }
-    if (!size || size[1] !== peakFontSize[1]) {
-      fail("the trim label does not declare the PEAK button's font size "
-        + `(${peakFontSize[1]}); unstated it inherits the document body size`);
-    }
-  }
-  if (!/color: "/.test(style)) {
-    fail("the trim label declares no colour, so it inherits the body default "
-      + "and outshines the readouts it sits among");
-  }
-  // No declared width, so the label can never be a box too small for its own
-  // word -- the failure mode S5 guards for the readout, which DOES need a
-  // fixed box because its value changes width.
-  if (/width: /.test(style)) {
-    fail("the trim label declares a fixed width; it has no reason to, and a "
-      + "box narrower than the word clips it");
-  }
-  if (!/whiteSpace: "nowrap"/.test(style)) {
-    fail("the trim label does not declare whiteSpace nowrap, so it can wrap "
-      + "inside a 26pt-tall header row");
-  }
-  // Order. A label after the track labels the readout, not the control.
-  const labelAt = meterBody.indexOf('"data-spectr-output-trim-label"');
-  const trackAt = meterBody.indexOf('"data-spectr-output-trim":');
-  const readoutAt = meterBody.indexOf('"data-spectr-output-trim-readout"');
-  if (!(labelAt < trackAt && trackAt < readoutAt)) {
-    fail("the cluster is not laid out label -> track -> readout "
-      + `(${labelAt}/${trackAt}/${readoutAt}); a label after the track reads `
-      + "as a caption on the number instead of a name for the control");
-  }
-}
-
-// S7. THE TRACK RESOLVES FINELY ENOUGH TO AIM WITH, MEASURED AGAINST THE
-// PATTERN THIS REPO ALREADY USES.
-//
-// The runtime maps a press to a value across the FULL declared track width
-// under a fixed ~20pt thumb, so resolution is (max - min) / width dB per
-// point and nothing else. It shipped at 58pt:
-//
-//     48 dB / 58pt = 0.828 dB per point
-//
-// -- confirmed through the shipping standalone, where a 25pt drag from the
-// track centre moved the trim 20.5 dB (0.82 measured, the difference being
-// the 0.5 dB step). At 2x that is a 0.5 dB step roughly every device pixel:
-// there is no fine adjustment at all.
-//
-// The bar is Spectr's own Settings slider, whose track is DERIVED from that
-// component's declarations rather than pinned to a literal here, so a
-// deliberate change to the Settings row moves this gate with it.
-const sliderRow = /const SSlider = [\s\S]{0,400}?gap: (\d+), width: (\d+) \}/
-  .exec(html);
-const sliderReadout =
-  /const SSlider = [\s\S]{0,1200}?className: "tnum", style: \{ width: (\d+)/
-    .exec(html);
-const trackStyle =
-  /"data-spectr-output-trim": true,[\s\S]{0,600}?style: \{([^}]*)\}/
-    .exec(meterBody);
-const trackWidth = trackStyle ? /width: (\d+)/.exec(trackStyle[1]) : null;
-const trimMin = /min:\s*(-?\d+)/.exec(meterBody);
-const trimMax = /max:\s*(-?\d+)/.exec(meterBody);
-const trimStep = /step:\s*([\d.]+)/.exec(meterBody);
-if (!sliderRow || !sliderReadout) {
-  fail("the Settings SSlider's own geometry is unreadable, so there is no "
-    + "in-repo pattern to measure the header trim against -- this check "
-    + "would otherwise pass vacuously");
-} else if (!trackWidth || !trimMin || !trimMax || !trimStep) {
-  fail("the trim declares no width/min/max/step, so its resolution cannot be "
-    + "computed at all");
-} else {
-  const settingsTrack =
-    Number(sliderRow[2]) - Number(sliderRow[1]) - Number(sliderReadout[1]);
-  const width = Number(trackWidth[1]);
-  const span = Number(trimMax[1]) - Number(trimMin[1]);
-  const step = Number(trimStep[1]);
-  const dbPerPoint = span / width;
-  const pointsPerStep = step / dbPerPoint;
-  console.log("control   %s %s", "settings track".padEnd(16), settingsTrack);
-  console.log("measured  trim track %dpt -> %s dB/pt, %s pt per %s dB step",
-    width, dbPerPoint.toFixed(3), pointsPerStep.toFixed(2), step);
-  // The header shares its width with the Freeze LENGTH control, so the trim
-  // no longer matches the Settings sliders' 156pt track (that is reported
-  // above, for comparison). What it must keep is the floor: one pointer
-  // point of travel never skips a step, or consecutive device pixels land
-  // on non-adjacent values. The 58pt track that shipped broke it, and was
-  // unusable for fine adjustment.
-  if (pointsPerStep < 1) {
-    fail(`one ${step} dB step is ${pointsPerStep.toFixed(2)}pt of travel, so `
-      + "a single-point pointer move skips values");
-  }
-}
-
-// S8. AND IT STILL FITS THE GAP IT WAS PLACED IN.
-//
-// The cluster is absolutely positioned at x=282 in the header's empty span,
-// which runs to the divider before BARS at x=839.5 now that the LIVE /
-// PRECISION control is hidden. It reads freeze toggle, | LENGTH [length] |,
-// OUTPUT, track, value, PEAK -- the controls at one flex gap, the dividers
-// and the LENGTH caption pulled in by their own negative margins -- and must
-// end short of that divider by at least the
-// header's own 18pt inter-group gap -- a cluster that crowds the divider reads
-// as part of the view controls. Computed from the cluster's own declarations
-// so it tracks any later edit to them.
-const clusterLeft =
-  /"data-spectr-output-cluster": true,[\s\S]{0,400}?left: (\d+)/
-    .exec(meterBody);
-const clusterGap = /gap: (\d+),\n\s*flexShrink/.exec(meterBody);
-const peakWidth = /width: (\d+),\n\s*minWidth/.exec(meterBody);
-const toggleBody = (() => {
-  const at = html.indexOf("function SpectrFreezeToggle(");
-  return at < 0 ? "" : html.slice(at, html.indexOf("function SpectrOutputMeter(", at));
-})();
-const toggleWidth = /style: \{ width: (\d+), minWidth: \1,/.exec(toggleBody);
-const readoutWidth = readoutStyle ? /width: (\d+)/.exec(readoutStyle[1]) : null;
-const lengthBody = (() => {
-  const at = html.indexOf("function SpectrFreezeLength(");
-  return at < 0 ? "" : html.slice(at, html.indexOf("function SpectrOutputMeter(", at));
-})();
-const lengthWidth = /width: (\d+), minWidth: \1, flexShrink: 0, height: 24/.exec(lengthBody);
-const dividerPull = /"data-spectr-header-divider": "freeze", style: \{[^}]*margin: "0 -(\d+)px"/
-  .exec(meterBody);
-const captionPull = /"LENGTH"/.test(meterBody)
-  ? /"data-spectr-freeze-length-caption": true,[\s\S]{0,400}?marginRight: -(\d+)/.exec(meterBody)
-  : null;
-const HEADER_DIVIDER = 839.5;
-const HEADER_GROUP_GAP = 18;
-if (!clusterLeft || !clusterGap || !peakWidth || !readoutWidth || !trackWidth
-    || !labelText || !toggleWidth || !lengthWidth || !dividerPull || !captionPull) {
-  fail("the cluster's own geometry is unreadable, so whether it still fits "
-    + "the header's measured gap cannot be answered");
-} else {
+  const [, label, min, max, step, readoutWidth] = outputKnob;
+  if (label !== "OUTPUT")
+    fail(`the Output knob's visible label reads ${JSON.stringify(label)}; it must `
+      + 'read "OUTPUT", the name the host already shows for kOutputTrim');
+  if (Number(min) !== -24 || Number(max) !== 24)
+    fail(`the Output knob spans ${min}..${max}, not the parameter's own +-24 dB`);
   const glyph = Number(peakFontSize ? peakFontSize[1] : 10);
-  // A mono advance is ~0.6em, plus the label's own 0.8pt of tracking. This
-  // estimates "OUTPUT" at 40.8pt against 41.0pt measured from a Skia raster
-  // of the shipping editor.
-  const labelWidth = labelText[1].length * (glyph * 0.6 + 0.8);
-  const gap = Number(clusterGap[1]);
-  // | LENGTH [length] |: each divider sits gap - pull from its neighbours,
-  // and the caption gap - its own pull from the dropdown.
-  const side = gap - Number(dividerPull[1]);
-  const lengthSegment = side + 1 + side
-    + "LENGTH".length * (glyph * 0.6 + 0.8) + (gap - Number(captionPull[1]))
-    + Number(lengthWidth[1]) + side + 1 + side;
-  const right = Number(clusterLeft[1])
-    + Number(toggleWidth[1]) + lengthSegment
-    + labelWidth + gap
-    + Number(trackWidth[1]) + gap
-    + Number(readoutWidth[1]) + gap
-    + Number(peakWidth[1]);
-  console.log("measured  cluster 282..%s against a divider at %s",
-    right.toFixed(1), HEADER_DIVIDER);
-  if (right > HEADER_DIVIDER - HEADER_GROUP_GAP) {
-    fail(`the cluster now ends at ~${right.toFixed(1)}, within `
-      + `${HEADER_GROUP_GAP}pt of the divider before BARS at x=${HEADER_DIVIDER}`);
+  const widest = 5 * glyph * 0.6;
+  if (Number(readoutWidth) < widest)
+    fail(`the Output readout's ${readoutWidth}pt box cannot hold "-24.0" `
+      + `(~${widest.toFixed(1)}pt)`);
+  if (!travel) {
+    fail("the knob declares no drag travel, so its resolution cannot be computed");
+  } else {
+    const pointsPerStep = Number(travel[1]) / ((Number(max) - Number(min)) / Number(step));
+    console.log("measured  output knob %spt travel -> %s pt per %s dB step",
+      travel[1], pointsPerStep.toFixed(2), step);
+    if (pointsPerStep < 1)
+      fail(`one ${step} dB step is ${pointsPerStep.toFixed(2)}pt of travel, so a `
+        + "single-point pointer move skips values");
   }
 }
+const clusterLeft = /"data-spectr-output-cluster": true,[\s\S]{0,600}?left: SPECTR_HEADER_SHOW_TAGLINE \? (\d+) : (\d+)/
+  .exec(meterBody);
+if (!clusterLeft || Number(clusterLeft[1]) !== 282)
+  fail("the cluster is not absolutely placed in the header's measured gap "
+    + "(from x=281.7 with the tagline); in the flex row it either renumbers "
+    + "bindings or runs off the 1320pt canvas");
 
 // ----------------------------------------------------------- runtime check
 // Static text cannot tell a hold that rises from one that follows. Execute the
@@ -903,9 +708,11 @@ if (!leafBlock) {
         return node ? node.textContent : flatten(peakNode());
       };
       const overFlag = () => peakNode() && peakNode().props["data-spectr-output-over"];
-      const trimNode = () => find(element, (p) => p["data-spectr-output-trim"]);
-      const trimText = () =>
-        flatten(find(element, (p) => p["data-spectr-output-trim-readout"]));
+      const trimNode = () => find(element, (p) => p.name === "output-trim" && "onEdit" in p);
+      const trimText = () => {
+        const k = trimNode();
+        return k ? k.props.format(k.props.value) : "";
+      };
 
       const publish = (payload) => {
         const cb = listeners.get("output_meter");
@@ -935,33 +742,30 @@ if (!leafBlock) {
       // the source. S6 reads text; this reads the tree the component returns,
       // so a label parked in a branch nothing takes -- or a component that
       // returns nothing at all -- is caught here and nowhere else.
-      const labelNode = find(element, (p) => p["data-spectr-output-trim-label"]);
+      const knobOf = (name) => find(element, (p) => p.name === name && "onEdit" in p);
+      const labelNode = knobOf("output-trim");
       if (!labelNode) {
-        fail("the rendered cluster contains no trim label node; it is "
-          + "declared in the source and absent from what a person sees");
-      } else if (flatten(labelNode) !== "OUTPUT") {
-        fail(`the rendered trim label reads ${JSON.stringify(flatten(labelNode))}`);
+        fail("the rendered cluster contains no OUTPUT knob; it is declared in "
+          + "the source and absent from what a person sees");
+      } else if (labelNode.props.label !== "OUTPUT") {
+        fail(`the rendered Output knob reads ${JSON.stringify(labelNode.props.label)}`);
       }
-      // ...and it is a SIBLING of the track inside the cluster, not nested in
-      // it, which would make it part of the slider's own hit region.
       const clusterNode = find(element, (p) => p["data-spectr-output-cluster"]);
       if (clusterNode) {
-        // The freeze toggle is a component of its own, so it is identified
-        // by its type rather than by props.
         const kinds = (clusterNode.children || [])
           .filter((c) => c && typeof c === "object")
           .map((c) => typeof c.type === "function"
               && c.type.name === "SpectrFreezeToggle" ? "freeze"
             : typeof c.type === "function"
               && c.type.name === "SpectrFreezeLength" ? "length"
+            : typeof c.type === "function" && c.type.name === "SpectrKnob"
+              ? "knob:" + c.props.name
             : !c.props ? "?"
             : c.props["data-spectr-header-divider"] ? "divider"
             : c.props["data-spectr-freeze-length-caption"] ? "caption"
-            : c.props["data-spectr-output-peak"] ? "peak"
-            : c.props["data-spectr-output-trim-label"] ? "label"
-            : c.props["data-spectr-output-trim"] ? "track"
-            : c.props["data-spectr-output-trim-readout"] ? "readout" : "?");
-        const expected = "freeze,divider,caption,length,divider,label,track,readout,peak";
+            : c.props["data-spectr-output-peak"] ? "peak" : "?");
+        const expected = "freeze,divider,caption,length,divider,"
+          + "knob:mix,knob:intensity,knob:output-trim,peak";
         if (kinds.join(",") !== expected) {
           fail(`the rendered cluster's children are ${kinds.join(",")}, `
             + `expected ${expected}`);
@@ -1255,7 +1059,7 @@ if (!leafBlock) {
 
       // R6. THE TRIM REACHES THE HOST, at the right id, with the right value.
       posted.length = 0;
-      trimNode().props.onChange({ target: { value: "6" } });
+      trimNode().props.onEdit(6);
       const write = posted.find((p) => p.type === "param_edit");
       if (!write) {
         fail("moving the trim wrote no param_edit; the control is inert");
@@ -1268,7 +1072,7 @@ if (!leafBlock) {
       }
       // The range is the parameter's own, so a value past it is refused.
       posted.length = 0;
-      trimNode().props.onChange({ target: { value: "99" } });
+      trimNode().props.onEdit(99);
       const clamped = posted.find((p) => p.type === "param_edit");
       if (!clamped || clamped.payload.value !== 24) {
         fail(`a +99 dB write was not clamped to the parameter's +24 dB `
