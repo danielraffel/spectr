@@ -212,6 +212,25 @@ TEST_CASE("Reported latency is a function of the render mode and nothing else",
           == spectr::kSpectralFftSize + spectr::kSpectralAnalysisHop);
 }
 
+TEST_CASE("Latency is answerable before any parameter store is wired",
+          "[render-mode][latency]") {
+    // AAX describes a plug-in from a bare factory() instance -- no store, no
+    // define_parameters, no prepare -- and reads latency_samples() from it.
+    // Reaching state() there dereferences an unbound store, so the plug-in
+    // dies while Pro Tools (or the AAX validator) is still registering it.
+    auto bare = spectr::create_spectr();
+    REQUIRE(bare != nullptr);
+    const int bare_latency = bare->latency_samples();
+
+    // Control: the store-free answer is the same number a fully wired
+    // instance reports for its default mode, not a placeholder.
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    INFO("bare=" << bare_latency
+         << " wired=" << host.processor()->latency_samples());
+    CHECK(bare_latency == host.processor()->latency_samples());
+    CHECK(bare_latency > 0);
+}
+
 TEST_CASE("Switching render mode tells the host its delay compensation moved",
           "[render-mode][latency]") {
     // The risky path. A host caches latency; if a mid-session switch changes it

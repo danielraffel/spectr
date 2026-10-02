@@ -61,7 +61,45 @@ endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
      "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
+# ── Optional AAX (Pro Tools) ───────────────────────────────────────────
+# Off by default. AAX needs Avid's AAX SDK, which is developer-supplied under
+# Avid's own agreement and never committed here; Pulp's installed SDK carries
+# the AAX adapter sources and builds Avid's library from that out-of-tree SDK.
+# Enabling it does not change the VST3/AU/CLAP/Standalone builds.
+#
+#   cmake -S . -B build-aax -G Ninja -DCMAKE_BUILD_TYPE=Release \
+#     -DPulp_DIR=<sdk>/lib/cmake/Pulp \
+#     -DSPECTR_ENABLE_AAX=ON -DPULP_AAX_SDK_DIR=$HOME/SDKs/avid/aax-sdk/current
+#
+# The result is an unsigned .aaxplugin: it loads in the free Pro Tools
+# Developer build, not in retail Pro Tools, which only loads PACE-signed AAX.
+option(SPECTR_ENABLE_AAX
+       "Build an AAX (Pro Tools) plug-in against a developer-supplied Avid AAX SDK" OFF)
+set(SPECTR_AAX_EDITOR "native" CACHE STRING
+    "AAX UI: native = Spectr's editor, strip = Pro Tools' generated parameter strip")
+set_property(CACHE SPECTR_AAX_EDITOR PROPERTY STRINGS native strip)
+if(SPECTR_ENABLE_AAX)
+    if(NOT APPLE)
+        message(FATAL_ERROR "SPECTR_ENABLE_AAX is only wired for macOS builds")
+    endif()
+    if(NOT SPECTR_AAX_EDITOR MATCHES "^(native|strip)$")
+        message(FATAL_ERROR
+            "SPECTR_AAX_EDITOR must be 'native' or 'strip' (got '${SPECTR_AAX_EDITOR}')")
+    endif()
+    if(NOT PULP_AAX_SDK_DIR AND "$ENV{PULP_AAX_SDK_DIR}" STREQUAL "")
+        message(FATAL_ERROR
+            "SPECTR_ENABLE_AAX=ON needs PULP_AAX_SDK_DIR (cache or environment) "
+            "pointing at an out-of-tree Avid AAX SDK root containing "
+            "Interfaces/AAX.h. Download it from https://developer.avid.com/aax/")
+    endif()
+    # Read by PulpConfig.cmake inside find_package(Pulp).
+    set(PULP_ENABLE_AAX ON)
+endif()
+
 find_package(Pulp 0.880.0 REQUIRED)
+if(SPECTR_ENABLE_AAX AND NOT PULP_HAS_AAX)
+    message(FATAL_ERROR "SPECTR_ENABLE_AAX=ON but the Pulp SDK did not enable AAX")
+endif()
 
 # Product provenance is recomputed on every configure. Never preserve a SHA
 # from a prior checkout in CMakeCache.txt: acceptance packages must identify
@@ -370,10 +408,34 @@ set(SPECTR_NATIVE_STANDALONE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone")
 set(SPECTR_NATIVE_VST3_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_VST3")
 set(SPECTR_NATIVE_AU_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AU")
 set(SPECTR_NATIVE_CLAP_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_CLAP")
+set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AAX")
+
+set(_spectr_native_formats VST3 AU CLAP Standalone)
+set(_spectr_native_aax_args "")
+if(SPECTR_ENABLE_AAX)
+    list(APPEND _spectr_native_formats AAX)
+    # AAX identifiers live in their own namespace (manufacturer + product +
+    # plug-in type ID), keyed by Pro Tools sessions just as AU codes are by
+    # Logic. The product ID reuses the identity's 4-char AU code; the type ID
+    # swaps its last character for 'N' (Native). Both are distinct from the
+    # WebView reference's SpeP/Spec. Once a shipping AAX build exists these
+    # two values are as frozen as the AU subtype: changing them orphans
+    # every Pro Tools session saved against Spectr.
+    string(SUBSTRING "${SPECTR_NATIVE_PLUGIN_CODE}" 0 3 _spectr_aax_stem)
+    set(SPECTR_NATIVE_AAX_PRODUCT_CODE "${SPECTR_NATIVE_PLUGIN_CODE}")
+    set(SPECTR_NATIVE_AAX_NATIVE_CODE "${_spectr_aax_stem}N")
+    list(APPEND _spectr_native_aax_args
+        AAX_PRODUCT_CODE "${SPECTR_NATIVE_AAX_PRODUCT_CODE}"
+        AAX_NATIVE_CODE "${SPECTR_NATIVE_AAX_NATIVE_CODE}")
+    message(STATUS "Spectr: AAX enabled (product ${SPECTR_NATIVE_AAX_PRODUCT_CODE}, "
+        "type ${SPECTR_NATIVE_AAX_NATIVE_CODE}, UI ${SPECTR_AAX_EDITOR}); "
+        "unsigned, for Pro Tools Developer only")
+endif()
 
 pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     NATIVE_UI
-    FORMATS VST3 AU CLAP Standalone
+    FORMATS ${_spectr_native_formats}
+    ${_spectr_native_aax_args}
     SOURCES ${SPECTR_NATIVE_SOURCES}
     PROCESSOR_FACTORY spectr::create_spectr
     PLUGIN_NAME "${SPECTR_NATIVE_PLUGIN_NAME}"
@@ -396,7 +458,8 @@ foreach(_spectr_native_target
         ${SPECTR_NATIVE_STANDALONE_TARGET}
         ${SPECTR_NATIVE_VST3_TARGET}
         ${SPECTR_NATIVE_AU_TARGET}
-        ${SPECTR_NATIVE_CLAP_TARGET})
+        ${SPECTR_NATIVE_CLAP_TARGET}
+        ${SPECTR_NATIVE_AAX_TARGET})
     if(TARGET ${_spectr_native_target})
         spectr_configure_native_target(${_spectr_native_target})
         if(SPECTR_NATIVE_PREVIEW_IDENTITY)
@@ -420,6 +483,10 @@ foreach(_spectr_native_target
         endif()
     endif()
 endforeach()
+if(TARGET ${SPECTR_NATIVE_AAX_TARGET})
+    target_compile_definitions(${SPECTR_NATIVE_AAX_TARGET} PRIVATE
+        SPECTR_AAX_CUSTOM_EDITOR=$<IF:$<STREQUAL:${SPECTR_AAX_EDITOR},native>,1,0>)
+endif()
 
 # ── Product icon ───────────────────────────────────────────────────────
 # Spectr's own five-bar spectrum mark, on the dark ground the editor chrome
