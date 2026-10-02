@@ -10527,3 +10527,71 @@ TEST_CASE("a press on a modulated Freeze flips what is shown until the gate's ne
     CHECK(freeze_face(rig) == "live");
     storage.require_unchanged();
 }
+
+// ── Settings shows the same per-LFO targets as the band menu ────────────
+
+TEST_CASE("Settings and the band menu edit the same targets, both ways",
+          "[native-n1][state-parity][modulation][routing][settings]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    activate(rig, "[data-spectr-settings-open]");
+    settle(rig.clock, 8);
+    ModulationEditRecorder recorder(rig.store);
+    const auto settings_switch = [&](const char* key) {
+        return runtime_value(rig, std::string("String(document.querySelector("
+            "'[data-spectr-settings-target=\"") + key + "\"]')"
+            "?.getAttribute('data-spectr-settings-target-state'))", key);
+    };
+
+    // Settings -> processor: a switch is one gesture on its own lane; a Depth
+    // drag is one bracket.
+    activate(rig, "[data-spectr-settings-target=\"band-shift\"] [data-spectr-setting-toggle]");
+    CHECK(recorder.take() == "begin 4024, set 4024=1, end 4024");
+    const auto depth = std::string(
+        "[data-spectr-settings-target-depth=\"band-shift\"] [data-spectr-setting-slider]");
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    activate(rig, depth, "pointerdown", slider_press_at(0.2, depth));
+    activate(rig, depth, "pointermove", slider_press_at(0.5, depth));
+    activate(rig, depth, "pointerup", slider_press_at(0.5, depth));
+    {
+        const auto log = recorder.take();
+        INFO(log);
+        CHECK(log.rfind("begin 4034, ", 0) == 0);
+        CHECK(log.substr(log.size() - std::string("end 4034").size()) == "end 4034");
+        CHECK(std::count(log.begin(), log.end(), 'b') >= 1);
+    }
+    CHECK(rig.store.get_value(spectr::lfo_route_amount_param_id(0, 4)) == Catch::Approx(0.5f));
+    // LFO 2's rows through the LFO chips.
+    activate(rig, "[data-spectr-settings-targets-lfo] [data-spectr-setting-option=\"2\"]");
+    settle(rig.clock, 8);
+    activate(rig, "[data-spectr-settings-target=\"freeze\"] [data-spectr-setting-toggle]");
+    CHECK(recorder.take() == "begin 4046, set 4046=1, end 4046");
+    REQUIRE(rig.processor.apply_surface_params(false));
+
+    // Processor (as the band menu would write it) -> Settings, live.
+    activate(rig, "[data-spectr-settings-targets-lfo] [data-spectr-setting-option=\"1\"]");
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 3), 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    CHECK(settings_switch("morph") == "on");
+    CHECK(settings_switch("band-shift") == "on");
+    CHECK(settings_switch("snapshot-a") == "undefined");  // control: the key is "a"
+    CHECK(settings_switch("a") == "off");
+
+    // Settings -> band menu: open the menu and read the same targets there.
+    activate(rig, "[data-spectr-settings-close]");
+    settle(rig.clock, 8);
+    open_band_menu(rig);
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"modulation-target-band-shift\"] [data-spectr-menu-switch]')"
+        "?.getAttribute('data-spectr-menu-switch') === 'on'",
+        "the band menu does not show the Band shift switch Settings turned on");
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-band-action=\"modulation-target-depth-band-shift\"]')"
+        "?.getAttribute('aria-valuetext') === '50%'",
+        "the band menu does not show the Depth Settings set");
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}

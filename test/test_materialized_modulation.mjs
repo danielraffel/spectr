@@ -349,6 +349,8 @@ function measureLiveSettings() {
     "shared modulation hook") + "\n" + blockAt(html,
     "function spectrModulationFromNative(modulation) {",
     "native modulation frame normaliser") + "\n"
+    + blockAt(html, "function spectrModulationRouteList() {",
+    "shared target list") + "\n"
     + blockAt(html, "function SpectrModulationSettings() {",
     "SpectrModulationSettings");
 
@@ -509,10 +511,24 @@ function measureLiveSettings() {
 
     // Control: the panel following native must NOT mean a frame already in
     // flight yanks a control out from under the user. A local write wins until
-    // native echoes it back.
-    const before = rt.state().depth;
+    // native echoes it back. The control is LFO 1's Bank Depth -- each target
+    // carries its own depth -- so the frames carry the per-LFO routing.
+    const frame = (bankDepth) => ({ modulation: {
+      enabled: true, shape: 0, beats_per_cycle: 4, depth: 0.25, target: 3,
+      lfo2_enabled: true, lfo2_shape: 1, lfo2_beats_per_cycle: 2,
+      lfo2_depth: 0.85, target_mask: 8,
+      routes: [{ mask: 1, amounts: [bankDepth, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5] },
+               { mask: 1, amounts: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5] }] } });
+    bridge.emit("processing_state_live", frame(0.3));
+    await rt.flush();
+    const before = rt.state().routeAmt1_0;
+    if (before !== 0.3) {
+      failures.push(`control: the Bank Depth did not hydrate (routeAmt1_0=${before}, expected 0.3)`);
+      return;
+    }
     const publishDepth = 0.42;
-    // Drive the real publish path through the rendered tree's onChange.
+    // Drive the real publish path through the rendered tree's onChange: the
+    // first "Depth" row is the first target's, Bank.
     const slider = findProp(rt, "Depth");
     if (!slider) {
       failures.push("control: could not reach the Depth control's onChange");
@@ -520,35 +536,26 @@ function measureLiveSettings() {
     }
     slider(publishDepth);
     await rt.flush();
-    bridge.emit("processing_state_live", { modulation: {
-      enabled: true, shape: 0, beats_per_cycle: 4, depth: before, target: 3,
-      lfo2_enabled: true, lfo2_shape: 1, lfo2_beats_per_cycle: 2,
-      lfo2_depth: 0.85, target_mask: 8 } });
+    bridge.emit("processing_state_live", frame(before));
     await rt.flush();
-    const contested = rt.state().depth;
+    const contested = rt.state().routeAmt1_0;
     console.log(`control (in-flight frame): local write ${publishDepth}, stale `
       + `native ${before}, panel shows ${contested}`);
     if (contested !== publishDepth) {
       failures.push(`control: a stale native frame overwrote the user's own `
-        + `edit (depth=${contested}, expected ${publishDepth})`);
+        + `edit (Bank Depth=${contested}, expected ${publishDepth})`);
     }
     // ...and once native echoes the write back, the panel is following native
     // again rather than latched on the local value forever.
-    bridge.emit("processing_state_live", { modulation: {
-      enabled: true, shape: 0, beats_per_cycle: 4, depth: publishDepth, target: 3,
-      lfo2_enabled: true, lfo2_shape: 1, lfo2_beats_per_cycle: 2,
-      lfo2_depth: 0.85, target_mask: 8 } });
+    bridge.emit("processing_state_live", frame(publishDepth));
     await rt.flush();
-    bridge.emit("processing_state_live", { modulation: {
-      enabled: true, shape: 0, beats_per_cycle: 4, depth: 0.11, target: 3,
-      lfo2_enabled: true, lfo2_shape: 1, lfo2_beats_per_cycle: 2,
-      lfo2_depth: 0.85, target_mask: 8 } });
+    bridge.emit("processing_state_live", frame(0.11));
     await rt.flush();
-    const released = rt.state().depth;
+    const released = rt.state().routeAmt1_0;
     console.log(`control (echo release): panel follows native again -> ${released}`);
     if (released !== 0.11) {
       failures.push(`control: the panel stayed latched on the local edit after `
-        + `native echoed it (depth=${released}, expected 0.11)`);
+        + `native echoed it (Bank Depth=${released}, expected 0.11)`);
     }
   })();
 }
@@ -561,8 +568,15 @@ function findProp(rt, label) {
     if (Array.isArray(node)) { node.forEach(walk); return; }
     const props = node.props || {};
     if (props.label === label) {
-      const kid = (node.children || []).flat().find((c) => c && c.props && c.props.onChange);
-      if (kid) { found = kid.props.onChange; return; }
+      // The control may sit inside a wrapper (a target's Depth row is), so
+      // search the field's subtree, nearest first.
+      const queue = [...(node.children || []).flat()];
+      while (queue.length) {
+        const c = queue.shift();
+        if (!c || typeof c !== "object") continue;
+        if (c.props && c.props.onChange) { found = c.props.onChange; return; }
+        queue.push(...(c.children || []).flat());
+      }
     }
     walk(node.children);
   };

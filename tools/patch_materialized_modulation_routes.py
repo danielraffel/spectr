@@ -39,7 +39,21 @@ EDITS = [
     (
         "routes are read from the native payload",
         '''function spectrModulationFromNative(modulation) {''',
-        '''function spectrModulationFromNative(modulation) {
+        '''// Every LFO target this build has, as [ModulationTarget index, action key,
+// label], in display order: most-modulated first, so the common ones show
+// without scrolling. The band menu and Settings both list exactly this. The
+// order names targets a build may not have yet (Intensity, Mix and Output
+// arrive with the gain controls); those are skipped.
+function spectrModulationRouteList() {
+  const table = {
+    bank: [0, "Bank"], "band-shift": [4, "Band shift"], "band-spread": [5, "Band spread"],
+    morph: [3, "Morph"], freeze: [6, "Freeze"], length: [7, "Length"],
+    a: [1, "Snapshot A"], b: [2, "Snapshot B"]};
+  const order = ["bank", "band-shift", "band-spread", "intensity", "mix", "morph",
+    "freeze", "length", "output", "a", "b"];
+  return order.filter((key) => table[key]).map((key) => [table[key][0], key, table[key][1]]);
+}
+function spectrModulationFromNative(modulation) {
   // Per-LFO routing as flat scalars: routeOn<lfo>_<t> / routeAmt<lfo>_<t>, t in
   // Bank, A, B, Morph, Band shift, Band spread. Absent from a payload
   // that does not carry it, so a stale writer leaves the keys alone. Nested so
@@ -75,19 +89,8 @@ EDITS = [
         "the destinations the menu lists",
         '''  const spectrModulationShapes = ["Sin", "Tri", "Square", "Saw"];''',
         '''  const spectrModulationShapes = ["Sin", "Tri", "Square", "Saw"];
-  // Each target this build has: action key -> [ModulationTarget index,
-  // label]. Displayed most-modulated first, so the common ones show without
-  // scrolling. The order names targets a build may not have yet (Intensity,
-  // Mix and Output arrive with the gain controls); those are skipped.
-  const spectrModulationRouteTable = {
-    bank: [0, "Bank"], "band-shift": [4, "Band shift"], "band-spread": [5, "Band spread"],
-    morph: [3, "Morph"], freeze: [6, "Freeze"], length: [7, "Length"],
-    a: [1, "Snapshot A"], b: [2, "Snapshot B"]};
-  const spectrModulationRouteOrder = ["bank", "band-shift", "band-spread", "intensity",
-    "mix", "morph", "freeze", "length", "output", "a", "b"];
-  const spectrModulationRouteTargets = spectrModulationRouteOrder
-    .filter((key) => spectrModulationRouteTable[key])
-    .map((key) => [spectrModulationRouteTable[key][0], key, spectrModulationRouteTable[key][1]]);''',
+  // The one target list, shared with Settings (spectrModulationRouteList).
+  const spectrModulationRouteTargets = spectrModulationRouteList();''',
     ),
     (
         "the LFO-level Depth row goes: each target carries its own",

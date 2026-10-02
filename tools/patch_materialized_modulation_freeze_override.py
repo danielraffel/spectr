@@ -12,8 +12,9 @@ on, it picks each new freeze's loop length. This patch:
   * makes a press of a modulated Freeze (button, Q, the chord: everything
     goes through spectrToggleFreeze) flip what is SHOWN, which the processor
     holds until the gate's next change;
-  * adds the Setting "Ask before overriding" (Settings, beside Hold while
-    editing, default ON). While on, operating a modulated control -- Freeze,
+  * backs the Setting "Ask before overriding modulation" (default ON; its row
+    is in Settings > MODULATION, see
+    tools/patch_materialized_modulation_settings_targets.py). While on, operating a modulated control -- Freeze,
     or a LENGTH pick while the Length target is on -- first asks, in the
     preset dialogs' style: "Freeze is being modulated by LFO 1. Turn off its
     Freeze target?" [KEEP MODULATING] [TURN OFF], with "Don't ask again".
@@ -215,23 +216,6 @@ function spectrOverrideModulated(control, target, lfos, action) {
 function spectrCommitFreezeLengthNow(bars, fraction) {''',
     ),
     (
-        "the Setting",
-        '''      value: settings.holdModulationWhileEditing !== false,
-      onChange: (v) => persist({ holdModulationWhileEditing: v })
-    }
-  ))), ''',
-        '''      value: settings.holdModulationWhileEditing !== false,
-      onChange: (v) => persist({ holdModulationWhileEditing: v })
-    }
-  ))), React.createElement(SpectrSettingsField, { label: "Ask before overriding", hint: "Touching a control an LFO drives asks whether to turn its target off" }, React.createElement("div", { "data-spectr-ask-override": settings.askBeforeOverride !== false ? "on" : "off" }, React.createElement(
-    SpectrSettingsToggle,
-    {
-      value: settings.askBeforeOverride !== false,
-      onChange: (v) => persist({ askBeforeOverride: v })
-    }
-  ))), ''',
-    ),
-    (
         "the dialog is mounted at the root",
         '''  ), /* @__PURE__ */ React.createElement(TweaksPanel, { settings, setSettings }), ''',
         '''  ), /* @__PURE__ */ React.createElement(TweaksPanel, { settings, setSettings }), React.createElement(SpectrModulationOverrideDialog, { settings, setSettings }), ''',
@@ -246,8 +230,13 @@ function SpectrModulationOverrideDialog({ settings, setSettings }) {
   const store = spectrOverrideStore();
   const [request, setRequest] = React.useState(store.request);
   const [dontAsk, setDontAsk] = React.useState(false);
-  // The Setting, mirrored where the asking code (outside React) reads it.
+  // The Setting, mirrored where the asking code (outside React) reads it, and
+  // a setter for the Settings > MODULATION row that shows it.
   globalThis.__spectrAskBeforeOverride = settings.askBeforeOverride !== false;
+  window.spectrSetAskBeforeOverride = (on) => {
+    globalThis.__spectrAskBeforeOverride = on === true;
+    setSettings((s) => ({ ...s, askBeforeOverride: on === true }));
+  };
   React.useEffect(() => {
     const sync = () => { setRequest(store.request); setDontAsk(false); };
     store.listeners.push(sync);
