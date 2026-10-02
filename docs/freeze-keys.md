@@ -27,23 +27,31 @@ identities.
 
 ## Playing it in Logic Pro
 
-Logic sends MIDI to an AU MIDI-controlled effect only from the track chosen
-in the plug-in's MIDI side-chain menu. Playing keys (or Musical Typing) with
-the audio track selected sends Spectr nothing, and Freeze just keeps holding.
+In Logic, an AU MIDI-controlled effect is loaded in a software instrument
+track's **Instrument** slot, not in an Audio FX slot. It plays from that
+track's own MIDI. The header's **Side Chain** pop-up chooses the *audio* the
+effect processes, not the MIDI source (Apple, Waves and Native Instruments
+document this setup; it is the same pattern as Logic's EVOC 20 vocoder).
 
-1. Put the audio on an audio track and insert **Audio FX > AU MIDI-controlled
-   Effects > Pulp > Spectr Keys Dev** on it.
-2. Create a Software Instrument track (File > New Tracks > Software
-   Instrument). Any instrument, or none, will do; its MIDI is what Spectr
-   plays from.
-3. In Spectr's plug-in window header, open the **Side Chain** pop-up menu
-   and choose that instrument track.
-4. Select the instrument track (click its header) so your keyboard, or
-   Window > Show Musical Typing (Cmd-K), plays it. Click Logic's main
-   window first if the Spectr window has keyboard focus.
+1. Create a Software Instrument track (File > New Tracks > Software
+   Instrument).
+2. In its **Instrument** slot choose **AU MIDI-controlled Effects > Pulp >
+   Spectr Keys Dev**.
+3. In the plug-in window header, open the **Side Chain** pop-up (top right)
+   and choose the track whose sound you want to freeze. Optionally set that
+   track's output to No Output so it isn't heard twice.
+4. Select the Spectr track so your keyboard, or Window > Show Musical Typing
+   (Cmd-K), plays it.
 5. Start playback, press **Freeze** in Spectr while the sound plays, then
    play keys: C3 (MIDI 60) plays the hold at its own pitch, G3 a fifth up,
    C2 an octave down. Releasing Freeze returns the live input.
+
+Not yet confirmed in Logic: whether the Side Chain pop-up appears for this
+component. Most shipping `aumf` plug-ins expose a single input bus, as Spectr
+does, and Logic reportedly feeds the side-chain audio to that bus in the
+Instrument slot. If the pop-up is missing, Pulp's AU v2 effect adapter needs a
+second input element (it exposes one today), plus a Plug-in Manager rescan or
+version bump so Logic notices.
 
 ### Is MIDI arriving?
 
@@ -63,7 +71,8 @@ Logic's out-of-process AU host too:
   end of the line says what the note did: `playing`, `ignored: Freeze is off`
   or `waiting: the hold is not audible yet`.
 - A `ready` line and no `note-on` line while you play: the host is not
-  sending MIDI to the plugin. In Logic, check the Side Chain menu (step 3).
+  sending MIDI to the plugin. In Logic, check that Spectr is in the
+  Instrument slot of the track you are playing (steps 1-2).
 
 The audio thread only records the note; a worker formats and logs it.
 
@@ -297,8 +306,9 @@ Logic never sends MIDI to an `aufx`. Freeze Keys in an AU therefore needs one
 of these options:
 
 1. **Make Spectr an `aumf` (music effect).** This is what Logic expects for an
-   effect that takes notes. It is listed as an Audio FX and under AU
-   MIDI-controlled Effects, and its header offers a MIDI side-chain menu. This
+   effect that takes notes. It is listed under AU MIDI-controlled
+   Effects in a software instrument track's Instrument slot, takes MIDI from
+   that track, and takes its audio through the Side Chain pop-up. This
    prototype has not been tried in Logic. The AU type is part of the saved identity,
    though, so changing it orphans every session saved against `aufx Spec Pulp`.
    It would have to ship as a new product identity (for example a separate
