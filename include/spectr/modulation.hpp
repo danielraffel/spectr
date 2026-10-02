@@ -170,6 +170,20 @@ inline float lfo_value(const LfoShapeFade& fade, double phase) noexcept {
 /// long; a smaller move takes proportionally less.
 inline constexpr double kLfoLevelSlewSeconds = 0.06;
 
+/// Route levels for the two VIEWPORT destinations slew more slowly. Fading a
+/// viewport route in or out moves the whole filter bank across the spectrum
+/// (up to a decade at full depth), and over 60 ms that is several times faster
+/// than the fastest free-running sweep -- measured through the AU host as a
+/// 1.7-2.2 dB/ms envelope step on a tone the bank passes over, against
+/// 0.3-0.4 for the running LFO. A quarter second keeps the fade inside the
+/// sweep's own speed and still reads as immediate.
+inline constexpr double kViewportRouteSlewSeconds = 0.25;
+
+/// Seconds for a full-scale route-level move of @p target.
+inline constexpr double route_slew_seconds(std::size_t target) noexcept {
+    return target >= 4 ? kViewportRouteSlewSeconds : kLfoLevelSlewSeconds;
+}
+
 /// The level @p seconds later, moving toward @p target at full scale per
 /// kLfoLevelSlewSeconds. Pure, so a test can reason about the ramp exactly.
 inline float slew_lfo_level(float current, float target,

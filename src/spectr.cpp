@@ -1444,7 +1444,9 @@ void Spectr::process(
                                 level = (audio_lfo_level_primed_
                                          && !modulation_plants_route_step())
                                     ? slew_lfo_level(level, target_level,
-                                                     level_seconds)
+                                                     level_seconds
+                                                         * kLfoLevelSlewSeconds
+                                                         / route_slew_seconds(t))
                                     : target_level;
                                 route.enabled = level > 0.0f;
                                 route.amount = level;

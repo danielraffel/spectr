@@ -74,10 +74,16 @@ appear where 1.0.6 composed sequentially:
 Every routing lane is something a host can automate at any sample, so none of
 them may step the sound:
 
-- A route's audible level (`enabled ? Amount : 0`) is slewed exactly like the
-  LFO's own level (`slew_lfo_level`, full scale per 60 ms). Switching a
-  destination on at an LFO crest, switching it off at a trough, or jumping its
-  Amount fades the contribution in over at most 60 ms.
+- A route's audible level (`enabled ? Amount : 0`) is slewed like the LFO's
+  own level (`slew_lfo_level`): full scale per 60 ms for the four field
+  destinations, per 250 ms for the two viewport destinations
+  (`kViewportRouteSlewSeconds`). Switching a destination on at an LFO crest,
+  switching it off at a trough, or jumping its Amount fades the contribution
+  instead of stepping it. The viewport ramp is longer because fading a
+  viewport route moves the whole bank by up to a decade; over 60 ms that is
+  several times faster than the fastest free-running sweep (measured through
+  the AU host as a 1.7-2.2 dB/ms envelope step on a tone the bank passes over,
+  against 0.3-0.4 dB/ms for the running LFO).
 - A viewport destination restages the filter bank every audio block; the mask
   renderer's swap crossfade spans the gap between restages
   (`kIrCrossfadeSamples` in `src/mask_renderer.cpp`), the same path a user
@@ -93,10 +99,41 @@ LFO at 1 beat, -12 dB bank; gate = 15 % of the 24 dB swing):
 | Bank switched off at the trough | 2.25 dB/block | 11.86 dB/block |
 | Amount 10 % -> 100 % at the crest | 2.14 dB/block | 10.80 dB/block |
 | Amount ramp 0 -> 100 % over 2 s, toggled off/on mid-render | 2.20 dB/block | 9.11 dB/block |
-| Viewport position switched on at the crest (decades/block, gate 0.30) | 0.178 | 0.999 |
+| Viewport position switched on at the crest (decades/block, gate 0.30; free-running 0.134) | 0.072 | 0.999 |
 
 `Spectr-route-smoothness-negative-control` re-runs those tests with
 `SPECTR_MODULATION_PLANT=route-step` and must fail.
+
+### Through a real host
+
+`Spectr-au-routes-host` (`tools/au_routes_probe.cpp`) loads the built
+`.component` in-process (offline: no install, no device, no window) and plays
+the routing lanes the way a DAW does -- `AudioUnitScheduleParameters`, an
+Amount ramp written as one event per 128-frame render call, switches at LFO
+crests and troughs -- through a steady 2 kHz tone. Each edge is scored against
+a reference render with the same destination running steadily. Three runs:
+
+| Edge | whitened spike, dB (reference) | largest 1 ms envelope step, dB (reference) | costliest call near it |
+| --- | --- | --- | --- |
+| Bank off at crest | 10.3-10.5 (10.2-10.5) | 0.42-0.47 (0.45-1.41) | 244-389 us |
+| Viewport position on at crest | 8.1-11.4 (7.7-8.8) | 0.68-1.78 (1.69-2.28) | 216-253 us |
+| Viewport position off at trough | 7.7-9.1 (8.6-8.7) | 0.67-1.02 (1.69-2.28) | 250-292 us |
+| Viewport zoom on at crest | 9.8-11.1 (7.3-11.3) | 0.14-0.16 (0.26-0.50) | 159-283 us |
+| Zoom Amount 100 % -> 20 % | 11.4-11.5 (10.7-11.3) | 0.07-0.10 (0.26-0.50) | 251-312 us |
+| Viewport zoom off at trough | 11.2-11.4 (11.2-11.7) | 0.08 (0.26-0.50) | 186-302 us |
+| Bank on at crest | 9.9-11.1 (10.2-11.0) | 0.59-0.76 (0.45-1.41) | 125-321 us |
+| Amount ramp 0 -> 100 % over 2 s | -- | 0.41-0.80 (0.45-1.41) | -- |
+
+Budget per call 2 667 us; reference p99 272-370 us. No edge reads as a click
+(gate: reference + 6 dB) or moves faster than its reference + 0.5 dB/ms.
+
+What it cannot see: the mask renderer spreads every swap over a crossfade of up
+to 18 ms, so even an un-ramped switch reaches the audio at about 1 dB/ms --
+inside the running LFO's own range. The probe still passes with
+`SPECTR_MODULATION_PLANT=route-step`, so it is a host-path gate (lanes arrive
+sample-accurately through a real AU, no click, no slow call), not a detector
+for a lost route ramp; the ramp is proven at the field level above. A REAPER
+pass was not run on this machine (no focus-stealing GUI permitted here).
 
 ## The viewport destinations and the editor
 
