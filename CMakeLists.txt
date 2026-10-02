@@ -550,6 +550,7 @@ endif()
 
 add_executable(Spectr-test
     test/test_spectr.cpp
+    test/test_modulation_routing.cpp
     test/test_band_state.cpp
     test/test_viewport.cpp
     test/test_analyzer_bridge.cpp
@@ -920,6 +921,18 @@ add_test(NAME Spectr-swap-fixed-fade-negative-control
         "A drag's fade spans the gap between publishes")
 set_tests_properties(Spectr-swap-fixed-fade-negative-control
     PROPERTIES TIMEOUT 300)
+
+# Routing-lane smoothness. The gate passes on the shipping binary; with
+# SPECTR_MODULATION_PLANT=route-step (destinations and amounts switch in one
+# block, as they did before the route ramp) the same tests must fail, so the
+# gate is proven able to see a step.
+add_test(NAME Spectr-route-smoothness-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_MODULATION_PLANT=route-step
+        $<TARGET_FILE:Spectr-test>
+        "routing lanes automate smoothly*" "viewport routes automate smoothly")
+set_tests_properties(Spectr-route-smoothness-negative-control
+    PROPERTIES WILL_FAIL TRUE TIMEOUT 300)
 
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp

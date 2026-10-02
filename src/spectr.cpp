@@ -23,11 +23,24 @@
 #include <sstream>
 #include <limits>
 #include <string>
+#include <cstdlib>
 #include <string_view>
 
 namespace spectr {
 
 namespace {
+
+/// Negative-control seam for the route ramp: `SPECTR_MODULATION_PLANT=route-step`
+/// switches destinations and amounts in one block, the behaviour before routes
+/// were slewed. Read once per process; unset in every shipping run.
+bool modulation_plants_route_step() noexcept {
+    static const bool planted = [] {
+        const char* value = std::getenv("SPECTR_MODULATION_PLANT");
+        return value != nullptr && std::string_view(value) == "route-step";
+    }();
+    return planted;
+}
+
 // See set_editor_is_standalone: asserted by the standalone entry points only.
 std::atomic<bool> g_editor_is_standalone{false};
 }  // namespace
@@ -1428,7 +1441,8 @@ void Spectr::process(
                                 const float target_level =
                                     route.enabled ? route.amount : 0.0f;
                                 float& level = audio_route_level_[lfo][t];
-                                level = audio_lfo_level_primed_
+                                level = (audio_lfo_level_primed_
+                                         && !modulation_plants_route_step())
                                     ? slew_lfo_level(level, target_level,
                                                      level_seconds)
                                     : target_level;
