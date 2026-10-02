@@ -328,6 +328,7 @@ Spectr::OutputLevelReading Spectr::read_output_level() {
     if (param_store_) {
         reading.intensity_percent = param_store_->get_value(kParamIntensity);
         reading.auto_gain = param_store_->get_value(kParamAutoGain) >= 0.5f;
+        reading.mix_percent = param_store_->get_value(kMix);
     }
     reading.auto_gain_db = auto_gain_applied_db();
 

@@ -459,6 +459,8 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     // The plain-key shortcut policy. Hydration-only, like the switch above:
     // it is never automated, so the live per-revision projection omits it.
     payload.addMember("keyboard", make_keyboard_policy_payload_(plugin));
+    // The editor's Range (level_controls.hpp): editor state, hydration only.
+    payload.addMember("range_db", static_cast<std::int32_t>(plugin.editor_range_db()));
     payload.addMember("freeze", make_freeze_payload_(plugin, /*with_settings=*/true));
     // The Latency control. Not a host parameter and not automatable, so like
     // "Morph moves the view" it rides the hydration payload the panel reads
@@ -1117,6 +1119,28 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     bridge.add_handler("keyboard_policy_get",
         [&plugin](const choc::value::ValueView&) -> std::string {
             return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
+        });
+
+    // Range: the plot's vertical scale and how far a full-height edit
+    // reaches. Editor state persisted with the session, never a host
+    // parameter and never audible. {range_db: 3 | 6 | 12 | 24}.
+    bridge.add_handler("range_get",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            auto out = choc::value::createObject("SpectrRange");
+            out.addMember("range_db", static_cast<std::int32_t>(plugin.editor_range_db()));
+            return EditorBridge::ok_response(out);
+        });
+    bridge.add_handler("range_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("range_db"))
+                return EditorBridge::err_response("range_db missing");
+            const auto value = finite_number_(p["range_db"]);
+            if (!value || *value != std::floor(*value)
+                || !plugin.set_editor_range_db(static_cast<int>(*value)))
+                return EditorBridge::err_response("range_db must be 3, 6, 12 or 24");
+            auto out = choc::value::createObject("SpectrRange");
+            out.addMember("range_db", static_cast<std::int32_t>(plugin.editor_range_db()));
+            return EditorBridge::ok_response(out);
         });
 
     // "Keyboard shortcuts in DAW". Shaped like morph_viewport_set: an editor

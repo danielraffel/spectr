@@ -774,6 +774,8 @@ public:
         /// owner is applying right now (dB; 0 when off and settled).
         bool  auto_gain = false;
         float auto_gain_db = 0.0f;
+        /// Mix (param 1), percent, for the editor's MIX knob.
+        float mix_percent = 100.0f;
     };
     OutputLevelReading read_output_level();
 
@@ -1165,6 +1167,12 @@ private:
     float native_output_level_peak_ = std::numeric_limits<float>::max();
     bool  native_output_level_over_ = false;
     float native_output_level_trim_db_ = std::numeric_limits<float>::max();
+    // The level controls ride the same publication (Intensity, Mix, Auto
+    // Gain and the gain it applies, held at 0.1 dB).
+    float native_output_level_intensity_ = std::numeric_limits<float>::max();
+    float native_output_level_mix_ = std::numeric_limits<float>::max();
+    int   native_output_level_auto_gain_ = -1;
+    float native_output_level_auto_gain_db_ = std::numeric_limits<float>::max();
     std::uint64_t native_analyzer_sequence_ = 0;
     // Last modulated-field sequence projected to the editor, so a UI tick
     // that finds no new audio frame does not re-dispatch the same overlay.
