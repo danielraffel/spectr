@@ -32,7 +32,7 @@ do three things in a DAW:
 | **LFO 1 shape** (Sin / Tri / Square / Saw) | `4001` (enum, labelled) | One bracket per pick | 150 ms crossfade | Shape row follows |
 | **LFO 1 rate** | `4002`, 0.25-16 beats, shown "4 beats" | One bracket per drag | Phase-continuous | Rate row follows |
 | **LFO 1 depth** | `4003`, 0-1, shown "50%" | One bracket per drag | 60 ms level ramp | Depth row follows, including after a hand edit |
-| **LFO 1 / 2 target switches** (Bank / Snapshot A / Snapshot B / Morph / Viewport position / Viewport zoom; band menu > Modulation > LFO n TARGETS) | `4020-4025`, `4040-4045` (toggle) | One bracket per press (`param_edit`) | 60 ms route ramp; several at once | Switch follows |
+| **LFO 1 / 2 target switches** (Bank / Snapshot A / Snapshot B / Morph / Band shift / Band spread; band menu > Modulation > LFO n TARGETS) | `4020-4025`, `4040-4045` (toggle) | One bracket per press (`param_edit`) | 60 ms route ramp; several at once | Switch follows |
 | **LFO 1 / 2 target Amount** (row under each switch; inert while the switch is off) | `4030-4035`, `4050-4055`, 0-1, shown "100%" | One bracket per drag (`param_gesture_begin` / `end`) | 60 ms route ramp | Amount row follows, including after a hand edit |
 | Legacy single target (Settings "Target") | `4004` (enum) | One bracket per pick | A change selects that one field destination for both LFOs ([modulation.md](modulation.md)) | Target switches follow |
 | **LFO 2 on/off, shape, rate, depth** | `4010-4013` | As for LFO 1 | As for LFO 1 | As for LFO 1 |

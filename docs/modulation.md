@@ -15,8 +15,8 @@ and playback are in [automation.md](automation.md).
 | Snapshot A | blends the field toward captured snapshot A and back (unipolar) | 0 ... 100 % of the way |
 | Snapshot B | the same toward snapshot B | 0 ... 100 % |
 | Morph | the A/B morph position, around the Morph slider | +/-0.5 of the morph range |
-| Viewport position | slides the window across the spectrum, width kept | +/-1 decade (about 3.3 octaves) |
-| Viewport zoom | widens / narrows the window about its centre | width x2 / x0.5 (log-frequency) |
+| Band shift | slides the window across the spectrum, width kept | +/-1 decade (about 3.3 octaves) |
+| Band spread | widens / narrows the window about its centre | width x2 / x0.5 (log-frequency) |
 
 Effective modulation of a destination = LFO **Depth x Amount**. Depth is one
 per LFO; Amount is one per LFO per destination (default 100 %). A route that
@@ -42,7 +42,7 @@ renders and the editor draws.
      captured shape (coordinate clamped to 0...1).
    - Bank: the summed offset x 12 dB is added to every band and the result is
      clamped into the band range once.
-   - Viewport zoom, then viewport position, on the window (see below).
+   - Band spread, then viewport position, on the window (see below).
 
    Morph and the snapshots *reshape* (every band stays between the values it
    is blended from); Bank *offsets* that shape. So Bank + Morph is a morphing
@@ -99,7 +99,7 @@ LFO at 1 beat, -12 dB bank; gate = 15 % of the 24 dB swing):
 | Bank switched off at the trough | 2.25 dB/block | 11.86 dB/block |
 | Amount 10 % -> 100 % at the crest | 2.14 dB/block | 10.80 dB/block |
 | Amount ramp 0 -> 100 % over 2 s, toggled off/on mid-render | 2.20 dB/block | 9.11 dB/block |
-| Viewport position switched on at the crest (decades/block, gate 0.30; free-running 0.134) | 0.072 | 0.999 |
+| Band shift switched on at the crest (decades/block, gate 0.30; free-running 0.134) | 0.072 | 0.999 |
 
 `Spectr-route-smoothness-negative-control` re-runs those tests with
 `SPECTR_MODULATION_PLANT=route-step` and must fail.
@@ -116,11 +116,11 @@ a reference render with the same destination running steadily. Three runs:
 | Edge | whitened spike, dB (reference) | largest 1 ms envelope step, dB (reference) | costliest call near it |
 | --- | --- | --- | --- |
 | Bank off at crest | 10.3-10.5 (10.2-10.5) | 0.42-0.47 (0.45-1.41) | 244-389 us |
-| Viewport position on at crest | 8.1-11.4 (7.7-8.8) | 0.68-1.78 (1.69-2.28) | 216-253 us |
-| Viewport position off at trough | 7.7-9.1 (8.6-8.7) | 0.67-1.02 (1.69-2.28) | 250-292 us |
-| Viewport zoom on at crest | 9.8-11.1 (7.3-11.3) | 0.14-0.16 (0.26-0.50) | 159-283 us |
+| Band shift on at crest | 8.1-11.4 (7.7-8.8) | 0.68-1.78 (1.69-2.28) | 216-253 us |
+| Band shift off at trough | 7.7-9.1 (8.6-8.7) | 0.67-1.02 (1.69-2.28) | 250-292 us |
+| Band spread on at crest | 9.8-11.1 (7.3-11.3) | 0.14-0.16 (0.26-0.50) | 159-283 us |
 | Zoom Amount 100 % -> 20 % | 11.4-11.5 (10.7-11.3) | 0.07-0.10 (0.26-0.50) | 251-312 us |
-| Viewport zoom off at trough | 11.2-11.4 (11.2-11.7) | 0.08 (0.26-0.50) | 186-302 us |
+| Band spread off at trough | 11.2-11.4 (11.2-11.7) | 0.08 (0.26-0.50) | 186-302 us |
 | Bank on at crest | 9.9-11.1 (10.2-11.0) | 0.59-0.76 (0.45-1.41) | 125-321 us |
 | Amount ramp 0 -> 100 % over 2 s | -- | 0.41-0.80 (0.45-1.41) | -- |
 
@@ -196,8 +196,8 @@ renders, which removes scheduler preemption on a shared machine; budget
 | LFO 1 on | median | p99 |
 | --- | --- | --- |
 | Bank | 376-431 us | 462-501 us |
-| Viewport position | 363-432 us | 464-471 us |
-| Viewport zoom | 370-432 us | 458-510 us |
+| Band shift | 363-432 us | 464-471 us |
+| Band spread | 370-432 us | 458-510 us |
 
 Both kinds restage the mask every block, so they cost the same order; the gate
 in `test_modulation_routing.cpp` holds the viewport median within 1.5x of Bank
@@ -221,7 +221,7 @@ Captured headless from the shipping editor
   792 x 516 host sizes (the two captures differ only in the live spectrum).
   The fallback of hiding the Amount rows of switched-off destinations was
   therefore not needed: Amount rows always stay in place, dimmed while off.
-- `viewport-overlay.png`: a full-depth viewport-position LFO, the plot on the
+- `viewport-overlay.png`: a full-depth band-shift LFO, the plot on the
   user's 200 Hz - 2 kHz window, the audible window bracketed on the minimap and
   across the top of the plot.
 
@@ -229,7 +229,7 @@ Editor frame cost (`SPECTR_ROUTE_FRAME_COST=1 Spectr-native-shot`, 64 bands,
 one 800-sample audio block then one display tick, 400 frames; the delivery
 control confirms 460 of 460 modulation frames reached the document and the
 viewport runs carried 58-59 distinct audible windows): LFO on Bank p50 0.057 /
-p95 0.305 ms, on Viewport position 0.077 / 0.332 ms, on both 0.075 / 0.352 ms,
+p95 0.305 ms, on Band shift 0.077 / 0.332 ms, on both 0.075 / 0.352 ms,
 Bank again 0.079 / 0.362 ms. No p95 regression beyond the run-to-run spread of
 the Bank baseline. This times the editor's own work (publication, the
 paint-only overlay apply, the draw loop); the raster of the two extra strokes
