@@ -20,6 +20,7 @@ do three things in a DAW:
 | Control | Host parameter | Records (editor → host) | Plays back: DSP | Plays back: editor |
 | --- | --- | --- | --- | --- |
 | LIVE / FROZEN toggle, Q, freeze chord | `3` Freeze (toggle) | One bracket per press (`freeze_set`) | Per sub-block | Toggle face follows |
+| Override question ("Freeze is being modulated by LFO 1...") | Turn off writes the target's switch lane | One bracket per turned-off lane, then the action's own | n/a | n/a |
 | Freeze Length (header LENGTH: 1/32 ... 15/16 bar, 1/2/4/8 bars, or Custom) | `4` (enum, labelled) | One bracket per pick or Apply (`freeze_length_set`; the custom bars + fraction ride the plugin state) | Next freeze; a playing hold keeps its loop | Dropdown follows |
 | Band gain (paint, Level/Boost/Flare/Glide, group drags) | `1000-1063` | One bracket per touched band per drag (plot drag epoch) | Sample-accurate | Bars follow |
 | Band mute (click, menu, selection) | `2000-2063` (toggle) | One bracket per change | Sample-accurate | Mute badge follows |
@@ -31,12 +32,11 @@ do three things in a DAW:
 | **LFO 1 on/off** | `4000` (toggle) | One bracket per press (`param_edit`) | 60 ms level ramp | Switch follows |
 | **LFO 1 shape** (Sin / Tri / Square / Saw) | `4001` (enum, labelled) | One bracket per pick | 150 ms crossfade | Shape row follows |
 | **LFO 1 rate** | `4002`, 0.25-16 beats, shown "4 beats" | One bracket per drag | Phase-continuous | Rate row follows |
-| **LFO 1 depth** | `4003`, 0-1, shown "50%" | One bracket per drag | 60 ms level ramp | Depth row follows, including after a hand edit |
-| **LFO 1 / 2 target switches** (Bank / Snapshot A / Snapshot B / Morph / Band shift / Band spread; band menu > Modulation > LFO n TARGETS) | `4020-4025`, `4040-4045` (toggle) | One bracket per press (`param_edit`) | 60 ms route ramp; several at once | Switch follows |
-| **LFO 1 / 2 target Amount** (row under each switch; inert while the switch is off) | `4030-4035`, `4050-4055`, 0-1, shown "100%" | One bracket per drag (`param_gesture_begin` / `end`) | 60 ms route ramp | Amount row follows, including after a hand edit |
-| Legacy single target (Settings "Target") | `4004` (enum) | One bracket per pick | A change selects that one field destination for both LFOs ([modulation.md](modulation.md)) | Target switches follow |
-| **LFO 2 on/off, shape, rate, depth** | `4010-4013` | As for LFO 1 | As for LFO 1 | As for LFO 1 |
-| Destinations multi-select (Settings) | writes the route switches of both LFOs (`modulation_targets_set`) | One bracket per changed switch | As the switches | As the switches |
+| LFO 1 depth (legacy) | `4003`, 0-1 | No editor control | A change sets the Depth of every target LFO 1 drives ([modulation.md](modulation.md)); never written back | Target Depth rows follow |
+| **LFO 1 / 2 target switches** (Bank / Band shift / Band spread / Morph / Freeze / Length / Snapshot A / Snapshot B; band menu > Modulation > LFO n TARGETS, and Settings > MODULATION) | `4020-4027`, `4040-4047` (toggle) | One bracket per press (`param_edit`) | 60 ms route ramp (250 ms for Band shift / spread); several at once | Switch follows, in both surfaces |
+| **LFO 1 / 2 target Depth** (row under each switch; inert while the switch is off) | `4030-4037`, `4050-4057`, 0-1, shown "50%" | One bracket per drag (`param_gesture_begin` / `end`) | Same route ramp | Depth row follows, including after a hand edit |
+| Legacy single target | `4004` (enum) | No editor control | A change selects that one of Bank / A / B / Morph for both LFOs ([modulation.md](modulation.md)); never written back | Target switches follow |
+| **LFO 2 on/off, shape, rate** (and legacy depth `4013`) | `4010-4013` | As for LFO 1 | As for LFO 1 | As for LFO 1 |
 | "Edit LFO 1 / 2" source switch | none (view state) | n/a | n/a | n/a |
 | Macro 1-4 value | `4200-4203` | One bracket per drag (`macro_drag_*`) | Yes | Yes |
 | Macro membership | none (supplemental state) | Not automatable, by design | n/a | n/a |
@@ -58,7 +58,7 @@ that can change at any sample:
   over 150 ms (`LfoShapeFade`).
 - **Rate** is a phase accumulator, so a new rate changes how fast the phase
   moves and never where it is.
-- **Target switches and Amounts** each drive one slewed route level per LFO
+- **Target switches and Depths** each drive one slewed route level per LFO
   per destination, on the same 60 ms ramp, so switching a destination on at a
   crest fades it in. Measurements and the fail-before numbers are in
   [modulation.md](modulation.md#smoothness).
