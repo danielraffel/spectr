@@ -381,6 +381,12 @@ RootRect painted_extent(const View& control) {
     auto extent = root_rect(control);
     const std::function<void(const View&)> walk = [&](const View& view) {
         if (!view.visible()) return;
+        // An empty caption paints no ink, and its layout box can be far wider
+        // than the control it sits in (a switch's unused text slot measures
+        // 150x32 inside a 40x20 track). It is not something the user sees.
+        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+            label != nullptr && label->text().empty() && view.child_count() == 0)
+            return;
         const auto box = root_rect(view);
         extent.left = std::min(extent.left, box.left);
         extent.top = std::min(extent.top, box.top);
@@ -3548,6 +3554,314 @@ TEST_CASE("native buttons are tappable across their whole painted bounds",
             CHECK(click_dispatch_count(rig) == before + 1);
         }
     }
+}
+
+// The same whole-box promise on every surface the editor can open, not only
+// the home screen: each dropdown, the band context menu, Settings (scrolled
+// through its whole body), the help rail and the preset manager. A menu row or
+// a Settings toggle is a control too, and the home-screen sweep above never
+// sees one because none of them is mounted until its surface opens.
+//
+// This resolves a press over a 5x5 grid of each control's box the way the
+// hosts do (an open overlay first, then the tree), and asks whether the view
+// it lands on is the control or something the control owns. It deliberately
+// does not click: a click would activate the row and close the surface under
+// the sweep. The home-screen case above proves the resolution-to-dispatch hop.
+TEST_CASE("every control on every editor surface resolves a press anywhere in its painted box",
+          "[native-n1][tap-targets]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.resize(990, 645);
+    settle(rig.clock, 96);
+    constexpr float kBorderSlack = 2.0f;
+
+    const std::function<const View*(const View&, std::string_view)> find_view_id =
+        [&](const View& view, std::string_view id) -> const View* {
+          if (view.id() == id) return &view;
+          for (std::size_t index = 0; index < view.child_count(); ++index)
+              if (const auto* match = find_view_id(*view.child_at(index), id))
+                  return match;
+          return nullptr;
+        };
+    // The native view behind a selector, read back the way this file reads
+    // runtime state: throw it and parse the message.
+    const auto native_view_for = [&](std::string_view selector) -> const View* {
+        std::string id;
+        try {
+            rig.bridge().load_script(
+                std::string{"(() => { const n = globalThis.__pulpFindMaterializedElement__("}
+                    + js_string(selector) + "); throw new Error('NATIVEID:' + "
+                    "(n ? (n.__pulpId || n.id || '') : '') + ':END'); })();",
+                "spectr-native-view-for-selector");
+        } catch (const std::exception& error) {
+            const std::string message = error.what();
+            const auto begin = message.find("NATIVEID:");
+            const auto end = message.find(":END");
+            if (begin != std::string::npos && end != std::string::npos)
+                id = message.substr(begin + 9, end - begin - 9);
+        }
+        return id.empty() ? nullptr : find_view_id(*rig.root, id);
+    };
+    // Controls a surface owns, named by what the document says is a control
+    // (a <button>, an input, or an element with a control role) rather than by
+    // which native views carry a click handler: the bridge arms a handler on
+    // captions and panels too, and those are not things a user aims at. With
+    // an overlay open only its subtree can take a press; a modal that is not
+    // an overlay (Settings) names its panel explicitly.
+    const auto semantic_control_ids = [&] {
+        std::vector<std::string> ids;
+        try {
+            rig.bridge().load_script(R"js((() => {
+              const selectors = ['button', 'input', '[role="option"]',
+                '[role="slider"]', '[role="switch"]', '[role="menuitem"]',
+                '[role="menuitemradio"]', '[role="menuitemcheckbox"]',
+                '[role="tab"]', '[data-spectr-setting-slider]',
+                '[data-spectr-menu-trigger]'];
+              const ids = new Set();
+              for (const selector of selectors)
+                for (const node of document.querySelectorAll(selector)) {
+                  const id = node && (node.__pulpId || node.id);
+                  if (id) ids.add(String(id));
+                }
+              throw new Error('CONTROLIDS:' + Array.from(ids).join('|') + ':END');
+            })();)js", "spectr-native-semantic-controls");
+        } catch (const std::exception& error) {
+            const std::string message = error.what();
+            const auto begin = message.find("CONTROLIDS:");
+            const auto end = message.find(":END");
+            if (begin != std::string::npos && end != std::string::npos) {
+                std::stringstream list(message.substr(begin + 11, end - begin - 11));
+                for (std::string id; std::getline(list, id, '|');)
+                    if (!id.empty()) ids.push_back(id);
+            }
+        }
+        return ids;
+    };
+    const auto is_within = [](const View& view, const View& ancestor) {
+        for (const auto* node = &view; node != nullptr; node = node->parent())
+            if (node == &ancestor) return true;
+        return false;
+    };
+    const auto surface_controls = [&](const View* explicit_scope) {
+        const View* scope = explicit_scope ? explicit_scope
+                                           : rig.root->interaction().active_overlay;
+        std::vector<const View*> controls;
+        for (const auto& id : semantic_control_ids()) {
+            const auto* view = find_view_id(*rig.root, id);
+            if (view == nullptr || !chain_interactive(*view)) continue;
+            if (scope != nullptr && !is_within(*view, *scope)) continue;
+            controls.push_back(view);
+        }
+        return controls;
+    };
+
+    int surfaces = 0;
+    std::size_t probed = 0;
+    std::vector<std::string> dead;
+    // Resolve a press the way every host does (route_press_to_active_overlay,
+    // then the tree): an open overlay that paints over the point takes it, hit
+    // tested from the overlay itself. A bare root hit_test would instead cull
+    // a popover that reaches far from the trigger it hangs off, which no real
+    // press ever sees. Resolution only: nothing is dismissed or delivered.
+    const auto press_target = [&](pulp::view::Point point) -> View* {
+        auto* overlay = rig.root->interaction().active_overlay;
+        if (overlay != nullptr && overlay->overlay_contains(point)) {
+            if (auto* hit = overlay->hit_test(
+                    pulp::view::point_to_local(point, overlay, rig.root.get())))
+                return hit;
+        }
+        return rig.root->hit_test(point);
+    };
+    // A point another view PAINTS over is not the control's to answer: a
+    // sticky menu footer over the last scrolled row, a modal over the editor.
+    // That holds only when something between the interceptor and the nearest
+    // shared ancestor lays down an opaque-enough fill; a transparent sibling
+    // (a caption, a layout wrapper) over a control is the defect this hunts.
+    const auto occluded_by_paint = [&](const View& hit, const View& control) {
+        for (const auto* node = &hit; node != nullptr; node = node->parent()) {
+            if (is_within(control, *node)) return false;  // shared ancestor
+            if (node->has_background_color() && node->background_color().a >= 0.5f)
+                return true;
+        }
+        return false;
+    };
+    int occluded = 0;
+    const auto directory = atlas_directory();
+    const auto sweep = [&](std::string_view surface,
+                           const View* scope = nullptr) {
+        settle(rig.clock, 24);
+        ++surfaces;
+        {
+            std::string name{"tap-sweep-"};
+            for (const char ch : surface) name.push_back(ch == ' ' ? '-' : ch);
+            capture(rig, directory, name);
+        }
+        const auto controls = surface_controls(scope);
+        INFO("surface " << surface);
+        CHECK_FALSE(controls.empty());
+        for (const auto* control : controls) {
+            const auto box = root_rect(*control);
+            if (box.right - box.left < 1.0f || box.bottom - box.top < 1.0f)
+                continue;
+            // Clipped out of its scroll viewport or off the editor: not a
+            // painted control at this scroll position.
+            if (box.right <= 0.0f || box.bottom <= 0.0f || box.left >= 1320.0f
+                || box.top >= 860.0f)
+                continue;
+            const auto painted = painted_extent(*control);
+            INFO("control " << describe_control(*control));
+            CAPTURE(painted.left, painted.top, painted.right, painted.bottom);
+            CHECK(painted.left >= box.left - kBorderSlack);
+            CHECK(painted.top >= box.top - kBorderSlack);
+            CHECK(painted.right <= box.right + kBorderSlack);
+            CHECK(painted.bottom <= box.bottom + kBorderSlack);
+            int misses = 0;
+            std::string first_miss;
+            for (const float fy : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f})
+            for (const float fx : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f}) {
+                // Sample the hit box's interior, 1 px in from every edge.
+                const pulp::view::Point point{box.left + 1.0f + (box.right - box.left - 2.0f) * fx,
+                                  box.top + 1.0f + (box.bottom - box.top - 2.0f) * fy};
+                // Clipped by an owning scroll viewport: not painted there. A
+                // ScrollView's root rect moves with its own offset, so add the
+                // offset back to get the fixed viewport.
+                if (const auto* scroll = owning_scroll_view(*control)) {
+                    auto viewport = root_rect(*scroll);
+                    viewport.left += scroll->scroll_x();
+                    viewport.right += scroll->scroll_x();
+                    viewport.top += scroll->scroll_y();
+                    viewport.bottom += scroll->scroll_y();
+                    if (point.y < viewport.top || point.y > viewport.bottom
+                        || point.x < viewport.left || point.x > viewport.right)
+                        continue;
+                }
+                ++probed;
+                auto* hit = press_target(point);
+                const auto* resolved = nearest_click_target(hit);
+                // The press is the control's when the hit lands on it or on
+                // something it owns (a slider's track, a button's caption).
+                if (hit != nullptr && is_within(*hit, *control)) continue;
+                if (hit != nullptr && occluded_by_paint(*hit, *control)) {
+                    ++occluded;
+                    continue;
+                }
+                if (++misses == 1) {
+                    std::ostringstream miss;
+                    const auto* caption = [&]() -> const pulp::view::Label* {
+                        std::function<const pulp::view::Label*(const View&)> first =
+                            [&](const View& v) -> const pulp::view::Label* {
+                              if (auto* l = dynamic_cast<const pulp::view::Label*>(&v);
+                                  l && !l->text().empty()) return l;
+                              for (std::size_t i = 0; i < v.child_count(); ++i)
+                                  if (auto* m = first(*v.child_at(i))) return m;
+                              return nullptr;
+                            };
+                        return first(*control);
+                    }();
+                    miss << std::string(surface) << ": " << describe_control(*control)
+                         << " '" << (caption ? caption->text() : std::string()) << "'"
+                         << " dead at (" << point.x << ',' << point.y << ") -> hit "
+                         << (hit ? describe_control(*hit) : std::string("<none>"))
+                         << " resolved "
+                         << (resolved ? describe_control(*resolved) : std::string("<none>"));
+                    first_miss = miss.str();
+                }
+            }
+            if (misses > 0)
+                dead.push_back(first_miss + " (" + std::to_string(misses) + "/25)");
+        }
+    };
+    const auto close_overlay = [&] {
+        if (rig.root->interaction().active_overlay != nullptr) {
+            pulp::view::View::dismiss_active_overlay(*rig.root);
+            settle(rig.clock, 12);
+        }
+    };
+
+    sweep("home");
+
+    for (const char* menu : {"analyzer", "bands", "edit", "overflow", "pattern"}) {
+        activate(rig, std::string("[data-spectr-menu-root=\"") + menu
+                          + "\"] [data-spectr-menu-trigger]");
+        REQUIRE(rig.root->interaction().active_overlay != nullptr);
+        sweep(std::string("menu ") + menu);
+        close_overlay();
+    }
+
+    activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+    sweep("help rail");
+    activate(rig, "[data-spectr-menu-root=\"help\"] [data-spectr-menu-trigger]");
+    require_home(rig);
+
+    activate(rig, "[data-spectr-filter-surface]", "contextmenu",
+             R"js({clientX:660,clientY:430,offsetX:660,offsetY:430,button:2})js");
+    require_state(rig, "band-context");
+    sweep("band context menu");
+    close_overlay();
+
+    activate(rig, "[data-spectr-settings-open]");
+    const auto* settings_panel = native_view_for("[data-spectr-settings-panel]");
+    REQUIRE(settings_panel != nullptr);
+    sweep("settings", settings_panel);
+    // The Settings body scrolls; sweep the rows below the fold too.
+    for (int step = 0; step < 6; ++step) {
+        std::vector<pulp::view::ScrollView*> scrolls;
+        const std::function<void(View&)> find = [&](View& view) {
+            if (auto* scroll = dynamic_cast<pulp::view::ScrollView*>(&view))
+                scrolls.push_back(scroll);
+            for (std::size_t index = 0; index < view.child_count(); ++index)
+                find(*view.child_at(index));
+        };
+        find(*rig.root);
+        bool moved = false;
+        for (auto* scroll : scrolls) {
+            const auto before = scroll->scroll_y();
+            scroll->set_scroll(0.0f, before + 300.0f);
+            moved = moved || scroll->scroll_y() != before;
+        }
+        if (!moved) break;
+        rig.root->layout_children();
+        sweep("settings scrolled " + std::to_string(step + 1),
+              native_view_for("[data-spectr-settings-panel]"));
+    }
+    activate(rig, "[data-spectr-settings-close]");
+    close_overlay();
+
+    activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-pattern-manage]");
+    sweep("preset manager");
+    close_overlay();
+
+    CHECK(surfaces >= 10);
+    // Control: the sweep actually probed a population, so an empty `dead` list
+    // is a reading, not an instrument that measured nothing.
+    CHECK(probed > 1000);
+    // Occlusion is a narrow excuse; if it starts absorbing a real share of the
+    // samples the sweep has stopped measuring what it claims to.
+    INFO("occluded samples " << occluded << " of " << probed);
+    CHECK(static_cast<std::size_t>(occluded) * 20 < probed);
+    // ONE known dead band, not excused: named here so it cannot hide and so a
+    // fix is forced to delete this line. The preset menu's SAVE CURRENT /
+    // MANAGE section is laid out 13px above where the reflowed factory rows
+    // end, so it covers the bottom 8px of the last factory row: its top 4px
+    // hit the section (no handler) and the next 4px hit SAVE CURRENT. Its
+    // cause is in the menu's native layout (it survives dropping the captured
+    // layout bindings and the panel's height cap), and it is tracked apart
+    // from the tap-target work that added this sweep.
+    const auto is_known = [](const std::string& entry) {
+        return entry.rfind("menu pattern: ", 0) == 0
+               && entry.find("'AIR LIFT (4k+)'") != std::string::npos;
+    };
+    std::vector<std::string> unexpected;
+    int known = 0;
+    for (const auto& entry : dead) {
+        if (is_known(entry)) ++known;
+        else unexpected.push_back(entry);
+    }
+    for (const auto& entry : unexpected) UNSCOPED_INFO(entry);
+    CHECK(unexpected.empty());
+    // Fails once the preset menu is fixed: delete `is_known` with it.
+    CHECK(known == 1);
 }
 
 // ── Editor-owned resize grip (AU v2) ─────────────────────────────────────────
