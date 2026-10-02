@@ -10599,3 +10599,34 @@ TEST_CASE("Settings and the band menu edit the same targets, both ways",
     CHECK(rig.store.open_gesture_count() == 0);
     storage.require_unchanged();
 }
+
+TEST_CASE("a LENGTH pick while the Length target is on asks, and changes the centre",
+          "[native-n1][state-parity][modulation][length-target]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 7), 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    feed_audio_blocks(rig, 4);
+    settle(rig.clock, 8);
+    const auto dialog_open = [&] {
+        return runtime_value(rig,
+            "String(!!document.querySelector('[data-spectr-override-dialog]'))", "dialog") == "true";
+    };
+    const float before = rig.store.get_value(spectr::kParamFreezeLength);
+    // A pick of 2 bars through the LENGTH control's own commit.
+    rig.bridge().load_script("window.spectrCommitFreezeLength(2, '0');", "length-pick");
+    settle(rig.clock, 8);
+    REQUIRE(dialog_open());
+    CHECK(runtime_value(rig,
+        "String(document.querySelector('[data-spectr-override-prompt]')?.textContent)", "prompt")
+          == "Length is being modulated by LFO 1. Turn off its Length target?");
+    CHECK(rig.store.get_value(spectr::kParamFreezeLength) == before);  // not yet
+    activate(rig, "[data-spectr-manager-action=\"override-keep\"]");
+    CHECK_FALSE(dialog_open());
+    // The pick landed as the new centre, and the target stayed on.
+    CHECK(rig.processor.freeze_length_preset() == 17);
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 7)) == 1.0f);
+    storage.require_unchanged();
+}
