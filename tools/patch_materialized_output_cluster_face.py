@@ -40,6 +40,13 @@ so two hand edits to it always conflict and neither is replayable. This
 substitutes exact text, asserts each patch point occurs exactly once, refuses a
 half-patched document, and reports "already applied" on a second run.
 
+A later script may rewrite a patch point this one already applied:
+patch_materialized_trim_readout_gap.py turns the readout's
+`width: 34, textAlign: "right", ` into `width: 31, textAlign: "left", ` and
+keeps the bound face. That superseded form counts as this edit being applied,
+so a re-run on a fully patched document still reports "already applied"
+rather than "half patched".
+
 Exit codes: 0 applied or already applied, 1 a patch point or the bound face is
 missing or ambiguous.
 """
@@ -58,6 +65,20 @@ CONTEXT = 'function SpectrOutputMeter({ latchOver = false } = {}) {'
 
 def family(runtime_family):
     return '\'"%s", "JetBrains Mono", ui-monospace, monospace\'' % runtime_family
+
+
+def superseded(face):
+    """Later forms of a patch point that still carry this script's edit.
+
+    Keyed by the edit's label; each value is text that, when present, means
+    the edit was applied and then revised by a follow-up script.
+    """
+    return {
+        'the trim readout uses the bound face':
+            'style: { width: 31, textAlign: "left", whiteSpace: "nowrap", '
+            'flexShrink: 0, fontFamily: %s, fontSize: 10, '
+            'color: "rgba(255,255,255,0.72)" }' % face,
+    }
 
 
 def edits(face):
@@ -103,15 +124,24 @@ def escaped(value):
 
 def main():
     raw = open(PATH, encoding="utf-8").read()
-    steps = edits(family(bound_mono_face(json.loads(raw))))
+    face = family(bound_mono_face(json.loads(raw)))
+    steps = edits(face)
+    later = superseded(face)
 
     if raw.count(escaped(CONTEXT)) != 1:
         sys.exit("FAIL: %r occurs %d times, expected 1; the output cluster is "
                  "not where this script expects it"
                  % (CONTEXT, raw.count(escaped(CONTEXT))))
 
-    applied = [raw.count(escaped(new)) == 1 and raw.count(escaped(old)) == 0
-               for _, old, new in steps]
+    def is_applied(label, old, new):
+        if raw.count(escaped(old)) != 0:
+            return False
+        if raw.count(escaped(new)) == 1:
+            return True
+        revised = later.get(label)
+        return revised is not None and raw.count(escaped(revised)) == 1
+
+    applied = [is_applied(label, old, new) for label, old, new in steps]
     if all(applied):
         print("already applied  the output cluster uses the bound monospace face")
         return 0

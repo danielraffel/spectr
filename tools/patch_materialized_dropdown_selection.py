@@ -79,6 +79,19 @@ POPOVER_KEYS = '''  React.useEffect(() => {
   }, [onChange]);
 '''
 
+# Text that proves an edit is in the document even after a later script has
+# rewritten the surrounding lines.  The popover's key owner is inserted at
+# the head of EditModePopover, and patch_materialized_dropdown_trigger_toggle.py
+# later rewrites that head, so the edit's full replacement text no longer
+# occurs verbatim; without these markers a re-run would insert a second key
+# owner.  Each marker must occur exactly once for the edit to count as applied.
+APPLIED_MARKERS = {
+    'the popover owns the letters its rows advertise': (
+        'function spectrEditModeShortcut(key) {',
+        'const mode = spectrEditModeShortcut(e.key);',
+    ),
+}
+
 EDITS = [
     ('the popover owns the letters its rows advertise',
      POPOVER_HEAD,
@@ -138,7 +151,12 @@ def main():
     already = 0
     for label, old, new in EDITS:
         old_e, new_e = escaped(old), escaped(new)
-        if raw.count(new_e) >= 1:
+        markers = APPLIED_MARKERS.get(label, ())
+        marker_counts = [raw.count(escaped(m)) for m in markers]
+        if any(c > 1 for c in marker_counts):
+            sys.exit('FAIL %s: an applied marker occurs more than once; the '
+                     'document was patched twice' % label)
+        if raw.count(new_e) >= 1 or (markers and all(c == 1 for c in marker_counts)):
             print('already applied ', label)
             already += 1
             continue

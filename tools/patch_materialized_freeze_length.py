@@ -30,6 +30,14 @@ generator cannot rebuild it. Each patch point is asserted to occur exactly
 once, a half-patched document is refused, and a second run reports "already
 applied".
 
+A follow-up script rewrites the control this one inserts:
+patch_materialized_freeze_length_menu_v2.py replaces the body of
+SpectrFreezeLength (the flat menu, the Fraction list) and marks it with
+`function SpectrLengthFractionList(`. On a re-run, that revised body counts
+as this script's control being applied, so a fully patched document reports
+"already applied" instead of "half patched". Every other patch point is
+checked exactly as written here.
+
 Exit codes: 0 applied or already applied, 1 a patch point is missing or
 ambiguous.
 """
@@ -43,6 +51,9 @@ PATH = os.path.join(REPO, "native-ui", "materialized",
                     "materialized-document.runtime.json")
 
 MARKER = "function SpectrFreezeLength()"
+# patch_materialized_freeze_length_menu_v2.py's marker: present once that
+# script has replaced the control body inserted here.
+MENU_V2_MARKER = "function SpectrLengthFractionList("
 
 # ── the freeze store: the Length replaces the hold length ──────────────────
 
@@ -564,7 +575,16 @@ def main():
     cluster_new = CLUSTER_NEW.replace("@FACE_RAW@", face_raw)
 
     if MARKER in html:
-        for marker, label in ((body, "length control"), (ACCEPT_BODY, "store accept"),
+        if html.count(MARKER) != 1:
+            sys.exit("FAIL: %r occurs %d times, expected 1"
+                     % (MARKER, html.count(MARKER)))
+        # The control body is either this script's, or the menu-v2 revision
+        # of it; anything else is a document this script did not produce.
+        if html.count(body) != 1 and html.count(MENU_V2_MARKER) != 1:
+            sys.exit("FAIL: the Length control is present but its length control "
+                     "is not (neither this script's body nor the menu-v2 "
+                     "revision); the document is half patched")
+        for marker, label in ((ACCEPT_BODY, "store accept"),
                               (cluster_new, "header cluster"), (TRACK_NEW, "trim track"),
                               (COMMENT_NEW, "cluster comment")):
             if html.count(marker) != 1:
