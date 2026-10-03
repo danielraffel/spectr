@@ -130,10 +130,8 @@ EDITS = [
     # ── FilterBank ─────────────────────────────────────────────────────────
     (
         "bank takes the initial state",
-        '''nativeHydrated, onNativeState }) {
-  const canvasRef = useRef(null);''',
-        '''nativeHydrated, onNativeState, initialNativeState }) {
-  const canvasRef = useRef(null);''',
+        '''onEditModeChange, nativeHydrated, onNativeState }) {''',
+        '''onEditModeChange, nativeHydrated, onNativeState, initialNativeState }) {''',
     ),
     (
         "static canvas mounts inside the mount",
@@ -253,17 +251,13 @@ EDITS = [
     # ── Freeze, morph, modulation, build info, tracing badge ───────────────
     (
         "freeze store starts from the processor",
-        '''    window.pulp.on("processing_state_hydrate", accept);
-    window.pulp.on("processing_state_live", accept);
-  }
-  return store;
+        '''    const accept = (message) => spectrFreezeAccept(message && message.payload);
+    window.pulp.on("processing_state_hydrate", accept);
 ''',
-        '''    window.pulp.on("processing_state_hydrate", accept);
-    window.pulp.on("processing_state_live", accept);
+        '''    const accept = (message) => spectrFreezeAccept(message && message.payload);
+    window.pulp.on("processing_state_hydrate", accept);
     if (typeof window.pulp.initial === "function")
       spectrFreezeAccept(window.pulp.initial("processing_state_get"));
-  }
-  return store;
 ''',
     ),
     (
