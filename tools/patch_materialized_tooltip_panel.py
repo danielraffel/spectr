@@ -24,9 +24,9 @@ THE FIX
     session in the plugin state, like "Keyboard shortcuts in DAW": each
     project keeps its own choice, a new instance shows them.
 
-INTERIM half: the explicit width and the span's own `nowrap` are the shim --
-DELETE THEM ON THE SDK BUMP that carries pulp#9317, after which the box
-shrink-fits its text by itself; the placement and the Setting stay.
+The box shrink-fits its text by itself (pulp#9317, Pulp SDK 0.901.0: the
+box's `nowrap` reaches the span), so the panel carries no explicit width; the
+estimate `w` only centres it and clamps it inside the editor.
 
 Idempotent like the other patch_materialized_* scripts. Run after
 tools/patch_materialized_header_tooltips.py.
@@ -62,8 +62,8 @@ EDITS = [
      '      // __spectrTooltipPanel: sized from the text (JetBrains Mono 10 px is\n'
      '      // measured 6.5 px a glyph with its 0.3 px letter\n'
      '      // spacing), centred under the control 6 px below it, clamped inside the\n'
-     '      // editor. The explicit width is the interim half: delete it on the\n'
-     '      // SDK bump that shrink-fits an absolute box to its text.\n'
+     '      // editor. `w` only centres and clamps the panel: the box shrink-fits\n'
+     '      // its text itself.\n'
      '      if (globalThis.__spectrShowTooltips === false) return;\n'
      '      const glyphs = Array.from(String(text)).length;\n'
      '      const w = Math.ceil(glyphs * 6.5) + 24;\n'
@@ -87,7 +87,7 @@ EDITS = [
      '        position: "absolute", left: tip.x, top: 32, zIndex: 60,\n'
      '        pointerEvents: "none", whiteSpace: "nowrap",\n',
      '        position: "absolute", left: tip.x, top: tip.y === undefined ? 32 : tip.y, zIndex: 60,\n'
-     '        width: tip.w, height: 26, display: "flex", alignItems: "center",\n'
+     '        height: 26, display: "flex", alignItems: "center",\n'
      '        pointerEvents: "none", whiteSpace: "nowrap",\n'),
 ]
 
@@ -134,9 +134,6 @@ def main():
         sys.exit('FAIL: the document is half patched by this script')
     edits = EDITS + [
         ('Settings > FEEDBACK gains Show tooltips', SETTING_OLD, SETTING_NEW),
-    ('the tip\'s text stays on one line',
-     'React.createElement("span", { style: { pointerEvents: "none" } }, tip.text)',
-     'React.createElement("span", { style: { pointerEvents: "none", whiteSpace: "nowrap" } }, tip.text)'),
         ('the Show tooltips switch', COMPONENT_ANCHOR, COMPONENT + COMPONENT_ANCHOR),
     ]
     for label, old, new in edits:
