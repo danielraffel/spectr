@@ -289,7 +289,7 @@ window.__spectrPolishStart = () => {
         // bridge appends a late-mounted widget), and the list is shown
         // whether or not an LFO is on, so targets can be set up first.
         const order = ['bank', 'band-shift', 'band-spread', 'intensity', 'mix',
-                       'morph', 'freeze', 'length', 'output', 'a', 'b'];
+                       'morph', 'freeze', 'length', 'bands', 'preset', 'output', 'a', 'b'];
         const rowFor = key => panel.querySelector(
           '[data-spectr-settings-target="' + key + '"]');
         const shown = el => {
@@ -308,7 +308,7 @@ window.__spectrPolishStart = () => {
         if (panel.querySelector('[data-spectr-modulation-target]')
             || panel.querySelector('[data-spectr-modulation-select]'))
           throw new Error('the old both-LFO Destinations chips are still mounted');
-        // A Depth row whose target is off is dimmed and inert.
+        // A Depth row whose target is off is hidden and inert.
         const bankDepth = panel.querySelector('[data-spectr-settings-target-depth="bank"]');
         if (!bankDepth || bankDepth.getAttribute('data-spectr-settings-target-depth-state') !== 'off')
           throw new Error('the Bank Depth row is not inert while Bank is off');

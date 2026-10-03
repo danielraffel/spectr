@@ -107,22 +107,16 @@ function replaceExactlyOnce(source, needle, replacement, label) {
   return source.replace(needle, replacement);
 }
 
-const SEP = ',\n    ';
 const TARGETS_ROW =
-  'React.createElement(SpectrSettingsField, { label: "LFO targets", hint: "The band menu\'s '
-  + 'Modulation targets" }, React.createElement("div", { "data-spectr-settings-targets-lfo": lfo }, '
+  'subhead("TARGETS", React.createElement("div", { "data-spectr-settings-targets-lfo": lfo }, '
   + 'React.createElement(SpectrSettingsChips, { value: lfo, onChange: (next) => setLfo(next), '
-  + 'opts: [[1, "LFO 1"], [2, "LFO 2"]] }))),\n    ...rows';
-const LFO2_TOGGLE_ROW =
-  'React.createElement(SpectrSettingsField, { label: "LFO 2", hint: "Enable second '
-  + 'modulation source" }, React.createElement(SpectrSettingsToggle, { value: '
-  + 'value.lfo2Enabled || false, onChange: (next) => publish("lfo2Enabled", 4010, next) }))';
+  + 'opts: [[1, "LFO 1"], [2, "LFO 2"]] }))),\n    ';
+const LFO2_HEAD = 'subhead("LFO 2"),\n    ';
 
 if (plantOrder) {
   // The target list lifted inside LFO 1's run, above LFO 2.
-  html = replaceExactlyOnce(html, SEP + TARGETS_ROW, '', 'plant-order lift');
-  html = replaceExactlyOnce(html, LFO2_TOGGLE_ROW, TARGETS_ROW + SEP + LFO2_TOGGLE_ROW,
-                            'plant-order drop');
+  html = replaceExactlyOnce(html, TARGETS_ROW, '', 'plant-order lift');
+  html = replaceExactlyOnce(html, LFO2_HEAD, TARGETS_ROW + LFO2_HEAD, 'plant-order drop');
 }
 if (plantRemount) {
   // The regression this whole suite exists to prevent: put LFO 2's rows back
@@ -131,14 +125,9 @@ if (plantRemount) {
   // a late-mounted widget, so the group re-scrambles the moment the user flips
   // the toggle. Here it shows up as a label sequence that CHANGES with state,
   // which is exactly the property the fix buys.
-  for (const label of ['LFO 2 shape', 'LFO 2 rate']) {
-    html = replaceExactlyOnce(
-      html,
-      'React.createElement(SpectrSettingsField, { hidden: !value.lfo2Enabled, label: "'
-        + label + '"',
-      'value.lfo2Enabled && React.createElement(SpectrSettingsField, { label: "'
-        + label + '"',
-      'plant-remount ' + label);
+  for (const key of ['lfo2-shape', 'lfo2-rate']) {
+    html = replaceExactlyOnce(html, 'nested("' + key + '", {}, ',
+      'value.lfo2Enabled && nested("' + key + '", {}, ', 'plant-remount ' + key);
   }
 }
 if (plantScope) {
@@ -147,8 +136,8 @@ if (plantScope) {
                             'value: lfo2RateUndeclared || 4', 'plant-scope');
 }
 if (plantHomograph) {
-  html = replaceExactlyOnce(html, 'label: "LFO targets", hint:',
-                            'label: "Targets", hint:', 'plant-homograph');
+  // A "Target" heading competing with the TARGETS list.
+  html = replaceExactlyOnce(html, 'subhead("OPTIONS")', 'subhead("TARGET")', 'plant-homograph');
 }
 
 // ---------------------------------------------------------------- extraction
@@ -211,33 +200,51 @@ function renderWith(state) {
     'GROUP', 'FIELD', 'CHIPS', 'SLIDER', 'TOGGLE')();
 }
 
+// The group's rows since its hierarchy: sub-headings (`subhead`, shown as
+// "# LABEL"), field rows (FIELD) and the rows nested under a field (Shape,
+// Rate, a target's Depth), which are hidden with display:none rather than
+// unmounted.
 function rowsOf(tree) {
   const group = tree.children.find((child) => child && child.type === 'GROUP');
   if (!group) return null;
-  return group.children
-    .filter((child) => child && child.type === 'FIELD')
-    .map((child) => ({label: child.props.label, hidden: child.props.hidden === true}));
+  const rows = [];
+  for (const child of group.children.flat()) {
+    if (!child || typeof child !== 'object') continue;
+    if (child.type === 'FIELD') {
+      rows.push({label: child.props.label, hidden: child.props.hidden === true});
+    } else if (child.type === 'div' && child.props['data-spectr-settings-subhead']) {
+      rows.push({label: '# ' + child.props['data-spectr-settings-subhead'], hidden: false});
+    } else if (child.type === 'div' && child.props['data-spectr-disclosed'] !== undefined) {
+      const labelCell = child.children[0];
+      rows.push({label: labelCell && labelCell.children ? String(labelCell.children[0]) : '?',
+                 hidden: child.props.style && child.props.style.display === 'none'});
+    }
+  }
+  return rows;
 }
 
 // Every row, in the one order the group must always have. A row that is not
 // mounted at all fails this outright, which is what catches --plant-remount.
 const TARGET_LABELS = ['Bank', 'Band shift', 'Band spread', 'Intensity', 'Mix', 'Morph',
-                       'Freeze', 'Length', 'Output', 'Snapshot A', 'Snapshot B'];
-const ORDER = ['LFO', 'Shape', 'Rate',
-               'LFO 2', 'LFO 2 shape', 'LFO 2 rate',
-               'LFO targets', ...TARGET_LABELS.flatMap((t) => [t, 'Depth']),
-               'Ask before overriding modulation', 'Viewport'];
+                       'Freeze', 'Length', 'Bands', 'Preset', 'Output', 'Snapshot A',
+                       'Snapshot B'];
+const ORDER = ['# LFO 1', 'LFO 1', 'Shape', 'Rate',
+               '# LFO 2', 'LFO 2', 'Shape', 'Rate',
+               // Freeze carries Hold for Length under its Depth.
+               '# TARGETS', ...TARGET_LABELS.flatMap((t) =>
+                 t === 'Freeze' ? [t, 'Depth', 'Hold for Length'] : [t, 'Depth']),
+               '# OPTIONS', 'Ask before overriding modulation', 'Viewport'];
 
-// Which rows the user should SEE in each enable state. LFO 1's rows follow
-// LFO 1 and LFO 2's follow LFO 2. The target list, the override Setting and
-// Viewport show always: targets can be set up before an LFO is switched on,
-// and Viewport governs the MORPH SLIDER, which works with both LFOs off.
-const visibleFor = (lfo1, lfo2) => (label) => {
-  if (label === 'LFO' || label === 'LFO 2' || label === 'Viewport'
-      || label === 'LFO targets' || label === 'Depth'
-      || label === 'Ask before overriding modulation' || TARGET_LABELS.includes(label))
-    return true;
-  return label.startsWith('LFO 2 ') ? lfo2 : lfo1;
+// Which rows the user should SEE in each enable state. LFO 1's Shape and Rate
+// follow LFO 1 and LFO 2's follow LFO 2. The headings, the target switches,
+// the override Setting and Viewport show always: targets can be set up before
+// an LFO is switched on, and Viewport governs the MORPH SLIDER, which works
+// with both LFOs off. A target's Depth row shows only while that target is
+// on, and no target is on in these states.
+const visibleFor = (lfo1, lfo2) => (label, index) => {
+  if (label === 'Depth' || label === 'Hold for Length') return false;
+  if (label === 'Shape' || label === 'Rate') return index < ORDER.indexOf('# LFO 2') ? lfo1 : lfo2;
+  return true;
 };
 
 const CASES = [
@@ -268,7 +275,7 @@ for (const {lfo1, lfo2} of CASES) {
             + '\n        got  ' + got.join(' > '));
 
   const wantVisible = visibleFor(lfo1, lfo2);
-  const wrong = rows.filter((row) => row.hidden === wantVisible(row.label));
+  const wrong = rows.filter((row, index) => row.hidden === wantVisible(row.label, index));
   if (wrong.length === 0) {
     pass('VISIBILITY: ' + name + '  shown: '
          + rows.filter((r) => !r.hidden).map((r) => r.label).join(', '));
@@ -300,21 +307,23 @@ try {
   // unhandled throw decide the exit code for us.
 }
 const at = (label) => both.indexOf(label);
+const lfo2Head = at('# LFO 2');
 
-if (at('LFO') === 0) pass('GROUPING: LFO 1 opens the group');
+if (at('# LFO 1') === 0 && at('LFO 1') === 1) pass('GROUPING: LFO 1 opens the group');
 else fail('GROUPING: LFO 1 does not open the group');
-if (at('Rate') > at('LFO') && at('Rate') < at('LFO 2'))
-  pass("GROUPING: LFO 1's settings sit between the two toggles");
-else fail("GROUPING: LFO 1's settings are not between the two toggles");
-if (at('LFO 2 rate') > at('LFO 2') && at('LFO 2 shape') === at('LFO 2') + 1)
+if (both.indexOf('Rate') > at('LFO 1') && both.indexOf('Rate') < lfo2Head)
+  pass("GROUPING: LFO 1's settings sit under LFO 1, above LFO 2");
+else fail("GROUPING: LFO 1's settings are not under LFO 1");
+if (at('LFO 2') === lfo2Head + 1 && both.indexOf('Shape', lfo2Head) === lfo2Head + 2
+    && both.indexOf('Rate', lfo2Head) === lfo2Head + 3)
   pass("GROUPING: LFO 2's settings follow its own toggle");
 else fail("GROUPING: LFO 2's settings do not follow its own toggle");
-if (at('LFO targets') === at('LFO 2 rate') + 1 && at('Bank') === at('LFO targets') + 1)
+if (at('# TARGETS') === lfo2Head + 4 && at('Bank') === at('# TARGETS') + 1)
   pass('GROUPING: the target list follows both LFOs');
 else fail('GROUPING: the target list does not follow both LFOs');
-if (at('Targets') === -1 && at('Target') === -1 && at('Destinations') === -1)
-  pass('NAMING: no "Target"/"Targets"/"Destinations" row competes with the target list');
-else fail('NAMING: a row is still labelled "Target", "Targets" or "Destinations"');
+if (both.filter((l) => /^# TARGETS?$/i.test(l) || /^(Targets?|Destinations)$/i.test(l)).length === 1)
+  pass('NAMING: one TARGETS heading, and no "Target"/"Destinations" row competes with it');
+else fail('NAMING: a "Target", "Targets" or "Destinations" row competes with the target list');
 
 // The list is the band menu's, and it writes each target's own lanes.
 if (componentSource.includes('const targets = spectrModulationRouteList();'))
@@ -322,7 +331,8 @@ if (componentSource.includes('const targets = spectrModulationRouteList();'))
 else fail('CAPABILITY: Settings does not list the shared target list');
 // On/off is lane(t) -- 4020 + 20 (lfo - 1) + t, or the level targets' own
 // block from 4060 -- and Depth is lane(t) + 10.
-if (componentSource.includes('const lane = (t) => (t >= 8 ? 4052 : 4020) + (lfo - 1) * 20 + t;')
+if (componentSource.includes('const lane = (t) => ')
+    && componentSource.includes('4100 + (lfo - 1) * 20 + (t - 11)')
     && componentSource.includes('publish("routeOn" + lfo + "_" + t, lane(t), next)')
     && componentSource.includes('publish("routeAmt" + lfo + "_" + t, lane(t) + 10,'))
   pass('CAPABILITY: each row writes its target\'s on/off and Depth lanes');

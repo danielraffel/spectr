@@ -33,6 +33,22 @@ foreach(_spectr_size_kind PREFERRED MIN MAX)
     endif()
 endforeach()
 
+# The editor's own background is the materialized document's `:root { --bg }`.
+# A plug-in host shows nothing but this colour until the document has mounted
+# (view-first opening), so it is read from the document here rather than
+# restated in C++, where a design change could leave the open frame stale.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.json"
+     _spectr_document_json)
+string(REGEX MATCH ":root[^{]*\\{[^}]*--bg:[ ]*#([0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])"
+       _spectr_document_bg "${_spectr_document_json}")
+if(NOT CMAKE_MATCH_1)
+    message(FATAL_ERROR
+        "materialized-document.json has no `:root { --bg: #rrggbb }`; Spectr's "
+        "editor background is read from it")
+endif()
+set(SPECTR_EDITOR_BACKGROUND_RGB "0x${CMAKE_MATCH_1}")
+unset(_spectr_document_json)
+
 # Build-time spectral profile seam. Balanced (8192/2048) is the product
 # default. Live (1024/256) and Maximum (16384/4096) are alternate build
 # profiles, not modes that can be switched dynamically at runtime. Separate
@@ -229,7 +245,8 @@ set(SPECTR_NATIVE_SOURCES
 )
 if(APPLE)
     enable_language(OBJCXX)
-    list(APPEND SPECTR_NATIVE_SOURCES src/ui/host_view_first_mouse_mac.mm)
+    list(APPEND SPECTR_NATIVE_SOURCES src/ui/host_view_first_mouse_mac.mm
+        src/ui/host_view_background_mac.mm)
 endif()
 
 # Shipping Spectr is a native cutover consumer. Requiring the dedicated target
@@ -339,6 +356,7 @@ function(spectr_configure_native_target target)
         SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
         SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
@@ -603,6 +621,7 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
     SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
     SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+    SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
     PULP_PLUGIN_DESIGN_W=${SPECTR_HOST_PREFERRED_WIDTH}
     PULP_PLUGIN_DESIGN_H=${SPECTR_HOST_PREFERRED_HEIGHT}
     PULP_PLUGIN_DESIGN_MIN_W=${SPECTR_HOST_MIN_WIDTH}
@@ -3856,6 +3875,7 @@ foreach(fmt VST3 AU CLAP Standalone)
             SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
             SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
             SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+            SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
             SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
             SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         )
@@ -3969,7 +3989,8 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     add_executable(Spectr-editor-open-probe tools/editor_open_probe.mm)
     target_link_libraries(Spectr-editor-open-probe PRIVATE
         "-framework AppKit" "-framework AudioToolbox" "-framework AudioUnit"
-        "-framework CoreGraphics" "-framework Metal" "-framework QuartzCore")
+        "-framework CoreGraphics" "-framework ImageIO" "-framework Metal"
+        "-framework QuartzCore")
     add_dependencies(Spectr-editor-open-probe ${SPECTR_NATIVE_AU_TARGET})
     add_test(NAME Spectr-au-editor-open
         COMMAND Spectr-editor-open-probe
@@ -3979,6 +4000,47 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     set_tests_properties(Spectr-au-editor-open PROPERTIES
         TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
         RESOURCE_LOCK spectr_native_materialized_editor)
+    # The editor opens on Spectr's own background: every presented frame, from
+    # view creation until the UI is stable, is either that background (plus
+    # chrome already in its final place) or the settled UI, and the backing
+    # layer the DAW shows before the first frame is that colour too. Read back
+    # from each presented drawable on the GPU (never a screenshot), cold and
+    # warm, at the preferred and the minimum host size. The SDK default navy
+    # this replaces fails it on every open.
+    foreach(_spectr_first_frame_size PREFERRED MIN)
+        set(_spectr_first_frame_args)
+        if(_spectr_first_frame_size STREQUAL "MIN")
+            set(_spectr_first_frame_args --view-size
+                "${SPECTR_HOST_MIN_WIDTH}x${SPECTR_HOST_MIN_HEIGHT}")
+        endif()
+        string(TOLOWER "${_spectr_first_frame_size}" _spectr_first_frame_name)
+        string(SUBSTRING "${SPECTR_EDITOR_BACKGROUND_RGB}" 2 6 _spectr_first_frame_rgb)
+        add_test(NAME Spectr-au-editor-first-frame-${_spectr_first_frame_name}
+            COMMAND Spectr-editor-open-probe
+                --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
+                --opens 3 --settle-ms 600 ${_spectr_first_frame_args}
+                --capture-frames "${CMAKE_BINARY_DIR}/first-frames/${_spectr_first_frame_name}"
+                --settled-bg ${_spectr_first_frame_rgb}
+                --expect-first-rgb ${_spectr_first_frame_rgb}
+                --max-offbrand-frames 0)
+        set_tests_properties(Spectr-au-editor-first-frame-${_spectr_first_frame_name} PROPERTIES
+            TIMEOUT 180 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
+            RESOURCE_LOCK spectr_native_materialized_editor
+            FIXTURES_REQUIRED spectr_first_frame_dirs)
+    endforeach()
+    # Out-of-process variant (AUHostingService + remote view controller). Not a
+    # ctest: it needs the component installed where AUHostingService finds it.
+    add_executable(Spectr-editor-open-oop-probe tools/editor_open_oop_probe.mm)
+    set_source_files_properties(tools/editor_open_oop_probe.mm PROPERTIES
+        COMPILE_OPTIONS "-fno-objc-arc")
+    target_link_libraries(Spectr-editor-open-oop-probe PRIVATE
+        "-framework AppKit" "-framework AudioToolbox" "-framework CoreAudioKit"
+        "-framework CoreGraphics" "-framework ImageIO" "-framework QuartzCore")
+    add_test(NAME Spectr-au-editor-first-frame-dirs
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${CMAKE_BINARY_DIR}/first-frames/preferred" "${CMAKE_BINARY_DIR}/first-frames/min")
+    set_tests_properties(Spectr-au-editor-first-frame-dirs PROPERTIES
+        FIXTURES_SETUP spectr_first_frame_dirs)
 endif()
 
 # Artifact-level host proof: load the built CLAP, VST3 and AU through
@@ -4008,6 +4070,7 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
         SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
         SPECTR_EXPECTED_LATENCY=${SPECTR_PROCESSING_LATENCY}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}

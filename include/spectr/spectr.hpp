@@ -30,6 +30,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -58,6 +59,11 @@
 #include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
 
+#ifndef SPECTR_EDITOR_BACKGROUND_RGB
+// Defined by CMake from the materialized document's `:root { --bg }`; this
+// fallback only serves a translation unit built outside Spectr's targets.
+#define SPECTR_EDITOR_BACKGROUND_RGB 0x05070A
+#endif
 #ifndef SPECTR_FFT_SIZE
 #define SPECTR_FFT_SIZE 8192
 #endif
@@ -78,6 +84,19 @@ struct ProcessingStateSnapshot {
     Viewport viewport{};
     Layout layout = Layout::Bands32;
     SnapshotBank snapshots{};
+};
+
+/// The Preset destination's neighbourhood: the band gains of the presets
+/// around the current one, in the preset menu's order (factory, then user),
+/// as the editor resolves them at the current band count. Index
+/// kPresetModulationSteps is the current preset itself (unused: the centre is
+/// the field as it stands, edits included); `below` / `above` neighbours
+/// exist. POD so it rides the audio modulation publication.
+struct PresetModulationNeighbours {
+    std::array<std::array<float, kMaxBands>, kPresetNeighbourCount> gains{};
+    int below = 0;
+    int above = 0;
+    bool valid = false;
 };
 
 struct AudioModulationState {
@@ -123,6 +142,8 @@ struct AudioModulationState {
     /// parameters, and reading them from the cursor is what makes a macro
     /// sample-accurate within a block instead of one publication behind.
     std::array<std::uint64_t, kMacroCount> macro_members{};
+    /// The Preset destination's neighbours (set_preset_modulation).
+    PresetModulationNeighbours preset{};
 };
 static_assert(std::is_trivially_copyable_v<AudioModulationState>,
               "audio modulation publication must remain allocation-free POD");
@@ -242,6 +263,20 @@ bool editor_is_standalone();
 /// classes gained it, 0 when the SDK already has its own. macOS only (0
 /// elsewhere); idempotent.
 int install_host_view_first_mouse();
+
+/// The editor's own background, 0xRRGGBB: the materialized document's
+/// `:root { --bg }`, read from the document at configure time
+/// (SPECTR_EDITOR_BACKGROUND_RGB). A plug-in host shows nothing but this colour
+/// until the document has mounted, so the editor opens looking like Spectr
+/// rather than like the SDK default.
+inline constexpr std::uint32_t kEditorBackgroundRgb = SPECTR_EDITOR_BACKGROUND_RGB;
+
+/// SDK shim -- delete on the Pulp SDK bump that defines
+/// PULP_FORMAT_HAS_EDITOR_BACKGROUND, where Processor::editor_background()
+/// does this for every host. Recolours the plug-in host view's backing layer,
+/// which is what the window server shows before the first frame. macOS only
+/// (no-op elsewhere); `native_view` is the host's NSView.
+void apply_host_view_background(void* native_view, std::uint32_t rgb);
 
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
@@ -451,6 +486,13 @@ public:
 
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
+#if defined(PULP_FORMAT_HAS_EDITOR_BACKGROUND)
+    /// Every frame a host paints before the document mounts, and the backing
+    /// layer behind them, is this colour.
+    std::optional<std::uint32_t> editor_background() const override {
+        return kEditorBackgroundRgb;
+    }
+#endif
     void on_view_opened(pulp::view::View& view) override;
     void on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) override;
     void on_view_closed(pulp::view::View& view) override;
@@ -557,6 +599,12 @@ public:
     /// blob like morph_applies_viewport.
     [[nodiscard]] bool keyboard_shortcuts_in_daw() const noexcept;
     void set_keyboard_shortcuts_in_daw(bool enabled) noexcept;
+
+    /// "Show tooltips" (Settings > FEEDBACK): whether hovering a header
+    /// control shows its tooltip. On by default. Saved with the session, like
+    /// Keyboard shortcuts in DAW, so each project keeps its own choice.
+    [[nodiscard]] bool show_tooltips() const noexcept;
+    void set_show_tooltips(bool enabled) noexcept;
 
     /// The editor's Range: the plot's vertical scale and the reach of a
     /// full-height edit, in dB (3, 6, 12 or 24; level_controls.hpp). Editor
@@ -818,6 +866,41 @@ public:
     [[nodiscard]] int freeze_modulated_length_index() const noexcept {
         return freeze_modulated_length_index_.load(std::memory_order_relaxed);
     }
+    /// The LENGTH-list index the playing freeze took at its engage while the
+    /// Length target drove it, or -1.
+    [[nodiscard]] int freeze_engaged_length_index() const noexcept {
+        return freeze_engaged_length_index_.load(std::memory_order_relaxed);
+    }
+    /// The LENGTH index the closed LENGTH dropdown shows while the Length
+    /// target drives it -- the length the current freeze took while frozen,
+    /// else the length the next engage would take -- or -1 when no LFO
+    /// drives Length.
+    [[nodiscard]] int freeze_shown_length_index() const noexcept;
+    /// Freeze "Hold for Length" (kParamFreezeHoldForLength).
+    [[nodiscard]] bool freeze_hold_for_length() const noexcept;
+    /// The band count the Bands destination plays, or 0 when no LFO drives it.
+    [[nodiscard]] int modulated_band_count_shown() const noexcept {
+        return audio_bands_shown_.load(std::memory_order_relaxed);
+    }
+    /// Whether an LFO drives the Preset destination, and the whole step from
+    /// the current preset it is nearest (0 = the current preset).
+    [[nodiscard]] bool preset_modulation_driven() const noexcept {
+        return audio_preset_driven_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] int preset_modulation_step_shown() const noexcept {
+        return audio_preset_step_.load(std::memory_order_relaxed);
+    }
+    /// The Preset destination's neighbourhood, as the editor resolved it:
+    /// the current preset's id, the names and band gains of the presets
+    /// around it in menu order (index kPresetModulationSteps is the current
+    /// one), and how many exist each way. Persisted in the plugin state, so
+    /// the target keeps working when a session reopens.
+    bool set_preset_modulation(std::string centre_id,
+                               const std::array<std::string, kPresetNeighbourCount>& names,
+                               const PresetModulationNeighbours& neighbours);
+    /// The preset name @p step from the current one, or "" when unknown.
+    [[nodiscard]] std::string preset_modulation_name(int step) const;
+    [[nodiscard]] std::string preset_modulation_centre_id() const;
     const ModulatedFieldSnapshot& read_modulated_field() {
         return modulated_field_publication_.read();
     }
@@ -1038,6 +1121,29 @@ private:
     bool freeze_param_last_ = false;
     bool freeze_user_override_ = false;
     bool freeze_user_value_ = false;
+    // "Hold for Length" (kParamFreezeHoldForLength): samples of the current
+    // latch still to play, the raw LFO gate of the previous block (a latch
+    // needs its rising edge), and the effective Length this callback's
+    // freeze takes, in seconds -- the length a latch holds for.
+    std::int64_t freeze_hold_remaining_ = 0;
+    // Display of the modulated LENGTH, BANDS and preset (freeze_display).
+    std::atomic<int> freeze_engaged_length_index_{-1};
+    bool freeze_engage_last_ = false;
+    std::atomic<int> audio_bands_shown_{0};
+    // The Bands destination's crossfade through flat: the count playing and
+    // how much of the shape is applied (1 = all of it).
+    int audio_bands_playing_ = 0;
+    float audio_bands_fade_ = 1.0f;
+    bool audio_bands_modulated_ = false;
+    std::atomic<bool> audio_preset_driven_{false};
+    std::atomic<int> audio_preset_step_{0};
+    // Guarded by processing_state_mutex_: the Preset destination's
+    // neighbourhood, published through AudioModulationState.
+    PresetModulationNeighbours preset_neighbours_{};
+    std::array<std::string, kPresetNeighbourCount> preset_names_{};
+    std::string preset_centre_id_;
+    bool freeze_hold_gate_last_ = false;
+    double audio_freeze_length_seconds_ = 0.0;
     // An editor press (button, key, chord) while the Freeze target drives the
     // freeze: the value it asks for, or -1. Taken on the audio thread, where
     // it holds the freeze there until the gate's next change -- even when the
@@ -1106,6 +1212,8 @@ private:
     // Guarded by processing_state_mutex_. Editor-only: the audio thread
     // never reads it.
     bool keyboard_shortcuts_in_daw_ = false;
+    // Guarded by processing_state_mutex_. Editor-only.
+    bool show_tooltips_ = true;
     // Which canonical slots each macro drives. Guarded by
     // processing_state_mutex_ and published in AudioModulationState.
     //
@@ -1264,7 +1372,7 @@ private:
     std::uint64_t native_modulation_sequence_ = 0;
     // Last freeze display sent: bit 0 frozen, 1 driven, 2-3 Freeze LFOs,
     // 4-5 Length LFOs; -1 before the first.
-    int native_freeze_display_ = -1;
+    std::int64_t native_freeze_display_ = -1;
     // Scratch for the display-time LFO reconstruction. A member rather than a
     // local so a BandField is not built on the stack every frame.
     BandField     native_modulation_drawn_{};

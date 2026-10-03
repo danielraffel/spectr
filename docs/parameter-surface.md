@@ -54,7 +54,17 @@ layout remain stored but do not enter the active spectral mask.
 | `4080...4082` | LFO 2 level targets on/off, same order |
 | `4083...4089` | Reserved LFO 2 level-target growth |
 | `4090...4092` | LFO 2 level target Depths, same order |
-| `4093...4199` | Reserved modulation growth |
+| `4093...4099` | Reserved modulation growth |
+| `4100...4101` | LFO 1 targets on/off: Bands, Preset |
+| `4102...4109` | Reserved |
+| `4110...4111` | LFO 1 Bands / Preset Depths |
+| `4112...4119` | Reserved |
+| `4120...4121` | LFO 2 targets on/off: Bands, Preset |
+| `4122...4129` | Reserved |
+| `4130...4131` | LFO 2 Bands / Preset Depths |
+| `4132...4139` | Reserved |
+| `4140` | Freeze Hold for Length, Off/On (default Off) |
+| `4141...4199` | Reserved modulation growth |
 | `4200...4203` | Macro 1...4 |
 | `4204...4299` | Reserved macro growth |
 | `5000` | Intensity, 0...100 % (scales the composed shape toward flat) |
@@ -72,6 +82,13 @@ is always its on/off ID + 10 (`lfo_route_enabled_param_id` /
 `lfo_route_amount_param_id` in `param_surface.hpp`). Host names follow the
 first block: `LFO 1 Intensity`, `LFO 1 Intensity Depth`, ..., `LFO 2 Output
 Depth`.
+
+Bands and Preset (ModulationTarget 11, 12) take a third block, clear of
+every ID the first two use: on/off `4100 + 20 l + (t - 11)`, Depth +10
+(`LFO 1 Bands`, `LFO 1 Preset Depth`, ..., `LFO 2 Preset Depth`). Freeze
+**Hold for Length** is `4140`, a toggle: on, each engage the Freeze target
+makes latches for exactly the effective Length (see
+[modulation.md](modulation.md#hold-for-length)).
 
 ## Display and recording
 
@@ -188,7 +205,20 @@ block's parameter cursor. See `include/spectr/level_controls.hpp`.
 - **Auto Gain** (`5001`): a post gain before Output trim, `-10 log10(sum w g^2 / sum w)`
   over the effective (pre-LFO) shape blended with Mix, weighted by a K-weighted
   pink reference; clamped to -24...+12 dB; 300 ms ramp; exactly 1.0 when off.
-  New instances default On (`kAutoGainDefaultForNewInstances`); a session saved
-  without the `level_controls` marker opens with it Off.
+  New instances default **Off** (`kAutoGainDefaultForNewInstances`): v1 judges
+  the drawn shape against a fixed reference spectrum, and on real program
+  material it can miss the loudness change by up to 14 LU, so AUTO is a
+  control to turn on when wanted until v2 weights the input's own spectrum. A
+  session saved without the `level_controls` marker opens with it Off too; a
+  session that saved it On keeps it On.
 - **Range** is not a parameter: it is editor state (`editor_range_db` in the
   supplemental blob, default 24) and never changes the sound.
+- **Show tooltips** (Settings > FEEDBACK) is not a parameter either: editor
+  state (`show_tooltips` in the supplemental blob, default on), saved with the
+  session like Keyboard shortcuts in DAW, so each project keeps its own
+  choice and a new instance shows them. Per session rather than a global app
+  preference because a plug-in has no other storage it can count on in every
+  host, and a project-level choice survives being opened on another machine.
+- The **Preset** target's neighbourhood (the names and band gains of the
+  presets around the current one) rides the supplemental blob as
+  `preset_modulation`, so the target keeps playing when a session reopens.

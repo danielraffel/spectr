@@ -1,4 +1,5 @@
 #include "spectr/spectr.hpp"
+#include <pulp/view/plugin_view_host.hpp>
 
 #include "spectr/editor_bridge.hpp"
 
@@ -6,7 +7,9 @@
 #include <pulp/runtime/trace.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/format/plugin_descriptor.hpp>
+#include <atomic>
 #include <cstdio>
+#include <thread>
 #include <pulp/view/screenshot.hpp>
 #include <pulp/view/script_event_dispatch.hpp>
 #include <pulp/view/tracing_badge.hpp>
@@ -334,15 +337,18 @@ std::string embedded_package_stamp() {
 // Packages left by host processes that have exited. A package now outlives the
 // editor that wrote it (see package_path_for), so without this sweep every
 // host session would strand one in the temp directory. Runs once per process,
-// off nothing but a directory listing and kill(pid, 0).
-void sweep_packages_of_exited_processes(const std::filesystem::path& directory) {
-    static bool swept = false;
-    if (swept) return;
-    swept = true;
+// off nothing but a directory listing and kill(pid, 0) -- but that listing is
+// the whole per-user temp directory (tens of thousands of entries on a
+// developer Mac) plus a remove_all of each stranded ~8 MB package, 40-160 ms
+// cold. It must never run inside the host's view-creation call, so it runs on
+// its own thread; it only ever touches other processes' packages.
+void sweep_packages_of_exited_processes_now(const std::filesystem::path& directory,
+                                            const std::atomic<bool>& stop) {
+    PULP_TRACE_SCOPE_NAMED("io", "spectr_sweep_stale_packages");
     const std::string prefix{kPackagePrefix};
     std::error_code ec;
     for (std::filesystem::directory_iterator it(directory, ec), end;
-         !ec && it != end; it.increment(ec)) {
+         !ec && !stop.load(std::memory_order_relaxed) && it != end; it.increment(ec)) {
         const auto name = it->path().filename().string();
         if (name.rfind(prefix, 0) != 0) continue;
         const auto pid_begin = prefix.size();
@@ -359,6 +365,25 @@ void sweep_packages_of_exited_processes(const std::filesystem::path& directory) 
         std::error_code remove_ec;
         std::filesystem::remove_all(it->path(), remove_ec);
     }
+}
+
+// Starts the sweep once per process. The thread is a function-local static,
+// so unloading the plug-in image (or process exit) requests a stop and joins
+// it rather than leaving it running in unmapped code.
+void sweep_packages_of_exited_processes(const std::filesystem::path& directory) {
+    struct Sweeper {
+        std::atomic<bool> stop{false};
+        std::thread thread;
+        explicit Sweeper(std::filesystem::path dir)
+            : thread([this, dir = std::move(dir)] {
+                  sweep_packages_of_exited_processes_now(dir, stop);
+              }) {}
+        ~Sweeper() {
+            stop.store(true, std::memory_order_relaxed);
+            if (thread.joinable()) thread.join();
+        }
+    };
+    static Sweeper sweeper(directory);
 }
 #endif
 
@@ -828,6 +853,13 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
 #endif
     auto root = std::make_unique<pulp::view::View>();
     root->set_theme(pulp::view::Theme::dark());
+#if !defined(PULP_FORMAT_HAS_EDITOR_BACKGROUND)
+    // SDK shim -- delete on the Pulp SDK bump that defines
+    // PULP_FORMAT_HAS_EDITOR_BACKGROUND. That SDK fills under the tree with
+    // editor_background(); this one fills with its own default navy, so the
+    // root paints Spectr's background itself until the document mounts over it.
+    root->set_background_color(pulp::canvas::Color::hex(kEditorBackgroundRgb));
+#endif
     root->flex().direction = pulp::view::FlexDirection::column;
     root->set_requires_gpu_host(true);
     pulp::view::route_global_keys(*root, native_command_registry_);
@@ -875,6 +907,16 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                 payload.addMember("min_hz", static_cast<double>(viewport().min_hz));
                 payload.addMember("max_hz", static_cast<double>(viewport().max_hz));
                 return pulp::view::EditorBridge::ok_response(payload);
+            });
+        // A read for the editor's first render: the header's level knobs
+        // (Intensity, Mix, Auto Gain, Trim) start at the processor's values
+        // instead of defaults the first output_meter publication corrects --
+        // a commit after the mount, which re-applies the captured document.
+        native_editor_bridge_.add_handler(
+            "output_levels_get",
+            [this](const choc::value::ValueView&) {
+                return pulp::view::EditorBridge::ok_response(
+                    make_output_meter_payload(read_output_level()));
             });
         native_editor_handlers_registered_ = true;
     }
@@ -1242,6 +1284,14 @@ void Spectr::finish_native_document_load_(bool session_loaded,
 void Spectr::open_native_editor_(pulp::view::View& view) {
     PULP_TRACE_SCOPE_NAMED("state", "spectr_editor_opened");
     if (&view != native_editor_root_ || !native_scripted_ui_) return;
+#if !defined(PULP_FORMAT_HAS_EDITOR_BACKGROUND)
+    // SDK shim -- delete with the one in create_native_editor_(). The host's
+    // backing layer is what shows before the first frame; this SDK seeds it
+    // with its default navy. AU v2 attaches before returning the view, so this
+    // runs before the DAW can composite it.
+    if (auto* host = view.plugin_view_host())
+        apply_host_view_background(host->native_handle(), kEditorBackgroundRgb);
+#endif
     const auto bounds = view.bounds();
     const auto width = bounds.width > 0.0f
         ? static_cast<uint32_t>(std::lround(bounds.width))
@@ -1325,8 +1375,18 @@ void Spectr::publish_freeze_display_() {
     // the editor knows who to name even before audio has run.
     const bool driven = freeze_lfos != 0;
     const bool frozen = driven ? freeze_effective() : store->get_value(kParamFreeze) >= 0.5f;
-    const int state = (frozen ? 1 : 0) | (driven ? 2 : 0) | (freeze_lfos << 2)
-        | (length_lfos << 4);
+    // The modulated LENGTH / BANDS / preset labels ride this message too:
+    // what the closed dropdowns show while an LFO moves them.
+    const int length_index = freeze_shown_length_index();
+    const int bands = modulated_band_count_shown();
+    const bool preset_driven = preset_modulation_driven();
+    const int preset_step = preset_driven ? preset_modulation_step_shown() : 0;
+    const std::int64_t state = static_cast<std::int64_t>(
+        (frozen ? 1 : 0) | (driven ? 2 : 0) | (freeze_lfos << 2) | (length_lfos << 4))
+        | (static_cast<std::int64_t>(length_index + 1) << 8)
+        | (static_cast<std::int64_t>(bands) << 16)
+        | (static_cast<std::int64_t>(preset_driven ? 1 : 0) << 24)
+        | (static_cast<std::int64_t>(preset_step + 16) << 25);
     if (state == native_freeze_display_) return;
     native_freeze_display_ = state;
     auto payload = choc::value::createObject("SpectrFreezeDisplay");
@@ -1340,6 +1400,12 @@ void Spectr::publish_freeze_display_() {
     }
     payload.addMember("freeze_lfos", freeze_list);
     payload.addMember("length_lfos", length_list);
+    payload.addMember("length_index", static_cast<std::int32_t>(length_index));
+    payload.addMember("bands", static_cast<std::int32_t>(bands));
+    payload.addMember("preset_driven", preset_driven);
+    payload.addMember("preset_step", static_cast<std::int32_t>(preset_step));
+    payload.addMember("preset_name", preset_driven ? preset_modulation_name(preset_step)
+                                                   : std::string());
     try {
         native_scripted_ui_->bridge()->dispatch_native_message(
             "__spectrPublishNativeMessage", "freeze_display", payload,

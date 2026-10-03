@@ -18,6 +18,7 @@
 
 #include "spectr/spectr.hpp"
 #include "spectr/editor_resize.hpp"
+#include "spectr/param_surface.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <pulp/state/store.hpp>
@@ -182,4 +183,111 @@ TEST_CASE("an editor open evaluates the document once and a reopen reuses its by
     CHECK(after.hits > before.hits);
     CHECK(after.compiles == before.compiles);
     CHECK(h.processor.active_scripted_ui()->probe_realm_evaluations() == 0);
+}
+
+namespace {
+// load_script returns nothing, so a value rides back as an exception's text.
+std::string read_js(pulp::view::WidgetBridge& bridge, const std::string& expr) {
+    try {
+        bridge.load_script("throw new Error('PULPVALUE:' + (" + expr + ") + ':PULPEND');",
+                           "spectr-editor-open-read");
+    } catch (const std::exception& e) {
+        const std::string msg = e.what();
+        const auto at = msg.find("PULPVALUE:");
+        const auto end = msg.find(":PULPEND", at);
+        if (at != std::string::npos && end != std::string::npos)
+            return msg.substr(at + 10, end - at - 10);
+        return "error:" + msg;
+    }
+    return "no-value";
+}
+
+long read_js_int(pulp::view::WidgetBridge& bridge, const std::string& expr) {
+    const auto text = read_js(bridge, "String(" + expr + ")");
+    try {
+        return std::stol(text);
+    } catch (...) {
+        FAIL("not an integer: " << expr << " -> " << text);
+    }
+    return -1;
+}
+}  // namespace
+
+TEST_CASE("an editor open commits nothing after the document mounts",
+          "[editor-open]") {
+    // Counts, not wall time. Every React commit that touches a host node
+    // re-applies the captured document (20-45 ms each on this one), and the
+    // open used to make six after the mount: a promise-driven modulation
+    // read (2), build info (1), the hydrate frame (1), a passive effect that
+    // handed the hydrate to the bank (1) and the tracing badge (1). The
+    // editor now reads the processor's state for its first render
+    // (tools/patch_materialized_hydrate_before_first_render.py) and the late
+    // mounts happen in the mount's layout pass, so nothing is left to commit.
+    // Counters: tools/patch_materialized_runtime_commit_stats.py.
+    EditorHarness h;
+    h.open_view(/*deferred=*/true);
+    for (int frame = 0; frame < 120; ++frame) h.frame();
+    REQUIRE(h.bridge() != nullptr);
+    auto& bridge = *h.bridge();
+    const auto stats = read_js(bridge, "JSON.stringify(globalThis.__pulpCommitStats__)");
+    INFO("commit stats: " << stats);
+    const long mount = read_js_int(bridge, "globalThis.__pulpCommitStats__.mount_commits");
+    const long commits = read_js_int(bridge, "globalThis.__pulpCommitStats__.commits");
+    const long reapplies = read_js_int(bridge, "globalThis.__pulpCommitStats__.reapplies");
+    const long full = read_js_int(bridge, "globalThis.__pulpCommitStats__.full_reapplies");
+    REQUIRE(mount >= 1);
+    // The mount itself: the root render plus its layout-effect flush.
+    CHECK(mount <= 2);
+    CHECK(commits - mount <= 1);
+    CHECK(reapplies <= mount + 1);
+    // Only the mount's own first commit re-applies the whole document.
+    CHECK(full == 1);
+    // The open's whole-subtree walks stay linear in the registry: the
+    // Settings scroll upgrade asked "children of X" by filtering the whole
+    // registry per element (866 filters x ~400 nodes), and captured-state
+    // resolution match-tested every node once per atlas state (~4,000 tests).
+    // tools/patch_materialized_runtime_linear_scroll_upgrade.py,
+    // tools/patch_materialized_runtime_batched_state_resolution.py.
+    const long registry = read_js_int(bridge, "globalThis.__pulpReactDomRegistry__.size");
+    REQUIRE(registry > 100);
+    INFO("scroll upgrade: " << read_js(bridge,
+        "JSON.stringify(globalThis.__spectrScrollUpgradeStats__)"));
+    INFO("state resolution: " << read_js(bridge,
+        "JSON.stringify(globalThis.__spectrStateResolutionStats__)"));
+    const long upgrades = read_js_int(bridge, "globalThis.__spectrScrollUpgradeStats__.upgrades");
+    REQUIRE(upgrades >= 1);
+    CHECK(read_js_int(bridge, "globalThis.__spectrScrollUpgradeStats__.visited")
+          <= 3 * registry * upgrades);
+    const long passes = read_js_int(bridge, "globalThis.__spectrStateResolutionStats__.passes");
+    REQUIRE(passes >= 1);
+    // Fewer match tests per resolution than ONE full scan of the registry.
+    CHECK(read_js_int(bridge, "globalThis.__spectrStateResolutionStats__.match_tests")
+          < registry * passes);
+    // And the editor is hydrated, not merely quiet.
+    CHECK(read_js(bridge,
+        "String(globalThis.__spectrTestHooks && globalThis.__spectrTestHooks.appState"
+        " ? globalThis.__spectrTestHooks.appState().nativeHydrated : 'no-hooks')") == "true");
+}
+
+TEST_CASE("an editor opens showing a non-default session without a hydrate commit",
+          "[editor-open]") {
+    // The first render reads the processor, so a session that is not the
+    // default still mounts showing it -- not defaults that a later hydrate
+    // corrects -- and still commits nothing after the mount.
+    EditorHarness h;
+    h.store.set_value(spectr::kParamBandCount, 48.0f);
+    h.store.set_value(spectr::band_gain_param_id(0), 12.0f);
+    REQUIRE(h.processor.apply_surface_params(false));
+    h.open_view(/*deferred=*/true);
+    for (int frame = 0; frame < 120; ++frame) h.frame();
+    REQUIRE(h.bridge() != nullptr);
+    auto& bridge = *h.bridge();
+    INFO("commit stats: " << read_js(bridge, "JSON.stringify(globalThis.__pulpCommitStats__)"));
+    CHECK(read_js_int(bridge, "globalThis.__pulpCommitStats__.commits")
+          - read_js_int(bridge, "globalThis.__pulpCommitStats__.mount_commits") <= 1);
+    INFO("processor n: " << read_js(bridge, "JSON.parse(globalThis.__spectrEditorDispatch(JSON.stringify({type:'processing_state_get',payload:{},id:'t'}))).n_visible"));
+    CHECK(read_js_int(bridge, "globalThis.__spectrTestHooks.appState().settings.bandCount") == 48);
+    CHECK(read_js_int(bridge, "globalThis.__spectrTestHooks.renderState().nVisible") == 48);
+    CHECK(read_js(bridge,
+        "globalThis.__spectrTestHooks.renderState().targetGains[0].toFixed(3)") == "0.500");
 }

@@ -32,6 +32,7 @@
 #include <pulp/runtime/trace_session.hpp>
 #include <pulp/state/store.hpp>
 #include <pulp/view/frame_clock.hpp>
+#include <pulp/view/inspector.hpp>
 #include <pulp/view/layout_snapshot.hpp>
 #include <pulp/view/overlay_dismissal.hpp>
 #include <pulp/view/pointer_dispatch.hpp>
@@ -1979,6 +1980,193 @@ int main(int argc, char** argv) {
             rig.root->layout_children();
             settle(rig.clock, 8);
             capture(rig, dir, prefix + "help-movement", backend, scale);
+            return g_failures == 0 ? 0 : 1;
+        }
+
+        // SPECTR_POLISH_SHOTS=1: the 1.0.7 polish evidence -- the Modulation
+        // submenu opened near the top of the window, its progressive Depth
+        // rows, Settings > MODULATION, the header tooltip, the header context
+        // menus and the modulated LENGTH / BANDS / preset labels.
+        if (std::getenv("SPECTR_POLISH_SHOTS") != nullptr) {
+            auto& store = rig.store;
+            const auto open_menu_at = [&](float x, float y) {
+                char script[512];
+                std::snprintf(script, sizeof script,
+                    "(() => { if (!globalThis.__pulpActivateMaterializedElement__("
+                    "'[data-spectr-filter-surface]','contextmenu',"
+                    "{clientX:%.0f,clientY:%.0f,offsetX:%.0f,offsetY:%.0f,button:2})) "
+                    "throw new Error('no band menu'); "
+                    "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+                    "globalThis.__pulpRuntimeSettle__(8); })();", x, y, x, y);
+                rig.eval(script, "spectr-polish-open");
+                settle(rig.clock, 16);
+                rig.activate("[data-spectr-band-action=\"modulation-toggle\"]");
+                settle(rig.clock, 16);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+            };
+            const auto report_panel = [&](const char* name) {
+                rig.eval(std::string("(() => { const p = document.querySelector("
+                    "'[data-spectr-modulation-panel]'); const m = document.querySelector("
+                    "'[data-spectr-band-context-menu]'); if (!p || !m) { console.log('[polish] ")
+                    + name + " NO PANEL'); return; } const r = p.getBoundingClientRect(); "
+                    "const b = m.getBoundingClientRect(); console.log('[polish] " + name
+                    + " menu top=' + b.top.toFixed(1) + ' panel top=' + r.top.toFixed(1) "
+                    "+ ' bottom=' + r.bottom.toFixed(1) + ' height=' + r.height.toFixed(1)); })();",
+                    "spectr-polish-report");
+                settle(rig.clock, 2);
+            };
+            const auto close_menu = [&] {
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                settle(rig.clock, 16);
+            };
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(8);
+            rig.resize(990.0f, 645.0f);
+            settle(rig.clock, 24);
+            open_menu_at(420.0f, 70.0f);
+            report_panel("near-top");
+            capture(rig, dir, prefix + "polish-submenu-near-top", backend, scale);
+            close_menu();
+            open_menu_at(420.0f, 430.0f);
+            report_panel("middle");
+            capture(rig, dir, prefix + "polish-submenu-middle", backend, scale);
+            close_menu();
+            // Several targets on: their Depth rows disclosed under them.
+            for (std::size_t t : {0u, 4u, 6u})
+                store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(4);
+            settle(rig.clock, 16);
+            open_menu_at(420.0f, 430.0f);
+            capture(rig, dir, prefix + "polish-submenu-progressive", backend, scale);
+            close_menu();
+            rig.activate("[data-spectr-settings-open]");
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            {
+                std::vector<pulp::view::ScrollView*> scrolls;
+                collect_scroll_views(*rig.root, scrolls);
+                pulp::view::ScrollView* body = nullptr;
+                for (auto* scroll : scrolls)
+                    if (scroll->content_size().height > scroll->bounds().height + 400.0f)
+                        body = scroll;
+                for (const float fraction : {0.45f, 0.6f, 0.75f, 0.9f, 1.0f}) {
+                    if (body != nullptr) {
+                        const float max_y = body->content_size().height - body->bounds().height;
+                        body->set_scroll(body->scroll_x(), max_y * fraction);
+                    }
+                    settle(rig.clock, 8);
+                    char name[64];
+                    std::snprintf(name, sizeof name, "polish-settings-modulation-%02d",
+                                  static_cast<int>(fraction * 100.0f));
+                    capture(rig, dir, prefix + name, backend, scale);
+                }
+            }
+            rig.activate("[data-spectr-settings-close]");
+            settle(rig.clock, 16);
+            // Header tooltips, after their hover delay (real time passes and
+            // the frame loop fires the runtime's timers).
+            const auto wait_ms = [&](int ms) {
+                for (int waited = 0; waited < ms; waited += 20) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                    rig.bridge().service_frame_callbacks();
+                    settle(rig.clock, 1);
+                }
+            };
+            for (const char* which : {"intensity", "freeze-toggle", "output-trim", "auto-gain"}) {
+                const std::string selector = std::string("[data-spectr-") + which + "]";
+                rig.eval("(() => { const n = globalThis.__pulpFindMaterializedElement__('" + selector
+                         + "'); const b = n && n.getBoundingClientRect ? n.getBoundingClientRect() : null;"
+                         " const at = b ? { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2 } : {};"
+                         " globalThis.__pulpActivateMaterializedElement__('" + selector
+                         + "', 'pointerenter', at); })();", "spectr-polish-tip");
+                wait_ms(800);
+                rig.root->layout_children();
+                settle(rig.clock, 4);
+                rig.eval("(() => { const t = document.querySelector('[data-spectr-header-tooltip]');"
+                         " const r = t && t.getBoundingClientRect ? t.getBoundingClientRect() : null;"
+                         " const s = t && t.firstChild && t.firstChild.getBoundingClientRect ? t.firstChild.getBoundingClientRect() : null;"
+                         " console.log('[polish] tip " + std::string(which) + " ' + (r ? ('x=' + r.left.toFixed(1)"
+                         " + ' y=' + r.top.toFixed(1) + ' w=' + r.width.toFixed(1) + ' h=' + r.height.toFixed(1)) : 'none')"
+                         " + (s ? (' text w=' + s.width.toFixed(1) + ' h=' + s.height.toFixed(1)) : '')); })();",
+                         "spectr-polish-tip-report");
+                capture(rig, dir, prefix + "polish-tooltip-" + which, backend, scale);
+                rig.eval("(() => { globalThis.__pulpActivateMaterializedElement__('" + selector
+                         + "', 'pointerleave', {}); })();", "spectr-polish-tip-leave");
+                settle(rig.clock, 4);
+            }
+            // The submenu scrolled to its end: Bands, Preset, and Freeze's
+            // Hold for Length under its Depth.
+            open_menu_at(420.0f, 430.0f);
+            {
+                const auto* viewport_view = [&]() -> const pulp::view::View* {
+                    std::string id;
+                    try {
+                        rig.eval("(() => { const el = document.querySelector("
+                                 "'[data-spectr-modulation-viewport]');"
+                                 " throw new Error('PULPVALUE:' + (el ? el.__pulpId : '')); })();",
+                                 "spectr-polish-viewport-id");
+                    } catch (const std::exception& e) {
+                        const std::string msg = e.what();
+                        const auto at = msg.find("PULPVALUE:");
+                        if (at != std::string::npos) {
+                            id = msg.substr(at + 10);
+                            const auto end = id.find_first_of(" \n\"'");
+                            if (end != std::string::npos) id = id.substr(0, end);
+                        }
+                    }
+                    return id.empty() ? nullptr : find_by_id(*rig.root, id);
+                }();
+                if (viewport_view != nullptr) {
+                    const auto box = pulp::view::ViewInspector::absolute_bounds(*viewport_view);
+                    const pulp::view::Point over{box.x + box.width * 0.5f, box.y + box.height * 0.5f};
+                    capture(rig, dir, prefix + "polish-submenu-hold-top", backend, scale);
+                    for (int i = 0; i < 12; ++i)
+                        pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 60.0f, {});
+                    settle(rig.clock, 8);
+                    rig.root->layout_children();
+                    settle(rig.clock, 4);
+                }
+                capture(rig, dir, prefix + "polish-submenu-end", backend, scale);
+            }
+            close_menu();
+            // Header context menus.
+            for (const char* which : {"intensity", "freeze-toggle"}) {
+                const std::string selector = std::string("[data-spectr-") + which + "]";
+                rig.eval("(() => { const n = globalThis.__pulpFindMaterializedElement__('" + selector
+                         + "'); const b = n && n.getBoundingClientRect ? n.getBoundingClientRect() : null;"
+                         " const at = b ? { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, button: 2 } : {};"
+                         " globalThis.__pulpActivateMaterializedElement__('" + selector
+                         + "', 'contextmenu', at); })();", "spectr-polish-ctx");
+                settle(rig.clock, 16);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+                capture(rig, dir, prefix + "polish-context-" + which, backend, scale);
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                settle(rig.clock, 8);
+            }
+            // LENGTH, BANDS and the preset label following their LFO.
+            rig.activate("[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+            settle(rig.clock, 8);
+            rig.activate("[data-spectr-pattern-menu-id=\"factory:harmonic\"]");
+            settle(rig.clock, 16);
+            store.set_value(spectr::kParamLfoShape, 2.0f);
+            store.set_value(spectr::kParamLfoRate, 16.0f);
+            for (const auto& [t, depth] : {std::pair{7u, 0.25f}, std::pair{11u, 1.0f},
+                                           std::pair{12u, 0.25f}}) {
+                store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+                store.set_value(spectr::lfo_route_amount_param_id(0, t), depth);
+            }
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(60);
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            capture(rig, dir, prefix + "polish-modulated-labels", backend, scale);
             return g_failures == 0 ? 0 : 1;
         }
 
@@ -7027,7 +7215,7 @@ int main(int argc, char** argv) {
         rig.activate_modulation_toggle(1, "LFO 2");
         rig.report_modulation_dom("after LFO 2 on");
         rig.report_native_state("after LFO 2 on");
-        show_modulation("06-MODULATION-lfo2-expanded", "LFO targets");
+        show_modulation("06-MODULATION-lfo2-expanded", "TARGETS");
 
         // Now an ASSERTION, not a probe. With both LFOs driven on, every LFO
         // target row (a switch and a Depth row per target, the one list the
@@ -7062,23 +7250,23 @@ int main(int argc, char** argv) {
         rig.activate(target_switch("morph"));
         rig.report_modulation_dom("after Morph target on");
         rig.report_native_state("after Morph target on");
-        show_modulation("07-MODULATION-target-morph-ON", "LFO targets");
+        show_modulation("07-MODULATION-target-morph-ON", "TARGETS");
 
         rig.activate(target_switch("morph"));
         rig.report_modulation_dom("after Morph target off");
         rig.report_native_state("after Morph target off");
-        show_modulation("08-MODULATION-target-morph-OFF", "LFO targets");
+        show_modulation("08-MODULATION-target-morph-OFF", "TARGETS");
 
         // The level targets: Intensity, Mix and Output on, then off.
         for (const char* key : {"intensity", "mix", "output"}) rig.activate(target_switch(key));
         rig.report_modulation_dom("after the level targets on");
         rig.report_native_state("after the level targets on");
-        show_modulation("09-MODULATION-level-targets-on", "LFO targets");
+        show_modulation("09-MODULATION-level-targets-on", "TARGETS");
 
         for (const char* key : {"intensity", "mix", "output"}) rig.activate(target_switch(key));
         rig.report_modulation_dom("after the level targets off");
         rig.report_native_state("after the level targets off");
-        show_modulation("10-MODULATION-level-targets-off", "LFO targets");
+        show_modulation("10-MODULATION-level-targets-off", "TARGETS");
 
         // Back to the collapsed state, proving the disclosure closes as well
         // as it opens -- a one-way drive would hide a stuck-open bug.
