@@ -3915,6 +3915,9 @@ TEST_CASE("every control on every editor surface resolves a press anywhere in it
         for (int i = 0; i < 40; ++i)
             pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, -60.0f, {});
         settle(rig.clock, 8);
+        // The rig renders no frames, so nothing lays the scrolled rows out
+        // the way a host's next frame does; do it here.
+        rig.root->layout_children();
         REQUIRE(attribute_of(list, offset_attribute) == "0");
         int pass = 0;
         for (std::string previous;; ++pass) {
@@ -3924,6 +3927,7 @@ TEST_CASE("every control on every editor surface resolves a press anywhere in it
             sweep(name + " at offset " + offset, nullptr, root_rect(*native_view_for(viewport_selector)));
             pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 90.0f, {});
             settle(rig.clock, 8);
+            rig.root->layout_children();
             REQUIRE(pass < 30);
         }
         // Every row of the list was reached at one of those positions.
@@ -11195,6 +11199,9 @@ TEST_CASE("the Modulation submenu scrolls its thirteen targets under a sticky he
                                  (viewport.top + viewport.bottom) * 0.5f};
     pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 90.0f, {});
     settle(rig.clock, 8);
+    // The rig renders no frames; lay the scrolled rows out as a host frame
+    // would before reading their rects.
+    rig.root->layout_children();
     CHECK(offset() == "90");
     const auto head_after = rect_of("[data-spectr-modulation-head]");
     CHECK(head_after.top == Catch::Approx(head.top).margin(0.5f));
