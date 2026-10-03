@@ -126,14 +126,19 @@ Right-click a band, open **Modulation**, and under **LFO 1 Targets** (or LFO 2) 
 - **Bank** moves all the band levels up and down together.
 - **Band shift** slides the whole set of bands up and down in frequency, keeping its width. You hear the sweep; the display stays where you set it, so you can keep drawing.
 - **Band spread** spreads the bands wider or narrower around their centre.
+- **Intensity** pulls the shape toward flat and back, so the whole effect breathes. At 100% Depth it goes all the way to flat at the top of each cycle, wherever the Intensity knob sits.
+- **Mix** pulls toward the original input and back. Over a frozen sound this blends frozen and live in time: try a slow sine for a swell, or a square for a rhythmic gate between the two.
 - **Morph** rocks the A/B morph back and forth around where the slider sits.
 - **Freeze** switches between LIVE and FROZEN. Depth is how much of each cycle is frozen, and every freeze captures fresh sound. Try a square wave on a short rate for rhythmic stutters.
 - **Length** picks each new freeze's loop length around your LENGTH setting. Depth is how many steps either way it can go. A loop that is already playing is never resized.
+- **Output** moves the volume up and down around your Output setting, up to 6 dB either way at 100% Depth. AUTO never cancels it.
 - **Snapshot A / B** blend toward that snapshot and back again.
 
-A and B do nothing if that snapshot is empty, and Morph needs both.
+A and B do nothing if that snapshot is empty, and Morph needs both. The list scrolls: the most-used targets are at the top, and the heading stays put while you scroll.
 
-**Touching something an LFO is driving.** The LFO keeps running. Press LIVE / FROZEN while Freeze is modulated and your press holds until the LFO next switches; pick a LENGTH and it becomes the new centre. With **Ask before overriding modulation** on (Settings, under Modulation, on by default) Spectr asks first: **Keep modulating** does what you asked and leaves the LFO running, **Turn off** switches that LFO's target off and then does it. Return turns off, Escape keeps modulating, and **Don't ask again** turns the question off.
+The Intensity, Mix and Output knobs keep showing your setting while an LFO moves them; their outer ring turns violet to show that one is.
+
+**Touching something an LFO is driving.** The LFO keeps running. Press LIVE / FROZEN while Freeze is modulated and your press holds until the LFO next switches; pick a LENGTH and it becomes the new centre; turn the Intensity, Mix or Output knob and your setting becomes the new centre. With **Ask before overriding modulation** on (Settings, under Modulation, on by default) Spectr asks first: **Keep modulating** does what you asked and leaves the LFO running, **Turn off** switches that LFO's target off and then does it. Return turns off, Escape keeps modulating, and **Don't ask again** turns the question off. For a knob, Keep modulating lets you turn it from then on without asking again.
 
 ## Automation
 

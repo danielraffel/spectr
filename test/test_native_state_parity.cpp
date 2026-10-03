@@ -3992,6 +3992,30 @@ TEST_CASE("every control on every editor surface resolves a press anywhere in it
     close_overlay();  // the Custom editor
     require_home(rig);
 
+    // The Modulation submenu's target rows scroll inside a clipping viewport
+    // under a fixed head: every row at every scroll position. Every LFO 1
+    // target is switched on first, so no Depth row is an inert stop.
+    for (std::size_t t = 0; t < spectr::kRouteTargetCount; ++t)
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+    activate(rig, "[data-spectr-filter-surface]", "contextmenu",
+             R"js({clientX:660,clientY:430,offsetX:660,offsetY:430,button:2})js");
+    require_state(rig, "band-context");
+    activate(rig, "[data-spectr-band-action=\"modulation-toggle\"]");
+    REQUIRE(native_view_for("[data-spectr-modulation-viewport]") != nullptr);
+    // The head (Back through the sticky TARGETS heading) does not scroll; the
+    // rows below it are swept in the list pass.
+    sweep("modulation submenu head", native_view_for("[data-spectr-modulation-panel]"),
+          root_rect(*native_view_for("[data-spectr-modulation-head]")));
+    CHECK(sweep_scrolling_list(
+              "modulation submenu", "[data-spectr-modulation-rows]",
+              "[data-spectr-modulation-viewport]", "data-spectr-modulation-offset",
+              "[data-spectr-band-action]") > 1);
+    close_overlay();  // the Modulation submenu
+    close_overlay();  // the band menu
+    require_home(rig);
+
     activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
     activate(rig, "[data-spectr-pattern-manage]");
     sweep("preset manager");
@@ -11002,5 +11026,220 @@ TEST_CASE("a LENGTH pick while the Length target is on asks, and changes the cen
     // The pick landed as the new centre, and the target stayed on.
     CHECK(rig.processor.freeze_length_preset() == 17);
     CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 7)) == 1.0f);
+    storage.require_unchanged();
+}
+
+// ── Intensity, Mix and Output as LFO targets ──────────────────────────────
+
+namespace {
+
+// The native view a selector names, read back the way this file reads
+// runtime state: throw it and parse the message.
+const View* native_view_of(NativeEditorRig& rig, std::string_view selector) {
+    std::string id;
+    try {
+        rig.bridge().load_script(
+            std::string{"(() => { const n = globalThis.__pulpFindMaterializedElement__("}
+                + js_string(selector) + "); throw new Error('NATIVEID:' + "
+                "(n ? (n.__pulpId || n.id || '') : '') + ':END'); })();",
+            "spectr-native-view-of");
+    } catch (const std::exception& error) {
+        const std::string message = error.what();
+        const auto begin = message.find("NATIVEID:");
+        const auto end = message.find(":END");
+        if (begin != std::string::npos && end != std::string::npos)
+            id = message.substr(begin + 9, end - begin - 9);
+    }
+    if (id.empty()) return nullptr;
+    const std::function<const View*(const View&)> find = [&](const View& view) -> const View* {
+        if (view.id() == id) return &view;
+        for (std::size_t index = 0; index < view.child_count(); ++index)
+            if (const auto* match = find(*view.child_at(index))) return match;
+        return nullptr;
+    };
+    return find(*rig.root);
+}
+
+bool row_inside(const RootRect& row, const RootRect& viewport) {
+    return row.top >= viewport.top - 0.5f && row.bottom <= viewport.bottom + 0.5f;
+}
+
+}  // namespace
+
+TEST_CASE("the Modulation submenu scrolls its eleven targets under a sticky heading",
+          "[native-n1][state-parity][modulation][routing][scroll]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.resize(990, 645);
+    settle(rig.clock, 96);
+    require_home(rig);
+    open_band_menu(rig);
+    settle(rig.clock, 12);
+    const auto rect_of = [&](std::string_view selector) {
+        const auto* view = native_view_of(rig, selector);
+        INFO("selector " << selector);
+        REQUIRE(view != nullptr);
+        return root_rect(*view);
+    };
+    const auto offset = [&] {
+        return runtime_value(rig,
+            "String(document.querySelector('[data-spectr-modulation-rows]')"
+            "?.getAttribute('data-spectr-modulation-offset'))", "spectr-modulation-offset");
+    };
+    const auto row = [](const char* action) {
+        return std::string("[data-spectr-band-action=\"") + action + "\"]";
+    };
+    // Eleven targets, in the planned order.
+    CHECK(runtime_value(rig,
+        "Array.from(document.querySelectorAll('[data-spectr-modulation-rows] [data-spectr-band-action^=\"modulation-target-\"]'))"
+        ".map((n) => n.getAttribute('data-spectr-band-action')).filter((a) => !a.includes('depth')).join(',')",
+        "spectr-modulation-order")
+          == "modulation-target-bank,modulation-target-band-shift,modulation-target-band-spread,"
+             "modulation-target-intensity,modulation-target-mix,modulation-target-morph,"
+             "modulation-target-freeze,modulation-target-length,modulation-target-output,"
+             "modulation-target-a,modulation-target-b");
+
+    const auto viewport = rect_of("[data-spectr-modulation-viewport]");
+    const auto head = rect_of("[data-spectr-modulation-head]");
+    const auto panel = rect_of("[data-spectr-modulation-panel]");
+    const auto rows = rect_of("[data-spectr-modulation-rows]");
+    CAPTURE(viewport.top, viewport.bottom, rows.bottom - rows.top, panel.top, panel.bottom);
+    // The list is longer than the room the menu has, so it scrolls...
+    REQUIRE(rows.bottom - rows.top > viewport.bottom - viewport.top + 1.0f);
+    REQUIRE(native_view_of(rig, "[data-spectr-modulation-scrollbar]") != nullptr);
+    CHECK(offset() == "0");
+    // ...and the panel never grows past the editor (780 design px of 860).
+    CHECK(panel.bottom - panel.top <= 780.5f);
+    CHECK(head.bottom <= viewport.top + 0.5f);
+    // The four most-modulated targets and their Depth rows show unscrolled.
+    for (const char* action : {"modulation-target-bank", "modulation-target-depth-bank",
+                               "modulation-target-band-shift", "modulation-target-depth-band-shift",
+                               "modulation-target-band-spread", "modulation-target-depth-band-spread",
+                               "modulation-target-intensity", "modulation-target-depth-intensity"}) {
+        INFO(action);
+        CHECK(row_inside(rect_of(row(action)), viewport));
+    }
+    // Control: the last row is NOT visible until the list scrolls.
+    CHECK_FALSE(row_inside(rect_of(row("modulation-target-depth-b")), viewport));
+
+    // A wheel over the list moves the rows, never the head.
+    const pulp::view::Point over{(viewport.left + viewport.right) * 0.5f,
+                                 (viewport.top + viewport.bottom) * 0.5f};
+    pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 90.0f, {});
+    settle(rig.clock, 8);
+    CHECK(offset() == "90");
+    const auto head_after = rect_of("[data-spectr-modulation-head]");
+    CHECK(head_after.top == Catch::Approx(head.top).margin(0.5f));
+    CHECK(head_after.bottom == Catch::Approx(head.bottom).margin(0.5f));
+    CHECK(rect_of(row("modulation-target-bank")).top < viewport.top);  // scrolled away
+
+    // Toggling a target re-renders the menu and keeps the offset.
+    activate(rig, row("modulation-target-output"));
+    settle(rig.clock, 8);
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 10)) == 1.0f);
+    CHECK(offset() == "90");
+
+    // The keyboard: End lands on the last stop (Snapshot B's switch; its Depth
+    // row is off, so not a stop) and scrolls it fully into view.
+    const auto key = [&](pulp::view::KeyCode code) {
+        REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
+            *rig.root, static_cast<int>(code), pulp::view::kModNone, true));
+        settle(rig.clock, 6);
+    };
+    key(pulp::view::KeyCode::end_);
+    // The runtime applies a style the handler wrote at its next read of the
+    // document; read the offset first, so the native boxes are current.
+    const auto bottom = offset();
+    CHECK(row_inside(rect_of(row("modulation-target-b")), viewport));
+    CHECK(std::stoi(bottom) > 90);
+    // Wheel back to the top, then step up from the last stop: the stop above
+    // it (Snapshot A's switch) is scrolled into view again.
+    for (int i = 0; i < 20; ++i)
+        pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, -60.0f, {});
+    settle(rig.clock, 8);
+    CHECK(offset() == "0");
+    key(pulp::view::KeyCode::up);
+    CHECK(offset() != "0");
+    CHECK(row_inside(rect_of(row("modulation-target-a")), viewport));
+    storage.require_unchanged();
+}
+
+TEST_CASE("grabbing a modulated level knob asks, and the knob keeps its own value",
+          "[native-n1][state-parity][modulation][level]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    for (std::size_t t : {8u, 9u, 10u})
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    feed_audio_blocks(rig, 4);
+    settle(rig.clock, 8);
+    ModulationEditRecorder recorder(rig.store);
+    const auto dialog_open = [&] {
+        return runtime_value(rig,
+            "String(!!document.querySelector('[data-spectr-override-dialog]'))", "dialog") == "true";
+    };
+    const auto prompt = [&] {
+        return runtime_value(rig,
+            "String(document.querySelector('[data-spectr-override-prompt]')?.textContent)", "prompt");
+    };
+    // Each knob says an LFO moves it, and still shows its own value.
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-intensity]')?.getAttribute('data-spectr-knob-modulated') === '1'"
+        " && document.querySelector('[data-spectr-mix]')?.getAttribute('data-spectr-knob-modulated') === '1'"
+        " && document.querySelector('[data-spectr-output-trim]')?.getAttribute('data-spectr-knob-modulated') === '1'"
+        " && document.querySelector('[data-spectr-intensity]')?.getAttribute('aria-valuenow') === '100'",
+        "the level knobs do not show their LFO, or do not show their own value");
+
+    // INTENSITY: a drag asks on release and moves nothing.
+    const auto intensity = std::string("[data-spectr-intensity]");
+    activate(rig, intensity, "pointerdown", knob_point(intensity, 0.0));
+    activate(rig, intensity, "pointermove", knob_point(intensity, 40.0));
+    activate(rig, intensity, "pointerup", knob_point(intensity, 40.0));
+    REQUIRE(dialog_open());
+    CHECK(prompt() == "Intensity is being modulated by LFO 1. Turn off its Intensity target?");
+    CHECK(recorder.take().find("5000") == std::string::npos);
+    CHECK(rig.store.get_value(spectr::kParamIntensity) == 100.0f);
+    // Keep modulating: the target stays on, and the knob turns from now on
+    // without asking.
+    activate(rig, "[data-spectr-manager-action=\"override-keep\"]");
+    CHECK_FALSE(dialog_open());
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 8)) == 1.0f);
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    activate(rig, intensity, "pointerdown", knob_point(intensity, 0.0));
+    activate(rig, intensity, "pointermove", knob_point(intensity, 40.0));
+    activate(rig, intensity, "pointerup", knob_point(intensity, 40.0));
+    CHECK_FALSE(dialog_open());
+    CHECK(recorder.take() == "begin 5000, set 5000=75, end 5000");
+
+    // MIX: a key step asks; Turn off writes the Mix target's own lane off
+    // (4061), then applies the step.
+    activate(rig, "[data-spectr-mix]", "keydown", R"js({key:"ArrowDown"})js");
+    REQUIRE(dialog_open());
+    CHECK(prompt() == "Mix is being modulated by LFO 1. Turn off its Mix target?");
+    activate(rig, "[data-spectr-manager-action=\"override-turn-off\"]");
+    CHECK_FALSE(dialog_open());
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 9)) == 0.0f);
+    CHECK(rig.store.get_value(spectr::kMix) == Catch::Approx(99.0f));
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 10)) == 1.0f);  // control
+
+    // OUTPUT: a wheel notch asks too; with the Setting off it just moves.
+    activate(rig, "[data-spectr-output-trim]", "wheel", R"js({deltaY:40})js");
+    REQUIRE(dialog_open());
+    CHECK(prompt() == "Output is being modulated by LFO 1. Turn off its Output target?");
+    activate(rig, "[data-spectr-manager-action=\"override-keep\"]");
+    CHECK(rig.store.get_value(spectr::kOutputTrim) < 0.0f);
+    rig.bridge().load_script("globalThis.__spectrAskBeforeOverride = false;", "ask-off");
+    (void)recorder.take();
+    activate(rig, "[data-spectr-mix]", "keydown", R"js({key:"ArrowDown"})js");
+    CHECK_FALSE(dialog_open());  // Mix is no longer driven anyway; Output below is
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 9), 1.0f);
+    (void)rig.processor.apply_surface_params(false);
+    feed_audio_blocks(rig, 2);
+    settle(rig.clock, 8);
+    activate(rig, "[data-spectr-mix]", "keydown", R"js({key:"ArrowDown"})js");
+    CHECK_FALSE(dialog_open());
+    CHECK(rig.store.open_gesture_count() == 0);
     storage.require_unchanged();
 }

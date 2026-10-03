@@ -167,6 +167,12 @@ EDITS = [
 
 def main():
     raw = open(PATH, encoding="utf-8").read()
+    # patch_materialized_modulation_level_targets.py runs after this script
+    # and rewrites some of the text it wrote (the target list, lane ids, the
+    # knob). Its marker proves this script already ran.
+    if escaped("function spectrRouteLaneId(") in raw:
+        print("already applied (superseded in part by patch_materialized_modulation_level_targets.py)")
+        return 0
     changed = False
     for label, old, new in EDITS:
         old_e, new_e = escaped(old), escaped(new)
