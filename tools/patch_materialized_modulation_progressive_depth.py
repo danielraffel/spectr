@@ -54,8 +54,11 @@ EDITS = [
      '      "data-spectr-disclosed": hidden ? "0" : "1",\n'
      '      style: {\n'
      '        display: hidden ? "none" : "flex", alignItems: "center", gap: 10, width: "100%",\n'
-     '        padding: indent ? "2px 12px 8px 26px" : "6px 12px",\n'
+     '        padding: indent ? "6px 12px 6px 26px" : "6px 12px",\n'
      '        color: disabled ? "rgba(255,255,255,0.25)" : indent ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.88)",\n'),
+    ('a hidden slider row reaches for no press',
+     '        style: { position: "relative", flex: 1, height: 16, cursor: disabled ? "default" : "pointer", hitSlop: "6 6" }\n',
+     '        style: { position: "relative", flex: 1, height: 16, cursor: disabled ? "default" : "pointer", hitSlop: hidden ? "0 0" : "6 6" }\n'),
     ('the submenu is capped so its targets scroll inside it',
      '  const modulationPanelMax = Math.max(120, menuMaxHeight - 44);\n',
      '  // Capped (__spectrProgressiveDepth): opened anywhere, it sits beside its\n'
@@ -145,11 +148,13 @@ SETTINGS_NEW = r'''  // Grouped and progressively disclosed (__spectrProgressive
              fontSize: 9, fontWeight: 600, letterSpacing: 1.8, color: "rgba(178,200,224,0.88)" }
   }, React.createElement("span", null, label), extra || null);
   // Always mounted, hidden while closed (display: none): the bridge appends a
-  // row that mounts late instead of placing it.
+  // row that mounts late instead of placing it. 28 tall so a slider's 11 pt
+  // press reach stays inside its own row rather than taking the bottom of the
+  // switch above (the all-controls first-press sweep).
   const nested = (key, attrs, label, control, hidden) => React.createElement("div", Object.assign({
-    key, "data-spectr-disclosed": hidden ? "0" : "1",
+    key, "data-spectr-disclosed": hidden ? "0" : "1", "data-spectr-nested-label": label,
     style: { display: hidden ? "none" : "flex", alignItems: "center", gap: 14, marginLeft: 12,
-                  paddingLeft: 12, borderLeft: "1px solid rgba(120,180,255,0.3)", marginTop: -4 }
+                  paddingLeft: 12, borderLeft: "1px solid rgba(120,180,255,0.3)", minHeight: 28 }
   }, attrs), React.createElement("div", { style: { width: 112, flexShrink: 0, fontSize: 10,
                                                    color: "rgba(255,255,255,0.72)", letterSpacing: 0.5 } }, label),
     React.createElement("div", { style: { flex: 1, display: "flex", justifyContent: "flex-end" } }, control));

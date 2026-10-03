@@ -90,10 +90,14 @@ EDITS = [
      '    next.holdForLength = modulation.freeze_hold_for_length;\n'),
     ('Settings writes each target\'s own lane',
      '  const lane = (t) => (t >= 8 ? 4052 : 4020) + (lfo - 1) * 20 + t;  // level targets: own block\n',
-     '  const lane = (t) => globalThis.spectrRouteLane(lfo, t);\n'),
+     '  // The shared helper, inline fallback for a sandbox that lifts this alone.\n'
+     '  const lane = (t) => globalThis.spectrRouteLane ? globalThis.spectrRouteLane(lfo, t)\n'
+     '    : t >= 11 ? 4100 + (lfo - 1) * 20 + (t - 11) : (t >= 8 ? 4052 : 4020) + (lfo - 1) * 20 + t;\n'),
     ('"Turn off" writes the target\'s own lane',
      '            { id: (r.target >= 8 ? 4052 : 4020) + (lfo - 1) * 20 + r.target, value: 0 },\n',
-     '            { id: globalThis.spectrRouteLane(lfo, r.target), value: 0 },\n'),
+     '            { id: globalThis.spectrRouteLane ? globalThis.spectrRouteLane(lfo, r.target)\n'
+     '                : r.target >= 11 ? 4100 + (lfo - 1) * 20 + (r.target - 11)\n'
+     '                : (r.target >= 8 ? 4052 : 4020) + (lfo - 1) * 20 + r.target, value: 0 },\n'),
     ('freeze_display carries the modulated LENGTH, BANDS and preset',
      '      store.lengthLfos = Array.isArray(p.length_lfos) ? p.length_lfos.map(Number) : [];\n'
      '      if (typeof store.paint === "function") store.paint();\n',
@@ -153,7 +157,19 @@ EDITS = [
      '      }),\n'),
     ('the preset label shows the preset the LFO is nearest',
      'selectedPatternName.length > 6 ? selectedPatternName.slice(0, 6) + "… \\u25BE" : selectedPatternName + " \\u25BE")))',
-     'React.createElement(SpectrPresetLabelText, { name: selectedPatternName }))))'),
+     'spectrPresetLabelText(selectedPatternName, spectrPresetShown))))'),
+    ('...in violet, read where the toolbar is drawn',
+     '  const [helpOpen, setHelpOpen] = useStateChrome(false);\n',
+     '  // The Preset target\'s nearest preset (__spectrStructuralTargets): a\n'
+     '  // freeze_display change re-renders the toolbar, which is rare.\n'
+     '  const spectrPresetShown = useSpectrModulatedDisplay();\n'
+     '  const spectrPresetDriven = spectrPresetShown.presetDriven === true && !!spectrPresetShown.presetName;\n'
+     '  const [helpOpen, setHelpOpen] = useStateChrome(false);\n'),
+    ('...with the label span carrying the cue',
+     '"data-spectr-selected-preset": true, title: selectedPatternName, style: { marginLeft: 6,',
+     '"data-spectr-selected-preset": true, "data-spectr-preset-modulated": spectrPresetDriven ? "1" : "", '
+     '"data-spectr-preset-shown": spectrPresetDriven ? spectrPresetShown.presetName : selectedPatternName, '
+     'title: selectedPatternName, style: { color: spectrPresetDriven ? "' + INK + '" : undefined, marginLeft: 6,'),
     ('a preset picked while an LFO drives Preset asks first, and moves the centre',
      '  const applyPattern = useAppC((p) => {\n'
      '    const b = bankRef.current;\n'
@@ -229,20 +245,11 @@ function SpectrBandsLabel({ count }) {
   }, (driven ? shown.bands : count) + " BANDS ▾");
 }
 // The preset label's text: the preset the Preset target is nearest while it
-// plays one, in violet (the label's own span, painted from here).
-function SpectrPresetLabelText({ name }) {
-  const shown = useSpectrModulatedDisplay();
-  const driven = shown.presetDriven === true && !!shown.presetName;
+// plays one, else the chosen preset. Plain text, so the toolbar's optical
+// centering measures it exactly as before.
+function spectrPresetLabelText(name, shown) {
+  const driven = shown && shown.presetDriven === true && !!shown.presetName;
   const text = driven ? shown.presetName : name;
-  React.useLayoutEffect(() => {
-    const span = document.querySelector ? document.querySelector("[data-spectr-selected-preset]") : null;
-    if (!span || !span.style) return;
-    span.style.color = driven ? "INK" : "";
-    if (typeof span.setAttribute === "function") {
-      span.setAttribute("data-spectr-preset-modulated", driven ? "1" : "");
-      span.setAttribute("data-spectr-preset-shown", text);
-    }
-  });
   return text.length > 6 ? text.slice(0, 6) + "… ▾" : text + " ▾";
 }
 // The presets around `id` in menu order (factory, then user), four each way,
