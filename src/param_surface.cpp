@@ -506,6 +506,7 @@ void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask& task) noexce
 namespace detail {
 std::atomic<std::uint64_t> g_param_sync_backlog{0};
 std::atomic<int> g_param_sync_test_stall_ms{0};
+std::atomic<void (*)()> g_param_sync_spawned_hook{nullptr};
 } // namespace detail
 
 Spectr::SurfaceDrift Spectr::sample_surface_drift_() noexcept {

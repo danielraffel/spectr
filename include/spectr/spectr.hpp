@@ -79,13 +79,19 @@ namespace detail {
 /// every Spectr in the process. See `spectr_param_sync_backlog_v1()`.
 extern std::atomic<std::uint64_t> g_param_sync_backlog;
 
-/// Test seam for the parameter-sync worker. Zero in every
-/// shipping run, where it costs one relaxed load.
+/// Test seams for the parameter-sync worker. Each costs one relaxed load in
+/// a shipping run.
 ///
 /// `g_param_sync_test_stall_ms`: the worker sleeps this long before it
 /// applies a task (the in-process twin of SPECTR_TEST_PARAM_SYNC_STALL_MS),
 /// so a test can starve the worker an offline block waits on.
 extern std::atomic<int> g_param_sync_test_stall_ms;
+/// `g_param_sync_spawned_hook`: called on the audio thread right after a
+/// parameter-sync task is handed to the worker, so a test can let the worker
+/// run to completion at exactly that point -- the worst interleaving the
+/// scheduler could produce -- and prove the outcome does not depend on it.
+/// Null in every shipping run.
+extern std::atomic<void (*)()> g_param_sync_spawned_hook;
 } // namespace detail
 
 /// The most one host block flagged offline waits for Spectr's own workers
@@ -477,6 +483,11 @@ public:
     /// `kOfflineBlockWaitBudget` and rendered anyway. Any thread.
     [[nodiscard]] std::uint64_t offline_wait_budget_exhausted_count() const noexcept {
         return offline_wait_budget_exhausted_.load(std::memory_order_relaxed);
+    }
+    /// Parameter-sync publishes dropped because a newer request -- the audio
+    /// path's own mask for that block -- had already been made. Any thread.
+    [[nodiscard]] std::uint64_t param_sync_superseded_count() const noexcept {
+        return param_sync_superseded_.load(std::memory_order_relaxed);
     }
 
     // ── Supplemental plugin state (pulp#625 / PR#628 hooks) ─────────────
@@ -1238,6 +1249,7 @@ private:
     std::atomic<std::uint64_t> param_sync_done_{0};
     std::atomic<bool> host_offline_render_{false};
     std::atomic<std::uint64_t> offline_wait_budget_exhausted_{0};
+    std::atomic<std::uint64_t> param_sync_superseded_{0};
     std::atomic<bool> offline_wait_budget_logged_{false};
     // Offline blocks only: wait for the worker results a paced host would
     // already have adopted by now, for at most kOfflineBlockWaitBudget.

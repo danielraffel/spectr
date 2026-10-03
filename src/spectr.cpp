@@ -504,6 +504,7 @@ void Spectr::publish_processing_state_() noexcept {
         ? renderer_->publish_layout_at(mask_layout, t_sync_publish.ordinal, &superseded)
         : renderer_->publish_layout(mask_layout);
     if (published && superseded) {
+        param_sync_superseded_.fetch_add(1, std::memory_order_relaxed);
         // A newer request is already staged; nothing of ours was. Do not
         // remember this layout as published, or a later identical publish
         // would be skipped and never reach the audio.
@@ -1252,13 +1253,22 @@ void Spectr::retire_param_sync_through_(std::uint64_t tag) noexcept {
 
 void Spectr::spawn_param_sync_(MaskRenderer* renderer) noexcept {
     const auto tag = param_sync_requested_.load(std::memory_order_relaxed) + 1;
-    // Reserved BEFORE the block's own staged layout is handed off (the caller
-    // flushes after this), so a layout the audio thread staged in the same
-    // block is the newer request and wins the adoption deterministically.
+    // Three steps, in this order. The ordinal is reserved first, so a layout
+    // the audio thread staged in this block -- or the mask it claimed -- is the
+    // NEWER request. The block's handoff is then flushed, which publishes that
+    // newer request (a staged layout's ordinal, or the claim's bump). Only
+    // then is the worker spawned: it can no longer run before the audio
+    // thread's request exists, so its publish is superseded however the
+    // scheduler interleaves the two. Spawning before the flush left a window
+    // in which a fast worker staged the base mask over the one the audio path
+    // owned.
     const auto ordinal = renderer ? renderer->reserve_request_ordinal() : 0;
+    if (renderer) renderer->flush_design_handoff();
     if (param_sync_lane_.try_spawn(ParamSyncTask{tag, ordinal, renderer})) {
         param_sync_requested_.store(tag, std::memory_order_relaxed);
         detail::g_param_sync_backlog.fetch_add(1, std::memory_order_acq_rel);
+        if (auto* hook = detail::g_param_sync_spawned_hook.load(std::memory_order_relaxed))
+            hook();
     }
 }
 
@@ -1350,10 +1360,11 @@ void Spectr::process(
         MaskRenderer* renderer;
         bool param_sync = false;
         ~BlockEndHandoff() {
+            // A param sync flushes the handoff itself, between reserving its
+            // ordinal and spawning (see spawn_param_sync_).
             if (param_sync) self->spawn_param_sync_(renderer);
-            if (!renderer) return;
-            renderer->flush_design_handoff();
-            renderer->defer_design_handoff(false);
+            else if (renderer) renderer->flush_design_handoff();
+            if (renderer) renderer->defer_design_handoff(false);
         }
     };
     BlockEndHandoff block_end_handoff{this, processor_prepared_ ? renderer : nullptr};

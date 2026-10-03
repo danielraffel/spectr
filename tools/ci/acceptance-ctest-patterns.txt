@@ -417,6 +417,7 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 ^"?an offline render of the Bands destination
 ^"?an offline flag left set
 ^"?prepare clears a host offline flag
+^"?a param sync loses to the mask
 # Session migration: a session saved before a control existed opens the way it
 # sounded.
 ^"?a pre-routing session

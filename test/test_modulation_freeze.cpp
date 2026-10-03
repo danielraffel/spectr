@@ -785,3 +785,47 @@ TEST_CASE("prepare clears a host offline flag", "[offline][offline-budget]") {
     rig.host.prepare(kRate, kBlock);
     CHECK_FALSE(rig.plugin->host_offline_render());
 }
+
+namespace {
+// Runs the param-sync worker to completion at the instant it is spawned: the
+// worst interleaving the scheduler could produce.
+void run_sync_worker_now() {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (spectr_param_sync_backlog_v1() != 0 && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+}
+struct SpawnHook {
+    SpawnHook() { spectr::detail::g_param_sync_spawned_hook.store(&run_sync_worker_now); }
+    ~SpawnHook() { spectr::detail::g_param_sync_spawned_hook.store(nullptr); }
+};
+}  // namespace
+
+TEST_CASE("a param sync loses to the mask the audio path claimed, however fast it runs",
+          "[modulation][bands-target][sync-order]") {
+    // While an LFO drives Bands the audio path owns the live mask and claims
+    // it every block. A host write drifts the surface and spawns a param sync
+    // in that same block; its base mask must be superseded by the audio
+    // path's request, even when the worker runs to completion the instant it
+    // is spawned -- before the block's handoff, had the spawn come first.
+    Rig rig(Pacing::paced);
+    draw_comb(rig);
+    rig.set(spectr::kParamBandCount, 48.0f);
+    rig.set(spectr::kParamLfoRate, 2.0f);
+    rig.set(spectr::lfo_route_enabled_param_id(0, kBandsT), 1.0f);
+    rig.set(spectr::lfo_route_amount_param_id(0, kBandsT), 1.0f);
+    for (int b = 0; b < 40; ++b) rig.block([](double) { return 2000.0; });
+    const SpawnHook hook;
+    const auto before = rig.plugin->param_sync_superseded_count();
+    constexpr int kWrites = 6;
+    for (int w = 0; w < kWrites; ++w) {
+        rig.set(spectr::band_gain_param_id(5), w % 2 ? 12.0f : -6.0f);
+        for (int b = 0; b < 8; ++b) rig.block([](double) { return 2000.0; });
+    }
+    const auto superseded = rig.plugin->param_sync_superseded_count() - before;
+    std::printf("[sync-order] %llu of %d worker-first sync publishes superseded\n",
+                static_cast<unsigned long long>(superseded), kWrites);
+    // Every write's sync loses. With the spawn ahead of the block's handoff
+    // (the order this replaced) the same run counts 0: each worker staged its
+    // base mask over the request the audio path had not yet published.
+    CHECK(superseded == static_cast<std::uint64_t>(kWrites));
+}
