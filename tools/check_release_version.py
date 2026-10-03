@@ -84,6 +84,13 @@ def binary_version_errors(bundle: Path, expected: str) -> list[str]:
 # The Diagnostics helper is its own product with its own version; every other
 # bundle in the installer is Spectr and must carry Spectr's version.
 FOREIGN_BUNDLE_IDS = {"com.pulp.spectr.diagnostics"}
+# Third-party code embedded in Spectr.app keeps its own versions: Sparkle's
+# framework and its Updater.app (org.sparkle-project.*).
+FOREIGN_BUNDLE_PREFIXES = ("org.sparkle-project.",)
+
+
+def is_foreign_bundle(bundle_id: str | None) -> bool:
+    return bundle_id in FOREIGN_BUNDLE_IDS or (bundle_id or "").startswith(FOREIGN_BUNDLE_PREFIXES)
 
 
 APP_BUNDLE_ID = "com.pulp.spectr"
@@ -121,7 +128,7 @@ def distribution_errors(dist_xml: str, name: str, expected: str,
         if ref.get("version") != expected:
             errors.append(f"{name}: pkg-ref {ref.get('id')} version is "
                           f"{ref.get('version')!r}, expected {expected!r}")
-    bundles = [b for b in root.iter("bundle") if b.get("id") not in FOREIGN_BUNDLE_IDS]
+    bundles = [b for b in root.iter("bundle") if not is_foreign_bundle(b.get("id"))]
     if not bundles:
         errors.append(f"{name}: declares no Spectr bundle versions")
     for b in bundles:
@@ -194,6 +201,17 @@ def self_test() -> int:
         '<bundle id="com.pulp.spectr.au"',
         '<bundle id="com.pulp.spectr" CFBundleShortVersionString="1.0.3" '
         'CFBundleVersion="1.0.3.2"/><bundle id="com.pulp.spectr.au"')
+    with_sparkle = dist.format(v="1.0.3").replace(
+        '<bundle id="com.pulp.spectr.au"',
+        '<bundle id="org.sparkle-project.Sparkle" CFBundleShortVersionString="2.10.0" '
+        'CFBundleVersion="2064"/><bundle id="com.pulp.spectr.au"')
+    cases.append(("embedded Sparkle keeps its own version",
+                  distribution_errors(with_sparkle, "d", "1.0.3") == []))
+    cases.append(("a Sparkle-prefixed id does not excuse a Spectr bundle",
+                  distribution_errors(with_sparkle.replace("2.10.0", "1.0.3").replace(
+                      'com.pulp.spectr.au" CFBundleShortVersionString="1.0.3"',
+                      'com.pulp.spectr.au" CFBundleShortVersionString="1.0.2"'),
+                      "d", "1.0.3") != []))
     cases.append(("practice app build accepted when declared",
                   distribution_errors(practice, "d", "1.0.3", "1.0.3.2") == []))
     cases.append(("practice app build rejected when not declared",
