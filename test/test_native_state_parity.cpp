@@ -11319,8 +11319,8 @@ TEST_CASE("grabbing a modulated level knob asks, and the knob keeps its own valu
 // horizontal trackpad delta, or a wheel past the end of the target list
 // bubbled out of the menu to the plot's zoom handler, and a wheel anywhere
 // outside the open menu zoomed the plot directly. While a menu is open the
-// wheel scrolls the menu or nothing (the macOS menu behaviour); see
-// tools/patch_materialized_menu_wheel_containment.py.
+// wheel scrolls the menu or nothing (the macOS menu behaviour). Pulp's overlay
+// routing owns the rule (route_passive_pointer / deliver_mouse_wheel).
 TEST_CASE("while a band menu is open no wheel reaches the plot behind it",
           "[native-n1][state-parity][modulation][wheel][overlay]") {
     PatternStoragePoison storage;

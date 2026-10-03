@@ -408,10 +408,9 @@ over the menu it scrolls only the menu and stops at its ends without chaining
 else it is swallowed and the menu stays open -- the macOS menu behaviour.
 Before, a wheel over the Modulation submenu's head or past the end of its list
 zoomed the viewport behind it. The rule belongs to Pulp's overlay routing
-(`route_passive_pointer` / `deliver_mouse_wheel`, Generous-Corp/pulp#9307);
-until Spectr builds against an SDK carrying it,
-`tools/patch_materialized_menu_wheel_containment.py` makes the plot and the
-knobs refuse the wheel while a menu is open (delete on that SDK bump).
+(`route_passive_pointer` / `deliver_mouse_wheel`, Generous-Corp/pulp#9307,
+Pulp SDK 0.901.0 and later): a wheel outside an open menu is dropped, and one
+inside it never bubbles past the menu's root.
 `test_native_state_parity.cpp`: "while a band menu is open no wheel reaches the
 plot behind it".
 

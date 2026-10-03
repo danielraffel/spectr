@@ -23,8 +23,7 @@ SETTINGS > MODULATION
   the target's name.
 
 Idempotent like the other patch_materialized_* scripts. Run after
-tools/patch_materialized_modulation_level_targets.py and
-tools/patch_materialized_menu_wheel_containment.py.
+tools/patch_materialized_modulation_level_targets.py.
 """
 
 import json
