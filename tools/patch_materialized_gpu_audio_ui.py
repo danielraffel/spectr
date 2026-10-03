@@ -75,8 +75,9 @@ COMPONENT = r'''function SpectrGpuAudioSurface({ enabled }) {
   const pill = enabled ? React.createElement("div", {
     "data-spectr-gpu-audio-status-pill": true,
     "data-spectr-gpu-audio-state": ready ? "gpu" : "cpu",
-    style: { position: "absolute", left: "50%", bottom: 62, transform: "translateX(-50%)",
-      display: "inline-flex", alignItems: "center", gap: 6, zIndex: 6, pointerEvents: "none",
+    style: { position: "absolute", left: 0, right: 0, bottom: 62, width: "100%",
+      boxSizing: "border-box", display: "flex", justifyContent: "center", alignItems: "center",
+      gap: 6, zIndex: 6, pointerEvents: "none",
       padding: "5px 10px", borderRadius: 3, border: "1px solid " + color,
       background: "rgba(8,12,18,0.9)", color, fontFamily: "var(--mono)",
       fontSize: 9.5, letterSpacing: 0.8, whiteSpace: "nowrap" }
