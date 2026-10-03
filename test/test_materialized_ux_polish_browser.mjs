@@ -37,11 +37,14 @@ assert.doesNotMatch(modulationSurface, /data-spectr-modulation-select/,
   'the old both-LFO Destinations ALL/NONE chips are still in Settings');
 assert.match(modulationSurface, /spectrModulationRouteList\(\)/,
   'Settings does not list the shared target list');
-for (const target of ['bank', 'band-shift', 'band-spread', 'morph', 'freeze', 'length']) {
+for (const target of ['bank', 'band-shift', 'band-spread', 'intensity', 'mix', 'morph',
+                      'freeze', 'length', 'output']) {
   assert.match(shippingSurface, new RegExp(`['"]${target}['"]`),
     `individual modulation target ${target} missing`);
 }
-assert.match(modulationSurface, /4030 \+ lane\(t\)/, 'target Depth lanes are not written');
+// On/off is lane(t) (the level targets in their own block from 4060), and the
+// Depth lane is on/off + 10.
+assert.match(modulationSurface, /lane\(t\) \+ 10/, 'target Depth lanes are not written');
 assert.match(shippingSurface, /lfo2Enabled|lfo2_enabled/, 'second LFO state is not represented in the bridge surface');
 const shortDwell = shippingSurface.replace(
   'const holdMs = /\\b(?:MUTED|UNMUTED)\\b/.test(display) ? 2800 : 2200;',
@@ -285,8 +288,8 @@ window.__spectrPolishStart = () => {
         // targets" chips select. Every row is mounted at mount (the native
         // bridge appends a late-mounted widget), and the list is shown
         // whether or not an LFO is on, so targets can be set up first.
-        const order = ['bank', 'band-shift', 'band-spread', 'morph', 'freeze',
-                       'length', 'a', 'b'];
+        const order = ['bank', 'band-shift', 'band-spread', 'intensity', 'mix',
+                       'morph', 'freeze', 'length', 'output', 'a', 'b'];
         const rowFor = key => panel.querySelector(
           '[data-spectr-settings-target="' + key + '"]');
         const shown = el => {
@@ -330,6 +333,12 @@ window.__spectrPolishStart = () => {
         if (edits()[1].payload.id !== 4046)
           throw new Error('LFO 2 Freeze switch wrote lane ' + edits()[1].payload.id
             + ', want 4046');
+        // A level target lives in its own block: LFO 2 Output is 4082.
+        rowFor('output').querySelector('[data-spectr-setting-toggle]').click();
+        await waitFor(() => edits().length >= 3, 'LFO 2 output switch bridge write');
+        if (edits()[2].payload.id !== 4082)
+          throw new Error('LFO 2 Output switch wrote lane ' + edits()[2].payload.id
+            + ', want 4082');
         await assertFinalSurface();
         result.textContent = 'SPECTR_MODULATION_OK';
         return;
@@ -547,7 +556,7 @@ assert.equal(oracleText(modulation), 'SPECTR_MODULATION_OK');
 // emitted source text. This severs the target button's handler and requires the
 // driven oracle to notice, so a future weakening turns this green->red.
 const deadTargets = shippingSurface.replace(
-  'onChange: (next) => publish("routeOn" + lfo + "_" + t, 4020 + lane(t), next)',
+  'onChange: (next) => publish("routeOn" + lfo + "_" + t, lane(t), next)',
   'onChange: () => {}');
 assert.notEqual(deadTargets, shippingSurface,
   'modulation target handler needle did not match; the negative control would be blind');

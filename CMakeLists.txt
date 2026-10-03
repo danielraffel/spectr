@@ -4184,15 +4184,24 @@ set_tests_properties(Spectr-gpu-audio-status PROPERTIES TIMEOUT 120 RESOURCE_LOC
 if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
    AND TARGET ${SPECTR_NATIVE_VST3_TARGET} AND TARGET ${SPECTR_NATIVE_AU_TARGET}
    AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET})
+    # Spectr.app is checked only when it carries the product version: a
+    # practice or preview build numbers the app alone differently (package.sh
+    # checks that one against the installer with --app-build-version). Built
+    # as a list rather than with empty generator expressions, which reach the
+    # command line as "" arguments argparse rejects.
+    set(_spectr_release_version_bundles
+        --bundle ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
+        --bundle ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
+        --bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
+    if(SPECTR_APP_BUILD_VERSION STREQUAL "")
+        list(APPEND _spectr_release_version_bundles
+            --bundle ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app)
+    endif()
     add_test(NAME Spectr-release-version
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_release_version.py
             --expected ${PROJECT_VERSION}
-            --bundle ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
-            --bundle ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
-            --bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap
-            $<$<STREQUAL:${SPECTR_APP_BUILD_VERSION},>:--bundle>
-            $<$<STREQUAL:${SPECTR_APP_BUILD_VERSION},>:${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app>
+            ${_spectr_release_version_bundles}
             --binary-version-bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
     set_tests_properties(Spectr-release-version PROPERTIES TIMEOUT 60)
     add_test(NAME Spectr-release-version-controls
