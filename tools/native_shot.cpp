@@ -2183,6 +2183,70 @@ int main(int argc, char** argv) {
             return g_failures == 0 ? 0 : 1;
         }
 
+        // SPECTR_CONTROL_TARGET_SHOTS=1: a header control's context menu with
+        // its own target rows, and "All targets..." opening the full
+        // Modulation submenu scrolled to and marking that target -- at the
+        // preferred and the minimum host size. Each frame logs the menu's and
+        // the marked row's boxes so the PNG is not the only evidence.
+        if (std::getenv("SPECTR_CONTROL_TARGET_SHOTS") != nullptr) {
+            auto& store = rig.store;
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            store.set_value(spectr::lfo_route_enabled_param_id(0, 6), 1.0f);
+            store.set_value(spectr::lfo_route_amount_param_id(0, 6), 0.6f);
+            store.set_value(spectr::lfo_route_enabled_param_id(1, 6), 1.0f);  // LFO 2 is off
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(8);
+            const auto report = [&](const char* name) {
+                rig.eval(std::string("(() => { const box = (s) => { const n = document.querySelector(s);"
+                    " const r = n && n.getBoundingClientRect ? n.getBoundingClientRect() : null;"
+                    " return r ? [r.left, r.top, r.right, r.bottom].map((v) => v.toFixed(1)).join(',') : 'none'; };"
+                    " console.log('[control-targets] ") + name
+                    + " menu=' + box('[data-spectr-control-menu]') + ' panel=' + box('[data-spectr-modulation-panel]')"
+                      " + ' viewport=' + box('[data-spectr-modulation-viewport]')"
+                      " + ' marked=' + box('[data-spectr-modulation-focus=\"true\"]')); })();",
+                    "spectr-control-targets-report");
+                settle(rig.clock, 2);
+            };
+            const auto open_control = [&](const std::string& selector) {
+                rig.eval("(() => { const n = globalThis.__pulpFindMaterializedElement__('" + selector
+                         + "'); const b = n && n.getBoundingClientRect ? n.getBoundingClientRect() : null;"
+                         " const at = b ? { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, button: 2 } : {};"
+                         " if (!globalThis.__pulpActivateMaterializedElement__('" + selector
+                         + "', 'contextmenu', at)) throw new Error('no context menu: " + selector + "');"
+                         " if (typeof globalThis.__pulpRuntimeSettle__ === 'function')"
+                         " globalThis.__pulpRuntimeSettle__(8); })();", "spectr-control-targets-open");
+                settle(rig.clock, 16);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+            };
+            const auto close_all = [&] {
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                settle(rig.clock, 16);
+            };
+            struct Size { float w, h; const char* tag; };
+            for (const Size size : {Size{990.0f, 645.0f, "990"}, Size{792.0f, 516.0f, "792"}}) {
+                rig.resize(size.w, size.h);
+                settle(rig.clock, 24);
+                for (const auto& [selector, name] :
+                     {std::pair<std::string, std::string>{"[data-spectr-freeze-toggle]", "freeze"},
+                      std::pair<std::string, std::string>{"[data-spectr-dropdown=\"pattern\"]", "preset"}}) {
+                    open_control(selector);
+                    const std::string base = std::string("control-targets-") + size.tag + "-" + name;
+                    report((base + "-menu").c_str());
+                    capture(rig, dir, prefix + base + "-menu", backend, scale);
+                    rig.activate("[data-spectr-control-action=\"all-targets\"]");
+                    settle(rig.clock, 16);
+                    rig.root->layout_children();
+                    settle(rig.clock, 8);
+                    report((base + "-all").c_str());
+                    capture(rig, dir, prefix + base + "-all", backend, scale);
+                    close_all();
+                }
+            }
+            return g_failures == 0 ? 0 : 1;
+        }
+
         // SPECTR_POLISH_SHOTS=1: the 1.0.7 polish evidence -- the Modulation
         // submenu opened near the top of the window, its progressive Depth
         // rows, Settings > MODULATION, the header tooltip, the header context

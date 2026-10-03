@@ -2204,6 +2204,25 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_context_modulation_behavior.mjs)
     set_tests_properties(Spectr-context-modulation-behavior PROPERTIES TIMEOUT 60)
 
+    # A header control's context menu names its own LFO target, toggles only
+    # that target's lane, and opens the full Modulation submenu marked on it.
+    # Executed out of the shipped document; each plant must be rejected by an
+    # assertion (--expect-fail inverts the verdict inside the script).
+    add_test(NAME Spectr-materialized-control-menu-targets
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_control_menu_targets.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-control-menu-targets PROPERTIES TIMEOUT 60)
+    foreach(plant wrong-target no-accent every-accent)
+        add_test(NAME Spectr-materialized-control-menu-targets-${plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_control_menu_targets.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-control-menu-targets-${plant}-control
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+
     # The band menu's own Escape and outside-press dismissal, its
     # one-submenu-at-a-time rule, and the absence of the EDIT MODE rows --
     # executed, not grepped. The defect these guard is a listener on the wrong
