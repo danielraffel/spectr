@@ -257,7 +257,7 @@ version_args=(--expected "$VER" --pkg "$PKG" --product-name "$PKG_NAME")
 python3 "$ROOT/tools/check_release_version.py" "${version_args[@]}"
 
 # Each signed bundle declares the macOS floor its binaries are built for.
-MIN_OS="$(sed -n 's/^CMAKE_OSX_DEPLOYMENT_TARGET:STRING=//p' "$CACHE" | tail -1)"
+MIN_OS="$(sed -n 's/^CMAKE_OSX_DEPLOYMENT_TARGET:[^=]*=//p' "$CACHE" | tail -1)"
 [[ -n "$MIN_OS" ]] || { echo "build cache names no CMAKE_OSX_DEPLOYMENT_TARGET" >&2; exit 2; }
 python3 "$ROOT/tools/check_min_os.py" --expected "$MIN_OS" \
   --bundle "$APP" --bundle "$AU" --bundle "$VST3" --bundle "$CLAP"
