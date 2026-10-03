@@ -8726,6 +8726,13 @@ function createWidget(type, id, parentId, props) {
         || (typeof stateHook === "function"
           && stateHook !== materializedStateHookApplied);
       const shouldReapply = unscopedReason || materializedDirtyIds.size > 0;
+      // Commit counters for the editor-open gate (tools/patch_materialized_runtime_commit_stats.py).
+      const commitStats = g4.__pulpCommitStats__ || (g4.__pulpCommitStats__ = {
+        commits: 0, reapplies: 0, full_reapplies: 0, reapply_ms: 0 });
+      commitStats.commits += 1;
+      const commitLog = Array.isArray(g4.__pulpCommitLog__) ? g4.__pulpCommitLog__ : null;
+      const commitClock = typeof __performanceNow__ === "function" ? __performanceNow__ : null;
+      const commitStart = commitClock ? commitClock() : 0;
       // `null` means "no scope, re-apply everything".
       const scope = unscopedReason ? null : Array.from(materializedDirtyIds);
       materializedRootSignature = rootSignature;
@@ -8734,6 +8741,8 @@ function createWidget(type, id, parentId, props) {
       if (shouldReapply) {
         materializedHookApplied = metadataHook;
         if (typeof metadataHook === "function") metadataHook(scope);
+        commitStats.reapplies += 1;
+        if (scope === null) commitStats.full_reapplies += 1;
       }
       // Captured-state matching resolves selectors over the registry, and a
       // commit that mutated no host node cannot have changed which selector
@@ -8752,6 +8761,12 @@ function createWidget(type, id, parentId, props) {
           if (typeof g4.layout === "function") call2("layout");
         });
       }
+      const commitMs = commitClock ? commitClock() - commitStart : 0;
+      if (shouldReapply) commitStats.reapply_ms += commitMs;
+      if (commitLog && commitLog.length < 256) commitLog.push({
+        reapply: shouldReapply, full: shouldReapply && scope === null,
+        scope: scope ? scope.length : 0, ms: commitMs,
+        stack: String(new Error().stack || "").split("\n").slice(1, 14).join(" | ") });
     },
     // ── Misc required no-ops / passthroughs ────────────────────────
     // Return the DOM-shim Element when available so `ref.current.X`
@@ -11431,7 +11446,73 @@ function restoreMaterializedLayout(node, bridge) {
     return Promise.resolve({ ok: response && response.ok === true, payload: response });
   };
 
+  // ── Hydrate before the first render ─────────────────────────────────
+  //
+  // The processor's dispatcher answers synchronously, so the editor can read
+  // its state while it renders for the first time instead of mounting with
+  // defaults and hydrating afterwards. Every post-mount hydrate was another
+  // React commit, and in this captured import each commit re-applies the
+  // captured document (20-45 ms apiece on the editor open).
+  //
+  // initial(type) reads a READ-ONLY verb once per realm and hands every
+  // caller the same answer, so all of the first render agrees on one state.
+  // The mount's `editor_ready` then reconciles: it re-reads after every
+  // listener has subscribed and hydrates only if the processor moved in
+  // between, so nothing published during the mount is lost.
+  const initialReads = new Map();
+  const readNow = (type) => {
+    const id = 'spectr-initial-' + type;
+    globalThis.__spectrNativeDispatchTrace.push({ type, payload: {}, id });
+    if (typeof globalThis.__spectrEditorDispatch !== 'function') {
+      const result = fallback(type);
+      return result && result.ok ? result.payload : null;
+    }
+    let response;
+    try {
+      response = JSON.parse(globalThis.__spectrEditorDispatch(JSON.stringify({
+        type, payload: {}, id,
+      })));
+    } catch (error) {
+      console.error('[Spectr] initial ' + type + ' read failed', error);
+      return null;
+    }
+    if (response && response.ok === false
+        && String(response.error || '').includes('unavailable during validation')) {
+      const result = fallback(type);
+      return result && result.ok ? result.payload : null;
+    }
+    return response && response.ok === true ? response : null;
+  };
+  const initial = (type) => {
+    if (!initialReads.has(type)) initialReads.set(type, readNow(type));
+    return initialReads.get(type);
+  };
+  // The state the first render was given, until the mount reconciles it.
+  let unreconciledInitialState = null;
+  const initialState = () => {
+    const known = initialReads.has('processing_state_get');
+    const payload = initial('processing_state_get');
+    if (!known && payload) unreconciledInitialState = JSON.stringify(payload);
+    return payload;
+  };
+
   const postMessage = (type, payload = {}, id = '') => {
+    if (type === 'editor_ready' && unreconciledInitialState !== null) {
+      // The mount's own request, after a first render that already showed
+      // the processor's state: hydrate only what moved since that read.
+      const shown = unreconciledInitialState;
+      unreconciledInitialState = null;
+      const fresh = readNow('processing_state_get');
+      if (fresh && JSON.stringify(fresh) !== shown)
+        emit('processing_state_hydrate', fresh, 'spectr-processing-state-hydrate');
+      return dispatch('spectral_resolution_request', {}, 'spectr-native-resolution')
+        .then(result => {
+          if (!result.ok) throw new Error(result.payload?.error || 'resolution unavailable');
+          requestAnimationFrame(() => emit(
+            'spectral_resolution', result.payload, 'spectr-spectral-resolution'));
+          return { ok: true, payload: { ok: true } };
+        });
+    }
     if (type === 'editor_ready') {
       const ready = Promise.all([
         dispatch('processing_state_get', {}, 'spectr-native-state').then(result => {
@@ -11481,6 +11562,10 @@ function restoreMaterializedLayout(node, bridge) {
       return () => callbacks.delete(callback);
     },
     postMessage,
+    // Synchronous first-render reads; see "Hydrate before the first render".
+    initial(type) {
+      return type === 'processing_state_get' ? initialState() : initial(type);
+    },
   };
 
   globalThis.__spectrPublishNativeMessage = emit;
@@ -11531,6 +11616,10 @@ function restoreMaterializedLayout(node, bridge) {
   }
   activeNativeRoot = new NativeRoot();
   activeNativeRoot.render(capturedRootElement);
+  // Everything the mount committed, including the layout-effect flush
+  // render() runs before it returns; later commits are post-mount.
+  if (g5.__pulpCommitStats__)
+    g5.__pulpCommitStats__.mount_commits = g5.__pulpCommitStats__.commits;
   if (typeof g5.__pulpRuntimeSettle__ === "function") g5.__pulpRuntimeSettle__(8);
   // React commits the initially hidden Settings scrim a few frames after the
   // root render and its semantic overlay prop can claim a zero-size owner.
