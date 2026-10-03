@@ -700,6 +700,14 @@ if(SPECTR_SHARED_SPECTRAL_FIXTURE)
     target_link_libraries(Spectr-shared-spectral-renderer PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-renderer COMMAND Spectr-shared-spectral-renderer)
     set_tests_properties(Spectr-shared-spectral-renderer PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-scaling EXCLUDE_FROM_ALL test/test_shared_spectral_scaling.cpp)
+    target_link_libraries(Spectr-shared-spectral-scaling PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-scaling COMMAND Spectr-shared-spectral-scaling)
+    set_tests_properties(Spectr-shared-spectral-scaling PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-layers EXCLUDE_FROM_ALL test/test_shared_spectral_layers.cpp)
+    target_link_libraries(Spectr-shared-spectral-layers PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-layers COMMAND Spectr-shared-spectral-layers)
+    set_tests_properties(Spectr-shared-spectral-layers PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
     add_executable(Spectr-shared-spectral-mix EXCLUDE_FROM_ALL test/test_shared_spectral_mix.cpp)
     target_link_libraries(Spectr-shared-spectral-mix PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-mix COMMAND Spectr-shared-spectral-mix)
@@ -1902,6 +1910,16 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_html_raw_templates.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html)
     set_tests_properties(Spectr-editor-html-raw-templates PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-gpu-audio-status-ui
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_audio_status_ui.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html)
+    set_tests_properties(Spectr-gpu-audio-status-ui PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-gpu-audio-materialized-ui
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_audio_materialized_ui.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-gpu-audio-materialized-ui PROPERTIES TIMEOUT 30)
     add_test(NAME Spectr-materialized-propagation
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_propagation.mjs
