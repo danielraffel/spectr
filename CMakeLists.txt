@@ -4312,8 +4312,12 @@ if(APPLE AND Python3_Interpreter_FOUND)
     add_test(NAME Spectr-sparkle-release-tooling
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/ship/test_sparkle_release.py)
+    # A release-numbered shipping app must read the release feed.
+    add_test(NAME Spectr-sparkle-feed-policy
+        COMMAND ${CMAKE_COMMAND} -P
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/sparkle_feed_policy_test.cmake)
     set_tests_properties(Spectr-sparkle-controls Spectr-sparkle-release-tooling
-        PROPERTIES TIMEOUT 60)
+        Spectr-sparkle-feed-policy PROPERTIES TIMEOUT 60)
     if(SPECTR_SPARKLE_EMBEDDED AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
        AND TARGET ${SPECTR_NATIVE_VST3_TARGET} AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         add_test(NAME Spectr-sparkle-bundles

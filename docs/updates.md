@@ -58,6 +58,13 @@ a prerelease (verified: it 302s to `releases/download/<tag>/<asset>`, which
    release tagged on a commit older than the current latest's never becomes
    latest, and its feed is never read.
 
+A shipping Spectr.app numbered as a release (`CFBundleVersion` equal to the
+product version) always reads the release feed: configure refuses
+`SPECTR_SPARKLE_FEED_URL` or the practice channel on it (rehearsals carry a
+practice build number), and `package.sh` refuses to package a release-numbered
+app whose `SUFeedURL` is anything else -- before signing, and again on the
+signed app with `check_sparkle.py bundles --feed`.
+
 Preview and dev identities (`SPECTR_NATIVE_PREVIEW_IDENTITY`,
 `SPECTR_DEV_IDENTITY`) are different apps with different bundle IDs and get no
 release feed. `-DSPECTR_SPARKLE_CHANNEL=off` builds without the updater.

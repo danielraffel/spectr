@@ -18,6 +18,8 @@
 # ~/.config/pulp/secrets/sparkle/spectr_ed25519 and 1Password; it never enters
 # this repository.
 
+include(${CMAKE_CURRENT_LIST_DIR}/SpectrSparklePolicy.cmake)
+
 set(SPECTR_SPARKLE_PUBLIC_ED_KEY "mosCtB7H9gxWzbWUYyHiHTapl4sWMgkd4t09iIUnO2g=")
 set(SPECTR_SPARKLE_RELEASE_FEED
     "https://github.com/danielraffel/spectr/releases/latest/download/appcast.xml")
@@ -159,6 +161,12 @@ function(spectr_configure_sparkle target kind)
         # Spectr.app only; the plug-in bundles keep PROJECT_VERSION.
         set_target_properties(${target} PROPERTIES
             MACOSX_BUNDLE_BUNDLE_VERSION "${SPECTR_APP_BUILD_VERSION}")
+    endif()
+
+    spectr_sparkle_feed_policy_error(_policy_error "${kind}" "${SPECTR_APP_BUILD_VERSION}"
+        "${PROJECT_VERSION}" "${SPECTR_SPARKLE_FEED_URL}" "${SPECTR_SPARKLE_CHANNEL}")
+    if(NOT _policy_error STREQUAL "")
+        message(FATAL_ERROR "Spectr: ${_policy_error}")
     endif()
 
     if(NOT _feed STREQUAL "" AND NOT _feed MATCHES "^https://" AND

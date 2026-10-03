@@ -152,6 +152,21 @@ for artifact in "$AU" "$VST3" "$CLAP" "$APP"; do
   [[ -d "$artifact" ]] || { echo "missing installer input: $artifact" >&2; exit 2; }
 done
 
+# A RELEASE (Spectr.app numbered exactly VER) must read the release feed: an
+# app that ships reading a practice or loopback feed, or with no updater, can
+# never be offered the next release. Checked before anything is signed.
+RELEASE_FEED="https://github.com/danielraffel/spectr/releases/latest/download/appcast.xml"
+APP_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
+if [[ "$APP_BUILD" == "$VER" ]]; then
+  APP_FEED="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$APP/Contents/Info.plist" 2>/dev/null || true)"
+  [[ "$APP_FEED" == "$RELEASE_FEED" ]] || {
+    echo "Spectr.app $APP_BUILD is a release build but its SUFeedURL is '${APP_FEED:-<none>}'," >&2
+    echo "not $RELEASE_FEED. Reconfigure with -DSPECTR_SPARKLE_CHANNEL=release and no" >&2
+    echo "SPECTR_SPARKLE_FEED_URL, or number it as a practice/preview build." >&2
+    exit 2
+  }
+fi
+
 # Pulp's signing recipe relocates control-shipping sidecars from Contents/MacOS
 # into sealed Resources. Preserve that evidence for the packaged artifacts.
 
@@ -201,9 +216,8 @@ fi
 
 "$PULP_ROOT/tools/scripts/build_combined_installer.sh" "${args[@]}"
 
-# Spectr.app's own CFBundleVersion may carry a practice build number
-# (SPECTR_APP_BUILD_VERSION, e.g. 1.0.7.1); everything else is VER.
-APP_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
+# Spectr.app's own CFBundleVersion (APP_BUILD, read above) may carry a practice
+# build number (SPECTR_APP_BUILD_VERSION, e.g. 1.0.7.1); everything else is VER.
 PKG="$OUT/Spectr-$VER.pkg"
 version_args=(--expected "$VER" --pkg "$PKG")
 [[ "$APP_BUILD" == "$VER" ]] || version_args+=(--app-build-version "$APP_BUILD")
@@ -211,9 +225,12 @@ python3 "$ROOT/tools/check_release_version.py" "${version_args[@]}"
 
 # The updater lives in the app and nowhere else, and the signed app's nested
 # Sparkle code carries the Developer ID signature notarization requires.
+# A release also proves, on the signed app, that it reads the release feed.
 if [[ -d "$SPARKLE_FW" ]]; then
+  feed_args=()
+  [[ "$APP_BUILD" == "$VER" ]] && feed_args=(--feed "$RELEASE_FEED")
   python3 "$ROOT/tools/ship/check_sparkle.py" bundles --signed --app "$APP" \
-    --plugin "$AU" --plugin "$VST3" --plugin "$CLAP"
+    --plugin "$AU" --plugin "$VST3" --plugin "$CLAP" ${feed_args[@]+"${feed_args[@]}"}
 fi
 
 # A practice package is named for its build so two of them can sit side by side
