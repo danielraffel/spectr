@@ -156,7 +156,11 @@ void install_updater() {
                                               !strcasecmp(override_value, "on") ||
                                               !strcasecmp(override_value, "true"));
 
-    NSMenu* app_menu = [[[NSApp mainMenu] itemAtIndex:0] submenu];
+    // -itemAtIndex: raises on an out-of-range index, so an app launched with
+    // no main menu (or an empty one) must not reach it.
+    NSMenu* main_menu = [NSApp mainMenu];
+    NSMenu* app_menu = main_menu != nil && [main_menu numberOfItems] > 0
+        ? [[main_menu itemAtIndex:0] submenu] : nil;
     if (app_menu != nil) {
         static SpectrUpdaterMenuTarget* target = [[SpectrUpdaterMenuTarget alloc] init];
         NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:@"Check for Updates…"
