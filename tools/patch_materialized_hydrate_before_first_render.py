@@ -36,6 +36,10 @@ WHAT IT CHANGES
     Freeze       the store starts from the same read.
     Build info   read synchronously from a layout effect (same id order: its
                  rows are still created after the first render).
+    Latency      the rail chip and the Settings group subscribe from layout
+                 effects, so the App's layout-pass handover (which keeps the
+                 Latency group out of the first render, and so keeps every
+                 first-render node's generated id) reaches them.
     Tracing      the badge shows from the mount when build info says the
                  build traces, so the native show call commits nothing.
 
@@ -68,7 +72,7 @@ EDITS = [
   // mounting with defaults and committing again when a hydrate arrives.
   // See tools/patch_materialized_hydrate_before_first_render.py.
   const [initialNative] = useAppS(() => {
-    const bridge = window.pulp;
+    const bridge = typeof window !== "undefined" ? window.pulp : null;
     if (!bridge || typeof bridge.initial !== "function") return null;
     const payload = bridge.initial("processing_state_get");
     // The Latency group renders only once its state is known. It is handed
@@ -84,7 +88,7 @@ EDITS = [
     return { state, latency: payload.latency || null,
       library: window.SpectrNativePatterns.parse(state.patternsJson) };
   });
-  React.useLayoutEffect(() => {
+  (React.useLayoutEffect || React.useEffect)(() => {
     if (initialNative && initialNative.latency)
       window.SpectrNativeState.parse({ latency: initialNative.latency });
   }, []);
@@ -139,7 +143,7 @@ EDITS = [
 ''',
         '''  // A layout effect: still created after every first-render node, but
   // flushed inside the mount instead of as a commit of its own.
-  React.useLayoutEffect(() => { setStaticMounted(true); }, []);
+  (React.useLayoutEffect || useEffect)(() => { setStaticMounted(true); }, []);
 ''',
     ),
     (
@@ -248,6 +252,19 @@ EDITS = [
   }, [N]);
 ''',
     ),
+    (
+        "latency controls listen from the mount's layout pass",
+        '''  React.useEffect(function () {
+    const listeners = store.listeners || (store.listeners = []);
+''',
+        '''  // A layout effect: the App hands the processor's latency over in the
+  // mount's layout pass, and a passive subscription would arrive after it
+  // and miss it. (A test rig without layout effects falls back.)
+  (React.useLayoutEffect || React.useEffect)(function () {
+    const listeners = store.listeners || (store.listeners = []);
+''',
+        2,
+    ),
     # ── Freeze, morph, modulation, build info, tracing badge ───────────────
     (
         "freeze store starts from the processor",
@@ -268,8 +285,9 @@ EDITS = [
   const publishedRef = React.useRef(0);
 ''',
         '''  const [v, setV] = useStateChrome(() => {
-    const body = window.pulp && typeof window.pulp.initial === "function"
-      ? window.pulp.initial("processing_state_get") : null;
+    const bridge = typeof window !== "undefined" ? window.pulp : null;
+    const body = bridge && typeof bridge.initial === "function"
+      ? bridge.initial("processing_state_get") : null;
     const t = body ? Number(body.morph) : NaN;
     return Number.isFinite(t) ? t : 0;
   });
@@ -282,9 +300,10 @@ EDITS = [
         "modulation hook starts from the processor",
         '''  const [ready, setReady] = React.useState(() => globalThis.__spectrModulationLast != null);
 ''',
-        '''  if (globalThis.__spectrModulationLast == null && window.pulp
-      && typeof window.pulp.initial === "function") {
-    const body = window.pulp.initial("processing_state_get");
+        '''  const initialBridge = typeof window !== "undefined" ? window.pulp : null;
+  if (globalThis.__spectrModulationLast == null && initialBridge
+      && typeof initialBridge.initial === "function") {
+    const body = initialBridge.initial("processing_state_get");
     const seeded = spectrModulationFromNative(body && body.modulation);
     if (seeded) globalThis.__spectrModulationLast = { ...seeded };
   }
@@ -296,32 +315,28 @@ EDITS = [
         '''  React.useEffect(() => {
     mountedRef.current = true;
     let live = true;
-    if (!window.pulp || typeof window.pulp.postMessage !== "function") {
-      setLoadFailed(true);
-      return;
-    }
 ''',
-        '''  // A layout effect, so a synchronous read lands inside the mount: its rows
-  // are still created after the first render, but not as a commit of their
-  // own. A runtime without the synchronous read keeps the request below.
-  React.useLayoutEffect(() => {
+        '''  // A layout effect, so the synchronous read below lands inside the mount:
+  // the rows are still created after the first render, but not as a commit
+  // of their own. (A test rig without layout effects falls back.)
+  (React.useLayoutEffect || React.useEffect)(() => {
     mountedRef.current = true;
     let live = true;
-    if (!window.pulp || typeof window.pulp.postMessage !== "function") {
-      setLoadFailed(true);
-      return;
-    }
+''',
+    ),
+    (
+        "build info answers from the synchronous read when it has one",
+        '''    Promise.resolve(window.pulp.postMessage("build_info_get", {}, requestId("get"))).then(unwrap).then((body) => {
+''',
+        '''    // The request then resolves to the same object, which React ignores;
+    // a runtime without the synchronous read keeps asking as before.
     const initialInfo = typeof window.pulp.initial === "function"
       ? window.pulp.initial("build_info_get") : null;
-    if (initialInfo && initialInfo.ok === true && initialInfo.product_version
-        && initialInfo.sdk_version) {
-      setInfo(initialInfo);
-      return () => {
-        live = false;
-        mountedRef.current = false;
-        if (resetTimer.current) clearTimeout(resetTimer.current);
-      };
-    }
+    const knownInfo = !!(initialInfo && initialInfo.ok === true
+      && initialInfo.product_version && initialInfo.sdk_version);
+    if (knownInfo) setInfo(initialInfo);
+    (knownInfo ? Promise.resolve(initialInfo)
+      : Promise.resolve(window.pulp.postMessage("build_info_get", {}, requestId("get"))).then(unwrap)).then((body) => {
 ''',
     ),
     (
@@ -331,9 +346,10 @@ EDITS = [
 ''',
         '''  // Shown inside the mount when build info says this build traces, so the
   // native show call below finds it shown and commits nothing.
-  React.useLayoutEffect(() => {
-    const info = window.pulp && typeof window.pulp.initial === "function"
-      ? window.pulp.initial("build_info_get") : null;
+  (React.useLayoutEffect || React.useEffect)(() => {
+    const bridge = typeof window !== "undefined" ? window.pulp : null;
+    const info = bridge && typeof bridge.initial === "function"
+      ? bridge.initial("build_info_get") : null;
     if (info && info.tracing === true) setShown(true);
     globalThis.__spectrShowTracingBadge = () => setShown(true);
 ''',
@@ -350,11 +366,14 @@ def main():
     if encode(MARKER) in raw:
         print("hydrate before first render already applied")
         return 0
-    for name, old, new in EDITS:
+    for edit in EDITS:
+        name, old, new = edit[:3]
+        expected = edit[3] if len(edit) > 3 else 1
         count = raw.count(encode(old))
-        if count != 1:
-            sys.exit("FAIL: %s anchor occurs %d times, expected 1" % (name, count))
-        raw = raw.replace(encode(old), encode(new), 1)
+        if count != expected:
+            sys.exit("FAIL: %s anchor occurs %d times, expected %d"
+                     % (name, count, expected))
+        raw = raw.replace(encode(old), encode(new))
     json.loads(raw)
     PATH.write_text(raw, encoding="utf-8")
     print("hydrate before first render applied")
