@@ -61,9 +61,15 @@ TEST_CASE("Spectr actual processor selects shared output with matching fallback 
         // The service thread drains selections; this sleep is outside measured audio.
         std::this_thread::sleep_for(milliseconds(20));
         const auto gs = g->shared_product_snapshot(), cs = c->shared_product_snapshot();
+        const auto live_gpu = g->gpu_audio_status();
         std::printf("cycle=%u gpu_selected=%llu cpu_selected=%llu forced_gpu=%llu forced_cpu=%llu latency=%d\n",
                     cycle, (unsigned long long)gs.gpu_selected, (unsigned long long)gs.cpu_selected,
                     (unsigned long long)cs.gpu_selected, (unsigned long long)cs.cpu_selected, expected_latency);
+        REQUIRE(live_gpu.availability == spectr::GpuAudioStatus::Availability::Available);
+        REQUIRE(live_gpu.delivery.has_value());
+        CHECK(live_gpu.delivery->provider_state == 1);
+        CHECK(live_gpu.delivery->gpu_selected > 0);
+        CHECK(live_gpu.delivery->lost_terminal_records == 0);
         CHECK(gs.gpu_selected > 0);
         CHECK(cs.gpu_selected == 0);
         CHECK(cs.cpu_selected > 0);
