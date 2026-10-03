@@ -272,14 +272,27 @@ measure 24 +/- 3 dB apart and the shown step is +1 / -1 by half.
 
 ## Header controls: context menus
 
-Right-clicking LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH or BANDS opens a
-small menu in the band menu's style: the control's name, **Reset to** its
-default (Live, 100 %, 0.0 dB, 1 bar, 32 bands), then **MODULATION** scoped to
-that control's target -- LFO 1 and LFO 2, each a switch with its Depth slider
-under it while on (a target on for an LFO that is itself off reads "On, LFO
-off"; the menu does not switch the LFO on behind the user's back), plus Hold
-for Length under LIVE / FROZEN -- and **Ask before overriding modulation**.
-One overlay: an outside press, Escape or a press on its control closes it.
+Right-clicking LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH, BANDS, MORPH or
+the preset button opens a small menu in the band menu's style: the control's
+name, **Reset to** its default (Live, 100 %, 0.0 dB, 1 bar, 32 bands, A; the
+preset has none), then **MODULATION** scoped to that control's own target:
+
+- one row per LFO naming the target, e.g. **LFO 1 → Freeze** -- a dot for
+  whether that LFO is running (violet) or off (dim), the route's state (On,
+  Off, or "LFO off" when the route is on but its LFO is not) and the route's
+  switch. While the route is on its **Depth** slider sits under it; a route
+  whose LFO is off offers **Turn on LFO n** rather than switching the LFO on
+  behind the user's back. Each row writes only that target's lane;
+- **Hold for Length** under LIVE / FROZEN;
+- **All targets…** -- the band menu's full Modulation submenu, opened in
+  place of this menu on the LFO that drives the control, with the target list
+  scrolled to this control's row, that row marked (accent rule, tint and
+  bright label) and the keyboard cursor on it. Its top row (‹ LIVE / FROZEN)
+  returns to this menu; Escape, Left or an outside press close it.
+
+Then **Ask before overriding modulation**. One overlay: an outside press,
+Escape or a press on its control closes it. Snapshot A / B keep their own
+right-click (it clears a filled slot).
 
 ## Touching a modulated control
 

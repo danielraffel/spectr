@@ -11651,3 +11651,141 @@ TEST_CASE("right-clicking a header control opens its own reset and modulation me
     CHECK(rig.store.open_gesture_count() == 0);
     storage.require_unchanged();
 }
+
+// ── A header menu's own target ──────────────────────────────────────────────
+// Every control with a context menu names its own LFO target, toggles exactly
+// that target's lane (no other route moves), fits the authored box at every
+// host size, and opens the full Modulation submenu scrolled to and marking
+// that target, with the keyboard cursor on it.
+TEST_CASE("a header control's menu shows and toggles only its own LFO target",
+          "[native-n1][state-parity][modulation][context-menu][control-menu-targets]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    struct Control { const char* selector; const char* name; const char* key;
+                     const char* label; unsigned target; };
+    const std::array<Control, 8> controls{{
+        {"[data-spectr-freeze-toggle]", "freeze", "freeze", "Freeze", 6},
+        {"[data-spectr-length-trigger]", "length", "length", "Length", 7},
+        {"[data-spectr-dropdown=\"bands\"]", "bands", "bands", "Bands", 11},
+        {"[data-spectr-intensity]", "intensity", "intensity", "Intensity", 8},
+        {"[data-spectr-mix]", "mix", "mix", "Mix", 9},
+        {"[data-spectr-output-trim]", "output", "output", "Output", 10},
+        {"[data-spectr-morph]", "morph", "morph", "Morph", 3},
+        {"[data-spectr-dropdown=\"pattern\"]", "preset", "preset", "Preset", 12},
+    }};
+    const auto routes = [&] {
+        std::vector<float> values;
+        for (unsigned lfo = 0; lfo < 2; ++lfo)
+            for (unsigned t = 0; t < 13; ++t)
+                values.push_back(rig.store.get_value(spectr::lfo_route_enabled_param_id(lfo, t)));
+        return values;
+    };
+    const auto query = [&](const std::string& expression, const char* label) {
+        return runtime_value(rig, expression, label);
+    };
+    const auto inside_box = [&](const char* selector) {
+        return query(std::string("(() => { const n = document.querySelector('") + selector
+            + "'); const r = n && n.getBoundingClientRect(); if (!r || !(r.height > 0)) return 'none';"
+              " return (r.left >= 0 && r.top >= 0 && r.right <= 1320 && r.bottom <= 860)"
+              " ? 'inside' : JSON.stringify([r.left, r.top, r.right, r.bottom]); })()",
+            "spectr-control-menu-box");
+    };
+    for (const auto [width, height] : {std::pair{1320.0f, 860.0f}, std::pair{990.0f, 645.0f},
+                                       std::pair{792.0f, 516.0f}}) {
+        CAPTURE(width, height);
+        rig.resize(width, height);
+        for (const auto& control : controls) {
+            CAPTURE(control.name);
+            activate(rig, control.selector, "contextmenu", knob_point(control.selector, 0.0));
+            settle(rig.clock, 8);
+            REQUIRE(query("String(document.querySelector('[data-spectr-control-menu]')"
+                          "?.getAttribute('data-spectr-control-menu'))", "menu") == control.name);
+            CHECK(inside_box("[data-spectr-control-menu]") == "inside");
+            for (const char* lfo : {"1", "2"}) {
+                const auto row = std::string("[data-spectr-control-action=\"lfo") + lfo + "\"]";
+                CHECK(query("String(document.querySelector('" + row
+                            + "')?.getAttribute('data-spectr-control-target'))", "target")
+                      == control.key);
+                // The row's own words, as painted (textContent is not
+                // modelled for React text children in this runtime).
+                const auto words = std::string("LFO ") + lfo + " → " + control.label;
+                CAPTURE(words);
+                CHECK(find_label(*rig.root, words) != nullptr);
+            }
+            // Toggling LFO 1's row moves exactly this target's lane.
+            const auto before = routes();
+            activate(rig, "[data-spectr-control-action=\"lfo1\"]");
+            settle(rig.clock, 8);
+            auto after = routes();
+            for (unsigned i = 0; i < after.size(); ++i) {
+                CAPTURE(i);
+                if (i == control.target) CHECK(after[i] != before[i]);
+                else CHECK(after[i] == before[i]);
+            }
+            activate(rig, "[data-spectr-control-action=\"lfo1\"]");  // and back
+            settle(rig.clock, 8);
+            CHECK(routes() == before);
+            CHECK(pulp::view::route_escape_to_active_overlay(*rig.root)
+                  != pulp::view::OverlayEscapeResult::none);
+            settle(rig.clock, 8);
+            REQUIRE(query("String(document.querySelector('[data-spectr-control-menu]'))", "closed")
+                    == "null");
+
+            // "All targets..." opens the full list on this target.
+            activate(rig, control.selector, "contextmenu", knob_point(control.selector, 0.0));
+            settle(rig.clock, 8);
+            activate(rig, "[data-spectr-control-action=\"all-targets\"]");
+            settle(rig.clock, 12);
+            CHECK(query("String(document.querySelector('[data-spectr-control-menu]'))", "gone")
+                  == "null");
+            REQUIRE(query("String(document.querySelector('[data-spectr-modulation-focus=\"true\"]')"
+                          "?.getAttribute('data-spectr-band-action'))", "focus")
+                    == std::string("modulation-target-") + control.key);
+            CHECK(query("String(document.querySelectorAll('[data-spectr-modulation-focus=\"true\"]').length)",
+                        "one") == "1");
+            CHECK(inside_box("[data-spectr-modulation-panel]") == "inside");
+            // The marked row is scrolled into the clipping viewport, whole.
+            CHECK(query("(() => { const v = document.querySelector('[data-spectr-modulation-viewport]')"
+                        ".getBoundingClientRect(); const r = document.querySelector("
+                        "'[data-spectr-modulation-focus=\"true\"]').getBoundingClientRect();"
+                        " return (r.top >= v.top - 0.5 && r.bottom <= v.bottom + 0.5) ? 'visible'"
+                        " : JSON.stringify([v.top, v.bottom, r.top, r.bottom]); })()", "visible")
+                  == "visible");
+            // The keyboard cursor is on it: Return toggles this target only.
+            const auto before_key = routes();
+            CHECK(press_key(rig, pulp::view::KeyCode::enter));
+            settle(rig.clock, 8);
+            after = routes();
+            for (unsigned i = 0; i < after.size(); ++i) {
+                CAPTURE(i);
+                if (i == control.target) CHECK(after[i] != before_key[i]);
+                else CHECK(after[i] == before_key[i]);
+            }
+            CHECK(press_key(rig, pulp::view::KeyCode::enter));  // and back
+            settle(rig.clock, 8);
+            CHECK(routes() == before_key);
+            // Back returns to the header menu; Escape there closes it.
+            activate(rig, "[data-spectr-band-action=\"modulation-back\"]");
+            settle(rig.clock, 8);
+            CHECK(query("String(document.querySelector('[data-spectr-band-context-menu]'))", "band")
+                  == "null");
+            CHECK(query("String(document.querySelector('[data-spectr-control-menu]')"
+                        "?.getAttribute('data-spectr-control-menu'))", "back") == control.name);
+            (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+            settle(rig.clock, 8);
+        }
+    }
+    // Escape closes the whole focused menu in one press: it IS its submenu.
+    activate(rig, "[data-spectr-freeze-toggle]", "contextmenu", knob_point("[data-spectr-freeze-toggle]", 0.0));
+    settle(rig.clock, 8);
+    activate(rig, "[data-spectr-control-action=\"all-targets\"]");
+    settle(rig.clock, 12);
+    REQUIRE(query("String(!!document.querySelector('[data-spectr-modulation-panel]'))", "open") == "true");
+    CHECK(pulp::view::route_escape_to_active_overlay(*rig.root)
+          != pulp::view::OverlayEscapeResult::none);
+    settle(rig.clock, 12);
+    CHECK(query("String(document.querySelector('[data-spectr-band-context-menu]'))", "esc") == "null");
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
