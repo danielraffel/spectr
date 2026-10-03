@@ -22,9 +22,11 @@ The private key is read from --key-file (default
 script never reads, prints or passes the key on a command line.
 
 Signing goes through `pulp ship appcast --sign-key-file` when the installed
-Pulp CLI supports it. Older CLIs fall back to Sparkle's own sign_update and an
-XML writer here -- delete that fallback (the _shim_* functions) on the Pulp SDK
-bump that ships `pulp ship appcast --sign-key-file`.
+Pulp CLI supports it. Older CLIs fall back to Sparkle's own sign_update -- by
+default the one the build tree of --app unpacked (<build>/_deps/sparkle-*/dist/
+bin/sign_update), so the documented command works unchanged -- and an XML
+writer here. Delete that fallback (default_sign_update and the _shim_*
+functions) on the Pulp SDK bump that ships `pulp ship appcast --sign-key-file`.
 """
 from __future__ import annotations
 
@@ -82,8 +84,18 @@ def app_min_os(app: Path) -> str:
     return m.group(1)
 
 
-def fetch_previous(source: str | None, channel: str, dest: Path) -> bool:
+def fetch_previous(source: str | None, channel: str, dest: Path, new_feed: bool = False) -> bool:
+    """Copy the feed this item is added to into `dest`; False when there is none.
+
+    Starting a feed from nothing drops every item it held, so it is never a
+    fallback: a 404 on the live feed usually means the newest release lacks
+    its appcast.xml (or is still a draft), and a fresh feed written then would
+    erase every older version from it. Only --new-feed starts one.
+    """
     if source == "none":
+        if channel == "release" and not new_feed:
+            fail("--previous none would start the release feed from nothing; pass "
+                 "--new-feed as well if that is really what you mean")
         return False
     if source is None:
         source = RELEASE_FEED if channel == "release" else PRACTICE_FEED
@@ -94,14 +106,40 @@ def fetch_previous(source: str | None, channel: str, dest: Path) -> bool:
             return True
         except urllib.error.HTTPError as e:
             if e.code == 404:
-                print(f"make_appcast: no feed at {source} yet; starting a new one")
-                return False
+                if new_feed:
+                    print(f"make_appcast: no feed at {source}; starting a new one (--new-feed)")
+                    return False
+                fail(f"no feed at {source} (HTTP 404). Refusing to start a new one: that "
+                     f"would drop every item the feed held. Usually the newest published "
+                     f"release lacks appcast.xml or is still a draft -- fix that, or pass "
+                     f"--previous <file>. Pass --new-feed only for the very first feed.")
             fail(f"could not fetch {source}: {e}")
     p = Path(source)
     if not p.is_file():
         fail(f"--previous {source} does not exist")
     shutil.copyfile(p, dest)
     return True
+
+
+def default_sign_update(app: Path | None) -> Path | None:
+    """Sparkle's sign_update from the build tree that produced `app`.
+
+    SpectrSparkle.cmake unpacks the pinned Sparkle distribution under
+    <build>/_deps/sparkle-<version>/dist, and the app is <build>/Spectr.app, so
+    the signer that matches the framework inside the app sits beside it. The
+    newest Sparkle version wins if a build tree carries more than one.
+    """
+    if app is None:
+        return None
+    found = []
+    for candidate in app.resolve().parent.glob("_deps/sparkle-*/dist/bin/sign_update"):
+        try:
+            key = check_sparkle.version_key(candidate.parts[-4].removeprefix("sparkle-"))
+        except ValueError:
+            continue
+        if candidate.is_file():
+            found.append((key, candidate))
+    return max(found)[1] if found else None
 
 
 def pulp_supports_key_file(pulp: str) -> bool:
@@ -176,13 +214,19 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--previous", help="existing feed (file or URL); 'none' to start fresh; "
                                        "default: the live feed for --channel")
+    ap.add_argument("--new-feed", action="store_true",
+                    help="allow starting a feed from nothing (a 404 on --previous, or "
+                         "--previous none on the release channel); never needed after the first")
     ap.add_argument("--download-url", help="override the enclosure URL (e.g. http://127.0.0.1:8765/... for a local rehearsal)")
     ap.add_argument("--release-url", help="full release notes page (default: the GitHub release)")
     ap.add_argument("--app", type=Path, help="built Spectr.app, to read the deployment target")
     ap.add_argument("--min-os", help="sparkle:minimumSystemVersion (default: from --app)")
     ap.add_argument("--key-file", type=Path, default=DEFAULT_KEY)
     ap.add_argument("--pulp", default=os.environ.get("PULP_CLI", "pulp"))
-    ap.add_argument("--sign-update", type=Path, help="Sparkle's bin/sign_update (fallback signer)")
+    ap.add_argument("--sign-update", type=Path,
+                    help="Sparkle's bin/sign_update (fallback signer; default: the one the "
+                         "build tree of --app unpacked, <build>/_deps/sparkle-*/dist/bin, "
+                         "then $SPARKLE_BIN)")
     ap.add_argument("--pub-date", help="RFC 2822 date (default: now)")
     args = ap.parse_args()
 
@@ -227,7 +271,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         prev = Path(tmp) / "previous.xml"
-        have_prev = fetch_previous(args.previous, args.channel, prev)
+        have_prev = fetch_previous(args.previous, args.channel, prev, args.new_feed)
         if pulp_supports_key_file(args.pulp):
             work = Path(tmp) / "appcast.xml"
             if have_prev:
@@ -242,11 +286,13 @@ def main() -> int:
             shutil.copyfile(work, args.out)
         else:
             # Delete on SDK bump.
-            sign_update = args.sign_update or Path(os.environ.get("SPARKLE_BIN", "")) / "sign_update"
+            sign_update = (args.sign_update or default_sign_update(args.app)
+                           or Path(os.environ.get("SPARKLE_BIN", "")) / "sign_update")
             if not sign_update.is_file():
-                fail("this Pulp CLI predates `pulp ship appcast --sign-key-file`; pass "
-                     "--sign-update <Sparkle>/bin/sign_update (the build tree has one under "
-                     "build/_deps/sparkle-*/dist/bin)")
+                fail("this Pulp CLI predates `pulp ship appcast --sign-key-file`, and no "
+                     "Sparkle sign_update was found beside --app (<build>/_deps/sparkle-*/"
+                     "dist/bin) or in $SPARKLE_BIN; pass --sign-update <Sparkle>/bin/sign_update")
+            print(f"make_appcast: signing with {sign_update}")
             sig = _shim_sign(sign_update, args.key_file, args.pkg)
             if have_prev:
                 items = check_sparkle.parse_items(prev.read_text())

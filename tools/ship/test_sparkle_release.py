@@ -12,6 +12,8 @@ import base64
 import sys
 import tempfile
 import unittest
+import urllib.error
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -19,6 +21,7 @@ sys.path.insert(0, str(HERE))
 import check_sparkle  # noqa: E402
 import ed25519_verify  # noqa: E402
 import make_appcast  # noqa: E402
+import publish_release  # noqa: E402
 import release_notes_html  # noqa: E402
 
 RELEASE_BODY = """Spectr 1.0.7 adds Sparkle updates.
@@ -99,6 +102,95 @@ class AppcastCarriesNotes(unittest.TestCase):
                 "length": len(pkg), "signature": sig, "feed": make_appcast.RELEASE_FEED})
             builds = [i["version"] for i in check_sparkle.parse_items(out.read_text())]
             self.assertEqual(builds, ["1.0.8", "1.0.7"])
+
+
+class FallbackSigner(unittest.TestCase):
+    """With a Pulp CLI that predates `pulp ship appcast --sign-key-file`, the
+    documented command (no --sign-update) must still find Sparkle's signer: the
+    one the build tree that made --app unpacked."""
+
+    def _tree(self, tmp: str, *versions: str) -> Path:
+        build = Path(tmp) / "build"
+        (build / "Spectr.app").mkdir(parents=True)
+        for v in versions:
+            tool = build / "_deps" / f"sparkle-{v}" / "dist" / "bin" / "sign_update"
+            tool.parent.mkdir(parents=True)
+            tool.write_text("#!/bin/sh\n")
+        return build
+
+    def test_finds_the_signer_beside_the_app(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            build = self._tree(tmp, "2.10.0")
+            self.assertEqual(make_appcast.default_sign_update(build / "Spectr.app"),
+                             (build / "_deps/sparkle-2.10.0/dist/bin/sign_update").resolve())
+
+    def test_prefers_the_newest_sparkle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            build = self._tree(tmp, "2.9.1", "2.10.0")
+            self.assertIn("sparkle-2.10.0",
+                          str(make_appcast.default_sign_update(build / "Spectr.app")))
+
+    def test_none_without_a_build_tree(self) -> None:
+        # Negative controls: no --app, and an app whose tree unpacked no Sparkle.
+        self.assertIsNone(make_appcast.default_sign_update(None))
+        with tempfile.TemporaryDirectory() as tmp:
+            build = self._tree(tmp)
+            self.assertIsNone(make_appcast.default_sign_update(build / "Spectr.app"))
+
+
+class PublishOrdering(unittest.TestCase):
+    """`latest/download/appcast.xml` follows a release the moment it is
+    published, so the assets must already be on it: create a draft, upload,
+    publish, then prove the LIVE feed's newest item is this version."""
+
+    def test_draft_then_upload_then_publish_then_verify(self) -> None:
+        steps = publish_release.plan("1.0.7", Path("a/Spectr-1.0.7.pkg"),
+                                     Path("a/appcast.xml"), Path("n.md"), "abc123")
+        self.assertEqual([s[2] if s[0] == "gh" else "verify" for s in steps],
+                         ["create", "upload", "edit", "verify"])
+        self.assertIn("--draft", steps[0])
+        self.assertIn("abc123", steps[0])
+        self.assertIn("a/Spectr-1.0.7.pkg", steps[1])
+        self.assertIn("a/appcast.xml", steps[1])
+        self.assertIn("--draft=false", steps[2])
+        verify = steps[3]
+        self.assertIn(f"{publish_release.LATEST}/appcast.xml", verify)
+        self.assertIn(f"{publish_release.LATEST}/Spectr-1.0.7.pkg", verify)
+        self.assertEqual(verify[verify.index("--expect-version") + 1], "1.0.7")
+
+    def test_expect_version_reads_the_newest_item(self) -> None:
+        feed = ('<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
+                '<channel><item><sparkle:version>1.0.6</sparkle:version>'
+                '<sparkle:shortVersionString>1.0.6</sparkle:shortVersionString></item>'
+                '</channel></rss>')
+        self.assertEqual(check_sparkle.expected_version_errors(feed, "1.0.6"), [])
+        # Negative control: "latest" still on the previous release.
+        self.assertNotEqual(check_sparkle.expected_version_errors(feed, "1.0.7"), [])
+
+
+class NoAccidentalNewFeed(unittest.TestCase):
+    """A 404 on the live feed usually means the newest release lacks its
+    appcast; starting a fresh feed then would drop every older item."""
+
+    def _404(self, *a, **k):
+        raise urllib.error.HTTPError(make_appcast.RELEASE_FEED, 404, "Not Found", {}, None)
+
+    def test_a_404_is_refused_without_new_feed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(make_appcast.urllib.request, "urlopen", self._404):
+            dest = Path(tmp) / "prev.xml"
+            with self.assertRaises(SystemExit):
+                make_appcast.fetch_previous(None, "release", dest)
+            self.assertFalse(make_appcast.fetch_previous(None, "release", dest, new_feed=True))
+
+    def test_previous_none_on_the_release_channel_needs_new_feed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "prev.xml"
+            with self.assertRaises(SystemExit):
+                make_appcast.fetch_previous("none", "release", dest)
+            self.assertFalse(make_appcast.fetch_previous("none", "release", dest, new_feed=True))
+            # The practice feed is throwaway and documented with --previous none.
+            self.assertFalse(make_appcast.fetch_previous("none", "practice", dest))
 
 
 if __name__ == "__main__":
