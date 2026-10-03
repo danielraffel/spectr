@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <thread>
 #include <vector>
 
 using Catch::Approx;
@@ -36,11 +37,38 @@ std::unique_ptr<pulp::format::Processor> create_tracking() {
     return p;
 }
 
+// How a Rig's blocks are paced against Spectr's workers (mask design, param
+// sync). A real-time host paces its callbacks, so the workers finish between
+// them; a back-to-back harness does not, and on a loaded machine the adoption
+// of a staged layout would then trail by a load-dependent number of blocks.
+enum class Pacing {
+    // Real-time blocks; after each one, wait for both worker backlogs to read
+    // zero -- the pacing a real-time host gives them. Deterministic.
+    paced,
+    // Offline blocks back to back: the processor itself waits for its workers,
+    // so this must equal `paced` sample for sample.
+    offline,
+    // Real-time blocks back to back with no wait: what a bounce was before the
+    // processor heard it was offline. Load-dependent; a control only.
+    unpaced,
+};
+
+// Event-driven on the exported counters (no fixed delay); a worker that never
+// drains fails the test rather than measuring a stale render.
+void await_workers() {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (spectr_mask_design_backlog_v1() != 0 || spectr_param_sync_backlog_v1() != 0) {
+        REQUIRE(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+    }
+}
+
 struct Rig {
+    Pacing pacing = Pacing::paced;
     pulp::format::HeadlessHost host{create_tracking};
     spectr::Spectr* plugin = nullptr;
     std::uint64_t n = 0;
-    Rig() {
+    explicit Rig(Pacing p = Pacing::paced) : pacing(p) {
         host.prepare(kRate, kBlock);
         plugin = dynamic_cast<spectr::Spectr*>(host.processor());
         REQUIRE(plugin != nullptr);
@@ -65,9 +93,20 @@ struct Rig {
         pulp::audio::BufferView<const float> iv(ip, 2, kBlock);
         auto ov = o.view();
         pulp::state::ParameterEventQueue events;
+        pulp::midi::MidiBuffer midi_in, midi_out;
+        pulp::format::ProcessContext ctx;
+        if (pacing == Pacing::offline) {
+            ctx.process_mode = pulp::format::ProcessMode::Offline;
+            ctx.render_speed_hint = pulp::format::RenderSpeedHint::FasterThanRealtime;
+        } else {
+            ctx.process_mode = pulp::format::ProcessMode::Realtime;
+            ctx.render_speed_hint = pulp::format::RenderSpeedHint::Realtime;
+        }
         const auto t0 = std::chrono::steady_clock::now();
-        host.process(ov, iv, events);
+        host.process(ov, iv, midi_in, midi_out, events, ctx);
         const auto t1 = std::chrono::steady_clock::now();
+        // Outside the timed region: the cost is the callback's own.
+        if (pacing == Pacing::paced) await_workers();
         if (out) out->insert(out->end(), o.channel(0).begin(), o.channel(0).end());
         return std::chrono::duration<double, std::micro>(t1 - t0).count();
     }
@@ -649,4 +688,52 @@ TEST_CASE("switching the Bands route off fades back to the user's band count",
     // through the list, each step its own fade. A straight switch home is
     // 10-11 dB (the plant in the test above).
     CHECK(step < 2.5);
+}
+
+TEST_CASE("an offline render of the Bands destination fades exactly as a paced one",
+          "[modulation][bands-target][offline]") {
+    // Bands swept by a sine LFO and then switched off, rendered twice: paced
+    // like a real-time host, and offline back to back. The processor waits
+    // for its own workers on an offline block, so the bounce takes every
+    // band-count fade step a paced render takes, at the same block.
+    const auto render = [](Pacing pacing) {
+        Rig rig(pacing);
+        draw_comb(rig);
+        rig.set(spectr::kParamBandCount, 48.0f);
+        rig.set(spectr::kParamLfoRate, 2.0f);
+        rig.set(spectr::lfo_route_enabled_param_id(0, kBandsT), 1.0f);
+        rig.set(spectr::lfo_route_amount_param_id(0, kBandsT), 1.0f);
+        std::vector<float> out;
+        for (int b = 0; b < int(3.0 * kRate / kBlock); ++b) {
+            if (b == int(2.0 * kRate / kBlock))
+                rig.set(spectr::lfo_route_enabled_param_id(0, kBandsT), 0.0f);
+            rig.block([](double) { return 2000.0; }, &out);
+        }
+        return out;
+    };
+    const auto max_diff = [](const std::vector<float>& a, const std::vector<float>& b) {
+        REQUIRE(a.size() == b.size());
+        double worst = 0.0;
+        std::size_t first = a.size(), last = 0;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const double d = std::fabs(double(a[i]) - double(b[i]));
+            if (d > 0.0) { first = std::min(first, i); last = i; }
+            worst = std::max(worst, d);
+        }
+        if (first < a.size())
+            std::printf("[bands-target]   differs over samples %zu..%zu (blocks %zu..%zu)\n",
+                        first, last, first / kBlock, last / kBlock);
+        return worst;
+    };
+    const auto paced = render(Pacing::paced);
+    const auto offline = render(Pacing::offline);
+    // Control, reported only: back to back with no wait adopts wherever the
+    // worker lands, which on a loaded machine is not where a paced host would.
+    const auto unpaced = render(Pacing::unpaced);
+    const double offline_diff = max_diff(paced, offline);
+    const double unpaced_diff = max_diff(paced, unpaced);
+    std::printf("[bands-target] offline vs paced max |diff| %.3g; unpaced (control) %.3g\n",
+                offline_diff, unpaced_diff);
+    INFO("offline vs paced " << offline_diff << ", unpaced control " << unpaced_diff);
+    CHECK(offline_diff <= 1e-6);
 }
