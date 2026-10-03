@@ -853,13 +853,6 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
 #endif
     auto root = std::make_unique<pulp::view::View>();
     root->set_theme(pulp::view::Theme::dark());
-#if !defined(PULP_FORMAT_HAS_EDITOR_BACKGROUND)
-    // SDK shim -- delete on the Pulp SDK bump that defines
-    // PULP_FORMAT_HAS_EDITOR_BACKGROUND. That SDK fills under the tree with
-    // editor_background(); this one fills with its own default navy, so the
-    // root paints Spectr's background itself until the document mounts over it.
-    root->set_background_color(pulp::canvas::Color::hex(kEditorBackgroundRgb));
-#endif
     root->flex().direction = pulp::view::FlexDirection::column;
     root->set_requires_gpu_host(true);
     pulp::view::route_global_keys(*root, native_command_registry_);
@@ -1284,14 +1277,6 @@ void Spectr::finish_native_document_load_(bool session_loaded,
 void Spectr::open_native_editor_(pulp::view::View& view) {
     PULP_TRACE_SCOPE_NAMED("state", "spectr_editor_opened");
     if (&view != native_editor_root_ || !native_scripted_ui_) return;
-#if !defined(PULP_FORMAT_HAS_EDITOR_BACKGROUND)
-    // SDK shim -- delete with the one in create_native_editor_(). The host's
-    // backing layer is what shows before the first frame; this SDK seeds it
-    // with its default navy. AU v2 attaches before returning the view, so this
-    // runs before the DAW can composite it.
-    if (auto* host = view.plugin_view_host())
-        apply_host_view_background(host->native_handle(), kEditorBackgroundRgb);
-#endif
     const auto bounds = view.bounds();
     const auto width = bounds.width > 0.0f
         ? static_cast<uint32_t>(std::lround(bounds.width))

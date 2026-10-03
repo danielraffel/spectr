@@ -245,8 +245,7 @@ set(SPECTR_NATIVE_SOURCES
 )
 if(APPLE)
     enable_language(OBJCXX)
-    list(APPEND SPECTR_NATIVE_SOURCES src/ui/host_view_first_mouse_mac.mm
-        src/ui/host_view_background_mac.mm)
+    list(APPEND SPECTR_NATIVE_SOURCES src/ui/host_view_first_mouse_mac.mm)
 endif()
 
 # Shipping Spectr is a native cutover consumer. Requiring the dedicated target
