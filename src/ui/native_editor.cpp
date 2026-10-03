@@ -143,6 +143,26 @@ RowAim aim_row(pulp::view::View& scope, const std::string& suffix) {
     return aim;
 }
 
+/// The nearest ancestor of @p view that clips (overflow other than visible)
+/// and leaves @p view's centre outside its box, or nullptr. @p dy is set to
+/// the direction a wheel must move the content to bring the centre in.
+pulp::view::View* clipping_ancestor(pulp::view::View& view, float cx, float cy,
+                                    float& wx, float& wy, float& dy) {
+    for (auto* a = view.parent(); a != nullptr; a = a->parent()) {
+        if (a->overflow() == pulp::view::View::Overflow::visible) continue;
+        float ax = 0.0f, ay = 0.0f;
+        root_origin_of(*a, ax, ay);
+        const auto b = a->bounds();
+        if (cx >= ax && cx <= ax + b.width && cy >= ay && cy <= ay + b.height)
+            return nullptr;
+        wx = ax + b.width * 0.5f;
+        wy = ay + b.height * 0.5f;
+        dy = cy > ay + b.height ? 60.0f : -60.0f;
+        return a;
+    }
+    return nullptr;
+}
+
 std::string json_escape(const std::string& in) {
     std::string out;
     for (char c : in) {
@@ -2461,7 +2481,20 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     auto* scope = spectr_menu_probe::menu_container(root, number);
                     if (scope == nullptr) detail = "menu-absent";
                     else {
-                        const auto aim = spectr_menu_probe::aim_row(*scope, arg);
+                        auto aim = spectr_menu_probe::aim_row(*scope, arg);
+                        // A row scrolled out of a clipping viewport (the
+                        // Modulation submenu's target list) is wheeled into
+                        // view first, the way a user reaches it.
+                        for (int turn = 0; turn < 40 && aim.found && aim.row != nullptr;
+                             ++turn) {
+                            float wx = 0.0f, wy = 0.0f, dy = 0.0f;
+                            if (spectr_menu_probe::clipping_ancestor(
+                                    *aim.row, aim.cx, aim.cy, wx, wy, dy) == nullptr)
+                                break;
+                            pulp::view::deliver_mouse_wheel(root, {wx, wy}, 0.0f, dy, {});
+                            root.layout_children();
+                            aim = spectr_menu_probe::aim_row(*scope, arg);
+                        }
                         if (!aim.found || aim.row == nullptr) detail = "row-absent";
                         else if (aim.w <= 0.0f || aim.h <= 0.0f) detail = "zero-area";
                         else {
@@ -3184,6 +3217,24 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                                               : who->text());
                                     }
                                 }
+                                // Scrolled out of a clipping ancestor (the
+                                // Modulation submenu's target viewport): not
+                                // painted, so not a row a press can aim at
+                                // at this scroll position.
+                                bool clipped = false;
+                                for (auto* a = v.parent(); a != nullptr && !clipped;
+                                     a = a->parent()) {
+                                    if (a->overflow() == pulp::view::View::Overflow::visible)
+                                        continue;
+                                    float ax = 0.0f, ay = 0.0f;
+                                    spectr_menu_probe::root_origin_of(*a, ax, ay);
+                                    const float cx = lx + box.width * 0.5f;
+                                    const float cy = ly + box.height * 0.5f;
+                                    clipped = cx < ax || cy < ay
+                                        || cx > ax + a->bounds().width
+                                        || cy > ay + a->bounds().height;
+                                    if (a == scope) break;
+                                }
                                 js << (first_row ? "" : ",")
                                    << "{\"label\":\""
                                    << spectr_menu_probe::json_escape(label->text())
@@ -3193,6 +3244,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                                               ? "true" : "false")
                                    << ",\"owns_own_centre\":"
                                    << (self ? "true" : "false")
+                                   << ",\"clipped\":" << (clipped ? "true" : "false")
                                    // The row's painted fill: a keyboard or
                                    // hover cursor is only real if it shows.
                                    << ",\"bg\":\""
@@ -3271,6 +3323,9 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 js << ",\"lfo1_enabled\":" << (modulation.enabled ? "true" : "false")
                    << ",\"lfo2_enabled\":" << (modulation.lfo2_enabled ? "true" : "false")
                    << ",\"lfo1_depth\":" << modulation.depth
+                   // LFO 1's Bank target Depth: the first Depth row of the
+                   // band menu's target list (there is no LFO-level Depth).
+                   << ",\"lfo1_bank_depth\":" << modulation.routes[0][0].amount
                    << ",\"lfo1_rate\":" << modulation.beats_per_cycle
                    << ",\"lfo1_shape\":" << static_cast<int>(modulation.shape)
                    << ",\"lfo_target\":" << static_cast<int>(modulation.target)

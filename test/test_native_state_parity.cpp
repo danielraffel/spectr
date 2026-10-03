@@ -1073,7 +1073,8 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // per target, plus the LFO targets chips and Ask before overriding
         // modulation, and 2686.58 -> 2884.58 when Appearance gained Display
         // (BARS / RESPONSE / BOTH, out of the header) and Structure gained
-        // Range. If you add a group and this fails, that is the window
+        // Range, and 2884.58 -> 3051.58 when the target list gained Intensity,
+        // Mix and Output. If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1083,7 +1084,7 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 2804 && s.content_height < 2964"
+        " && s.content_height > 2971 && s.content_height < 3131"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
@@ -11108,8 +11109,11 @@ TEST_CASE("the Modulation submenu scrolls its eleven targets under a sticky head
     REQUIRE(rows.bottom - rows.top > viewport.bottom - viewport.top + 1.0f);
     REQUIRE(native_view_of(rig, "[data-spectr-modulation-scrollbar]") != nullptr);
     CHECK(offset() == "0");
-    // ...and the panel never grows past the editor (780 design px of 860).
+    // ...and the panel never grows past the editor (780 design px of 860)
+    // and stays clear of the 44 pt top bar, where a press would resolve to
+    // the bar and the Back row would be dead.
     CHECK(panel.bottom - panel.top <= 780.5f);
+    CHECK(panel.top >= 44.0f);
     CHECK(head.bottom <= viewport.top + 0.5f);
     // The four most-modulated targets and their Depth rows show unscrolled.
     for (const char* action : {"modulation-target-bank", "modulation-target-depth-bank",

@@ -170,7 +170,7 @@ def main():
     # patch_materialized_modulation_level_targets.py runs after this script
     # and rewrites some of the text it wrote (the target list, lane ids, the
     # knob). Its marker proves this script already ran.
-    if escaped("function spectrRouteLaneId(") in raw:
+    if escaped("function spectrLfosDrivingIn(") in raw:
         print("already applied (superseded in part by patch_materialized_modulation_level_targets.py)")
         return 0
     changed = False

@@ -241,12 +241,16 @@ SCENARIO_KEYS = ";".join([
     "v_rate=slider:Rate@0.0", "v_rate_settled=wait",
     "v_k1=key:down", "v_k2=key:down", "v_k3=key:down", "v_k4=key:down",
     "v_k5=key:down", "v_k6=key:down", "v_k7=key:down", "v_k8=key:down",
+    # Back, LFO 1, LFO 2, the two EDIT LFO tabs, Shape, Rate, Bank's switch,
+    # then Bank's Depth: the ninth stop, the first slider of the target list.
+    "v_k9=key:down",
     "v_right=key:right", "v_right_settled=wait",
     "v_left=key:left", "v_left_settled=wait",
     # Shape shows every waveform: a press on a glyph picks it, and with the
     # cursor on the row Left/Right step through the shapes, wrapping.
     "v_shape=slider:Shape@0.625", "v_shape_settled=wait",
-    "v_su=key:up", "v_su2=key:up", "v_shape_right=key:right", "v_shape_right_settled=wait",
+    "v_su=key:up", "v_su2=key:up", "v_su3=key:up",
+    "v_shape_right=key:right", "v_shape_right_settled=wait",
     "v_shape_wrap=key:right", "v_shape_wrap_settled=wait",
     "v_esc1=escape", "v_esc2=escape",
     # Leaving a selection. A Cmd-drag marquee selects some bands; a press on
@@ -320,6 +324,12 @@ def layout_reading(s):
             continue
         pressable_count += bool(row.get("pressable"))
         label = row.get("label", "<unnamed>")
+        # Scrolled out of a clipping viewport (the Modulation submenu's
+        # target list): not painted at this offset, so neither inside the
+        # menu's box nor a press target. The rows are swept at every scroll
+        # position by the native all-controls test.
+        if row.get("clipped") is True:
+            continue
         try:
             x, y, w, h = (float(v) for v in row["rect"])
         except (KeyError, TypeError, ValueError):
@@ -428,7 +438,10 @@ def verify_64(steps):
     require(esc1.get("result") == "overlay" and esc1.get("menu_mounted") is True and
             esc2.get("result") == "overlay" and esc2.get("menu_mounted") is False,
             "target:escape-one-layer-per-press")
-    require(reopened.get("lfo_target") == 2 and reopened.get("lfo_target_mask") == 4 and
+    # Reopened, the menu shows what the processor holds: the routing the
+    # Snapshot B press left (above), not the legacy single-target answer.
+    require(reopened.get("lfo_target") == target.get("lfo_target") and
+            reopened.get("lfo_target_mask") == target.get("lfo_target_mask") and
             reopened.get("lfo1_enabled") is lfo2.get("lfo1_enabled") and
             reopened.get("lfo2_enabled") is lfo2.get("lfo2_enabled") and
             layout_reading(reopened)[0], "target:reopen-state")
@@ -492,8 +505,10 @@ def verify_keys(steps, plant_no_keys=False):
     want = [expected[i % len(expected)] for i in range(8)] if expected else []
     require(len(expected) >= 4 and visited == want,
             "keys:down-visits-enabled-rows-in-painted-order")
+    # The Depth a press and the arrow keys move is a target's (Bank's, the
+    # first Depth row of the target list); there is no LFO-level Depth row.
     def depth(name):
-        return st(name).get("lfo1_depth")
+        return st(name).get("lfo1_bank_depth")
     require(depth("v_mod_settled") is not None and depth("v_depth_settled") is not None
             and abs(depth("v_depth_settled") - 0.25) <= 0.02
             and abs(depth("v_mod_settled") - 0.25) > 0.05,

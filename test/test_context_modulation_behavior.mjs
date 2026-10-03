@@ -166,11 +166,25 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.equal(test.closed, 0);
   assert.equal(test.button('modulation-toggle').props['aria-haspopup'], 'menu');
   assert.equal(test.button('modulation-toggle').props['aria-expanded'], true);
-  // The submenu IS capped, and short enough that the shrink does not bite.
-  // Derived, not the literal 780, so it follows the mount's viewport.
-  assert.equal(test.submenu().props.style.maxHeight,
-               Math.max(120, Math.max(24, 860 - 64) - 16));
-  assert.equal(test.submenu().props.style.overflowY, 'auto');
+  // The submenu is NOT capped by `maxHeight` (Pulp would shrink its rows):
+  // its target rows scroll by hand in a clipping viewport under a fixed head.
+  // Until the head and rows are measured the viewport takes the estimates --
+  // a 264 px head, 63 px per target -- inside the room the menu has, less
+  // the 44 pt top bar the panel stays clear of (derived, not the literal
+  // 736, so it follows the mount's viewport).
+  assert.equal(test.submenu().props.style.maxHeight, undefined);
+  assert.equal(test.submenu().props.style.overflowY, undefined);
+  {
+    const viewport = nodes2(test).find(n => n.props['data-spectr-modulation-viewport']);
+    assert(viewport, 'the target viewport');
+    assert.equal(viewport.props.style.overflow, 'hidden');
+    assert.equal(viewport.props.style.height,
+                 Math.min(11 * 63, Math.max(120, Math.max(24, 860 - 64) - 16 - 44) - 264 - 14));
+    const rows = nodes2(test).find(n => n.props['data-spectr-modulation-rows']);
+    assert.equal(rows.props['data-spectr-modulation-offset'], '0');
+    assert(nodes2(test).find(n => n.props['data-spectr-modulation-scrollbar']),
+           'eleven targets overflow the viewport, so the scrollbar shows');
+  }
   assert.equal(test.button('lfo1-enable').props.disabled, true);
   test.click('lfo1-enable');
   assert.equal(test.calls.filter(call => call.type === 'param_edit').length, 0);
@@ -208,6 +222,13 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4025, value: 1 } });
   test.click('modulation-target-b');
   assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4022, value: 0 } });
+  // The level targets have their own block: LFO 1 on/off 4060..4062.
+  test.click('modulation-target-intensity');
+  assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4060, value: 1 } });
+  test.click('modulation-target-output');
+  assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4062, value: 1 } });
+  test.button('modulation-target-depth-output').props['aria-disabled'] === 'false'
+    || assert.fail('the Output Depth row is live once Output is on');
   assert.equal(test.button('modulation-target-morph').props['aria-checked'], true);
   assert.equal(test.button('modulation-target-band-spread').props['aria-checked'], true);
   assert.equal(test.button('modulation-target-band-shift').props['aria-checked'], true);
@@ -218,6 +239,8 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.equal(test.button('modulation-target-depth-bank').props['aria-valuetext'], '50%');
   test.click('modulation-target-a');
   assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4041, value: 1 } });
+  test.click('modulation-target-mix');
+  assert.deepEqual(test.calls.at(-1), { type: 'param_edit', payload: { id: 4081, value: 1 } });
   const lfo1Tab = nodes2(test).find(n => n.props['data-spectr-modulation-source-action'] === 1);
   lfo1Tab.props.onClick(); test.rerender();
   // No modulation write ever goes out as a bare, unrecordable value.

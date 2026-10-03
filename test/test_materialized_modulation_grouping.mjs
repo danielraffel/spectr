@@ -221,8 +221,8 @@ function rowsOf(tree) {
 
 // Every row, in the one order the group must always have. A row that is not
 // mounted at all fails this outright, which is what catches --plant-remount.
-const TARGET_LABELS = ['Bank', 'Band shift', 'Band spread', 'Morph', 'Freeze', 'Length',
-                       'Snapshot A', 'Snapshot B'];
+const TARGET_LABELS = ['Bank', 'Band shift', 'Band spread', 'Intensity', 'Mix', 'Morph',
+                       'Freeze', 'Length', 'Output', 'Snapshot A', 'Snapshot B'];
 const ORDER = ['LFO', 'Shape', 'Rate',
                'LFO 2', 'LFO 2 shape', 'LFO 2 rate',
                'LFO targets', ...TARGET_LABELS.flatMap((t) => [t, 'Depth']),
@@ -320,7 +320,11 @@ else fail('NAMING: a row is still labelled "Target", "Targets" or "Destinations"
 if (componentSource.includes('const targets = spectrModulationRouteList();'))
   pass('CAPABILITY: Settings lists spectrModulationRouteList(), the band menu\'s list');
 else fail('CAPABILITY: Settings does not list the shared target list');
-if (componentSource.includes('4020 + lane(t)') && componentSource.includes('4030 + lane(t)'))
+// On/off is lane(t) -- 4020 + 20 (lfo - 1) + t, or the level targets' own
+// block from 4060 -- and Depth is lane(t) + 10.
+if (componentSource.includes('const lane = (t) => (t >= 8 ? 4052 : 4020) + (lfo - 1) * 20 + t;')
+    && componentSource.includes('publish("routeOn" + lfo + "_" + t, lane(t), next)')
+    && componentSource.includes('publish("routeAmt" + lfo + "_" + t, lane(t) + 10,'))
   pass('CAPABILITY: each row writes its target\'s on/off and Depth lanes');
 else fail('CAPABILITY: the per-target lane writes are gone');
 

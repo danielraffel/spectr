@@ -10,11 +10,10 @@ _freeze_override.py). This patch:
     target list, in the planned order -- Bank, Band shift, Band spread,
     Intensity, Mix, Morph, Freeze, Length, Output, Snapshot A, Snapshot B --
     so the band menu and Settings both show them;
-  * routes every lane id through `spectrRouteLaneId` (on/off) and
-    `spectrRouteDepthLaneId` (Depth): the level destinations live in their own
-    block (4060.. / 4070..; docs/parameter-surface.md), so the old
-    `4020 + 20 (lfo - 1) + target` arithmetic no longer holds for every
-    target;
+  * computes every lane id as `(t >= 8 ? 4052 : 4020) + 20 (lfo - 1) + t`
+    (Depth + 10): the level destinations live in their own block (4060.. /
+    4070..; docs/parameter-surface.md). Inline at each site rather than a
+    helper, because the tests lift these components into sandboxes alone;
   * reads all eleven bits of the native route mask;
   * makes the MIX, INTENSITY and OUTPUT knobs ask before overriding an LFO
     that drives them (`spectrOverrideModulated`, the same question LENGTH and
@@ -54,18 +53,7 @@ def escaped(value):
     return json.dumps(value, ensure_ascii=False)[1:-1]
 
 
-HELPERS = r'''// Host lane of LFO `lfo` (1 or 2) -> target `target` (ModulationTarget
-// index): on/off, and its Depth (always on/off + 10). Targets 0..7 sit at
-// 4020 + 20 (lfo - 1) + target; the level targets (Intensity 8, Mix 9,
-// Output 10) have their own block at 4060 + 20 (lfo - 1) + (target - 8).
-// See docs/parameter-surface.md and tools/patch_materialized_modulation_level_targets.py.
-function spectrRouteLaneId(lfo, target) {
-  return (target >= 8 ? 4052 : 4020) + (lfo - 1) * 20 + target;
-}
-function spectrRouteDepthLaneId(lfo, target) {
-  return spectrRouteLaneId(lfo, target) + 10;
-}
-// The LFOs (1, 2) driving `target` in a normalized modulation frame: on, and
+HELPERS = r'''// The LFOs (1, 2) driving `target` in a normalized modulation frame: on, and
 // with that target switched on.
 function spectrLfosDrivingIn(frame, target) {
   const m = frame || {};
@@ -161,8 +149,13 @@ ROUTE_ROWS_NEW = r'''        React.createElement(Divider, { label: "LFO " + modu
           const on = modulation["routeOn" + lfo + "_" + target] === true;
           const stored = modulation["routeAmt" + lfo + "_" + target];
           const amount = Number.isFinite(stored) ? stored : 0.5;
-          const onLane = spectrRouteLaneId(lfo, target);
-          const depthLane = spectrRouteDepthLaneId(lfo, target);
+          // Host lanes: targets 0..7 at 4020 + 20 (lfo - 1) + target, the level
+          // targets (Intensity 8, Mix 9, Output 10) in their own block at
+          // 4060 + 20 (lfo - 1) + (target - 8); Depth is always on/off + 10.
+          // Inline, not a helper: this component is lifted whole into the
+          // tests' sandboxes, and a free helper would not travel with it.
+          const onLane = (target >= 8 ? 4052 : 4020) + (lfo - 1) * 20 + target;
+          const depthLane = onLane + 10;
           return [
             Item({
               key, action: "modulation-target-" + key, label,
@@ -215,12 +208,16 @@ SCROLLER_STATE = r'''  // ── The Modulation submenu's target scroller ──
   // Until measured: the head's rows (Back, divider, two LFO rows, the EDIT
   // LFO tabs, divider, Shape, Rate, the TARGETS heading) and two rows per
   // target, at their usual pitch.
-  const modulationHeadH = modulationMeasure.head !== null ? modulationMeasure.head : 238;
+  const modulationHeadH = modulationMeasure.head !== null ? modulationMeasure.head : 264;
   const modulationRowsH = modulationMeasure.rows !== null ? modulationMeasure.rows
     : spectrModulationRouteTargets.length * 63;
-  // The panel's 6px padding top and bottom and its 1px border.
+  // The panel stays clear of the 44 pt top bar: a submenu pushed up over it
+  // loses its Back row, because a press there resolves to the bar in the
+  // root hit test. Then the panel's 6px padding top and bottom and its 1px
+  // border.
+  const modulationPanelMax = Math.max(120, menuMaxHeight - 44);
   const modulationViewportH = Math.max(60, Math.min(modulationRowsH,
-    menuMaxHeight - modulationHeadH - 14));
+    modulationPanelMax - modulationHeadH - 14));
   const modulationMaxOffset = Math.max(0, modulationRowsH - modulationViewportH);
   const modulationScrolls = modulationMaxOffset > 0.5;
   const modulationThumbH = Math.max(24, Math.round((modulationViewportH - 4)
@@ -296,17 +293,20 @@ KNOB_LOGIC = r'''  const valueRef = React.useRef(value);
   // knob shows its own value; the ring is tinted while an LFO moves it, and
   // grabbing it asks first (spectrOverrideModulated). "Keep modulating"
   // lets it turn from then on, until the LFOs driving it change.
-  const drivingKey = useSpectrLfosDriving(modTarget);
+  // Guarded: a sandbox that lifts this component alone has no hook.
+  const drivingKey = typeof useSpectrLfosDriving === "function"
+    ? useSpectrLfosDriving(modTarget) : "";
   const modulated = drivingKey !== "";
   const acknowledgedRef = React.useRef("");
   const askPendingRef = React.useRef(false);
   const pressOpenRef = React.useRef(false);
   const overrideAsks = (then) => {
-    if (typeof modTarget !== "number") return false;
+    if (typeof modTarget !== "number" || typeof spectrLfosDriving !== "function") return false;
     const lfos = spectrLfosDriving(modTarget);
     const key = lfos.join(",");
     if (!lfos.length) { acknowledgedRef.current = ""; return false; }
-    if (acknowledgedRef.current === key || !spectrOverrideAsks()) return false;
+    if (acknowledgedRef.current === key || typeof spectrOverrideAsks !== "function"
+        || !spectrOverrideAsks()) return false;
     spectrOverrideModulated(modName || label, modTarget, lfos, () => {
       acknowledgedRef.current = key;
       if (then) then();
@@ -314,7 +314,8 @@ KNOB_LOGIC = r'''  const valueRef = React.useRef(value);
     return true;
   };
   const wouldAsk = () => {
-    if (typeof modTarget !== "number" || !spectrOverrideAsks()) return false;
+    if (typeof modTarget !== "number" || typeof spectrLfosDriving !== "function"
+        || typeof spectrOverrideAsks !== "function" || !spectrOverrideAsks()) return false;
     const key = spectrLfosDriving(modTarget).join(",");
     return key !== "" && acknowledgedRef.current !== key;
   };
@@ -361,7 +362,7 @@ function spectrModulationRouteList() {
     (
         "Settings writes through the lane helper",
         '''  const lane = (t) => (lfo - 1) * 20 + t;''',
-        '''  const lane = (t) => spectrRouteLaneId(lfo, t);''',
+        '''  const lane = (t) => (t >= 8 ? 4052 : 4020) + (lfo - 1) * 20 + t;  // level targets: own block''',
     ),
     (
         "Settings target switch lane",
@@ -376,12 +377,13 @@ function spectrModulationRouteList() {
     (
         "Turn off writes the target's own lane",
         '''            { id: 4020 + (lfo - 1) * 20 + r.target, value: 0 },''',
-        '''            { id: spectrRouteLaneId(lfo, r.target), value: 0 },''',
+        '''            { id: (r.target >= 8 ? 4052 : 4020) + (lfo - 1) * 20 + r.target, value: 0 },''',
     ),
     (
         "the override comment names the lane helper",
         '''// ModulationTarget index (its lanes are 4020 + 20 (lfo - 1) + target), and''',
-        '''// ModulationTarget index (its on/off lane is spectrRouteLaneId(lfo, target)), and''',
+        '''// ModulationTarget index (its on/off lane is 4020 + 20 (lfo - 1) + target,
+// 4060 + 20 (lfo - 1) + (target - 8) for the level targets), and''',
     ),
     (
         "the knob takes a modulation target",
@@ -568,7 +570,7 @@ def main():
         changed = True
         print("applied         ", label)
     html = json.loads(raw)["html"]
-    for token in ("function spectrRouteLaneId(", "function useSpectrLfosDriving(",
+    for token in ("function spectrLfosDrivingIn(", "function useSpectrLfosDriving(",
                   '"data-spectr-modulation-viewport": true', "const modulationScrollTo = ",
                   'output: [10, "Output"]'):
         if html.count(token) != 1:

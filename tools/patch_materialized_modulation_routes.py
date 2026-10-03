@@ -194,7 +194,7 @@ def main():
     # patch_materialized_modulation_level_targets.py runs after this script
     # and rewrites some of the text it wrote (the target list, lane ids, the
     # knob). Its marker proves this script already ran.
-    if encode("function spectrRouteLaneId(") in raw:
+    if encode("function spectrLfosDrivingIn(") in raw:
         print("modulation routes already applied (superseded in part by patch_materialized_modulation_level_targets.py)")
         return 0
     applied = 0

@@ -1802,20 +1802,77 @@ int main(int argc, char** argv) {
             // Default size: Bank on, Morph on at 40 %, Band shift on at
             // 75 % -- several on, several off, so lit and dimmed rows show.
             rig.resize(990.0f, 645.0f);
-            set_routes(0, 0x59u, {1.0f, 1.0f, 1.0f, 0.4f, 0.75f, 1.0f, 0.5f, 0.5f});
+            set_routes(0, 0x159u, {1.0f, 1.0f, 1.0f, 0.4f, 0.75f, 1.0f, 0.5f, 0.5f,
+                                   0.6f, 0.5f, 0.5f});
             rig.processor.apply_surface_params(false);
             rig.feed_tone(8);
             open_menu();
             report("990x645-mixed");
             capture(rig, dir, prefix + "modulation-routes-990x645-mixed", backend, scale);
             // Every destination on: the tallest the panel gets.
-            set_routes(0, 0xFFu, {1.0f, 0.25f, 0.5f, 0.4f, 0.75f, 0.6f, 0.5f, 0.3f});
+            set_routes(0, 0x7FFu, {1.0f, 0.25f, 0.5f, 0.4f, 0.75f, 0.6f, 0.5f, 0.3f,
+                                   0.6f, 0.45f, 0.35f});
             rig.processor.apply_surface_params(false);
             rig.feed_tone(4);
             settle(rig.clock, 16);
             rig.root->layout_children();
             report("990x645-all-on");
             capture(rig, dir, prefix + "modulation-routes-990x645-all-on", backend, scale);
+            // The target list scrolls under its sticky heading: halfway and to
+            // the end, by the host's own wheel verb over the list.
+            {
+                const auto offset_now = [&] {
+                    rig.eval("(() => { const r = document.querySelector('[data-spectr-modulation-rows]');"
+                             " const v = document.querySelector('[data-spectr-modulation-viewport]');"
+                             " console.log('[route-shot] offset=' + (r && r.getAttribute('data-spectr-modulation-offset'))"
+                             " + ' viewport=' + (r && r.getAttribute('data-spectr-modulation-viewport-height'))"
+                             " + ' rows=' + (r ? r.getBoundingClientRect().height : -1)); })();",
+                             "spectr-route-shot-offset");
+                };
+                std::string viewport_id;
+                try {
+                    rig.eval("(() => { const el = document.querySelector("
+                             "'[data-spectr-modulation-viewport]');"
+                             " throw new Error('PULPVALUE:' + (el ? (el.__pulpId || el.id || "
+                             "'(no id)') : '(absent)')); })();",
+                             "spectr-route-shot-viewport-id");
+                } catch (const std::exception& e) {
+                    const std::string msg = e.what();
+                    const auto at = msg.find("PULPVALUE:");
+                    if (at != std::string::npos) {
+                        viewport_id = msg.substr(at + 10);
+                        const auto end = viewport_id.find_first_of(" \n\"'");
+                        if (end != std::string::npos) viewport_id = viewport_id.substr(0, end);
+                    }
+                }
+                const auto* viewport_view = viewport_id.empty()
+                    ? nullptr : find_by_id(*rig.root, viewport_id);
+                if (viewport_view == nullptr) {
+                    std::printf("[route-shot] CONTROL FAILED: no modulation viewport\n");
+                    ++g_failures;
+                } else {
+                    float vx = 0.0f, vy = 0.0f;
+                    root_origin(*viewport_view, vx, vy);
+                    const auto vb = viewport_view->bounds();
+                    const pulp::view::Point over{vx + vb.width * 0.5f, vy + vb.height * 0.5f};
+                    pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 60.0f, {});
+                    settle(rig.clock, 8);
+                    offset_now();
+                    rig.root->layout_children();
+                    capture(rig, dir, prefix + "modulation-routes-990x645-scrolled-mid", backend, scale);
+                    for (int i = 0; i < 10; ++i)
+                        pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 60.0f, {});
+                    settle(rig.clock, 8);
+                    offset_now();
+                    rig.root->layout_children();
+                    capture(rig, dir, prefix + "modulation-routes-990x645-scrolled-bottom", backend, scale);
+                    for (int i = 0; i < 12; ++i)
+                        pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, -60.0f, {});
+                    settle(rig.clock, 8);
+                    offset_now();
+                    rig.root->layout_children();
+                }
+            }
             // The minimum host size. The editor is pinned to its design box and
             // scaled uniformly, so the menu has the same design-space room.
             rig.resize(static_cast<float>(spectr::kEditorMinimumWidth), static_cast<float>(spectr::kEditorMinimumHeight));
@@ -1825,7 +1882,8 @@ int main(int argc, char** argv) {
             capture(rig, dir, prefix + "modulation-routes-minimum-all-on", backend, scale);
             rig.resize(990.0f, 645.0f);
             // LFO 2's rows: source switch.
-            set_routes(1, 0xA1u, {0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.3f, 0.5f, 0.25f});
+            set_routes(1, 0x4A1u, {0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.3f, 0.5f, 0.25f,
+                                   0.5f, 0.5f, 0.8f});
             rig.processor.apply_surface_params(false);
             rig.activate("[data-spectr-modulation-source-action=\"2\"]");
             settle(rig.clock, 16);
@@ -1856,6 +1914,26 @@ int main(int argc, char** argv) {
                      "'[data-spectr-manager-action=\"override-keep\"]', 'click', null); })();",
                      "spectr-route-shot-keep");
             settle(rig.clock, 16);
+            // The header with LFO 1 driving Intensity, Mix and Output: the
+            // knobs keep their own values and tint their rings. Then a grab of
+            // INTENSITY asks the override question in its own name.
+            capture(rig, dir, prefix + "header-level-targets", backend, scale);
+            rig.eval("(() => { const n = globalThis.__pulpFindMaterializedElement__('[data-spectr-intensity]');"
+                     " const b = n && n.getBoundingClientRect ? n.getBoundingClientRect() : null;"
+                     " const at = b ? { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, pointerId: 1, button: 0 } : {};"
+                     " globalThis.__pulpActivateMaterializedElement__('[data-spectr-intensity]', 'pointerdown', at);"
+                     " globalThis.__pulpActivateMaterializedElement__('[data-spectr-intensity]', 'pointerup', at);"
+                     " console.log('[route-shot] knob modulated=' + (n && n.getAttribute('data-spectr-knob-modulated'))); })();",
+                     "spectr-route-shot-knob");
+            settle(rig.clock, 16);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            capture(rig, dir, prefix + "override-dialog-intensity", backend, scale);
+            rig.eval("(() => { if (document.querySelector('[data-spectr-manager-action=\"override-keep\"]'))"
+                     " globalThis.__pulpActivateMaterializedElement__("
+                     "'[data-spectr-manager-action=\"override-keep\"]', 'click', null); })();",
+                     "spectr-route-shot-keep-knob");
+            settle(rig.clock, 16);
             rig.activate("[data-spectr-settings-open]");
             settle(rig.clock, 24);
             rig.root->layout_children();
@@ -1867,7 +1945,7 @@ int main(int argc, char** argv) {
                 for (auto* scroll : scrolls)
                     if (scroll->content_size().height > scroll->bounds().height + 400.0f)
                         body = scroll;
-                for (const float fraction : {0.62f, 0.82f}) {
+                for (const float fraction : {0.0f, 0.3f, 0.62f, 0.82f, 1.0f}) {
                     if (body != nullptr) {
                         const float max_y = body->content_size().height - body->bounds().height;
                         body->set_scroll(body->scroll_x(), max_y * fraction);
@@ -5834,54 +5912,35 @@ int main(int argc, char** argv) {
         // not mere presence, is the assertion that matters -- MOD-1 shipped
         // these same controls mounted behind a display:none ancestor, where
         // every static source-text check still passed.
-        // Every row in the group is mounted at mount and hidden with
-        // display:none, because the widget bridge has no insert-at-index and
-        // no move -- a row that mounts late is appended, not placed. So the
-        // shared Target/Destinations rows EXIST here but are not visible while
-        // both LFOs are off. Probe rather than assert, and say which state we
-        // captured.
-        // Treating "absent" as a failure would make the correct behaviour red.
-        // With both LFOs off the shared destination rows must be MOUNTED (so
-        // their position is fixed before any toggle moves) and NOT REACHABLE
-        // (so the closed disclosure is real, not merely styled). Asserting
-        // both is what separates this design from the two failures it replaces:
-        // a row that is absent would be appended in the wrong place when it
-        // arrives, and a row that is merely dimmed would be a live control the
-        // user can still hit.
+        // Every row in the group is mounted at mount, because the widget
+        // bridge has no insert-at-index and no move -- a row that mounts late
+        // is appended, not placed. Per-LFO routing replaced the shared
+        // Target / Destinations rows with one target list (a switch and a
+        // Depth row per target), shown whether or not an LFO is on, so every
+        // one of the eleven target switches must be MOUNTED here, with both
+        // LFOs off. Treating "absent" as a failure is the point: a row that
+        // is absent would be appended in the wrong place when it arrives.
         {
-            const char* destinations[] = {
-                "[data-spectr-modulation-target=\"bank\"]",
-                "[data-spectr-modulation-target=\"snapshot-a\"]",
-                "[data-spectr-modulation-target=\"snapshot-b\"]",
-                "[data-spectr-modulation-target=\"morph\"]",
-                "[data-spectr-modulation-select=\"all\"]",
-                "[data-spectr-modulation-select=\"none\"]",
+            const char* targets[] = {
+                "bank", "band-shift", "band-spread", "intensity", "mix", "morph",
+                "freeze", "length", "output", "a", "b",
             };
             std::string wrong;
-            for (const char* selector : destinations) {
+            for (const char* key : targets) {
+                const std::string selector =
+                    std::string("[data-spectr-settings-target=\"") + key + "\"]";
                 const bool mounted = rig.is_mounted(selector);
-                const bool reachable = mounted && rig.is_reachable(selector);
-                std::printf("destination %-46s mounted=%-3s reachable=%-3s\n",
-                            selector, mounted ? "yes" : "no",
-                            reachable ? "yes" : "no");
-                if (!mounted || reachable) {
+                std::printf("target %-44s mounted=%s\n", selector.c_str(),
+                            mounted ? "yes" : "no");
+                if (!mounted) {
                     if (!wrong.empty()) wrong += ", ";
                     wrong += selector;
-                    wrong += mounted ? " (reachable while both LFOs are off)"
-                                     : " (not mounted)";
                 }
-            }
-            if (const auto* probe = find_label(*rig.root, "ALL")) {
-                std::printf("destination native visibility ALL:");
-                for (const auto* node = static_cast<const pulp::view::View*>(probe);
-                     node != nullptr; node = node->parent())
-                    std::printf(" %s", node->visible() ? "visible" : "HIDDEN");
-                std::printf("\n");
             }
             if (!wrong.empty())
                 throw std::runtime_error(
-                    "PRODUCT BUG: with both LFOs off every destination control "
-                    "must be mounted and hidden, but: " + wrong);
+                    "PRODUCT BUG: with both LFOs off every LFO target row must be "
+                    "mounted, but these are not: " + wrong);
         }
 
         const pulp::view::Label* modulation = nullptr;
@@ -6968,24 +7027,25 @@ int main(int argc, char** argv) {
         rig.activate_modulation_toggle(1, "LFO 2");
         rig.report_modulation_dom("after LFO 2 on");
         rig.report_native_state("after LFO 2 on");
-        show_modulation("06-MODULATION-lfo2-expanded", "Destinations");
+        show_modulation("06-MODULATION-lfo2-expanded", "LFO targets");
 
-        // Now an ASSERTION, not a probe. With both LFOs driven on, absent
-        // destination chips are a product bug, so name every selector that
-        // failed to mount rather than skipping past them.
+        // Now an ASSERTION, not a probe. With both LFOs driven on, every LFO
+        // target row (a switch and a Depth row per target, the one list the
+        // band menu shows too) must be mounted; name every one that is not.
+        static const char* kTargetKeys[] = {
+            "bank", "band-shift", "band-spread", "intensity", "mix", "morph",
+            "freeze", "length", "output", "a", "b",
+        };
+        const auto target_switch = [](const char* key) {
+            return std::string("[data-spectr-settings-target=\"") + key
+                + "\"] [data-spectr-setting-toggle]";
+        };
         {
-            const char* required[] = {
-                "[data-spectr-modulation-target=\"bank\"]",
-                "[data-spectr-modulation-target=\"snapshot-a\"]",
-                "[data-spectr-modulation-target=\"snapshot-b\"]",
-                "[data-spectr-modulation-target=\"morph\"]",
-                "[data-spectr-modulation-select=\"all\"]",
-                "[data-spectr-modulation-select=\"none\"]",
-            };
             std::string missing;
-            for (const char* selector : required) {
+            for (const char* key : kTargetKeys) {
+                const auto selector = target_switch(key);
                 const bool mounted = rig.is_mounted(selector);
-                std::printf("destination selector %-46s %s\n", selector,
+                std::printf("target switch %-60s %s\n", selector.c_str(),
                             mounted ? "MOUNTED" : "ABSENT");
                 if (!mounted) {
                     if (!missing.empty()) missing += ", ";
@@ -6995,33 +7055,30 @@ int main(int argc, char** argv) {
             if (!missing.empty())
                 throw std::runtime_error(
                     "PRODUCT BUG: both modulation toggles are driven on, but "
-                    "these destination-selection elements never mounted: "
-                    + missing);
-            for (const char* selector : required) rig.require_reachable(selector);
+                    "these LFO target switches never mounted: " + missing);
         }
 
-        // ── Drive one destination chip SELECTED, then back to DISABLED ───
-        // MORPH starts unpressed; one click selects it, a second clears it.
-        rig.activate("[data-spectr-modulation-target=\"morph\"]");
-        rig.report_modulation_dom("after MORPH click 1");
-        rig.report_native_state("after MORPH click 1");
-        show_modulation("07-MODULATION-target-morph-SELECTED", "Destinations");
+        // ── One target ON, then OFF again (Morph, LFO 1) ────────────────
+        rig.activate(target_switch("morph"));
+        rig.report_modulation_dom("after Morph target on");
+        rig.report_native_state("after Morph target on");
+        show_modulation("07-MODULATION-target-morph-ON", "LFO targets");
 
-        rig.activate("[data-spectr-modulation-target=\"morph\"]");
-        rig.report_modulation_dom("after MORPH click 2");
-        rig.report_native_state("after MORPH click 2");
-        show_modulation("08-MODULATION-target-morph-DISABLED", "Destinations");
+        rig.activate(target_switch("morph"));
+        rig.report_modulation_dom("after Morph target off");
+        rig.report_native_state("after Morph target off");
+        show_modulation("08-MODULATION-target-morph-OFF", "LFO targets");
 
-        // ALL / NONE drive the whole destination set at once.
-        rig.activate("[data-spectr-modulation-select=\"all\"]");
-        rig.report_modulation_dom("after ALL");
-        rig.report_native_state("after ALL");
-        show_modulation("09-MODULATION-targets-all", "Destinations");
+        // The level targets: Intensity, Mix and Output on, then off.
+        for (const char* key : {"intensity", "mix", "output"}) rig.activate(target_switch(key));
+        rig.report_modulation_dom("after the level targets on");
+        rig.report_native_state("after the level targets on");
+        show_modulation("09-MODULATION-level-targets-on", "LFO targets");
 
-        rig.activate("[data-spectr-modulation-select=\"none\"]");
-        rig.report_modulation_dom("after NONE");
-        rig.report_native_state("after NONE");
-        show_modulation("10-MODULATION-targets-none", "Destinations");
+        for (const char* key : {"intensity", "mix", "output"}) rig.activate(target_switch(key));
+        rig.report_modulation_dom("after the level targets off");
+        rig.report_native_state("after the level targets off");
+        show_modulation("10-MODULATION-level-targets-off", "LFO targets");
 
         // Back to the collapsed state, proving the disclosure closes as well
         // as it opens -- a one-way drive would hide a stuck-open bug.

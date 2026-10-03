@@ -53,8 +53,12 @@ constexpr int kOrder = 32;
 // Parameter IDs (docs/parameter-surface.md).
 constexpr AudioUnitParameterID kLfoEnabled = 4000, kLfoShape = 4001, kLfoRate = 4002,
                                kLfoDepth = 4003, kCenter = 3001, kWidth = 3002;
-constexpr AudioUnitParameterID route_on(int t) { return AudioUnitParameterID(4020 + t); }
-constexpr AudioUnitParameterID route_amount(int t) { return AudioUnitParameterID(4030 + t); }
+constexpr AudioUnitParameterID route_on(int t) {
+    // Targets 0..7 at 4020 + t; the level targets (Intensity 8, Mix 9,
+    // Output 10) in their own block from 4060.
+    return AudioUnitParameterID(t >= 8 ? 4052 + t : 4020 + t);
+}
+constexpr AudioUnitParameterID route_amount(int t) { return route_on(t) + 10; }
 constexpr AudioUnitParameterID band_gain(int b) { return AudioUnitParameterID(1000 + b); }
 
 struct Options {
@@ -285,6 +289,11 @@ int main(int argc, char** argv) {
     base.push_back({0, kLfoRate, 1.0f});
     base.push_back({0, kLfoDepth, 1.0f});
     for (int t = 0; t < 6; ++t) { base.push_back({0, route_on(t), 0.0f}); base.push_back({0, route_amount(t), 1.0f}); }
+    // The Output level target (10) as well: +-6 dB after Auto Gain, ramped
+    // per sample. Auto Gain keeps its new-instance default (on): a static
+    // shape is a constant gain, so the reference is the LFO alone.
+    base.push_back({0, route_on(10), 0.0f});
+    base.push_back({0, route_amount(10), 1.0f});
 
     // Each switch lands at an LFO crest or trough (the 0.5 s sine peaks at
     // 0.125 and 0.375 s into its cycle), where an un-ramped switch would move
@@ -292,8 +301,14 @@ int main(int argc, char** argv) {
     // REFERENCE render in which the same destination runs steadily the whole
     // time: a switch may move the sound no faster than that modulation itself
     // does.
-    enum Ref { kBank, kPosition, kZoom };
-    struct Edge { const char* name; double when; Ref ref; };
+    enum Ref { kBank, kPosition, kZoom, kOutput };
+    // `gain_ramp`: the edge is a pure broadband gain ramp (the Output target),
+    // which the whitened-residual detector cannot judge -- the whitener
+    // predicts a steady tone, so ANY change of a gain's slope, however slow,
+    // leaves a residual it scores as a spike (a 60 ms, 6 dB linear fade scored
+    // 21-34 dB). Such an edge is judged by the envelope step against its
+    // reference instead, and its spike is printed for the record.
+    struct Edge { const char* name; double when; Ref ref; bool gain_ramp = false; };
     std::vector<Edge> edges;
     std::vector<Event> automated = base;
     // Bank, its Amount ramped 0 -> 100 % over 2 s (one event per render
@@ -308,21 +323,24 @@ int main(int argc, char** argv) {
     automated.push_back({at(5.125), route_amount(5), 0.2f}); edges.push_back({"Band spread Depth 100->20%", 5.125, kZoom});
     automated.push_back({at(5.875), route_on(5), 0.0f}); edges.push_back({"Band spread off (trough)", 5.875, kZoom});
     automated.push_back({at(6.625), route_on(0), 1.0f}); edges.push_back({"Bank on (crest)", 6.625, kBank});
+    automated.push_back({at(7.125), route_on(10), 1.0f}); edges.push_back({"Output on (crest)", 7.125, kOutput, true});
 
-    const auto reference = [&](int t) {
+    // The Output edge comes after Bank is back on, so its reference runs both.
+    const auto reference = [&](int t, int also = -1) {
         std::vector<Event> ev = base;
         ev.push_back({0, route_on(t), 1.0f});
+        if (also >= 0) ev.push_back({0, route_on(also), 1.0f});
         Input in = input;
         return render(o, in, ev);
     };
-    const Render refs[3] = {reference(0), reference(4), reference(5)};
+    const Render refs[4] = {reference(0), reference(4), reference(5), reference(10, 0)};
     const Render& ctrl = refs[kBank];
     Input ai = input;
     const Render autom = render(o, ai, automated);
-    double ref_step[3];
-    for (int r = 0; r < 3; ++r) ref_step[r] = ms_step_db(refs[r].out, at(1.0), at(7.5), o.sr);
-    std::printf("free-running largest 1 ms step: Bank %.2f dB, Band shift %.2f dB, Band spread %.2f dB\n",
-                ref_step[0], ref_step[1], ref_step[2]);
+    double ref_step[4];
+    for (int r = 0; r < 4; ++r) ref_step[r] = ms_step_db(refs[r].out, at(1.0), at(7.5), o.sr);
+    std::printf("free-running largest 1 ms step: Bank %.2f dB, Band shift %.2f dB, Band spread %.2f dB, "
+                "Output %.2f dB\n", ref_step[0], ref_step[1], ref_step[2], ref_step[3]);
     if (const char* dump = std::getenv("SPECTR_ROUTES_DUMP")) {
         FILE* f = std::fopen(dump, "w");
         for (std::size_t n = 0; n < ctrl.out.size(); ++n)
@@ -357,7 +375,7 @@ int main(int argc, char** argv) {
         for (std::size_t b = 0; b < autom.start.size(); ++b)
             if (autom.start[b] + o.block > edge && autom.start[b] < edge + at(0.08))
                 cost = std::max(cost, autom.us[b]);
-        const bool click = spike > std::max(cspike + 6.0, 20.0);
+        const bool click = !e.gain_ramp && spike > std::max(cspike + 6.0, 20.0);
         // The tone's envelope is the gain the mask gives it: a switch may move
         // it no faster than the same modulation running freely, + 0.5 dB/ms.
         const bool stepped = step > cstep + 0.5;
