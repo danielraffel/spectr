@@ -662,7 +662,7 @@ public:
         for (int ch = 0; ch < channels_; ++ch)
             if (input[ch] == nullptr || output[ch] == nullptr) return false;
 
-        hand_off_staged_layout_();
+        if (!defer_handoff_) hand_off_staged_layout_();
 
         mixer_.push_dry(input, channels_, num_samples);
 
@@ -771,6 +771,8 @@ public:
     [[nodiscard]] unsigned long long active_generation() const noexcept override {
         return active_generation_.load(std::memory_order_acquire);
     }
+
+    void defer_design_handoff(bool defer) noexcept override { defer_handoff_ = defer; }
 
     // Offline only, and deliberately outside the render-path region: it
     // sleeps. See MaskRenderer::await_staged_designs().
@@ -955,6 +957,8 @@ private:
     // design (or a stop) retired.
     std::atomic<std::uint64_t> requested_sequence_{0};
     std::atomic<std::uint64_t> designed_sequence_{0};
+    // Audio-thread only. See MaskRenderer::defer_design_handoff().
+    bool defer_handoff_ = false;
 
     pulp::format::BackgroundTaskLane<DesignTask, 8> lane_;
 };

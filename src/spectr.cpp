@@ -560,7 +560,7 @@ Spectr::SharedProductSnapshot Spectr::shared_product_snapshot() const noexcept {
             s.cancelled, s.lost_records};
 }
 bool Spectr::finalize_shared_product_snapshot(SharedProductSnapshot& out) noexcept {
-    param_sync_lane_.stop();
+    stop_param_sync_lane_();
     std::lock_guard<std::mutex> lock(processing_state_mutex_);
     auto* shared = dynamic_cast<experimental::SharedSpectralMaskRenderer*>(renderer_.get());
     if (!shared) { out = {}; return false; }
@@ -745,7 +745,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // publish a compiled layout, and publish_layout() must never race
     // MaskRenderer::prepare(). The lane is restarted after the new engine
     // and its initial publication are ready.
-    param_sync_lane_.stop();
+    stop_param_sync_lane_();
 
     sample_rate_ = ctx.sample_rate;
     max_block_   = ctx.max_buffer_size;
@@ -1149,7 +1149,7 @@ void Spectr::configure_bridge_(int num_channels) {
 void Spectr::release() {
     // Join the sync worker BEFORE touching the mask processor: an in-flight
     // apply publishes into it.
-    param_sync_lane_.stop();
+    stop_param_sync_lane_();
     freeze_storage_lane_.stop();
     active_renderer_.store(nullptr, std::memory_order_release);
     std::unique_ptr<MaskRenderer> outgoing;
@@ -1217,6 +1217,23 @@ struct RenderEpochScope {
 
 } // namespace
 
+void Spectr::retire_param_sync_through_(std::uint64_t tag) noexcept {
+    auto done = param_sync_done_.load(std::memory_order_relaxed);
+    while (tag > done) {
+        if (param_sync_done_.compare_exchange_weak(done, tag, std::memory_order_release,
+                                                   std::memory_order_relaxed)) {
+            detail::g_param_sync_backlog.fetch_sub(tag - done, std::memory_order_acq_rel);
+            return;
+        }
+    }
+}
+
+void Spectr::stop_param_sync_lane_() noexcept {
+    param_sync_lane_.stop();
+    // A stopped lane owes nothing; never leave the process-wide count stuck.
+    retire_param_sync_through_(param_sync_requested_.load(std::memory_order_relaxed));
+}
+
 void Spectr::await_offline_work_(MaskRenderer* renderer) noexcept {
     PULP_TRACE_SCOPE_NAMED("audio", "offline: await design workers");
     // Parameter sync first: it can publish a new mask, which the renderer
@@ -1269,9 +1286,10 @@ void Spectr::process(
     // blocks behind and the bounce stops matching playback. On an offline
     // block only, first wait for what a paced host would already have
     // adopted. A realtime block never waits.
-    if (processor_prepared_
-        && (ctx.is_offline() || host_offline_render_.load(std::memory_order_relaxed)))
-        await_offline_work_(renderer);
+    const bool offline_block = processor_prepared_
+        && (ctx.is_offline() || host_offline_render_.load(std::memory_order_relaxed));
+    if (offline_block) await_offline_work_(renderer);
+    if (processor_prepared_ && renderer) renderer->defer_design_handoff(offline_block);
 
     // spectr#34: host-side parameter writes (automation playback, generic
     // controls) land in the store between blocks. On any drift, hand the
@@ -1282,8 +1300,10 @@ void Spectr::process(
         ? sample_surface_drift_() : SurfaceDrift{};
     if (surface_drift.worker) {
         const auto tag = param_sync_requested_.load(std::memory_order_relaxed) + 1;
-        if (param_sync_lane_.try_spawn(ParamSyncTask{tag}))
+        if (param_sync_lane_.try_spawn(ParamSyncTask{tag})) {
             param_sync_requested_.store(tag, std::memory_order_relaxed);
+            detail::g_param_sync_backlog.fetch_add(1, std::memory_order_acq_rel);
+        }
     }
 
     // Sync the two continuously automatable audio controls each block.

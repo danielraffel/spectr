@@ -484,13 +484,12 @@ void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask& task) noexce
     (void)self->apply_surface_params(/*apply_morph=*/true);
     // Retire this task and every one it coalesced (an offline render waits
     // on this; see await_offline_work_).
-    auto done = self->param_sync_done_.load(std::memory_order_relaxed);
-    while (task.tag > done
-           && !self->param_sync_done_.compare_exchange_weak(
-                  done, task.tag, std::memory_order_release,
-                  std::memory_order_relaxed)) {
-    }
+    self->retire_param_sync_through_(task.tag);
 }
+
+namespace detail {
+std::atomic<std::uint64_t> g_param_sync_backlog{0};
+} // namespace detail
 
 Spectr::SurfaceDrift Spectr::sample_surface_drift_() noexcept {
     SurfaceDrift drift;
@@ -1129,3 +1128,7 @@ void Spectr::end_param_gesture_epoch() noexcept {
 }
 
 } // namespace spectr
+
+extern "C" std::uint64_t spectr_param_sync_backlog_v1() noexcept {
+    return spectr::detail::g_param_sync_backlog.load(std::memory_order_acquire);
+}

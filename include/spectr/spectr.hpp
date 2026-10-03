@@ -67,6 +67,12 @@
 
 namespace spectr {
 
+namespace detail {
+/// Parameter-sync tasks handed to a worker and not yet applied, summed over
+/// every Spectr in the process. See `spectr_param_sync_backlog_v1()`.
+extern std::atomic<std::uint64_t> g_param_sync_backlog;
+} // namespace detail
+
 struct ProcessingStateSnapshot {
     BandField field{};
     Viewport viewport{};
@@ -1087,6 +1093,8 @@ private:
     // Offline blocks only: wait for the worker results a paced host would
     // already have adopted by now. Sleeps; never called on a realtime block.
     void await_offline_work_(MaskRenderer* renderer) noexcept;
+    void retire_param_sync_through_(std::uint64_t tag) noexcept;
+    void stop_param_sync_lane_() noexcept;
     ModulationSettings modulation_{};
     // Guarded by processing_state_mutex_ and published to the audio thread in
     // AudioModulationState, so both sides of a morph agree on what moves.
@@ -1315,3 +1323,10 @@ inline std::unique_ptr<pulp::format::Processor> create_spectr() {
 }
 
 } // namespace spectr
+
+/// Host-parameter drift the audio thread handed the parameter-sync worker that
+/// it has not applied yet, process-wide. The companion of
+/// `spectr_mask_design_backlog_v1()`: a harness that renders back to back waits
+/// for both to read zero after each block to render as a paced host would.
+/// Read-only and lock-free; exported from the AU bundle.
+extern "C" std::uint64_t spectr_param_sync_backlog_v1() noexcept;

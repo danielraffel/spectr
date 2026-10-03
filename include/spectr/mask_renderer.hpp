@@ -146,6 +146,14 @@ public:
     /// Realisations that adopt synchronously have nothing to wait for.
     virtual bool await_staged_designs() noexcept { return true; }
 
+    /// Audio thread. While true, `process()` keeps a staged layout for the
+    /// next `await_staged_designs()` instead of handing it to the design
+    /// worker at once. An offline render sets it so a design can never finish
+    /// (on a preempted call) between two of the same host block's render
+    /// blocks: every layout is adopted at the start of the host block after
+    /// the one that staged it, which is when a paced host adopts it.
+    virtual void defer_design_handoff(bool /*defer*/) noexcept {}
+
     /// Monotonic counter of the magnitude the renderer is currently
     /// realising. Advances when a newly published or staged layout has been
     /// adopted into the audio path. Diagnostic: a renderer whose adoption is
