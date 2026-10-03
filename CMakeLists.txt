@@ -4006,6 +4006,14 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
             RESOURCE_LOCK spectr_native_materialized_editor
             FIXTURES_REQUIRED spectr_first_frame_dirs)
     endforeach()
+    # Out-of-process variant (AUHostingService + remote view controller). Not a
+    # ctest: it needs the component installed where AUHostingService finds it.
+    add_executable(Spectr-editor-open-oop-probe tools/editor_open_oop_probe.mm)
+    set_source_files_properties(tools/editor_open_oop_probe.mm PROPERTIES
+        COMPILE_OPTIONS "-fno-objc-arc")
+    target_link_libraries(Spectr-editor-open-oop-probe PRIVATE
+        "-framework AppKit" "-framework AudioToolbox" "-framework CoreAudioKit"
+        "-framework CoreGraphics" "-framework ImageIO" "-framework QuartzCore")
     add_test(NAME Spectr-au-editor-first-frame-dirs
         COMMAND ${CMAKE_COMMAND} -E make_directory
             "${CMAKE_BINARY_DIR}/first-frames/preferred" "${CMAKE_BINARY_DIR}/first-frames/min")
