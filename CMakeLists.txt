@@ -3967,7 +3967,8 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     add_executable(Spectr-editor-open-probe tools/editor_open_probe.mm)
     target_link_libraries(Spectr-editor-open-probe PRIVATE
         "-framework AppKit" "-framework AudioToolbox" "-framework AudioUnit"
-        "-framework CoreGraphics" "-framework Metal" "-framework QuartzCore")
+        "-framework CoreGraphics" "-framework ImageIO" "-framework Metal"
+        "-framework QuartzCore")
     add_dependencies(Spectr-editor-open-probe ${SPECTR_NATIVE_AU_TARGET})
     add_test(NAME Spectr-au-editor-open
         COMMAND Spectr-editor-open-probe
@@ -3977,6 +3978,39 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     set_tests_properties(Spectr-au-editor-open PROPERTIES
         TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
         RESOURCE_LOCK spectr_native_materialized_editor)
+    # The editor opens on Spectr's own background: every presented frame, from
+    # view creation until the UI is stable, is either that background (plus
+    # chrome already in its final place) or the settled UI, and the backing
+    # layer the DAW shows before the first frame is that colour too. Read back
+    # from each presented drawable on the GPU (never a screenshot), cold and
+    # warm, at the preferred and the minimum host size. The SDK default navy
+    # this replaces fails it on every open.
+    foreach(_spectr_first_frame_size PREFERRED MIN)
+        set(_spectr_first_frame_args)
+        if(_spectr_first_frame_size STREQUAL "MIN")
+            set(_spectr_first_frame_args --view-size
+                "${SPECTR_HOST_MIN_WIDTH}x${SPECTR_HOST_MIN_HEIGHT}")
+        endif()
+        string(TOLOWER "${_spectr_first_frame_size}" _spectr_first_frame_name)
+        string(SUBSTRING "${SPECTR_EDITOR_BACKGROUND_RGB}" 2 6 _spectr_first_frame_rgb)
+        add_test(NAME Spectr-au-editor-first-frame-${_spectr_first_frame_name}
+            COMMAND Spectr-editor-open-probe
+                --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
+                --opens 3 --settle-ms 600 ${_spectr_first_frame_args}
+                --capture-frames "${CMAKE_BINARY_DIR}/first-frames/${_spectr_first_frame_name}"
+                --settled-bg ${_spectr_first_frame_rgb}
+                --expect-first-rgb ${_spectr_first_frame_rgb}
+                --max-offbrand-frames 0)
+        set_tests_properties(Spectr-au-editor-first-frame-${_spectr_first_frame_name} PROPERTIES
+            TIMEOUT 180 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
+            RESOURCE_LOCK spectr_native_materialized_editor
+            FIXTURES_REQUIRED spectr_first_frame_dirs)
+    endforeach()
+    add_test(NAME Spectr-au-editor-first-frame-dirs
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${CMAKE_BINARY_DIR}/first-frames/preferred" "${CMAKE_BINARY_DIR}/first-frames/min")
+    set_tests_properties(Spectr-au-editor-first-frame-dirs PROPERTIES
+        FIXTURES_SETUP spectr_first_frame_dirs)
 endif()
 
 # Artifact-level host proof: load the built CLAP, VST3 and AU through
