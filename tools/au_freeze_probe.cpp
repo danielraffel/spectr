@@ -47,6 +47,8 @@
 // Exit: 0 clean, 1 a problem (click, fade overshoot, dropout, slow edge,
 // render-thread tail notification), 2 setup error.
 
+#include <spectr/freeze_length.hpp>
+
 #include <AudioToolbox/AudioToolbox.h>
 #include <AudioUnit/AudioUnit.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -67,7 +69,18 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr AudioUnitParameterID kParamFreeze = 3;
 constexpr AudioUnitParameterID kParamFreezeLength = 4;
-constexpr AudioUnitParameterValue kFreezeLengthCustom = 4.0f;
+// The Freeze Length parameter is an index into spectr::kLengthPresets, and
+// Custom is the index one past the list. Read it from the product header: a
+// hard-coded 4.0 stayed behind when the list grew from 4 presets to 20, and
+// every --length run then selected preset 4 (1/6 bar) instead of Custom.
+// SPECTR_PROBE_PLANT_STALE_CUSTOM=1 restores the stale 4.0: the hold-check's
+// negative control, which must fail.
+AudioUnitParameterValue freeze_length_custom() {
+    static const AudioUnitParameterValue value =
+        std::getenv("SPECTR_PROBE_PLANT_STALE_CUSTOM") != nullptr
+            ? 4.0f : static_cast<AudioUnitParameterValue>(spectr::kLengthPresetCustom);
+    return value;
+}
 
 struct Options {
     double sr = 48000.0;
@@ -576,7 +589,7 @@ struct Host {
             return true;
         });
         return ok && AudioUnitSetParameter(au, kParamFreezeLength, kAudioUnitScope_Global, 0,
-                                           kFreezeLengthCustom, 0) == noErr;
+                                           freeze_length_custom(), 0) == noErr;
     }
 
     // The custom length and the parameter, as the unit reports them.
@@ -594,7 +607,7 @@ struct Host {
         const auto f0 = json.find('"', fraction_at + 11) + 1;
         const std::string fraction = json.substr(f0, json.find('"', f0) - f0);
         char out[64];
-        std::snprintf(out, sizeof(out), "%s%d+%s", preset == kFreezeLengthCustom ? "" : "preset:",
+        std::snprintf(out, sizeof(out), "%s%d+%s", preset == freeze_length_custom() ? "" : "preset:",
                       bars, fraction.c_str());
         return out;
     }
@@ -755,6 +768,22 @@ int hold_check(Options o) {
             for (const double f : chord_a) ea += goertzel_power(r.out.l, from, n, f, o.sr);
             for (const double f : chord_b) eb += goertzel_power(r.out.l, from, n, f, o.sr);
             a_share[column++] = ea / (ea + eb + 1e-30);
+            if (std::getenv("SPECTR_HOLD_TRACE")) {
+                // What the output carries over time, from 0.5 s before the
+                // press to 3 s after it, in 250 ms windows: chord A, chord B.
+                const auto press_out = std::size_t((change + offset) * o.sr) + std::size_t(r.latency);
+                std::printf("    trace Length %s, press +%.2f s (t=0 at the press, latency-aligned):\n", hold, offset);
+                for (double t = -0.5; t < 3.0; t += 0.25) {
+                    const auto at = std::size_t(double(press_out) + t * o.sr);
+                    const auto w = std::size_t(0.25 * o.sr);
+                    if (at + w > r.out.l.size()) break;
+                    double a = 0, b = 0;
+                    for (const double f : chord_a) a += goertzel_power(r.out.l, at, w, f, o.sr);
+                    for (const double f : chord_b) b += goertzel_power(r.out.l, at, w, f, o.sr);
+                    std::printf("      t=%+5.2f s  A %6.1f dB  B %6.1f dB\n", t,
+                                10.0 * std::log10(a + 1e-30), 10.0 * std::log10(b + 1e-30));
+                }
+            }
             const std::string expected = std::string(std::strchr(hold, '/') ? "0+" : "") + hold
                 + (std::strchr(hold, '/') ? "" : "+0");
             std::printf("  press %+.2f s after the change, Length %s bar (unit reads back %s): "
