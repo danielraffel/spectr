@@ -194,6 +194,8 @@ std::string json_escape(const std::string& in) {
 #if defined(_WIN32)
 #include <process.h>
 #else
+#include <cerrno>
+#include <csignal>
 #include <unistd.h>
 #endif
 
@@ -209,6 +211,18 @@ void set_editor_owns_resize_grip(bool value) {
 
 bool editor_owns_resize_grip() {
     return g_editor_owns_resize_grip.load(std::memory_order_relaxed);
+}
+
+namespace {
+std::atomic<bool> g_editor_defers_document_load{false};
+}  // namespace
+
+void set_editor_defers_document_load(bool value) {
+    g_editor_defers_document_load.store(value, std::memory_order_relaxed);
+}
+
+bool editor_defers_document_load() {
+    return g_editor_defers_document_load.load(std::memory_order_relaxed);
 }
 
 namespace {
@@ -309,7 +323,63 @@ const std::array kEmbeddedFiles{
     EmbeddedFile{"help-content.js", spectr_native::help_content_js, spectr_native::help_content_js_size},
 };
 
-std::filesystem::path package_path_for(const void* instance) {
+constexpr const char* kPackagePrefix = "spectr-native-materialized-";
+
+// Identity of the embedded package: file count and total bytes, hex. Any build
+// that adds, removes or resizes a file names a different directory, so two
+// Spectr builds loaded into one host process never share a package.
+std::string embedded_package_stamp() {
+    std::size_t total = 0;
+    for (const auto& file : kEmbeddedFiles) total += file.size;
+    std::ostringstream stamp;
+    stamp << std::hex << kEmbeddedFiles.size() << 'x' << total;
+    return stamp.str();
+}
+
+#if !defined(_WIN32)
+// Packages left by host processes that have exited. A package now outlives the
+// editor that wrote it (see package_path_for), so without this sweep every
+// host session would strand one in the temp directory. Runs once per process,
+// off nothing but a directory listing and kill(pid, 0).
+void sweep_packages_of_exited_processes(const std::filesystem::path& directory) {
+    static bool swept = false;
+    if (swept) return;
+    swept = true;
+    const std::string prefix{kPackagePrefix};
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(directory, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        const auto name = it->path().filename().string();
+        if (name.rfind(prefix, 0) != 0) continue;
+        const auto pid_begin = prefix.size();
+        const auto pid_end = name.find('-', pid_begin);
+        if (pid_end == std::string::npos || pid_end == pid_begin) continue;
+        pid_t pid = 0;
+        try {
+            pid = static_cast<pid_t>(std::stol(name.substr(pid_begin, pid_end - pid_begin)));
+        } catch (...) {
+            continue;
+        }
+        if (pid <= 0 || pid == getpid()) continue;
+        if (kill(pid, 0) == 0 || errno != ESRCH) continue;  // alive, or not ours to judge
+        std::error_code remove_ec;
+        std::filesystem::remove_all(it->path(), remove_ec);
+    }
+}
+#endif
+
+// One package per host process and build, shared by every Spectr editor in
+// that process and kept for the life of the process.
+//
+// It used to be one package per Processor instance, removed when the editor
+// closed. Every editor open therefore rewrote ~2.7 MB synchronously inside
+// the host's view-creation call (AU v2 `uiViewForAudioUnit:`), the one place
+// the host is blocked waiting for us: 18 ms on an idle disk, 273 ms measured
+// under build load. The package is immutable for a given build, so a reopen,
+// a second instance, or a second window in the same host now finds it on
+// disk (stamp + per-file size check in write_embedded_package) and writes
+// nothing.
+std::filesystem::path package_path_for(const void*) {
     std::error_code ec;
     auto directory = std::filesystem::temp_directory_path(ec);
     if (ec) return {};
@@ -318,8 +388,9 @@ std::filesystem::path package_path_for(const void* instance) {
     const auto process_id = _getpid();
 #else
     const auto process_id = getpid();
+    sweep_packages_of_exited_processes(directory);
 #endif
-    name << "spectr-native-materialized-" << process_id << '-' << instance;
+    name << kPackagePrefix << process_id << '-' << embedded_package_stamp();
     return directory / name.str();
 }
 
@@ -714,6 +785,7 @@ bool Spectr::perform_command(pulp::view::CommandID id) {
 }
 
 std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
+    PULP_TRACE_SCOPE_NAMED("state", "spectr_editor_create");
     (void)install_host_view_first_mouse();
     // Logic may retain a detached AUv2 NSView and ask the same Processor for a
     // replacement editor before that retained view is deallocated. In that
@@ -767,8 +839,13 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     pulp::view::route_global_keys(*root, native_command_registry_);
 
     native_package_path_ = package_path_for(this);
-    if (native_package_path_.empty()
-        || !write_embedded_package(native_package_path_)) {
+    bool package_written = false;
+    {
+        PULP_TRACE_SCOPE_NAMED("io", "spectr_write_package");
+        package_written = !native_package_path_.empty()
+            && write_embedded_package(native_package_path_);
+    }
+    if (!package_written) {
         pulp::runtime::log_error(
             "[Spectr native] materialized editor package could not be written; editor is fail-closed");
         native_editor_root_ = root.get();
@@ -810,14 +887,174 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     native_editor_bridge_.attach_native_runtime(
         *native_scripted_ui_, "__spectrEditorDispatch");
 
+    native_document_load_frames_ = 0;
+#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+    // Pulp holds view::ScopedDeferredDocumentLoad around this call for every
+    // host-embedded editor, so load_deferrable() returns the view first there.
+    native_document_load_pending_ = false;
+    load_native_document_();
+#else
+    if (editor_defers_document_load()) {
+        native_document_load_pending_ = true;
+    } else {
+        native_document_load_pending_ = false;
+        load_native_document_();
+    }
+#endif
+
+    // ── Editor-owned resize grip ────────────────────────────────────────
+    //
+    // AU v2 has no host->plugin resize contract. `AUCocoaUIBase` declares only
+    // `interfaceVersion` and `uiViewForAudioUnit:withSize:` (host->plugin at
+    // creation only), and Logic's AU plugin window reports no AXGrowArea and
+    // refuses a host-side resize outright. Resizable AU v2 editors therefore
+    // draw their own grip and push a size at the host; JUCE's AU wrapper does
+    // exactly this in `resizeHostWindow()`, and reverts host-driven parent
+    // resizes in `parentSizeChanged()`. `Processor::request_editor_resize` is
+    // Pulp's equivalent, and this grip is the gesture that drives it.
+    //
+    // The grip is a native, unregistered child of the editor root rather than a
+    // scripted widget, for two reasons worth recording:
+    //   * Realm teardown is ownership-classified.
+    //     `WidgetBridge::clear_quarantined_realm` seeds the root's direct
+    //     children with `inherited_this_realm = false` and only flips it for
+    //     nodes registered in `owned_widgets_`, so an unregistered native child
+    //     is never retired with the realm. This is NOT a claim that
+    //     Generous-Corp/pulp#7648 is resolved — that issue still needs
+    //     re-verification on its own terms; it is why this particular placement
+    //     is safe.
+    //   * `View::hit_test` walks children topmost-first, so a last-added,
+    //     high-z grip owns its own rect without stealing hits from the
+    //     scripted tree beneath it.
+    //
+    // Failure mode is deliberately inert: the grip only REQUESTS a size. The
+    // editor's own geometry changes solely through `on_view_resized`, which
+    // fires when the host actually applied the new frame. If the host refuses,
+    // nothing here moves, so the internal size and the host window cannot
+    // disagree.
+    // Only where the format gives the user no resize affordance of its own,
+    // which today means AU v2 alone — see set_editor_owns_resize_grip(). It is
+    // opt-in, so every other format (and the standalone, where macOS owns these
+    // exact pixels and consumes press and click before the content view is
+    // asked) gets nothing here by default.
+    if (editor_owns_resize_grip()) {
+    auto grip = std::make_unique<EditorResizeGrip>();
+    grip->set_position(pulp::view::View::Position::absolute);
+    grip->set_right(kResizeGripInset);
+    grip->set_bottom(kResizeGripBottomInset);
+    grip->flex().preferred_width = kResizeGripSize;
+    grip->flex().preferred_height = kResizeGripSize;
+    grip->set_z_index(kResizeGripZIndex);
+    grip->on_drag_begin = [this] {
+        // Measure from the HOST size, not the root. Under a pinned viewport the
+        // root is constant at the authored box, so basing the drag on root
+        // bounds makes every gesture start from the same number and the grip
+        // can only ever take a single step.
+        native_resize_base_width_ = native_host_width_ > 0
+            ? native_host_width_ : kEditorPreferredWidth;
+        native_resize_base_height_ = native_host_height_ > 0
+            ? native_host_height_ : kEditorPreferredHeight;
+        native_resize_refused_ = false;
+    };
+    grip->on_resize = [this](float movement_x, float movement_y) {
+        if (native_resize_refused_ || native_resize_base_width_ == 0) return;
+        const auto target = resolve_editor_resize(
+            native_resize_base_width_, native_resize_base_height_,
+            movement_x, movement_y);
+        // Skip the round trip while the drag still resolves to the size the
+        // host is already at; otherwise a slow drag opens one host transaction
+        // per mouse-move that changes nothing. Compared against the host size
+        // for the same reason the base is: the root does not move under a pin.
+        if (native_host_width_ == target.width
+            && native_host_height_ == target.height) {
+            return;
+        }
+        if (!request_editor_resize(target.width, target.height)) {
+            // One log per gesture, not per mouse-move.
+            native_resize_refused_ = true;
+            pulp::runtime::log_info(
+                "[Spectr native] host refused editor resize to {}x{}; "
+                "keeping the current editor size",
+                target.width, target.height);
+        }
+    };
+    native_resize_grip_ = grip.get();
+    root->add_child(std::move(grip));
+    }
+
+    native_editor_root_ = root.get();
+    return root;
+}
+
+void Spectr::load_native_document_() {
+    native_document_load_pending_ = false;
+    if (!native_scripted_ui_) return;
+#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+    // Pulp decides when the document is evaluated. Inside a host's
+    // view-creation call (ViewBridge::Options::hosted_editor(), every plug-in
+    // format) load_deferrable() returns at once and the session evaluates on
+    // its second idle poll; standalone and in-process harnesses evaluate here.
+    // finish_native_document_load_ runs from the session's callback either way.
+    native_document_load_reported_ = false;
+    native_scripted_ui_->set_document_loaded_callback(
+        [this](bool loaded, const std::string& error) {
+            native_document_load_reported_ = true;
+            finish_native_document_load_(loaded, error, /*from_session=*/true);
+        });
     std::string error;
-    if (!native_scripted_ui_->load(&error)) {
+    bool accepted = false;
+    {
+        PULP_TRACE_SCOPE_NAMED("js", "spectr_session_load");
+        accepted = native_scripted_ui_->load_deferrable(&error);
+    }
+    // A script that cannot even be read fails before any evaluation, so the
+    // callback never ran for it.
+    if (!accepted && !native_document_load_reported_)
+        finish_native_document_load_(false, error, /*from_session=*/false);
+    retire_failed_native_session_();
+#else
+    // SDK 0.890.1 equivalent of Pulp's view-first load (the AU v2 entry point
+    // declares editor_defers_document_load and the frame clock calls this on
+    // the second frame). Delete this branch, set_editor_defers_document_load
+    // and native_document_load_pending_ on the SDK bump to the first Pulp
+    // release that defines PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD.
+    PULP_TRACE_SCOPE_NAMED("state", "spectr_document_load");
+    std::string error;
+    bool session_loaded = false;
+    {
+        PULP_TRACE_SCOPE_NAMED("js", "spectr_session_load");
+        session_loaded = native_scripted_ui_->load(&error);
+    }
+    finish_native_document_load_(session_loaded, error, /*from_session=*/false);
+    retire_failed_native_session_();
+#endif
+}
+
+void Spectr::retire_failed_native_session_() {
+    if (!native_session_failed_) return;
+    native_session_failed_ = false;
+    native_scripted_ui_.reset();
+}
+
+void Spectr::finish_native_document_load_(bool session_loaded,
+                                          const std::string& error,
+                                          bool from_session) {
+    PULP_TRACE_SCOPE_NAMED("state", "spectr_document_bind");
+    // A failure reported from inside the session's own load must not destroy
+    // that session while its call is still on the stack; it is marked and
+    // retired by the caller or the next frame tick instead.
+    const auto fail_closed = [this, from_session] {
+        native_editor_bridge_.detach_native_runtime(
+            *native_scripted_ui_, "__spectrEditorDispatch");
+        native_session_failed_ = true;
+        if (!from_session) retire_failed_native_session_();
+    };
+    if (!native_scripted_ui_) return;
+    if (!session_loaded) {
         pulp::runtime::log_error(
             "[Spectr native] materialized QuickJS load failed: {}; editor is fail-closed",
             error);
-        native_editor_bridge_.detach_native_runtime(
-            *native_scripted_ui_, "__spectrEditorDispatch");
-        native_scripted_ui_.reset();
+        fail_closed();
         std::error_code ec;
         std::filesystem::remove_all(native_package_path_, ec);
         native_package_path_.clear();
@@ -827,7 +1064,10 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                            std::istreambuf_iterator<char>());
         try {
             bridge->set_script_base_dir(native_package_path_);
-            bridge->load_script(design, "spectr-materialized-design");
+            {
+                PULP_TRACE_SCOPE_NAMED("js", "spectr_design_script");
+                bridge->load_script(design, "spectr-materialized-design");
+            }
             // The help overlay's copy. Loaded here rather than inlined into
             // the materialized document so the text is editable without
             // patching a checked-in one-line artifact. It assigns one string
@@ -848,12 +1088,15 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                         "[Spectr native] help-content.js was empty; the help "
                         "overlay will report that its content did not load");
             }
-            bridge->load_script(
-                "if (typeof globalThis.__pulpApplyMaterializedVisualAuthority__ === 'function') "
-                "globalThis.__pulpApplyMaterializedVisualAuthority__(); "
-                "if (typeof globalThis.__pulpBindMaterializedCanvases__ === 'function') "
-                "globalThis.__pulpBindMaterializedCanvases__();",
-                "spectr-materialized-bind");
+            {
+                PULP_TRACE_SCOPE_NAMED("js", "spectr_materialized_bind");
+                bridge->load_script(
+                    "if (typeof globalThis.__pulpApplyMaterializedVisualAuthority__ === 'function') "
+                    "globalThis.__pulpApplyMaterializedVisualAuthority__(); "
+                    "if (typeof globalThis.__pulpBindMaterializedCanvases__ === 'function') "
+                    "globalThis.__pulpBindMaterializedCanvases__();",
+                    "spectr-materialized-bind");
+            }
             // A tracing build carries a "TRACING" reminder. Pulp paints one
             // from the root View at a fixed corner, above the header's line;
             // the header draws its own on that line instead, so Pulp's is
@@ -1013,97 +1256,28 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
             pulp::runtime::log_error(
                 "[Spectr native] DesignIR materialization failed: {}; editor is fail-closed",
                 error.what());
-            native_editor_bridge_.detach_native_runtime(
-                *native_scripted_ui_, "__spectrEditorDispatch");
-            native_scripted_ui_.reset();
+            fail_closed();
         }
     }
-
-    // ── Editor-owned resize grip ────────────────────────────────────────
-    //
-    // AU v2 has no host->plugin resize contract. `AUCocoaUIBase` declares only
-    // `interfaceVersion` and `uiViewForAudioUnit:withSize:` (host->plugin at
-    // creation only), and Logic's AU plugin window reports no AXGrowArea and
-    // refuses a host-side resize outright. Resizable AU v2 editors therefore
-    // draw their own grip and push a size at the host; JUCE's AU wrapper does
-    // exactly this in `resizeHostWindow()`, and reverts host-driven parent
-    // resizes in `parentSizeChanged()`. `Processor::request_editor_resize` is
-    // Pulp's equivalent, and this grip is the gesture that drives it.
-    //
-    // The grip is a native, unregistered child of the editor root rather than a
-    // scripted widget, for two reasons worth recording:
-    //   * Realm teardown is ownership-classified.
-    //     `WidgetBridge::clear_quarantined_realm` seeds the root's direct
-    //     children with `inherited_this_realm = false` and only flips it for
-    //     nodes registered in `owned_widgets_`, so an unregistered native child
-    //     is never retired with the realm. This is NOT a claim that
-    //     Generous-Corp/pulp#7648 is resolved — that issue still needs
-    //     re-verification on its own terms; it is why this particular placement
-    //     is safe.
-    //   * `View::hit_test` walks children topmost-first, so a last-added,
-    //     high-z grip owns its own rect without stealing hits from the
-    //     scripted tree beneath it.
-    //
-    // Failure mode is deliberately inert: the grip only REQUESTS a size. The
-    // editor's own geometry changes solely through `on_view_resized`, which
-    // fires when the host actually applied the new frame. If the host refuses,
-    // nothing here moves, so the internal size and the host window cannot
-    // disagree.
-    // Only where the format gives the user no resize affordance of its own,
-    // which today means AU v2 alone — see set_editor_owns_resize_grip(). It is
-    // opt-in, so every other format (and the standalone, where macOS owns these
-    // exact pixels and consumes press and click before the content view is
-    // asked) gets nothing here by default.
-    if (editor_owns_resize_grip()) {
-    auto grip = std::make_unique<EditorResizeGrip>();
-    grip->set_position(pulp::view::View::Position::absolute);
-    grip->set_right(kResizeGripInset);
-    grip->set_bottom(kResizeGripBottomInset);
-    grip->flex().preferred_width = kResizeGripSize;
-    grip->flex().preferred_height = kResizeGripSize;
-    grip->set_z_index(kResizeGripZIndex);
-    grip->on_drag_begin = [this] {
-        // Measure from the HOST size, not the root. Under a pinned viewport the
-        // root is constant at the authored box, so basing the drag on root
-        // bounds makes every gesture start from the same number and the grip
-        // can only ever take a single step.
-        native_resize_base_width_ = native_host_width_ > 0
-            ? native_host_width_ : kEditorPreferredWidth;
-        native_resize_base_height_ = native_host_height_ > 0
-            ? native_host_height_ : kEditorPreferredHeight;
-        native_resize_refused_ = false;
-    };
-    grip->on_resize = [this](float movement_x, float movement_y) {
-        if (native_resize_refused_ || native_resize_base_width_ == 0) return;
-        const auto target = resolve_editor_resize(
-            native_resize_base_width_, native_resize_base_height_,
-            movement_x, movement_y);
-        // Skip the round trip while the drag still resolves to the size the
-        // host is already at; otherwise a slow drag opens one host transaction
-        // per mouse-move that changes nothing. Compared against the host size
-        // for the same reason the base is: the root does not move under a pin.
-        if (native_host_width_ == target.width
-            && native_host_height_ == target.height) {
-            return;
-        }
-        if (!request_editor_resize(target.width, target.height)) {
-            // One log per gesture, not per mouse-move.
-            native_resize_refused_ = true;
-            pulp::runtime::log_info(
-                "[Spectr native] host refused editor resize to {}x{}; "
-                "keeping the current editor size",
-                target.width, target.height);
-        }
-    };
-    native_resize_grip_ = grip.get();
-    root->add_child(std::move(grip));
+#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+    // A deferred document mounts from the idle tick after the host already
+    // reported its size; publish it now that there is a document to lay out.
+    // (An immediate load runs inside create_view(), before the root is
+    // registered, and open_native_editor_ publishes instead.)
+    if (session_loaded && native_editor_root_ != nullptr && native_scripted_ui_
+        && native_scripted_ui_->bridge() != nullptr) {
+        on_view_resized(*native_editor_root_,
+                        native_host_width_ > 0 ? native_host_width_
+                                               : kEditorPreferredWidth,
+                        native_host_height_ > 0 ? native_host_height_
+                                                : kEditorPreferredHeight);
+        native_editor_root_->request_repaint();
     }
-
-    native_editor_root_ = root.get();
-    return root;
+#endif
 }
 
 void Spectr::open_native_editor_(pulp::view::View& view) {
+    PULP_TRACE_SCOPE_NAMED("state", "spectr_editor_opened");
     if (&view != native_editor_root_ || !native_scripted_ui_) return;
     const auto bounds = view.bounds();
     const auto width = bounds.width > 0.0f
@@ -1116,7 +1290,14 @@ void Spectr::open_native_editor_(pulp::view::View& view) {
     native_host_automation_revision_ = host_automation_revision();
     if (native_frame_subscription_ >= 0) return;
     native_frame_clock_ = view.frame_clock();
-    if (!native_frame_clock_) return;
+    if (!native_frame_clock_) {
+        // Nothing will ever tick a deferred load; evaluate it now.
+        if (native_document_load_pending_) {
+            load_native_document_();
+            on_view_resized(view, width, height);
+        }
+        return;
+    }
     native_frame_subscription_ = native_frame_clock_->subscribe(
         [this](float dt) { return tick_native_analyzer_(dt); });
     // Subscribing does not, by itself, wake an idle render loop. The host reads
@@ -1340,6 +1521,34 @@ void Spectr::publish_modulation_frame_() {
 }
 
 bool Spectr::tick_native_analyzer_(float dt) {
+#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+    retire_failed_native_session_();
+    // Pulp's session evaluates a deferred document from its own idle poll;
+    // keep ticking until it has.
+    if (native_scripted_ui_ && native_scripted_ui_->document_load_pending())
+        return true;
+#endif
+    if (native_document_load_pending_) {
+        // A deferred editor (editor_defers_document_load): the host has its
+        // correctly sized view already. Let the first frame paint the empty
+        // editor, then evaluate the document on the second one and publish
+        // the host size the first open recorded but could not apply.
+        if (++native_document_load_frames_ < 2) {
+            if (native_editor_root_ != nullptr)
+                native_editor_root_->request_repaint();
+            return true;
+        }
+        load_native_document_();
+        if (native_editor_root_ != nullptr) {
+            on_view_resized(*native_editor_root_,
+                            native_host_width_ > 0 ? native_host_width_
+                                                   : kEditorPreferredWidth,
+                            native_host_height_ > 0 ? native_host_height_
+                                                    : kEditorPreferredHeight);
+            native_editor_root_->request_repaint();
+        }
+        return true;
+    }
     if (!native_scripted_ui_ || !native_scripted_ui_->bridge()) return false;
 
     // Host-resize fixture. `on_view_resized` is the one entry point a host uses
@@ -3610,16 +3819,15 @@ void Spectr::close_native_editor_() {
     gesture_perf_done_ = false;
 #endif
     native_editor_root_ = nullptr;
+    native_document_load_pending_ = false;
     if (native_scripted_ui_) {
         native_editor_bridge_.detach_native_runtime(
             *native_scripted_ui_, "__spectrEditorDispatch");
     }
     native_scripted_ui_.reset();
-    if (!native_package_path_.empty()) {
-        std::error_code ec;
-        std::filesystem::remove_all(native_package_path_, ec);
-        native_package_path_.clear();
-    }
+    // The package is shared by every editor in this process and is reused by
+    // the next open (see package_path_for); forget it, do not delete it.
+    native_package_path_.clear();
 }
 
 } // namespace spectr

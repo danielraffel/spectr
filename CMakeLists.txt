@@ -981,6 +981,7 @@ endif()
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
     test/test_native_state_parity.cpp
+    test/test_editor_open.cpp
 )
 target_link_libraries(Spectr-native-n1-test PRIVATE
     ${SPECTR_NATIVE_CORE_TARGET} Catch2::Catch2WithMain
@@ -3927,6 +3928,31 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     set_tests_properties(Spectr-au-routes-host
         PROPERTIES TIMEOUT 300 LABELS "modulation;au-host")
 
+endif()
+
+# Editor-open timeline through the built AU v2 component's Cocoa view, the
+# call Logic makes: kAudioUnitProperty_CocoaUI -> view factory ->
+# -uiViewForAudioUnit:withSize:. A host shows only its own window chrome for
+# as long as that call runs (Logic: a header-only plug-in window), so the gate
+# is the call's duration and the size of the NSView it returns. Hosted
+# in-process, never activated or focused, in a borderless window off every
+# screen; no audio device is opened. Needs a window server and SKIPs (exit 4)
+# without one. Warm opens only for the time gate: the first open of a freshly
+# built binary also pays one-time dyld and Metal shader-cache costs.
+if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
+    add_executable(Spectr-editor-open-probe tools/editor_open_probe.mm)
+    target_link_libraries(Spectr-editor-open-probe PRIVATE
+        "-framework AppKit" "-framework AudioToolbox" "-framework AudioUnit"
+        "-framework CoreGraphics" "-framework Metal" "-framework QuartzCore")
+    add_dependencies(Spectr-editor-open-probe ${SPECTR_NATIVE_AU_TARGET})
+    add_test(NAME Spectr-au-editor-open
+        COMMAND Spectr-editor-open-probe
+            --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
+            --opens 3 --settle-ms 600 --min-width ${SPECTR_HOST_PREFERRED_WIDTH}
+            --min-height ${SPECTR_HOST_PREFERRED_HEIGHT} --max-warm-factory-ms 250)
+    set_tests_properties(Spectr-au-editor-open PROPERTIES
+        TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
+        RESOURCE_LOCK spectr_native_materialized_editor)
 endif()
 
 # Artifact-level host proof: load the built CLAP, VST3 and AU through

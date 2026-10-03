@@ -217,6 +217,27 @@ static_assert(std::is_trivially_copyable_v<ModulatedFieldSnapshot>,
 void set_editor_owns_resize_grip(bool value);
 bool editor_owns_resize_grip();
 
+/// Whether the editor returns its view BEFORE evaluating the materialized
+/// document, and evaluates it on the view's second frame instead.
+///
+/// A plug-in host creates the editor view synchronously and shows nothing of
+/// it until that call returns: Logic opens its plug-in window as just its own
+/// header strip (power, preset, Editor, link) and only grows it to the
+/// editor's size once `uiViewForAudioUnit:` hands back the NSView. Evaluating
+/// runtime.js and mounting the captured document inside that call is
+/// ~1.4 s on an M5 Max, all of it spent showing the user a header-sized
+/// window. Deferring the evaluation to the second frame returns a correctly
+/// sized view in milliseconds; the host grows the window at once, the first
+/// frame paints the editor's background, and the document appears when it
+/// has mounted.
+///
+/// Declared by the linked entry point, like the resize grip, and off by
+/// default: in-process harnesses (`create_view()` + `on_view_opened()` in the
+/// tests, Spectr-native-shot) read the mounted document immediately after
+/// opening and have no host waiting on them.
+void set_editor_defers_document_load(bool value);
+bool editor_defers_document_load();
+
 /// Whether this process is Spectr's standalone app rather than a plug-in host.
 ///
 /// Decides the plain-key shortcut policy. A DAW owns its plain keys -- Logic's
@@ -1213,6 +1234,11 @@ private:
     // state a freshly created editor must be in so the first pass still runs.
     std::uint32_t native_published_width_ = 0;
     std::uint32_t native_published_height_ = 0;
+    // Set while a deferred editor (editor_defers_document_load) has its
+    // session constructed but not yet evaluated; counts the frames seen so
+    // the first one can paint before the evaluation blocks the second.
+    bool native_document_load_pending_ = false;
+    int native_document_load_frames_ = 0;
     pulp::view::FrameClock* native_frame_clock_ = nullptr;
     int native_frame_subscription_ = -1;
     float native_analyzer_elapsed_ = 0.0f;
@@ -1246,6 +1272,23 @@ private:
     EditorRevision native_host_automation_revision_ = 0;
 
     std::unique_ptr<pulp::view::View> create_native_editor_();
+
+    // Evaluates the materialized document into the constructed session and
+
+    // runs the post-load scripts. Immediate, or on the second frame when
+
+    // editor_defers_document_load().
+
+    void load_native_document_();
+    // Runs the post-load scripts once the session has (or has not) mounted
+    // the document; from the session's document-loaded callback on SDKs with
+    // view-first loading, directly otherwise.
+    void finish_native_document_load_(bool session_loaded, const std::string& error,
+                                      bool from_session);
+    // Destroys a session marked failed from inside its own callback.
+    void retire_failed_native_session_();
+    bool native_session_failed_ = false;
+    bool native_document_load_reported_ = false;
     void publish_native_layout_(std::uint32_t w, std::uint32_t h);
     void open_native_editor_(pulp::view::View& view);
     void close_native_editor_();
