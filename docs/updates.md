@@ -21,6 +21,13 @@ unsafe. `ctest -R Spectr-sparkle-bundles` proves it for every build.
   full release page — then **Install Update**. A package update always asks
   for an administrator password; it never installs silently.
 
+**Keep Spectr in /Applications.** The update is the installer package, and it
+installs to `/Applications/Spectr.app` -- not over whichever copy is running.
+A copy anywhere else (left in Downloads, moved to `~/Applications`) never
+changes when an update installs, so it would be offered the same update on
+every check. Such a copy therefore runs no scheduled checks; **Check for
+Updates…** still works there, after a warning that names where the copy is.
+
 The updater can only update a copy that already contains it. **1.0.7 is the
 first release with Sparkle**: anyone on 1.0.6 or earlier installs 1.0.7 by
 hand, and 1.0.7 is the first version that can update itself (to 1.0.8).
