@@ -259,6 +259,27 @@ TEST_CASE("an editor open commits nothing after the document mounts",
     CHECK(reapplies <= mount + 1);
     // Only the mount's own first commit re-applies the whole document.
     CHECK(full == 1);
+    // The open's whole-subtree walks stay linear in the registry: the
+    // Settings scroll upgrade asked "children of X" by filtering the whole
+    // registry per element (866 filters x ~400 nodes), and captured-state
+    // resolution match-tested every node once per atlas state (~4,000 tests).
+    // tools/patch_materialized_runtime_linear_scroll_upgrade.py,
+    // tools/patch_materialized_runtime_batched_state_resolution.py.
+    const long registry = read_js_int(bridge, "globalThis.__pulpReactDomRegistry__.size");
+    REQUIRE(registry > 100);
+    INFO("scroll upgrade: " << read_js(bridge,
+        "JSON.stringify(globalThis.__spectrScrollUpgradeStats__)"));
+    INFO("state resolution: " << read_js(bridge,
+        "JSON.stringify(globalThis.__spectrStateResolutionStats__)"));
+    const long upgrades = read_js_int(bridge, "globalThis.__spectrScrollUpgradeStats__.upgrades");
+    REQUIRE(upgrades >= 1);
+    CHECK(read_js_int(bridge, "globalThis.__spectrScrollUpgradeStats__.visited")
+          <= 3 * registry * upgrades);
+    const long passes = read_js_int(bridge, "globalThis.__spectrStateResolutionStats__.passes");
+    REQUIRE(passes >= 1);
+    // Fewer match tests per resolution than ONE full scan of the registry.
+    CHECK(read_js_int(bridge, "globalThis.__spectrStateResolutionStats__.match_tests")
+          < registry * passes);
     // And the editor is hydrated, not merely quiet.
     CHECK(read_js(bridge,
         "String(globalThis.__spectrTestHooks && globalThis.__spectrTestHooks.appState"
