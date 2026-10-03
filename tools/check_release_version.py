@@ -150,12 +150,13 @@ def appcast_order_errors(appcast_xml: str, build: str) -> list[str]:
 
 
 def distribution_errors(dist_xml: str, name: str, expected: str,
-                        app_build: str | None = None) -> list[str]:
+                        app_build: str | None = None,
+                        product: str = "Spectr") -> list[str]:
     root = ET.fromstring(dist_xml)
     errors = []
     title = (root.findtext("title") or "").strip()
-    if title != f"Spectr {expected}":
-        errors.append(f"{name}: installer title is {title!r}, expected 'Spectr {expected}'")
+    if title != f"{product} {expected}":
+        errors.append(f"{name}: installer title is {title!r}, expected '{product} {expected}'")
     refs = [r for r in root.iter("pkg-ref") if r.get("version") is not None]
     if not refs:
         errors.append(f"{name}: no versioned pkg-ref")
@@ -177,14 +178,15 @@ def distribution_errors(dist_xml: str, name: str, expected: str,
     return errors
 
 
-def pkg_errors(pkg: Path, expected: str, app_build: str | None = None) -> list[str]:
+def pkg_errors(pkg: Path, expected: str, app_build: str | None = None,
+               product: str = "Spectr") -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "x"
         subprocess.run(["pkgutil", "--expand", str(pkg), str(out)], check=True)
         dist = out / "Distribution"
         if not dist.is_file():
             return [f"{pkg.name}: no Distribution"]
-        errors = distribution_errors(dist.read_text(), pkg.name, expected, app_build)
+        errors = distribution_errors(dist.read_text(), pkg.name, expected, app_build, product)
         infos = sorted(out.glob("*/PackageInfo"))
         if not infos:
             errors.append(f"{pkg.name}: no component PackageInfo")
@@ -298,6 +300,8 @@ def main() -> int:
                     help="Spectr.app CFBundleVersion when it differs (practice: X.Y.Z.N)")
     ap.add_argument("--newer-than-appcast", type=Path,
                     help="fail unless the app build is newer than every build this feed offers")
+    ap.add_argument("--product-name", default="Spectr",
+                    help="installer product name (a development identity packages under its own)")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     if args.self_test:
@@ -324,7 +328,7 @@ def main() -> int:
         errors += binary_version_errors(bundle, args.expected)
         checked += 1
     if args.pkg:
-        errors += pkg_errors(args.pkg, args.expected, args.app_build_version)
+        errors += pkg_errors(args.pkg, args.expected, args.app_build_version, args.product_name)
         checked += 1
     if args.newer_than_appcast:
         errors += appcast_order_errors(args.newer_than_appcast.read_text(),

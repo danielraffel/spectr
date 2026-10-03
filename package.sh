@@ -252,7 +252,7 @@ fi
 # Spectr.app's own CFBundleVersion (APP_BUILD, read above) may carry a practice
 # build number (SPECTR_APP_BUILD_VERSION, e.g. 1.0.7.1); everything else is VER.
 PKG="$OUT/$PKG_NAME-$VER.pkg"
-version_args=(--expected "$VER" --pkg "$PKG")
+version_args=(--expected "$VER" --pkg "$PKG" --product-name "$PKG_NAME")
 [[ "$APP_BUILD" == "$VER" ]] || version_args+=(--app-build-version "$APP_BUILD")
 python3 "$ROOT/tools/check_release_version.py" "${version_args[@]}"
 
