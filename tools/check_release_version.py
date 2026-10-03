@@ -20,6 +20,11 @@ feed appends one more component (1.0.7.1, 1.0.7.2, ...) to Spectr.app only
 --newer-than-appcast fails unless the app's build number is strictly higher
 than every build an existing feed already offers.
 
+A PREVIEW of X.Y.Z (Z > 0) numbers Spectr.app X.Y.(Z-1).9nnn instead
+(1.0.7 preview 1 = 1.0.6.9001): below X.Y.Z, so the release of X.Y.Z is
+newer than every preview of it, and each preview newer than the last. Previews
+never get an appcast.
+
 --self-test runs the negative controls: a planted mismatch in each reader
 must be rejected, so a reader that silently returns nothing cannot pass.
 """
@@ -98,6 +103,13 @@ APP_BUNDLE_ID = "com.pulp.spectr"
 
 def version_key(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in v.split("."))
+
+
+def is_preview_build(expected: str, build: str) -> bool:
+    """A preview of `expected` X.Y.Z: X.Y.(Z-1).9nnn, which sorts below it."""
+    major, minor, patch = (int(p) for p in expected.split("."))
+    return patch > 0 and re.fullmatch(
+        rf"{major}\.{minor}\.{patch - 1}\.9\d{{3}}", build) is not None
 
 
 def appcast_order_errors(appcast_xml: str, build: str) -> list[str]:
@@ -229,6 +241,15 @@ def self_test() -> int:
     cases.append(("older build rejected", appcast_order_errors(feed, "1.0.5") != []))
     cases.append(("numeric not lexical ordering",
                   appcast_order_errors(feed.replace("1.0.6", "1.0.9"), "1.0.10") == []))
+    cases.append(("a preview sorts below its release and above the previous one",
+                  is_preview_build("1.0.7", "1.0.6.9001")
+                  and version_key("1.0.6.9001") < version_key("1.0.7")
+                  and version_key("1.0.6.9001") > version_key("1.0.6")
+                  and version_key("1.0.6.9002") > version_key("1.0.6.9001")))
+    cases.append(("a non-preview shape is not a preview",
+                  not is_preview_build("1.0.7", "1.0.6.1")
+                  and not is_preview_build("1.0.7", "1.0.7.9001")
+                  and not is_preview_build("1.0.0", "1.0.-1.9001")))
     for name, ok in cases:
         print(("PASS " if ok else "FAIL ") + name)
         failures += not ok
@@ -252,9 +273,11 @@ def main() -> int:
     if not args.expected or not re.fullmatch(r"\d+\.\d+\.\d+", args.expected):
         print("--expected must be MAJOR.MINOR.PATCH", file=sys.stderr)
         return 2
-    if args.app_build_version and not re.fullmatch(
-            re.escape(args.expected) + r"\.\d+", args.app_build_version):
-        print("--app-build-version must be <expected>.<n>", file=sys.stderr)
+    if args.app_build_version and not (
+            re.fullmatch(re.escape(args.expected) + r"\.\d+", args.app_build_version)
+            or is_preview_build(args.expected, args.app_build_version)):
+        print("--app-build-version must be <expected>.<n> (practice) or "
+              "<X.Y.Z-1>.9nnn (preview)", file=sys.stderr)
         return 2
     if not (args.bundle or args.binary_version_bundle or args.pkg or args.newer_than_appcast):
         print("nothing to check", file=sys.stderr)

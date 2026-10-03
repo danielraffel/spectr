@@ -217,8 +217,8 @@ if [[ -d "$SPARKLE_FW" ]]; then
 fi
 
 # A practice package is named for its build so two of them can sit side by side
-# on the practice release.
-if [[ "$APP_BUILD" != "$VER" ]]; then
+# on the practice release. A preview (X.Y.(Z-1).9nnn) keeps the product name.
+if [[ "$APP_BUILD" == "$VER".* ]]; then
   mv "$PKG" "$OUT/Spectr-$APP_BUILD.pkg"
   PKG="$OUT/Spectr-$APP_BUILD.pkg"
   echo "practice package: $PKG"

@@ -87,7 +87,18 @@ Sparkle compares the appcast's `sparkle:version` with Spectr.app's
   of one product version can update one to the other. The plug-ins keep
   `1.0.7`.
 
-`tools/check_release_version.py` enforces both (`--app-build-version`, and
+- **Preview:** a preview of X.Y.Z (Z > 0) numbers Spectr.app
+  `X.Y.(Z-1).9nnn` — 1.0.7 preview 1 is `-DSPECTR_APP_BUILD_VERSION=1.0.6.9001`.
+  That sorts below `X.Y.Z`, so when the release ships Sparkle offers it to
+  everyone on a preview (a preview numbered `1.0.7` would read as already up
+  to date, and a practice-style `1.0.7.1` would sort above the release), and
+  each preview sorts above the one before. The plug-ins and the installer keep
+  `X.Y.Z`; the package keeps its product name. **Previews never get an
+  appcast:** `make_appcast.py` refuses their build number on both channels,
+  and they are handed out by hand (or as GitHub prereleases without an
+  `appcast.xml`).
+
+`tools/check_release_version.py` enforces all three (`--app-build-version`, and
 `--newer-than-appcast <feed>` refuses a build that is not strictly newer than
 every build the feed already offers), and `make_appcast.py` and
 `check_sparkle.py appcast` refuse a release item with a practice-shaped build
