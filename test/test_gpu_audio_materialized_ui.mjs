@@ -12,4 +12,6 @@ assert.match(html, /build_info_get/);
 assert.match(html, /gpu_audio/);
 assert.match(html, /Convolving on the CPU/);
 assert.match(html, /CPU fallback/);
+assert.match(html, /freeze_available === false/);
+assert.match(html, /Freeze unavailable in this mode/);
 console.log('PASS: native materialized editor contains the GPU audio controls and status contract');

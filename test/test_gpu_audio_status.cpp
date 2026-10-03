@@ -37,6 +37,19 @@ void projection_controls() {
     require(p["sampling"].get<std::string>()=="independent_live_counters","coherent snapshot implied");
     const auto text=spectr::detail::gpu_audio_status_copy_text(s);
     require(text.find("GPU selected: 7")!=std::string::npos&&text.find("Lost terminal records: 1")!=std::string::npos,"copy projection differs");
+    // A refused freeze source is reported in every availability, never dropped.
+    require(p["freeze_available"].getBool()&&!p.hasObjectMember("freeze_note"),"freeze reported refused when wired");
+    require(text.find("Freeze unavailable")==std::string::npos,"copy text claims Freeze unavailable");
+    for(const auto availability:{S::Availability::NotBuilt,S::Availability::NonSharedRenderer,S::Availability::Available}) {
+        S refused=availability==S::Availability::Available?s:S{availability,{}};
+        refused.freeze_available=false;
+        const auto q=spectr::detail::gpu_audio_status_projection(refused);
+        require(!q["freeze_available"].getBool(),"refused freeze source projected as available");
+        require(q.hasObjectMember("freeze_note")&&q["freeze_note"].get<std::string>()=="Freeze unavailable in this mode",
+                "refused freeze source has no note");
+        require(spectr::detail::gpu_audio_status_copy_text(refused).find("Freeze unavailable in this mode")!=std::string::npos,
+                "copy text hid a refused freeze source");
+    }
     s.delivery->provider_state=999;
     require(spectr::detail::gpu_audio_status_projection(s)["provider_state"].get<std::string>()=="unknown","unknown provider state claimed ready");
     s.delivery->provider_state=1;s.delivery->gpu_selected=0;
@@ -62,6 +75,7 @@ void lifecycle_and_bridge_controls() {
     const auto response=choc::json::parse(bridge.dispatch_json(R"({"type":"build_info_get","payload":{}})"));
     require(response["ok"].getBool()&&!response["gpu_audio"]["available"].getBool(),"actual bridge fabricated measurements");
     require(!response["gpu_audio"].hasObjectMember("gpu_selected"),"actual bridge invented GPU zero");
+    require(response["gpu_audio"]["freeze_available"].getBool(),"build_info hides the freeze availability");
     require(choc::json::parse(bridge.dispatch_json(R"({"type":"build_info_copy","payload":{}})"))["ok"].getBool(),"copy route failed");
     require(copied==response["copy_text"].get<std::string>(),"structured/copy observation diverged");
     std::atomic<bool> done{false},bad{false};
@@ -80,6 +94,7 @@ void lifecycle_and_bridge_controls() {
             require(first.processor.set_render_mode(spectr::MaskRenderMode::linear_phase),"linear renderer failed to prepare");
             const auto status=first.processor.gpu_audio_status();
             require(status.availability==A::Available&&status.delivery.has_value(),"shared renderer unavailable");
+            require(status.freeze_available&&first.processor.freeze_source_wired(),"shared renderer refused the freeze source");
             // Existing preparation primes renderer history. These counters are
             // observed as-is, never asserted to represent host-rendered audio.
             require(second.processor.gpu_audio_status().availability==A::NotPrepared,"cross-instance status leak");

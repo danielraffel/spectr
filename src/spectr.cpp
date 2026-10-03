@@ -559,17 +559,20 @@ MaskRendererConfig Spectr::renderer_config_() const noexcept {
 }
 
 GpuAudioStatus Spectr::gpu_audio_status() const {
+    const bool freeze=freeze_source_wired();
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     std::lock_guard<std::mutex> lock(renderer_observation_mutex_);
-    if(!renderer_)return {GpuAudioStatus::Availability::NotPrepared,{}};
+    if(!renderer_)return {GpuAudioStatus::Availability::NotPrepared,{},freeze};
     const auto* shared=dynamic_cast<const experimental::SharedSpectralMaskRenderer*>(renderer_.get());
-    if(!shared)return {GpuAudioStatus::Availability::NonSharedRenderer,{}};
+    if(!shared)return {GpuAudioStatus::Availability::NonSharedRenderer,{},freeze};
     const auto s=shared->snapshot();
     return {GpuAudioStatus::Availability::Available,
         GpuAudioStatus::Delivery{unsigned(s.state),s.epoch,s.gpu_delivered,
-            s.cpu_fallback,s.cancelled,s.lost_records}};
+            s.cpu_fallback,s.cancelled,s.lost_records},freeze};
 #else
-    return {};
+    GpuAudioStatus status;
+    status.freeze_available=freeze;
+    return status;
 #endif
 }
 

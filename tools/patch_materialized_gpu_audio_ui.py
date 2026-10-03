@@ -92,6 +92,9 @@ COMPONENT = r'''function SpectrGpuAudioSurface({ enabled }) {
   let text = mixing ? "GPU unavailable" : "Convolving on the CPU";
   if (ready) text = "GPU | " + Number(gpuAudio.gpu_selected || 0)
     + " blocks | " + Number(gpuAudio.cpu_fallback || 0) + " CPU fallback";
+  // A renderer that refused Freeze's held source says so; never silent.
+  if (gpuAudio && gpuAudio.freeze_available === false)
+    text += " | " + (gpuAudio.freeze_note || "Freeze unavailable in this mode");
   const pill = enabled ? React.createElement("div", {
     "data-spectr-gpu-audio-status-pill": true,
     "data-spectr-gpu-audio-state": ready ? "gpu" : "cpu",

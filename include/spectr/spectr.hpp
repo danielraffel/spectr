@@ -965,7 +965,8 @@ private:
     // Only pointer publication/removal and the public observer take this lock.
     // Build/join/destruction happen outside it; process() never acquires it.
     // When nested, processing_state_mutex_ precedes this observation mutex.
-    std::atomic<bool> freeze_source_wired_{false};
+    // Nothing has refused the source until a renderer is built.
+    std::atomic<bool> freeze_source_wired_{true};
     mutable std::mutex renderer_observation_mutex_;
     std::unique_ptr<MaskRenderer>          renderer_{};
     // The mode `renderer_` was built for. Authoritative for what this instance
