@@ -118,7 +118,9 @@ constexpr int kGridH = 6;
 constexpr int kSamples = kGridW * kGridH;
 struct FrameSample {
     double t = 0;
-    std::uint64_t mono_raw_ns = 0;  // CLOCK_MONOTONIC_RAW, for trace alignment
+    // CLOCK_UPTIME_RAW at the present call: the clock a Perfetto trace of the
+    // plug-in uses on macOS, so frames join the trace's spans directly.
+    std::uint64_t uptime_ns = 0;
     std::uint32_t rgb[kSamples] = {};
     bool ok = false;
     // --capture-frames: the whole frame at half resolution, packed RGB.
@@ -237,10 +239,10 @@ bool write_png(const FrameSample& f, const std::string& path) {
     return ok;
 }
 
-void record_sample(id<MTLTexture> tex, double t) {
+void record_sample(id<MTLTexture> tex, double t, std::uint64_t uptime_ns) {
     FrameSample s;
     s.t = t;
-    s.mono_raw_ns = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
+    s.uptime_ns = uptime_ns;
     s.ok = read_grid(tex, s.rgb);
     if (s.ok && !g_capture_dir.empty()) {
         std::size_t held = 0;
@@ -266,7 +268,8 @@ void probe_present(id self, SEL cmd) {
     note_present();
     if (g_sample_pixels) {
         g_present_path = "drawable-present";
-        record_sample(static_cast<id<CAMetalDrawable>>(self).texture, now_ms());
+        record_sample(static_cast<id<CAMetalDrawable>>(self).texture, now_ms(),
+                      clock_gettime_nsec_np(CLOCK_UPTIME_RAW));
     }
     reinterpret_cast<void (*)(id, SEL)>(g_orig_present)(self, cmd);
 }
@@ -276,9 +279,10 @@ void probe_cb_present(id self, SEL cmd, id drawable) {
     if (g_sample_pixels) {
         g_present_path = "commandbuffer-presentDrawable";
         const double t = now_ms();
+        const std::uint64_t uptime_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
         id<MTLTexture> tex = [static_cast<id<CAMetalDrawable>>(drawable).texture retain];
         [static_cast<id<MTLCommandBuffer>>(self) addCompletedHandler:^(id<MTLCommandBuffer>) {
-            record_sample(tex, t);
+            record_sample(tex, t, uptime_ns);
             [tex release];
         }];
     }
@@ -535,10 +539,10 @@ void write_capture(const OpenResult& r, int open_index, double origin) {
         }
         if (json)
             std::fprintf(json,
-                         "%s{\"index\":%zu,\"t_ms\":%.3f,\"mono_raw_ns\":%llu,"
+                         "%s{\"index\":%zu,\"t_ms\":%.3f,\"uptime_ns\":%llu,"
                          "\"class\":\"%s\",\"centre\":\"%06X\",\"png\":\"%s\"}",
                          i ? ",\n" : "", i, f.t - origin,
-                         static_cast<unsigned long long>(f.mono_raw_ns), r.frame_class[i],
+                         static_cast<unsigned long long>(f.uptime_ns), r.frame_class[i],
                          f.rgb[(kGridH / 2) * kGridW + kGridW / 2], png.c_str());
     }
     if (json) {
