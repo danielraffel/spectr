@@ -11,13 +11,24 @@
 #import <Security/Security.h>
 #include <objc/message.h>
 
+#include "spectr/updater_location.hpp"
+
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <strings.h>
 
 namespace {
 
 id g_controller = nil;
+
+// The running bundle, symlinks resolved. See spectr/updater_location.hpp.
+bool at_install_location() {
+    NSString* path = [[[[NSBundle mainBundle] bundlePath] stringByResolvingSymlinksInPath]
+        stringByStandardizingPath];
+    return path != nil && spectr::updater_runs_from_install_location(
+        std::string([path fileSystemRepresentation]));
+}
 
 Class updater_class() {
     Class cls = NSClassFromString(@"SPUStandardUpdaterController");
@@ -47,6 +58,37 @@ bool developer_id_signed() {
     return team;
 }
 
+} // namespace
+
+// Sparkle's updater delegate: refuses background (scheduled) checks for a copy
+// outside /Applications, which an installed update never replaces. Reached
+// through the runtime, like the rest of this file: Sparkle asks
+// -respondsToSelector: for each optional delegate method.
+@interface SpectrUpdaterDelegate : NSObject
+@end
+
+@implementation SpectrUpdaterDelegate
+- (BOOL)updater:(id)updater mayPerformUpdateCheck:(NSInteger)updateCheck error:(NSError**)error {
+    (void)updater;
+    constexpr NSInteger kBackgroundCheck = 1;  // SPUUpdateCheckUpdatesInBackground
+    if (updateCheck != kBackgroundCheck || at_install_location()) return YES;
+    if (error) {
+        *error = [NSError errorWithDomain:@"com.pulp.spectr.updater" code:1 userInfo:@{
+            NSLocalizedDescriptionKey :
+                @"Spectr is not in /Applications, where updates install; scheduled checks are off."
+        }];
+    }
+    return NO;
+}
+@end
+
+namespace {
+
+SpectrUpdaterDelegate* updater_delegate() {
+    static SpectrUpdaterDelegate* delegate = [[SpectrUpdaterDelegate alloc] init];
+    return delegate;
+}
+
 void ensure_controller() {
     if (g_controller != nil) return;
     Class cls = updater_class();
@@ -54,7 +96,26 @@ void ensure_controller() {
     SEL init = NSSelectorFromString(@"initWithStartingUpdater:updaterDelegate:userDriverDelegate:");
     id obj = [cls alloc];
     if (![obj respondsToSelector:init]) return;
-    g_controller = reinterpret_cast<id (*)(id, SEL, BOOL, id, id)>(objc_msgSend)(obj, init, YES, nil, nil);
+    g_controller = reinterpret_cast<id (*)(id, SEL, BOOL, id, id)>(objc_msgSend)(
+        obj, init, YES, updater_delegate(), nil);
+}
+
+// A manual check from a copy an update will not replace: say so first.
+bool confirm_check_outside_install_location() {
+    if (at_install_location()) return true;
+    NSAlert* alert = [[NSAlert alloc] init];
+    [alert setAlertStyle:NSAlertStyleWarning];
+    [alert setMessageText:@"Spectr isn't in your Applications folder"];
+    [alert setInformativeText:[NSString stringWithFormat:
+        @"This copy is at %@. Updates install to /Applications/Spectr.app, so this "
+        @"copy will stay at its current version and keep being offered the same "
+        @"update. Move Spectr to /Applications and open it from there, or check anyway.",
+        [[NSBundle mainBundle] bundlePath]]];
+    [alert addButtonWithTitle:@"Check Anyway"];
+    [alert addButtonWithTitle:@"Cancel"];
+    const NSModalResponse response = [alert runModal];
+    [alert release];
+    return response == NSAlertFirstButtonReturn;
 }
 
 bool headless_launch() {
@@ -72,6 +133,7 @@ bool headless_launch() {
 @implementation SpectrUpdaterMenuTarget
 - (void)checkForUpdates:(id)sender {
     (void)sender;
+    if (!confirm_check_outside_install_location()) return;
     ensure_controller();
     SEL check = NSSelectorFromString(@"checkForUpdates:");
     if (g_controller != nil && [g_controller respondsToSelector:check])
