@@ -876,6 +876,16 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                 payload.addMember("max_hz", static_cast<double>(viewport().max_hz));
                 return pulp::view::EditorBridge::ok_response(payload);
             });
+        // A read for the editor's first render: the header's level knobs
+        // (Intensity, Mix, Auto Gain, Trim) start at the processor's values
+        // instead of defaults the first output_meter publication corrects --
+        // a commit after the mount, which re-applies the captured document.
+        native_editor_bridge_.add_handler(
+            "output_levels_get",
+            [this](const choc::value::ValueView&) {
+                return pulp::view::EditorBridge::ok_response(
+                    make_output_meter_payload(read_output_level()));
+            });
         native_editor_handlers_registered_ = true;
     }
     native_editor_bridge_.attach_native_runtime(

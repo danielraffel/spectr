@@ -265,6 +265,51 @@ EDITS = [
 ''',
         2,
     ),
+    (
+        "header level knobs start at the processor's values",
+        '''  const [mix, setMix] = React.useState(100);
+''',
+        '''  const [mix, setMix] = React.useState(() => levelSeed(initialLevels.mix_pct, 100));
+''',
+    ),
+    (
+        "intensity starts at the processor's",
+        '''  const [intensity, setIntensity] = React.useState(100);
+''',
+        '''  const [intensity, setIntensity] = React.useState(() => levelSeed(initialLevels.intensity_pct, 100));
+''',
+    ),
+    (
+        "auto gain starts at the processor's",
+        '''  const [autoGain, setAutoGain] = React.useState(false);
+''',
+        '''  const [autoGain, setAutoGain] = React.useState(() => initialLevels.auto_gain === true);
+''',
+    ),
+    (
+        "auto gain level starts at the processor's",
+        '''  const [autoGainDb, setAutoGainDb] = React.useState(0);
+''',
+        '''  const [autoGainDb, setAutoGainDb] = React.useState(() => levelSeed(initialLevels.auto_gain_db, 0));
+''',
+    ),
+    (
+        "trim starts at the processor's",
+        '''  const [trim, setTrim] = React.useState(0);
+''',
+        '''  // The processor's levels for the first render (output_levels_get), so
+  // the first output_meter publication finds nothing to change.
+  const [initialLevels] = React.useState(() => {
+    const bridge = typeof window !== "undefined" ? window.pulp : null;
+    const body = bridge && typeof bridge.initial === "function"
+      ? bridge.initial("output_levels_get") : null;
+    return body && typeof body === "object" ? body : {};
+  });
+  const levelSeed = (raw, fallback) =>
+    typeof raw === "number" && isFinite(raw) ? raw : fallback;
+  const [trim, setTrim] = React.useState(() => levelSeed(initialLevels.trim_db, 0));
+''',
+    ),
     # ── Freeze, morph, modulation, build info, tracing badge ───────────────
     (
         "freeze store starts from the processor",
@@ -363,20 +408,27 @@ def encode(text):
 
 def main():
     raw = PATH.read_text(encoding="utf-8")
-    if encode(MARKER) in raw:
-        print("hydrate before first render already applied")
-        return 0
+    applied = 0
+    # Each edit is applied once: an edit whose replacement is already in the
+    # document is skipped, so a document patched by an earlier version of
+    # this script gains only the edits added since.
     for edit in EDITS:
         name, old, new = edit[:3]
         expected = edit[3] if len(edit) > 3 else 1
+        if raw.count(encode(new)) >= expected:
+            continue
         count = raw.count(encode(old))
         if count != expected:
             sys.exit("FAIL: %s anchor occurs %d times, expected %d"
                      % (name, count, expected))
         raw = raw.replace(encode(old), encode(new))
+        applied += 1
+    if applied == 0:
+        print("hydrate before first render already applied")
+        return 0
     json.loads(raw)
     PATH.write_text(raw, encoding="utf-8")
-    print("hydrate before first render applied")
+    print("hydrate before first render applied (%d edits)" % applied)
     return 0
 
 
