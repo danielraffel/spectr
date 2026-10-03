@@ -72,6 +72,15 @@ The compact status surface may be hidden independently through the GPU stats
 setting. Build information remains the place for provenance and detailed
 diagnostics.
 
+Native package note: the installed editor executes
+`native-ui/materialized/materialized-document.runtime.json`, not
+`resources/editor.html`. The GPU controls in the native package are maintained
+by `tools/patch_materialized_gpu_audio_ui.py`; the corresponding
+`Spectr-gpu-audio-materialized-ui` test scans the embedded runtime directly.
+GPU-enabled package builds must also configure
+`SPECTR_EXPERIMENTAL_SHARED_RENDERER=ON`. A green browser-source test alone is
+not evidence that the native package contains the controls.
+
 Before adding a high-band-count control, measure the existing 64-band editor
 with progressively heavier workloads. The first matrix is 8192-point CPU,
 8192-point GPU, and 16384-point GPU, followed by multiple 16384-point layers
