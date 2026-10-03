@@ -6,7 +6,9 @@
 #include <pulp/runtime/trace.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/format/plugin_descriptor.hpp>
+#include <atomic>
 #include <cstdio>
+#include <thread>
 #include <pulp/view/screenshot.hpp>
 #include <pulp/view/script_event_dispatch.hpp>
 #include <pulp/view/tracing_badge.hpp>
@@ -320,15 +322,18 @@ std::string embedded_package_stamp() {
 // Packages left by host processes that have exited. A package now outlives the
 // editor that wrote it (see package_path_for), so without this sweep every
 // host session would strand one in the temp directory. Runs once per process,
-// off nothing but a directory listing and kill(pid, 0).
-void sweep_packages_of_exited_processes(const std::filesystem::path& directory) {
-    static bool swept = false;
-    if (swept) return;
-    swept = true;
+// off nothing but a directory listing and kill(pid, 0) -- but that listing is
+// the whole per-user temp directory (tens of thousands of entries on a
+// developer Mac) plus a remove_all of each stranded ~8 MB package, 40-160 ms
+// cold. It must never run inside the host's view-creation call, so it runs on
+// its own thread; it only ever touches other processes' packages.
+void sweep_packages_of_exited_processes_now(const std::filesystem::path& directory,
+                                            const std::atomic<bool>& stop) {
+    PULP_TRACE_SCOPE_NAMED("io", "spectr_sweep_stale_packages");
     const std::string prefix{kPackagePrefix};
     std::error_code ec;
     for (std::filesystem::directory_iterator it(directory, ec), end;
-         !ec && it != end; it.increment(ec)) {
+         !ec && !stop.load(std::memory_order_relaxed) && it != end; it.increment(ec)) {
         const auto name = it->path().filename().string();
         if (name.rfind(prefix, 0) != 0) continue;
         const auto pid_begin = prefix.size();
@@ -345,6 +350,25 @@ void sweep_packages_of_exited_processes(const std::filesystem::path& directory) 
         std::error_code remove_ec;
         std::filesystem::remove_all(it->path(), remove_ec);
     }
+}
+
+// Starts the sweep once per process. The thread is a function-local static,
+// so unloading the plug-in image (or process exit) requests a stop and joins
+// it rather than leaving it running in unmapped code.
+void sweep_packages_of_exited_processes(const std::filesystem::path& directory) {
+    struct Sweeper {
+        std::atomic<bool> stop{false};
+        std::thread thread;
+        explicit Sweeper(std::filesystem::path dir)
+            : thread([this, dir = std::move(dir)] {
+                  sweep_packages_of_exited_processes_now(dir, stop);
+              }) {}
+        ~Sweeper() {
+            stop.store(true, std::memory_order_relaxed);
+            if (thread.joinable()) thread.join();
+        }
+    };
+    static Sweeper sweeper(directory);
 }
 #endif
 
