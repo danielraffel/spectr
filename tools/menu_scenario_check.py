@@ -59,6 +59,9 @@ SCENARIO = ";".join([
     "o_msel2=rpress:378,400",      "mutesel2=row:Mute / Unmute selection",
     "o_seln2=rpress:378,400",      "selnone=row:Select none",
     "o_after_seln=rpress:378,400",
+    # While a menu is open the wheel is the menu's and the plot ignores it
+    # (patch_materialized_menu_wheel_containment.py), so close it first.
+    "close_after_seln=escape",
     "zoom=wheel:378,400,-240,12",
     "o_fit=rpress:378,400",        "fit=row:Fit full range",
     "settle_fit=wait",

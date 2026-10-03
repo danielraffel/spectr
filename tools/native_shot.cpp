@@ -7215,7 +7215,7 @@ int main(int argc, char** argv) {
         rig.activate_modulation_toggle(1, "LFO 2");
         rig.report_modulation_dom("after LFO 2 on");
         rig.report_native_state("after LFO 2 on");
-        show_modulation("06-MODULATION-lfo2-expanded", "LFO targets");
+        show_modulation("06-MODULATION-lfo2-expanded", "TARGETS");
 
         // Now an ASSERTION, not a probe. With both LFOs driven on, every LFO
         // target row (a switch and a Depth row per target, the one list the
@@ -7250,23 +7250,23 @@ int main(int argc, char** argv) {
         rig.activate(target_switch("morph"));
         rig.report_modulation_dom("after Morph target on");
         rig.report_native_state("after Morph target on");
-        show_modulation("07-MODULATION-target-morph-ON", "LFO targets");
+        show_modulation("07-MODULATION-target-morph-ON", "TARGETS");
 
         rig.activate(target_switch("morph"));
         rig.report_modulation_dom("after Morph target off");
         rig.report_native_state("after Morph target off");
-        show_modulation("08-MODULATION-target-morph-OFF", "LFO targets");
+        show_modulation("08-MODULATION-target-morph-OFF", "TARGETS");
 
         // The level targets: Intensity, Mix and Output on, then off.
         for (const char* key : {"intensity", "mix", "output"}) rig.activate(target_switch(key));
         rig.report_modulation_dom("after the level targets on");
         rig.report_native_state("after the level targets on");
-        show_modulation("09-MODULATION-level-targets-on", "LFO targets");
+        show_modulation("09-MODULATION-level-targets-on", "TARGETS");
 
         for (const char* key : {"intensity", "mix", "output"}) rig.activate(target_switch(key));
         rig.report_modulation_dom("after the level targets off");
         rig.report_native_state("after the level targets off");
-        show_modulation("10-MODULATION-level-targets-off", "LFO targets");
+        show_modulation("10-MODULATION-level-targets-off", "TARGETS");
 
         // Back to the collapsed state, proving the disclosure closes as well
         // as it opens -- a one-way drive would hide a stuck-open bug.
