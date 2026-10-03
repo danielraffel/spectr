@@ -439,3 +439,16 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # flag does not outlive its session. Needs Spectr-au-routes-probe, which the
 # workflow builds for exactly these.
 ^Spectr-au-offline-
+
+# Third-party validators over the built bundles. clap-validator's
+# state-reproducibility-flush failed on 1.0.7 RC1 (the legacy LFO Depth and
+# Target lanes rewrote per-target routing a host had set in the same batch);
+# the in-process reproduction of that check rides `Built Spectr` above. A
+# runner without the tool reports these rows SKIP, never PASS.
+^Spectr-plugin-validator-controls$
+^Spectr-clap-validator$
+^Spectr-pluginval-vst3$
+
+# Every shipped bundle declares LSMinimumSystemVersion equal to the binaries'
+# minos (missing from every bundle in 1.0.7 RC1), plus its negative controls.
+^Spectr-bundle-min-os

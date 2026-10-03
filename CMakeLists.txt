@@ -4061,6 +4061,7 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
     # editor to link against.
     add_executable(Spectr-artifact-test
         test/test_built_clap.cpp
+        test/test_clap_flush_parity.cpp
         ${SPECTR_TEST_SOURCES})
     target_link_libraries(Spectr-artifact-test PRIVATE
         Pulp::host Pulp::format Pulp::view
@@ -4148,6 +4149,36 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         add_dependencies(Spectr-artifact-test SpectrWebViewReference_VST3)
     endif()
     catch_discover_tests(Spectr-artifact-test)
+endif()
+
+# Third-party validators over the exact built bundles: clap-validator
+# (--in-process, the mode Spectr 1.0.7 RC1 failed state-reproducibility-flush
+# in) and pluginval at strictness 5 without GUI tests. Registered whether or
+# not the tools are installed, so the acceptance pattern list always finds the
+# rows; a machine without the tool reports SKIP (exit 77), never PASS.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-plugin-validator-controls
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/run_plugin_validator.py --self-test)
+    set_tests_properties(Spectr-plugin-validator-controls PROPERTIES TIMEOUT 60)
+    if(TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+        add_test(NAME Spectr-clap-validator
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/run_plugin_validator.py clap
+                "${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap"
+                --log "${CMAKE_BINARY_DIR}/validators/clap-validator.txt")
+        set_tests_properties(Spectr-clap-validator PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "PULP_AUDIO_DEVICE=null")
+    endif()
+    if(TARGET ${SPECTR_NATIVE_VST3_TARGET})
+        add_test(NAME Spectr-pluginval-vst3
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/run_plugin_validator.py vst3
+                "${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3"
+                --log "${CMAKE_BINARY_DIR}/validators/pluginval-vst3.txt")
+        set_tests_properties(Spectr-pluginval-vst3 PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "PULP_AUDIO_DEVICE=null")
+    endif()
 endif()
 
 if(TARGET ${SPECTR_NATIVE_STANDALONE_TARGET} AND TARGET Pulp::platform AND TARGET Pulp::view)
@@ -4331,3 +4362,45 @@ if(APPLE AND Python3_Interpreter_FOUND)
     endif()
 endif()
 
+
+# ── LSMinimumSystemVersion ────────────────────────────────────────────────
+# Every shipped bundle declares the macOS floor its binaries are built for
+# (LC_BUILD_VERSION minos = CMAKE_OSX_DEPLOYMENT_TARGET), so Finder, the
+# installer and a host scanning plug-ins refuse an older macOS up front
+# instead of failing to load. Pulp's Info.plist templates do not emit the key
+# yet, so it is added to each target's template at the end of configure --
+# after Spectr.app's Sparkle keys, which are added the same way -- so a
+# reconfigure regenerating the bundle Info.plist never drops it. Checked on
+# the built bundles by Spectr-bundle-min-os. Delete this block on the Pulp SDK
+# bump whose plugin/app templates carry LSMinimumSystemVersion themselves.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpectrMinimumSystemVersion.cmake)
+if(APPLE)
+    spectr_declare_minimum_system_version(
+        ${SPECTR_NATIVE_STANDALONE_TARGET} ${SPECTR_NATIVE_AU_TARGET}
+        ${SPECTR_NATIVE_VST3_TARGET} ${SPECTR_NATIVE_CLAP_TARGET})
+    if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET}
+       AND TARGET ${SPECTR_NATIVE_AU_TARGET} AND TARGET ${SPECTR_NATIVE_VST3_TARGET}
+       AND TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+        add_test(NAME Spectr-bundle-min-os
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_min_os.py
+                --expected "${CMAKE_OSX_DEPLOYMENT_TARGET}"
+                --bundle ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app
+                --bundle ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
+                --bundle ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
+                --bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
+        add_test(NAME Spectr-bundle-min-os-controls
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_min_os.py --self-test)
+        set_tests_properties(Spectr-bundle-min-os Spectr-bundle-min-os-controls
+            PROPERTIES TIMEOUT 60)
+    endif()
+    # The shim configures in a scratch project with the deployment target set
+    # and with it unset, so an empty-variable guard cannot break configure.
+    add_test(NAME Spectr-bundle-min-os-configure
+        COMMAND ${CMAKE_COMMAND}
+            -DSPECTR_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DSCRATCH=${CMAKE_BINARY_DIR}/min-os-configure-test
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/test/min_os_configure_test.cmake)
+    set_tests_properties(Spectr-bundle-min-os-configure PROPERTIES TIMEOUT 120)
+endif()
