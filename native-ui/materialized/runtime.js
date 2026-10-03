@@ -9491,12 +9491,47 @@ function createWidget(type, id, parentId, props) {
     // run Element.appendChild, so restore that lifecycle bit explicitly (and
     // for every descendant) or later React commits treat live labels as
     // detached and skip their native updates/event wiring.
+    // One registry pass indexes every node under the parent each of its two
+    // parent edges names, so the three subtree walks below cost O(subtree)
+    // rather than a registry scan per element (866 scans, 61 ms, on the
+    // editor open). Lookups re-check the live edges, so a child whose edge a
+    // walk rewrote is judged exactly as a fresh scan would judge it.
+    // See tools/patch_materialized_runtime_linear_scroll_upgrade.py.
+    const registryChildrenByParent = /* @__PURE__ */ new Map();
+    const indexRegistryChild = (owner, candidate) => {
+      if (!owner || owner === candidate) return;
+      let list = registryChildrenByParent.get(owner);
+      if (!list) registryChildrenByParent.set(owner, list = []);
+      if (list[list.length - 1] !== candidate) list.push(candidate);
+    };
+    for (const candidate of values) {
+      if (!candidate) continue;
+      indexRegistryChild(candidate.parentElement, candidate);
+      indexRegistryChild(candidate._parentElement, candidate);
+    }
+    const upgradeStats = g5.__spectrScrollUpgradeStats__
+      || (g5.__spectrScrollUpgradeStats__ = { upgrades: 0, registry: 0, lookups: 0,
+        visited: 0 });
+    upgradeStats.upgrades += 1;
+    upgradeStats.registry += values.length;
     const childrenFor = (element) => {
-      const direct = (Array.isArray(element?._children) ? element._children : [])
-        .concat(values.filter((candidate) => candidate && candidate !== element
-          && (candidate.parentElement === element
-              || candidate._parentElement === element)));
-      return direct.filter((child, index, all) => child && all.indexOf(child) === index);
+      upgradeStats.lookups += 1;
+      const direct = Array.isArray(element?._children) ? element._children : [];
+      const indexed = registryChildrenByParent.get(element) || [];
+      upgradeStats.visited += indexed.length;
+      const seen = /* @__PURE__ */ new Set();
+      const children = [];
+      const keep = (child) => {
+        if (!child || seen.has(child)) return;
+        seen.add(child);
+        children.push(child);
+      };
+      for (const child of direct) keep(child);
+      for (const candidate of indexed) {
+        if (candidate !== element && (candidate.parentElement === element
+            || candidate._parentElement === element)) keep(candidate);
+      }
+      return children;
     };
     const markNative = (element) => {
       if (!element) return;
