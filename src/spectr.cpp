@@ -2824,7 +2824,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             ok = row.isArray() && row.size() == kMaxBands && preset["names"][static_cast<std::uint32_t>(i)].isString();
             for (std::size_t b = 0; ok && b < kMaxBands; ++b) {
                 const auto& v = row[static_cast<std::uint32_t>(b)];
-                ok = v.isFloat() || v.isInt();
+                ok = v.isFloat32() || v.isFloat64() || v.isInt32() || v.isInt64();
                 if (ok) new_preset_neighbours.gains[i][b] = std::clamp(
                     static_cast<float>(v.getWithDefault<double>(0.0)), kBandGainMinDb, kBandGainMaxDb);
             }

@@ -1202,7 +1202,7 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                     return EditorBridge::err_response("gains rows must hold at most 64 values");
                 for (std::uint32_t b = 0; b < row.size(); ++b) {
                     const auto& v = row[b];
-                    if (!(v.isFloat() || v.isInt()))
+                    if (!(v.isFloat32() || v.isFloat64() || v.isInt32() || v.isInt64()))
                         return EditorBridge::err_response("gains must be numbers");
                     neighbours.gains[i][b] = static_cast<float>(v.getWithDefault<double>(0.0));
                 }

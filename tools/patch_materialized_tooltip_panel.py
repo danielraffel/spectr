@@ -5,9 +5,12 @@ THE DEFECT
 
   Hovering FROZEN or INTENSITY showed a small dark square at the left with the
   text spilling out of it. The tip is an absolutely positioned box with no
-  width around a one-line span, and the SDK lays such a box out at its padding
-  and border alone (20 x 27 design px) while the text paints at its natural
-  width. It also sat at a fixed 32 px, over the lower edge of the control.
+  width around a one-line span. The runtime stamps `white-space: normal` on
+  every span and the SDK did not inherit `nowrap` from the box, so the span
+  soft-wrapped to nothing and the box laid out at its padding and border alone
+  (20 x 27 design px) while the text painted at its natural width
+  (Generous-Corp/pulp#9317 makes `nowrap` reach descendant text). It also sat
+  at a fixed 32 px, over the lower edge of the control.
 
 THE FIX
 
@@ -21,9 +24,9 @@ THE FIX
     session in the plugin state, like "Keyboard shortcuts in DAW": each
     project keeps its own choice, a new instance shows them.
 
-INTERIM half: the explicit width is a shim -- DELETE ON THE SDK BUMP that
-makes an absolutely positioned auto-width box shrink-to-fit its text (the Pulp
-fix that accompanies this); the placement and the Setting stay.
+INTERIM half: the explicit width and the span's own `nowrap` are the shim --
+DELETE THEM ON THE SDK BUMP that carries pulp#9317, after which the box
+shrink-fits its text by itself; the placement and the Setting stay.
 
 Idempotent like the other patch_materialized_* scripts. Run after
 tools/patch_materialized_header_tooltips.py.
@@ -131,6 +134,9 @@ def main():
         sys.exit('FAIL: the document is half patched by this script')
     edits = EDITS + [
         ('Settings > FEEDBACK gains Show tooltips', SETTING_OLD, SETTING_NEW),
+    ('the tip\'s text stays on one line',
+     'React.createElement("span", { style: { pointerEvents: "none" } }, tip.text)',
+     'React.createElement("span", { style: { pointerEvents: "none", whiteSpace: "nowrap" } }, tip.text)'),
         ('the Show tooltips switch', COMPONENT_ANCHOR, COMPONENT + COMPONENT_ANCHOR),
     ]
     for label, old, new in edits:

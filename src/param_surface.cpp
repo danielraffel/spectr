@@ -1145,6 +1145,13 @@ bool Spectr::edit_param_from_editor(pulp::state::ParamID id,
     if (!in_drag) store->begin_gesture(id);
     store->set_value(id, value);
     if (!in_drag) store->end_gesture(id);
+    // Hold for Length is not in the surface cache the drift sweep watches,
+    // so its edit advances the live projection here, or a second view of
+    // the switch (Settings beside the band menu) would keep the old value.
+    if (id == kParamFreezeHoldForLength)
+        host_automation_revision_.store(
+            editor_authority_.record_external_mutation(),
+            std::memory_order_release);
     return true;
 }
 
