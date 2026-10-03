@@ -79,6 +79,20 @@ VER="${VER:-$PROJECT_VER}"
   echo "  change project(Spectr VERSION ...) in CMakeLists.txt instead" >&2
   exit 2
 }
+# A side-by-side development identity (SPECTR_DEV_IDENTITY, see
+# cmake/SpectrIdentity.cmake) builds differently named targets and bundles, and
+# its installer must carry its own package identifiers so it can never replace
+# the shipping Spectr receipts. The shipping identity keeps every name below.
+DEV_IDENT="$(sed -n 's/^SPECTR_DEV_IDENTITY:STRING=//p' "$CACHE" | tail -1)"
+if [[ -n "$DEV_IDENT" ]]; then
+  TARGET_PREFIX="Spectr${DEV_IDENT}Dev"
+  BUNDLE_NAME="Spectr ${DEV_IDENT} Dev"
+  PKG_NAME="Spectr${DEV_IDENT}Dev"
+else
+  TARGET_PREFIX="Spectr"
+  BUNDLE_NAME="Spectr"
+  PKG_NAME="Spectr"
+fi
 SOURCE_ROOT="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$CACHE" | tail -1)"
 SOURCE_ROOT="$(cd "$SOURCE_ROOT" 2>/dev/null && pwd || true)"
 [[ "$SOURCE_ROOT" == "$ROOT" ]] || {
@@ -128,7 +142,7 @@ grep -q '^PULP_SDK_DISTRIBUTION_ELIGIBLE:INTERNAL=TRUE$' "$CACHE" || {
 # leases a bounded share of the shared M5 rather than claiming the machine.
 "$PULP_ROOT/tools/ci/governed-build.sh" \
   cmake --build "$BUILD" \
-  --target Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP
+  --target "${TARGET_PREFIX}_Standalone" "${TARGET_PREFIX}_AU" "${TARGET_PREFIX}_VST3" "${TARGET_PREFIX}_CLAP"
 SPECTR_SHA_AFTER_BUILD="$(git -C "$ROOT" rev-parse --verify HEAD)"
 [[ "$SPECTR_SHA_AFTER_BUILD" == "$SPECTR_SHA_EXPECTED" ]] || {
   echo "Spectr source changed during package rebuild: expected $SPECTR_SHA_EXPECTED, got $SPECTR_SHA_AFTER_BUILD" >&2
@@ -144,10 +158,10 @@ SPECTR_SHA_CACHED_AFTER_BUILD="$(sed -n 's/^SPECTR_SOURCE_GIT_SHA:INTERNAL=//p' 
   exit 2
 }
 
-AU="$BUILD/AU/Spectr.component"
-VST3="$BUILD/VST3/Spectr.vst3"
-CLAP="$BUILD/CLAP/Spectr.clap"
-APP="$BUILD/Spectr.app"
+AU="$BUILD/AU/$BUNDLE_NAME.component"
+VST3="$BUILD/VST3/$BUNDLE_NAME.vst3"
+CLAP="$BUILD/CLAP/$BUNDLE_NAME.clap"
+APP="$BUILD/$BUNDLE_NAME.app"
 for artifact in "$AU" "$VST3" "$CLAP" "$APP"; do
   [[ -d "$artifact" ]] || { echo "missing installer input: $artifact" >&2; exit 2; }
 done
@@ -155,9 +169,11 @@ done
 # A RELEASE (Spectr.app numbered exactly VER) must read the release feed: an
 # app that ships reading a practice or loopback feed, or with no updater, can
 # never be offered the next release. Checked before anything is signed.
+# A development identity is a different app that must never be offered a
+# release over itself, so it is built without an updater and is exempt.
 RELEASE_FEED="https://github.com/danielraffel/spectr/releases/latest/download/appcast.xml"
 APP_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
-if [[ "$APP_BUILD" == "$VER" ]]; then
+if [[ "$APP_BUILD" == "$VER" && -z "$DEV_IDENT" ]]; then
   APP_FEED="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$APP/Contents/Info.plist" 2>/dev/null || true)"
   [[ "$APP_FEED" == "$RELEASE_FEED" ]] || {
     echo "Spectr.app $APP_BUILD is a release build but its SUFeedURL is '${APP_FEED:-<none>}'," >&2
@@ -171,7 +187,7 @@ fi
 # into sealed Resources. Preserve that evidence for the packaged artifacts.
 
 args=(
-  --name Spectr
+  --name "$PKG_NAME"
   --version "$VER"
   --sign-identity "$APP_ID"
   --installer-identity "$INST_ID"
@@ -235,7 +251,7 @@ fi
 
 # Spectr.app's own CFBundleVersion (APP_BUILD, read above) may carry a practice
 # build number (SPECTR_APP_BUILD_VERSION, e.g. 1.0.7.1); everything else is VER.
-PKG="$OUT/Spectr-$VER.pkg"
+PKG="$OUT/$PKG_NAME-$VER.pkg"
 version_args=(--expected "$VER" --pkg "$PKG")
 [[ "$APP_BUILD" == "$VER" ]] || version_args+=(--app-build-version "$APP_BUILD")
 python3 "$ROOT/tools/check_release_version.py" "${version_args[@]}"
@@ -259,7 +275,7 @@ fi
 # A practice package is named for its build so two of them can sit side by side
 # on the practice release. A preview (X.Y.(Z-1).9nnn) keeps the product name.
 if [[ "$APP_BUILD" == "$VER".* ]]; then
-  mv "$PKG" "$OUT/Spectr-$APP_BUILD.pkg"
-  PKG="$OUT/Spectr-$APP_BUILD.pkg"
+  mv "$PKG" "$OUT/$PKG_NAME-$APP_BUILD.pkg"
+  PKG="$OUT/$PKG_NAME-$APP_BUILD.pkg"
   echo "practice package: $PKG"
 fi

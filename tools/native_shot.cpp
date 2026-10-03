@@ -1623,6 +1623,166 @@ int main(int argc, char** argv) {
         rig.feed_tone(96);
         settle(rig.clock, 24);
 
+        // SPECTR_GPU_STATUS_PROBE=1: the GPU audio status surface with LIVE
+        // delivery. Presses the header's compute-mode indicator through the
+        // host hit-test path (the same press a user makes), paces real-time
+        // audio through the processor until the shared renderer reports
+        // GPU-selected quanta, lets the component's own 500 ms refresh read
+        // build_info_get, and captures the frame. The pill's text and state
+        // attribute are read back from the runtime, so the verdict does not
+        // rest on the image alone; the image is written for a human to look at.
+        if (std::getenv("SPECTR_GPU_STATUS_PROBE") != nullptr) {
+            using steady_t = std::chrono::steady_clock;
+            const auto js_value = [&rig](const std::string& expr) -> std::string {
+                try {
+                    rig.eval("(() => { const v = (() => { " + expr + " })();"
+                             " throw new Error('PULPVALUE:' + v + ':PULPEND'); })();",
+                             "spectr-gpu-status-value");
+                } catch (const std::exception& error) {
+                    const std::string message = error.what();
+                    const auto at = message.find("PULPVALUE:");
+                    const auto end = message.find(":PULPEND");
+                    if (at != std::string::npos && end != std::string::npos && end > at)
+                        return message.substr(at + 10, end - at - 10);
+                }
+                return "(unread)";
+            };
+            const auto pump_ms = [&rig](int ms) {
+                const auto end = steady_t::now() + std::chrono::milliseconds(ms);
+                while (steady_t::now() < end) {
+                    settle(rig.clock, 1);
+                    rig.eval("if (typeof globalThis.__pulpRuntimeSettle__ "
+                             "=== 'function') globalThis.__pulpRuntimeSettle__(1);",
+                             "spectr-gpu-status-pump");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(8));
+                }
+            };
+            // Real-time paced audio: one 256-sample block per 5.33 ms of wall
+            // clock, so the shared renderer's service thread has the time a
+            // host callback would give it.
+            const auto paced_audio = [&rig](int blocks) {
+                constexpr int block = 256;
+                constexpr double sr = 48000.0;
+                constexpr double pi = 3.14159265358979323846;
+                static std::uint64_t n = 0;
+                std::vector<float> in0(block), in1(block), out0(block), out1(block);
+                const float* inputs[2]{in0.data(), in1.data()};
+                float* outputs[2]{out0.data(), out1.data()};
+                pulp::midi::MidiBuffer midi_in, midi_out;
+                pulp::format::ProcessContext context;
+                context.sample_rate = sr;
+                context.num_samples = block;
+                const auto start = steady_t::now();
+                for (int b = 0; b < blocks; ++b) {
+                    std::this_thread::sleep_until(start + std::chrono::nanoseconds(
+                        static_cast<std::int64_t>(b) * block * 1000000000LL / 48000));
+                    for (int i = 0; i < block; ++i, ++n) {
+                        const auto v = static_cast<float>(
+                            0.3 * std::sin(2.0 * pi * 997.0 * static_cast<double>(n) / sr)
+                            + 0.2 * std::sin(2.0 * pi * 220.0 * static_cast<double>(n) / sr));
+                        in0[i] = v;
+                        in1[i] = v;
+                    }
+                    pulp::audio::BufferView<const float> input(inputs, 2, block);
+                    pulp::audio::BufferView<float> output(outputs, 2, block);
+                    rig.processor.process(output, input, midi_in, midi_out, context);
+                }
+            };
+            const auto status_line = [&rig]() {
+                const auto s = rig.processor.gpu_audio_status();
+                using A = spectr::GpuAudioStatus::Availability;
+                const char* a = s.availability == A::Available ? "available"
+                    : s.availability == A::NotBuilt ? "not_built"
+                    : s.availability == A::NotPrepared ? "not_prepared"
+                    : "non_shared_renderer";
+                char buf[256];
+                if (s.delivery)
+                    std::snprintf(buf, sizeof buf,
+                        "availability=%s provider_state=%u epoch=%llu gpu_selected=%llu "
+                        "cpu_fallback=%llu cancelled=%llu lost=%llu", a,
+                        s.delivery->provider_state,
+                        (unsigned long long)s.delivery->current_epoch,
+                        (unsigned long long)s.delivery->gpu_selected,
+                        (unsigned long long)s.delivery->cpu_fallback,
+                        (unsigned long long)s.delivery->cancelled,
+                        (unsigned long long)s.delivery->lost_terminal_records);
+                else
+                    std::snprintf(buf, sizeof buf, "availability=%s (no delivery)", a);
+                return std::string{buf};
+            };
+            const char* pill_q = "document.querySelector('[data-spectr-gpu-audio-status-pill]')";
+            const char* ind_q = "document.querySelector('[data-spectr-gpu-mode-indicator]')";
+            const auto read_surface = [&]() {
+                return "indicator mode=" + js_value(std::string("const e=") + ind_q
+                           + "; return e ? e.getAttribute('data-spectr-gpu-mode') : '(absent)';")
+                    + " ready=" + js_value(std::string("const e=") + ind_q
+                           + "; return e ? e.getAttribute('data-spectr-gpu-ready') : '(absent)';")
+                    + " label=\"" + js_value(std::string("const e=") + ind_q
+                           + "; return e ? e.textContent : '(absent)';")
+                    + "\" | pill state=" + js_value(std::string("const e=") + pill_q
+                           + "; return e ? e.getAttribute('data-spectr-gpu-audio-state') : '(absent)';")
+                    + " text=\"" + js_value(std::string("const e=") + pill_q
+                           + "; return e ? e.textContent : '(absent)';") + "\"";
+            };
+
+            pump_ms(1200);
+            std::printf("[gpu-status] before press: %s\n", status_line().c_str());
+            std::printf("[gpu-status] before press: %s\n", read_surface().c_str());
+            capture(rig, dir, prefix + "gpu-status-0-tracking-cpu", backend, scale);
+
+            // Press the indicator where it paints, through the host hit test.
+            const std::string ind_id = js_value(std::string("const e=") + ind_q
+                + "; return e ? (e.__pulpId || e.id || '(no id)') : '(absent)';");
+            auto* ind_view = find_by_id(*rig.root, ind_id);
+            if (ind_view == nullptr) {
+                std::printf("[gpu-status] FAIL: compute-mode indicator view not found (id=%s)\n",
+                            ind_id.c_str());
+                return 1;
+            }
+            float ix = 0.0f, iy = 0.0f;
+            root_origin(*ind_view, ix, iy);
+            const auto ib = ind_view->bounds();
+            std::printf("[gpu-status] pressing indicator id=%s at (%.1f,%.1f) size %.1fx%.1f\n",
+                        ind_id.c_str(), ix + ib.width * 0.5f, iy + ib.height * 0.5f,
+                        ib.width, ib.height);
+            rig.root->simulate_click(pulp::view::Point{ix + ib.width * 0.5f, iy + ib.height * 0.5f});
+            pump_ms(300);
+            std::printf("[gpu-status] after press: %s\n", read_surface().c_str());
+
+            // Pace audio until the shared renderer reports GPU-selected output.
+            bool delivered = false;
+            const auto deadline = steady_t::now() + std::chrono::seconds(20);
+            while (steady_t::now() < deadline) {
+                paced_audio(96);
+                pump_ms(40);
+                const auto s = rig.processor.gpu_audio_status();
+                if (s.availability == spectr::GpuAudioStatus::Availability::Available
+                    && s.delivery && s.delivery->provider_state == 1
+                    && s.delivery->gpu_selected > 0) {
+                    delivered = true;
+                    break;
+                }
+            }
+            std::printf("[gpu-status] after paced audio: %s\n", status_line().c_str());
+            // Keep audio flowing while the component's 500 ms refresh reads
+            // build_info_get at least twice.
+            for (int i = 0; i < 6; ++i) {
+                paced_audio(48);
+                pump_ms(250);
+            }
+            const auto surface = read_surface();
+            std::printf("[gpu-status] live: %s\n", status_line().c_str());
+            std::printf("[gpu-status] live: %s\n", surface.c_str());
+            rig.root->layout_children();
+            capture(rig, dir, prefix + "gpu-status-1-mixing-gpu-live", backend, scale);
+            const bool surface_live = surface.find("pill state=gpu") != std::string::npos
+                && surface.find("text=\"GPU | ") != std::string::npos
+                && surface.find("ready=true") != std::string::npos;
+            std::printf("[gpu-status] VERDICT delivered=%s surface_live=%s\n",
+                        delivered ? "yes" : "no", surface_live ? "yes" : "no");
+            return (delivered && surface_live && g_failures == 0) ? 0 : 1;
+        }
+
         // COR-4: sweep host sizes through the SHIPPING resize path
         // (on_view_resized -> __spectrResizeNativeEditor), censusing every
         // interactive control at each. Separate mode, so it cannot perturb the
