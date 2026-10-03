@@ -188,10 +188,27 @@ args=(
 # Customize-pane component, and a tester who hits "it won't load" runs it to
 # save a report ZIP on the Desktop. Unset DIAG_APP to build without it; a set
 # DIAG_APP that does not exist is an error, never a silent omission.
+#
+# The helper ships as part of this Spectr release, so it carries the Spectr
+# version: a tester's report and the Installer's receipt then name the release
+# it came with, not the kit's own build number. The source app is never
+# touched -- a staging copy under OUT is stamped, and the recipe below signs
+# that copy (it re-signs every --app, so the edited Info.plist is sealed).
 if [[ -n "${DIAG_APP:-}" ]]; then
   [[ -d "$DIAG_APP" ]] || { echo "DIAG_APP does not exist: $DIAG_APP" >&2; exit 2; }
   [[ -f "${DIAG_ENT:-}" ]] || { echo "DIAG_ENT must name DiagnosticKit.entitlements" >&2; exit 2; }
-  args+=(--app "Diagnostics app" "$DIAG_APP" "$DIAG_ENT")
+  DIAG_STAGE="$OUT/diagnostics-staging"
+  rm -rf "$DIAG_STAGE"
+  mkdir -p "$DIAG_STAGE"
+  DIAG_STAGED="$DIAG_STAGE/$(basename "$DIAG_APP")"
+  ditto "$DIAG_APP" "$DIAG_STAGED"
+  for key in CFBundleShortVersionString CFBundleVersion; do
+    /usr/libexec/PlistBuddy -c "Set :$key $VER" "$DIAG_STAGED/Contents/Info.plist" 2>/dev/null ||
+      /usr/libexec/PlistBuddy -c "Add :$key string $VER" "$DIAG_STAGED/Contents/Info.plist"
+    [[ "$(/usr/libexec/PlistBuddy -c "Print :$key" "$DIAG_STAGED/Contents/Info.plist")" == "$VER" ]] || {
+      echo "could not stamp $key=$VER on the staged diagnostics app" >&2; exit 2; }
+  done
+  args+=(--app "Diagnostics app" "$DIAG_STAGED" "$DIAG_ENT")
 fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
 
@@ -222,6 +239,12 @@ PKG="$OUT/Spectr-$VER.pkg"
 version_args=(--expected "$VER" --pkg "$PKG")
 [[ "$APP_BUILD" == "$VER" ]] || version_args+=(--app-build-version "$APP_BUILD")
 python3 "$ROOT/tools/check_release_version.py" "${version_args[@]}"
+
+# Each signed bundle declares the macOS floor its binaries are built for.
+MIN_OS="$(sed -n 's/^CMAKE_OSX_DEPLOYMENT_TARGET:STRING=//p' "$CACHE" | tail -1)"
+[[ -n "$MIN_OS" ]] || { echo "build cache names no CMAKE_OSX_DEPLOYMENT_TARGET" >&2; exit 2; }
+python3 "$ROOT/tools/check_min_os.py" --expected "$MIN_OS" \
+  --bundle "$APP" --bundle "$AU" --bundle "$VST3" --bundle "$CLAP"
 
 # The updater lives in the app and nowhere else, and the signed app's nested
 # Sparkle code carries the Developer ID signature notarization requires.
