@@ -180,6 +180,46 @@ if [[ -n "${DIAG_APP:-}" ]]; then
 fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
 
+# Spectr.app embeds Sparkle (cmake/SpectrSparkle.cmake). Its nested code must be
+# signed inside-out with the Developer ID identity before the app is sealed.
+# Pulp's recipe does that from the release that added pulp_add_sparkle(); for an
+# older PULP_ROOT, sign the framework here first. Delete this block on the Pulp
+# SDK bump that ships pulp_add_sparkle().
+SPARKLE_FW="$APP/Contents/Frameworks/Sparkle.framework"
+if [[ -d "$SPARKLE_FW" ]] &&
+   ! grep -q 'sign_embedded_frameworks' "$PULP_ROOT/tools/scripts/build_combined_installer.sh"; then
+  "$PULP_ROOT/tools/scripts/ensure_signing_ready.sh" --quiet || {
+    echo "signing preflight failed; run 'pulp ship doctor'" >&2; exit 2; }
+  SPARKLE_V="$SPARKLE_FW/Versions/B"
+  for nested in "$SPARKLE_V/Autoupdate" "$SPARKLE_V/Updater.app"; do
+    [[ -e "$nested" ]] && codesign --force --options runtime --timestamp -s "$APP_ID" "$nested"
+  done
+  [[ -d "$SPARKLE_V/XPCServices" ]] && {
+    echo "Sparkle XPC services are present; a non-sandboxed Spectr must not ship them" >&2; exit 2; }
+  codesign --force --options runtime --timestamp -s "$APP_ID" "$SPARKLE_FW"
+fi
+
 "$PULP_ROOT/tools/scripts/build_combined_installer.sh" "${args[@]}"
-python3 "$ROOT/tools/check_release_version.py" --expected "$VER" \
-  --pkg "$OUT/Spectr-$VER.pkg"
+
+# Spectr.app's own CFBundleVersion may carry a practice build number
+# (SPECTR_APP_BUILD_VERSION, e.g. 1.0.7.1); everything else is VER.
+APP_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
+PKG="$OUT/Spectr-$VER.pkg"
+version_args=(--expected "$VER" --pkg "$PKG")
+[[ "$APP_BUILD" == "$VER" ]] || version_args+=(--app-build-version "$APP_BUILD")
+python3 "$ROOT/tools/check_release_version.py" "${version_args[@]}"
+
+# The updater lives in the app and nowhere else, and the signed app's nested
+# Sparkle code carries the Developer ID signature notarization requires.
+if [[ -d "$SPARKLE_FW" ]]; then
+  python3 "$ROOT/tools/ship/check_sparkle.py" bundles --signed --app "$APP" \
+    --plugin "$AU" --plugin "$VST3" --plugin "$CLAP"
+fi
+
+# A practice package is named for its build so two of them can sit side by side
+# on the practice release.
+if [[ "$APP_BUILD" != "$VER" ]]; then
+  mv "$PKG" "$OUT/Spectr-$APP_BUILD.pkg"
+  PKG="$OUT/Spectr-$APP_BUILD.pkg"
+  echo "practice package: $PKG"
+fi
