@@ -101,5 +101,39 @@ class AppcastCarriesNotes(unittest.TestCase):
             self.assertEqual(builds, ["1.0.8", "1.0.7"])
 
 
+class FallbackSigner(unittest.TestCase):
+    """With a Pulp CLI that predates `pulp ship appcast --sign-key-file`, the
+    documented command (no --sign-update) must still find Sparkle's signer: the
+    one the build tree that made --app unpacked."""
+
+    def _tree(self, tmp: str, *versions: str) -> Path:
+        build = Path(tmp) / "build"
+        (build / "Spectr.app").mkdir(parents=True)
+        for v in versions:
+            tool = build / "_deps" / f"sparkle-{v}" / "dist" / "bin" / "sign_update"
+            tool.parent.mkdir(parents=True)
+            tool.write_text("#!/bin/sh\n")
+        return build
+
+    def test_finds_the_signer_beside_the_app(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            build = self._tree(tmp, "2.10.0")
+            self.assertEqual(make_appcast.default_sign_update(build / "Spectr.app"),
+                             (build / "_deps/sparkle-2.10.0/dist/bin/sign_update").resolve())
+
+    def test_prefers_the_newest_sparkle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            build = self._tree(tmp, "2.9.1", "2.10.0")
+            self.assertIn("sparkle-2.10.0",
+                          str(make_appcast.default_sign_update(build / "Spectr.app")))
+
+    def test_none_without_a_build_tree(self) -> None:
+        # Negative controls: no --app, and an app whose tree unpacked no Sparkle.
+        self.assertIsNone(make_appcast.default_sign_update(None))
+        with tempfile.TemporaryDirectory() as tmp:
+            build = self._tree(tmp)
+            self.assertIsNone(make_appcast.default_sign_update(build / "Spectr.app"))
+
+
 if __name__ == "__main__":
     unittest.main()

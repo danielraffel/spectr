@@ -136,9 +136,10 @@ number.
    `fullReleaseNotesLink` to the GitHub release), and then verifies the result
    with the **public** key (`check_sparkle.py appcast`). It uses
    `pulp ship appcast --sign-key-file` when the installed Pulp CLI has it, and
-   Sparkle's `sign_update` otherwise (`--sign-update
-   build/_deps/sparkle-2.10.0/dist/bin/sign_update`; delete that fallback on the
-   SDK bump).
+   Sparkle's `sign_update` otherwise -- by default the one the build tree of
+   `--app` unpacked (`build/_deps/sparkle-2.10.0/dist/bin/sign_update`), so the
+   command above needs no extra flag with either CLI; `--sign-update <path>`
+   overrides it. Delete that fallback on the SDK bump.
 4. Publish: upload `Spectr-1.0.7.pkg` **and** `appcast.xml` to the `v1.0.7`
    release, which must not be a prerelease:
 

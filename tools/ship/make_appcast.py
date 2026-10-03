@@ -22,9 +22,11 @@ The private key is read from --key-file (default
 script never reads, prints or passes the key on a command line.
 
 Signing goes through `pulp ship appcast --sign-key-file` when the installed
-Pulp CLI supports it. Older CLIs fall back to Sparkle's own sign_update and an
-XML writer here -- delete that fallback (the _shim_* functions) on the Pulp SDK
-bump that ships `pulp ship appcast --sign-key-file`.
+Pulp CLI supports it. Older CLIs fall back to Sparkle's own sign_update -- by
+default the one the build tree of --app unpacked (<build>/_deps/sparkle-*/dist/
+bin/sign_update), so the documented command works unchanged -- and an XML
+writer here. Delete that fallback (default_sign_update and the _shim_*
+functions) on the Pulp SDK bump that ships `pulp ship appcast --sign-key-file`.
 """
 from __future__ import annotations
 
@@ -102,6 +104,27 @@ def fetch_previous(source: str | None, channel: str, dest: Path) -> bool:
         fail(f"--previous {source} does not exist")
     shutil.copyfile(p, dest)
     return True
+
+
+def default_sign_update(app: Path | None) -> Path | None:
+    """Sparkle's sign_update from the build tree that produced `app`.
+
+    SpectrSparkle.cmake unpacks the pinned Sparkle distribution under
+    <build>/_deps/sparkle-<version>/dist, and the app is <build>/Spectr.app, so
+    the signer that matches the framework inside the app sits beside it. The
+    newest Sparkle version wins if a build tree carries more than one.
+    """
+    if app is None:
+        return None
+    found = []
+    for candidate in app.resolve().parent.glob("_deps/sparkle-*/dist/bin/sign_update"):
+        try:
+            key = check_sparkle.version_key(candidate.parts[-4].removeprefix("sparkle-"))
+        except ValueError:
+            continue
+        if candidate.is_file():
+            found.append((key, candidate))
+    return max(found)[1] if found else None
 
 
 def pulp_supports_key_file(pulp: str) -> bool:
@@ -182,7 +205,10 @@ def main() -> int:
     ap.add_argument("--min-os", help="sparkle:minimumSystemVersion (default: from --app)")
     ap.add_argument("--key-file", type=Path, default=DEFAULT_KEY)
     ap.add_argument("--pulp", default=os.environ.get("PULP_CLI", "pulp"))
-    ap.add_argument("--sign-update", type=Path, help="Sparkle's bin/sign_update (fallback signer)")
+    ap.add_argument("--sign-update", type=Path,
+                    help="Sparkle's bin/sign_update (fallback signer; default: the one the "
+                         "build tree of --app unpacked, <build>/_deps/sparkle-*/dist/bin, "
+                         "then $SPARKLE_BIN)")
     ap.add_argument("--pub-date", help="RFC 2822 date (default: now)")
     args = ap.parse_args()
 
@@ -242,11 +268,13 @@ def main() -> int:
             shutil.copyfile(work, args.out)
         else:
             # Delete on SDK bump.
-            sign_update = args.sign_update or Path(os.environ.get("SPARKLE_BIN", "")) / "sign_update"
+            sign_update = (args.sign_update or default_sign_update(args.app)
+                           or Path(os.environ.get("SPARKLE_BIN", "")) / "sign_update")
             if not sign_update.is_file():
-                fail("this Pulp CLI predates `pulp ship appcast --sign-key-file`; pass "
-                     "--sign-update <Sparkle>/bin/sign_update (the build tree has one under "
-                     "build/_deps/sparkle-*/dist/bin)")
+                fail("this Pulp CLI predates `pulp ship appcast --sign-key-file`, and no "
+                     "Sparkle sign_update was found beside --app (<build>/_deps/sparkle-*/"
+                     "dist/bin) or in $SPARKLE_BIN; pass --sign-update <Sparkle>/bin/sign_update")
+            print(f"make_appcast: signing with {sign_update}")
             sig = _shim_sign(sign_update, args.key_file, args.pkg)
             if have_prev:
                 items = check_sparkle.parse_items(prev.read_text())
