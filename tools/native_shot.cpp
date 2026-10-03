@@ -1712,17 +1712,39 @@ int main(int argc, char** argv) {
             };
             const char* pill_q = "document.querySelector('[data-spectr-gpu-audio-status-pill]')";
             const char* ind_q = "document.querySelector('[data-spectr-gpu-mode-indicator]')";
+            // The runtime's DOM shim has no textContent, so read the text the
+            // view tree actually paints: the Labels under the element's view.
+            const auto painted_text = [&](const char* query) -> std::string {
+                const std::string id = js_value(std::string("const e=") + query
+                    + "; return e ? (e.__pulpId || e.id || '') : '';");
+                auto* view = id.empty() ? nullptr : find_by_id(*rig.root, id);
+                if (view == nullptr) return "(absent)";
+                std::string found;
+                std::function<void(const pulp::view::View&)> walk =
+                    [&](const pulp::view::View& v) {
+                        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&v))
+                            found += std::string{label->text()};
+                        for (std::size_t i = 0; i < v.child_count(); ++i)
+                            walk(*v.child_at(i));
+                    };
+                walk(*view);
+                float x = 0.0f, y = 0.0f;
+                root_origin(*view, x, y);
+                const auto box = view->bounds();
+                char rect[96];
+                std::snprintf(rect, sizeof rect, " @[%.0f,%.0f %.0fx%.0f]", x, y,
+                              box.width, box.height);
+                return found + "\"" + rect;
+            };
             const auto read_surface = [&]() {
                 return "indicator mode=" + js_value(std::string("const e=") + ind_q
                            + "; return e ? e.getAttribute('data-spectr-gpu-mode') : '(absent)';")
                     + " ready=" + js_value(std::string("const e=") + ind_q
                            + "; return e ? e.getAttribute('data-spectr-gpu-ready') : '(absent)';")
-                    + " label=\"" + js_value(std::string("const e=") + ind_q
-                           + "; return e ? e.textContent : '(absent)';")
-                    + "\" | pill state=" + js_value(std::string("const e=") + pill_q
+                    + " label=\"" + painted_text(ind_q)
+                    + " | pill state=" + js_value(std::string("const e=") + pill_q
                            + "; return e ? e.getAttribute('data-spectr-gpu-audio-state') : '(absent)';")
-                    + " text=\"" + js_value(std::string("const e=") + pill_q
-                           + "; return e ? e.textContent : '(absent)';") + "\"";
+                    + " text=\"" + painted_text(pill_q);
             };
 
             pump_ms(1200);
@@ -1775,7 +1797,25 @@ int main(int argc, char** argv) {
             std::printf("[gpu-status] live: %s\n", surface.c_str());
             rig.root->layout_children();
             capture(rig, dir, prefix + "gpu-status-1-mixing-gpu-live", backend, scale);
-            const bool surface_live = surface.find("pill state=gpu") != std::string::npos
+            // Both surfaces must paint inside the design box: an absolute node
+            // resolved against the wrong containing block lands off-screen and
+            // still reads "live" from its attributes alone.
+            const auto on_screen = [&](const char* query) {
+                const std::string id = js_value(std::string("const e=") + query
+                    + "; return e ? (e.__pulpId || e.id || '') : '';");
+                auto* view = id.empty() ? nullptr : find_by_id(*rig.root, id);
+                if (view == nullptr) return false;
+                float x = 0.0f, y = 0.0f;
+                root_origin(*view, x, y);
+                const auto box = view->bounds();
+                return box.width > 0.0f && box.height > 0.0f && x >= 0.0f && y >= 0.0f
+                    && x + box.width <= kDesignWidth && y + box.height <= kDesignHeight;
+            };
+            const bool placed = on_screen(ind_q) && on_screen(pill_q);
+            std::printf("[gpu-status] indicator and pill inside the design box: %s\n",
+                        placed ? "yes" : "no");
+            const bool surface_live = placed
+                && surface.find("pill state=gpu") != std::string::npos
                 && surface.find("text=\"GPU | ") != std::string::npos
                 && surface.find("ready=true") != std::string::npos;
             std::printf("[gpu-status] VERDICT delivered=%s surface_live=%s\n",

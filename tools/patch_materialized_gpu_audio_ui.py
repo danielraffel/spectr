@@ -43,7 +43,18 @@ COMPONENT = r'''function SpectrGpuAudioSurface({ enabled }) {
     && gpuAudio.provider_state === "shared_ready";
   const color = ready ? "hsl(205,90%,64%)" : "hsl(38,90%,62%)";
   const label = mixing ? (ready ? "GPU" : "GPU unavailable") : "CPU";
+  // The chip shows the engine only; colour carries readiness and the
+  // accessible label and the status pill carry the full wording.
+  const chip = mixing ? "GPU" : "CPU";
   const toggle = () => {
+    // The latency rail owns the one write path: it wakes the TRACKING /
+    // MIXING chip and Settings with the change. Fall back to a direct
+    // message only where that path is absent.
+    if (typeof spectrToggleLatencyMode === "function") {
+      const moved = spectrToggleLatencyMode();
+      if (moved && (moved.mode === "linear_phase" || moved.mode === "zero_latency")) setRenderMode(moved.mode);
+      return;
+    }
     const next = mixing ? "zero_latency" : "linear_phase";
     if (window.pulp && window.pulp.postMessage)
       Promise.resolve(window.pulp.postMessage("render_mode_" + "set", { mode: next }, "spectr-render-mode"))
@@ -63,19 +74,25 @@ COMPONENT = r'''function SpectrGpuAudioSurface({ enabled }) {
     "data-spectr-gpu-ready": ready ? "true" : "false",
     role: "status", "aria-label": "Compute mode: " + label, title: label,
     onClick: toggle,
-    style: { display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 10,
+    // Native layout positions captured header nodes from their bindings, so
+    // an uncaptured node in flow lands on the logo. Pin it to the header's
+    // free right edge in design space (the editor scales uniformly).
+    style: { position: "absolute", right: 20, top: 9.5, width: 52, boxSizing: "border-box", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
       padding: "3px 8px", borderRadius: 3, border: "1px solid " + color,
       background: "rgba(255,255,255,0.03)", color, fontFamily: "var(--mono)",
       fontSize: 10, letterSpacing: 1, cursor: "pointer" }
   }, React.createElement("span", { "aria-hidden": true,
-      style: { width: 6, height: 6, borderRadius: 3, background: color } }), label);
+      style: { width: 6, height: 6, borderRadius: 3, background: color } }), chip);
   let text = mixing ? "GPU unavailable" : "Convolving on the CPU";
   if (ready) text = "GPU | " + Number(gpuAudio.gpu_selected || 0)
     + " blocks | " + Number(gpuAudio.cpu_fallback || 0) + " CPU fallback";
   const pill = enabled ? React.createElement("div", {
     "data-spectr-gpu-audio-status-pill": true,
     "data-spectr-gpu-audio-state": ready ? "gpu" : "cpu",
-    style: { position: "absolute", left: 0, right: 0, bottom: 62, width: "100%",
+    // Absolute offsets resolve against the header in native layout, so a
+    // bottom offset lands above the window. Pin the pill to the free band
+    // between the spectrum and the viewport strip, in design space.
+    style: { position: "absolute", left: 410, top: 742, width: 500,
       boxSizing: "border-box", display: "flex", justifyContent: "center", alignItems: "center",
       gap: 6, zIndex: 6, pointerEvents: "none",
       padding: "5px 10px", borderRadius: 3, border: "1px solid " + color,
