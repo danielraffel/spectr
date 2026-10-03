@@ -3973,6 +3973,14 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         PROPERTIES TIMEOUT 300 LABELS "modulation;au-host")
     set_tests_properties(Spectr-au-offline-bounce-negative-control
         PROPERTIES PASS_REGULAR_EXPRESSION "\nDIFFER\n")
+    # The offline flag's lifetime through the real AU entry: a host write
+    # reaches a bounce one re-initialization later, survives a Reset, and is
+    # gone the session after (a stuck flag makes realtime blocks wait).
+    add_test(NAME Spectr-au-offline-flag-lifecycle
+        COMMAND Spectr-au-routes-probe --bundle "${_spectr_au_bundle}"
+            --offline-flag-lifecycle)
+    set_tests_properties(Spectr-au-offline-flag-lifecycle
+        PROPERTIES TIMEOUT 60 LABELS "modulation;au-host")
 
 endif()
 

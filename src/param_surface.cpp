@@ -490,8 +490,10 @@ void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask& task) noexce
         const int parsed = std::atoi(raw);
         return parsed > 0 ? std::min(parsed, 5000) : 0;
     }();
-    if (stall_ms > 0)
-        std::this_thread::sleep_for(std::chrono::milliseconds(stall_ms));
+    const int test_stall_ms = std::max(
+        stall_ms, detail::g_param_sync_test_stall_ms.load(std::memory_order_relaxed));
+    if (test_stall_ms > 0)
+        std::this_thread::sleep_for(std::chrono::milliseconds(test_stall_ms));
     auto* self = static_cast<Spectr*>(ctx);
     t_sync_publish = {task.ordinal, task.renderer};
     (void)self->apply_surface_params(/*apply_morph=*/true);
@@ -503,6 +505,7 @@ void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask& task) noexce
 
 namespace detail {
 std::atomic<std::uint64_t> g_param_sync_backlog{0};
+std::atomic<int> g_param_sync_test_stall_ms{0};
 } // namespace detail
 
 Spectr::SurfaceDrift Spectr::sample_surface_drift_() noexcept {

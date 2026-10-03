@@ -37,11 +37,6 @@ namespace {
 /// contract exists to prevent. 64 samples is 1.33 ms at 48 kHz.
 constexpr int kRenderBlock = kZeroLatencyRenderBlock;
 
-/// How long an offline render waits for one host block's designs before it
-/// gives up and renders with whatever is adopted. A design takes milliseconds;
-/// this only bounds a stopped or starved worker so a bounce cannot hang.
-constexpr auto kOfflineDesignWaitLimit = std::chrono::seconds(10);
-
 /// Layouts the audio thread has handed a design worker that no worker has
 /// designed and staged yet, summed over every zero-latency renderer in the
 /// process. See `spectr_mask_design_backlog_v1()`.
@@ -807,13 +802,12 @@ public:
 
     // Offline only, and deliberately outside the render-path region: it
     // sleeps. See MaskRenderer::await_staged_designs().
-    bool await_staged_designs() noexcept override {
+    bool await_staged_designs(
+        std::chrono::steady_clock::time_point deadline) noexcept override {
         if (!prepared_) return true;
         // Waits only for work already handed to the worker. A layout staged
         // but not yet handed off (left by a control-thread pump, say) goes at
         // the end of this host block like any other, as it would when paced.
-        const auto deadline =
-            std::chrono::steady_clock::now() + kOfflineDesignWaitLimit;
         while (designed_sequence_.load(std::memory_order_acquire)
                < requested_sequence_.load(std::memory_order_relaxed)) {
             if (!lane_.running() || std::chrono::steady_clock::now() > deadline)

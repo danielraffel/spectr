@@ -764,6 +764,11 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // and its initial publication are ready.
     stop_param_sync_lane_();
 
+    // An offline flag is one render session's; a host that set it for a
+    // bounce and never cleared it must not make every later block wait.
+    host_offline_render_.store(false, std::memory_order_relaxed);
+    offline_wait_budget_logged_.store(false, std::memory_order_relaxed);
+
     sample_rate_ = ctx.sample_rate;
     max_block_   = ctx.max_buffer_size;
     channels_    = std::max(1, ctx.output_channels);
@@ -1263,22 +1268,33 @@ void Spectr::stop_param_sync_lane_() noexcept {
     retire_param_sync_through_(param_sync_requested_.load(std::memory_order_relaxed));
 }
 
-void Spectr::await_param_sync_() noexcept {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+bool Spectr::await_param_sync_(std::chrono::steady_clock::time_point deadline) noexcept {
     while (param_sync_done_.load(std::memory_order_acquire)
            < param_sync_requested_.load(std::memory_order_relaxed)) {
-        if (!param_sync_lane_.running() || std::chrono::steady_clock::now() > deadline)
-            return;
+        if (!param_sync_lane_.running()) return true;
+        if (std::chrono::steady_clock::now() > deadline) return false;
         std::this_thread::sleep_for(std::chrono::microseconds(50));
     }
+    return true;
 }
 
 void Spectr::await_offline_work_(MaskRenderer* renderer) noexcept {
     PULP_TRACE_SCOPE_NAMED("audio", "offline: await design workers");
-    // Parameter sync first: it can publish a new mask, which the renderer
-    // then has to have designed.
-    await_param_sync_();
-    if (renderer) (void)renderer->await_staged_designs();
+    // One budget for the whole block. Parameter sync first: it can publish a
+    // new mask, which the renderer then has to have designed.
+    const auto deadline = std::chrono::steady_clock::now() + kOfflineBlockWaitBudget;
+    bool settled = await_param_sync_(deadline);
+    if (renderer) settled = renderer->await_staged_designs(deadline) && settled;
+    if (settled) return;
+    offline_wait_budget_exhausted_.fetch_add(1, std::memory_order_relaxed);
+    // Once per instance: a stuck flag would otherwise log every block.
+    if (!offline_wait_budget_logged_.exchange(true, std::memory_order_relaxed)) {
+        pulp::runtime::log_warn(
+            "[Spectr] an offline block waited its whole budget for the design "
+            "workers and rendered without them; a bounce may differ from "
+            "playback here (a starved worker, or a host offline flag left set "
+            "after its bounce). Logged once.");
+    }
 }
 
 void Spectr::process(

@@ -22,6 +22,7 @@
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -164,9 +165,15 @@ public:
     /// coalesces intermediate layouts away. Calling this at each host block
     /// of an offline render reproduces the paced schedule exactly. Never call
     /// it on a real-time block: it may sleep. Returns false when the wait gave
-    /// up (worker stopped, or the bound in the implementation elapsed).
-    /// Realisations that adopt synchronously have nothing to wait for.
-    virtual bool await_staged_designs() noexcept { return true; }
+    /// up (worker stopped, or `deadline` passed). The caller owns the budget:
+    /// the processor gives every host block one, so a worker that is starved
+    /// -- or a host whose offline flag outlived its bounce -- costs a bounded
+    /// wait rather than a stalled callback. Realisations that adopt
+    /// synchronously have nothing to wait for.
+    virtual bool await_staged_designs(
+        std::chrono::steady_clock::time_point /*deadline*/) noexcept {
+        return true;
+    }
 
     /// Audio thread. While true, `process()` keeps a staged layout until
     /// `flush_design_handoff()` instead of

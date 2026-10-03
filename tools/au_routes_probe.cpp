@@ -92,6 +92,7 @@ struct Options {
     bool gate_cost = false;
     bool offline_equivalence = false;
     bool offline_flag = true;
+    bool offline_lifecycle = false;
 };
 
 // How a render call is paced against the AU's own mask-design worker.
@@ -392,6 +393,54 @@ int offline_equivalence(const Options& o) {
     return match ? 0 : 1;
 }
 
+// The offline flag's lifetime through the real AU entry. A host write must
+// reach a bounce that re-initializes once after it (or that it preceded), and
+// must not outlive the session after that: the flag makes Spectr wait for its
+// workers, so a stuck one would hold every later realtime block.
+int offline_flag_lifecycle(const Options& o) {
+    AudioComponent comp = register_bundle(o.bundle);
+    if (!comp) { std::fprintf(stderr, "cannot load %s\n", o.bundle.c_str()); return 2; }
+    AudioUnit au = nullptr;
+    if (AudioComponentInstanceNew(comp, &au) != noErr || !au) return 2;
+    const auto set = [&](UInt32 v) {
+        return AudioUnitSetProperty(au, kAudioUnitProperty_OfflineRender,
+                                    kAudioUnitScope_Global, 0, &v, sizeof(v));
+    };
+    const auto get = [&]() -> int {
+        UInt32 v = 99, size = sizeof(v);
+        if (AudioUnitGetProperty(au, kAudioUnitProperty_OfflineRender,
+                                 kAudioUnitScope_Global, 0, &v, &size) != noErr)
+            return -1;
+        return int(v);
+    };
+    int failures = 0;
+    const auto expect = [&](const char* what, int want) {
+        const int got = get();
+        std::printf("%-58s OfflineRender=%d (want %d)%s\n", what, got, want,
+                    got == want ? "" : "  <-- WRONG");
+        if (got != want) ++failures;
+    };
+    if (set(1) != noErr) { std::fprintf(stderr, "set before Initialize rejected\n"); return 2; }
+    if (AudioUnitInitialize(au) != noErr) return 2;
+    expect("set before the first Initialize", 1);
+    AudioUnitUninitialize(au);
+    if (AudioUnitInitialize(au) != noErr) return 2;
+    expect("one re-initialization later, never written back", 0);
+    if (set(1) != noErr) return 2;
+    AudioUnitUninitialize(au);
+    if (AudioUnitInitialize(au) != noErr) return 2;
+    expect("set, then re-initialized for the bounce", 1);
+    AudioUnitReset(au, kAudioUnitScope_Global, 0);
+    expect("...then Reset at transport start", 1);
+    AudioUnitUninitialize(au);
+    if (AudioUnitInitialize(au) != noErr) return 2;
+    expect("the next session, never written back", 0);
+    AudioUnitUninitialize(au);
+    AudioComponentInstanceDispose(au);
+    std::printf("%s\n", failures == 0 ? "PASS" : "FAIL");
+    return failures == 0 ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -406,10 +455,12 @@ int main(int argc, char** argv) {
         else if (a == "--gate-cost") o.gate_cost = true;
         else if (a == "--offline-equivalence") o.offline_equivalence = true;
         else if (a == "--no-offline-flag") o.offline_flag = false;
+        else if (a == "--offline-flag-lifecycle") o.offline_lifecycle = true;
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (o.bundle.empty()) { std::fprintf(stderr, "--bundle is required\n"); return 2; }
     if (o.offline_equivalence) return offline_equivalence(o);
+    if (o.offline_lifecycle) return offline_flag_lifecycle(o);
 
     // Material: one steady tone. Its envelope is exactly the gain the mask
     // gives it, so a 1 ms envelope step is the gain step itself, and the

@@ -741,3 +741,47 @@ TEST_CASE("an offline render of the Bands destination fades exactly as a paced o
     INFO("offline vs paced " << offline_diff << ", unpaced control " << unpaced_diff);
     CHECK(offline_diff <= 1e-6);
 }
+
+namespace {
+// Restores the in-process sync-worker stall on every exit, so a failing CHECK
+// cannot leave the next test case running against a starved worker.
+struct SyncStall {
+    explicit SyncStall(int ms) { spectr::detail::g_param_sync_test_stall_ms.store(ms); }
+    ~SyncStall() {
+        spectr::detail::g_param_sync_test_stall_ms.store(0);
+        await_workers();
+    }
+};
+}  // namespace
+
+TEST_CASE("an offline flag left set never holds a block past the wait budget",
+          "[offline][offline-budget]") {
+    // A host that set the offline flag for a bounce and never wrote it back
+    // makes every later block an offline one. With the sync worker starved
+    // (2 s), such a block may wait for it no longer than the budget, then
+    // render; the processor counts the give-up.
+    Rig rig(Pacing::unpaced);
+    rig.plugin->set_host_offline_render(true);
+    const SyncStall stall(2000);
+    rig.set(spectr::kParamBandCount, 48.0f);
+    (void)rig.block([](double) { return 1000.0; });  // spawns the sync at its end
+    const double waited_us = rig.block([](double) { return 1000.0; });
+    const double budget_us =
+        std::chrono::duration<double, std::micro>(spectr::kOfflineBlockWaitBudget).count();
+    std::printf("[offline-budget] block with a starved worker took %.1f ms (budget %.0f ms)\n",
+                waited_us / 1000.0, budget_us / 1000.0);
+    INFO("block took " << waited_us / 1000.0 << " ms, budget " << budget_us / 1000.0 << " ms");
+    CHECK(waited_us < budget_us + 250'000.0);
+    // And the budget itself stays a few hundred ms, whatever it is set to: a
+    // realtime callback under a stuck flag pays it.
+    CHECK(budget_us <= 500'000.0);
+    CHECK(rig.plugin->offline_wait_budget_exhausted_count() >= 1);
+}
+
+TEST_CASE("prepare clears a host offline flag", "[offline][offline-budget]") {
+    Rig rig(Pacing::unpaced);
+    rig.plugin->set_host_offline_render(true);
+    REQUIRE(rig.plugin->host_offline_render());
+    rig.host.prepare(kRate, kBlock);
+    CHECK_FALSE(rig.plugin->host_offline_render());
+}

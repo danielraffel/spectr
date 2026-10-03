@@ -25,6 +25,7 @@
 #endif
 #include <atomic>
 #include <bitset>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -77,7 +78,23 @@ namespace detail {
 /// Parameter-sync tasks handed to a worker and not yet applied, summed over
 /// every Spectr in the process. See `spectr_param_sync_backlog_v1()`.
 extern std::atomic<std::uint64_t> g_param_sync_backlog;
+
+/// Test seam for the parameter-sync worker. Zero in every
+/// shipping run, where it costs one relaxed load.
+///
+/// `g_param_sync_test_stall_ms`: the worker sleeps this long before it
+/// applies a task (the in-process twin of SPECTR_TEST_PARAM_SYNC_STALL_MS),
+/// so a test can starve the worker an offline block waits on.
+extern std::atomic<int> g_param_sync_test_stall_ms;
 } // namespace detail
+
+/// The most one host block flagged offline waits for Spectr's own workers
+/// (parameter sync, then mask design) before it renders with whatever is
+/// adopted. A design takes milliseconds, so a paced-equivalent bounce never
+/// gets near it; the budget exists for a starved worker, and for a host whose
+/// offline flag outlived its bounce, where every realtime block would
+/// otherwise wait. Once spent, the block renders and Spectr logs it once.
+inline constexpr auto kOfflineBlockWaitBudget = std::chrono::milliseconds(250);
 
 struct ProcessingStateSnapshot {
     BandField field{};
@@ -446,11 +463,20 @@ public:
     /// Host offline-render intent from a format adapter that does not yet
     /// put it on `ProcessContext` (the AU v2 entry's shim). Any thread.
     /// Either this or `ProcessContext::is_offline()` makes a block offline.
+    /// `prepare()` clears it: the flag describes one render session, and a
+    /// host that never writes it back must not leave every later realtime
+    /// block waiting on the workers. The shim re-asserts a value the host
+    /// set before initializing.
     void set_host_offline_render(bool offline) noexcept {
         host_offline_render_.store(offline, std::memory_order_relaxed);
     }
     [[nodiscard]] bool host_offline_render() const noexcept {
         return host_offline_render_.load(std::memory_order_relaxed);
+    }
+    /// Offline blocks whose wait for the workers ran out of
+    /// `kOfflineBlockWaitBudget` and rendered anyway. Any thread.
+    [[nodiscard]] std::uint64_t offline_wait_budget_exhausted_count() const noexcept {
+        return offline_wait_budget_exhausted_.load(std::memory_order_relaxed);
     }
 
     // ── Supplemental plugin state (pulp#625 / PR#628 hooks) ─────────────
@@ -1205,15 +1231,19 @@ private:
     std::atomic<std::uint64_t> param_sync_requested_{0};
     std::atomic<std::uint64_t> param_sync_done_{0};
     std::atomic<bool> host_offline_render_{false};
+    std::atomic<std::uint64_t> offline_wait_budget_exhausted_{0};
+    std::atomic<bool> offline_wait_budget_logged_{false};
     // Offline blocks only: wait for the worker results a paced host would
-    // already have adopted by now. Sleeps; never called on a realtime block.
+    // already have adopted by now, for at most kOfflineBlockWaitBudget.
+    // Sleeps; never called on a realtime block.
     void await_offline_work_(MaskRenderer* renderer) noexcept;
     void retire_param_sync_through_(std::uint64_t tag) noexcept;
     void stop_param_sync_lane_() noexcept;
     // Audio thread, lock-free: hand the param-sync worker one task.
     void spawn_param_sync_(MaskRenderer* renderer) noexcept;
-    // Offline blocks only: sleep until the param-sync worker is idle.
-    void await_param_sync_() noexcept;
+    // Offline blocks only: sleep until the param-sync worker is idle or the
+    // deadline passes. False when it gave up with work outstanding.
+    bool await_param_sync_(std::chrono::steady_clock::time_point deadline) noexcept;
     // Set by the param-sync worker around its apply, so the mask it publishes
     // carries the request ordinal reserved when it was asked for.
     struct SyncPublishOrder {

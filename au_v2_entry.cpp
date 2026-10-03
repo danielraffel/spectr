@@ -57,8 +57,9 @@ public:
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
             if (!data) return kAudioUnitErr_InvalidPropertyValue;
             auto* processor = spectr_processor_();
-            *static_cast<UInt32*>(data) =
-                processor && processor->host_offline_render() ? 1u : 0u;
+            const bool offline =
+                processor ? processor->host_offline_render() : offline_render_;
+            *static_cast<UInt32*>(data) = offline ? 1u : 0u;
             return noErr;
         }
         return PulpAUEffect::GetProperty(id, scope, element, data);
@@ -70,15 +71,46 @@ public:
         if (id == kAudioUnitProperty_OfflineRender) {
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
             if (!data || size < sizeof(UInt32)) return kAudioUnitErr_InvalidPropertyValue;
-            auto* processor = spectr_processor_();
-            if (!processor) return kAudioUnitErr_Uninitialized;
-            processor->set_host_offline_render(*static_cast<const UInt32*>(data) != 0);
+            offline_render_ = *static_cast<const UInt32*>(data) != 0;
+            offline_written_since_initialize_ = true;
+            if (auto* processor = spectr_processor_())
+                processor->set_host_offline_render(offline_render_);
             return noErr;
         }
         return PulpAUEffect::SetProperty(id, scope, element, data, size);
     }
 
+    // The flag's lifetime. `Spectr::prepare()` clears it, so a host that set
+    // it for one bounce and never wrote it back cannot leave every later
+    // realtime block waiting on the design workers. A host write survives
+    // exactly ONE re-initialization: a host may set the flag and THEN
+    // re-initialize for the bounce (to raise MaximumFramesPerSlice, say), or
+    // set it before the first Initialize, and that write must reach the
+    // bounce. A write older than the previous Initialize is a previous
+    // session's and is dropped.
+    //
+    // Reset is deliberately NOT a clear: hosts reset at transport start, which
+    // can come after they set the flag for the bounce, and clearing there
+    // would silently turn the bounce realtime-paced. A flag that outlives its
+    // bounce until the next re-initialization costs at most
+    // `spectr::kOfflineBlockWaitBudget` per block, and only while a worker
+    // actually has work outstanding.
+    OSStatus Initialize() override {
+        const OSStatus status = PulpAUEffect::Initialize();
+        if (status == noErr && offline_written_since_initialize_) {
+            if (auto* processor = spectr_processor_())
+                processor->set_host_offline_render(offline_render_);
+        } else {
+            offline_render_ = false;
+        }
+        offline_written_since_initialize_ = false;
+        return status;
+    }
+
 private:
+    bool offline_render_ = false;
+    bool offline_written_since_initialize_ = false;
+
     // The adapter keeps its Processor private; the editor-context property is
     // the public seam that hands it out, so the shim reads it from there.
     spectr::Spectr* spectr_processor_() {
