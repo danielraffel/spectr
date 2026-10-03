@@ -58,7 +58,13 @@ inline constexpr float kIntensityDefaultPercent = 100.0f;
 /// Auto Gain's value for a NEW instance. Loaded sessions that predate the
 /// control always open with it Off (see Spectr::deserialize_plugin_state), so
 /// flipping this constant changes new instances only.
-inline constexpr bool kAutoGainDefaultForNewInstances = true;
+///
+/// Off until Auto Gain v2. v1 compensates the drawn shape against a fixed
+/// K-weighted pink reference, and on real program material that misses the
+/// loudness actually lost or gained by up to 14 LU in the worst case, so it is
+/// something to turn on when wanted rather than a default. v2 will weight the
+/// input's own spectrum.
+inline constexpr bool kAutoGainDefaultForNewInstances = false;
 
 /// Full-scale (0 -> 100 %) Intensity slew. Longer than the LFO level's 60 ms
 /// because Intensity moves EVERY band at once and each step is a mask

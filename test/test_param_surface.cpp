@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 199;  // +4 macros, +freeze, +freeze length, +44 LFO routing, +intensity, +auto gain
+constexpr std::size_t kExpectedParamCount = 208;  // +4 macros, +freeze, +freeze length, +52 LFO routing, +intensity, +auto gain, +freeze hold for length
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {
@@ -190,8 +190,21 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     CHECK(find(w.store, 4039) == nullptr);
     CHECK(find(w.store, 4048) == nullptr);
     CHECK(find(w.store, 4058) == nullptr);
-    CHECK(find(w.store, 4100) == nullptr);
-    CHECK(find(w.store, 4199) == nullptr);
+    // Bands and Preset take a third block, clear of every ID before it.
+    const std::pair<std::size_t, pulp::state::ParamID> struct_ids[] = {{11, 4100}, {12, 4101}};
+    for (const auto& [t, id] : struct_ids) {
+        CHECK(spectr::lfo_route_enabled_param_id(0, t) == id);
+        CHECK(spectr::lfo_route_amount_param_id(0, t) == id + 10);
+        CHECK(spectr::lfo_route_enabled_param_id(1, t) == id + 20);
+        CHECK(spectr::lfo_route_amount_param_id(1, t) == id + 30);
+    }
+    CHECK(find(w.store, 4100)->name == "LFO 1 Bands");
+    CHECK(find(w.store, 4111)->name == "LFO 1 Preset Depth");
+    CHECK(find(w.store, 4131)->name == "LFO 2 Preset Depth");
+    CHECK(find(w.store, 4140)->name == "Freeze Hold for Length");
+    CHECK(find(w.store, 4140)->range.default_value == 0.0f);
+    for (const pulp::state::ParamID id : {4102, 4109, 4112, 4122, 4132, 4139, 4141, 4199})
+        CHECK(find(w.store, id) == nullptr);
     // Beyond the documented scheme entirely.
     CHECK(find(w.store, 9999) == nullptr);
 }

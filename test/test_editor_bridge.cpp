@@ -468,10 +468,12 @@ TEST_CASE("host automation publication is compact and revisioned") {
     // an automatable host parameter, and the editor's settings panel reads
     // them from here; when they only shipped at hydration the panel showed
     // whatever the session opened with while the host drove the audio
-    // somewhere else. Ten scalars plus the per-LFO routing (two masks and
-    // two six-amount arrays), so the payload stays compact.
+    // somewhere else. Ten scalars, the per-LFO routing (two masks and two
+    // amount arrays) and Freeze's Hold for Length, so the payload stays
+    // compact.
     REQUIRE(payload["modulation"].isObject());
-    CHECK(payload["modulation"].size() == 11);
+    CHECK(payload["modulation"].size() == 12);
+    CHECK(payload["modulation"].hasObjectMember("freeze_hold_for_length"));
     REQUIRE(payload["modulation"]["routes"].isArray());
     CHECK(payload["modulation"]["routes"].size() == 2);
 }

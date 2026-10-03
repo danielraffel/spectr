@@ -1375,8 +1375,18 @@ void Spectr::publish_freeze_display_() {
     // the editor knows who to name even before audio has run.
     const bool driven = freeze_lfos != 0;
     const bool frozen = driven ? freeze_effective() : store->get_value(kParamFreeze) >= 0.5f;
-    const int state = (frozen ? 1 : 0) | (driven ? 2 : 0) | (freeze_lfos << 2)
-        | (length_lfos << 4);
+    // The modulated LENGTH / BANDS / preset labels ride this message too:
+    // what the closed dropdowns show while an LFO moves them.
+    const int length_index = freeze_shown_length_index();
+    const int bands = modulated_band_count_shown();
+    const bool preset_driven = preset_modulation_driven();
+    const int preset_step = preset_driven ? preset_modulation_step_shown() : 0;
+    const std::int64_t state = static_cast<std::int64_t>(
+        (frozen ? 1 : 0) | (driven ? 2 : 0) | (freeze_lfos << 2) | (length_lfos << 4))
+        | (static_cast<std::int64_t>(length_index + 1) << 8)
+        | (static_cast<std::int64_t>(bands) << 16)
+        | (static_cast<std::int64_t>(preset_driven ? 1 : 0) << 24)
+        | (static_cast<std::int64_t>(preset_step + 16) << 25);
     if (state == native_freeze_display_) return;
     native_freeze_display_ = state;
     auto payload = choc::value::createObject("SpectrFreezeDisplay");
@@ -1390,6 +1400,12 @@ void Spectr::publish_freeze_display_() {
     }
     payload.addMember("freeze_lfos", freeze_list);
     payload.addMember("length_lfos", length_list);
+    payload.addMember("length_index", static_cast<std::int32_t>(length_index));
+    payload.addMember("bands", static_cast<std::int32_t>(bands));
+    payload.addMember("preset_driven", preset_driven);
+    payload.addMember("preset_step", static_cast<std::int32_t>(preset_step));
+    payload.addMember("preset_name", preset_driven ? preset_modulation_name(preset_step)
+                                                   : std::string());
     try {
         native_scripted_ui_->bridge()->dispatch_native_message(
             "__spectrPublishNativeMessage", "freeze_display", payload,

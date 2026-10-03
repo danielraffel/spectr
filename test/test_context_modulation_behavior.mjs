@@ -122,6 +122,20 @@ function mount(initial, height = 860, keepSeed = false) {
     assert(result, `visible button ${action}`);
     return result;
   };
+  // A row mounted but hidden (display: none), as an off target's Depth row is.
+  const hiddenButton = action => {
+    const all = [];
+    const walk = node => {
+      if (!node || typeof node !== 'object') return;
+      all.push(node);
+      for (const child of node.children || []) walk(child);
+    };
+    walk(tree);
+    const result = all.find(node => node.props && node.props['data-spectr-band-action'] === action);
+    assert(result, `mounted button ${action}`);
+    assert(!nodes(tree).includes(result), `${action} is hidden`);
+    return result;
+  };
   const menu = () => nodes(tree).find(node => node.props['data-spectr-band-context-menu']);
   const submenu = () => nodes(tree).find(node => node.props['data-spectr-modulation-panel']);
   const click = action => { button(action).props.onClick(); render(); };
@@ -141,7 +155,7 @@ function mount(initial, height = 860, keepSeed = false) {
   // container -- at which point capping this panel becomes correct again.
   assert.equal(menu().props.style.overflowY, undefined);
   assert.equal(menu().props.style.maxHeight, undefined);
-  return { button, click, calls, native, listeners, tree: () => tree, rerender: render, get closed() { return closed; },
+  return { button, hiddenButton, click, calls, native, listeners, tree: () => tree, rerender: render, get closed() { return closed; },
     menu, submenu,
     async settle() { await Promise.resolve(); await Promise.resolve(); render(); },
     external(value) { Object.assign(native, value); emit(); render(); },
@@ -178,12 +192,13 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
     const viewport = nodes2(test).find(n => n.props['data-spectr-modulation-viewport']);
     assert(viewport, 'the target viewport');
     assert.equal(viewport.props.style.overflow, 'hidden');
+    // The panel is capped at 560 so the targets scroll inside it.
     assert.equal(viewport.props.style.height,
-                 Math.min(11 * 63, Math.max(120, Math.max(24, 860 - 64) - 16 - 44) - 264 - 14));
+                 Math.min(13 * 63, Math.max(120, Math.min(Math.max(24, 860 - 64) - 16 - 44, 560)) - 264 - 14));
     const rows = nodes2(test).find(n => n.props['data-spectr-modulation-rows']);
     assert.equal(rows.props['data-spectr-modulation-offset'], '0');
     assert(nodes2(test).find(n => n.props['data-spectr-modulation-scrollbar']),
-           'eleven targets overflow the viewport, so the scrollbar shows');
+           'thirteen targets overflow the viewport, so the scrollbar shows');
   }
   assert.equal(test.button('lfo1-enable').props.disabled, true);
   test.click('lfo1-enable');
@@ -208,8 +223,9 @@ for (const enabled of [false, true]) for (const lfo2_enabled of [false, true]) {
   assert.equal(test.button('modulation-target-bank').props['aria-checked'], false);
   assert.equal(test.button('modulation-target-depth-b').props['aria-valuetext'], '40%');
   assert.equal(test.button('modulation-target-depth-b').props['aria-disabled'], 'false');
-  // A Depth row whose destination is off stays in place, dimmed and inert.
-  assert.equal(test.button('modulation-target-depth-bank').props['aria-disabled'], 'true');
+  // A Depth row whose destination is off is hidden (mounted, so the rows
+  // never re-order) and inert.
+  assert.equal(test.hiddenButton('modulation-target-depth-bank').props['aria-disabled'], 'true');
   test.click('modulation-back');
   test.button('modulation-toggle');
   assert.equal(test.closed, 0);
