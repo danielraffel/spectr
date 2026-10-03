@@ -3960,6 +3960,7 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
             --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
     set_tests_properties(Spectr-au-level-host PROPERTIES TIMEOUT 300)
     add_executable(Spectr-au-freeze-probe tools/au_freeze_probe.cpp)
+    target_include_directories(Spectr-au-freeze-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(Spectr-au-freeze-probe PRIVATE
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
     add_dependencies(Spectr-au-freeze-probe ${SPECTR_NATIVE_AU_TARGET})
@@ -4000,9 +4001,26 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     add_test(NAME Spectr-au-freeze-hold-mixing
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
             --hold-presence --mode mixing --block 256)
+    # Length end to end: a short Length holds only what sounds now, a 1-bar
+    # Length loops the 2 s before the press. Its negative control restores
+    # the probe's stale Custom index (4.0, from when there were 4 presets),
+    # which silently selected 1/6 bar for every Length and must fail.
+    add_test(NAME Spectr-au-freeze-hold-check
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-check --mode tracking --block 128)
+    add_test(NAME Spectr-au-freeze-hold-check-mixing
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-check --mode mixing --block 256)
+    add_test(NAME Spectr-au-freeze-hold-check-negative-control
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-check --mode tracking --block 128)
+    set_tests_properties(Spectr-au-freeze-hold-check-negative-control PROPERTIES
+        ENVIRONMENT SPECTR_PROBE_PLANT_STALE_CUSTOM=1 WILL_FAIL TRUE)
     set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
         Spectr-au-freeze-host-loop Spectr-au-freeze-host-long-loop
         Spectr-au-freeze-hold-tracking Spectr-au-freeze-hold-mixing
+        Spectr-au-freeze-hold-check Spectr-au-freeze-hold-check-mixing
+        Spectr-au-freeze-hold-check-negative-control
         PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
 
     # LFO routing automation through the same in-process AU host: an Amount
