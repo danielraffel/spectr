@@ -24,6 +24,9 @@ COMPONENT = r'''function SpectrGpuAudioSurface({ enabled }) {
       const latency = globalThis.__spectrLatency;
       const mode = latency && latency.state && latency.state.mode;
       if (mode === "linear_phase" || mode === "zero_latency") setRenderMode(mode);
+      // Tracking never reads the counters, so it neither polls nor commits:
+      // an idle editor must not re-render after the document mounts.
+      if (mode !== "linear_phase") return;
       if (!window.pulp || typeof window.pulp.postMessage !== "function") return;
       // Keep the diagnostic request distinct from the import-fidelity
       // contract's canonical build-info call. The native document already
@@ -31,7 +34,10 @@ COMPONENT = r'''function SpectrGpuAudioSurface({ enabled }) {
       Promise.resolve(window.pulp.postMessage("build_" + "info_get", {}, "spectr-gpu-status"))
         .then((response) => response && response.payload ? response.payload : response)
         .then((body) => {
-          if (live && body && body.ok === true && body.gpu_audio) setGpuAudio(body.gpu_audio);
+          if (live && body && body.ok === true && body.gpu_audio) {
+            const next = body.gpu_audio;
+            setGpuAudio((prev) => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+          }
         }).catch(() => {});
     };
     refresh();
@@ -77,7 +83,7 @@ COMPONENT = r'''function SpectrGpuAudioSurface({ enabled }) {
     // Native layout positions captured header nodes from their bindings, so
     // an uncaptured node in flow lands on the logo. Pin it to the header's
     // free right edge in design space (the editor scales uniformly).
-    style: { position: "absolute", right: 20, top: 9.5, width: 52, boxSizing: "border-box", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+    style: { position: "absolute", right: 12, top: 9.5, width: 52, boxSizing: "border-box", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
       padding: "3px 8px", borderRadius: 3, border: "1px solid " + color,
       background: "rgba(255,255,255,0.03)", color, fontFamily: "var(--mono)",
       fontSize: 10, letterSpacing: 1, cursor: "pointer" }
