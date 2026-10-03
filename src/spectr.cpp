@@ -12,6 +12,7 @@
 #include <choc/containers/choc_Value.h>
 #include <choc/text/choc_JSON.h>
 #include <pulp/runtime/log.hpp>
+#include <cassert>
 
 #include <algorithm>
 #include <atomic>
@@ -674,7 +675,22 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
     // Last: the pump above runs on this (control) thread while the audio
     // thread may be running the outgoing renderer through the same source, so
     // the source is attached only once nothing here will process again.
-    if (freeze_source_.prepared()) (void)renderer->set_wet_source(&freeze_source_);
+    //
+    // A renderer that refuses the source would play live input while Freeze
+    // reads as engaged, so a refusal is reported, never dropped: an error in
+    // the log, an assertion in a debug build, and freeze_source_wired() false.
+    bool wired = !freeze_source_.prepared();
+    if (freeze_source_.prepared()) {
+        wired = renderer->set_wet_source(&freeze_source_);
+        if (!wired) {
+            pulp::runtime::log_error(
+                "[Spectr] the {} renderer refused the freeze source; Freeze "
+                "is unavailable in this mode",
+                mode == MaskRenderMode::linear_phase ? "linear-phase" : "zero-latency");
+            assert(wired && "renderer refused the freeze wet source");
+        }
+    }
+    freeze_source_wired_.store(wired, std::memory_order_release);
     return renderer;
 }
 

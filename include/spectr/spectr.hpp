@@ -380,6 +380,11 @@ class Spectr : public pulp::format::Processor
 public:
     // UI/control thread only. Never stops processing or changes engine selection.
     [[nodiscard]] GpuAudioStatus gpu_audio_status() const;
+    // Whether the renderer built most recently accepted the freeze source.
+    // False means Freeze cannot reach the audio in the current mode.
+    [[nodiscard]] bool freeze_source_wired() const noexcept {
+        return freeze_source_wired_.load(std::memory_order_acquire);
+    }
 #if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
     // Stopped/control lane only; never race prepare/release/mode replacement.
     // Quantum output selections before product mix/trim, not GPU completions.
@@ -960,6 +965,7 @@ private:
     // Only pointer publication/removal and the public observer take this lock.
     // Build/join/destruction happen outside it; process() never acquires it.
     // When nested, processing_state_mutex_ precedes this observation mutex.
+    std::atomic<bool> freeze_source_wired_{false};
     mutable std::mutex renderer_observation_mutex_;
     std::unique_ptr<MaskRenderer>          renderer_{};
     // The mode `renderer_` was built for. Authoritative for what this instance

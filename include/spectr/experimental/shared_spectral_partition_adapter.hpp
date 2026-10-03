@@ -35,6 +35,13 @@ public:
     // Callback-owner request at the current input-sample position. Its envelope
     // is delayed by additional_latency_samples to match the CPU reference.
     bool set_mix(float mix) noexcept;
+    // Time-domain source for the WET path only, as MaskRenderer::set_wet_source:
+    // each callback the source rewrites the live input, the bridge (its CPU
+    // reference and the GPU journal alike) realises the mask over what the
+    // source wrote, and the dry leg of the mix stays the live input. Install
+    // while the callback cannot be inside process(); survives prepare/reset.
+    void set_wet_source(MaskRenderer::WetSource* source) noexcept { wet_source_=source; }
+    MaskRenderer::WetSource* wet_source() const noexcept { return wet_source_; }
     bool pop_terminal(SharedSpectralBridge::Terminal& t) noexcept { return bridge_.pop_terminal(t); }
     std::uint64_t quantum_count() const noexcept { return quantums_.load(std::memory_order_acquire); }
     std::uint64_t serviced_quantums() const noexcept { return bridge_.serviced_blocks(); }
@@ -57,6 +64,10 @@ private:
     std::vector<MixEvent> mix_events_;
     std::vector<const float*> mix_input_;
     std::vector<float*> mix_output_;
+    MaskRenderer::WetSource* wet_source_=nullptr;
+    std::vector<float> wet_;
+    std::vector<float*> wet_write_;
+    std::vector<const float*> wet_read_;
     std::size_t mix_read_=0,mix_write_=0,mix_count_=0;
     std::uint64_t sample_cursor_=0;
     float latest_mix_=1.f;

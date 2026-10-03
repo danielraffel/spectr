@@ -147,3 +147,102 @@ TEST_CASE("Spectr actual output delay equals its pinned shared PDC",
         host.release();
     }
 }
+
+// Freeze in Mixing on the shared GPU renderer. The held source must reach the
+// output through the GPU path (live delivery while frozen), match the forced
+// CPU reference of the same renderer, survive a switch to Tracking and back,
+// and audibly differ from an unfrozen instance once the input changes -- the
+// instrument's positive control, without which a dropped source would pass.
+TEST_CASE("Spectr Freeze reaches the output through the shared GPU renderer",
+          "[shared-product][installed-sdk][freeze]") {
+    using namespace std::chrono;
+    constexpr unsigned block = 512;
+    pulp::format::HeadlessHost gpu(spectr::create_spectr), cpu(spectr::create_spectr),
+        live(spectr::create_spectr);
+    auto* g = static_cast<spectr::Spectr*>(gpu.processor());
+    auto* c = static_cast<spectr::Spectr*>(cpu.processor());
+    auto* l = static_cast<spectr::Spectr*>(live.processor());
+    REQUIRE(c->set_shared_product_force_cpu(true));
+    for (auto* p : {g, c, l}) REQUIRE(p->set_render_mode(spectr::MaskRenderMode::linear_phase));
+    gpu.prepare(48000, block);
+    cpu.prepare(48000, block);
+    live.prepare(48000, block);
+    REQUIRE(g->freeze_source_wired());
+    REQUIRE(c->freeze_source_wired());
+    pulp::audio::Buffer<float> input(2, block), actual(2, block), reference(2, block),
+        unfrozen(2, block);
+    const float* ptrs[]{input.channel(0).data(), input.channel(1).data()};
+    pulp::audio::BufferView<const float> in(ptrs, 2, block);
+    auto out = actual.view(), ref = reference.view(), unf = unfrozen.view();
+    constexpr unsigned freeze_block = 96, switch_block = 160, tracking_block = 200,
+                       mixing_block = 224, total_blocks = 320;
+    double held_vs_live = 0, held_power = 0;
+    unsigned compared = 0;
+    const auto start = steady_clock::now();
+    for (unsigned b = 0; b < total_blocks; ++b) {
+        std::this_thread::sleep_until(start + nanoseconds(std::uint64_t(b) * block * 1000000000 / 48000));
+        for (unsigned i = 0; i < block; ++i) {
+            const auto n = b * block + i;
+            const double hz = b < switch_block ? 997.0 : 3100.0;
+            input.channel(0)[i] = 0.2f * std::sin(6.283185307179586 * hz * n / 48000);
+            input.channel(1)[i] = 0.15f * std::sin(6.283185307179586 * (hz * 0.43) * n / 48000);
+        }
+        pulp::state::ParameterEventQueue events, cpu_events, live_events;
+        if (b == freeze_block) {
+            // The Freeze switch, as the editor or a host sets it, between blocks.
+            gpu.state().set_value(spectr::kParamFreeze, 1.0f);
+            cpu.state().set_value(spectr::kParamFreeze, 1.0f);
+        }
+        if (b == tracking_block) {
+            // A Latency switch while frozen hands the SAME hold to the new
+            // renderer. Both twins take the same excursion so their histories
+            // stay identical.
+            REQUIRE(g->set_render_mode(spectr::MaskRenderMode::zero_latency));
+            REQUIRE(c->set_render_mode(spectr::MaskRenderMode::zero_latency));
+            REQUIRE(g->freeze_source_wired());
+        }
+        if (b == mixing_block) {
+            REQUIRE(g->set_render_mode(spectr::MaskRenderMode::linear_phase));
+            REQUIRE(c->set_render_mode(spectr::MaskRenderMode::linear_phase));
+            REQUIRE(g->freeze_source_wired());
+        }
+        gpu.process(out, in, events);
+        cpu.process(ref, in, cpu_events);
+        live.process(unf, in, live_events);
+        // Through the whole run -- frozen, in Tracking and back in Mixing --
+        // the GPU instance matches its forced CPU twin.
+        {
+            const auto match = pulp::test::audio::assert_null_near(actual, reference, -90.0);
+            INFO("block=" << b << " " << match.message);
+            REQUIRE(match.passed);
+        }
+        if (b >= switch_block + 24 && b < tracking_block) {
+            for (unsigned ch = 0; ch < 2; ++ch)
+                for (unsigned i = 0; i < block; ++i) {
+                    const double d = double(reference.channel(ch)[i]) - unfrozen.channel(ch)[i];
+                    held_vs_live += d * d;
+                    held_power += double(reference.channel(ch)[i]) * reference.channel(ch)[i];
+                    ++compared;
+                }
+        }
+    }
+    std::this_thread::sleep_for(milliseconds(20));
+    const auto live_gpu = g->gpu_audio_status();
+    const double held_rms = std::sqrt(held_power / std::max(1u, compared));
+    const double diff_rms = std::sqrt(held_vs_live / std::max(1u, compared));
+    std::printf("freeze gpu: held_rms=%.4f held_vs_unfrozen_rms=%.4f gpu_selected=%llu cpu_fallback=%llu lost=%llu\n",
+                held_rms, diff_rms,
+                live_gpu.delivery ? (unsigned long long)live_gpu.delivery->gpu_selected : 0ull,
+                live_gpu.delivery ? (unsigned long long)live_gpu.delivery->cpu_fallback : 0ull,
+                live_gpu.delivery ? (unsigned long long)live_gpu.delivery->lost_terminal_records : 0ull);
+    REQUIRE(live_gpu.availability == spectr::GpuAudioStatus::Availability::Available);
+    REQUIRE(live_gpu.delivery.has_value());
+    CHECK(live_gpu.delivery->provider_state == 1);
+    CHECK(live_gpu.delivery->gpu_selected > 0);
+    CHECK(live_gpu.delivery->lost_terminal_records == 0);
+    CHECK(held_rms > 0.01);
+    CHECK(diff_rms > 0.5 * held_rms);
+    gpu.release();
+    cpu.release();
+    live.release();
+}
