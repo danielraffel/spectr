@@ -98,7 +98,7 @@ COMPONENT = r'''function SpectrGpuAudioSurface({ enabled }) {
     // Absolute offsets resolve against the header in native layout, so a
     // bottom offset lands above the window. Pin the pill to the free band
     // between the spectrum and the viewport strip, in design space.
-    style: { position: "absolute", left: 410, top: 742, width: 500,
+    style: { position: "absolute", left: 410, top: 739, width: 500,
       boxSizing: "border-box", display: "flex", justifyContent: "center", alignItems: "center",
       gap: 6, zIndex: 6, pointerEvents: "none",
       padding: "5px 10px", borderRadius: 3, border: "1px solid " + color,
