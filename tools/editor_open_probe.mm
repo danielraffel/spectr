@@ -49,6 +49,9 @@
 //       [--expect-first-rgb RRGGBB] (with --pixels: fail unless the backing
 //        layer shown before the first frame, and the first presented frame at
 //        every sample, are this colour within a small tolerance)
+//        On-brand-but-empty (first present -> first frame that looks like the
+//        settled editor, when nothing before it was off-brand) is reported
+//        per open and in the JSON as onbrand_empty_ms; tracked, not gated.
 //       [--view-size WxH] resize the returned view before showing it, as a
 //        host does (e.g. the minimum editor size)
 // Exit: 0 ok, 1 a gate failed, 2 setup error, 4 no window server (skip).
@@ -374,6 +377,11 @@ struct OpenResult {
     std::uint32_t settled_bg = 0;  // dominant colour of the settled look
     long offbrand_frames = 0;      // frames before look_ready not in settled_bg
     double offbrand_visible_ms = 0; // how long an off-brand frame stayed on screen
+    // On-brand but empty: from the first presented frame to the first frame
+    // that looks like the settled editor, when every frame before it was the
+    // editor's own background. Tracked, not gated: it is the time a user stares
+    // at the right colour with nothing on it.
+    double onbrand_empty_ms = -1;
     long unreadable_frames = 0;
     long layer_rgb = -1;           // backing layer colour when ordered in
     // Per-frame colour class counts (see classify_frame).
@@ -510,6 +518,8 @@ void analyse_pixels(OpenResult& r) {
                 cls = "settling";
         }
         r.frame_class.push_back(cls);
+        if (r.onbrand_empty_ms < 0 && std::strcmp(cls, "ui") == 0 && !r.samples.empty())
+            r.onbrand_empty_ms = f.t - r.samples.front().t;
         if (std::strcmp(cls, "background") == 0 || std::strcmp(cls, "settling") == 0)
             ++r.class_background;
         else if (std::strcmp(cls, "ui") == 0) ++r.class_ui;
@@ -785,9 +795,10 @@ int main(int argc, char** argv) {
                     if (f.t >= r.look_ready && ++shown >= 2) break;
                 }
                 std::printf("    frame classes: background/settling %ld, ui %ld, navy %ld, other %ld | "
-                            "backing layer before first frame #%06lX\n",
+                            "backing layer before first frame #%06lX | on-brand-but-empty %.1f ms\n",
                             r.class_background, r.class_ui, r.class_navy, r.class_other,
-                            r.layer_rgb);
+                            r.layer_rgb,
+                            r.class_navy + r.class_other == 0 ? r.onbrand_empty_ms : -1.0);
                 if (max_offbrand >= 0 && r.class_navy + r.class_other > max_offbrand) {
                     std::printf("FAIL: %ld off-brand frame(s) (%ld navy, %ld other): neither "
                                 "the editor's background nor its settled look (max %ld)\n",
@@ -857,13 +868,14 @@ int main(int argc, char** argv) {
                                     "\"content_present_ms\":%.3f,\"idle_ms\":%.3f,"
                                     "\"presents\":%ld,\"max_stall_ms\":%.3f,"
                                     "\"look_ready_ms\":%.3f,\"offbrand_frames\":%ld,"
-                                    "\"offbrand_visible_ms\":%.3f,"
+                                    "\"offbrand_visible_ms\":%.3f,\"onbrand_empty_ms\":%.3f,"
                                     "\"first_frame_rgb\":\"%06X\",\"settled_rgb\":\"%06X\"}",
                                  i ? "," : "", r.factory_end - r.factory_begin, r.view_w, r.view_h,
                                  rel(r.first_drawable), rel(r.first_present),
                                  rel(r.content_present), rel(r.idle), r.presents, r.max_stall_ms,
                                  rel(r.look_ready), r.class_navy + r.class_other,
                                  r.offbrand_visible_ms,
+                                 r.class_navy + r.class_other == 0 ? r.onbrand_empty_ms : -1.0,
                                  r.samples.empty() ? 0u : dominant(r.samples.front()).first,
                                  r.settled_bg);
                 }
