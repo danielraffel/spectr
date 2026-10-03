@@ -199,6 +199,12 @@ std::string json_escape(const std::string& in) {
 #include <unistd.h>
 #endif
 
+// The editor relies on Pulp's view-first open: a hosted editor returns its
+// sized view before the document is evaluated.
+#if !defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
+#error "Spectr's native editor requires a Pulp SDK with view-first document loading"
+#endif
+
 namespace spectr {
 
 namespace {
@@ -211,18 +217,6 @@ void set_editor_owns_resize_grip(bool value) {
 
 bool editor_owns_resize_grip() {
     return g_editor_owns_resize_grip.load(std::memory_order_relaxed);
-}
-
-namespace {
-std::atomic<bool> g_editor_defers_document_load{false};
-}  // namespace
-
-void set_editor_defers_document_load(bool value) {
-    g_editor_defers_document_load.store(value, std::memory_order_relaxed);
-}
-
-bool editor_defers_document_load() {
-    return g_editor_defers_document_load.load(std::memory_order_relaxed);
 }
 
 namespace {
@@ -887,20 +881,9 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     native_editor_bridge_.attach_native_runtime(
         *native_scripted_ui_, "__spectrEditorDispatch");
 
-    native_document_load_frames_ = 0;
-#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
     // Pulp holds view::ScopedDeferredDocumentLoad around this call for every
     // host-embedded editor, so load_deferrable() returns the view first there.
-    native_document_load_pending_ = false;
     load_native_document_();
-#else
-    if (editor_defers_document_load()) {
-        native_document_load_pending_ = true;
-    } else {
-        native_document_load_pending_ = false;
-        load_native_document_();
-    }
-#endif
 
     // ── Editor-owned resize grip ────────────────────────────────────────
     //
@@ -987,9 +970,7 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
 }
 
 void Spectr::load_native_document_() {
-    native_document_load_pending_ = false;
     if (!native_scripted_ui_) return;
-#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
     // Pulp decides when the document is evaluated. Inside a host's
     // view-creation call (ViewBridge::Options::hosted_editor(), every plug-in
     // format) load_deferrable() returns at once and the session evaluates on
@@ -1012,22 +993,6 @@ void Spectr::load_native_document_() {
     if (!accepted && !native_document_load_reported_)
         finish_native_document_load_(false, error, /*from_session=*/false);
     retire_failed_native_session_();
-#else
-    // SDK 0.890.1 equivalent of Pulp's view-first load (the AU v2 entry point
-    // declares editor_defers_document_load and the frame clock calls this on
-    // the second frame). Delete this branch, set_editor_defers_document_load
-    // and native_document_load_pending_ on the SDK bump to the first Pulp
-    // release that defines PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD.
-    PULP_TRACE_SCOPE_NAMED("state", "spectr_document_load");
-    std::string error;
-    bool session_loaded = false;
-    {
-        PULP_TRACE_SCOPE_NAMED("js", "spectr_session_load");
-        session_loaded = native_scripted_ui_->load(&error);
-    }
-    finish_native_document_load_(session_loaded, error, /*from_session=*/false);
-    retire_failed_native_session_();
-#endif
 }
 
 void Spectr::retire_failed_native_session_() {
@@ -1259,7 +1224,6 @@ void Spectr::finish_native_document_load_(bool session_loaded,
             fail_closed();
         }
     }
-#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
     // A deferred document mounts from the idle tick after the host already
     // reported its size; publish it now that there is a document to lay out.
     // (An immediate load runs inside create_view(), before the root is
@@ -1273,7 +1237,6 @@ void Spectr::finish_native_document_load_(bool session_loaded,
                                                 : kEditorPreferredHeight);
         native_editor_root_->request_repaint();
     }
-#endif
 }
 
 void Spectr::open_native_editor_(pulp::view::View& view) {
@@ -1290,14 +1253,7 @@ void Spectr::open_native_editor_(pulp::view::View& view) {
     native_host_automation_revision_ = host_automation_revision();
     if (native_frame_subscription_ >= 0) return;
     native_frame_clock_ = view.frame_clock();
-    if (!native_frame_clock_) {
-        // Nothing will ever tick a deferred load; evaluate it now.
-        if (native_document_load_pending_) {
-            load_native_document_();
-            on_view_resized(view, width, height);
-        }
-        return;
-    }
+    if (!native_frame_clock_) return;
     native_frame_subscription_ = native_frame_clock_->subscribe(
         [this](float dt) { return tick_native_analyzer_(dt); });
     // Subscribing does not, by itself, wake an idle render loop. The host reads
@@ -1521,34 +1477,11 @@ void Spectr::publish_modulation_frame_() {
 }
 
 bool Spectr::tick_native_analyzer_(float dt) {
-#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
     retire_failed_native_session_();
     // Pulp's session evaluates a deferred document from its own idle poll;
     // keep ticking until it has.
     if (native_scripted_ui_ && native_scripted_ui_->document_load_pending())
         return true;
-#endif
-    if (native_document_load_pending_) {
-        // A deferred editor (editor_defers_document_load): the host has its
-        // correctly sized view already. Let the first frame paint the empty
-        // editor, then evaluate the document on the second one and publish
-        // the host size the first open recorded but could not apply.
-        if (++native_document_load_frames_ < 2) {
-            if (native_editor_root_ != nullptr)
-                native_editor_root_->request_repaint();
-            return true;
-        }
-        load_native_document_();
-        if (native_editor_root_ != nullptr) {
-            on_view_resized(*native_editor_root_,
-                            native_host_width_ > 0 ? native_host_width_
-                                                   : kEditorPreferredWidth,
-                            native_host_height_ > 0 ? native_host_height_
-                                                    : kEditorPreferredHeight);
-            native_editor_root_->request_repaint();
-        }
-        return true;
-    }
     if (!native_scripted_ui_ || !native_scripted_ui_->bridge()) return false;
 
     // Host-resize fixture. `on_view_resized` is the one entry point a host uses
@@ -3819,7 +3752,6 @@ void Spectr::close_native_editor_() {
     gesture_perf_done_ = false;
 #endif
     native_editor_root_ = nullptr;
-    native_document_load_pending_ = false;
     if (native_scripted_ui_) {
         native_editor_bridge_.detach_native_runtime(
             *native_scripted_ui_, "__spectrEditorDispatch");

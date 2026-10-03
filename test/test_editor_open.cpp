@@ -12,12 +12,9 @@
 // session has NOT evaluated anything yet, and the document mounts on the
 // view's second frame, at the size the host reported.
 //
-// On an SDK with view-first loading (PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
 // Pulp owns this: ViewBridge holds view::ScopedDeferredDocumentLoad around
 // create_view() for every plug-in format and the session evaluates from its
-// second idle poll. On SDK 0.890.1 the AU v2 entry point declares
-// set_editor_defers_document_load(true) and Spectr's frame tick evaluates;
-// that branch goes with the SDK bump.
+// second idle poll.
 
 #include "spectr/spectr.hpp"
 #include "spectr/editor_resize.hpp"
@@ -36,11 +33,6 @@
 namespace {
 
 using pulp::view::View;
-
-struct DeferralFlag {
-    explicit DeferralFlag(bool value) { spectr::set_editor_defers_document_load(value); }
-    ~DeferralFlag() { spectr::set_editor_defers_document_load(false); }
-};
 
 const pulp::view::Label* find_label(const View& view, std::string_view text) {
     if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
@@ -74,12 +66,8 @@ struct EditorHarness {
     // `deferred` opens the view the way a plug-in host does: inside the
     // view-creation guard Pulp's ViewBridge holds for hosted editors.
     void open_view(bool deferred = false) {
-#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
         std::optional<pulp::view::ScopedDeferredDocumentLoad> guard;
         if (deferred) guard.emplace();
-#else
-        (void)deferred;
-#endif
         root = processor.create_view();
         REQUIRE(root != nullptr);
         root->set_bounds({0, 0, 1320, 860});
@@ -113,7 +101,6 @@ TEST_CASE("the editor reports its full preferred size before it has evaluated an
 
 TEST_CASE("a deferred editor returns unevaluated and mounts on its second frame",
           "[editor-open]") {
-    DeferralFlag defer{true};
     EditorHarness h;
     h.open_view(/*deferred=*/true);
 
@@ -144,7 +131,6 @@ TEST_CASE("a deferred editor returns unevaluated and mounts on its second frame"
 
 TEST_CASE("a deferred editor closed before its second frame tears down cleanly",
           "[editor-open]") {
-    DeferralFlag defer{true};
     EditorHarness h;
     h.open_view(/*deferred=*/true);
     h.frame();
@@ -166,13 +152,11 @@ TEST_CASE("a deferred editor closed before its second frame tears down cleanly",
 TEST_CASE("without deferral the document is mounted when create_view returns",
           "[editor-open]") {
     // The default every in-process harness relies on (tests, native-shot).
-    DeferralFlag defer{false};
     EditorHarness h;
     h.open_view();
     CHECK(h.bridge() != nullptr);
 }
 
-#if defined(PULP_VIEW_HAS_DEFERRED_DOCUMENT_LOAD)
 #include <pulp/view/js_engine.hpp>
 
 TEST_CASE("an editor open evaluates the document once and a reopen reuses its bytecode",
@@ -199,4 +183,3 @@ TEST_CASE("an editor open evaluates the document once and a reopen reuses its by
     CHECK(after.compiles == before.compiles);
     CHECK(h.processor.active_scripted_ui()->probe_realm_evaluations() == 0);
 }
-#endif
