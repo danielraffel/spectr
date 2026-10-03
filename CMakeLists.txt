@@ -992,6 +992,7 @@ set_tests_properties(Spectr-level-target-step-negative-control PROPERTIES
     TIMEOUT 300
     PASS_REGULAR_EXPRESSION "CHECK\\( worst <= kOutputGateDbPerMs \\)")
 
+find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME Spectr-level-help-pins
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py)
