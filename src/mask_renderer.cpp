@@ -622,8 +622,27 @@ public:
         // allowed here, and doing the work now means a state restore or a
         // prepare leaves a correct impulse staged before audio starts.
         PULP_TRACE_SCOPE_NAMED("state", "redesign filter bank (UI thread)");
+        const auto ordinal = reserve_request_ordinal();
         std::lock_guard<std::mutex> guard(design_mutex_);
-        return design_and_stage_(layout);
+        return design_and_stage_(layout, ordinal);
+    }
+
+    [[nodiscard]] std::uint64_t reserve_request_ordinal() noexcept override {
+        return request_ordinal_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    }
+
+    [[nodiscard]] bool publish_layout_at(const Layout& layout, std::uint64_t ordinal,
+                                         bool* superseded) override {
+        if (superseded) *superseded = false;
+        if (!prepared_) return false;
+        if (ordinal == 0) return publish_layout(layout);
+        PULP_TRACE_SCOPE_NAMED("state", "redesign filter bank (sync worker)");
+        std::lock_guard<std::mutex> guard(design_mutex_);
+        if (ordinal < last_staged_ordinal_) {
+            if (superseded) *superseded = true;
+            return true;
+        }
+        return design_and_stage_(layout, ordinal);
     }
 
     [[nodiscard]] bool set_layout_rt(const Layout& layout) noexcept override {
@@ -702,7 +721,8 @@ private:
         if (rt_layout_pending_.exchange(false, std::memory_order_acquire)) {
             const auto sequence =
                 requested_sequence_.load(std::memory_order_relaxed) + 1;
-            if (lane_.try_spawn(DesignTask{rt_layout_, sequence})) {
+            if (lane_.try_spawn(DesignTask{rt_layout_, sequence,
+                                           reserve_request_ordinal()})) {
                 requested_sequence_.store(sequence, std::memory_order_relaxed);
                 g_mask_design_backlog.fetch_add(1, std::memory_order_acq_rel);
             }
@@ -813,7 +833,11 @@ private:
 
     /// Compile a layout to a table, design its minimum-phase impulse, and
     /// stage it for the audio thread to adopt at its next block boundary.
-    [[nodiscard]] bool design_and_stage_(const Layout& layout) {
+    [[nodiscard]] bool design_and_stage_(const Layout& layout, std::uint64_t ordinal) {
+        // Caller holds design_mutex_. Older than what is already staged: a
+        // newer request won, so this one is dropped rather than adopted late.
+        if (ordinal < last_staged_ordinal_) return true;
+        last_staged_ordinal_ = ordinal;
         pulp::signal::SpectralMaskTable table;
         {
             PULP_TRACE_SCOPE_NAMED("state", "compile band mask table");
@@ -879,6 +903,7 @@ private:
     struct DesignTask {
         Layout        layout;
         std::uint64_t sequence = 0;
+        std::uint64_t ordinal = 0;
     };
 
     static void handle_design_(void* context, const DesignTask& task) {
@@ -886,7 +911,7 @@ private:
                                "redesign filter bank (worker, audio-driven)");
         auto* self = static_cast<ZeroLatencyMaskRenderer*>(context);
         std::lock_guard<std::mutex> guard(self->design_mutex_);
-        (void)self->design_and_stage_(task.layout);
+        (void)self->design_and_stage_(task.layout, task.ordinal);
         // Retired only once the impulse is staged, so a zero backlog means
         // the next audio block adopts it. The Latest lane coalesces, so this
         // one design also retires every handoff it superseded; a re-read of
@@ -962,6 +987,10 @@ private:
     std::atomic<std::uint64_t> designed_sequence_{0};
     // Audio-thread only. See MaskRenderer::defer_design_handoff().
     bool defer_handoff_ = false;
+    // Request ordering (MaskRenderer::reserve_request_ordinal). The last
+    // staged ordinal is guarded by design_mutex_.
+    std::atomic<std::uint64_t> request_ordinal_{0};
+    std::uint64_t last_staged_ordinal_ = 0;
 
     pulp::format::BackgroundTaskLane<DesignTask, 8> lane_;
 };

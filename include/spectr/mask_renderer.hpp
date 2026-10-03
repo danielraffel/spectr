@@ -98,6 +98,27 @@ public:
     /// Publish one layout from the control thread. May allocate.
     [[nodiscard]] virtual bool publish_layout(const Layout& layout) = 0;
 
+    /// Requests are ordered by when they were ASKED for, not by which design
+    /// finishes first. A staged-layout handoff and every publish take a
+    /// request ordinal; a design whose ordinal is older than the last one
+    /// staged is dropped as superseded. Without this a parameter sync and an
+    /// audio-thread layout asked for in the same block race to be adopted,
+    /// and the winner depends on the scheduler.
+    ///
+    /// Reserve an ordinal now for a publish that happens later (the param
+    /// sync reserves at spawn, on the audio thread). Lock-free. Zero means
+    /// this realisation does not order requests.
+    [[nodiscard]] virtual std::uint64_t reserve_request_ordinal() noexcept { return 0; }
+
+    /// `publish_layout` at a reserved ordinal. Sets `*superseded` when a newer
+    /// request had already been staged, in which case nothing was staged.
+    [[nodiscard]] virtual bool publish_layout_at(const Layout& layout,
+                                                 std::uint64_t /*ordinal*/,
+                                                 bool* superseded) {
+        if (superseded) *superseded = false;
+        return publish_layout(layout);
+    }
+
     /// Stage the latest layout from the single audio owner. Allocation-free
     /// and lock-free; the work the layout implies is done elsewhere and
     /// adopted at a boundary this renderer chooses.

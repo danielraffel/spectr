@@ -493,7 +493,9 @@ void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask& task) noexce
     if (stall_ms > 0)
         std::this_thread::sleep_for(std::chrono::milliseconds(stall_ms));
     auto* self = static_cast<Spectr*>(ctx);
+    t_sync_publish = {task.ordinal, task.renderer};
     (void)self->apply_surface_params(/*apply_morph=*/true);
+    t_sync_publish = {};
     // Retire this task and every one it coalesced (an offline render waits
     // on this; see await_offline_work_).
     self->retire_param_sync_through_(task.tag);

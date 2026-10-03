@@ -468,6 +468,8 @@ void Spectr::publish_audio_modulation_state_() noexcept {
     audio_modulation_publication_.write(published);
 }
 
+thread_local Spectr::SyncPublishOrder Spectr::t_sync_publish{};
+
 void Spectr::publish_processing_state_() noexcept {
     publish_audio_modulation_state_();
     auto mask_layout = make_mask_layout_();
@@ -495,7 +497,20 @@ void Spectr::publish_processing_state_() noexcept {
     if (last_published_layout_valid_
         && same_mask_layout_(last_published_layout_, mask_layout))
         return;
-    if (!renderer_->publish_layout(mask_layout)) {
+    bool superseded = false;
+    const bool ordered = t_sync_publish.renderer == renderer_.get()
+        && t_sync_publish.ordinal != 0;
+    const bool published = ordered
+        ? renderer_->publish_layout_at(mask_layout, t_sync_publish.ordinal, &superseded)
+        : renderer_->publish_layout(mask_layout);
+    if (published && superseded) {
+        // A newer request is already staged; nothing of ours was. Do not
+        // remember this layout as published, or a later identical publish
+        // would be skipped and never reach the audio.
+        last_published_layout_valid_ = false;
+        return;
+    }
+    if (!published) {
         last_published_layout_valid_ = false;
         // Invalid control state fails closed; never leave a stale audible
         // table active after a rejected geometry update.
@@ -1230,9 +1245,13 @@ void Spectr::retire_param_sync_through_(std::uint64_t tag) noexcept {
     }
 }
 
-void Spectr::spawn_param_sync_() noexcept {
+void Spectr::spawn_param_sync_(MaskRenderer* renderer) noexcept {
     const auto tag = param_sync_requested_.load(std::memory_order_relaxed) + 1;
-    if (param_sync_lane_.try_spawn(ParamSyncTask{tag})) {
+    // Reserved BEFORE the block's own staged layout is handed off (the caller
+    // flushes after this), so a layout the audio thread staged in the same
+    // block is the newer request and wins the adoption deterministically.
+    const auto ordinal = renderer ? renderer->reserve_request_ordinal() : 0;
+    if (param_sync_lane_.try_spawn(ParamSyncTask{tag, ordinal, renderer})) {
         param_sync_requested_.store(tag, std::memory_order_relaxed);
         detail::g_param_sync_backlog.fetch_add(1, std::memory_order_acq_rel);
     }
@@ -1315,7 +1334,7 @@ void Spectr::process(
         MaskRenderer* renderer;
         bool param_sync = false;
         ~BlockEndHandoff() {
-            if (param_sync) self->spawn_param_sync_();
+            if (param_sync) self->spawn_param_sync_(renderer);
             if (!renderer) return;
             renderer->flush_design_handoff();
             renderer->defer_design_handoff(false);

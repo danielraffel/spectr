@@ -1188,7 +1188,16 @@ private:
     // Audio→worker lane: process() spawns on parameter drift, the worker
     // applies params → canonical state and republishes the mask (table
     // compilation is a control-thread operation).
-    struct ParamSyncTask { std::uint64_t tag = 0; };
+    // `ordinal` is the renderer request ordinal reserved when the audio thread
+    // asked for this sync (MaskRenderer::reserve_request_ordinal), so the
+    // mask it publishes is ordered against the layouts the audio thread
+    // stages by when each was asked for; `renderer` is the renderer it was
+    // reserved from.
+    struct ParamSyncTask {
+        std::uint64_t tag = 0;
+        std::uint64_t ordinal = 0;
+        const MaskRenderer* renderer = nullptr;
+    };
     pulp::format::BackgroundTaskLane<ParamSyncTask, 8> param_sync_lane_;
     // Offline pacing: the last param-sync task the audio thread handed the
     // worker, and the last one the worker finished (Latest coalesces, so a
@@ -1202,9 +1211,16 @@ private:
     void retire_param_sync_through_(std::uint64_t tag) noexcept;
     void stop_param_sync_lane_() noexcept;
     // Audio thread, lock-free: hand the param-sync worker one task.
-    void spawn_param_sync_() noexcept;
+    void spawn_param_sync_(MaskRenderer* renderer) noexcept;
     // Offline blocks only: sleep until the param-sync worker is idle.
     void await_param_sync_() noexcept;
+    // Set by the param-sync worker around its apply, so the mask it publishes
+    // carries the request ordinal reserved when it was asked for.
+    struct SyncPublishOrder {
+        std::uint64_t ordinal = 0;
+        const MaskRenderer* renderer = nullptr;
+    };
+    static thread_local SyncPublishOrder t_sync_publish;
     ModulationSettings modulation_{};
     // Guarded by processing_state_mutex_ and published to the audio thread in
     // AudioModulationState, so both sides of a morph agree on what moves.
