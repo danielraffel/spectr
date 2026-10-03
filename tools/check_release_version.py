@@ -20,8 +20,10 @@ feed appends one more component (1.0.7.1, 1.0.7.2, ...) to Spectr.app only
 --newer-than-appcast fails unless the app's build number is strictly higher
 than every build an existing feed already offers.
 
-A PREVIEW of X.Y.Z (Z > 0) numbers Spectr.app X.Y.(Z-1).9nnn instead
-(1.0.7 preview 1 = 1.0.6.9001): below X.Y.Z, so the release of X.Y.Z is
+A PREVIEW of X.Y.Z numbers Spectr.app <just below X.Y.Z>.9nnn instead:
+X.Y.(Z-1).9nnn when Z > 0 (1.0.7 preview 1 = 1.0.6.9001), X.(Y-1).9999.9nnn
+for X.Y.0 (1.1.0 preview 1 = 1.0.9999.9001), (X-1).9999.9999.9nnn for X.0.0
+(see preview_prefix). Each sorts below X.Y.Z, so the release of X.Y.Z is
 newer than every preview of it, and each preview newer than the last. Previews
 never get an appcast.
 
@@ -105,11 +107,32 @@ def version_key(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in v.split("."))
 
 
-def is_preview_build(expected: str, build: str) -> bool:
-    """A preview of `expected` X.Y.Z: X.Y.(Z-1).9nnn, which sorts below it."""
+def preview_prefix(expected: str) -> str | None:
+    """The first three components of every preview build of `expected`.
+
+    A preview of X.Y.Z must sort below X.Y.Z and above every release before
+    it, so it borrows the version just below X.Y.Z and adds a 9nnn component:
+      X.Y.Z (Z > 0)  ->  X.Y.(Z-1).9nnn      1.0.7 preview 1 = 1.0.6.9001
+      X.Y.0 (Y > 0)  ->  X.(Y-1).9999.9nnn   1.1.0 preview 1 = 1.0.9999.9001
+      X.0.0 (X > 0)  ->  (X-1).9999.9999.9nnn
+    9999 stands for "after every patch (or minor) release of the previous
+    line", which holds while no component reaches 9999. 0.0.0 has no preview.
+    """
     major, minor, patch = (int(p) for p in expected.split("."))
-    return patch > 0 and re.fullmatch(
-        rf"{major}\.{minor}\.{patch - 1}\.9\d{{3}}", build) is not None
+    if patch > 0:
+        return f"{major}.{minor}.{patch - 1}"
+    if minor > 0:
+        return f"{major}.{minor - 1}.9999"
+    if major > 0:
+        return f"{major - 1}.9999.9999"
+    return None
+
+
+def is_preview_build(expected: str, build: str) -> bool:
+    """A preview of `expected`: <preview_prefix>.9nnn, which sorts below it."""
+    prefix = preview_prefix(expected)
+    return prefix is not None and re.fullmatch(
+        re.escape(prefix) + r"\.9\d{3}", build) is not None
 
 
 def appcast_order_errors(appcast_xml: str, build: str) -> list[str]:
@@ -246,6 +269,15 @@ def self_test() -> int:
                   and version_key("1.0.6.9001") < version_key("1.0.7")
                   and version_key("1.0.6.9001") > version_key("1.0.6")
                   and version_key("1.0.6.9002") > version_key("1.0.6.9001")))
+    cases.append(("an X.Y.0 preview borrows X.(Y-1).9999 and sorts between the lines",
+                  is_preview_build("1.1.0", "1.0.9999.9001")
+                  and version_key("1.0.9999.9001") < version_key("1.1.0")
+                  and version_key("1.0.9999.9001") > version_key("1.0.42")
+                  and is_preview_build("2.0.0", "1.9999.9999.9001")
+                  and version_key("1.9999.9999.9001") < version_key("2.0.0")
+                  and not is_preview_build("1.1.0", "1.1.-1.9001")
+                  and not is_preview_build("1.1.0", "1.0.9998.9001")
+                  and preview_prefix("0.0.0") is None))
     cases.append(("a non-preview shape is not a preview",
                   not is_preview_build("1.0.7", "1.0.6.1")
                   and not is_preview_build("1.0.7", "1.0.7.9001")
@@ -277,7 +309,8 @@ def main() -> int:
             re.fullmatch(re.escape(args.expected) + r"\.\d+", args.app_build_version)
             or is_preview_build(args.expected, args.app_build_version)):
         print("--app-build-version must be <expected>.<n> (practice) or "
-              "<X.Y.Z-1>.9nnn (preview)", file=sys.stderr)
+              f"{preview_prefix(args.expected) or '<none for 0.0.0>'}.9nnn (preview)",
+              file=sys.stderr)
         return 2
     if not (args.bundle or args.binary_version_bundle or args.pkg or args.newer_than_appcast):
         print("nothing to check", file=sys.stderr)

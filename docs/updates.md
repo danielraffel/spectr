@@ -123,8 +123,17 @@ Sparkle compares the appcast's `sparkle:version` with Spectr.app's
   of one product version can update one to the other. The plug-ins keep
   `1.0.7`.
 
-- **Preview:** a preview of X.Y.Z (Z > 0) numbers Spectr.app
-  `X.Y.(Z-1).9nnn` — 1.0.7 preview 1 is `-DSPECTR_APP_BUILD_VERSION=1.0.6.9001`.
+- **Preview:** a preview of X.Y.Z numbers Spectr.app just below it, with a
+  `9nnn` fourth component:
+
+  | Previewing | Spectr.app build | Example (preview 1) |
+  |---|---|---|
+  | `X.Y.Z`, Z > 0 | `X.Y.(Z-1).9nnn` | 1.0.7 → `1.0.6.9001` |
+  | `X.Y.0`, Y > 0 | `X.(Y-1).9999.9nnn` | 1.1.0 → `1.0.9999.9001` |
+  | `X.0.0` | `(X-1).9999.9999.9nnn` | 2.0.0 → `1.9999.9999.9001` |
+
+  (`9999` reads "after every release of the previous line", true while no
+  component reaches 9999.) Pass it as `-DSPECTR_APP_BUILD_VERSION=…`.
   That sorts below `X.Y.Z`, so when the release ships Sparkle offers it to
   everyone on a preview (a preview numbered `1.0.7` would read as already up
   to date, and a practice-style `1.0.7.1` would sort above the release), and

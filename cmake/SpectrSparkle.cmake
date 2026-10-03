@@ -140,23 +140,24 @@ function(spectr_configure_sparkle target kind)
     endif()
 
     if(NOT SPECTR_APP_BUILD_VERSION STREQUAL "")
-        # A PREVIEW of X.Y.Z (Z > 0) numbers Spectr.app X.Y.(Z-1).<n>: below
-        # X.Y.Z itself, so the release of X.Y.Z is offered to a preview as
-        # newer, and rising from one preview to the next. (A practice build's
-        # X.Y.Z.<n> sorts ABOVE the release; a preview must not.)
-        set(_spectr_preview_prefix "")
-        if(PROJECT_VERSION_PATCH GREATER 0)
-            math(EXPR _spectr_prev_patch "${PROJECT_VERSION_PATCH} - 1")
-            set(_spectr_preview_prefix
-                "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${_spectr_prev_patch}")
-        endif()
-        if(NOT SPECTR_APP_BUILD_VERSION MATCHES "^${PROJECT_VERSION}(\\.[0-9]+)?$"
+        # A PREVIEW numbers Spectr.app just below X.Y.Z, with a 9nnn
+        # component: X.Y.(Z-1).9nnn, X.(Y-1).9999.9nnn for X.Y.0, or
+        # (X-1).9999.9999.9nnn for X.0.0 (tools/check_release_version.py,
+        # preview_prefix). Below X.Y.Z itself, so the release is offered to a
+        # preview as newer, and rising from one preview to the next. (A
+        # practice build's X.Y.Z.<n> sorts ABOVE the release; a preview must
+        # not.)
+        spectr_sparkle_preview_prefix(_spectr_preview_prefix
+            ${PROJECT_VERSION_MAJOR} ${PROJECT_VERSION_MINOR} ${PROJECT_VERSION_PATCH})
+        spectr_sparkle_regex_escape(_spectr_version_re "${PROJECT_VERSION}")
+        spectr_sparkle_regex_escape(_spectr_preview_re "${_spectr_preview_prefix}")
+        if(NOT SPECTR_APP_BUILD_VERSION MATCHES "^${_spectr_version_re}(\\.[0-9]+)?$"
            AND NOT (NOT _spectr_preview_prefix STREQUAL ""
-                    AND SPECTR_APP_BUILD_VERSION MATCHES "^${_spectr_preview_prefix}\\.9[0-9][0-9][0-9]$"))
+                    AND SPECTR_APP_BUILD_VERSION MATCHES "^${_spectr_preview_re}\\.9[0-9][0-9][0-9]$"))
             message(FATAL_ERROR
                 "SPECTR_APP_BUILD_VERSION (${SPECTR_APP_BUILD_VERSION}) must be "
                 "${PROJECT_VERSION}, ${PROJECT_VERSION}.<n> (practice) or "
-                "<X.Y.Z-1>.9<nnn> (preview of ${PROJECT_VERSION})")
+                "${_spectr_preview_prefix}.9<nnn> (preview of ${PROJECT_VERSION})")
         endif()
         # Spectr.app only; the plug-in bundles keep PROJECT_VERSION.
         set_target_properties(${target} PROPERTIES

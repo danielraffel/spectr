@@ -31,3 +31,26 @@ function(spectr_sparkle_feed_policy_error out_var kind app_build project_version
     endif()
     set(${out_var} "${_error}" PARENT_SCOPE)
 endfunction()
+
+# `text` with every regex metacharacter escaped, for use inside MATCHES.
+function(spectr_sparkle_regex_escape out_var text)
+    string(REGEX REPLACE "([][.*+?^$()|\\{}])" "\\\\\\1" _escaped "${text}")
+    set(${out_var} "${_escaped}" PARENT_SCOPE)
+endfunction()
+
+# The first three components of every preview build of MAJOR.MINOR.PATCH, or
+# "" for 0.0.0. Mirrors preview_prefix in tools/check_release_version.py.
+function(spectr_sparkle_preview_prefix out_var major minor patch)
+    set(_prefix "")
+    if(patch GREATER 0)
+        math(EXPR _p "${patch} - 1")
+        set(_prefix "${major}.${minor}.${_p}")
+    elseif(minor GREATER 0)
+        math(EXPR _m "${minor} - 1")
+        set(_prefix "${major}.${_m}.9999")
+    elseif(major GREATER 0)
+        math(EXPR _x "${major} - 1")
+        set(_prefix "${_x}.9999.9999")
+    endif()
+    set(${out_var} "${_prefix}" PARENT_SCOPE)
+endfunction()
