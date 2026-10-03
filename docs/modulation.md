@@ -398,7 +398,9 @@ the default list (Bank on) is 13 rows plus one Depth row. The submenu is
 capped at 560 design px (it used to take the editor's whole height whenever it
 could, 736 px), so wherever the band menu opens -- near the top of the window
 included -- the panel sits beside it and the target list scrolls inside it.
-Captured in `SPECTR_POLISH_SHOTS=1 Spectr-native-shot --backend=skia`.
+Captured by `SPECTR_POLISH_SHOTS=1 Spectr-native-shot --backend=skia`, in
+[`evidence/2026-10-03-polish/`](evidence/2026-10-03-polish/) (with the
+before shots of the submenu and of the tooltip).
 
 While any menu, submenu, dropdown or popover is open the wheel belongs to it:
 over the menu it scrolls only the menu and stops at its ends without chaining
