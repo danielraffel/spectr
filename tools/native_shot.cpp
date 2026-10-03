@@ -1982,6 +1982,94 @@ int main(int argc, char** argv) {
             return g_failures == 0 ? 0 : 1;
         }
 
+        // SPECTR_POLISH_SHOTS=1: the 1.0.7 polish evidence -- the Modulation
+        // submenu opened near the top of the window, its progressive Depth
+        // rows, Settings > MODULATION, the header tooltip, the header context
+        // menus and the modulated LENGTH / BANDS / preset labels.
+        if (std::getenv("SPECTR_POLISH_SHOTS") != nullptr) {
+            auto& store = rig.store;
+            const auto open_menu_at = [&](float x, float y) {
+                char script[512];
+                std::snprintf(script, sizeof script,
+                    "(() => { if (!globalThis.__pulpActivateMaterializedElement__("
+                    "'[data-spectr-filter-surface]','contextmenu',"
+                    "{clientX:%.0f,clientY:%.0f,offsetX:%.0f,offsetY:%.0f,button:2})) "
+                    "throw new Error('no band menu'); "
+                    "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+                    "globalThis.__pulpRuntimeSettle__(8); })();", x, y, x, y);
+                rig.eval(script, "spectr-polish-open");
+                settle(rig.clock, 16);
+                rig.activate("[data-spectr-band-action=\"modulation-toggle\"]");
+                settle(rig.clock, 16);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+            };
+            const auto report_panel = [&](const char* name) {
+                rig.eval(std::string("(() => { const p = document.querySelector("
+                    "'[data-spectr-modulation-panel]'); const m = document.querySelector("
+                    "'[data-spectr-band-context-menu]'); if (!p || !m) { console.log('[polish] ")
+                    + name + " NO PANEL'); return; } const r = p.getBoundingClientRect(); "
+                    "const b = m.getBoundingClientRect(); console.log('[polish] " + name
+                    + " menu top=' + b.top.toFixed(1) + ' panel top=' + r.top.toFixed(1) "
+                    "+ ' bottom=' + r.bottom.toFixed(1) + ' height=' + r.height.toFixed(1)); })();",
+                    "spectr-polish-report");
+                settle(rig.clock, 2);
+            };
+            const auto close_menu = [&] {
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                settle(rig.clock, 16);
+            };
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(8);
+            rig.resize(990.0f, 645.0f);
+            settle(rig.clock, 24);
+            open_menu_at(420.0f, 70.0f);
+            report_panel("near-top");
+            capture(rig, dir, prefix + "polish-submenu-near-top", backend, scale);
+            close_menu();
+            open_menu_at(420.0f, 430.0f);
+            report_panel("middle");
+            capture(rig, dir, prefix + "polish-submenu-middle", backend, scale);
+            close_menu();
+            // Several targets on: their Depth rows disclosed under them.
+            for (std::size_t t : {0u, 4u, 6u})
+                store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(4);
+            settle(rig.clock, 16);
+            open_menu_at(420.0f, 430.0f);
+            capture(rig, dir, prefix + "polish-submenu-progressive", backend, scale);
+            close_menu();
+            rig.activate("[data-spectr-settings-open]");
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            {
+                std::vector<pulp::view::ScrollView*> scrolls;
+                collect_scroll_views(*rig.root, scrolls);
+                pulp::view::ScrollView* body = nullptr;
+                for (auto* scroll : scrolls)
+                    if (scroll->content_size().height > scroll->bounds().height + 400.0f)
+                        body = scroll;
+                for (const float fraction : {0.45f, 0.6f, 0.75f, 0.9f, 1.0f}) {
+                    if (body != nullptr) {
+                        const float max_y = body->content_size().height - body->bounds().height;
+                        body->set_scroll(body->scroll_x(), max_y * fraction);
+                    }
+                    settle(rig.clock, 8);
+                    char name[64];
+                    std::snprintf(name, sizeof name, "polish-settings-modulation-%02d",
+                                  static_cast<int>(fraction * 100.0f));
+                    capture(rig, dir, prefix + name, backend, scale);
+                }
+            }
+            rig.activate("[data-spectr-settings-close]");
+            settle(rig.clock, 16);
+            return g_failures == 0 ? 0 : 1;
+        }
+
         // ── The About guide: the wheel's cost, and where the About Spectr
         //    caption sits inside its box ─────────────────────────────────
         //

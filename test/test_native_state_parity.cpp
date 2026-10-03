@@ -10631,11 +10631,12 @@ TEST_CASE("every routing edit in the band menu records as a host gesture",
     CHECK(ends == 1);
     CHECK(rig.store.get_value(spectr::lfo_route_amount_param_id(0, 4)) == Catch::Approx(0.75f));
 
-    // A disabled Depth row (its destination is off) ignores input entirely.
-    const float zoom_before = rig.store.get_value(spectr::lfo_route_amount_param_id(0, 5));
-    drag_menu_slider(rig, "modulation-target-depth-band-spread", {0.1, 0.3});
+    // A target that is off has no Depth row at all (progressive disclosure),
+    // so there is nothing to drag and nothing records.
+    CHECK(runtime_value(rig,
+        "String(!!document.querySelector('[data-spectr-band-action=\"modulation-target-depth-band-spread\"]'))",
+        "spectr-off-depth-row") == "false");
     CHECK(recorder.take().find("4035") == std::string::npos);
-    CHECK(rig.store.get_value(spectr::lfo_route_amount_param_id(0, 5)) == zoom_before);
 
     // LFO 2's rows address LFO 2's lanes.
     activate(rig, "[data-spectr-modulation-source-action=\"2\"]");
@@ -10691,7 +10692,8 @@ TEST_CASE("host playback of the routing lanes moves the band menu",
     CHECK(row("modulation-target-depth-band-shift", "aria-valuetext") == "60%");
     CHECK(row("modulation-target-depth-band-shift", "aria-disabled") == "false");
     CHECK(row("modulation-target-depth-morph", "aria-valuetext") == "80%");
-    CHECK(row("modulation-target-depth-bank", "aria-disabled") == "true");
+    // Bank is off now, so its Depth row is gone.
+    CHECK(row("modulation-target-depth-bank", "aria-disabled") == "undefined");
 
     // The legacy single-target lane, played back, is the command it always
     // was: Snapshot B alone among the field destinations, viewport kept.
@@ -11074,6 +11076,12 @@ TEST_CASE("the Modulation submenu scrolls its eleven targets under a sticky head
     rig.resize(990, 645);
     settle(rig.clock, 96);
     require_home(rig);
+    // Several targets on, so several Depth rows are disclosed and the list
+    // is long enough to scroll.
+    for (std::size_t t : {0u, 3u, 4u, 5u})
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 12);
     open_band_menu(rig);
     settle(rig.clock, 12);
     const auto rect_of = [&](std::string_view selector) {
@@ -11112,19 +11120,21 @@ TEST_CASE("the Modulation submenu scrolls its eleven targets under a sticky head
     // ...and the panel never grows past the editor (780 design px of 860)
     // and stays clear of the 44 pt top bar, where a press would resolve to
     // the bar and the Back row would be dead.
-    CHECK(panel.bottom - panel.top <= 780.5f);
+    CHECK(panel.bottom - panel.top <= 560.5f);  // capped; the list scrolls inside
     CHECK(panel.top >= 44.0f);
     CHECK(head.bottom <= viewport.top + 0.5f);
     // The four most-modulated targets and their Depth rows show unscrolled.
     for (const char* action : {"modulation-target-bank", "modulation-target-depth-bank",
                                "modulation-target-band-shift", "modulation-target-depth-band-shift",
                                "modulation-target-band-spread", "modulation-target-depth-band-spread",
-                               "modulation-target-intensity", "modulation-target-depth-intensity"}) {
+                               "modulation-target-intensity"}) {
         INFO(action);
         CHECK(row_inside(rect_of(row(action)), viewport));
     }
     // Control: the last row is NOT visible until the list scrolls.
-    CHECK_FALSE(row_inside(rect_of(row("modulation-target-depth-b")), viewport));
+    CHECK_FALSE(row_inside(rect_of(row("modulation-target-b")), viewport));
+    // Only an enabled target has a Depth row.
+    CHECK(native_view_of(rig, row("modulation-target-depth-intensity")) == nullptr);
 
     // A wheel over the list moves the rows, never the head.
     const pulp::view::Point over{(viewport.left + viewport.right) * 0.5f,
@@ -11245,5 +11255,72 @@ TEST_CASE("grabbing a modulated level knob asks, and the knob keeps its own valu
     activate(rig, "[data-spectr-mix]", "keydown", R"js({key:"ArrowDown"})js");
     CHECK_FALSE(dialog_open());
     CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+// ── An open menu keeps the wheel to itself ──────────────────────────────────
+//
+// Scrolling the band menu's Modulation submenu zoomed the viewport behind it:
+// a wheel over the submenu's head (which has no scroller of its own), a
+// horizontal trackpad delta, or a wheel past the end of the target list
+// bubbled out of the menu to the plot's zoom handler, and a wheel anywhere
+// outside the open menu zoomed the plot directly. While a menu is open the
+// wheel scrolls the menu or nothing (the macOS menu behaviour); see
+// tools/patch_materialized_menu_wheel_containment.py.
+TEST_CASE("while a band menu is open no wheel reaches the plot behind it",
+          "[native-n1][state-parity][modulation][wheel][overlay]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.resize(990, 645);
+    settle(rig.clock, 96);
+    require_home(rig);
+    // Control: with nothing open the gesture zooms.
+    const auto at_rest = plot_view(rig);
+    wheel_over_plot(rig);
+    REQUIRE(plot_view(rig) != at_rest);
+
+    open_band_menu(rig);
+    settle(rig.clock, 12);
+    const auto rect_of = [&](std::string_view selector) {
+        const auto* view = native_view_of(rig, selector);
+        INFO("selector " << selector);
+        REQUIRE(view != nullptr);
+        return root_rect(*view);
+    };
+    const auto centre = [](const RootRect& r) {
+        return pulp::view::Point{(r.left + r.right) * 0.5f, (r.top + r.bottom) * 0.5f};
+    };
+    const auto menu_open = [&] {
+        return runtime_value(rig,
+            "String(!!document.querySelector('[data-spectr-modulation-panel]')"
+            " && !!document.querySelector('[data-spectr-band-context-menu]'))",
+            "spectr-menu-open") == "true";
+    };
+    const auto before = plot_view(rig);
+    const auto wheel = [&](pulp::view::Point at, float dx, float dy, int times) {
+        for (int i = 0; i < times; ++i)
+            pulp::view::deliver_mouse_wheel(*rig.root, at, dx, dy, {});
+        settle(rig.clock, 8);
+    };
+    SECTION("over the submenu's head") {
+        wheel(centre(rect_of("[data-spectr-band-action=\"lfo1-enable\"]")), 0.0f, -40.0f, 4);
+        wheel(centre(rect_of("[data-spectr-band-action=\"modulation-back\"]")), 0.0f, 40.0f, 4);
+    }
+    SECTION("past either end of the target list, and sideways") {
+        const auto over = centre(rect_of("[data-spectr-modulation-viewport]"));
+        wheel(over, 0.0f, 90.0f, 30);    // to the end and beyond
+        wheel(over, 0.0f, -90.0f, 30);   // back to the top and beyond
+        wheel(over, 40.0f, 0.0f, 4);     // a horizontal trackpad delta
+    }
+    SECTION("over the band menu itself") {
+        wheel(centre(rect_of("[data-spectr-band-context-menu]")), 0.0f, -40.0f, 4);
+    }
+    SECTION("outside the open menu") {
+        wheel_over_plot(rig);
+        // Swallowed, not a dismissal: the menu stays open.
+        CHECK(menu_open());
+    }
+    CHECK(plot_view(rig) == before);
+    CHECK(menu_open());
     storage.require_unchanged();
 }
