@@ -22,6 +22,7 @@
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <span>
 
@@ -282,3 +283,22 @@ inline constexpr int kZeroLatencyRenderBlock = 64;
 [[nodiscard]] std::unique_ptr<MaskRenderer> make_mask_renderer(MaskRenderMode mode);
 
 } // namespace spectr
+
+/// Layouts staged from an audio thread that no design worker has finished
+/// with yet, summed over every zero-latency renderer in the process.
+///
+/// The zero-latency realisation designs on a worker and adopts at its next
+/// render block, so how many blocks a staged layout trails the audio that
+/// asked for it depends on how soon that worker is scheduled. A real-time host
+/// paces the audio callback, so the worker keeps up; a consumer that renders
+/// blocks back to back (an offline harness) outruns it, and on a loaded machine
+/// it can outrun it by a different number of blocks each run -- the worker's
+/// Latest lane then coalesces the intermediate layouts away, so a ramp arrives
+/// late and in coarser steps. A harness waits for this to read zero after each
+/// block to render as a paced host would hear it.
+///
+/// Zero means every staged layout's impulse is staged for adoption at the next
+/// render block. Read-only and lock-free; exported from the AU bundle so an
+/// in-process host can reach it. It is a process-wide total, so it is only
+/// exact while one renderer is being driven.
+extern "C" std::uint64_t spectr_mask_design_backlog_v1() noexcept;
