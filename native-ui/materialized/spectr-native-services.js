@@ -330,7 +330,73 @@
     return Promise.resolve({ ok: response && response.ok === true, payload: response });
   };
 
+  // ── Hydrate before the first render ─────────────────────────────────
+  //
+  // The processor's dispatcher answers synchronously, so the editor can read
+  // its state while it renders for the first time instead of mounting with
+  // defaults and hydrating afterwards. Every post-mount hydrate was another
+  // React commit, and in this captured import each commit re-applies the
+  // captured document (20-45 ms apiece on the editor open).
+  //
+  // initial(type) reads a READ-ONLY verb once per realm and hands every
+  // caller the same answer, so all of the first render agrees on one state.
+  // The mount's `editor_ready` then reconciles: it re-reads after every
+  // listener has subscribed and hydrates only if the processor moved in
+  // between, so nothing published during the mount is lost.
+  const initialReads = new Map();
+  const readNow = (type) => {
+    const id = 'spectr-initial-' + type;
+    globalThis.__spectrNativeDispatchTrace.push({ type, payload: {}, id });
+    if (typeof globalThis.__spectrEditorDispatch !== 'function') {
+      const result = fallback(type);
+      return result && result.ok ? result.payload : null;
+    }
+    let response;
+    try {
+      response = JSON.parse(globalThis.__spectrEditorDispatch(JSON.stringify({
+        type, payload: {}, id,
+      })));
+    } catch (error) {
+      console.error('[Spectr] initial ' + type + ' read failed', error);
+      return null;
+    }
+    if (response && response.ok === false
+        && String(response.error || '').includes('unavailable during validation')) {
+      const result = fallback(type);
+      return result && result.ok ? result.payload : null;
+    }
+    return response && response.ok === true ? response : null;
+  };
+  const initial = (type) => {
+    if (!initialReads.has(type)) initialReads.set(type, readNow(type));
+    return initialReads.get(type);
+  };
+  // The state the first render was given, until the mount reconciles it.
+  let unreconciledInitialState = null;
+  const initialState = () => {
+    const known = initialReads.has('processing_state_get');
+    const payload = initial('processing_state_get');
+    if (!known && payload) unreconciledInitialState = JSON.stringify(payload);
+    return payload;
+  };
+
   const postMessage = (type, payload = {}, id = '') => {
+    if (type === 'editor_ready' && unreconciledInitialState !== null) {
+      // The mount's own request, after a first render that already showed
+      // the processor's state: hydrate only what moved since that read.
+      const shown = unreconciledInitialState;
+      unreconciledInitialState = null;
+      const fresh = readNow('processing_state_get');
+      if (fresh && JSON.stringify(fresh) !== shown)
+        emit('processing_state_hydrate', fresh, 'spectr-processing-state-hydrate');
+      return dispatch('spectral_resolution_request', {}, 'spectr-native-resolution')
+        .then(result => {
+          if (!result.ok) throw new Error(result.payload?.error || 'resolution unavailable');
+          requestAnimationFrame(() => emit(
+            'spectral_resolution', result.payload, 'spectr-spectral-resolution'));
+          return { ok: true, payload: { ok: true } };
+        });
+    }
     if (type === 'editor_ready') {
       const ready = Promise.all([
         dispatch('processing_state_get', {}, 'spectr-native-state').then(result => {
@@ -380,6 +446,10 @@
       return () => callbacks.delete(callback);
     },
     postMessage,
+    // Synchronous first-render reads; see "Hydrate before the first render".
+    initial(type) {
+      return type === 'processing_state_get' ? initialState() : initial(type);
+    },
   };
 
   globalThis.__spectrPublishNativeMessage = emit;

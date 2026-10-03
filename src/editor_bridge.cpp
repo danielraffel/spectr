@@ -191,6 +191,9 @@ choc::value::Value build_info_projection_(const Spectr& plugin) {
     if (!pulp::runtime::kBuildIso8601.empty())
         result.addMember("build_time", std::string{pulp::runtime::kBuildIso8601});
     result.addMember("sdk_dirty", pulp::runtime::kGitDirty);
+    // Lets the editor show its TRACING badge from the mount rather than
+    // committing again when the native side asks for it after load.
+    result.addMember("tracing", pulp::runtime::kTracingEnabled);
     const auto gpu_status=plugin.gpu_audio_status();
     result.addMember("gpu_audio", detail::gpu_audio_status_projection(gpu_status));
     result.addMember("copy_text", build_info_copy_text_(plugin,gpu_status));

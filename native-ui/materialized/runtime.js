@@ -8726,6 +8726,13 @@ function createWidget(type, id, parentId, props) {
         || (typeof stateHook === "function"
           && stateHook !== materializedStateHookApplied);
       const shouldReapply = unscopedReason || materializedDirtyIds.size > 0;
+      // Commit counters for the editor-open gate (tools/patch_materialized_runtime_commit_stats.py).
+      const commitStats = g4.__pulpCommitStats__ || (g4.__pulpCommitStats__ = {
+        commits: 0, reapplies: 0, full_reapplies: 0, reapply_ms: 0 });
+      commitStats.commits += 1;
+      const commitLog = Array.isArray(g4.__pulpCommitLog__) ? g4.__pulpCommitLog__ : null;
+      const commitClock = typeof __performanceNow__ === "function" ? __performanceNow__ : null;
+      const commitStart = commitClock ? commitClock() : 0;
       // `null` means "no scope, re-apply everything".
       const scope = unscopedReason ? null : Array.from(materializedDirtyIds);
       materializedRootSignature = rootSignature;
@@ -8734,6 +8741,8 @@ function createWidget(type, id, parentId, props) {
       if (shouldReapply) {
         materializedHookApplied = metadataHook;
         if (typeof metadataHook === "function") metadataHook(scope);
+        commitStats.reapplies += 1;
+        if (scope === null) commitStats.full_reapplies += 1;
       }
       // Captured-state matching resolves selectors over the registry, and a
       // commit that mutated no host node cannot have changed which selector
@@ -8752,6 +8761,12 @@ function createWidget(type, id, parentId, props) {
           if (typeof g4.layout === "function") call2("layout");
         });
       }
+      const commitMs = commitClock ? commitClock() - commitStart : 0;
+      if (shouldReapply) commitStats.reapply_ms += commitMs;
+      if (commitLog && commitLog.length < 256) commitLog.push({
+        reapply: shouldReapply, full: shouldReapply && scope === null,
+        scope: scope ? scope.length : 0, ms: commitMs,
+        stack: String(new Error().stack || "").split("\n").slice(1, 14).join(" | ") });
     },
     // ── Misc required no-ops / passthroughs ────────────────────────
     // Return the DOM-shim Element when available so `ref.current.X`
@@ -9476,12 +9491,47 @@ function createWidget(type, id, parentId, props) {
     // run Element.appendChild, so restore that lifecycle bit explicitly (and
     // for every descendant) or later React commits treat live labels as
     // detached and skip their native updates/event wiring.
+    // One registry pass indexes every node under the parent each of its two
+    // parent edges names, so the three subtree walks below cost O(subtree)
+    // rather than a registry scan per element (866 scans, 61 ms, on the
+    // editor open). Lookups re-check the live edges, so a child whose edge a
+    // walk rewrote is judged exactly as a fresh scan would judge it.
+    // See tools/patch_materialized_runtime_linear_scroll_upgrade.py.
+    const registryChildrenByParent = /* @__PURE__ */ new Map();
+    const indexRegistryChild = (owner, candidate) => {
+      if (!owner || owner === candidate) return;
+      let list = registryChildrenByParent.get(owner);
+      if (!list) registryChildrenByParent.set(owner, list = []);
+      if (list[list.length - 1] !== candidate) list.push(candidate);
+    };
+    for (const candidate of values) {
+      if (!candidate) continue;
+      indexRegistryChild(candidate.parentElement, candidate);
+      indexRegistryChild(candidate._parentElement, candidate);
+    }
+    const upgradeStats = g5.__spectrScrollUpgradeStats__
+      || (g5.__spectrScrollUpgradeStats__ = { upgrades: 0, registry: 0, lookups: 0,
+        visited: 0 });
+    upgradeStats.upgrades += 1;
+    upgradeStats.registry += values.length;
     const childrenFor = (element) => {
-      const direct = (Array.isArray(element?._children) ? element._children : [])
-        .concat(values.filter((candidate) => candidate && candidate !== element
-          && (candidate.parentElement === element
-              || candidate._parentElement === element)));
-      return direct.filter((child, index, all) => child && all.indexOf(child) === index);
+      upgradeStats.lookups += 1;
+      const direct = Array.isArray(element?._children) ? element._children : [];
+      const indexed = registryChildrenByParent.get(element) || [];
+      upgradeStats.visited += indexed.length;
+      const seen = /* @__PURE__ */ new Set();
+      const children = [];
+      const keep = (child) => {
+        if (!child || seen.has(child)) return;
+        seen.add(child);
+        children.push(child);
+      };
+      for (const child of direct) keep(child);
+      for (const candidate of indexed) {
+        if (candidate !== element && (candidate.parentElement === element
+            || candidate._parentElement === element)) keep(candidate);
+      }
+      return children;
     };
     const markNative = (element) => {
       if (!element) return;
@@ -10924,6 +10974,26 @@ function restoreMaterializedLayout(node, bridge) {
     for (const match of text.matchAll(/\[\s*([A-Za-z0-9_:-]+)/g))
       materializedQueriedAttributes.add(match[1]);
   };
+  // Transplanted Pulp fix: memoized web-compat selector parse
+  // (tools/patch_materialized_runtime_selector_parse_cache.py). Inert on an
+  // SDK whose own parse is memoized.
+  (function memoizeWebCompatSelectorParse(host) {
+    const parse = host._parseSelector;
+    if (typeof parse !== "function" || parse.__pulpMemoized) return;
+    const cache = /* @__PURE__ */ new Map();
+    const memoized = function(str) {
+      if (!str) return parse(str);
+      const key = String(str);
+      const hit = cache.get(key);
+      if (hit !== void 0) return hit;
+      const parsed = parse(key);
+      if (cache.size >= 512) cache.clear();
+      cache.set(key, parsed);
+      return parsed;
+    };
+    memoized.__pulpMemoized = true;
+    host._parseSelector = memoized;
+  })(globalThis);
   g5.__pulpFindMaterializedElement__ = function(selector, ancestor) {
     if (typeof selector !== "string" || selector.length === 0) return null;
     // Recorded before the miss cache is consulted: an attribute a
@@ -10981,6 +11051,113 @@ function restoreMaterializedLayout(node, bridge) {
     }
     if (missCacheable) materializedFindMisses.add(missKey);
     return null;
+  };
+  // Many lookups against one unchanged registry, answered in one pass: each
+  // result is exactly what __pulpFindMaterializedElement__ returns for that
+  // query. See tools/patch_materialized_runtime_batched_state_resolution.py.
+  const materializedSelectorAttributeNames = /* @__PURE__ */ new Map();
+  const selectorAttributeNames = (selector) => {
+    let names = materializedSelectorAttributeNames.get(selector);
+    if (!names) {
+      // Pseudo-classes and selector lists can name an attribute a match does
+      // not require (`:not([x])`), so only a plain compound is prefiltered.
+      names = /[:,]/.test(selector) ? []
+        : Array.from(new Set(materializedParseSelector(selector).attributes
+          .map((attribute) => attribute.name)));
+      materializedSelectorAttributeNames.set(selector, names);
+    }
+    return names;
+  };
+  g5.__pulpFindMaterializedElements__ = function(queries) {
+    const results = new Array(queries.length).fill(null);
+    const stats = g5.__spectrStateResolutionStats__
+      || (g5.__spectrStateResolutionStats__ = { passes: 0, match_tests: 0,
+        attribute_reads: 0 });
+    const pending = [];
+    queries.forEach((query, index) => {
+      if (!query || typeof query.selector !== "string" || query.selector.length === 0) return;
+      const selector = query.selector;
+      const ancestor = query.ancestor;
+      recordQueriedAttributes(selector);
+      recordQueriedAttributes(ancestor);
+      if (g5.document && typeof g5.document.querySelector === "function") {
+        const browserNode = g5.document.querySelector(selector);
+        if (browserNode && (!ancestor || materializedClosest(browserNode, ancestor))) {
+          results[index] = browserNode;
+          return;
+        }
+      }
+      const missEpoch = g5.__pulpMaterializedTreeEpoch__;
+      const missCacheable = typeof missEpoch === "number"
+        && (ancestor === void 0 || ancestor === null || typeof ancestor === "string");
+      let missKey = "";
+      if (missCacheable) {
+        if (missEpoch !== materializedFindMissEpoch) {
+          materializedFindMisses.clear();
+          materializedFindMissEpoch = missEpoch;
+        }
+        missKey = selector + "\u0000" + (ancestor || "");
+        if (materializedFindMisses.has(missKey)) return;
+      }
+      let targetSelector = selector.trim();
+      let effectiveAncestor = ancestor || "";
+      let directParentSelector = "";
+      const directParts = targetSelector.split(/\s*>\s*/).filter(Boolean);
+      if (directParts.length > 1) {
+        targetSelector = directParts.pop();
+        directParentSelector = directParts.pop();
+        if (!effectiveAncestor && directParts.length > 0) {
+          effectiveAncestor = directParts.join(" > ");
+        }
+      }
+      if (!effectiveAncestor) {
+        const split = materializedLastDescendantSplit(targetSelector);
+        if (split > 0) {
+          effectiveAncestor = targetSelector.slice(0, split).trim();
+          targetSelector = targetSelector.slice(split + 1).trim();
+        }
+      }
+      pending.push({ index, targetSelector, directParentSelector, effectiveAncestor,
+        required: selectorAttributeNames(targetSelector), missCacheable, missKey });
+    });
+    if (pending.length === 0) return results;
+    stats.passes += 1;
+    let open = pending.length;
+    const presence = /* @__PURE__ */ new Map();
+    for (const node of materializedDomRegistryValues()) {
+      if (open === 0) break;
+      presence.clear();
+      const has = (name) => {
+        let present = presence.get(name);
+        if (present === void 0) {
+          stats.attribute_reads += 1;
+          present = typeof node.getAttribute !== "function"
+            || node.getAttribute(name) !== null
+            || (typeof node.hasAttribute === "function" && node.hasAttribute(name));
+          presence.set(name, present);
+        }
+        return present;
+      };
+      const parent = node && (node.parentElement || node._parentElement || null);
+      for (const query of pending) {
+        if (query.found) continue;
+        if (!query.required.every(has)) continue;
+        stats.match_tests += 1;
+        if (materializedMatches(node, query.targetSelector)
+            && (!query.directParentSelector
+              || materializedMatches(parent, query.directParentSelector))
+            && (!query.effectiveAncestor || materializedClosest(
+              query.directParentSelector ? parent : node, query.effectiveAncestor))) {
+          query.found = true;
+          results[query.index] = node;
+          --open;
+        }
+      }
+    }
+    for (const query of pending) {
+      if (!query.found && query.missCacheable) materializedFindMisses.add(query.missKey);
+    }
+    return results;
   };
   g5.__pulpActivateMaterializedElement__ = function(selector, eventName, eventData) {
     const node = g5.__pulpFindMaterializedElement__(selector);
@@ -11431,7 +11608,73 @@ function restoreMaterializedLayout(node, bridge) {
     return Promise.resolve({ ok: response && response.ok === true, payload: response });
   };
 
+  // ── Hydrate before the first render ─────────────────────────────────
+  //
+  // The processor's dispatcher answers synchronously, so the editor can read
+  // its state while it renders for the first time instead of mounting with
+  // defaults and hydrating afterwards. Every post-mount hydrate was another
+  // React commit, and in this captured import each commit re-applies the
+  // captured document (20-45 ms apiece on the editor open).
+  //
+  // initial(type) reads a READ-ONLY verb once per realm and hands every
+  // caller the same answer, so all of the first render agrees on one state.
+  // The mount's `editor_ready` then reconciles: it re-reads after every
+  // listener has subscribed and hydrates only if the processor moved in
+  // between, so nothing published during the mount is lost.
+  const initialReads = new Map();
+  const readNow = (type) => {
+    const id = 'spectr-initial-' + type;
+    globalThis.__spectrNativeDispatchTrace.push({ type, payload: {}, id });
+    if (typeof globalThis.__spectrEditorDispatch !== 'function') {
+      const result = fallback(type);
+      return result && result.ok ? result.payload : null;
+    }
+    let response;
+    try {
+      response = JSON.parse(globalThis.__spectrEditorDispatch(JSON.stringify({
+        type, payload: {}, id,
+      })));
+    } catch (error) {
+      console.error('[Spectr] initial ' + type + ' read failed', error);
+      return null;
+    }
+    if (response && response.ok === false
+        && String(response.error || '').includes('unavailable during validation')) {
+      const result = fallback(type);
+      return result && result.ok ? result.payload : null;
+    }
+    return response && response.ok === true ? response : null;
+  };
+  const initial = (type) => {
+    if (!initialReads.has(type)) initialReads.set(type, readNow(type));
+    return initialReads.get(type);
+  };
+  // The state the first render was given, until the mount reconciles it.
+  let unreconciledInitialState = null;
+  const initialState = () => {
+    const known = initialReads.has('processing_state_get');
+    const payload = initial('processing_state_get');
+    if (!known && payload) unreconciledInitialState = JSON.stringify(payload);
+    return payload;
+  };
+
   const postMessage = (type, payload = {}, id = '') => {
+    if (type === 'editor_ready' && unreconciledInitialState !== null) {
+      // The mount's own request, after a first render that already showed
+      // the processor's state: hydrate only what moved since that read.
+      const shown = unreconciledInitialState;
+      unreconciledInitialState = null;
+      const fresh = readNow('processing_state_get');
+      if (fresh && JSON.stringify(fresh) !== shown)
+        emit('processing_state_hydrate', fresh, 'spectr-processing-state-hydrate');
+      return dispatch('spectral_resolution_request', {}, 'spectr-native-resolution')
+        .then(result => {
+          if (!result.ok) throw new Error(result.payload?.error || 'resolution unavailable');
+          requestAnimationFrame(() => emit(
+            'spectral_resolution', result.payload, 'spectr-spectral-resolution'));
+          return { ok: true, payload: { ok: true } };
+        });
+    }
     if (type === 'editor_ready') {
       const ready = Promise.all([
         dispatch('processing_state_get', {}, 'spectr-native-state').then(result => {
@@ -11481,6 +11724,10 @@ function restoreMaterializedLayout(node, bridge) {
       return () => callbacks.delete(callback);
     },
     postMessage,
+    // Synchronous first-render reads; see "Hydrate before the first render".
+    initial(type) {
+      return type === 'processing_state_get' ? initialState() : initial(type);
+    },
   };
 
   globalThis.__spectrPublishNativeMessage = emit;
@@ -11531,6 +11778,10 @@ function restoreMaterializedLayout(node, bridge) {
   }
   activeNativeRoot = new NativeRoot();
   activeNativeRoot.render(capturedRootElement);
+  // Everything the mount committed, including the layout-effect flush
+  // render() runs before it returns; later commits are post-mount.
+  if (g5.__pulpCommitStats__)
+    g5.__pulpCommitStats__.mount_commits = g5.__pulpCommitStats__.commits;
   if (typeof g5.__pulpRuntimeSettle__ === "function") g5.__pulpRuntimeSettle__(8);
   // React commits the initially hidden Settings scrim a few frames after the
   // root render and its semantic overlay prop can claim a zero-size owner.
@@ -11625,13 +11876,15 @@ function restoreMaterializedLayout(node, bridge) {
   const __spectrLevelCapturedStates = new Set(["snapshots-morph"]);
   function resolveCapturedStateFromAtlas() {
     let levelFallback = "";
+    // Every state's lookup in one registry pass (the loop below used to scan
+    // the registry once per state).
+    const matches = g5.__pulpFindMaterializedElements__(capturedStates.map(
+      (state) => state.match ? { selector: state.match.selector,
+        ancestor: state.match.ancestor } : null));
     for (let index = capturedStates.length - 1; index >= 0; --index) {
       const state = capturedStates[index];
       if (state.match) {
-        const match = g5.__pulpFindMaterializedElement__(
-          state.match.selector,
-          state.match.ancestor
-        );
+        const match = matches[index];
         if (state.id === "settings") {
           const liveMatch = match || globalThis.document?.querySelector?.(
             "[data-spectr-settings-panel]");
