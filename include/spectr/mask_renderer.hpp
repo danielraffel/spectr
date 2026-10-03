@@ -132,7 +132,8 @@ public:
     virtual void reset() noexcept = 0;
 
     /// OFFLINE RENDERS ONLY. Block the calling audio thread until every layout
-    /// staged so far is realised and waiting for the next `process()` to adopt.
+    /// already handed to the design worker is realised and waiting for the
+    /// next `process()` to adopt.
     ///
     /// A realisation that designs on a worker adopts a staged layout at the
     /// first render block after that worker finishes. A real-time host paces
@@ -146,13 +147,18 @@ public:
     /// Realisations that adopt synchronously have nothing to wait for.
     virtual bool await_staged_designs() noexcept { return true; }
 
-    /// Audio thread. While true, `process()` keeps a staged layout for the
-    /// next `await_staged_designs()` instead of handing it to the design
-    /// worker at once. An offline render sets it so a design can never finish
-    /// (on a preempted call) between two of the same host block's render
-    /// blocks: every layout is adopted at the start of the host block after
-    /// the one that staged it, which is when a paced host adopts it.
+    /// Audio thread. While true, `process()` keeps a staged layout until
+    /// `flush_design_handoff()` instead of
+    /// handing it to the design worker at once. The processor defers for the
+    /// whole of a host block and flushes at its end, so a design can never
+    /// finish -- on a call the scheduler preempted -- between two render
+    /// blocks of the host block that staged it. Every layout is then adopted
+    /// at a host-block boundary, the same one in a paced real-time render and
+    /// in an offline bounce, rather than wherever the worker happened to land.
     virtual void defer_design_handoff(bool /*defer*/) noexcept {}
+
+    /// Audio thread, lock-free: hand a deferred staged layout to the worker.
+    virtual void flush_design_handoff() noexcept {}
 
     /// Monotonic counter of the magnitude the renderer is currently
     /// realising. Advances when a newly published or staged layout has been

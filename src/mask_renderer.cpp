@@ -773,12 +773,15 @@ public:
     }
 
     void defer_design_handoff(bool defer) noexcept override { defer_handoff_ = defer; }
+    void flush_design_handoff() noexcept override { hand_off_staged_layout_(); }
 
     // Offline only, and deliberately outside the render-path region: it
     // sleeps. See MaskRenderer::await_staged_designs().
     bool await_staged_designs() noexcept override {
         if (!prepared_) return true;
-        hand_off_staged_layout_();
+        // Waits only for work already handed to the worker. A layout staged
+        // but not yet handed off (left by a control-thread pump, say) goes at
+        // the end of this host block like any other, as it would when paced.
         const auto deadline =
             std::chrono::steady_clock::now() + kOfflineDesignWaitLimit;
         while (designed_sequence_.load(std::memory_order_acquire)

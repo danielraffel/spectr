@@ -1228,23 +1228,35 @@ void Spectr::retire_param_sync_through_(std::uint64_t tag) noexcept {
     }
 }
 
+void Spectr::spawn_param_sync_() noexcept {
+    const auto tag = param_sync_requested_.load(std::memory_order_relaxed) + 1;
+    if (param_sync_lane_.try_spawn(ParamSyncTask{tag})) {
+        param_sync_requested_.store(tag, std::memory_order_relaxed);
+        detail::g_param_sync_backlog.fetch_add(1, std::memory_order_acq_rel);
+    }
+}
+
 void Spectr::stop_param_sync_lane_() noexcept {
     param_sync_lane_.stop();
     // A stopped lane owes nothing; never leave the process-wide count stuck.
     retire_param_sync_through_(param_sync_requested_.load(std::memory_order_relaxed));
 }
 
-void Spectr::await_offline_work_(MaskRenderer* renderer) noexcept {
-    PULP_TRACE_SCOPE_NAMED("audio", "offline: await design workers");
-    // Parameter sync first: it can publish a new mask, which the renderer
-    // then has to have designed.
+void Spectr::await_param_sync_() noexcept {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (param_sync_done_.load(std::memory_order_acquire)
            < param_sync_requested_.load(std::memory_order_relaxed)) {
         if (!param_sync_lane_.running() || std::chrono::steady_clock::now() > deadline)
-            break;
+            return;
         std::this_thread::sleep_for(std::chrono::microseconds(50));
     }
+}
+
+void Spectr::await_offline_work_(MaskRenderer* renderer) noexcept {
+    PULP_TRACE_SCOPE_NAMED("audio", "offline: await design workers");
+    // Parameter sync first: it can publish a new mask, which the renderer
+    // then has to have designed.
+    await_param_sync_();
     if (renderer) (void)renderer->await_staged_designs();
 }
 
@@ -1289,7 +1301,26 @@ void Spectr::process(
     const bool offline_block = processor_prepared_
         && (ctx.is_offline() || host_offline_render_.load(std::memory_order_relaxed));
     if (offline_block) await_offline_work_(renderer);
-    if (processor_prepared_ && renderer) renderer->defer_design_handoff(offline_block);
+    // Work this block asks of a worker -- a staged mask's design, a drifted
+    // parameter's sync (which publishes a mask of its own) -- is handed over
+    // when the block ENDS, never in the middle of it: a call the scheduler
+    // preempts could otherwise let that work land between two of this block's
+    // render blocks, and the adoption point would depend on load. Deferral is
+    // lifted on the way out so control-thread pumps of the renderer hand off
+    // at once.
+    struct BlockEndHandoff {
+        Spectr* self;
+        MaskRenderer* renderer;
+        bool param_sync = false;
+        ~BlockEndHandoff() {
+            if (param_sync) self->spawn_param_sync_();
+            if (!renderer) return;
+            renderer->flush_design_handoff();
+            renderer->defer_design_handoff(false);
+        }
+    };
+    BlockEndHandoff block_end_handoff{this, processor_prepared_ ? renderer : nullptr};
+    if (block_end_handoff.renderer) block_end_handoff.renderer->defer_design_handoff(true);
 
     // spectr#34: host-side parameter writes (automation playback, generic
     // controls) land in the store between blocks. On any drift, hand the
@@ -1298,13 +1329,7 @@ void Spectr::process(
     // block at most; the lane's Latest policy coalesces bursts.
     const auto surface_drift = processor_prepared_
         ? sample_surface_drift_() : SurfaceDrift{};
-    if (surface_drift.worker) {
-        const auto tag = param_sync_requested_.load(std::memory_order_relaxed) + 1;
-        if (param_sync_lane_.try_spawn(ParamSyncTask{tag})) {
-            param_sync_requested_.store(tag, std::memory_order_relaxed);
-            detail::g_param_sync_backlog.fetch_add(1, std::memory_order_acq_rel);
-        }
-    }
+    block_end_handoff.param_sync = surface_drift.worker;
 
     // Sync the two continuously automatable audio controls each block.
     const float mix        = state().get_value(kMix) / 100.0f;

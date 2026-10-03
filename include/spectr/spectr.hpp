@@ -1095,6 +1095,10 @@ private:
     void await_offline_work_(MaskRenderer* renderer) noexcept;
     void retire_param_sync_through_(std::uint64_t tag) noexcept;
     void stop_param_sync_lane_() noexcept;
+    // Audio thread, lock-free: hand the param-sync worker one task.
+    void spawn_param_sync_() noexcept;
+    // Offline blocks only: sleep until the param-sync worker is idle.
+    void await_param_sync_() noexcept;
     ModulationSettings modulation_{};
     // Guarded by processing_state_mutex_ and published to the audio thread in
     // AudioModulationState, so both sides of a morph agree on what moves.
