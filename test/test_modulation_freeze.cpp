@@ -618,3 +618,35 @@ TEST_CASE("the Preset destination morphs toward neighbouring presets and back",
     CHECK(reopened.plugin->preset_modulation_centre_id() == "factory:flat");
     CHECK(reopened.plugin->preset_modulation_name(1) == "ABOVE");
 }
+
+TEST_CASE("switching the Bands route off fades back to the user's band count",
+          "[modulation][bands-target]") {
+    // A square at +1 holds 64 bands over a 32-band base; the route is then
+    // switched off mid-render. The way home crossfades through flat too: the
+    // route's 60 ms slew walks the count home while the route still plays, so
+    // each step takes the fade (audio_bands_modulated_ also covers a route that
+    // stops without its slew). A regression guard rather than a fail-before
+    // test: it also passes with that flag removed.
+    Rig rig;
+    draw_comb(rig);
+    rig.set(spectr::kParamLfoShape, float(LfoShape::Square));
+    rig.set(spectr::kParamLfoRate, 16.0f);  // 8 s: +1 for 4 s
+    rig.set(spectr::lfo_route_enabled_param_id(0, kBandsT), 1.0f);
+    rig.set(spectr::lfo_route_amount_param_id(0, kBandsT), 1.0f);
+    std::vector<float> out;
+    bool saw_64 = false;
+    for (int b = 0; b < int(3.0 * kRate / kBlock); ++b) {
+        if (b == int(2.0 * kRate / kBlock))
+            rig.set(spectr::lfo_route_enabled_param_id(0, kBandsT), 0.0f);
+        rig.block([](double) { return 2000.0; }, &out);
+        saw_64 = saw_64 || rig.plugin->modulated_band_count_shown() == 64;
+    }
+    CHECK(saw_64);
+    CHECK(rig.plugin->modulated_band_count_shown() == 0);
+    const double step = largest_step_db(out);
+    INFO("largest 1 ms step across the switch-off " << step << " dB");
+    // Measured 1.8 dB: the route's own 60 ms slew walks the count down
+    // through the list, each step its own fade. A straight switch home is
+    // 10-11 dB (the plant in the test above).
+    CHECK(step < 2.5);
+}

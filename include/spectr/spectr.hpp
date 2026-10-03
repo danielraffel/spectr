@@ -1091,6 +1091,7 @@ private:
     // how much of the shape is applied (1 = all of it).
     int audio_bands_playing_ = 0;
     float audio_bands_fade_ = 1.0f;
+    bool audio_bands_modulated_ = false;
     std::atomic<bool> audio_preset_driven_{false};
     std::atomic<int> audio_preset_step_{0};
     // Guarded by processing_state_mutex_: the Preset destination's

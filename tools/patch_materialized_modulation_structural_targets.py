@@ -238,10 +238,13 @@ function useSpectrModulatedDisplay() {
 function SpectrBandsLabel({ count }) {
   const shown = useSpectrModulatedDisplay();
   const driven = shown.bands > 0;
+  // The toolbar's own style, written as it was (a contract marker in
+  // test_import_fidelity.cpp keys on this literal).
+  const base = { style: { lineHeight: 1, whiteSpace: "nowrap" } };
   return React.createElement("span", {
     className: "tnum", "data-spectr-bands-shown": String(driven ? shown.bands : count),
     "data-spectr-bands-modulated": driven ? "1" : "",
-    style: { lineHeight: 1, whiteSpace: "nowrap", color: driven ? "INK" : undefined }
+    style: driven ? Object.assign({}, base.style, { color: "INK" }) : base.style
   }, (driven ? shown.bands : count) + " BANDS ▾");
 }
 // The preset label's text: the preset the Preset target is nearest while it

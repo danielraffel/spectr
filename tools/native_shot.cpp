@@ -32,6 +32,7 @@
 #include <pulp/runtime/trace_session.hpp>
 #include <pulp/state/store.hpp>
 #include <pulp/view/frame_clock.hpp>
+#include <pulp/view/inspector.hpp>
 #include <pulp/view/layout_snapshot.hpp>
 #include <pulp/view/overlay_dismissal.hpp>
 #include <pulp/view/pointer_dispatch.hpp>
@@ -2098,6 +2099,74 @@ int main(int argc, char** argv) {
                          + "', 'pointerleave', {}); })();", "spectr-polish-tip-leave");
                 settle(rig.clock, 4);
             }
+            // The submenu scrolled to its end: Bands, Preset, and Freeze's
+            // Hold for Length under its Depth.
+            open_menu_at(420.0f, 430.0f);
+            {
+                const auto* viewport_view = [&]() -> const pulp::view::View* {
+                    std::string id;
+                    try {
+                        rig.eval("(() => { const el = document.querySelector("
+                                 "'[data-spectr-modulation-viewport]');"
+                                 " throw new Error('PULPVALUE:' + (el ? el.__pulpId : '')); })();",
+                                 "spectr-polish-viewport-id");
+                    } catch (const std::exception& e) {
+                        const std::string msg = e.what();
+                        const auto at = msg.find("PULPVALUE:");
+                        if (at != std::string::npos) {
+                            id = msg.substr(at + 10);
+                            const auto end = id.find_first_of(" \n\"'");
+                            if (end != std::string::npos) id = id.substr(0, end);
+                        }
+                    }
+                    return id.empty() ? nullptr : find_by_id(*rig.root, id);
+                }();
+                if (viewport_view != nullptr) {
+                    const auto box = pulp::view::ViewInspector::absolute_bounds(*viewport_view);
+                    const pulp::view::Point over{box.x + box.width * 0.5f, box.y + box.height * 0.5f};
+                    capture(rig, dir, prefix + "polish-submenu-hold-top", backend, scale);
+                    for (int i = 0; i < 12; ++i)
+                        pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 60.0f, {});
+                    settle(rig.clock, 8);
+                    rig.root->layout_children();
+                    settle(rig.clock, 4);
+                }
+                capture(rig, dir, prefix + "polish-submenu-end", backend, scale);
+            }
+            close_menu();
+            // Header context menus.
+            for (const char* which : {"intensity", "freeze-toggle"}) {
+                const std::string selector = std::string("[data-spectr-") + which + "]";
+                rig.eval("(() => { const n = globalThis.__pulpFindMaterializedElement__('" + selector
+                         + "'); const b = n && n.getBoundingClientRect ? n.getBoundingClientRect() : null;"
+                         " const at = b ? { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, button: 2 } : {};"
+                         " globalThis.__pulpActivateMaterializedElement__('" + selector
+                         + "', 'contextmenu', at); })();", "spectr-polish-ctx");
+                settle(rig.clock, 16);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+                capture(rig, dir, prefix + "polish-context-" + which, backend, scale);
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                settle(rig.clock, 8);
+            }
+            // LENGTH, BANDS and the preset label following their LFO.
+            rig.activate("[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+            settle(rig.clock, 8);
+            rig.activate("[data-spectr-pattern-menu-id=\"factory:harmonic\"]");
+            settle(rig.clock, 16);
+            store.set_value(spectr::kParamLfoShape, 2.0f);
+            store.set_value(spectr::kParamLfoRate, 16.0f);
+            for (const auto& [t, depth] : {std::pair{7u, 0.25f}, std::pair{11u, 1.0f},
+                                           std::pair{12u, 0.25f}}) {
+                store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+                store.set_value(spectr::lfo_route_amount_param_id(0, t), depth);
+            }
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(60);
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            capture(rig, dir, prefix + "polish-modulated-labels", backend, scale);
             return g_failures == 0 ? 0 : 1;
         }
 

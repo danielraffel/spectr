@@ -1889,7 +1889,13 @@ void Spectr::process(
                             (static_cast<double>(out_slice.num_samples())
                              / (ctx.sample_rate > 0.0 ? ctx.sample_rate : sample_rate_))
                             / kBandsFadeSeconds;
-                        if (audio_bands_playing_ <= 0 || !bands_driven) {
+                        // The route switched off also fades back to the
+                        // user's count; a host band-count lane with no LFO
+                        // on Bands switches straight across, as it always
+                        // has (audio_bands_modulated_ tells them apart).
+                        if (bands_driven) audio_bands_modulated_ = true;
+                        if (audio_bands_playing_ <= 0
+                            || (!bands_driven && !audio_bands_modulated_)) {
                             audio_bands_playing_ = wanted;
                             audio_bands_fade_ = 1.0f;
                         } else if (wanted != audio_bands_playing_) {
@@ -1899,6 +1905,8 @@ void Spectr::process(
                         } else if (audio_bands_fade_ < 1.0f) {
                             audio_bands_fade_ = std::min(1.0f, audio_bands_fade_
                                 + static_cast<float>(fade_step));
+                        } else if (!bands_driven) {
+                            audio_bands_modulated_ = false;  // back home
                         }
                         automated.active_bands =
                             static_cast<std::uint32_t>(audio_bands_playing_);
