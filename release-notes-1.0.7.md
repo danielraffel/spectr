@@ -1,6 +1,6 @@
 Spectr 1.0.7 brings musical Freeze lengths, multi-target modulation, new level controls, and the first standalone app that updates itself.
 
-**Install:** download `Spectr-1.0.7.pkg` and open it. By default it installs the AU, VST3 and CLAP plug-ins, the standalone Spectr app, and Spectr Diagnostics. You can untick any of them under Customize. The installer is signed and notarized by Apple. Requires macOS 13.4 or later.
+**Install:** download `Spectr-1.0.7.pkg` and open it. By default it installs the AU, VST3 and CLAP plug-ins, the standalone Spectr app, and Spectr Diagnostics. You can untick any of them under Customize. The installer is signed and notarized by Apple. Requires a Mac with Apple silicon running macOS 13.4 or later.
 
 ## What's new since 1.0.5
 
