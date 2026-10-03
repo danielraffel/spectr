@@ -52,6 +52,14 @@ bool modulation_plants_level_target_step() noexcept {
     return planted;
 }
 
+// Every negative-control seam the audio thread reads. Called from the
+// constructor and from prepare(), never from process().
+void prime_negative_control_seams() noexcept {
+    (void)modulation_plants_route_step();
+    (void)modulation_plants_level_target_step();
+    (void)level_plant("");
+}
+
 // See set_editor_is_standalone: asserted by the standalone entry points only.
 std::atomic<bool> g_editor_is_standalone{false};
 }  // namespace
@@ -99,6 +107,7 @@ namespace {
 
 
 Spectr::Spectr() : editor_authority_(*this) {
+    prime_negative_control_seams();
 #if defined(SPECTR_NATIVE_EDITOR)
     pulp::view::CommandInfo settings;
     settings.id = kOpenSettingsCommand;
@@ -769,6 +778,11 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // bounce and never cleared it must not make every later block wait.
     host_offline_render_.store(false, std::memory_order_relaxed);
     offline_wait_budget_logged_.store(false, std::memory_order_relaxed);
+    // The negative-control seams read the environment once, in function-local
+    // statics. Take that first read here, on the control thread, so the audio
+    // thread never calls getenv or runs a static initializer's guard: it only
+    // loads a value already initialised.
+    prime_negative_control_seams();
 
     sample_rate_ = ctx.sample_rate;
     max_block_   = ctx.max_buffer_size;

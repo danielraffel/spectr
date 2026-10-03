@@ -244,7 +244,9 @@ private:
 /// it: `intensity-step` (no Intensity slew), `intensity-ignored` (Intensity
 /// never reaches the mask), `autogain-follow-output` (Auto Gain chases the
 /// output level block by block -- the pumping design this one replaces).
-/// Read once per process; unset in every shipping run.
+/// Read once per process; unset in every shipping run. The Spectr constructor
+/// and prepare() make that first read (spectr.cpp,
+/// prime_negative_control_seams), so the audio thread only ever loads it.
 inline bool level_plant(const char* name) noexcept {
     static const char* const planted = std::getenv("SPECTR_LEVEL_PLANT");
     return planted != nullptr && std::string_view(planted) == name;
