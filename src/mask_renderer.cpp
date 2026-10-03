@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,7 @@
 #include <memory>
 #include <mutex>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -34,6 +36,11 @@ namespace {
 /// a different latency on a different machine, which is the recall hazard the
 /// contract exists to prevent. 64 samples is 1.33 ms at 48 kHz.
 constexpr int kRenderBlock = kZeroLatencyRenderBlock;
+
+/// How long an offline render waits for one host block's designs before it
+/// gives up and renders with whatever is adopted. A design takes milliseconds;
+/// this only bounds a stopped or starved worker so a bounce cannot hang.
+constexpr auto kOfflineDesignWaitLimit = std::chrono::seconds(10);
 
 /// Layouts the audio thread has handed a design worker that no worker has
 /// designed and staged yet, summed over every zero-latency renderer in the
@@ -641,9 +648,10 @@ public:
     //
     // Everything between these markers runs on the audio thread. It must
     // contain no wall-clock read, no sleep, no thread handle and no lock: the
-    // schedule here is expressed purely in samples, which is what makes an
-    // offline bounce and real-time playback produce identical samples whether
-    // or not the host tells the plugin which one it is. The markers are not
+    // convolution schedule here is expressed purely in samples. When a staged
+    // layout is adopted rides on the design worker, so an offline render
+    // waits for it through await_staged_designs(), outside this region and
+    // only when the host says it is rendering offline. The markers are not
     // decoration — `tools/ci/check_render_path_clock.py` scans exactly this
     // region, and `test/test_mask_renderer.cpp` proves the scan can fail.
     [[nodiscard]] bool process(const float* const* input, float* const* output,
@@ -654,14 +662,7 @@ public:
         for (int ch = 0; ch < channels_; ++ch)
             if (input[ch] == nullptr || output[ch] == nullptr) return false;
 
-        if (rt_layout_pending_.exchange(false, std::memory_order_acquire)) {
-            const auto sequence =
-                requested_sequence_.load(std::memory_order_relaxed) + 1;
-            if (lane_.try_spawn(DesignTask{rt_layout_, sequence})) {
-                requested_sequence_.store(sequence, std::memory_order_relaxed);
-                g_mask_design_backlog.fetch_add(1, std::memory_order_acq_rel);
-            }
-        }
+        hand_off_staged_layout_();
 
         mixer_.push_dry(input, channels_, num_samples);
 
@@ -696,6 +697,18 @@ public:
     }
 
 private:
+    /// Hand the layout the audio thread staged (if any) to the design worker.
+    void hand_off_staged_layout_() noexcept {
+        if (rt_layout_pending_.exchange(false, std::memory_order_acquire)) {
+            const auto sequence =
+                requested_sequence_.load(std::memory_order_relaxed) + 1;
+            if (lane_.try_spawn(DesignTask{rt_layout_, sequence})) {
+                requested_sequence_.store(sequence, std::memory_order_relaxed);
+                g_mask_design_backlog.fetch_add(1, std::memory_order_acq_rel);
+            }
+        }
+    }
+
     void render_block_() noexcept {
         // The fade a swap landing now is given is the gap it closes: the
         // samples since the previous swap landed, clamped. Saturate the count
@@ -757,6 +770,22 @@ public:
 
     [[nodiscard]] unsigned long long active_generation() const noexcept override {
         return active_generation_.load(std::memory_order_acquire);
+    }
+
+    // Offline only, and deliberately outside the render-path region: it
+    // sleeps. See MaskRenderer::await_staged_designs().
+    bool await_staged_designs() noexcept override {
+        if (!prepared_) return true;
+        hand_off_staged_layout_();
+        const auto deadline =
+            std::chrono::steady_clock::now() + kOfflineDesignWaitLimit;
+        while (designed_sequence_.load(std::memory_order_acquire)
+               < requested_sequence_.load(std::memory_order_relaxed)) {
+            if (!lane_.running() || std::chrono::steady_clock::now() > deadline)
+                return false;
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+        }
+        return true;
     }
 
 private:
@@ -863,7 +892,8 @@ private:
     void retire_designed_through_(std::uint64_t sequence) noexcept {
         const auto designed = designed_sequence_.load(std::memory_order_relaxed);
         if (sequence <= designed) return;
-        designed_sequence_.store(sequence, std::memory_order_relaxed);
+        // Release: a reader that sees this sequence also sees the staged IR.
+        designed_sequence_.store(sequence, std::memory_order_release);
         g_mask_design_backlog.fetch_sub(sequence - designed,
                                         std::memory_order_acq_rel);
     }

@@ -1217,6 +1217,20 @@ struct RenderEpochScope {
 
 } // namespace
 
+void Spectr::await_offline_work_(MaskRenderer* renderer) noexcept {
+    PULP_TRACE_SCOPE_NAMED("audio", "offline: await design workers");
+    // Parameter sync first: it can publish a new mask, which the renderer
+    // then has to have designed.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (param_sync_done_.load(std::memory_order_acquire)
+           < param_sync_requested_.load(std::memory_order_relaxed)) {
+        if (!param_sync_lane_.running() || std::chrono::steady_clock::now() > deadline)
+            break;
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+    }
+    if (renderer) (void)renderer->await_staged_designs();
+}
+
 void Spectr::process(
     pulp::audio::BufferView<float>& output,
     const pulp::audio::BufferView<const float>& input,
@@ -1250,6 +1264,15 @@ void Spectr::process(
     const RenderEpochScope epoch_scope{render_epoch_};
     MaskRenderer* const renderer = active_renderer_.load(std::memory_order_acquire);
 
+    // An offline render is not paced, so the workers that design a staged
+    // mask or apply drifted host parameters fall a load-dependent number of
+    // blocks behind and the bounce stops matching playback. On an offline
+    // block only, first wait for what a paced host would already have
+    // adopted. A realtime block never waits.
+    if (processor_prepared_
+        && (ctx.is_offline() || host_offline_render_.load(std::memory_order_relaxed)))
+        await_offline_work_(renderer);
+
     // spectr#34: host-side parameter writes (automation playback, generic
     // controls) land in the store between blocks. On any drift, hand the
     // adoption to the sync worker — mask-table compilation is a
@@ -1257,8 +1280,11 @@ void Spectr::process(
     // block at most; the lane's Latest policy coalesces bursts.
     const auto surface_drift = processor_prepared_
         ? sample_surface_drift_() : SurfaceDrift{};
-    if (surface_drift.worker)
-        param_sync_lane_.try_spawn(ParamSyncTask{});
+    if (surface_drift.worker) {
+        const auto tag = param_sync_requested_.load(std::memory_order_relaxed) + 1;
+        if (param_sync_lane_.try_spawn(ParamSyncTask{tag}))
+            param_sync_requested_.store(tag, std::memory_order_relaxed);
+    }
 
     // Sync the two continuously automatable audio controls each block.
     const float mix        = state().get_value(kMix) / 100.0f;

@@ -467,7 +467,7 @@ void register_surface_params(pulp::state::StateStore& store) {
 
 namespace spectr {
 
-void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask&) noexcept {
+void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask& task) noexcept {
     // Fixture-only. Holds this worker back so a test can prove the audio path
     // reads the store on its own rather than by winning a race with this
     // thread. Read once; unset in every shipping configuration, where the
@@ -480,7 +480,16 @@ void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask&) noexcept {
     }();
     if (stall_ms > 0)
         std::this_thread::sleep_for(std::chrono::milliseconds(stall_ms));
-    (void)static_cast<Spectr*>(ctx)->apply_surface_params(/*apply_morph=*/true);
+    auto* self = static_cast<Spectr*>(ctx);
+    (void)self->apply_surface_params(/*apply_morph=*/true);
+    // Retire this task and every one it coalesced (an offline render waits
+    // on this; see await_offline_work_).
+    auto done = self->param_sync_done_.load(std::memory_order_relaxed);
+    while (task.tag > done
+           && !self->param_sync_done_.compare_exchange_weak(
+                  done, task.tag, std::memory_order_release,
+                  std::memory_order_relaxed)) {
+    }
 }
 
 Spectr::SurfaceDrift Spectr::sample_surface_drift_() noexcept {

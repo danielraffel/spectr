@@ -131,6 +131,21 @@ public:
     /// Clear streaming state, preserving the currently adopted magnitude.
     virtual void reset() noexcept = 0;
 
+    /// OFFLINE RENDERS ONLY. Block the calling audio thread until every layout
+    /// staged so far is realised and waiting for the next `process()` to adopt.
+    ///
+    /// A realisation that designs on a worker adopts a staged layout at the
+    /// first render block after that worker finishes. A real-time host paces
+    /// its callbacks, so the worker finishes between them; an offline render
+    /// does not wait, so on a loaded machine the adoption lands a
+    /// load-dependent number of blocks late and the worker's Latest lane
+    /// coalesces intermediate layouts away. Calling this at each host block
+    /// of an offline render reproduces the paced schedule exactly. Never call
+    /// it on a real-time block: it may sleep. Returns false when the wait gave
+    /// up (worker stopped, or the bound in the implementation elapsed).
+    /// Realisations that adopt synchronously have nothing to wait for.
+    virtual bool await_staged_designs() noexcept { return true; }
+
     /// Monotonic counter of the magnitude the renderer is currently
     /// realising. Advances when a newly published or staged layout has been
     /// adopted into the audio path. Diagnostic: a renderer whose adoption is

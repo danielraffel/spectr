@@ -402,6 +402,16 @@ public:
         pulp::midi::MidiBuffer& midi_out,
         const pulp::format::ProcessContext& ctx) override;
 
+    /// Host offline-render intent from a format adapter that does not yet
+    /// put it on `ProcessContext` (the AU v2 entry's shim). Any thread.
+    /// Either this or `ProcessContext::is_offline()` makes a block offline.
+    void set_host_offline_render(bool offline) noexcept {
+        host_offline_render_.store(offline, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool host_offline_render() const noexcept {
+        return host_offline_render_.load(std::memory_order_relaxed);
+    }
+
     // ── Supplemental plugin state (pulp#625 / PR#628 hooks) ─────────────
     //
     // Under V2 handoff §5.4, Spectr's richer state (canonical band field,
@@ -1068,6 +1078,15 @@ private:
     // compilation is a control-thread operation).
     struct ParamSyncTask { std::uint64_t tag = 0; };
     pulp::format::BackgroundTaskLane<ParamSyncTask, 8> param_sync_lane_;
+    // Offline pacing: the last param-sync task the audio thread handed the
+    // worker, and the last one the worker finished (Latest coalesces, so a
+    // finished task retires every one it superseded).
+    std::atomic<std::uint64_t> param_sync_requested_{0};
+    std::atomic<std::uint64_t> param_sync_done_{0};
+    std::atomic<bool> host_offline_render_{false};
+    // Offline blocks only: wait for the worker results a paced host would
+    // already have adopted by now. Sleeps; never called on a realtime block.
+    void await_offline_work_(MaskRenderer* renderer) noexcept;
     ModulationSettings modulation_{};
     // Guarded by processing_state_mutex_ and published to the audio thread in
     // AudioModulationState, so both sides of a morph agree on what moves.
