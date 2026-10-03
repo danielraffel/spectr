@@ -852,6 +852,16 @@ void Spectr::set_keyboard_shortcuts_in_daw(bool enabled) noexcept {
     keyboard_shortcuts_in_daw_ = enabled;
 }
 
+bool Spectr::show_tooltips() const noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return show_tooltips_;
+}
+
+void Spectr::set_show_tooltips(bool enabled) noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    show_tooltips_ = enabled;
+}
+
 bool Spectr::set_modulation_target_mask(std::uint8_t mask) noexcept {
     // Legacy "Destinations" selection (both LFOs, the four field
     // destinations). It is now expressed as the per-LFO routing lanes, each

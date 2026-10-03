@@ -11324,3 +11324,75 @@ TEST_CASE("while a band menu is open no wheel reaches the plot behind it",
     CHECK(menu_open());
     storage.require_unchanged();
 }
+
+// ── Header tooltips are one sized panel under their control ────────────────
+//
+// FROZEN's and INTENSITY's tooltips painted as a small dark square at the
+// left with the text running out of it: the SDK laid the absolute, width-less
+// box out at its padding alone. The panel now holds its whole line of text,
+// sits below the control without covering it, stays inside the editor, and
+// Settings > FEEDBACK > Show tooltips turns it off (saved with the session).
+TEST_CASE("a header tooltip is one panel that holds its text below its control",
+          "[native-n1][state-parity][level][tooltip]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto wait = [&](int ms) {
+        for (int waited = 0; waited < ms; waited += 20) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            rig.bridge().service_frame_callbacks();
+            settle(rig.clock, 1);
+        }
+    };
+    const auto boxes = [&](const char* selector) {
+        return runtime_string(rig, std::string(
+            "(() => { const t = document.querySelector('[data-spectr-header-tooltip]');"
+            " if (!t) return 'none';"
+            " const r = t.getBoundingClientRect(), s = t.firstChild.getBoundingClientRect();"
+            " const c = document.querySelector('") + selector + "').getBoundingClientRect();"
+            " let o = t; while (o.parentElement && o.parentElement.offsetWidth > 0) o = o.parentElement;"
+            " return [r.left, r.right, r.top, r.bottom, s.left, s.right, c.bottom, o.offsetWidth]"
+            ".map((v) => v.toFixed(1)).join(','); })()", "spectr-tip-boxes");
+    };
+    for (const char* selector : {"[data-spectr-freeze-toggle]", "[data-spectr-intensity]",
+                                 "[data-spectr-output-peak]"}) {
+        INFO(selector);
+        activate(rig, selector, "pointerenter", knob_point(selector, 0.0));
+        wait(800);
+        rig.root->layout_children();
+        auto text = boxes(selector);
+        text.erase(std::min(text.find('\n'), text.size()));
+        INFO("panel l,r,t,b, text l,r, control bottom, editor width: " << text);
+        REQUIRE(text != "none");
+        std::vector<float> v;
+        std::stringstream in(text);
+        for (std::string part; std::getline(in, part, ',');) v.push_back(std::stof(part));
+        REQUIRE(v.size() == 8);
+        // The text is inside the panel, with padding, not spilling out of it.
+        CHECK(v[1] - v[0] > 60.0f);
+        CHECK(v[4] >= v[0] + 4.0f);
+        CHECK(v[5] <= v[1] - 4.0f);
+        // Below its control, not over it; inside the editor.
+        CHECK(v[2] >= v[6] + 2.0f);
+        CHECK(v[0] >= 0.0f);
+        CHECK(v[1] <= v[7]);
+        activate(rig, selector, "pointerleave");
+        settle(rig.clock, 4);
+    }
+    // Show tooltips off: no tip, and the choice is saved with the session.
+    activate(rig, "[data-spectr-settings-open]");
+    activate(rig, "[data-spectr-show-tooltips] [data-spectr-setting-toggle]");
+    settle(rig.clock, 8);
+    CHECK_FALSE(rig.processor.show_tooltips());
+    activate(rig, "[data-spectr-settings-close]");
+    activate(rig, "[data-spectr-intensity]", "pointerenter", knob_point("[data-spectr-intensity]", 0.0));
+    wait(800);
+    CHECK(runtime_string(rig, "String(!!document.querySelector('[data-spectr-header-tooltip]'))",
+                         "spectr-tip-off").rfind("false", 0) == 0);
+    const auto blob = rig.processor.serialize_plugin_state();
+    NativeEditorRig reloaded(blob);
+    CHECK_FALSE(reloaded.processor.show_tooltips());
+    NativeEditorRig fresh;
+    CHECK(fresh.processor.show_tooltips());  // default on
+    storage.require_unchanged();
+}

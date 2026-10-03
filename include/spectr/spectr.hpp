@@ -542,6 +542,12 @@ public:
     [[nodiscard]] bool keyboard_shortcuts_in_daw() const noexcept;
     void set_keyboard_shortcuts_in_daw(bool enabled) noexcept;
 
+    /// "Show tooltips" (Settings > FEEDBACK): whether hovering a header
+    /// control shows its tooltip. On by default. Saved with the session, like
+    /// Keyboard shortcuts in DAW, so each project keeps its own choice.
+    [[nodiscard]] bool show_tooltips() const noexcept;
+    void set_show_tooltips(bool enabled) noexcept;
+
     /// The editor's Range: the plot's vertical scale and the reach of a
     /// full-height edit, in dB (3, 6, 12 or 24; level_controls.hpp). Editor
     /// state persisted in the supplemental blob, never a host parameter, and
@@ -1075,6 +1081,8 @@ private:
     // Guarded by processing_state_mutex_. Editor-only: the audio thread
     // never reads it.
     bool keyboard_shortcuts_in_daw_ = false;
+    // Guarded by processing_state_mutex_. Editor-only.
+    bool show_tooltips_ = true;
     // Which canonical slots each macro drives. Guarded by
     // processing_state_mutex_ and published in AudioModulationState.
     //

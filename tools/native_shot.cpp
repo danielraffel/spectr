@@ -2067,6 +2067,37 @@ int main(int argc, char** argv) {
             }
             rig.activate("[data-spectr-settings-close]");
             settle(rig.clock, 16);
+            // Header tooltips, after their hover delay (real time passes and
+            // the frame loop fires the runtime's timers).
+            const auto wait_ms = [&](int ms) {
+                for (int waited = 0; waited < ms; waited += 20) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                    rig.bridge().service_frame_callbacks();
+                    settle(rig.clock, 1);
+                }
+            };
+            for (const char* which : {"intensity", "freeze-toggle", "output-trim", "auto-gain"}) {
+                const std::string selector = std::string("[data-spectr-") + which + "]";
+                rig.eval("(() => { const n = globalThis.__pulpFindMaterializedElement__('" + selector
+                         + "'); const b = n && n.getBoundingClientRect ? n.getBoundingClientRect() : null;"
+                         " const at = b ? { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2 } : {};"
+                         " globalThis.__pulpActivateMaterializedElement__('" + selector
+                         + "', 'pointerenter', at); })();", "spectr-polish-tip");
+                wait_ms(800);
+                rig.root->layout_children();
+                settle(rig.clock, 4);
+                rig.eval("(() => { const t = document.querySelector('[data-spectr-header-tooltip]');"
+                         " const r = t && t.getBoundingClientRect ? t.getBoundingClientRect() : null;"
+                         " const s = t && t.firstChild && t.firstChild.getBoundingClientRect ? t.firstChild.getBoundingClientRect() : null;"
+                         " console.log('[polish] tip " + std::string(which) + " ' + (r ? ('x=' + r.left.toFixed(1)"
+                         " + ' y=' + r.top.toFixed(1) + ' w=' + r.width.toFixed(1) + ' h=' + r.height.toFixed(1)) : 'none')"
+                         " + (s ? (' text w=' + s.width.toFixed(1) + ' h=' + s.height.toFixed(1)) : '')); })();",
+                         "spectr-polish-tip-report");
+                capture(rig, dir, prefix + "polish-tooltip-" + which, backend, scale);
+                rig.eval("(() => { globalThis.__pulpActivateMaterializedElement__('" + selector
+                         + "', 'pointerleave', {}); })();", "spectr-polish-tip-leave");
+                settle(rig.clock, 4);
+            }
             return g_failures == 0 ? 0 : 1;
         }
 

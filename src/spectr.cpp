@@ -2235,6 +2235,9 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // writer that predates it; readers treat absence as OFF, the default, so
     // an old session keeps the host's keys where a new instance would.
     root.addMember("keyboard_shortcuts_in_daw", keyboard_shortcuts_in_daw_);
+    // "Show tooltips". Absent on an older writer; readers treat absence as ON,
+    // the default.
+    root.addMember("show_tooltips", show_tooltips_);
     // Level controls. `level_controls` marks a writer that knows Intensity
     // and Auto Gain: a session WITHOUT it predates them, and opens with Auto
     // Gain off so its level does not change on reload (the parameters
@@ -2644,6 +2647,13 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_keyboard_shortcuts_in_daw = flag.getBool();
     }
 
+    bool new_show_tooltips = true;
+    if (root.hasObjectMember("show_tooltips")) {
+        const auto& flag = root["show_tooltips"];
+        if (!flag.isBool()) return false;
+        new_show_tooltips = flag.getBool();
+    }
+
     // Level controls (see serialize_plugin_state). A malformed Range falls
     // back to the default rather than losing the session: it is a view.
     const bool knows_level_controls = root.hasObjectMember("level_controls");
@@ -2788,6 +2798,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_overrides_ = new_morph_overrides;
         morph_applies_viewport_ = new_morph_applies_viewport;
         keyboard_shortcuts_in_daw_ = new_keyboard_shortcuts_in_daw;
+        show_tooltips_ = new_show_tooltips;
         editor_range_db_ = new_editor_range_db;
         if (new_freeze_custom_length)
             (void)set_freeze_custom_length(*new_freeze_custom_length);

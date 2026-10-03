@@ -246,6 +246,8 @@ choc::value::Value make_keyboard_policy_payload_(const Spectr& plugin) {
     keyboard.addMember("host_kind",
                        std::string(editor_is_standalone() ? "standalone" : "plugin"));
     keyboard.addMember("shortcuts_in_daw", plugin.keyboard_shortcuts_in_daw());
+    // "Show tooltips" rides the same editor-preference payload.
+    keyboard.addMember("show_tooltips", plugin.show_tooltips());
     return keyboard;
 }
 
@@ -1170,6 +1172,18 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             if (!flag.isBool())
                 return EditorBridge::err_response("enabled must be a boolean");
             plugin.set_keyboard_shortcuts_in_daw(flag.getBool());
+            return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
+        });
+
+    // "Show tooltips": an editor preference persisted in the plugin state.
+    bridge.add_handler("tooltips_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("enabled"))
+                return EditorBridge::err_response("enabled missing");
+            const auto& flag = p["enabled"];
+            if (!flag.isBool())
+                return EditorBridge::err_response("enabled must be a boolean");
+            plugin.set_show_tooltips(flag.getBool());
             return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
         });
 
