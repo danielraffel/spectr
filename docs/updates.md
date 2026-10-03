@@ -1,0 +1,205 @@
+# In-app updates (Sparkle 2)
+
+Spectr.app checks for new versions with [Sparkle 2](https://sparkle-project.org)
+and installs them from the same signed, notarized installer package a user
+downloads by hand. That package carries every format (AU, VST3, CLAP, the
+standalone app and Spectr Diagnostics), so updating the app updates everything.
+
+Only Spectr.app contains the updater. The plug-in bundles never do: they run
+inside a DAW's process, and a self-updater there would be both wrong and
+unsafe. `ctest -R Spectr-sparkle-bundles` proves it for every build.
+
+## What a user sees
+
+- **Spectr → Check for Updates…** in the app menu, above Settings.
+- Sparkle's own permission prompt on the second launch ("Check for updates
+  automatically?"). Automatic checks follow that answer; it can be changed later
+  with the same prompt's defaults (`defaults delete com.pulp.spectr SUEnableAutomaticChecks`
+  resets it).
+- When an update exists: Sparkle's update window with **What's New** — the
+  GitHub release notes, styled like Spectr's dark editor, with a link to the
+  full release page — then **Install Update**. A package update always asks
+  for an administrator password; it never installs silently.
+
+The updater can only update a copy that already contains it. **1.0.7 is the
+first release with Sparkle**: anyone on 1.0.6 or earlier installs 1.0.7 by
+hand, and 1.0.7 is the first version that can update itself (to 1.0.8).
+
+## Feeds
+
+| Feed | URL | Who reads it |
+|---|---|---|
+| release | `https://github.com/danielraffel/spectr/releases/latest/download/appcast.xml` | every shipping build (`com.pulp.spectr`) |
+| practice | `https://github.com/danielraffel/spectr/releases/download/sparkle-practice/appcast-practice.xml` | builds configured with `-DSPECTR_SPARKLE_CHANNEL=practice` |
+| local | `http://127.0.0.1:8765/appcast-practice.xml` | builds configured with `-DSPECTR_SPARKLE_FEED_URL=http://127.0.0.1:8765/…` |
+
+Why the release feed is GitHub's `latest/download` URL: GitHub redirects it to
+the asset of that name on the newest release that is **not** a draft and **not**
+a prerelease (verified: it 302s to `releases/download/<tag>/<asset>`, which
+302s to the blob; Sparkle follows redirects). Two rules follow from that:
+
+1. **Publish previews as prereleases.** A prerelease can never become "latest",
+   so nothing on it reaches release users even if it carries an appcast.
+2. **Every non-prerelease release must carry `appcast.xml`.** Otherwise the
+   feed 404s: scheduled checks fail quietly and a manual check shows an error
+   until the next release.
+
+Preview and dev identities (`SPECTR_NATIVE_PREVIEW_IDENTITY`,
+`SPECTR_DEV_IDENTITY`) are different apps with different bundle IDs and get no
+release feed. `-DSPECTR_SPARKLE_CHANNEL=off` builds without the updater.
+
+## Keys
+
+The appcast signs each package with an Ed25519 (EdDSA) key; Sparkle refuses
+any update whose signature does not verify against the public key built into
+the app.
+
+- Public key (in `cmake/SpectrSparkle.cmake`, written into Info.plist as
+  `SUPublicEDKey`): `mosCtB7H9gxWzbWUYyHiHTapl4sWMgkd4t09iIUnO2g=`
+- Private key: `~/.config/pulp/secrets/sparkle/spectr_ed25519` (mode 600; the
+  32-byte seed as one line of base64 — the format of Sparkle's
+  `generate_keys -x`). Durable copy in 1Password: item **"Spectr Sparkle EdDSA
+  private key"** in the **Private** vault.
+- Never commit, print or paste the private key. Tools read it from the file;
+  nothing passes it on a command line.
+- **Losing the private key strands every installed copy.** Sparkle has no key
+  rotation for apps already in the field.
+
+To restore the key on a new machine from 1Password:
+
+```sh
+mkdir -p ~/.config/pulp/secrets/sparkle && chmod 700 ~/.config/pulp/secrets/sparkle
+op read "op://Private/Spectr Sparkle EdDSA private key/private key" \
+  > ~/.config/pulp/secrets/sparkle/spectr_ed25519
+chmod 600 ~/.config/pulp/secrets/sparkle/spectr_ed25519
+```
+
+## Version numbers
+
+Sparkle compares the appcast's `sparkle:version` with Spectr.app's
+`CFBundleVersion`, so that number must rise with every update.
+
+- **Release:** `CFBundleVersion` = the product version `MAJOR.MINOR.PATCH`
+  (`project(Spectr VERSION …)`), the same string every bundle and the installer
+  already carry. It rises because the product version does.
+- **Practice:** Spectr.app alone gets a fourth component —
+  `-DSPECTR_APP_BUILD_VERSION=1.0.7.1`, `1.0.7.2`, … — so two practice packages
+  of one product version can update one to the other. The plug-ins keep
+  `1.0.7`.
+
+`tools/check_release_version.py` enforces both (`--app-build-version`, and
+`--newer-than-appcast <feed>` refuses a build that is not strictly newer than
+every build the feed already offers), and `make_appcast.py` and
+`check_sparkle.py appcast` refuse a release item with a practice-shaped build
+number.
+
+## Releasing an update
+
+1. Build and package as usual (`package.sh`). With Spectr.app embedding
+   Sparkle it also: signs the framework's nested code inside-out with the
+   Developer ID identity and the hardened runtime (Pulp's installer recipe does
+   this; for an older `PULP_ROOT`, `package.sh` does it itself), and runs
+   `tools/ship/check_sparkle.py bundles --signed` (codesign `--deep --strict`,
+   Team ID and hardened runtime on every nested binary, `spctl`, and no Sparkle
+   in any plug-in bundle).
+2. Write the GitHub release notes as usual (Markdown), save them to a file.
+3. Generate the feed:
+
+   ```sh
+   python3 tools/ship/make_appcast.py \
+     --pkg artifacts/Spectr-1.0.7.pkg --version 1.0.7 \
+     --notes release-notes-1.0.7.md --app build/Spectr.app \
+     --out artifacts/appcast.xml
+   ```
+
+   It fetches the live feed, renders What's New from the notes
+   (`whats-new-1.0.7.html`, embedded inline in the item), signs the package
+   with the private key, writes the item (`sparkle:version`,
+   `shortVersionString`, `minimumSystemVersion` read from the app binary,
+   `installationType="package"`, length, signature, What's New, a
+   `fullReleaseNotesLink` to the GitHub release), and then verifies the result
+   with the **public** key (`check_sparkle.py appcast`). It uses
+   `pulp ship appcast --sign-key-file` when the installed Pulp CLI has it, and
+   Sparkle's `sign_update` otherwise (`--sign-update
+   build/_deps/sparkle-2.10.0/dist/bin/sign_update`; delete that fallback on the
+   SDK bump).
+4. Publish: upload `Spectr-1.0.7.pkg` **and** `appcast.xml` to the `v1.0.7`
+   release, which must not be a prerelease:
+
+   ```sh
+   gh release upload v1.0.7 artifacts/Spectr-1.0.7.pkg artifacts/appcast.xml
+   ```
+
+The notes are inline rather than a `sparkle:releaseNotesLink` because GitHub
+serves release assets with `Content-Disposition: attachment`, which Sparkle's
+web view would receive as a download, not a page.
+
+## Practising an update
+
+Never with release builds: practice builds read the practice feed only.
+
+1. Configure a practice build and package two versions from one clean head:
+
+   ```sh
+   cmake -B build -DSPECTR_SPARKLE_CHANNEL=practice -DSPECTR_APP_BUILD_VERSION=1.0.7.1
+   ./package.sh            # → artifacts/Spectr-1.0.7.1.pkg
+   cmake -B build -DSPECTR_APP_BUILD_VERSION=1.0.7.2
+   ./package.sh            # → artifacts/Spectr-1.0.7.2.pkg
+   ```
+
+2. Feed for the newer one, on the `sparkle-practice` prerelease:
+
+   ```sh
+   python3 tools/ship/make_appcast.py --channel practice \
+     --pkg artifacts/Spectr-1.0.7.2.pkg --version 1.0.7 --build 1.0.7.2 \
+     --notes practice-notes.md --app build/Spectr.app --previous none \
+     --out artifacts/appcast-practice.xml
+   gh release create sparkle-practice --prerelease --title "Sparkle practice feed" \
+     --notes "Practice updates; not for release users." || true
+   gh release upload sparkle-practice --clobber \
+     artifacts/Spectr-1.0.7.2.pkg artifacts/appcast-practice.xml
+   ```
+
+   For a fully local rehearsal instead, serve the folder from loopback
+   (`cd ~/SparklePractice && python3 -m http.server 8765 --bind 127.0.0.1`),
+   configure with
+   `-DSPECTR_SPARKLE_FEED_URL=http://127.0.0.1:8765/appcast-practice.xml`, and
+   pass `--download-url http://127.0.0.1:8765/Spectr-1.0.7.2.pkg`. Sparkle
+   refuses `file://` feeds ("The download request URL must use http or https"),
+   and the configure step rejects them. An already-built practice app can also
+   be pointed at a feed without rebuilding:
+   `defaults write com.pulp.spectr SUFeedURL http://127.0.0.1:8765/appcast-practice.xml`
+   (Sparkle logs a warning; `defaults delete com.pulp.spectr SUFeedURL` undoes it).
+3. Install `Spectr-1.0.7.1.pkg` on a test Mac, open Spectr, choose
+   **Spectr → Check for Updates…**. Expect the update window with What's New
+   for 1.0.7 (build 1.0.7.2); **Install Update** asks for an admin password,
+   installs the package and relaunches Spectr. **Spectr → Settings → About**
+   still says 1.0.7; `defaults read /Applications/Spectr.app/Contents/Info CFBundleVersion`
+   says `1.0.7.2`.
+   Measured on m5s with notarized 1.0.6.1/1.0.6.2 practice packages and a
+   loopback feed: the Developer-ID build ran Sparkle's launch check by itself
+   and opened the update window (586x402, beside the editor); with a feed that
+   offered only the installed build, no update window opened.
+4. Afterwards reinstall a release build by hand: a practice build number
+   (1.0.7.2) sorts above the release (1.0.7), so a practice-updated test Mac
+   would not be offered 1.0.7 itself.
+
+## Third-party notice
+
+Sparkle 2.10.0 (MIT; its distribution also carries bsdiff BSD-2-Clause,
+sais-lite MIT and ed25519 zlib notices) is downloaded at configure time with a
+pinned SHA-256 and redistributed inside Spectr.app. Its full license text is
+`resources/licenses/Sparkle-LICENSE.txt`, installed as
+`Spectr.app/Contents/Resources/Licenses/Sparkle-LICENSE.txt`; `check_sparkle.py`
+fails a build that omits it.
+
+## Future: updating the plug-ins inside a host
+
+Not built yet. Today a plug-in is updated by updating the app (one package
+installs everything), and a DAW picks the new plug-in binaries up the next time
+it loads them. The direction worth taking later mirrors how Forge reloads
+itself: a small Sparkle-driven (or Sparkle-compatible, same feed and EdDSA key)
+check in the plug-in that downloads the signed package or a signed hot-reload
+pack, verifies it, and hot-swaps the DSP/UI in a running host through Pulp's
+reload path, without the plug-in ever running an installer inside the DAW's
+process. Until then, no updater code goes into the plug-in bundles.

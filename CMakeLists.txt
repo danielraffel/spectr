@@ -473,6 +473,10 @@ if(APPLE)
     endforeach()
 endif()
 
+# ── In-app updates (Sparkle 2) ─────────────────────────────────────────
+# Spectr.app only; see cmake/SpectrSparkle.cmake and docs/updates.md.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpectrSparkle.cmake)
+spectr_configure_sparkle(${SPECTR_NATIVE_STANDALONE_TARGET} "${_spectr_id_KIND}")
 
 foreach(_forbidden_native_source
         src/ui/editor_view.cpp
@@ -4187,12 +4191,38 @@ if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
             --bundle ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
             --bundle ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
             --bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap
-            --bundle ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app
+            $<$<STREQUAL:${SPECTR_APP_BUILD_VERSION},>:--bundle>
+            $<$<STREQUAL:${SPECTR_APP_BUILD_VERSION},>:${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app>
             --binary-version-bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
     set_tests_properties(Spectr-release-version PROPERTIES TIMEOUT 60)
     add_test(NAME Spectr-release-version-controls
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_release_version.py --self-test)
     set_tests_properties(Spectr-release-version-controls PROPERTIES TIMEOUT 60)
+endif()
+
+# Sparkle lives in Spectr.app and in no plug-in bundle; the update-feed tooling
+# (What's New HTML, appcast signing/ordering checks) has its own controls.
+if(APPLE AND Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-sparkle-controls
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/ship/check_sparkle.py --self-test)
+    add_test(NAME Spectr-sparkle-release-tooling
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/ship/test_sparkle_release.py)
+    set_tests_properties(Spectr-sparkle-controls Spectr-sparkle-release-tooling
+        PROPERTIES TIMEOUT 60)
+    if(SPECTR_SPARKLE_EMBEDDED AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
+       AND TARGET ${SPECTR_NATIVE_VST3_TARGET} AND TARGET ${SPECTR_NATIVE_AU_TARGET})
+        add_test(NAME Spectr-sparkle-bundles
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/ship/check_sparkle.py bundles
+                --app ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app
+                --feed ${SPECTR_SPARKLE_FEED_EFFECTIVE}
+                --plugin ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
+                --plugin ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
+                --plugin ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
+        set_tests_properties(Spectr-sparkle-bundles PROPERTIES TIMEOUT 120)
+    endif()
 endif()
 
