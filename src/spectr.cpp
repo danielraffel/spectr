@@ -856,6 +856,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     auto_gain_target_db_ = 0.0f;
     auto_gain_primed_ = false;
     audio_intensity_primed_ = false;
+    audio_legacy_lanes_.primed = false;
     audio_output_mod_primed_ = false;
     audio_output_mod_db_ = 0.0f;
     audio_intensity_percent_ = state().get_value(kParamIntensity);
@@ -1633,23 +1634,6 @@ void Spectr::process(
                                 lfo_route_amount_param_id(lfo, t)), 0.0f, 1.0f);
                         }
                     }
-                    // The legacy single-target lane is a COMMAND (see
-                    // apply_surface_params): a move selects that one field
-                    // destination for both LFOs. The control worker turns it
-                    // into routing-lane writes one pass later; until then the
-                    // published target still names the value the routing was
-                    // reconciled against, and the moved lane wins here at once
-                    // rather than being swallowed until that pass lands.
-                    if (modulation_settings.target
-                        != audio_modulation.settings.target) {
-                        const auto bit = modulation_target_bit(
-                            modulation_settings.target);
-                        for (auto& routes : modulation_settings.routes)
-                            set_route_mask(routes, static_cast<std::uint16_t>(
-                                (route_mask(routes)
-                                 & ~static_cast<std::uint16_t>(kModulationTargetMaskAll))
-                                | bit));
-                    }
                     modulation_settings.lfo2_enabled =
                         cursor.value(kParamLfo2Enabled) >= 0.5f;
                     modulation_settings.lfo2_shape = static_cast<LfoShape>(
@@ -1659,22 +1643,73 @@ void Spectr::process(
                         cursor.value(kParamLfo2Rate), 0.25f, 16.0f);
                     modulation_settings.lfo2_depth = std::clamp(
                         cursor.value(kParamLfo2Depth), 0.0f, 1.0f);
-                    // The LFO-level Depth lanes are COMMANDS too (see
-                    // apply_surface_params): each target carries its own
-                    // depth, and a move of an LFO's legacy Depth lane sets the
-                    // depth of every target that LFO currently drives. Applied
-                    // here at once, like the target lane, until the control
-                    // worker has written it into the target lanes.
+                    // The legacy lanes are COMMANDS (see apply_surface_params):
+                    // a move of the single-target lane (4004) selects that one
+                    // field destination for both LFOs, and a move of an LFO's
+                    // Depth lane (4003/4013) sets the Depth of every target
+                    // that LFO drives. The control worker turns a command into
+                    // routing-lane writes one pass later; until then it is
+                    // latched here so the moved lane is heard at once.
+                    //
+                    // A command applies only when it moves ALONE. A slice that
+                    // also moves an LFO's routing lanes (a host restoring or
+                    // setting every parameter at once) is an explicit routing
+                    // statement, and the command does not touch that LFO --
+                    // the same rule the worker applies, so what is heard
+                    // matches what the lanes read back.
                     {
+                        auto& legacy = audio_legacy_lanes_;
+                        if (!legacy.primed) {
+                            legacy.depth[0] = audio_modulation.settings.depth;
+                            legacy.depth[1] = audio_modulation.settings.lfo2_depth;
+                            legacy.target = static_cast<int>(
+                                audio_modulation.settings.target);
+                            legacy.routes = audio_modulation.settings.routes;
+                            legacy.depth_command[0] = legacy.depth_command[1] = false;
+                            legacy.target_command[0] = legacy.target_command[1] = false;
+                            legacy.primed = true;
+                        }
                         const float lane[2] = {modulation_settings.depth,
                                                modulation_settings.lfo2_depth};
-                        const float published[2] = {
-                            audio_modulation.settings.depth,
-                            audio_modulation.settings.lfo2_depth};
+                        const int target = static_cast<int>(modulation_settings.target);
+                        const bool target_moved = target != legacy.target;
                         for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
-                            if (lane[lfo] == published[lfo]) continue;
-                            for (auto& route : modulation_settings.routes[lfo])
-                                if (route.enabled) route.amount = lane[lfo];
+                            // A lane that moved onto the published routing is
+                            // the worker's own write of a command landing, not
+                            // a host statement, and does not count.
+                            bool routing_moved = false;
+                            for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+                                const auto& now = modulation_settings.routes[lfo][t];
+                                const auto& seen = legacy.routes[lfo][t];
+                                const auto& published =
+                                    audio_modulation.settings.routes[lfo][t];
+                                if ((now.enabled != seen.enabled
+                                     && now.enabled != published.enabled)
+                                    || (now.amount != seen.amount
+                                        && now.amount != published.amount))
+                                    routing_moved = true;
+                            }
+                            legacy.routes[lfo] = modulation_settings.routes[lfo];
+                            if (target_moved) legacy.target_command[lfo] = !routing_moved;
+                            else if (routing_moved) legacy.target_command[lfo] = false;
+                            if (lane[lfo] != legacy.depth[lfo])
+                                legacy.depth_command[lfo] = !routing_moved;
+                            else if (routing_moved)
+                                legacy.depth_command[lfo] = false;
+                            legacy.depth[lfo] = lane[lfo];
+                        }
+                        legacy.target = target;
+                        const auto bit = modulation_target_bit(modulation_settings.target);
+                        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+                            auto& routes = modulation_settings.routes[lfo];
+                            if (legacy.target_command[lfo])
+                                set_route_mask(routes, static_cast<std::uint16_t>(
+                                    (route_mask(routes)
+                                     & ~static_cast<std::uint16_t>(kModulationTargetMaskAll))
+                                    | bit));
+                            if (legacy.depth_command[lfo])
+                                for (auto& route : routes)
+                                    if (route.enabled) route.amount = lane[lfo];
                         }
                     }
                     if (should_reset_stream_history && block_offset == 0) {
@@ -2493,8 +2528,15 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // `kModulationTargetMaskUnset`, which reproduces that writer's behaviour
     // exactly — follow the kParamLfoTarget enum — rather than reading as an
     // empty selection that would silence modulation.
+    //
+    // Written from the parameter lanes it is derived from, not from the
+    // reconciled copy: that copy lags a host's parameter writes until the
+    // sync worker runs, so the same parameter values could otherwise save
+    // two different blobs depending on when the host asked.
     root.addMember("modulation_target_mask",
-                   static_cast<int32_t>(modulation_.target_mask));
+                   static_cast<int32_t>(param_store_
+                       ? modulation_from_store_().target_mask
+                       : modulation_.target_mask));
     // Per-LFO routing lives in its own parameter lanes (4020..4055) and rides
     // the base blob. This marker only says those lanes are authoritative; a
     // blob without it predates them and is migrated from the single target

@@ -1139,6 +1139,21 @@ private:
     LfoShapeFade audio_lfo_shape_fade_{};
     LfoShapeFade audio_lfo_2_shape_fade_{};
     bool         audio_lfo_shape_fade_primed_ = false;
+    // The legacy LFO command lanes (4003/4013 Depth, 4004 Target) as the
+    // audio owner last saw them, with the routing lanes beside them. A
+    // command is latched on the slice its lane moves -- unless that slice
+    // also moved the LFO's routing lanes, which then win -- and released when
+    // the routing lanes next move (which is how the worker's own write of the
+    // command lands). Audio-thread only; primed from the published state.
+    struct AudioLegacyLanes {
+        bool  primed = false;
+        float depth[2] = {0.0f, 0.0f};
+        int   target = 0;
+        std::array<LfoRoutes, 2> routes{};
+        bool  depth_command[2] = {false, false};
+        bool  target_command[2] = {false, false};
+    };
+    AudioLegacyLanes audio_legacy_lanes_{};
     // Each LFO's slewed audible level (enabled ? depth : 0); see
     // slew_lfo_level. Adopted without a ramp on the first block, like the
     // shape, so a session that opens with an LFO running starts on it.

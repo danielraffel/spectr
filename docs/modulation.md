@@ -371,6 +371,18 @@ machine allowed to run one).
 - **`4003` / `4013` (LFO / LFO 2 Depth) are command lanes** the same way: a
   change sets the Depth of every target that LFO currently drives. Never
   written back, so a host shows the last command, not the per-target Depths.
+- **A command only applies when it moves alone.** If the host writes any of an
+  LFO's routing lanes (a target's on/off or Depth) in the same pass as `4003`,
+  `4004` or `4013` -- a session restore, a CLAP `params.flush()`, a host
+  setting every parameter at once -- the routing lanes are the explicit
+  statement and the command is not applied to that LFO. Old automation only
+  ever moves the legacy lanes, so it still replays as a command. This makes the
+  result independent of how the host's writes and the parameter-sync pass
+  interleave (clap-validator's `state-reproducibility-flush`). The lanes stay
+  automatable rather than read-only so pre-1.0.7 automation keeps working.
+- `modulation_target_mask` is saved from the routing lanes themselves (not
+  from a reconciled copy), so identical parameter values always save an
+  identical blob.
 - `modulation_target_mask` keeps being saved (LFO 1's level targets) so an
   older Spectr opening a new session plays the nearest thing it can.
 

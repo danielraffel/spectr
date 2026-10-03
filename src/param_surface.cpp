@@ -731,7 +731,9 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     }
     // The routing lanes: the audio owner reads them straight off the cursor,
     // so this only stamps the cache (an unstamped slot reads as drift forever)
-    // and tells the editor.
+    // and tells the editor. It also records whether the host wrote any of an
+    // LFO's routing lanes in this pass: see the legacy commands below.
+    bool routing_written[kRouteLfoCount] = {false, false};
     for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
         for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
             const auto& route = next_modulation.routes[lfo][t];
@@ -743,10 +745,21 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
                 if (cached.load(std::memory_order_relaxed) != values[k]) {
                     cached.store(values[k], std::memory_order_relaxed);
                     modulation_changed = true;
+                    routing_written[lfo] = true;
                 }
             }
         }
     }
+    // The legacy lanes below (4004 Target, 4003/4013 Depth) are COMMANDS that
+    // rewrite routing lanes, which is only meaningful when they move ALONE --
+    // which is all automation written before per-LFO routing ever does. When
+    // the host writes an LFO's routing lanes in the same pass (restoring or
+    // setting every parameter at once: CLAP params.flush(), the same events
+    // through process(), a host snapshot) those lanes are the explicit,
+    // more specific statement, and the command is not applied to that LFO.
+    // Otherwise the result would depend on the order the host's writes and
+    // this pass happened to interleave in, and two hosts setting identical
+    // values could read back different ones.
     if (target_lane_changed) {
         // The host moved the legacy single-target lane (4004): automation
         // written before per-LFO routing existed, or a host edit of it. It
@@ -759,6 +772,10 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         // agree with what is heard.
         const auto bit = modulation_target_bit(next_modulation.target);
         for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+            if (routing_written[lfo]) {
+                legacy_route_masks[lfo] = route_mask(next_modulation.routes[lfo]);
+                continue;
+            }
             const std::uint16_t keep = static_cast<std::uint16_t>(
                 route_mask(next_modulation.routes[lfo])
                 & ~static_cast<std::uint16_t>(kModulationTargetMaskAll));
@@ -778,7 +795,7 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     // written before per-target depth existed -- sets the Depth of every target
     // that LFO currently drives. Never written back.
     for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
-        if (!depth_lane_changed[lfo]) continue;
+        if (!depth_lane_changed[lfo] || routing_written[lfo]) continue;
         const float depth = lfo == 0 ? next_modulation.depth : next_modulation.lfo2_depth;
         for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
             auto& route = next_modulation.routes[lfo][t];
