@@ -708,6 +708,17 @@ if(SPECTR_SHARED_SPECTRAL_FIXTURE)
     target_link_libraries(Spectr-shared-spectral-layers PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-layers COMMAND Spectr-shared-spectral-layers)
     set_tests_properties(Spectr-shared-spectral-layers PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    # Freeze's held wet source through the shared renderer, against the CPU
+    # linear-phase renderer. The plant installs no source on the shared
+    # renderer and must fail.
+    add_executable(Spectr-shared-spectral-freeze EXCLUDE_FROM_ALL test/test_shared_spectral_freeze.cpp)
+    target_link_libraries(Spectr-shared-spectral-freeze PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-freeze COMMAND Spectr-shared-spectral-freeze)
+    add_test(NAME Spectr-shared-spectral-freeze-negative-control COMMAND Spectr-shared-spectral-freeze)
+    set_tests_properties(Spectr-shared-spectral-freeze-negative-control PROPERTIES
+        ENVIRONMENT SPECTR_FREEZE_PLANT_DROP_SOURCE=1 WILL_FAIL TRUE)
+    set_tests_properties(Spectr-shared-spectral-freeze Spectr-shared-spectral-freeze-negative-control
+        PROPERTIES TIMEOUT 240 RESOURCE_LOCK pulp_gpu)
     add_executable(Spectr-shared-spectral-mix EXCLUDE_FROM_ALL test/test_shared_spectral_mix.cpp)
     target_link_libraries(Spectr-shared-spectral-mix PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-mix COMMAND Spectr-shared-spectral-mix)
@@ -3958,8 +3969,21 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
             --length 8 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
             --forbid-render-notifications --quiet)
+    # The click probes above score each edge against an unpressed control,
+    # so a freeze that never reaches the output passes them: there is no
+    # edge to click. The hold-presence check asks what the held sound IS --
+    # chord A held after the input moved to chord B, against the same render
+    # unpressed -- in each Latency mode, so a renderer that drops the freeze
+    # source fails it.
+    add_test(NAME Spectr-au-freeze-hold-tracking
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-presence --mode tracking --block 128)
+    add_test(NAME Spectr-au-freeze-hold-mixing
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-presence --mode mixing --block 256)
     set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
         Spectr-au-freeze-host-loop Spectr-au-freeze-host-long-loop
+        Spectr-au-freeze-hold-tracking Spectr-au-freeze-hold-mixing
         PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
 
     # LFO routing automation through the same in-process AU host: an Amount

@@ -768,13 +768,61 @@ int hold_check(Options o) {
     return bad ? 1 : 0;
 }
 
+// ── The hold reaches the output ────────────────────────────────────────────
+//
+// The edge probes score clicks against an unpressed control, so a freeze that
+// never reaches the output passes them: nothing changes, nothing clicks. This
+// asks what the held sound IS. Chord A plays for three seconds, then chord B
+// (no partial in common); Freeze is pressed 50 ms after the change, so the
+// hold's analysis -- each frame spans kFftSize samples -- is mostly chord A.
+// One second later, well inside the hold, the output must still be chord A.
+// The same render without the press is the instrument's control: it must
+// carry essentially no chord A there, or the measurement cannot tell a held
+// chord from a live one.
+int hold_presence(Options o) {
+    static constexpr double chord_a[] = {261.63, 329.63, 392.00, 523.25};
+    static constexpr double chord_b[] = {369.99, 466.16, 554.37, 739.99};
+    const double change = 3.0, seconds = 6.0, offset = 0.05;
+    Stereo input; input.resize(std::size_t(seconds * o.sr));
+    for (std::size_t n = 0; n < input.size(); ++n) {
+        const double t = double(n) / o.sr;
+        const auto& chord = t < change ? chord_a : chord_b;
+        double v = 0.0;
+        for (const double f : chord) v += 0.12 * std::sin(2.0 * kPi * f * t);
+        input.l[n] = input.r[n] = float(v);
+    }
+    if (o.length.empty()) o.length = "1/16";
+    const std::vector<Tap> taps{{std::size_t((change + offset) * o.sr), std::size_t((change + offset + 2.5) * o.sr)}};
+    double share[2] = {0, 0}, a_db[2] = {0, 0};
+    for (int pressed = 0; pressed < 2; ++pressed) {
+        const auto r = render(o, input, pressed ? &taps : nullptr);
+        const std::size_t from = std::size_t((change + offset + 0.6) * o.sr) + std::size_t(r.latency);
+        const std::size_t n = std::size_t(1.0 * o.sr);
+        double ea = 0.0, eb = 0.0;
+        for (const double f : chord_a) ea += goertzel_power(r.out.l, from, n, f, o.sr);
+        for (const double f : chord_b) eb += goertzel_power(r.out.l, from, n, f, o.sr);
+        share[pressed] = ea / (ea + eb + 1e-30);
+        a_db[pressed] = 10.0 * std::log10(ea + 1e-30);
+        std::printf("hold presence mode=%s block=%u Length %s %s: latency %d, chord A %5.1f%% "
+                    "of the chord energy (A %6.1f dB, B %6.1f dB)\n",
+                    o.mode.c_str(), o.block, o.length.c_str(), pressed ? "pressed  " : "unpressed",
+                    r.latency, 100.0 * share[pressed], a_db[pressed], 10.0 * std::log10(eb + 1e-30));
+    }
+    const bool control_ok = share[0] < 0.05;
+    const bool held = share[1] > 0.5 && a_db[1] > -60.0;
+    if (!control_ok) std::printf("NO VERDICT: the unpressed control carries chord A; the instrument cannot tell held from live\n");
+    std::printf("%s: the held chord %s the output\n", control_ok && held ? "OK" : "FAIL",
+                held ? "reaches" : "does NOT reach");
+    return control_ok && held ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     Options o;
     int repeat = 1;
     double max_cost_ratio = 0.0;
     bool forbid_notifications = false;
     double deadline = 0.0;
-    bool check_hold = false;
+    bool check_hold = false, check_presence = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         const auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : std::string(); };
@@ -797,11 +845,13 @@ int main(int argc, char** argv) {
         else if (a == "--forbid-render-notifications") forbid_notifications = true;
         else if (a == "--deadline") deadline = std::atof(next().c_str());
         else if (a == "--hold-check") check_hold = true;
+        else if (a == "--hold-presence") check_presence = true;
         else if (a == "--length") o.length = next();
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
 
     if (check_hold) return hold_check(o);
+    if (check_presence) return hold_presence(o);
 
     // Taps: press, hold 0.7-1.6 s, release, rest 0.8-1.5 s. The first press
     // waits for the capture window to fill.
