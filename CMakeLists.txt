@@ -3938,6 +3938,21 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
             --block 128 --max-cost-ratio 6)
     set_tests_properties(Spectr-au-routes-host
         PROPERTIES TIMEOUT 300 LABELS "modulation;au-host")
+    # An offline bounce (kAudioUnitProperty_OfflineRender set, rendered back
+    # to back) must equal a paced render of the same Intensity ramp and LFO
+    # routes sample for sample; the second test is its negative control and
+    # passes only when the unflagged bounce DIFFERS.
+    add_test(NAME Spectr-au-offline-bounce-equivalence
+        COMMAND Spectr-au-routes-probe --bundle "${_spectr_au_bundle}"
+            --block 128 --offline-equivalence)
+    add_test(NAME Spectr-au-offline-bounce-negative-control
+        COMMAND Spectr-au-routes-probe --bundle "${_spectr_au_bundle}"
+            --block 128 --offline-equivalence --no-offline-flag)
+    set_tests_properties(Spectr-au-offline-bounce-equivalence
+        Spectr-au-offline-bounce-negative-control
+        PROPERTIES TIMEOUT 300 LABELS "modulation;au-host")
+    set_tests_properties(Spectr-au-offline-bounce-negative-control
+        PROPERTIES PASS_REGULAR_EXPRESSION "\nDIFFER\n")
 
 endif()
 

@@ -245,7 +245,7 @@ OSStatus input_cb(void* ctx, AudioUnitRenderActionFlags*, const AudioTimeStamp*,
 struct Render { std::vector<float> out; std::vector<double> us; std::vector<std::size_t> start; };
 
 Render render(const Options& o, Input& input, std::vector<Event> events,
-              Pacing pacing = Pacing::paced) {
+              Pacing pacing = Pacing::paced, const std::vector<Event>& preset = {}) {
     AudioComponent comp = register_bundle(o.bundle);
     if (!comp) { std::fprintf(stderr, "cannot load %s\n", o.bundle.c_str()); std::exit(2); }
     AudioUnit au = nullptr;
@@ -262,6 +262,10 @@ Render render(const Options& o, Input& input, std::vector<Event> events,
     AudioUnitSetProperty(au, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maxf, sizeof(maxf));
     AURenderCallbackStruct cb{&input_cb, &input};
     AudioUnitSetProperty(au, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &cb, sizeof(cb));
+    // The session state a host restores before it renders: set, not
+    // scheduled, so it is the prepared state rather than block 0's automation.
+    for (const auto& e : preset)
+        AudioUnitSetParameter(au, e.id, kAudioUnitScope_Global, 0, e.value, 0);
     if (AudioUnitInitialize(au) != noErr) std::exit(2);
     if (pacing == Pacing::offline_flagged) {
         UInt32 offline = 1;
@@ -334,7 +338,8 @@ int offline_equivalence(const Options& o) {
     }
     const auto at = [&](double s) { return std::size_t(s * o.sr); };
     constexpr AudioUnitParameterID kIntensity = 5000;
-    std::vector<Event> ev;
+    std::vector<Event> preset;
+    std::vector<Event>& ev = preset;
     ev.push_back({0, kCenter, 3.15f});
     ev.push_back({0, kWidth, 1.2f});
     for (int b = 0; b < 32; ++b)
@@ -350,15 +355,22 @@ int offline_equivalence(const Options& o) {
     ev.push_back({0, route_amount(8), 0.6f});
     ev.push_back({0, route_on(4), 1.0f});
     ev.push_back({0, route_amount(4), 0.5f});
+    std::vector<Event> automation;
     for (std::size_t s = 0; s < at(seconds); s += o.block) {
         const double t = double(s) / o.sr;
         const double v = t < 3.0 ? t / 3.0 : 1.0 - 0.7 * std::min(1.0, (t - 3.0) / 2.0);
-        ev.push_back({s, kIntensity, float(100.0 * v)});
+        automation.push_back({s, kIntensity, float(100.0 * v)});
     }
 
     Input a_in = input, b_in = input;
-    const Render paced = render(o, a_in, ev, Pacing::paced);
-    const Render bounce = render(o, b_in, ev, o.offline_flag ? Pacing::offline_flagged : Pacing::unpaced);
+    const Pacing bounce_pacing = o.offline_flag ? Pacing::offline_flagged : Pacing::unpaced;
+    // Diagnostic: SPECTR_EQUIV_SELF=paced|bounce compares a pacing against a
+    // second render of itself, to tell which side of a mismatch is unstable.
+    const char* self = std::getenv("SPECTR_EQUIV_SELF");
+    const Pacing first_pacing = self && std::string(self) == "bounce" ? bounce_pacing : Pacing::paced;
+    const Pacing second_pacing = self && std::string(self) == "paced" ? Pacing::paced : bounce_pacing;
+    const Render paced = render(o, a_in, automation, first_pacing, preset);
+    const Render bounce = render(o, b_in, automation, second_pacing, preset);
     double max_diff = 0.0, ref_peak = 0.0;
     std::size_t first = paced.out.size(), differing = 0;
     for (std::size_t n = 0; n < paced.out.size(); ++n) {
