@@ -21,9 +21,15 @@ WHY THIS EXISTS
 WHAT IT CHANGES
 
     One line after the reconciler is created: install the hook, exactly as
-    @pulp/react's index.ts now does. An SDK whose frame pump does not call the
-    hook yet ignores it; Spectr's native-message `emit` (spectr-native-services
-    .js) calls it directly, so the hydrate is batched on every SDK.
+    @pulp/react's index.ts now does. Pulp SDK 0.895.1's WidgetBridge frame and
+    timer pump calls it, so with this line rAF and timer callbacks commit once;
+    Spectr's native-message `emit` (spectr-native-services.js) calls it
+    directly as well.
+
+    Kept on the 0.895.1 bump rather than regenerating runtime.js: the vendored
+    bundle also carries Spectr-only runtime transplants (hit slop, insert
+    index, overlay parent, pattern menu footer, ...) that a regenerated
+    @pulp/react bundle would not, so regeneration is a full re-import.
 
 DELETE WHEN
 
