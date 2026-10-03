@@ -112,8 +112,9 @@ block) and must fail on its gate.
 **The knobs.** MIX, INTENSITY and OUTPUT show the base value, never the
 modulated one: the value under the pointer is the value a drag starts from,
 and a needle that moved on its own would make every grab look like a jump.
-While an LFO drives one, its track ring is tinted violet (an existing path
-recoloured; no animation, so it costs nothing per frame). Grabbing a driven
+While an LFO drives one, its track ring and rim are tinted violet (existing
+nodes recoloured; no animation, so it costs nothing per frame; the rim because
+at 100 % the value arc covers the whole track). Grabbing a driven
 knob -- a drag, a wheel notch or an arrow key -- asks the override question
 (below) on the release of the press; **Keep modulating** lets the knob turn
 from then on without asking until the set of LFOs driving it changes, and the

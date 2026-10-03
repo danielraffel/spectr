@@ -22,8 +22,9 @@ _freeze_override.py). This patch:
     on one view. "Keep modulating" lets the knob turn from then on without
     asking again until the LFOs driving it change; "Turn off" switches the
     target off. The knob always shows its own (base) value; while an LFO
-    drives it, its track ring is tinted violet (an existing path recoloured,
-    no new node);
+    drives it, its track ring and rim are tinted violet (existing nodes
+    recoloured, no new node; the rim because at 100 % the value arc covers
+    the whole track);
   * replaces the Modulation submenu's single column with a fixed head (Back,
     the LFO switches, EDIT LFO, Shape, Rate and the sticky "LFO n TARGETS"
     heading) over a clipping viewport whose rows move by a negative margin --
@@ -484,6 +485,13 @@ function spectrModulationRouteList() {
         stroke: "rgba(255,255,255,0.14)", strokeWidth: 2, fill: "none",''',
         '''      React.createElement("path", { d: spectrKnobArc(c, c, radius, -SWEEP, SWEEP),
         stroke: modulated ? "rgba(190,150,255,0.55)" : "rgba(255,255,255,0.14)", strokeWidth: 2, fill: "none",''',
+    ),
+    (
+        "the knob's rim is tinted too, so a knob at its end stop still shows it",
+        '''        border: "1px solid rgba(255,255,255,0.10)",
+        cursor: "ns-resize"''',
+        '''        border: "1px solid " + (modulated ? "rgba(190,150,255,0.65)" : "rgba(255,255,255,0.10)"),
+        cursor: "ns-resize"''',
     ),
     (
         "MIX is the Mix target",

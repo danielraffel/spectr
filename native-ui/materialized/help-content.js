@@ -136,7 +136,7 @@ Right-click a band, open **Modulation**, and under **LFO 1 Targets** (or LFO 2) 
 
 A and B do nothing if that snapshot is empty, and Morph needs both. The list scrolls: the most-used targets are at the top, and the heading stays put while you scroll.
 
-The Intensity, Mix and Output knobs keep showing your setting while an LFO moves them; their outer ring turns violet to show that one is.
+The Intensity, Mix and Output knobs keep showing your setting while an LFO moves them; their ring and rim turn violet to show that one is.
 
 **Touching something an LFO is driving.** The LFO keeps running. Press LIVE / FROZEN while Freeze is modulated and your press holds until the LFO next switches; pick a LENGTH and it becomes the new centre; turn the Intensity, Mix or Output knob and your setting becomes the new centre. With **Ask before overriding modulation** on (Settings, under Modulation, on by default) Spectr asks first: **Keep modulating** does what you asked and leaves the LFO running, **Turn off** switches that LFO's target off and then does it. Return turns off, Escape keeps modulating, and **Don't ask again** turns the question off. For a knob, Keep modulating lets you turn it from then on without asking again.
 
