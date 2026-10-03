@@ -188,7 +188,11 @@ block's parameter cursor. See `include/spectr/level_controls.hpp`.
 - **Auto Gain** (`5001`): a post gain before Output trim, `-10 log10(sum w g^2 / sum w)`
   over the effective (pre-LFO) shape blended with Mix, weighted by a K-weighted
   pink reference; clamped to -24...+12 dB; 300 ms ramp; exactly 1.0 when off.
-  New instances default On (`kAutoGainDefaultForNewInstances`); a session saved
-  without the `level_controls` marker opens with it Off.
+  New instances default **Off** (`kAutoGainDefaultForNewInstances`): v1 judges
+  the drawn shape against a fixed reference spectrum, and on real program
+  material it can miss the loudness change by up to 14 LU, so AUTO is a
+  control to turn on when wanted until v2 weights the input's own spectrum. A
+  session saved without the `level_controls` marker opens with it Off too; a
+  session that saved it On keeps it On.
 - **Range** is not a parameter: it is editor state (`editor_range_db` in the
   supplemental blob, default 24) and never changes the sound.

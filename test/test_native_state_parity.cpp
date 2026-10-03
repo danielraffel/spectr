@@ -10297,7 +10297,7 @@ TEST_CASE("header tooltips appear after a delay and hide on press without blocki
     const std::pair<const char*, const char*> tips[] = {
         {"[data-spectr-mix]", "Mix: blend Spectr's sound with the original. Great with Freeze."},
         {"[data-spectr-output-trim]", "Output: final volume (dB)."},
-        {"[data-spectr-auto-gain]", "Auto Gain: keeps the level steady as you boost or cut."},
+        {"[data-spectr-auto-gain]", "Auto Gain: AUTO keeps the level steady — turn it on when you want it."},
         {"[data-spectr-freeze-length]", "Length: how much audio a freeze captures and loops, in bars."},
         {"[data-spectr-output-peak]", "Peak: the level leaving Spectr. Click to clear."},
     };
