@@ -46,7 +46,15 @@ layout remain stored but do not enter the active spectral mask.
 | `4040...4047` | LFO 2 targets on/off, same order |
 | `4048...4049` | Reserved LFO 2 target growth |
 | `4050...4057` | LFO 2 target Depths, same order |
-| `4058...4199` | Reserved modulation growth |
+| `4058...4059` | Reserved modulation growth |
+| `4060...4062` | LFO 1 level targets on/off: Intensity, Mix, Output |
+| `4063...4069` | Reserved LFO 1 level-target growth |
+| `4070...4072` | LFO 1 level target Depths, same order |
+| `4073...4079` | Reserved LFO 1 level-target growth |
+| `4080...4082` | LFO 2 level targets on/off, same order |
+| `4083...4089` | Reserved LFO 2 level-target growth |
+| `4090...4092` | LFO 2 level target Depths, same order |
+| `4093...4199` | Reserved modulation growth |
 | `4200...4203` | Macro 1...4 |
 | `4204...4299` | Reserved macro growth |
 | `5000` | Intensity, 0...100 % (scales the composed shape toward flat) |
@@ -55,6 +63,15 @@ layout remain stored but do not enter the active spectral mask.
 
 The gain and mute names are zero-padded (`Band 01 Gain` through
 `Band 64 Gain`) so hosts that flatten groups still sort them correctly.
+
+The level targets (ModulationTarget 8...10) came after the first block had
+shipped, so they take a block of their own rather than its two-ID headroom:
+for LFO `l` (0 or 1) and target `t`, on/off is `4020 + 20 l + t` for
+`t < 8` and `4060 + 20 l + (t - 8)` from Intensity on, and a target's Depth
+is always its on/off ID + 10 (`lfo_route_enabled_param_id` /
+`lfo_route_amount_param_id` in `param_surface.hpp`). Host names follow the
+first block: `LFO 1 Intensity`, `LFO 1 Intensity Depth`, ..., `LFO 2 Output
+Depth`.
 
 ## Display and recording
 

@@ -21,13 +21,17 @@ same lanes, so either follows the other live.
 | Bank | every band's level, together | +/-12 dB |
 | Band shift | slides the whole band set up/down in frequency, width kept | +/-1 decade (about 3.3 octaves) |
 | Band spread | spreads the bands wider/narrower about their centre | width x2 / x0.5 (log-frequency) |
+| Intensity | pulls the Intensity amount toward flat and back (unipolar) | all the way to flat at the wave's top |
+| Mix | pulls Mix toward dry and back (unipolar): the freeze blend | all the way to dry at the wave's top |
 | Morph | the A/B morph position, around the Morph slider | +/-0.5 of the morph range |
 | Freeze | LIVE / FROZEN, gated by the LFO | frozen the whole cycle (Depth = frozen duty) |
 | Length | the next freeze's loop length, around the user's LENGTH | +/-8 steps of the LENGTH list |
+| Output | the Output trim, after Auto Gain | +/-6 dB (clamped with the trim to +/-24 dB) |
 | Snapshot A / B | blends toward that captured snapshot and back (unipolar) | all the way there |
 
-The order also has slots for Intensity, Mix and Output, which become targets
-when the gain controls land; a build without them skips them.
+Parameter IDs: the first eight targets at 4020... (on/off) and 4030...
+(Depth), the three level targets in their own block at 4060... / 4070...
+(LFO 2 +20); see [parameter-surface.md](parameter-surface.md).
 
 Effective modulation of a target is **wave x that target's Depth**. There is no
 LFO-level depth. A target that is switched off contributes nothing whatever its
@@ -55,7 +59,65 @@ Morph and the snapshots reshape; Bank offsets the shape, so Bank + Morph is a
 morphing shape that also breathes. Authored mutes always survive: a muted band
 is excluded from modulation and no target toggles a mute.
 
-Freeze and Length do not touch the field (below).
+Freeze and Length do not touch the field (below), and neither do the level
+targets.
+
+## Intensity, Mix and Output
+
+These move a level control around the user's setting and never write it: the
+knob keeps showing its own value, its host lane keeps its automation.
+
+- **Intensity** and **Mix** are unipolar pulls, in proportion to the knob:
+  `effective = knob x (1 - c)`, `c = (wave + 1) / 2 x Depth` (summed over
+  LFOs, clamped to 0..1). Proportional rather than an offset so the full
+  Depth is always usable without clipping -- the knobs default to 100 %, where
+  an offset could only ever move one way -- and a knob set lower is scaled
+  rather than pinned at zero. At Depth 100 % Intensity reaches flat and Mix
+  reaches dry once per cycle. Over a frozen sound the Mix target is the freeze
+  blend: frozen and live alternate at the LFO rate.
+- **Output** is bipolar: `wave x Depth x 6 dB` added to the trim, the sum
+  clamped into the trim's +/-24 dB range. 6 dB each way (12 dB peak to peak)
+  is a clear tremolo without the level jumps a +/-12 dB swing on the final
+  gain would invite; two LFOs on Output add.
+
+**Auto Gain never cancels them.** It is computed from the unmodulated
+Intensity and Mix (the knobs), and the Output target is applied after it, on
+top of the trim, the same rule that keeps a Bank LFO audible: a level LFO stays
+audible as level.
+
+**Smoothing.** A route's level is slewed like every other target's; the
+Intensity route over 200 ms full scale, the Intensity knob's own slew, because
+a full-depth Intensity route switched on at a crest moves every band at once.
+The Output gain is ramped per sample from the previous slice's value to the
+LFO value at the END of the slice, so a running Output LFO is a smooth gain
+and slices of different lengths meet without a kink (evaluating at the slice
+start lagged a slice and steepened a short slice 2.7x). Mix rides the mixer's
+own ramp; Intensity restages the mask per block like the knob.
+
+Measured (`test/test_level_controls.cpp`, 48 kHz, 512-sample blocks):
+
+| Case | Result |
+| --- | --- |
+| Output, Depth 100 % / 50 %, square at its top, Auto Gain on (+12.000 dB make-up) | +6.000 / +3.000 dB, Auto Gain unchanged |
+| Intensity on a +12 dB shape, Depth 100 % / 50 % | 0.000 / +6.000 dB; Auto Gain -10.084 dB with and without the route |
+| Mix on a -24 dB shape, Depth 100 % / 50 % | 0.000 dB (dry) / -5.49 dB |
+| Output LFO running (sine, 1 beat, Depth 100 %): largest 1 ms envelope step | 0.075 dB (gate 0.2; per-block plant 0.80) |
+| Output switched on at a crest | 0.100 dB / ms |
+| Intensity switched on at a crest, +12 dB shape | 1.05 dB per block (Bank-LFO yardstick 2.3) |
+
+`Spectr-level-target-step-negative-control` re-runs the smoothness case with
+`SPECTR_MODULATION_PLANT=level-target-step` (the Output gain lands once per
+block) and must fail on its gate.
+
+**The knobs.** MIX, INTENSITY and OUTPUT show the base value, never the
+modulated one: the value under the pointer is the value a drag starts from,
+and a needle that moved on its own would make every grab look like a jump.
+While an LFO drives one, its track ring is tinted violet (an existing path
+recoloured; no animation, so it costs nothing per frame). Grabbing a driven
+knob -- a drag, a wheel notch or an arrow key -- asks the override question
+(below) on the release of the press; **Keep modulating** lets the knob turn
+from then on without asking until the set of LFOs driving it changes, and the
+user's new value is the new centre.
 
 ### Changes against 1.0.6
 
@@ -123,8 +185,8 @@ target?" -- **Keep modulating** applies the action and leaves the LFO running;
 **Turn off** writes that LFO's target lane off (a recorded host gesture) and
 then applies it. Return = Turn off, Escape = Keep modulating, and **Don't ask
 again** turns the Setting off. The dialog is generic
-(`window.spectrOverrideModulated(control, target, lfos, action)`), so a knob
-that becomes a target later asks the same question in its own name.
+(`window.spectrOverrideModulated(control, target, lfos, action)`); the Mix,
+Intensity and Output knobs ask it in their own names.
 
 ## Smoothness
 
@@ -223,12 +285,35 @@ only.
 
 ## The menu, measured
 
+### With eleven targets: the scrolling list
+
+Eleven targets are 22 rows (638 design px) under a 238 px head, past the
+780 px the menu may use. Pulp does not scroll an overflow container, so the
+submenu is the help guide's scroller: a fixed head -- Back, the LFO switches,
+EDIT LFO, Shape, Rate and the **LFO n TARGETS** heading, which therefore stays
+put -- over a viewport that clips the target rows at a numeric height (502 px
+at 990 x 645) and moves them by a negative margin. A clipping viewport also
+keeps a scrolled-away row from taking a press. The wheel (and a trackpad's
+small deltas) move the rows directly, without a re-render; a 4 pt Spectr
+scrollbar shows the position; toggling a target or switching EDIT LFO keeps
+the offset; a keyboard move (arrows, Home, End) scrolls its row fully into
+view; each opening starts at the top. Bank, Band shift, Band spread and
+Intensity with their Depth rows show without scrolling at 990 x 645.
+
+`test_native_state_parity.cpp`: "the Modulation submenu scrolls its eleven
+targets under a sticky heading" (order, fit, wheel, offset kept on toggle,
+keyboard reveal), and the all-controls first-press sweep covers the head and
+every target row at every wheel position. That sweep found menu slider tracks
+reaching 8 pt up into the switch row above; they reach 6 pt now.
+
+### Eight targets (1.0.7 development)
+
+
 Captured headless (`SPECTR_MODULATION_ROUTE_SHOTS=1 Spectr-native-shot
 --backend=skia`), in [`evidence/2026-10-02-lfo-routing/`](evidence/2026-10-02-lfo-routing/):
 the band-menu panel with all eight targets is 742 design px of the 780 the
 menu may use, so it neither scrolls nor clips, at the default 990 x 645 and the
 minimum 792 x 516 alike (the editor is pinned to its 1320 x 860 design box and
 scaled uniformly). Hiding off targets' Depth rows was therefore not needed.
-Three more targets (Intensity, Mix, Output: six rows) will take it past the
-limit; the runtime cannot scroll an overflow container, so that merge needs
-the menu to scroll by hand the way the help guide does.
+Three more targets (Intensity, Mix, Output: six rows) took it past the limit;
+see above.
