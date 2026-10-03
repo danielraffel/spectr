@@ -30,6 +30,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -58,6 +59,11 @@
 #include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
 
+#ifndef SPECTR_EDITOR_BACKGROUND_RGB
+// Defined by CMake from the materialized document's `:root { --bg }`; this
+// fallback only serves a translation unit built outside Spectr's targets.
+#define SPECTR_EDITOR_BACKGROUND_RGB 0x05070A
+#endif
 #ifndef SPECTR_FFT_SIZE
 #define SPECTR_FFT_SIZE 8192
 #endif
@@ -236,6 +242,20 @@ bool editor_is_standalone();
 /// classes gained it, 0 when the SDK already has its own. macOS only (0
 /// elsewhere); idempotent.
 int install_host_view_first_mouse();
+
+/// The editor's own background, 0xRRGGBB: the materialized document's
+/// `:root { --bg }`, read from the document at configure time
+/// (SPECTR_EDITOR_BACKGROUND_RGB). A plug-in host shows nothing but this colour
+/// until the document has mounted, so the editor opens looking like Spectr
+/// rather than like the SDK default.
+inline constexpr std::uint32_t kEditorBackgroundRgb = SPECTR_EDITOR_BACKGROUND_RGB;
+
+/// SDK shim -- delete on the Pulp SDK bump that defines
+/// PULP_FORMAT_HAS_EDITOR_BACKGROUND, where Processor::editor_background()
+/// does this for every host. Recolours the plug-in host view's backing layer,
+/// which is what the window server shows before the first frame. macOS only
+/// (no-op elsewhere); `native_view` is the host's NSView.
+void apply_host_view_background(void* native_view, std::uint32_t rgb);
 
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
@@ -435,6 +455,13 @@ public:
 
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
+#if defined(PULP_FORMAT_HAS_EDITOR_BACKGROUND)
+    /// Every frame a host paints before the document mounts, and the backing
+    /// layer behind them, is this colour.
+    std::optional<std::uint32_t> editor_background() const override {
+        return kEditorBackgroundRgb;
+    }
+#endif
     void on_view_opened(pulp::view::View& view) override;
     void on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) override;
     void on_view_closed(pulp::view::View& view) override;
