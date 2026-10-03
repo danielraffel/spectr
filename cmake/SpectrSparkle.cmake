@@ -11,7 +11,8 @@
 #             preview published as a prerelease can never reach release users.
 #   practice  https://github.com/danielraffel/spectr/releases/download/sparkle-practice/appcast-practice.xml
 #             a separate feed for rehearsing an update; release builds never read it.
-#   anything else (a file:// feed for a local rehearsal) via SPECTR_SPARKLE_FEED_URL.
+#   anything else via SPECTR_SPARKLE_FEED_URL: https://, or http://127.0.0.1:<port>/...
+#   for a local rehearsal. Sparkle refuses file:// feeds at run time.
 #
 # The PUBLIC half of the EdDSA key pair is below. The private half lives only in
 # ~/.config/pulp/secrets/sparkle/spectr_ed25519 and 1Password; it never enters
@@ -27,7 +28,7 @@ set(SPECTR_SPARKLE_CHANNEL "release" CACHE STRING
     "Which update feed Spectr.app reads: release, practice, or off")
 set_property(CACHE SPECTR_SPARKLE_CHANNEL PROPERTY STRINGS release practice off)
 set(SPECTR_SPARKLE_FEED_URL "" CACHE STRING
-    "Override the update feed URL (e.g. file:///path/appcast.xml for a local rehearsal)")
+    "Override the update feed URL (https://, or http://127.0.0.1:<port>/appcast.xml for a local rehearsal)")
 set(SPECTR_APP_BUILD_VERSION "" CACHE STRING
     "CFBundleVersion for Spectr.app only (default: PROJECT_VERSION); practice packages use a fourth component, e.g. 1.0.7.1")
 
@@ -147,6 +148,12 @@ function(spectr_configure_sparkle target kind)
             MACOSX_BUNDLE_BUNDLE_VERSION "${SPECTR_APP_BUILD_VERSION}")
     endif()
 
+    if(NOT _feed STREQUAL "" AND NOT _feed MATCHES "^https://" AND
+       NOT _feed MATCHES "^http://(127\\.0\\.0\\.1|localhost)(:[0-9]+)?/")
+        message(FATAL_ERROR
+            "Spectr: the Sparkle feed must be https:// or loopback http:// "
+            "(Sparkle refuses file://): ${_feed}")
+    endif()
     if(_feed STREQUAL "")
         message(STATUS "Spectr: Sparkle updater disabled for ${target}")
         return()

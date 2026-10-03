@@ -31,7 +31,7 @@ hand, and 1.0.7 is the first version that can update itself (to 1.0.8).
 |---|---|---|
 | release | `https://github.com/danielraffel/spectr/releases/latest/download/appcast.xml` | every shipping build (`com.pulp.spectr`) |
 | practice | `https://github.com/danielraffel/spectr/releases/download/sparkle-practice/appcast-practice.xml` | builds configured with `-DSPECTR_SPARKLE_CHANNEL=practice` |
-| local | `file:///…/appcast.xml` | builds configured with `-DSPECTR_SPARKLE_FEED_URL=file:///…` |
+| local | `http://127.0.0.1:8765/appcast-practice.xml` | builds configured with `-DSPECTR_SPARKLE_FEED_URL=http://127.0.0.1:8765/…` |
 
 Why the release feed is GitHub's `latest/download` URL: GitHub redirects it to
 the asset of that name on the newest release that is **not** a draft and **not**
@@ -160,15 +160,26 @@ Never with release builds: practice builds read the practice feed only.
      artifacts/Spectr-1.0.7.2.pkg artifacts/appcast-practice.xml
    ```
 
-   For a fully local rehearsal instead, configure with
-   `-DSPECTR_SPARKLE_FEED_URL=file:///Users/<you>/SparklePractice/appcast-practice.xml`
-   and pass `--download-url file:///Users/<you>/SparklePractice/Spectr-1.0.7.2.pkg`.
+   For a fully local rehearsal instead, serve the folder from loopback
+   (`cd ~/SparklePractice && python3 -m http.server 8765 --bind 127.0.0.1`),
+   configure with
+   `-DSPECTR_SPARKLE_FEED_URL=http://127.0.0.1:8765/appcast-practice.xml`, and
+   pass `--download-url http://127.0.0.1:8765/Spectr-1.0.7.2.pkg`. Sparkle
+   refuses `file://` feeds ("The download request URL must use http or https"),
+   and the configure step rejects them. An already-built practice app can also
+   be pointed at a feed without rebuilding:
+   `defaults write com.pulp.spectr SUFeedURL http://127.0.0.1:8765/appcast-practice.xml`
+   (Sparkle logs a warning; `defaults delete com.pulp.spectr SUFeedURL` undoes it).
 3. Install `Spectr-1.0.7.1.pkg` on a test Mac, open Spectr, choose
    **Spectr → Check for Updates…**. Expect the update window with What's New
    for 1.0.7 (build 1.0.7.2); **Install Update** asks for an admin password,
    installs the package and relaunches Spectr. **Spectr → Settings → About**
    still says 1.0.7; `defaults read /Applications/Spectr.app/Contents/Info CFBundleVersion`
    says `1.0.7.2`.
+   Measured on m5s with notarized 1.0.6.1/1.0.6.2 practice packages and a
+   loopback feed: the Developer-ID build ran Sparkle's launch check by itself
+   and opened the update window (586x402, beside the editor); with a feed that
+   offered only the installed build, no update window opened.
 4. Afterwards reinstall a release build by hand: a practice build number
    (1.0.7.2) sorts above the release (1.0.7), so a practice-updated test Mac
    would not be offered 1.0.7 itself.

@@ -176,7 +176,7 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--previous", help="existing feed (file or URL); 'none' to start fresh; "
                                        "default: the live feed for --channel")
-    ap.add_argument("--download-url", help="override the enclosure URL (e.g. file:// for a local rehearsal)")
+    ap.add_argument("--download-url", help="override the enclosure URL (e.g. http://127.0.0.1:8765/... for a local rehearsal)")
     ap.add_argument("--release-url", help="full release notes page (default: the GitHub release)")
     ap.add_argument("--app", type=Path, help="built Spectr.app, to read the deployment target")
     ap.add_argument("--min-os", help="sparkle:minimumSystemVersion (default: from --app)")
