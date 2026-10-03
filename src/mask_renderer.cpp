@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
@@ -33,6 +34,11 @@ namespace {
 /// a different latency on a different machine, which is the recall hazard the
 /// contract exists to prevent. 64 samples is 1.33 ms at 48 kHz.
 constexpr int kRenderBlock = kZeroLatencyRenderBlock;
+
+/// Layouts the audio thread has handed a design worker that no worker has
+/// designed and staged yet, summed over every zero-latency renderer in the
+/// process. See `spectr_mask_design_backlog_v1()`.
+std::atomic<std::uint64_t> g_mask_design_backlog{0};
 
 /// Magnitudes below this are floored before the logarithm that the cepstral
 /// reconstruction takes. A muted band therefore realises at -120 dB rather
@@ -476,18 +482,26 @@ private:
 /// Design — the cepstral reconstruction and the partition spectra it implies —
 /// runs on a worker. The audio thread only ever fills a render block, adopts a
 /// finished impulse response at a block boundary, and convolves. Nothing on
-/// the audio path reads a clock, allocates, or blocks: the schedule is
-/// expressed entirely in samples, which is what makes a faster-than-real-time
-/// bounce produce the same samples as real-time playback by construction
-/// rather than by a flag the host may not set.
+/// the audio path reads a clock, allocates, or blocks: the convolution and its
+/// crossfades are scheduled in samples.
+///
+/// WHICH block adopts a layout staged from the audio thread is not: it is the
+/// first render block after the worker finishes, and the worker runs on wall
+/// time (its lane also coalesces to the newest layout). A real-time host paces
+/// the callback, so the worker lands within a block. A consumer that renders
+/// blocks back to back can outrun it by a load-dependent number of blocks,
+/// adopting a ramp late and with intermediate layouts coalesced away. An AU v2
+/// host does not tell the plugin it is bouncing offline, so the renderer cannot
+/// wait for its worker there; an offline harness waits on
+/// `spectr_mask_design_backlog_v1()` instead.
 class ZeroLatencyMaskRenderer final : public MaskRenderer {
 public:
-    ~ZeroLatencyMaskRenderer() override { lane_.stop(); }
+    ~ZeroLatencyMaskRenderer() override { stop_lane_(); }
 
     [[nodiscard]] bool prepare(const MaskRendererConfig& config) override {
         if (!valid_config(config)) return false;
 
-        lane_.stop();
+        stop_lane_();
 
         const int bins = config.design_grid_size / 2 + 1;
         // The renderer states its own grid requirement rather than inheriting
@@ -640,8 +654,14 @@ public:
         for (int ch = 0; ch < channels_; ++ch)
             if (input[ch] == nullptr || output[ch] == nullptr) return false;
 
-        if (rt_layout_pending_.exchange(false, std::memory_order_acquire))
-            (void)lane_.try_spawn(rt_layout_);
+        if (rt_layout_pending_.exchange(false, std::memory_order_acquire)) {
+            const auto sequence =
+                requested_sequence_.load(std::memory_order_relaxed) + 1;
+            if (lane_.try_spawn(DesignTask{rt_layout_, sequence})) {
+                requested_sequence_.store(sequence, std::memory_order_relaxed);
+                g_mask_design_backlog.fetch_add(1, std::memory_order_acq_rel);
+            }
+        }
 
         mixer_.push_dry(input, channels_, num_samples);
 
@@ -820,12 +840,42 @@ private:
         return staged_any;
     }
 
-    static void handle_design_(void* context, const Layout& layout) {
+    /// One audio-thread handoff: the layout, and its position in the order
+    /// this renderer's audio thread staged them.
+    struct DesignTask {
+        Layout        layout;
+        std::uint64_t sequence = 0;
+    };
+
+    static void handle_design_(void* context, const DesignTask& task) {
         PULP_TRACE_SCOPE_NAMED("state",
                                "redesign filter bank (worker, audio-driven)");
         auto* self = static_cast<ZeroLatencyMaskRenderer*>(context);
         std::lock_guard<std::mutex> guard(self->design_mutex_);
-        (void)self->design_and_stage_(layout);
+        (void)self->design_and_stage_(task.layout);
+        // Retired only once the impulse is staged, so a zero backlog means
+        // the next audio block adopts it. The Latest lane coalesces, so this
+        // one design also retires every handoff it superseded; a re-read of
+        // the same task retires nothing.
+        self->retire_designed_through_(task.sequence);
+    }
+
+    void retire_designed_through_(std::uint64_t sequence) noexcept {
+        const auto designed = designed_sequence_.load(std::memory_order_relaxed);
+        if (sequence <= designed) return;
+        designed_sequence_.store(sequence, std::memory_order_relaxed);
+        g_mask_design_backlog.fetch_sub(sequence - designed,
+                                        std::memory_order_acq_rel);
+    }
+
+    /// Stop the worker and retire whatever it did not get to: a renderer that
+    /// is re-prepared or destroyed owes no design, so it must not leave the
+    /// process-wide backlog permanently non-zero. Control thread, with the
+    /// audio thread outside this renderer.
+    void stop_lane_() noexcept {
+        lane_.stop();
+        retire_designed_through_(
+            requested_sequence_.load(std::memory_order_relaxed));
     }
 
     MaskRendererConfig config_{};
@@ -870,7 +920,13 @@ private:
     std::atomic<unsigned long long> pending_generation_{0};
     std::atomic<unsigned long long> active_generation_{0};
 
-    pulp::format::BackgroundTaskLane<Layout, 8> lane_;
+    // Handoff bookkeeping for `spectr_mask_design_backlog_v1()`: the last
+    // sequence the audio thread handed the worker, and the last one a worker
+    // design (or a stop) retired.
+    std::atomic<std::uint64_t> requested_sequence_{0};
+    std::atomic<std::uint64_t> designed_sequence_{0};
+
+    pulp::format::BackgroundTaskLane<DesignTask, 8> lane_;
 };
 
 } // namespace
@@ -1173,3 +1229,7 @@ std::unique_ptr<MaskRenderer> make_mask_renderer(MaskRenderMode mode) {
 }
 
 } // namespace spectr
+
+extern "C" std::uint64_t spectr_mask_design_backlog_v1() noexcept {
+    return spectr::g_mask_design_backlog.load(std::memory_order_acquire);
+}

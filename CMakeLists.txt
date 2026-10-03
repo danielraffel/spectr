@@ -3877,6 +3877,12 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     # Intensity and Auto Gain as a DAW sees them: parameter info, scheduled
     # automation playback (smoothness vs the LFO yardstick), a set-parameter
     # jump, and Auto Gain's level, all through the built AU in-process.
+    # The probe renders blocks back to back, faster than the mask-design
+    # worker is scheduled on a loaded machine, so it waits after each block
+    # for that worker's backlog to drain -- the pacing a real-time host gives
+    # it. The counter is read-only and lock-free (mask_renderer.hpp).
+    target_link_options(${SPECTR_NATIVE_AU_TARGET} PRIVATE
+        "LINKER:-exported_symbol,_spectr_mask_design_backlog_v1")
     add_executable(Spectr-au-level-probe tools/au_level_probe.cpp)
     target_link_libraries(Spectr-au-level-probe PRIVATE
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
