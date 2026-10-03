@@ -219,6 +219,10 @@ block's parameter cursor. See `include/spectr/level_controls.hpp`.
   choice and a new instance shows them. Per session rather than a global app
   preference because a plug-in has no other storage it can count on in every
   host, and a project-level choice survives being opened on another machine.
+- **Ask before overriding modulation** (Settings > MODULATION and the header
+  context menus) is the same kind of editor state: `ask_before_override` in
+  the supplemental blob, default on, absent on an older session means on.
+  "Don't ask again" in the override dialog turns it off and that is saved too.
 - The **Preset** target's neighbourhood (the names and band gains of the
   presets around the current one) rides the supplemental blob as
   `preset_modulation`, so the target keeps playing when a session reopens.

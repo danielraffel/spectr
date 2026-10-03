@@ -10945,6 +10945,22 @@ TEST_CASE("operating a modulated Freeze asks, and both answers do what they say"
     CHECK(has(recorder.take(), "begin 3, set 3="));
     CHECK(runtime_value(rig, "String(globalThis.__spectrAskBeforeOverride)", "setting") == "false");
     CHECK(rig.store.open_gesture_count() == 0);
+
+    // The choice is the processor's and is saved with the session: a reopened
+    // project does not ask again, and its editor shows the Setting off. A new
+    // instance asks (default on).
+    CHECK_FALSE(rig.processor.ask_before_override());
+    const auto blob = rig.processor.serialize_plugin_state();
+    NativeEditorRig reloaded(blob);
+    CHECK_FALSE(reloaded.processor.ask_before_override());
+    settle(reloaded.clock, 8);
+    CHECK(runtime_value(reloaded, "String(globalThis.__spectrAskBeforeOverride)",
+                        "reloaded-setting") == "false");
+    NativeEditorRig fresh;
+    CHECK(fresh.processor.ask_before_override());
+    settle(fresh.clock, 8);
+    CHECK(runtime_value(fresh, "String(globalThis.__spectrAskBeforeOverride)",
+                        "fresh-setting") == "true");
     storage.require_unchanged();
 }
 

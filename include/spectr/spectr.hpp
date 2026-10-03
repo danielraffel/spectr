@@ -632,6 +632,12 @@ public:
     [[nodiscard]] bool show_tooltips() const noexcept;
     void set_show_tooltips(bool enabled) noexcept;
 
+    /// "Ask before overriding modulation" (Settings > MODULATION, and the
+    /// header context menus): whether operating a control an LFO drives asks
+    /// first. On by default. Saved with the session like Show tooltips.
+    [[nodiscard]] bool ask_before_override() const noexcept;
+    void set_ask_before_override(bool enabled) noexcept;
+
     /// The editor's Range: the plot's vertical scale and the reach of a
     /// full-height edit, in dB (3, 6, 12 or 24; level_controls.hpp). Editor
     /// state persisted in the supplemental blob, never a host parameter, and
@@ -1260,6 +1266,7 @@ private:
     bool keyboard_shortcuts_in_daw_ = false;
     // Guarded by processing_state_mutex_. Editor-only.
     bool show_tooltips_ = true;
+    bool ask_before_override_ = true;
     // Which canonical slots each macro drives. Guarded by
     // processing_state_mutex_ and published in AudioModulationState.
     //

@@ -938,6 +938,16 @@ void Spectr::set_show_tooltips(bool enabled) noexcept {
     show_tooltips_ = enabled;
 }
 
+bool Spectr::ask_before_override() const noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return ask_before_override_;
+}
+
+void Spectr::set_ask_before_override(bool enabled) noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    ask_before_override_ = enabled;
+}
+
 bool Spectr::set_modulation_target_mask(std::uint8_t mask) noexcept {
     // Legacy "Destinations" selection (both LFOs, the four field
     // destinations). It is now expressed as the per-LFO routing lanes, each

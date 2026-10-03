@@ -2496,6 +2496,9 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // "Show tooltips". Absent on an older writer; readers treat absence as ON,
     // the default.
     root.addMember("show_tooltips", show_tooltips_);
+    // "Ask before overriding modulation". Absent on an older writer; readers
+    // treat absence as ON, the default.
+    root.addMember("ask_before_override", ask_before_override_);
     // The Preset destination's neighbourhood, as the editor last resolved it,
     // so the target keeps playing when the session reopens. Absent: none.
     if (preset_neighbours_.valid) {
@@ -2967,6 +2970,12 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         if (!flag.isBool()) return false;
         new_show_tooltips = flag.getBool();
     }
+    bool new_ask_before_override = true;
+    if (root.hasObjectMember("ask_before_override")) {
+        const auto& flag = root["ask_before_override"];
+        if (!flag.isBool()) return false;
+        new_ask_before_override = flag.getBool();
+    }
 
     // Level controls (see serialize_plugin_state). A malformed Range falls
     // back to the default rather than losing the session: it is a view.
@@ -3113,6 +3122,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_applies_viewport_ = new_morph_applies_viewport;
         keyboard_shortcuts_in_daw_ = new_keyboard_shortcuts_in_daw;
         show_tooltips_ = new_show_tooltips;
+        ask_before_override_ = new_ask_before_override;
         preset_neighbours_ = new_preset_neighbours;
         preset_names_ = new_preset_names;
         preset_centre_id_ = new_preset_centre;
