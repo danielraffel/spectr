@@ -394,3 +394,47 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 ^Spectr-menu-arrow-step-selftest$
 ^Spectr-menu-arrow-step-negative-control$
 ^Spectr-menu-arrow-step-negative-control-eager-cursor$
+
+# Release and update tooling. Spectr.app's version, the Sparkle framework's
+# placement (in the app, never in a plug-in) and the appcast tooling all have
+# gates of their own; none of them ran in CI until they were named here.
+^Spectr-release-version
+^Spectr-sparkle-
+
+# Freeze and modulation targets (test/test_modulation_freeze.cpp): the gate's
+# duty, Hold for Length, the Length/Bands/Preset destinations, and the offline
+# render that must equal a paced one -- plus the offline wait budget.
+^"?the Freeze
+^"?each Freeze-target engage
+^"?rhythmic Freeze-target
+^"?Length steps the next freeze
+^"?a playing loop is never resized
+^"?a press while the Freeze target
+^"?Hold for Length
+^"?the Bands destination
+^"?the Preset destination
+^"?switching the Bands route off
+^"?an offline render of the Bands destination
+^"?an offline flag left set
+^"?prepare clears a host offline flag
+# Session migration: a session saved before a control existed opens the way it
+# sounded.
+^"?a pre-routing session
+^"?the legacy LFO Depth lane
+^"?A session saved before Auto Gain
+# Level controls (test/test_level_controls.cpp) and their negative controls.
+^"?Auto Gain
+^"?Intensity
+^"?Level parameters
+^"?Level destinations
+^"?Level targets are smooth
+^"?Mix blends the latency-aligned dry
+^"?The Output target moves the level
+^"?The Intensity target
+^"?The Mix target
+^Spectr-level-
+# The AU v2 entry under an offline bounce: paced and offline renders match
+# sample for sample, the unflagged control differs, and the host's offline
+# flag does not outlive its session. Needs Spectr-au-routes-probe, which the
+# workflow builds for exactly these.
+^Spectr-au-offline-

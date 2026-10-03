@@ -240,7 +240,7 @@ jobs:
             Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP \
             Spectr-test Spectr-native-n1-test Spectr-editor-authority-test \
             Spectr-artifact-test Spectr-native-standalone-artifact-test \
-            Spectr-native-shot
+            Spectr-native-shot Spectr-au-routes-probe
 
       # MUST run after the build: catch_discover_tests registers Catch2 cases
       # in a POST_BUILD step, so before the build the ctest list holds only the

@@ -7,7 +7,12 @@ standalone app and Spectr Diagnostics), so updating the app updates everything.
 
 Only Spectr.app contains the updater. The plug-in bundles never do: they run
 inside a DAW's process, and a self-updater there would be both wrong and
-unsafe. `ctest -R Spectr-sparkle-bundles` proves it for every build.
+unsafe. `ctest -R Spectr-sparkle-bundles` proves it for any build you run it
+on, and the M5 product-acceptance workflow runs it -- with the other
+`Spectr-sparkle-*` gates and `Spectr-release-version` -- on every pull request
+into `main` that can reach the product (a docs-only change skips the build).
+It does not run on a release build by itself: `package.sh` runs the signed
+variant, `check_sparkle.py bundles --signed`, on the package it makes.
 
 ## What a user sees
 
