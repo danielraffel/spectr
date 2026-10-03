@@ -21,114 +21,57 @@ const bool g_au_v2_owns_resize_grip = [] {
 
 }  // namespace
 
-// ── Offline-render shim: DELETE ON THE SDK BUMP that ships it in Pulp ────────
+// ── Offline-render session lifetime ──────────────────────────────────────────
 //
-// A host bouncing faster than realtime (Logic, REAPER) writes
-// kAudioUnitProperty_OfflineRender before the render. Pulp 0.895.1's AU v2
-// adapter does not implement that property, so the write fails and every
-// block reports realtime; Spectr then cannot tell it must wait for its
-// mask-design worker, and a bounce diverges from playback. Pulp now handles
-// the property itself and reports it as ProcessContext::is_offline() (the
-// "report AU v2 offline bounces through ProcessContext" change). Once the
-// pinned SDK contains it, delete this class and go back to PULP_AU_PLUGIN:
-// the base GetProperty/SetProperty then answer the property and Spectr reads
-// the flag from ProcessContext.
+// Pulp's AU v2 adapter answers kAudioUnitProperty_OfflineRender and reports it
+// as ProcessContext::is_offline(). Its flag lives until the host writes it
+// back, which is the property's contract -- but an offline block makes Spectr
+// wait (up to kOfflineBlockWaitBudget) for its design workers, so a host that
+// set the flag for one bounce and never cleared it would hold every later
+// realtime block. This subclass adds only that lifetime: a host write survives
+// exactly ONE re-initialization (a host may set the flag and THEN re-initialize
+// for the bounce, or set it before the first Initialize), and a write older
+// than the previous Initialize is a previous session's and is dropped. Reset
+// deliberately does not clear it: hosts reset at transport start, which can
+// come after they set the flag for the bounce. Delete this class, and go back
+// to PULP_AU_PLUGIN, when Pulp's adapter scopes the flag to a session itself.
 namespace spectr::detail {
 
-class OfflineRenderShimAU : public pulp::format::au::PulpAUEffect {
+class OfflineSessionAU : public pulp::format::au::PulpAUEffect {
 public:
-    explicit OfflineRenderShimAU(AudioComponentInstance ci) : PulpAUEffect(ci) {}
-
-    OSStatus GetPropertyInfo(AudioUnitPropertyID id, AudioUnitScope scope,
-                             AudioUnitElement element, UInt32& size,
-                             bool& writable) override {
-        if (id == kAudioUnitProperty_OfflineRender) {
-            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
-            size = sizeof(UInt32);
-            writable = true;
-            return noErr;
-        }
-        return PulpAUEffect::GetPropertyInfo(id, scope, element, size, writable);
-    }
-
-    OSStatus GetProperty(AudioUnitPropertyID id, AudioUnitScope scope,
-                         AudioUnitElement element, void* data) override {
-        if (id == kAudioUnitProperty_OfflineRender) {
-            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
-            if (!data) return kAudioUnitErr_InvalidPropertyValue;
-            auto* processor = spectr_processor_();
-            const bool offline =
-                processor ? processor->host_offline_render() : offline_render_;
-            *static_cast<UInt32*>(data) = offline ? 1u : 0u;
-            return noErr;
-        }
-        return PulpAUEffect::GetProperty(id, scope, element, data);
-    }
+    explicit OfflineSessionAU(AudioComponentInstance ci) : PulpAUEffect(ci) {}
 
     OSStatus SetProperty(AudioUnitPropertyID id, AudioUnitScope scope,
                          AudioUnitElement element, const void* data,
                          UInt32 size) override {
-        if (id == kAudioUnitProperty_OfflineRender) {
-            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
-            if (!data || size < sizeof(UInt32)) return kAudioUnitErr_InvalidPropertyValue;
-            offline_render_ = *static_cast<const UInt32*>(data) != 0;
+        const OSStatus status = PulpAUEffect::SetProperty(id, scope, element, data, size);
+        if (id == kAudioUnitProperty_OfflineRender && status == noErr)
             offline_written_since_initialize_ = true;
-            if (auto* processor = spectr_processor_())
-                processor->set_host_offline_render(offline_render_);
-            return noErr;
-        }
-        return PulpAUEffect::SetProperty(id, scope, element, data, size);
-    }
-
-    // The flag's lifetime. `Spectr::prepare()` clears it, so a host that set
-    // it for one bounce and never wrote it back cannot leave every later
-    // realtime block waiting on the design workers. A host write survives
-    // exactly ONE re-initialization: a host may set the flag and THEN
-    // re-initialize for the bounce (to raise MaximumFramesPerSlice, say), or
-    // set it before the first Initialize, and that write must reach the
-    // bounce. A write older than the previous Initialize is a previous
-    // session's and is dropped.
-    //
-    // Reset is deliberately NOT a clear: hosts reset at transport start, which
-    // can come after they set the flag for the bounce, and clearing there
-    // would silently turn the bounce realtime-paced. A flag that outlives its
-    // bounce until the next re-initialization costs at most
-    // `spectr::kOfflineBlockWaitBudget` per block, and only while a worker
-    // actually has work outstanding.
-    OSStatus Initialize() override {
-        const OSStatus status = PulpAUEffect::Initialize();
-        if (status == noErr && offline_written_since_initialize_) {
-            if (auto* processor = spectr_processor_())
-                processor->set_host_offline_render(offline_render_);
-        } else {
-            offline_render_ = false;
-        }
-        offline_written_since_initialize_ = false;
         return status;
     }
 
-private:
-    bool offline_render_ = false;
-    bool offline_written_since_initialize_ = false;
-
-    // The adapter keeps its Processor private; the editor-context property is
-    // the public seam that hands it out, so the shim reads it from there.
-    spectr::Spectr* spectr_processor_() {
-        pulp::format::au::PulpEditorContext context;
-        if (PulpAUEffect::GetProperty(pulp::format::au::kPulpEditorContextProperty,
-                                      kAudioUnitScope_Global, 0, &context) != noErr)
-            return nullptr;
-        return dynamic_cast<spectr::Spectr*>(context.processor);
+    OSStatus Initialize() override {
+        if (!offline_written_since_initialize_) {
+            const UInt32 realtime = 0;
+            PulpAUEffect::SetProperty(kAudioUnitProperty_OfflineRender,
+                                      kAudioUnitScope_Global, 0, &realtime,
+                                      sizeof(realtime));
+        }
+        offline_written_since_initialize_ = false;
+        return PulpAUEffect::Initialize();
     }
+
+private:
+    bool offline_written_since_initialize_ = false;
 };
 
 }  // namespace spectr::detail
 
 #define SPECTR_AU_V2_PLUGIN(ClassName, factory_fn)                              \
     PULP_REGISTER_PLUGIN(factory_fn)                                           \
-    class ClassName : public spectr::detail::OfflineRenderShimAU {              \
+    class ClassName : public spectr::detail::OfflineSessionAU {                 \
     public:                                                                    \
-        explicit ClassName(AudioComponentInstance ci) : OfflineRenderShimAU(ci) {} \
+        explicit ClassName(AudioComponentInstance ci) : OfflineSessionAU(ci) {} \
     };                                                                         \
     AUSDK_COMPONENT_ENTRY(ausdk::AUBaseFactory, ClassName)
 

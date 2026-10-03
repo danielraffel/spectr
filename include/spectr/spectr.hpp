@@ -459,13 +459,12 @@ public:
         pulp::midi::MidiBuffer& midi_out,
         const pulp::format::ProcessContext& ctx) override;
 
-    /// Host offline-render intent from a format adapter that does not yet
-    /// put it on `ProcessContext` (the AU v2 entry's shim). Any thread.
+    /// Host offline-render intent from a caller that cannot put it on
+    /// `ProcessContext` (every shipping adapter now does). Any thread.
     /// Either this or `ProcessContext::is_offline()` makes a block offline.
     /// `prepare()` clears it: the flag describes one render session, and a
     /// host that never writes it back must not leave every later realtime
-    /// block waiting on the workers. The shim re-asserts a value the host
-    /// set before initializing.
+    /// block waiting on the workers.
     void set_host_offline_render(bool offline) noexcept {
         host_offline_render_.store(offline, std::memory_order_relaxed);
     }
