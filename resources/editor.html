@@ -3780,19 +3780,26 @@ window.PatternManager = PatternManager;`,
       '        status={status}\n        selectedPatternName={selectedPatternName}\n        renderMode={renderMode}\n        gpuAudio={gpuAudio}\n        onRenderModeChange={setRenderModeFromUi}\n        dspMode={dspMode}',
       'GPU status receives app projection');
     replaceSpectrSource(
-      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
-      'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, renderMode, gpuAudio, onRenderModeChange, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
+      // Earlier patches rewrite this signature: 'chrome receives selected preset name' inserts
+      // selectedPatternName after status and 'preset dropdown save action
+      // prop' inserts onSavePattern. Match the signature as it stands when
+      // this patch runs, and only through snapshotStatus, so a later prop
+      // added to the tail does not orphan this patch again.
+      'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus,',
+      'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, renderMode, gpuAudio, onRenderModeChange, snapshotStatus,',
       'GPU chrome receives native mode and delivery status');
     replaceSpectrSource(
-      '      <StatusBanner message={status} />',
-      '      <StatusBanner message={status} />\n      <GpuAudioStatusPill enabled={settings.showGpuStats !== false} renderMode={renderMode} gpuAudio={gpuAudio} />',
+      // 'status banner receives the persistent setting' has already added the
+      // disabled prop by the time this runs.
+      '      <StatusBanner message={status} disabled={settings.statusInfo === false} />',
+      '      <StatusBanner message={status} disabled={settings.statusInfo === false} />\n      <GpuAudioStatusPill enabled={settings.showGpuStats !== false} renderMode={renderMode} gpuAudio={gpuAudio} />',
       'GPU status pill sits above the bottom rail');
     replaceSpectrSource(
       '      </div>\n\n      {/* Status banner */}',
       '      </div>\n\n      <GpuModeIndicator renderMode={renderMode} gpuAudio={gpuAudio} onChange={onRenderModeChange} />\n\n      {/* Status banner */}',
       'GPU mode indicator follows zoom readout');
     replaceSpectrSource(
-      'function StatusBanner({ message }) {',
+      'function StatusBanner({ message, disabled }) {',
       String.raw`function GpuModeIndicator({ renderMode, gpuAudio, onChange }) {
   const mixing = renderMode === 'linear_phase';
   const available = mixing && gpuAudio && gpuAudio.available === true;
@@ -3838,7 +3845,7 @@ function GpuAudioStatusPill({ enabled, renderMode, gpuAudio }) {
   </div>;
 }
 
-function StatusBanner({ message }) {`,
+function StatusBanner({ message, disabled }) {`,
       'GPU mode and status pill components');
 
     // Mirror imperative cursor writes into the React-owned style prop. The
