@@ -152,6 +152,13 @@ function(spectr_configure_sparkle target kind)
         return()
     endif()
     message(STATUS "Spectr: Sparkle updater in ${target}, feed ${_feed}")
+    # Sparkle is MIT-licensed (with bsdiff, sais-lite and ed25519 notices); the
+    # app that redistributes it carries its license text.
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/licenses/Sparkle-LICENSE.txt
+        PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Licenses)
+    target_sources(${target} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/licenses/Sparkle-LICENSE.txt)
     set(SPECTR_SPARKLE_EMBEDDED ON PARENT_SCOPE)
     set(SPECTR_SPARKLE_FEED_EFFECTIVE "${_feed}" PARENT_SCOPE)
     if(COMMAND pulp_add_sparkle)

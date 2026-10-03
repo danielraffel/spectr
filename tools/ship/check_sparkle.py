@@ -92,6 +92,8 @@ def app_errors(app: Path, public_key: str, feed: str | None) -> list[str]:
     if plist.get("SUPublicEDKey") != public_key:
         errors.append(f"{app.name}: SUPublicEDKey is {plist.get('SUPublicEDKey')!r}, "
                       f"expected {public_key!r}")
+    if not (app / "Contents" / "Resources" / "Licenses" / "Sparkle-LICENSE.txt").is_file():
+        errors.append(f"{app.name}: does not carry Sparkle's license (Resources/Licenses)")
     fw = app / "Contents" / "Frameworks" / "Sparkle.framework"
     if not (fw / "Versions" / "B" / "Sparkle").is_file():
         errors.append(f"{app.name}: no Contents/Frameworks/Sparkle.framework")

@@ -173,6 +173,15 @@ Never with release builds: practice builds read the practice feed only.
    (1.0.7.2) sorts above the release (1.0.7), so a practice-updated test Mac
    would not be offered 1.0.7 itself.
 
+## Third-party notice
+
+Sparkle 2.10.0 (MIT; its distribution also carries bsdiff BSD-2-Clause,
+sais-lite MIT and ed25519 zlib notices) is downloaded at configure time with a
+pinned SHA-256 and redistributed inside Spectr.app. Its full license text is
+`resources/licenses/Sparkle-LICENSE.txt`, installed as
+`Spectr.app/Contents/Resources/Licenses/Sparkle-LICENSE.txt`; `check_sparkle.py`
+fails a build that omits it.
+
 ## Future: updating the plug-ins inside a host
 
 Not built yet. Today a plug-in is updated by updating the app (one package
