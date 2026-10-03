@@ -84,8 +84,18 @@ def app_min_os(app: Path) -> str:
     return m.group(1)
 
 
-def fetch_previous(source: str | None, channel: str, dest: Path) -> bool:
+def fetch_previous(source: str | None, channel: str, dest: Path, new_feed: bool = False) -> bool:
+    """Copy the feed this item is added to into `dest`; False when there is none.
+
+    Starting a feed from nothing drops every item it held, so it is never a
+    fallback: a 404 on the live feed usually means the newest release lacks
+    its appcast.xml (or is still a draft), and a fresh feed written then would
+    erase every older version from it. Only --new-feed starts one.
+    """
     if source == "none":
+        if channel == "release" and not new_feed:
+            fail("--previous none would start the release feed from nothing; pass "
+                 "--new-feed as well if that is really what you mean")
         return False
     if source is None:
         source = RELEASE_FEED if channel == "release" else PRACTICE_FEED
@@ -96,8 +106,13 @@ def fetch_previous(source: str | None, channel: str, dest: Path) -> bool:
             return True
         except urllib.error.HTTPError as e:
             if e.code == 404:
-                print(f"make_appcast: no feed at {source} yet; starting a new one")
-                return False
+                if new_feed:
+                    print(f"make_appcast: no feed at {source}; starting a new one (--new-feed)")
+                    return False
+                fail(f"no feed at {source} (HTTP 404). Refusing to start a new one: that "
+                     f"would drop every item the feed held. Usually the newest published "
+                     f"release lacks appcast.xml or is still a draft -- fix that, or pass "
+                     f"--previous <file>. Pass --new-feed only for the very first feed.")
             fail(f"could not fetch {source}: {e}")
     p = Path(source)
     if not p.is_file():
@@ -199,6 +214,9 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--previous", help="existing feed (file or URL); 'none' to start fresh; "
                                        "default: the live feed for --channel")
+    ap.add_argument("--new-feed", action="store_true",
+                    help="allow starting a feed from nothing (a 404 on --previous, or "
+                         "--previous none on the release channel); never needed after the first")
     ap.add_argument("--download-url", help="override the enclosure URL (e.g. http://127.0.0.1:8765/... for a local rehearsal)")
     ap.add_argument("--release-url", help="full release notes page (default: the GitHub release)")
     ap.add_argument("--app", type=Path, help="built Spectr.app, to read the deployment target")
@@ -253,7 +271,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         prev = Path(tmp) / "previous.xml"
-        have_prev = fetch_previous(args.previous, args.channel, prev)
+        have_prev = fetch_previous(args.previous, args.channel, prev, args.new_feed)
         if pulp_supports_key_file(args.pulp):
             work = Path(tmp) / "appcast.xml"
             if have_prev:
