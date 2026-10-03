@@ -181,6 +181,14 @@ public:
     /// Audio thread, lock-free: hand a deferred staged layout to the worker.
     virtual void flush_design_handoff() noexcept {}
 
+    /// Audio thread, lock-free: the audio path drove the mask this block
+    /// (it staged a layout, or left its last one live on purpose). The next
+    /// `flush_design_handoff()` then counts as a request even with nothing
+    /// staged, so a control-thread publish asked for earlier in the block --
+    /// a parameter sync's base mask -- is superseded instead of replacing the
+    /// layout the audio path believes is live.
+    virtual void claim_mask_this_block() noexcept {}
+
     /// Monotonic counter of the magnitude the renderer is currently
     /// realising. Advances when a newly published or staged layout has been
     /// adopted into the audio path. Diagnostic: a renderer whose adoption is

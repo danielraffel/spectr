@@ -638,7 +638,10 @@ public:
         if (ordinal == 0) return publish_layout(layout);
         PULP_TRACE_SCOPE_NAMED("state", "redesign filter bank (sync worker)");
         std::lock_guard<std::mutex> guard(design_mutex_);
-        if (ordinal < last_staged_ordinal_) {
+        // Superseded by any NEWER request, staged or not: deciding by whether
+        // that request has finished yet would make the answer -- and what the
+        // caller remembers as published -- depend on the scheduler.
+        if (ordinal < request_ordinal_.load(std::memory_order_acquire)) {
             if (superseded) *superseded = true;
             return true;
         }
@@ -793,7 +796,14 @@ public:
     }
 
     void defer_design_handoff(bool defer) noexcept override { defer_handoff_ = defer; }
-    void flush_design_handoff() noexcept override { hand_off_staged_layout_(); }
+    void flush_design_handoff() noexcept override {
+        const bool staged = rt_layout_pending_.load(std::memory_order_acquire);
+        hand_off_staged_layout_();
+        if (claimed_ && !staged)
+            request_ordinal_.fetch_add(1, std::memory_order_acq_rel);
+        claimed_ = false;
+    }
+    void claim_mask_this_block() noexcept override { claimed_ = true; }
 
     // Offline only, and deliberately outside the render-path region: it
     // sleeps. See MaskRenderer::await_staged_designs().
@@ -987,6 +997,7 @@ private:
     std::atomic<std::uint64_t> designed_sequence_{0};
     // Audio-thread only. See MaskRenderer::defer_design_handoff().
     bool defer_handoff_ = false;
+    bool claimed_ = false;
     // Request ordering (MaskRenderer::reserve_request_ordinal). The last
     // staged ordinal is guarded by design_mutex_.
     std::atomic<std::uint64_t> request_ordinal_{0};

@@ -2109,6 +2109,9 @@ void Spectr::process(
                         last_staged_layout_ = automated;
                         last_staged_layout_valid_ = true;
                     }
+                    // This path owns the live mask: a sync publish of the
+                    // base mask asked for this block must not replace it.
+                    renderer->claim_mask_this_block();
                     // The Mix destination pulls Mix toward dry (the freeze
                     // blend); the mixer's own ramp carries each block's move.
                     renderer->set_mix(modulated_mix(
