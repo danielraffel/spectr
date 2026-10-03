@@ -166,8 +166,9 @@ std::vector<std::uint8_t> make_three_island_state() {
     // what carries that mode across the real format boundary.
     REQUIRE(processor->set_render_mode(spectr::MaskRenderMode::linear_phase));
     // The island readings are the mask's own, so the authored state carries
-    // Auto Gain off (it is on for new instances), and the restore across the
-    // format boundary proves that choice survives too.
+    // Auto Gain off explicitly -- whatever a new instance defaults to
+    // (kAutoGainDefaultForNewInstances) -- and the restore across the format
+    // boundary proves that choice survives too.
     author.state().set_value(spectr::kParamAutoGain, 0.0f);
     spectr::BandField islands;
     for (auto& band : islands.bands) band.muted = true;

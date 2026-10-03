@@ -37,6 +37,14 @@ The updater can only update a copy that already contains it. **1.0.7 is the
 first release with Sparkle**: anyone on 1.0.6 or earlier installs 1.0.7 by
 hand, and 1.0.7 is the first version that can update itself (to 1.0.8).
 
+**"Preview" means two different things here.** A *preview build* is the
+shipping app (`com.pulp.spectr`) handed out before a release, numbered
+`X.Y.(Z-1).9nnn` (see [Version numbers](#version-numbers)) and published, if at
+all, as a GitHub prerelease. The *preview identity*
+(`SPECTR_NATIVE_PREVIEW_IDENTITY`) is a different app altogether, with its own
+name and bundle id, installed beside the shipping one; it reads no release
+feed. "Publish previews as prereleases" below is about preview builds.
+
 ## Feeds
 
 | Feed | URL | Who reads it |

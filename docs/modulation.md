@@ -415,10 +415,12 @@ knobs refuse the wheel while a menu is open (delete on that SDK bump).
 `test_native_state_parity.cpp`: "while a band menu is open no wheel reaches the
 plot behind it".
 
-### With eleven targets: the scrolling list
+### With thirteen targets: the scrolling list
 
-Eleven targets are 22 rows (638 design px) under a 238 px head, past the
-780 px the menu may use. Pulp does not scroll an overflow container, so the
+Thirteen targets are up to 26 rows -- a switch each, and a Depth row under
+each one that is on; about 754 design px at the 29 px a row measured with
+eleven -- plus Hold for Length under the Freeze target while it is on, under
+a 238 px head, well past the 780 px the menu may use. Pulp does not scroll an overflow container, so the
 submenu is the help guide's scroller: a fixed head -- Back, the LFO switches,
 EDIT LFO, Shape, Rate and the **LFO n TARGETS** heading, which therefore stays
 put -- over a viewport that clips the target rows at a numeric height (502 px
@@ -430,7 +432,7 @@ the offset; a keyboard move (arrows, Home, End) scrolls its row fully into
 view; each opening starts at the top. Bank, Band shift, Band spread and
 Intensity with their Depth rows show without scrolling at 990 x 645.
 
-`test_native_state_parity.cpp`: "the Modulation submenu scrolls its eleven
+`test_native_state_parity.cpp`: "the Modulation submenu scrolls its thirteen
 targets under a sticky heading" (order, fit, wheel, offset kept on toggle,
 keyboard reveal), and the all-controls first-press sweep covers the head and
 every target row at every wheel position. That sweep found menu slider tracks
