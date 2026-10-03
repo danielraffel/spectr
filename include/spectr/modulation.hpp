@@ -25,12 +25,14 @@ enum class ModulationTarget : std::uint8_t {
     Intensity,         ///< scales the Intensity amount toward flat (unipolar)
     Mix,               ///< pulls Mix toward dry (unipolar): the freeze blend
     Output,            ///< moves Output trim in dB, after Auto Gain (bipolar)
+    Bands,             ///< steps the visible band count around the user's
+    Preset,            ///< morphs toward neighbouring presets' band fields
 };
 
 /// Destinations the legacy single-target lane can name (Bank..Morph).
 inline constexpr std::size_t kLegacyModulationTargetCount = 4;
 /// Every routable destination.
-inline constexpr std::size_t kModulationTargetCount = 11;
+inline constexpr std::size_t kModulationTargetCount = 13;
 /// Internal LFOs.
 inline constexpr std::size_t kLfoCount = 2;
 
@@ -45,7 +47,7 @@ inline constexpr std::uint8_t kModulationTargetMaskUnset = 0xFF;
 inline constexpr std::uint8_t kModulationTargetMaskAll = 0x0F;
 /// Every routable destination selected. Routing masks are 16-bit: there are
 /// more destinations than the 8 bits the legacy `target_mask` uses.
-inline constexpr std::uint16_t kModulationRouteMaskAll = 0x07FF;
+inline constexpr std::uint16_t kModulationRouteMaskAll = 0x1FFF;
 
 /// One LFO -> destination route. `amount` IS this destination's depth
 /// (effective modulation = wave x amount); there is no LFO-level depth, so one
@@ -206,7 +208,8 @@ inline constexpr double route_slew_seconds(std::size_t target) noexcept {
 /// Destinations that shape the band field or the window, and so feed the
 /// modulated-field publication. Freeze and Length act on the freeze source.
 inline constexpr bool modulation_target_moves_field(std::size_t target) noexcept {
-    return target < static_cast<std::size_t>(ModulationTarget::Freeze);
+    return target < static_cast<std::size_t>(ModulationTarget::Freeze)
+        || target == static_cast<std::size_t>(ModulationTarget::Preset);
 }
 
 /// The level @p seconds later, moving toward @p target at full scale per
@@ -525,6 +528,65 @@ inline constexpr int modulated_length_index(int base_index, float coordinate,
     const int offset = static_cast<int>(steps < 0.0f ? steps - 0.5f : steps + 0.5f);
     const int index = base_index + offset;
     return index < 0 ? 0 : (index >= list_size ? list_size - 1 : index);
+}
+
+// ── Bands and Preset ─────────────────────────────────────────────────────
+
+/// The band-count options, ascending (Layout's values).
+inline constexpr std::array<int, 5> kBandCountOptions{32, 40, 48, 56, 64};
+/// How far either way, in steps of the band-count list, a full-depth Bands
+/// route moves the visible band count: the whole list from the middle.
+inline constexpr int kBandsModulationSteps = 4;
+
+/// Index into kBandCountOptions of @p count, or -1.
+inline constexpr int band_count_option_index(int count) noexcept {
+    for (std::size_t i = 0; i < kBandCountOptions.size(); ++i)
+        if (kBandCountOptions[i] == count) return static_cast<int>(i);
+    return -1;
+}
+
+/// The band count the Bands destination plays: @p base_count (the user's
+/// BANDS) moved by `round(coordinate x 4)` steps of the list, clamped to it.
+/// The same rounding as the Length destination.
+inline constexpr int modulated_band_count(int base_count, float coordinate) noexcept {
+    const int base = band_count_option_index(base_count);
+    if (base < 0) return base_count;
+    const float steps = coordinate * static_cast<float>(kBandsModulationSteps);
+    const int offset = static_cast<int>(steps < 0.0f ? steps - 0.5f : steps + 0.5f);
+    const int last = static_cast<int>(kBandCountOptions.size()) - 1;
+    const int index = base + offset;
+    return kBandCountOptions[static_cast<std::size_t>(
+        index < 0 ? 0 : (index > last ? last : index))];
+}
+
+/// A Bands count change fades the shape to flat over this long, switches the
+/// count, and fades it back over this long again.
+inline constexpr double kBandsFadeSeconds = 0.08;
+
+/// Escape hatch: true leaves the Bands destination's lanes in place but plays
+/// the user's band count, should the structural change ever prove unsafe on a
+/// host. Off: measured click-free and inside the cost gate.
+inline constexpr bool kBandsTargetDisabled = false;
+
+/// How far either way, in presets, a full-depth Preset route reaches.
+inline constexpr int kPresetModulationSteps = 4;
+/// Neighbouring presets the audio owner holds: the current one +- the reach.
+inline constexpr std::size_t kPresetNeighbourCount =
+    2 * static_cast<std::size_t>(kPresetModulationSteps) + 1;
+
+/// Where in the preset list the Preset destination sits, as a continuous
+/// offset from the current preset (0 = the current field, as drawn), clamped
+/// to the @p below / @p above neighbours that exist.
+inline float preset_modulation_offset(float coordinate, int below, int above) noexcept {
+    if (!std::isfinite(coordinate)) return 0.0f;
+    const float offset = coordinate * static_cast<float>(kPresetModulationSteps);
+    return std::clamp(offset, -static_cast<float>(below), static_cast<float>(above));
+}
+
+/// The preset the Preset destination is nearest, as a whole step from the
+/// current one: what the preset dropdown names while it moves.
+inline int preset_modulation_step(float offset) noexcept {
+    return static_cast<int>(std::lround(offset));
 }
 
 /// Whether @p settings move anything: an LFO that is on, has depth, and has a

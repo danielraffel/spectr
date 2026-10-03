@@ -356,6 +356,8 @@ choc::value::Value make_modulation_payload_(const Spectr& plugin) {
         routes.addArrayElement(route);
     }
     modulation.addMember("routes", routes);
+    // Freeze "Hold for Length" (4140): shown under the Freeze target.
+    modulation.addMember("freeze_hold_for_length", plugin.freeze_hold_for_length());
     return modulation;
 }
 
@@ -1173,6 +1175,44 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 return EditorBridge::err_response("enabled must be a boolean");
             plugin.set_keyboard_shortcuts_in_daw(flag.getBool());
             return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
+        });
+
+    // The Preset destination's neighbourhood. The editor resolves each
+    // neighbouring preset at the current band count -- exactly what applying
+    // it would write -- and sends their names and gains here whenever the
+    // current preset, the band count or the library changes.
+    //   { centre: id, below: n, above: n, names: [9], gains: [9][<=64] }
+    bridge.add_handler("preset_modulation_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("centre") || !p["centre"].isString()
+                || !p.hasObjectMember("names") || !p["names"].isArray()
+                || !p.hasObjectMember("gains") || !p["gains"].isArray())
+                return EditorBridge::err_response("centre, names and gains required");
+            if (p["names"].size() != kPresetNeighbourCount
+                || p["gains"].size() != kPresetNeighbourCount)
+                return EditorBridge::err_response("names and gains must hold 9 presets");
+            std::array<std::string, kPresetNeighbourCount> names{};
+            PresetModulationNeighbours neighbours{};
+            for (std::uint32_t i = 0; i < kPresetNeighbourCount; ++i) {
+                const auto& name = p["names"][i];
+                if (!name.isString()) return EditorBridge::err_response("names must be strings");
+                names[i] = std::string(name.getString());
+                const auto& row = p["gains"][i];
+                if (!row.isArray() || row.size() > kMaxBands)
+                    return EditorBridge::err_response("gains rows must hold at most 64 values");
+                for (std::uint32_t b = 0; b < row.size(); ++b) {
+                    const auto& v = row[b];
+                    if (!(v.isFloat() || v.isInt()))
+                        return EditorBridge::err_response("gains must be numbers");
+                    neighbours.gains[i][b] = static_cast<float>(v.getWithDefault<double>(0.0));
+                }
+            }
+            neighbours.below = p.hasObjectMember("below")
+                ? static_cast<int>(p["below"].getWithDefault<std::int64_t>(0)) : 0;
+            neighbours.above = p.hasObjectMember("above")
+                ? static_cast<int>(p["above"].getWithDefault<std::int64_t>(0)) : 0;
+            plugin.set_preset_modulation(std::string(p["centre"].getString()), names, neighbours);
+            return EditorBridge::ok_response();
         });
 
     // "Show tooltips": an editor preference persisted in the plugin state.

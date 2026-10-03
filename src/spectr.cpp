@@ -460,7 +460,8 @@ void Spectr::publish_audio_modulation_state_() noexcept {
         .morph_derived = morph_derived_,
         .morph_overrides =
             morph_derived_ ? morph_overrides_.to_ullong() : 0ull,
-        .macro_members = {}};
+        .macro_members = {},
+        .preset = preset_neighbours_};
     for (std::size_t m = 0; m < kMacroCount; ++m)
         published.macro_members[m] = macro_members_[m].to_ullong();
     audio_modulation_publication_.write(published);
@@ -1303,6 +1304,7 @@ void Spectr::process(
         transport_time_sig_denominator_.store(denominator, std::memory_order_relaxed);
         const double seconds = modulated_freeze_seconds_(tempo, numerator, denominator);
         freeze_source_.set_hold_seconds(seconds);
+        audio_freeze_length_seconds_ = seconds;
         // Longer than the rings reach: ask the worker for bigger ones. A
         // lock-free spawn, at most once per size; the source adopts them at
         // a hop boundary.
@@ -1594,6 +1596,37 @@ void Spectr::process(
                             gate = gate || lfo_freeze_gate(fades[lfo]->to, phases[lfo],
                                                            route.amount);
                         }
+                        // Hold for Length: a rising edge of the gate latches
+                        // the freeze for exactly the effective Length (the
+                        // length this freeze takes), then releases; the
+                        // LFO's off-phase is ignored meanwhile, and the next
+                        // rising edge after the release latches again. The
+                        // release lands on the slice boundary at or after the
+                        // Length (at most one slice late).
+                        {
+                            const bool hold_mode = driven
+                                && cursor.value(kParamFreezeHoldForLength) >= 0.5f;
+                            const bool rising = gate && !freeze_hold_gate_last_;
+                            freeze_hold_gate_last_ = gate;
+                            const auto slice = static_cast<std::int64_t>(
+                                out_slice.num_samples());
+                            if (!hold_mode) {
+                                freeze_hold_remaining_ = 0;
+                            } else if (freeze_hold_remaining_ > 0) {
+                                gate = true;
+                                freeze_hold_remaining_ -= slice;
+                            } else if (rising) {
+                                const double rate = ctx.sample_rate > 0.0
+                                    ? ctx.sample_rate : sample_rate_;
+                                freeze_hold_remaining_ = std::max<std::int64_t>(1,
+                                    std::llround(audio_freeze_length_seconds_ * rate))
+                                    - slice;
+                                if (freeze_hold_remaining_ < 0) freeze_hold_remaining_ = 0;
+                                gate = true;
+                            } else {
+                                gate = false;
+                            }
+                        }
                         const bool param_frozen = cursor.value(kParamFreeze) >= 0.5f;
                         const int press = freeze_press_request_.exchange(
                             -1, std::memory_order_relaxed);
@@ -1620,6 +1653,13 @@ void Spectr::process(
                         freeze_source_.set_frozen(frozen);
                         freeze_effective_.store(frozen, std::memory_order_relaxed);
                         freeze_gate_driven_.store(driven, std::memory_order_relaxed);
+                        // The length this engage takes is the one the LENGTH
+                        // label shows while it holds.
+                        if (frozen && !freeze_engage_last_)
+                            freeze_engaged_length_index_.store(
+                                freeze_modulated_length_index_.load(std::memory_order_relaxed),
+                                std::memory_order_relaxed);
+                        freeze_engage_last_ = frozen;
                     }
                     // Slew each LFO's audible level, then let the slewed
                     // value stand in for enabled + depth everywhere below:
@@ -1676,7 +1716,52 @@ void Spectr::process(
                     const auto composed = compose_internal_modulation(
                         host_field, audio_modulation.snapshots, host_morph,
                         modulation_settings, wave, wave2);
-                    const BandField& audible = composed.field;
+                    // ── Preset destination ──────────────────────────────
+                    // Moves the composed field toward the neighbouring
+                    // presets' band gains (menu order) by the coordinate x
+                    // kPresetModulationSteps presets: 0 is the field as it
+                    // stands, edits included; between two presets the gains
+                    // interpolate, the morph's own rule. Mutes are never
+                    // moved (preserve_authored_mutes). Stack storage, no
+                    // allocation.
+                    BandField preset_blended;
+                    const BandField* audible_source = &composed.field;
+                    {
+                        constexpr auto kPresetT =
+                            static_cast<std::size_t>(ModulationTarget::Preset);
+                        const bool preset_driven =
+                            audio_modulation.preset.valid
+                            && (modulation_settings.routes[0][kPresetT].enabled
+                                || modulation_settings.routes[1][kPresetT].enabled);
+                        const float offset = preset_driven
+                            ? preset_modulation_offset(composed.coords.value[kPresetT],
+                                                       audio_modulation.preset.below,
+                                                       audio_modulation.preset.above)
+                            : 0.0f;
+                        audio_preset_driven_.store(preset_driven, std::memory_order_relaxed);
+                        audio_preset_step_.store(preset_modulation_step(offset),
+                                                 std::memory_order_relaxed);
+                        if (preset_driven && offset != 0.0f) {
+                            const int lo = static_cast<int>(std::floor(offset));
+                            const float frac = offset - static_cast<float>(lo);
+                            const auto gain_at = [&](int step, std::size_t band) {
+                                return step == 0
+                                    ? composed.field.bands[band].gain_db
+                                    : audio_modulation.preset.gains[static_cast<std::size_t>(
+                                          kPresetModulationSteps + step)][band];
+                            };
+                            preset_blended = composed.field;
+                            for (std::size_t band = 0; band < kMaxBands; ++band) {
+                                const float a = gain_at(lo, band);
+                                const float b = frac > 0.0f ? gain_at(lo + 1, band) : a;
+                                preset_blended.bands[band].gain_db = std::clamp(
+                                    a + (b - a) * frac, kBandGainMinDb, kBandGainMaxDb);
+                            }
+                            preserve_authored_mutes(preset_blended, host_field);
+                            audible_source = &preset_blended;
+                        }
+                    }
+                    const BandField& audible = *audible_source;
 
                     const auto authored_viewport = decode_viewport(
                         cursor.value(kParamViewportCenter),
@@ -1771,8 +1856,55 @@ void Spectr::process(
                     modulated_field_was_active_ = modulation_active;
 
                     pulp::signal::SpectralBandLayout automated;
-                    automated.active_bands = static_cast<std::uint32_t>(
-                        visible_count(automated_layout));
+                    // ── Bands destination ───────────────────────────────
+                    // Steps the band count the mask is built with around the
+                    // user's BANDS. Structural, but the same path a host
+                    // automating the band-count lane takes: the layout holds
+                    // all 64 slots preallocated, slots past the user's count
+                    // are neutral, and the renderer's swap crossfade carries
+                    // the restage between the two banks.
+                    {
+                        constexpr auto kBandsT =
+                            static_cast<std::size_t>(ModulationTarget::Bands);
+                        const int user_count =
+                            static_cast<int>(visible_count(automated_layout));
+                        const bool bands_driven =
+                            modulation_settings.routes[0][kBandsT].enabled
+                            || modulation_settings.routes[1][kBandsT].enabled;
+                        const int wanted = bands_driven && !kBandsTargetDisabled
+                            ? modulated_band_count(user_count,
+                                                   composed.coords.value[kBandsT])
+                            : user_count;
+                        // Click-free: a count change crossfades through the
+                        // flat response. The shape fades to flat over
+                        // kBandsFadeSeconds at the old count, the count
+                        // switches while nothing is shaped (so the switch
+                        // is silent), and the shape fades back in at the new
+                        // count. Every step on the way is a gain restage the
+                        // renderer carries like an Intensity move. A switch
+                        // straight across -- what a host's band-count lane
+                        // does -- sprays broadband energy (measured -13 dB
+                        // against a 2 kHz tone, test_modulation_freeze.cpp).
+                        const double fade_step =
+                            (static_cast<double>(out_slice.num_samples())
+                             / (ctx.sample_rate > 0.0 ? ctx.sample_rate : sample_rate_))
+                            / kBandsFadeSeconds;
+                        if (audio_bands_playing_ <= 0 || !bands_driven) {
+                            audio_bands_playing_ = wanted;
+                            audio_bands_fade_ = 1.0f;
+                        } else if (wanted != audio_bands_playing_) {
+                            audio_bands_fade_ = std::max(0.0f, audio_bands_fade_
+                                - static_cast<float>(fade_step));
+                            if (audio_bands_fade_ <= 0.0f) audio_bands_playing_ = wanted;
+                        } else if (audio_bands_fade_ < 1.0f) {
+                            audio_bands_fade_ = std::min(1.0f, audio_bands_fade_
+                                + static_cast<float>(fade_step));
+                        }
+                        automated.active_bands =
+                            static_cast<std::uint32_t>(audio_bands_playing_);
+                        audio_bands_shown_.store(bands_driven ? audio_bands_playing_ : 0,
+                                                 std::memory_order_relaxed);
+                    }
                     // In Spectr the viewport is a DSP input, not a camera:
                     // it sets the band↔frequency mapping the mask is built
                     // from. So when a morph moves the window, the audio owner
@@ -1831,7 +1963,8 @@ void Spectr::process(
                         // alone, so it never cancels the LFO.
                         if (!level_plant("intensity-ignored"))
                             apply_intensity(automated, modulated_intensity(
-                                audio_intensity_, composed.coords));
+                                audio_intensity_, composed.coords)
+                                * audio_bands_fade_);
 
                         // Auto Gain compensates the shape the user DREW (the
                         // pre-LFO field, after morph and macros) at this
@@ -2084,6 +2217,13 @@ void Spectr::process(
             freeze_source_.set_frozen(frozen);
             freeze_effective_.store(frozen, std::memory_order_relaxed);
             freeze_gate_driven_.store(false, std::memory_order_relaxed);
+            if (frozen && !freeze_engage_last_)
+                freeze_engaged_length_index_.store(
+                    freeze_modulated_length_index_.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+            freeze_engage_last_ = frozen;
+            audio_bands_shown_.store(0, std::memory_order_relaxed);
+            audio_preset_driven_.store(false, std::memory_order_relaxed);
             freeze_param_last_ = frozen;
             freeze_user_override_ = false;
         }
@@ -2238,6 +2378,26 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // "Show tooltips". Absent on an older writer; readers treat absence as ON,
     // the default.
     root.addMember("show_tooltips", show_tooltips_);
+    // The Preset destination's neighbourhood, as the editor last resolved it,
+    // so the target keeps playing when the session reopens. Absent: none.
+    if (preset_neighbours_.valid) {
+        auto preset = choc::value::createObject("SpectrPresetModulation");
+        preset.addMember("centre", preset_centre_id_);
+        preset.addMember("below", static_cast<std::int32_t>(preset_neighbours_.below));
+        preset.addMember("above", static_cast<std::int32_t>(preset_neighbours_.above));
+        auto names = choc::value::createEmptyArray();
+        auto gains = choc::value::createEmptyArray();
+        for (std::size_t i = 0; i < kPresetNeighbourCount; ++i) {
+            names.addArrayElement(preset_names_[i]);
+            auto row = choc::value::createEmptyArray();
+            for (const float g : preset_neighbours_.gains[i])
+                row.addArrayElement(static_cast<double>(g));
+            gains.addArrayElement(row);
+        }
+        preset.addMember("names", names);
+        preset.addMember("gains", gains);
+        root.addMember("preset_modulation", preset);
+    }
     // Level controls. `level_controls` marks a writer that knows Intensity
     // and Auto Gain: a session WITHOUT it predates them, and opens with Auto
     // Gain off so its level does not change on reload (the parameters
@@ -2647,6 +2807,42 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_keyboard_shortcuts_in_daw = flag.getBool();
     }
 
+    // The Preset destination's neighbourhood; a malformed one is dropped
+    // rather than failing the whole state (it is rebuilt on the next preset).
+    PresetModulationNeighbours new_preset_neighbours{};
+    std::array<std::string, kPresetNeighbourCount> new_preset_names{};
+    std::string new_preset_centre;
+    if (root.hasObjectMember("preset_modulation")) {
+        const auto& preset = root["preset_modulation"];
+        bool ok = preset.isObject() && preset.hasObjectMember("centre")
+            && preset["centre"].isString() && preset.hasObjectMember("names")
+            && preset["names"].isArray() && preset["names"].size() == kPresetNeighbourCount
+            && preset.hasObjectMember("gains") && preset["gains"].isArray()
+            && preset["gains"].size() == kPresetNeighbourCount;
+        for (std::size_t i = 0; ok && i < kPresetNeighbourCount; ++i) {
+            const auto& row = preset["gains"][static_cast<std::uint32_t>(i)];
+            ok = row.isArray() && row.size() == kMaxBands && preset["names"][static_cast<std::uint32_t>(i)].isString();
+            for (std::size_t b = 0; ok && b < kMaxBands; ++b) {
+                const auto& v = row[static_cast<std::uint32_t>(b)];
+                ok = v.isFloat() || v.isInt();
+                if (ok) new_preset_neighbours.gains[i][b] = std::clamp(
+                    static_cast<float>(v.getWithDefault<double>(0.0)), kBandGainMinDb, kBandGainMaxDb);
+            }
+            if (ok) new_preset_names[i] = std::string(preset["names"][static_cast<std::uint32_t>(i)].getString());
+        }
+        if (ok) {
+            new_preset_centre = std::string(preset["centre"].getString());
+            new_preset_neighbours.below = std::clamp(
+                static_cast<int>(preset["below"].getWithDefault<std::int64_t>(0)), 0, kPresetModulationSteps);
+            new_preset_neighbours.above = std::clamp(
+                static_cast<int>(preset["above"].getWithDefault<std::int64_t>(0)), 0, kPresetModulationSteps);
+            new_preset_neighbours.valid = !new_preset_centre.empty();
+        } else {
+            new_preset_neighbours = {};
+            new_preset_names = {};
+        }
+    }
+
     bool new_show_tooltips = true;
     if (root.hasObjectMember("show_tooltips")) {
         const auto& flag = root["show_tooltips"];
@@ -2799,6 +2995,9 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_applies_viewport_ = new_morph_applies_viewport;
         keyboard_shortcuts_in_daw_ = new_keyboard_shortcuts_in_daw;
         show_tooltips_ = new_show_tooltips;
+        preset_neighbours_ = new_preset_neighbours;
+        preset_names_ = new_preset_names;
+        preset_centre_id_ = new_preset_centre;
         editor_range_db_ = new_editor_range_db;
         if (new_freeze_custom_length)
             (void)set_freeze_custom_length(*new_freeze_custom_length);
