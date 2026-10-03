@@ -20,8 +20,9 @@
 // Pacing: a host renders in real time, and the mask a parameter change stages
 // is designed on a worker that keeps up with that. This probe renders blocks
 // back to back, so after each one it waits until the bundle's
-// spectr_mask_design_backlog_v1() reads zero -- every staged layout designed
-// and waiting for the next block -- instead of measuring how far a loaded
+// spectr_mask_design_backlog_v1() and spectr_param_sync_backlog_v1() read
+// zero -- every staged layout designed and waiting for the next block --
+// instead of measuring how far a loaded
 // machine let the render outrun that worker.
 //
 // Usage: Spectr-au-level-probe --bundle path/to/Spectr.component [--mode tracking|mixing]
@@ -50,6 +51,7 @@ constexpr AudioUnitParameterID kBandGainBase = 1000;
 
 using BacklogFn = std::uint64_t (*)();
 BacklogFn design_backlog = nullptr;
+BacklogFn param_sync_backlog = nullptr;
 
 // Block until the mask-design worker has caught up with every layout the last
 // render staged. Event-driven on the counter, not a fixed delay: it returns as
@@ -57,7 +59,7 @@ BacklogFn design_backlog = nullptr;
 // run rather than a silently stale measurement.
 void await_design_worker() {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    while (design_backlog() != 0) {
+    while (design_backlog() != 0 || param_sync_backlog() != 0) {
         if (std::chrono::steady_clock::now() > deadline) {
             std::fprintf(stderr, "mask-design worker never drained its backlog (%llu)\n",
                          static_cast<unsigned long long>(design_backlog()));
@@ -97,8 +99,10 @@ AudioComponent register_bundle(const std::string& path) {
     if (!factory) return nullptr;
     design_backlog = reinterpret_cast<BacklogFn>(
         CFBundleGetFunctionPointerForName(bundle, CFSTR("spectr_mask_design_backlog_v1")));
-    if (!design_backlog) {
-        std::fprintf(stderr, "%s does not export spectr_mask_design_backlog_v1\n", path.c_str());
+    param_sync_backlog = reinterpret_cast<BacklogFn>(
+        CFBundleGetFunctionPointerForName(bundle, CFSTR("spectr_param_sync_backlog_v1")));
+    if (!design_backlog || !param_sync_backlog) {
+        std::fprintf(stderr, "%s does not export the spectr_*_backlog_v1 counters\n", path.c_str());
         return nullptr;
     }
     return AudioComponentRegister(&desc, CFSTR("Pulp: level probe (in-process)"), 1, factory);
