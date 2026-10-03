@@ -67,6 +67,7 @@ bool editor_is_standalone() {
 #if !defined(__APPLE__)
 // Only AppKit withholds a click that lands in a non-key window from the view.
 int install_host_view_first_mouse() { return 0; }
+void apply_host_view_background(void*, std::uint32_t) {}
 #endif
 
 namespace {

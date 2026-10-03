@@ -33,6 +33,22 @@ foreach(_spectr_size_kind PREFERRED MIN MAX)
     endif()
 endforeach()
 
+# The editor's own background is the materialized document's `:root { --bg }`.
+# A plug-in host shows nothing but this colour until the document has mounted
+# (view-first opening), so it is read from the document here rather than
+# restated in C++, where a design change could leave the open frame stale.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.json"
+     _spectr_document_json)
+string(REGEX MATCH ":root[^{]*\\{[^}]*--bg:[ ]*#([0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])"
+       _spectr_document_bg "${_spectr_document_json}")
+if(NOT CMAKE_MATCH_1)
+    message(FATAL_ERROR
+        "materialized-document.json has no `:root { --bg: #rrggbb }`; Spectr's "
+        "editor background is read from it")
+endif()
+set(SPECTR_EDITOR_BACKGROUND_RGB "0x${CMAKE_MATCH_1}")
+unset(_spectr_document_json)
+
 # Build-time spectral profile seam. Balanced (8192/2048) is the product
 # default. Live (1024/256) and Maximum (16384/4096) are alternate build
 # profiles, not modes that can be switched dynamically at runtime. Separate
@@ -229,7 +245,8 @@ set(SPECTR_NATIVE_SOURCES
 )
 if(APPLE)
     enable_language(OBJCXX)
-    list(APPEND SPECTR_NATIVE_SOURCES src/ui/host_view_first_mouse_mac.mm)
+    list(APPEND SPECTR_NATIVE_SOURCES src/ui/host_view_first_mouse_mac.mm
+        src/ui/host_view_background_mac.mm)
 endif()
 
 # Shipping Spectr is a native cutover consumer. Requiring the dedicated target
@@ -339,6 +356,7 @@ function(spectr_configure_native_target target)
         SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
         SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
@@ -603,6 +621,7 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
     SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
     SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+    SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
     PULP_PLUGIN_DESIGN_W=${SPECTR_HOST_PREFERRED_WIDTH}
     PULP_PLUGIN_DESIGN_H=${SPECTR_HOST_PREFERRED_HEIGHT}
     PULP_PLUGIN_DESIGN_MIN_W=${SPECTR_HOST_MIN_WIDTH}
@@ -3856,6 +3875,7 @@ foreach(fmt VST3 AU CLAP Standalone)
             SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
             SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
             SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+            SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
             SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
             SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         )
@@ -3986,6 +4006,7 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
         SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
         SPECTR_EXPECTED_LATENCY=${SPECTR_PROCESSING_LATENCY}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
