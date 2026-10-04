@@ -91,7 +91,10 @@ void lifecycle_and_bridge_controls() {
             first.processor.prepare({48000.0,128,2,2});
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
             require(first.processor.gpu_audio_status().availability==A::NonSharedRenderer,"default mode claimed shared renderer");
+            // Mixing with GPU processing off is the CPU linear-phase renderer.
             require(first.processor.set_render_mode(spectr::MaskRenderMode::linear_phase),"linear renderer failed to prepare");
+            require(first.processor.gpu_audio_status().availability==A::NonSharedRenderer,"GPU processing off still built the shared renderer");
+            require(first.processor.set_gpu_processing(true),"GPU processing failed to prepare");
             const auto status=first.processor.gpu_audio_status();
             require(status.availability==A::Available&&status.delivery.has_value(),"shared renderer unavailable");
             require(status.freeze_available&&first.processor.freeze_source_wired(),"shared renderer refused the freeze source");
@@ -99,6 +102,7 @@ void lifecycle_and_bridge_controls() {
             // observed as-is, never asserted to represent host-rendered audio.
             require(second.processor.gpu_audio_status().availability==A::NotPrepared,"cross-instance status leak");
             require(first.processor.set_render_mode(spectr::MaskRenderMode::zero_latency),"zero latency replacement failed");
+            require(first.processor.set_gpu_processing(false),"GPU processing off failed");
 #endif
             first.processor.release();
         }
@@ -109,5 +113,44 @@ void lifecycle_and_bridge_controls() {
     std::cout<<"lifecycle_reads="<<reads.load()<<'\n';
 }
 }
-int main(){try{projection_controls();lifecycle_and_bridge_controls();std::cout<<"GPU audio status controls passed\n";return 0;}
+// The editor's GPU processing message: it switches Mixing's renderer, answers
+// with the latency state the panel shows, and build_info reports the figure
+// the host is told.
+void gpu_processing_bridge_controls() {
+    Rig rig;
+    pulp::view::EditorBridge bridge;
+    spectr::register_spectr_editor_handlers(bridge,rig.processor,rig.processor.patterns(),
+        rig.processor.editor_authority(),[](std::string_view){return true;});
+    require(!choc::json::parse(bridge.dispatch_json(R"({"type":"gpu_processing_set","payload":{"enabled":"yes"}})"))["ok"].getBool(),
+            "a non-bool GPU processing value was accepted");
+    rig.processor.prepare({48000.0,512,2,2});
+    require(rig.processor.set_render_mode(spectr::MaskRenderMode::linear_phase),"Mixing failed");
+    const auto mixing_option=[](const choc::value::ValueView& latency){
+        for(std::uint32_t i=0;i<latency["options"].size();++i)
+            if(latency["options"][i]["mode"].get<std::string>()=="linear_phase")
+                return latency["options"][i]["samples"].getWithDefault<double>(-1);
+        return -1.0;
+    };
+    const auto info=[&]{return choc::json::parse(bridge.dispatch_json(R"({"type":"build_info_get","payload":{}})"));};
+    require(info()["latency"]["reported_samples"].getWithDefault<double>(-1)==rig.processor.latency_samples(),
+            "build_info latency is not the reported latency");
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    const int cpu=rig.processor.latency_samples();
+    const auto on=choc::json::parse(bridge.dispatch_json(R"({"type":"gpu_processing_set","payload":{"enabled":true}})"));
+    const auto& on_payload=on.hasObjectMember("payload")?on["payload"]:on;
+    require(on["ok"].getBool(),"GPU processing on failed");
+    require(rig.processor.gpu_processing()&&rig.processor.latency_samples()>cpu,"GPU processing did not move the latency");
+    require(on_payload["latency"]["gpu_processing"].getBool(),"response hides the GPU choice");
+    require(mixing_option(on_payload["latency"])==rig.processor.latency_samples(),"Mixing option is not the reported latency");
+    require(info()["latency"]["reported_samples"].getWithDefault<double>(-1)==rig.processor.latency_samples(),
+            "build_info latency is stale after the switch");
+    require(info()["copy_text"].get<std::string>().find(std::to_string(rig.processor.latency_samples())+" samples")!=std::string::npos,
+            "copied build info omits the reported latency");
+    require(choc::json::parse(bridge.dispatch_json(R"({"type":"gpu_processing_set","payload":{"enabled":false}})"))["ok"].getBool(),
+            "GPU processing off failed");
+    require(rig.processor.latency_samples()==cpu,"GPU processing off did not restore the CPU latency");
+#endif
+    rig.processor.release();
+}
+int main(){try{projection_controls();lifecycle_and_bridge_controls();gpu_processing_bridge_controls();std::cout<<"GPU audio status controls passed\n";return 0;}
 catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -430,11 +430,35 @@ public:
     /// Delay this mode costs at the live sample rate, in samples and in
     /// milliseconds. Derived from the renderer's own contract so no
     /// user-facing figure is ever a number somebody typed.
-    [[nodiscard]] int render_mode_latency_samples(MaskRenderMode mode) const noexcept {
-        return mask_render_latency_samples(mode, latency_geometry_());
+    ///
+    /// This is the figure the host is told for that mode (latency_samples()
+    /// reports the same number once prepared): in a build with the shared GPU
+    /// renderer, Mixing adds that renderer's fixed lead to the linear-phase
+    /// latency, whether a block is delivered by the GPU or by its CPU
+    /// fallback -- both keep the same alignment.
+    [[nodiscard]] int render_mode_latency_samples(MaskRenderMode mode) const noexcept;
+    [[nodiscard]] int render_mode_latency_samples(MaskRenderMode mode, bool gpu) const noexcept;
+
+    /// GPU processing for Mixing. Saved with the session, not a host
+    /// parameter: switching it rebuilds the renderer and moves the latency the
+    /// host is told, exactly like a Tracking/Mixing switch, so it must not be
+    /// automatable. Off by default: GPU output is the CPU linear-phase output
+    /// (no sonic difference) at a higher latency. Tracking is always CPU.
+    /// Control thread only; same failure contract as set_render_mode.
+    bool set_gpu_processing(bool enabled);
+    [[nodiscard]] bool gpu_processing() const noexcept { return gpu_processing_; }
+    /// Whether this build can render Mixing on the GPU at all.
+    [[nodiscard]] static constexpr bool gpu_processing_available() noexcept {
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+        return true;
+#else
+        return false;
+#endif
     }
     [[nodiscard]] double render_mode_latency_ms(MaskRenderMode mode) const noexcept {
-        return spectr::render_mode_latency_ms(mode, latency_geometry_(), sample_rate_);
+        return sample_rate_ > 0.0
+            ? 1000.0 * static_cast<double>(render_mode_latency_samples(mode)) / sample_rate_
+            : 0.0;
     }
 
     /// Switch modes on a live instance.
@@ -982,6 +1006,7 @@ private:
     // sounds like and what latency it reports; written by the control thread
     // only, read by process() to notice a pending rebuild.
     MaskRenderMode                         render_mode_ = kDefaultRenderMode;
+    bool                                   gpu_processing_ = false;
     // Set when a restore could not build the renderer the project asked for.
     // The instance keeps the mode it has and says so rather than pretending
     // the project opened cleanly.
@@ -1036,7 +1061,8 @@ private:
     /// Build and fully prepare a renderer for `mode` against the current
     /// geometry, including its initial layout and mix. Returns null when the
     /// mode cannot be prepared; the caller keeps whatever was already live.
-    std::unique_ptr<MaskRenderer> build_renderer_(MaskRenderMode mode);
+    std::unique_ptr<MaskRenderer> build_renderer_(MaskRenderMode mode, bool gpu);
+    bool switch_renderer_(MaskRenderMode mode, bool gpu);
     /// Free retired renderers the audio thread can no longer reach. Control
     /// thread only.
     void drain_retired_renderers_() noexcept;
