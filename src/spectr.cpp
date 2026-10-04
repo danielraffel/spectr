@@ -1414,6 +1414,7 @@ void Spectr::process(
     const bool offline_block = processor_prepared_
         && (ctx.is_offline() || host_offline_render_.load(std::memory_order_relaxed));
     if (offline_block) await_offline_work_(renderer);
+    if (renderer) renderer->set_offline_block(offline_block);
     // Work this block asks of a worker -- a staged mask's design, a drifted
     // parameter's sync (which publishes a mask of its own) -- is handed over
     // when the block ENDS, never in the middle of it: a call the scheduler

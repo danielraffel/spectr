@@ -43,6 +43,7 @@ public:
     void set_wet_source(MaskRenderer::WetSource* source) noexcept { wet_source_=source; }
     MaskRenderer::WetSource* wet_source() const noexcept { return wet_source_; }
     bool pop_terminal(SharedSpectralBridge::Terminal& t) noexcept { return bridge_.pop_terminal(t); }
+    void set_offline(bool offline) noexcept { bridge_.set_offline(offline); }
     std::uint64_t quantum_count() const noexcept { return quantums_.load(std::memory_order_acquire); }
     std::uint64_t serviced_quantums() const noexcept { return bridge_.serviced_blocks(); }
     std::uint64_t completed_hops() const noexcept { return bridge_.completed_hops(); }

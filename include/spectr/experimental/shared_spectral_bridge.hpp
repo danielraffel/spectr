@@ -47,6 +47,13 @@ public:
     // still feeds the CPU renderer, but no new GPU block is admitted.
     bool process(const float* const*, float* const*, bool admit=true) noexcept;
     void service() noexcept;
+    // Callback owner. While true the callback waits, bounded, for the GPU
+    // output of the quantum it is about to deliver instead of substituting
+    // the CPU stand-in: an offline bounce is not paced, so without the wait
+    // it outruns the worker and falls back for most of the render. Never set
+    // for a realtime block.
+    void set_offline(bool offline) noexcept { offline_=offline; }
+    static constexpr std::uint64_t offline_wait_budget_ns=250'000'000;
     bool pop_terminal(Terminal&) noexcept;
     // Existing CPU renderer remains the only layout/transition authority.
     bool publish_layout(const MaskRenderer::Layout& layout) { return prepared_ && cpu_->publish_layout(layout); }
@@ -91,6 +98,9 @@ private:
     void fail_callback(FenceReason why) noexcept { callback_reason_=why;callback_failed_epoch_.store(epoch_,std::memory_order_release); }
     void fail_worker(FenceReason why,std::uint64_t epoch) noexcept {worker_reason_=why;worker_failed_epoch_.store(epoch,std::memory_order_release);}
     void collect_completed() noexcept;
+    bool gpu_ready_for_wait_() const noexcept {
+        return !config_.force_cpu_only && !fenced();
+    }
     void capture_frame(const MaskRenderer::Table&,std::uint64_t ordinal) noexcept;
     bool load_hop_gains() noexcept;
     bool claim_empty_or_obsolete(Slot&,std::uint64_t epoch) noexcept;
@@ -121,6 +131,6 @@ private:
     void* observer_context_=nullptr;
     std::uint64_t epoch_=0, callback_sequence_=0, worker_sequence_=0, hop_sequence_=0, input_count_=0, next_terminal_=0;
     unsigned accumulated_=0;
-    bool prepared_=false, finishing_=false, hop_pending_=false, hop_gains_loaded_=false;
+    bool prepared_=false, finishing_=false, hop_pending_=false, hop_gains_loaded_=false, offline_=false;
 };
 }

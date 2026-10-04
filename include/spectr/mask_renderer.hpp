@@ -175,6 +175,12 @@ public:
         return true;
     }
 
+    /// Audio thread, once per host block before process(). True when the host
+    /// renders this block offline: a realisation whose output is computed on a
+    /// worker may then wait, bounded, for that output instead of substituting
+    /// its stand-in. False for every realtime block, which never waits.
+    virtual void set_offline_block(bool /*offline*/) noexcept {}
+
     /// Audio thread. While true, `process()` keeps a staged layout until
     /// `flush_design_handoff()` instead of
     /// handing it to the design worker at once. The processor defers for the

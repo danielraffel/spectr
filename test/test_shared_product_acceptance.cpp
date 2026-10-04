@@ -570,3 +570,64 @@ TEST_CASE("CPU cost of Mixing on the CPU, Mixing on the GPU and Tracking",
                     host.release();
                 }
 }
+
+// A bounce is rendered as fast as the host can go, which outruns the GPU
+// worker: without help most quanta would fall back to the CPU stand-in. On a
+// block the host marks offline the shared renderer waits (bounded) for its
+// GPU output instead; a realtime block never waits. Control: the same
+// unpaced render marked realtime does fall back, so the zero below is the
+// wait's doing and not an instrument that cannot see fallbacks.
+TEST_CASE("An offline bounce waits for GPU output instead of falling back",
+          "[shared-product][installed-sdk][offline-gpu]") {
+    using namespace std::chrono;
+    constexpr unsigned block = 512;
+    const auto bounce = [&](bool offline, bool force_cpu, std::vector<float>* rendered) {
+        pulp::format::HeadlessHost host(spectr::create_spectr);
+        auto* p = static_cast<spectr::Spectr*>(host.processor());
+        REQUIRE(p->set_shared_product_force_cpu(force_cpu));
+        REQUIRE(p->set_gpu_processing(true));
+        REQUIRE(p->set_render_mode(spectr::MaskRenderMode::linear_phase));
+        host.prepare(48000, block);
+        pulp::audio::Buffer<float> input(2, block), output(2, block);
+        const float* ptrs[]{input.channel(0).data(), input.channel(1).data()};
+        pulp::audio::BufferView<const float> in(ptrs, 2, block);
+        auto out = output.view();
+        std::uint64_t n = 0;
+        const auto start = steady_clock::now();
+        for (unsigned b = 0; b < 375; ++b) {   // 4 s at 48 kHz, unpaced
+            for (unsigned i = 0; i < block; ++i, ++n) {
+                const float v = 0.3f * float(std::sin(6.283185307179586 * 997.0 * double(n) / 48000.0));
+                input.channel(0)[i] = v; input.channel(1)[i] = -v;
+            }
+            pulp::format::ProcessContext ctx;
+            ctx.process_mode = offline ? pulp::format::ProcessMode::Offline
+                                       : pulp::format::ProcessMode::Realtime;
+            host.process(out, in, ctx);
+            if (rendered) rendered->insert(rendered->end(), output.channel(0).begin(), output.channel(0).end());
+        }
+        const double seconds = duration<double>(steady_clock::now() - start).count();
+        std::this_thread::sleep_for(milliseconds(30));
+        const auto s = p->gpu_audio_status();
+        REQUIRE(s.delivery.has_value());
+        std::printf("bounce offline=%d force_cpu=%d: gpu_selected=%llu cpu_fallback=%llu in %.2f s\n",
+                    int(offline), int(force_cpu), (unsigned long long)s.delivery->gpu_selected,
+                    (unsigned long long)s.delivery->cpu_fallback, seconds);
+        host.release();
+        return std::tuple{s.delivery->gpu_selected, s.delivery->cpu_fallback, seconds};
+    };
+    std::vector<float> gpu_out, cpu_out;
+    const auto [og, oc, os] = bounce(true, false, &gpu_out);
+    CHECK(og > 0);
+    CHECK(oc == 0);
+    const auto [rg, rc, rs] = bounce(false, false, nullptr);
+    CHECK(rc > 0);          // control: unpaced realtime outruns the worker
+    CHECK(rs < os);         // and it never waited
+    (void)rg;
+    (void)bounce(true, true, &cpu_out);
+    REQUIRE(gpu_out.size() == cpu_out.size());
+    double worst = 0.0;
+    for (std::size_t i = 0; i < gpu_out.size(); ++i)
+        worst = std::max(worst, double(std::abs(gpu_out[i] - cpu_out[i])));
+    INFO("worst |offline gpu - forced cpu| = " << worst);
+    CHECK(worst < 1e-5);
+}

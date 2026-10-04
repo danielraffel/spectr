@@ -31,6 +31,8 @@ public:
     // the GPU journal, so fallback, fencing and device loss keep the source.
     bool set_wet_source(WetSource* source) noexcept override { adapter_->set_wet_source(source);return true; }
     bool process(const float* const*,float* const*,int) noexcept override;
+    // Offline blocks wait (bounded) for GPU output rather than falling back.
+    void set_offline_block(bool offline) noexcept override { adapter_->set_offline(offline); }
     void reset() noexcept override;
     unsigned long long active_generation() const noexcept override;
     Snapshot snapshot() const noexcept;
