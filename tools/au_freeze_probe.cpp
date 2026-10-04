@@ -936,6 +936,9 @@ int latency_check(Options o, int plant) {
     }
     std::printf("%s: reported latency %s the measured delay\n", bad ? "FAIL" : "OK",
                 bad ? "does NOT equal" : "equals");
+    return bad ? 1 : 0;
+}
+
 // ── The first samples of a stream ──────────────────────────────────────────
 //
 // A fresh unit at Mix 100 with a flat shape must pass the first samples it is
