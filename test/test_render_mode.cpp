@@ -807,13 +807,13 @@ TEST_CASE("A mode switch is bounded, raises exactly one latency flag, and "
 
 // The first samples of a stream reach the output at full level, in both modes,
 // after a prepare and after a host reset. A fresh WOLA stream has no frames
-// ending before its first sample; unprimed, the start-of-stream
-// normalisation floor faded the first ~85 ms in (an impulse 13 samples in
-// came out at -176 dB, 1024 samples in at -25 dB), so a drum hit at playback
-// start lost its attack in Mixing. Flat shape, Mix 100, Auto Gain off: the
-// output must be the input delayed by the reported latency.
-// SPECTR_PLANT_NO_STREAM_PRIME restores the unprimed start: the negative
-// control, which must fail.
+// ending before its first sample; without frames placed before it, the
+// start-of-stream normalisation floor faded the first ~85 ms in (an impulse 13
+// samples in came out at -176 dB, 1024 samples in at -25 dB), so a drum hit at
+// playback start lost its attack in Mixing. Flat shape, Mix 100, Auto Gain
+// off: the output must be the input delayed by the reported latency.
+// SPECTR_PLANT_NO_FULL_OVERLAP turns off the framework's full-overlap stream
+// start: the negative control, which must fail.
 TEST_CASE("The first samples of a stream reach the output at full level",
           "[render-mode][audio][stream-start]") {
     constexpr unsigned kBlock = 512;
