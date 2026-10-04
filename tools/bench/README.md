@@ -21,6 +21,12 @@ For the existing Cocoa open probe, adapt its JSON with:
 --command 'open=python3 tools/bench/editor_open_adapter.py build/open-{run}.json'
 ```
 
+The adapter validates every row in `opens[]` and emits `warm_open_ms_max` and
+`warm_first_frame_ms_max` alongside the selected `open_ms` row. Select a
+different row explicitly with `--open-index N`; the default is the cold first
+open. A missing or nonnumeric timing in any row fails the adapter instead of
+silently dropping a warm-open result.
+
 For frame cadence, run `frame_cadence_probe.py --json-out build/frame.json` and
 adapt with `python3 tools/bench/frame_cadence_adapter.py build/frame.json`.
 The adapter rejects reports without a gesture p95 metric.
