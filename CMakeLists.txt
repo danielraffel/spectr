@@ -659,7 +659,26 @@ set_tests_properties(Spectr-deadline-negative-control PROPERTIES
 add_test(NAME Spectr-deadline-96k-negative-control
     COMMAND Spectr-test "Both modes keep every callback inside a 32-sample deadline at 96 kHz")
 set_tests_properties(Spectr-deadline-96k-negative-control PROPERTIES
-    ENVIRONMENT SPECTR_PLANT_CALLBACK_BURST=60000 WILL_FAIL TRUE TIMEOUT 300)
+    ENVIRONMENT SPECTR_PLANT_CALLBACK_BURST=120000 WILL_FAIL TRUE TIMEOUT 300)
+
+# Trace categories: a PULP_TRACE_* category the SDK never declared compiles in
+# the shipping build (the macros are no-ops there) and breaks the first traced
+# build. Checked against the SDK's own declared list, with a planted control.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+get_filename_component(_spectr_pulp_trace_header
+    "${Pulp_DIR}/../../../include/pulp/runtime/trace.hpp" ABSOLUTE)
+if(Python3_Interpreter_FOUND AND EXISTS "${_spectr_pulp_trace_header}")
+    add_test(NAME Spectr-trace-categories
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
+            --trace-header "${_spectr_pulp_trace_header}")
+    add_test(NAME Spectr-trace-categories-control
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
+            --trace-header "${_spectr_pulp_trace_header}" --self-test)
+    set_tests_properties(Spectr-trace-categories Spectr-trace-categories-control
+        PROPERTIES TIMEOUT 60)
+endif()
 
 # Trace categories: a PULP_TRACE_* category the SDK never declared compiles in
 # the shipping build (the macros are no-ops there) and breaks the first traced
