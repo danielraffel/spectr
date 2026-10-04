@@ -680,25 +680,6 @@ if(Python3_Interpreter_FOUND AND EXISTS "${_spectr_pulp_trace_header}")
         PROPERTIES TIMEOUT 60)
 endif()
 
-# Trace categories: a PULP_TRACE_* category the SDK never declared compiles in
-# the shipping build (the macros are no-ops there) and breaks the first traced
-# build. Checked against the SDK's own declared list, with a planted control.
-find_package(Python3 QUIET COMPONENTS Interpreter)
-get_filename_component(_spectr_pulp_trace_header
-    "${Pulp_DIR}/../../../include/pulp/runtime/trace.hpp" ABSOLUTE)
-if(Python3_Interpreter_FOUND AND EXISTS "${_spectr_pulp_trace_header}")
-    add_test(NAME Spectr-trace-categories
-        COMMAND ${Python3_EXECUTABLE} -B
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
-            --trace-header "${_spectr_pulp_trace_header}")
-    add_test(NAME Spectr-trace-categories-control
-        COMMAND ${Python3_EXECUTABLE} -B
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
-            --trace-header "${_spectr_pulp_trace_header}" --self-test)
-    set_tests_properties(Spectr-trace-categories Spectr-trace-categories-control
-        PROPERTIES TIMEOUT 60)
-endif()
-
 # The product-independent loudness-compensation unit behind Auto Gain v2
 # (include/spectr/upstream/loudness_compensation.hpp). Its tests link Pulp and
 # Catch2 only -- no Spectr target -- so the header and this file move upstream
