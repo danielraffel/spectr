@@ -18,7 +18,7 @@ Spectr 1.0.7 brings musical Freeze lengths, multi-target modulation, new level c
 
 ### Level controls
 - **MIX, INTENSITY and OUTPUT knobs** in the header, with **AUTO** gain.
-- **AUTO listens to your sound.** Auto Gain now keeps the level steady by weighing your shape against the long-term balance of the sound going through Spectr, so boosting the highs of a bass line no longer turns it down. It holds through silence and does not pump, catches up in about a second when the sound changes or Freeze is released, remembers the sound across stops, locates and reopened projects, and while Freeze holds it listens to the held sound. AUTO is still off by default. A project that saved AUTO on with an earlier version keeps that version's AUTO, so its level does not change, until you switch AUTO off and on again.
+- **AUTO listens to your sound.** Auto Gain now keeps the level steady by weighing your shape against the long-term balance of the sound going through Spectr, so boosting the highs of a bass line no longer turns it down. It holds through silence and does not pump, catches up in about a second when the sound changes or Freeze is released, remembers the sound across stops, locates and reopened projects, and while Freeze holds it listens to the held sound. It keeps listening while it is off, so switching it on starts from the sound that is playing. **AUTO is now on by default** in a new instance; projects keep the AUTO they saved, and one saved before AUTO existed opens with it off. A project that saved AUTO on with an earlier version keeps that version's AUTO, so its level does not change, until you switch AUTO off and on again.
 - **Range and Display settings** for the editor.
 
 ### Editor
