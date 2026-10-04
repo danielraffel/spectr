@@ -599,10 +599,11 @@ add_executable(Spectr-test
     test/test_freeze_click.cpp
     test/test_freeze_level.cpp
     test/test_level_controls.cpp
+    test/test_auto_gain_v2.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
-    Pulp::format Pulp::view
+    Pulp::format Pulp::view Pulp::audio-analysis
     Catch2::Catch2WithMain
     ${SPECTR_TEST_ASSET_TARGET}
 )
@@ -641,6 +642,32 @@ add_test(NAME Spectr-stream-start-negative-control
     COMMAND Spectr-test "The first samples of a stream reach the output at full level")
 set_tests_properties(Spectr-stream-start-negative-control PROPERTIES
     ENVIRONMENT SPECTR_PLANT_NO_STREAM_PRIME=1 WILL_FAIL TRUE TIMEOUT 120)
+
+# The product-independent loudness-compensation unit behind Auto Gain v2
+# (include/spectr/upstream/loudness_compensation.hpp). Its tests link Pulp and
+# Catch2 only -- no Spectr target -- so the header and this file move upstream
+# together. Its own executable because it counts allocations with a global
+# operator new.
+add_executable(Spectr-loudness-compensation-test test/test_loudness_compensation.cpp)
+target_link_libraries(Spectr-loudness-compensation-test PRIVATE
+    Pulp::signal Catch2::Catch2WithMain)
+target_include_directories(Spectr-loudness-compensation-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+catch_discover_tests(Spectr-loudness-compensation-test)
+
+# Auto Gain v1 vs v2 corpus sweep: ADVISORY, not a test. Driven by
+# tools/autogain_corpus_report.py, which builds the license-clean corpus
+# (quality-lab corpus.py provenance), runs this, and writes the report.
+# Built exactly as Spectr-test is (same sources, assets and build contract),
+# so the Spectr it renders is the one the gates measure.
+add_executable(Spectr-autogain-sweep EXCLUDE_FROM_ALL
+    tools/autogain_sweep.cpp ${SPECTR_TEST_SOURCES})
+target_link_libraries(Spectr-autogain-sweep PRIVATE
+    Pulp::format Pulp::view Pulp::audio-analysis ${SPECTR_TEST_ASSET_TARGET})
+target_include_directories(Spectr-autogain-sweep PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/test)
+get_target_property(_spectr_sweep_defs Spectr-test COMPILE_DEFINITIONS)
+target_compile_definitions(Spectr-autogain-sweep PRIVATE ${_spectr_sweep_defs})
 
 if(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
     add_executable(Spectr-shared-product-acceptance EXCLUDE_FROM_ALL
@@ -1018,6 +1045,21 @@ add_test(NAME Spectr-level-autogain-follow-output-negative-control
 set_tests_properties(Spectr-level-autogain-follow-output-negative-control PROPERTIES
     TIMEOUT 300
     PASS_REGULAR_EXPRESSION "CHECK\\( spread <= 0\\.01 \\)")
+# Auto Gain v2 (test/test_auto_gain_v2.cpp). Ignoring the material's
+# spectrum must fail the accuracy gate; dropping the smoothing and the slew
+# limit (each frame replaces the estimate) must fail the pumping gate.
+add_test(NAME Spectr-level-autogain-v2-unweighted-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-unweighted
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 holds narrow material where v1 misses")
+set_tests_properties(Spectr-level-autogain-v2-unweighted-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( p95 <= 1\\.5 \\)")
+add_test(NAME Spectr-level-autogain-v2-no-smoothing-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-no-smoothing
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 does not pump on steady material")
+set_tests_properties(Spectr-level-autogain-v2-no-smoothing-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( worst_spread <= 0\\.5 \\)")
 # The Output LFO destination lands once per block (no ramp): its smoothness
 # gate must catch the per-block zipper.
 add_test(NAME Spectr-level-target-step-negative-control
@@ -4109,6 +4151,14 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         PROPERTIES TIMEOUT 300 LABELS "modulation;au-host")
     set_tests_properties(Spectr-au-offline-bounce-negative-control
         PROPERTIES PASS_REGULAR_EXPRESSION "\nDIFFER\n")
+    # The same equivalence with Auto Gain v2 on and the material changing
+    # mid-render: its estimator's frame grid and per-sample targets must make
+    # the bounce match the paced render sample for sample.
+    add_test(NAME Spectr-au-offline-bounce-equivalence-auto-gain
+        COMMAND Spectr-au-routes-probe --bundle "${_spectr_au_bundle}"
+            --block 128 --offline-equivalence --auto-gain)
+    set_tests_properties(Spectr-au-offline-bounce-equivalence-auto-gain
+        PROPERTIES TIMEOUT 300 LABELS "modulation;au-host;autogain")
     # The offline flag's lifetime through the real AU entry: a host write
     # reaches a bounce one re-initialization later, survives a Reset, and is
     # gone the session after (a stuck flag makes realtime blocks wait).
@@ -4388,6 +4438,20 @@ add_test(NAME Spectr-render-path-clock-freeze
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
         ${CMAKE_CURRENT_SOURCE_DIR}/include/spectr/freeze_source.hpp)
 set_tests_properties(Spectr-render-path-clock-freeze PROPERTIES TIMEOUT 60)
+
+# Auto Gain v2 runs inside the wet-source stage of both renderers and in the
+# product's gain loop: its loudness-compensation unit and Spectr's adapter are
+# held to the same rule.
+add_test(NAME Spectr-render-path-clock-loudness-compensation
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/spectr/upstream/loudness_compensation.hpp)
+add_test(NAME Spectr-render-path-clock-auto-gain
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/spectr/auto_gain_material.hpp)
+set_tests_properties(Spectr-render-path-clock-loudness-compensation
+    Spectr-render-path-clock-auto-gain PROPERTIES TIMEOUT 60)
 
 # The merge driver for the materialized editor document. That artifact is one
 # minified line, so git's default merge conflicts on ANY two changes to it --

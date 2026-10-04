@@ -657,6 +657,25 @@ public:
         return config_.design_grid_size;
     }
 
+    [[nodiscard]] double minimum_phase_floor() const noexcept override {
+        return kDesignMagnitudeFloor;
+    }
+
+    /// The table plus this realisation's band-edge shaping: the magnitude
+    /// design_and_stage_ reconstructs, by the same code path.
+    [[nodiscard]] bool realised_magnitude(const Layout& layout, double sample_rate,
+                                          Table& scratch,
+                                          std::span<double> out) const noexcept override {
+        const int grid = config_.design_grid_size;
+        if (grid <= 0 || out.size() < static_cast<std::size_t>(grid / 2 + 1)) return false;
+        if (!pulp::signal::build_spectral_mask(layout, grid, static_cast<float>(sample_rate),
+                                               scratch))
+            return false;
+        shaped_magnitude_(scratch, sample_rate,
+                          out.first(static_cast<std::size_t>(scratch.num_bins)));
+        return true;
+    }
+
     [[nodiscard]] bool publish_layout(const Layout& layout) override {
         if (!prepared_) return false;
         // Control thread: design inline. Allocation and a few FFTs are
@@ -863,6 +882,28 @@ public:
         return true;
     }
 
+    /// The compiled table's magnitude with this realisation's edge shaping
+    /// applied: what the minimum-phase reconstruction is given. The shaping is
+    /// the zero-latency realisation's own step -- the table, the layout and
+    /// every other mode are untouched by it, so the linear-phase path keeps
+    /// realising the drawn magnitude exactly as authored. Pure and
+    /// allocation-free; shared by the design step and realised_magnitude().
+    static void shaped_magnitude_(const Table& table, double sample_rate,
+                                  std::span<double> magnitudes) noexcept {
+        const auto bins = std::min(magnitudes.size(),
+                                   static_cast<std::size_t>(table.num_bins));
+        for (std::size_t i = 0; i < bins; ++i)
+            magnitudes[i] = static_cast<double>(table.gain_linear[i]);
+        (void)shape_tracking_transitions(
+            magnitudes.first(bins),
+            std::span<const float>(
+                table.band_edges_hz.data(),
+                static_cast<std::size_t>(table.active_bands) + 1u),
+            sample_rate / static_cast<double>(table.fft_size),
+            kTrackingTransitionWidthBins,
+            kDesignMagnitudeFloor);
+    }
+
 private:
     /// Cepstral minimum-phase reconstruction of `design_magnitudes_` into
     /// `design_taps_`. Worker or control thread; never the audio thread.
@@ -901,24 +942,9 @@ private:
 
         const auto bins = static_cast<std::size_t>(table.num_bins);
         if (bins != design_magnitudes_.size()) return false;
-        for (std::size_t i = 0; i < bins; ++i)
-            design_magnitudes_[i] = static_cast<double>(table.gain_linear[i]);
-
-        // Shape the drawn edges before reconstructing. This is the zero-latency
-        // realisation's own step: the table, the layout and every other mode
-        // are untouched by it, so the linear-phase path keeps realising the
-        // drawn magnitude exactly as authored.
         {
             PULP_TRACE_SCOPE_NAMED("state", "shape band-edge transitions");
-            (void)shape_tracking_transitions(
-                design_magnitudes_,
-                std::span<const float>(
-                    table.band_edges_hz.data(),
-                    static_cast<std::size_t>(table.active_bands) + 1u),
-                config_.sample_rate
-                    / static_cast<double>(config_.design_grid_size),
-                kTrackingTransitionWidthBins,
-                kDesignMagnitudeFloor);
+            shaped_magnitude_(table, config_.sample_rate, design_magnitudes_);
         }
 
         {
