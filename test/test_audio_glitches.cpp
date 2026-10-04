@@ -613,6 +613,37 @@ TEST_CASE("A host reset during a Latency switch completes it instead of warming 
     REQUIRE_FALSE(plugin->render_switch_in_flight());
 }
 
+TEST_CASE("A Latency switch before the stream starts takes effect at once",
+          "[render-mode][render-switch]") {
+    // A host restoring a session's mode after it prepared the plug-in but
+    // before the first render: nothing has been heard, so there is nothing to
+    // fade from, and the stream must start in the restored mode -- an impulse
+    // at sample 0 out at the new mode's latency, at full level.
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    auto* plugin = dynamic_cast<Spectr*>(host.processor());
+    REQUIRE(plugin->set_render_mode(MaskRenderMode::zero_latency));
+    host.prepare(48000.0, 512);
+    host.state().set_value(spectr::kParamAutoGain, 0.0f);
+    REQUIRE(plugin->set_render_mode(MaskRenderMode::linear_phase));
+    const int latency = plugin->latency_samples();
+    pulp::midi::MidiBuffer mi, mo;
+    std::vector<float> out_l;
+    for (int b = 0; b < 30; ++b) {
+        pulp::audio::Buffer<float> inb(2, 512), outb(2, 512);
+        if (b == 0) { inb.channel(0)[0] = 0.5f; inb.channel(1)[0] = 0.5f; }
+        const float* ip[] = {inb.channel(0).data(), inb.channel(1).data()};
+        pulp::audio::BufferView<const float> iv(ip, 2, 512);
+        auto ov = outb.view();
+        pulp::state::ParameterEventQueue events;
+        pulp::format::ProcessContext ctx;
+        ctx.sample_rate = 48000.0;
+        host.process(ov, iv, mi, mo, events, ctx);
+        out_l.insert(out_l.end(), outb.channel(0).begin(), outb.channel(0).end());
+    }
+    INFO("latency " << latency << ", out at latency " << out_l[std::size_t(latency)]);
+    CHECK(std::abs(out_l[std::size_t(latency)] - 0.5f) < 0.01f);
+}
+
 // ── 2/3. Reports: Freeze engage/release, band drags, loop seams (Tracking) ─
 
 TEST_CASE("Glitch report: Freeze engage and release in Tracking",

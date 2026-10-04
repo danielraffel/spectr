@@ -1098,6 +1098,10 @@ private:
     bool                                   switch_wet_wired_ = false;
     // Audio thread only.
     pulp_candidate::signal::ProcessingSwitchCrossfade switch_xfade_{};
+    // Audio thread: whether any block has rendered since the last prepare or
+    // stream reset. A switch before the stream has started has nothing heard
+    // to fade from, so it completes at once.
+    bool                                   stream_rendered_ = false;
     /// Replays one wet block to a renderer during a switch, so the freeze
     /// source (which advances when it is run) is run ONCE per block however
     /// many renderers are listening. Unarmed it forwards to the real source.
