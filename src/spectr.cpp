@@ -151,6 +151,7 @@ Spectr::Spectr() : editor_authority_(*this) {
 }
 
 Spectr::~Spectr() {
+    switch_reclaim_lane_.stop();
 #if defined(SPECTR_NATIVE_EDITOR)
     native_command_registry_.remove_handler(this);
 #endif
@@ -604,7 +605,22 @@ bool Spectr::set_shared_product_force_cpu(bool force) noexcept {
 }
 #endif
 
+namespace {
+// How long a mode switch crossfades, once the incoming renderer is warm. The
+// two sides carry the same material a latency apart, so this is a blend of
+// uncorrelated signals: long enough not to read as a cut, short enough that
+// the switch is not heard as an echo.
+constexpr double kRenderSwitchFadeSeconds = 0.03;
+// SPECTR_PLANT_HARD_RENDER_SWITCH restores the cut a switch used to be. Read
+// on the control thread only (set_render_mode).
+bool render_switch_plants_hard_cut_() noexcept {
+    static const bool planted = std::getenv("SPECTR_PLANT_HARD_RENDER_SWITCH") != nullptr;
+    return planted;
+}
+} // namespace
+
 std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
+    renderer_builds_.fetch_add(1, std::memory_order_relaxed);
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     std::unique_ptr<MaskRenderer> renderer;
     if(mode==MaskRenderMode::linear_phase)
@@ -692,6 +708,10 @@ void Spectr::drain_retired_renderers_() noexcept {
 }
 
 bool Spectr::set_render_mode(MaskRenderMode mode) {
+    std::lock_guard<std::mutex> switch_lock(switch_mutex_);
+    // A switch still crossfading is finished first, so there is only ever one
+    // outgoing renderer and the mode compared below is the one being heard.
+    if (processor_prepared_) settle_render_switch_();
     if (mode == render_mode_) return true;
 
     // Nothing is prepared yet (a host restoring a project before audio starts,
@@ -733,11 +753,42 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
     render_mode_=mode;
 #endif
 
-    // Publish to the audio thread. From here process() renders through the new
-    // mode; the old object is still alive and still valid for any call already
-    // inside it.
-    active_renderer_.store(incoming, std::memory_order_release);
+    // Hand both renderers to the audio thread. It keeps rendering the old one
+    // (still `active_renderer_`), warms the new one on the same input until
+    // its delay line and impulse history are full, then crossfades into it
+    // and publishes it as active (spectr/upstream/processing_switch_crossfade.hpp). A cut here
+    // was audible twice: the new renderer's own latency of silence -- 213 ms
+    // into Mixing -- and a step where the old one stopped mid-waveform.
+    //
+    // From here every control-side publication goes to the new renderer, so
+    // a mask edited during the fade is the one it fades into.
+    const int history = mode == MaskRenderMode::zero_latency
+        ? incoming->design_grid_size() : 0;
+    switch_plan_ = pulp_candidate::signal::plan_processing_switch(
+        incoming->latency_samples(), history, sample_rate_, kRenderSwitchFadeSeconds);
+    // Negative control: the cut this replaced -- the new renderer heard from
+    // its first, history-less sample.
+    if (render_switch_plants_hard_cut_()) switch_plan_ = pulp_candidate::signal::ProcessingSwitchPlan{0, 1};
+    switch_incoming_ = incoming;
+    switch_outgoing_ = std::move(outgoing);
+    switch_wet_wired_ = freeze_source_.prepared();
+    render_switch_state_.store(kSwitchPending, std::memory_order_release);
 
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        active_design_grid_ = renderer_->design_grid_size();
+    }
+
+    // The host's delay compensation is now wrong by the difference between the
+    // two modes. This is the whole reason the switch is observable to a host.
+    flag_latency_changed();
+    return true;
+}
+
+void Spectr::retire_switch_outgoing_() noexcept {
+    std::unique_ptr<MaskRenderer> outgoing = std::move(switch_outgoing_);
+    switch_incoming_ = nullptr;
+    if (!outgoing) return;
     // Retire the old renderer only once the audio thread cannot still be
     // inside it. An even epoch means it is outside process() right now and
     // will re-read active_renderer_ on its next entry; a changed epoch means
@@ -758,16 +809,153 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
     } else {
         retired_renderers_.push_back(std::move(outgoing));
     }
+}
 
-    {
-        std::lock_guard<std::mutex> lock(processing_state_mutex_);
-        active_design_grid_ = renderer_->design_grid_size();
+void Spectr::settle_render_switch_() noexcept {
+    using Clock = std::chrono::steady_clock;
+    const double rate = sample_rate_ > 0.0 ? sample_rate_ : 48000.0;
+    // Twice the switch's own length in audio time, and a margin: a host that
+    // is playing finishes it well inside this.
+    const auto budget = std::chrono::duration_cast<Clock::duration>(
+        std::chrono::duration<double>(
+            2.0 * double(switch_plan_.warm_samples + switch_plan_.fade_samples) / rate
+            + 0.25));
+    const auto start = Clock::now();
+    std::uint64_t seen_epoch = render_epoch_.load(std::memory_order_acquire);
+    auto epoch_moved_at = start;
+    for (;;) {
+        int s = render_switch_state_.load(std::memory_order_acquire);
+        if (s == kSwitchIdle) return;
+        if (s == kSwitchDone) {
+            if (render_switch_state_.compare_exchange_strong(
+                    s, kSwitchIdle, std::memory_order_acq_rel)) {
+                retire_switch_outgoing_();
+                return;
+            }
+            continue;
+        }
+        if (s == kSwitchPending || s == kSwitchRunning) {
+            const auto now = Clock::now();
+            const auto epoch = render_epoch_.load(std::memory_order_acquire);
+            if (epoch != seen_epoch) { seen_epoch = epoch; epoch_moved_at = now; }
+            // No block has run for 50 ms: the host is not processing (stopped,
+            // or a test driving the processor from this same thread), so no
+            // fade will ever be heard. Finish the switch here instead.
+            const bool audio_idle = now - epoch_moved_at > std::chrono::milliseconds(50);
+            if (audio_idle || now - start > budget) {
+                // Taking the word from Pending/Running means the audio thread
+                // is not inside the switch and will never claim it again.
+                if (render_switch_state_.compare_exchange_strong(
+                        s, kSwitchIdle, std::memory_order_acq_rel)) {
+                    if (switch_wet_wired_)
+                        (void)switch_incoming_->set_wet_source(&auto_gain_tap_);
+                    active_renderer_.store(switch_incoming_, std::memory_order_release);
+                    retire_switch_outgoing_();
+                    return;
+                }
+                continue;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+}
 
-    // The host's delay compensation is now wrong by the difference between the
-    // two modes. This is the whole reason the switch is observable to a host.
-    flag_latency_changed();
-    return true;
+void Spectr::switch_reclaim_trampoline_(void* ctx, const SwitchReclaimTask&) noexcept {
+    auto* self = static_cast<Spectr*>(ctx);
+    std::lock_guard<std::mutex> switch_lock(self->switch_mutex_);
+    int done = kSwitchDone;
+    if (self->render_switch_state_.compare_exchange_strong(
+            done, kSwitchIdle, std::memory_order_acq_rel))
+        self->retire_switch_outgoing_();
+}
+
+void Spectr::abandon_render_switch_() noexcept {
+    // Only where no audio thread can run (prepare, release): nothing to wait
+    // for, and whatever the switch held is about to be rebuilt or freed.
+    render_switch_state_.store(kSwitchIdle, std::memory_order_release);
+    switch_xfade_.cancel();
+    switch_replay_in_.replay = nullptr;
+    switch_replay_out_.replay = nullptr;
+    switch_outgoing_.reset();
+    switch_incoming_ = nullptr;
+}
+
+MaskRenderer* Spectr::claim_render_switch_(MaskRenderer* outgoing) noexcept {
+    int s = render_switch_state_.load(std::memory_order_acquire);
+    if (s != kSwitchPending && s != kSwitchRunning) return nullptr;
+    const int claimed = s;
+    if (!render_switch_state_.compare_exchange_strong(
+            s, kSwitchBusy, std::memory_order_acq_rel))
+        return nullptr;
+    MaskRenderer* incoming = switch_incoming_;
+    if (claimed == kSwitchPending) {
+        switch_xfade_.begin(switch_plan_);
+        // Both renderers now listen to one run of the freeze source per
+        // block (render_through_), not one each.
+        if (switch_wet_wired_ && outgoing != nullptr) {
+            switch_replay_out_.forward = &auto_gain_tap_;
+            switch_replay_in_.forward = &auto_gain_tap_;
+            switch_replay_out_.replay = nullptr;
+            switch_replay_in_.replay = nullptr;
+            (void)outgoing->set_wet_source(&switch_replay_out_);
+            (void)incoming->set_wet_source(&switch_replay_in_);
+        }
+    }
+    return incoming;
+}
+
+void Spectr::release_render_switch_(MaskRenderer* incoming) noexcept {
+    if (incoming == nullptr) return;
+    if (switch_xfade_.finished() || !switch_xfade_.active()) {
+        if (switch_wet_wired_) (void)incoming->set_wet_source(&auto_gain_tap_);
+        switch_xfade_.cancel();
+        // The new renderer has not seen what this thread staged into the old
+        // one, nor does the surface cache describe it: restage and resync.
+        last_staged_layout_valid_ = false;
+        audio_applied_surface_valid_ = false;
+        active_renderer_.store(incoming, std::memory_order_release);
+        render_switch_state_.store(kSwitchDone, std::memory_order_release);
+        // Lock-free: the worker frees the outgoing renderer off this thread.
+        (void)switch_reclaim_lane_.try_spawn(SwitchReclaimTask{});
+    } else {
+        render_switch_state_.store(kSwitchRunning, std::memory_order_release);
+    }
+}
+
+bool Spectr::render_through_(MaskRenderer* renderer, MaskRenderer* incoming,
+                             const float* const* input, float* const* output,
+                             int num_samples) noexcept {
+    if (incoming == nullptr || !switch_xfade_.active())
+        return renderer->process(input, output, num_samples);
+    const int channels = channels_;
+    // The outgoing renderer may run in place, so both read a copy.
+    for (int ch = 0; ch < channels; ++ch) {
+        auto* copy = const_cast<float*>(switch_in_ptrs_[static_cast<std::size_t>(ch)]);
+        std::copy(input[ch], input[ch] + num_samples, copy);
+    }
+    const float* const* in = switch_in_ptrs_.data();
+    if (switch_wet_wired_) {
+        auto_gain_tap_.process_block(in, switch_wet_write_.data(), channels, num_samples);
+        switch_replay_out_.replay = switch_wet_read_.data();
+        switch_replay_in_.replay = switch_wet_read_.data();
+        switch_replay_out_.offset = 0;
+        switch_replay_in_.offset = 0;
+    }
+    const bool incoming_ok = incoming->process(in, switch_out_ptrs_.data(), num_samples);
+    const bool outgoing_ok = renderer->process(in, output, num_samples);
+    switch_replay_out_.replay = nullptr;
+    switch_replay_in_.replay = nullptr;
+    if (!incoming_ok)
+        for (int ch = 0; ch < channels; ++ch)
+            std::fill(switch_out_ptrs_[static_cast<std::size_t>(ch)],
+                      switch_out_ptrs_[static_cast<std::size_t>(ch)] + num_samples, 0.0f);
+    if (!outgoing_ok)
+        for (int ch = 0; ch < channels; ++ch)
+            std::fill(output[ch], output[ch] + num_samples, 0.0f);
+    switch_xfade_.mix(output,
+                      const_cast<const float* const*>(switch_out_ptrs_.data()),
+                      channels, num_samples);
+    return incoming_ok || outgoing_ok;
 }
 
 void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
@@ -821,7 +1009,26 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
 
     // No audio thread can be running across a prepare, so the previous
     // renderer and anything a mode switch parked are free to go now.
+    switch_reclaim_lane_.stop();
+    abandon_render_switch_();
     active_renderer_.store(nullptr, std::memory_order_release);
+    (void)switch_reclaim_lane_.start(&Spectr::switch_reclaim_trampoline_, this,
+                                     pulp::format::BackgroundTaskPolicy::Latest);
+    {
+        // A switch renders both renderers from a copy of the input, one run
+        // of the freeze source, and the incoming output: three planar blocks.
+        const auto block = static_cast<std::size_t>(std::max(1, max_block_));
+        const auto chans = static_cast<std::size_t>(
+            std::min<int>(channels_, static_cast<int>(kMaximumChannels)));
+        switch_scratch_.assign(3 * chans * block, 0.0f);
+        for (std::size_t ch = 0; ch < chans; ++ch) {
+            float* base = switch_scratch_.data() + 3 * ch * block;
+            switch_in_ptrs_[ch] = base;
+            switch_wet_write_[ch] = base + block;
+            switch_wet_read_[ch] = base + block;
+            switch_out_ptrs_[ch] = base + 2 * block;
+        }
+    }
     std::unique_ptr<MaskRenderer> outgoing;
     {
         std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
@@ -1220,6 +1427,8 @@ void Spectr::release() {
     // apply publishes into it.
     stop_param_sync_lane_();
     freeze_storage_lane_.stop();
+    switch_reclaim_lane_.stop();
+    abandon_render_switch_();
     active_renderer_.store(nullptr, std::memory_order_release);
     std::unique_ptr<MaskRenderer> outgoing;
     {
@@ -1385,6 +1594,18 @@ void Spectr::process(
     // and half of the other.
     const RenderEpochScope epoch_scope{render_epoch_};
     MaskRenderer* const renderer = active_renderer_.load(std::memory_order_acquire);
+    // A mode switch in flight: this block renders both renderers and
+    // crossfades (render_through_). Released last, after every other use of
+    // the outgoing renderer in this block, so the control thread can free it
+    // the moment the switch reads done.
+    struct RenderSwitchScope {
+        Spectr* self;
+        MaskRenderer* incoming;
+        ~RenderSwitchScope() { self->release_render_switch_(incoming); }
+    };
+    const RenderSwitchScope switch_scope{
+        this, processor_prepared_ && renderer ? claim_render_switch_(renderer) : nullptr};
+    MaskRenderer* const switch_in = switch_scope.incoming;
     // A restored session's Auto Gain estimate (deserialize_plugin_state) is
     // adopted here, before any sample reaches the estimator.
     auto_gain_material_.adopt_pending();
@@ -1474,6 +1695,11 @@ void Spectr::process(
     if (should_reset_stream_history) {
         if (processor_prepared_ && renderer)
             renderer->reset();
+        // A switch warming across a jump warms again from here.
+        if (switch_in != nullptr) {
+            switch_in->reset();
+            switch_xfade_.begin(switch_plan_);
+        }
         // A transport jump forgets the input analysed so far and nothing
         // else: a playing hold keeps playing across it.
         freeze_source_.clear_history();
@@ -2372,6 +2598,7 @@ void Spectr::process(
                     if (!last_staged_layout_valid_
                         || !same_mask_layout_(last_staged_layout_, automated)) {
                         (void)renderer->set_layout_rt(automated);
+                        if (switch_in != nullptr) (void)switch_in->set_layout_rt(automated);
                         last_staged_layout_ = automated;
                         last_staged_layout_valid_ = true;
                     }
@@ -2380,9 +2607,13 @@ void Spectr::process(
                     renderer->claim_mask_this_block();
                     // The Mix destination pulls Mix toward dry (the freeze
                     // blend); the mixer's own ramp carries each block's move.
-                    renderer->set_mix(modulated_mix(
-                        std::clamp(cursor.value(kMix) / 100.0f, 0.0f, 1.0f),
-                        composed.coords));
+                    {
+                        const float slice_mix = modulated_mix(
+                            std::clamp(cursor.value(kMix) / 100.0f, 0.0f, 1.0f),
+                            composed.coords);
+                        renderer->set_mix(slice_mix);
+                        if (switch_in != nullptr) switch_in->set_mix(slice_mix);
+                    }
                     // The Output destination, in dB, at the end of this
                     // slice. Ramped from the previous slice's value across
                     // the samples below, so a running LFO is a smooth gain
@@ -2435,7 +2666,8 @@ void Spectr::process(
                         output_channels_[channel] =
                             out_slice.channel(channel).data();
                     }
-                    const bool processed = renderer->process(
+                    const bool processed = render_through_(
+                        renderer, switch_in,
                         input_channels_.data(), output_channels_.data(),
                         static_cast<int>(out_slice.num_samples()));
                     // v2's events due in this slice, in sample order: each
@@ -2598,6 +2830,7 @@ void Spectr::process(
             output_channels_[channel] = output.channel(channel).data();
         }
         renderer->set_mix(std::clamp(mix, 0.0f, 1.0f));
+        if (switch_in != nullptr) switch_in->set_mix(std::clamp(mix, 0.0f, 1.0f));
         {
             // No LFO is running on this path, so nothing gates the freeze.
             const bool frozen = state().get_value(kParamFreeze) >= 0.5f;
@@ -2622,7 +2855,8 @@ void Spectr::process(
         audio_output_trim_db_ = out_trim_db;
         audio_intensity_percent_ = state().get_value(kParamIntensity);
         audio_auto_gain_param_ = state().get_value(kParamAutoGain);
-        const bool processed = renderer->process(
+        const bool processed = render_through_(
+            renderer, switch_in,
             input_channels_.data(), output_channels_.data(),
             static_cast<int>(output.num_samples()));
 
