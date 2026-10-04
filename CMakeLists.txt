@@ -2184,7 +2184,7 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_control_menu_targets.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
     set_tests_properties(Spectr-materialized-control-menu-targets PROPERTIES TIMEOUT 60)
-    foreach(plant wrong-target no-accent every-accent)
+    foreach(plant wrong-target no-accent every-accent loose-hold lfo2-shape head-copy)
         add_test(NAME Spectr-materialized-control-menu-targets-${plant}-control
             COMMAND ${SPECTR_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_control_menu_targets.mjs
