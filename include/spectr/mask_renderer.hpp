@@ -101,6 +101,38 @@ public:
     /// renderer makes it follow instead.
     [[nodiscard]] virtual int design_grid_size() const noexcept = 0;
 
+    /// The linear magnitude this realisation would apply for @p layout, per
+    /// bin of the design grid (design_grid_size() / 2 + 1 values into @p out),
+    /// computed exactly as its own design step computes it -- the compiled
+    /// table, plus whatever edge shaping the realisation adds. Auto Gain v2
+    /// weighs THIS against the material's spectrum, so its make-up follows
+    /// the response the listener actually hears rather than the drawn steps.
+    ///
+    /// Pure with respect to the renderer's state: no allocation, no lock, no
+    /// clock; @p scratch is the caller's (a table is too large for an audio
+    /// thread's stack). Returns false, writing nothing, if the layout does not
+    /// compile or @p out is too short. The default is the table itself, which
+    /// is what a realisation that applies the table per STFT bin realises.
+    /// > 0 when this realisation reconstructs a MINIMUM-PHASE impulse from the
+    /// realised magnitude, with this magnitude floor; 0 when its wet leg is
+    /// zero-phase against the latency-aligned dry leg. Auto Gain v2 needs the
+    /// phase only below 100 % Mix, where wet and dry interfere.
+    [[nodiscard]] virtual double minimum_phase_floor() const noexcept { return 0.0; }
+
+    [[nodiscard]] virtual bool realised_magnitude(const Layout& layout, double sample_rate,
+                                                  Table& scratch,
+                                                  std::span<double> out) const noexcept {
+        const int grid = design_grid_size();
+        if (grid <= 0 || out.size() < static_cast<std::size_t>(grid / 2 + 1)) return false;
+        if (!pulp::signal::build_spectral_mask(layout, grid, static_cast<float>(sample_rate),
+                                               scratch))
+            return false;
+        for (int bin = 0; bin < scratch.num_bins; ++bin)
+            out[static_cast<std::size_t>(bin)] =
+                static_cast<double>(scratch.gain_linear[static_cast<std::size_t>(bin)]);
+        return true;
+    }
+
     /// Publish one layout from the control thread. May allocate.
     [[nodiscard]] virtual bool publish_layout(const Layout& layout) = 0;
 

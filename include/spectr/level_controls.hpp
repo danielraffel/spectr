@@ -11,11 +11,15 @@
 //              unity instead of jumping. 100 % is the drawn shape exactly;
 //              0 % is a flat (unity) mask.
 //   Auto Gain  (host parameter 5001) is a broadband post gain computed from
-//              the ENERGY of the effective shape against a K-weighted pink
-//              reference -- never from the output signal, so it cannot pump.
-//              It compensates the drawn / morphed / macro shape scaled by
-//              Intensity and blended by Mix. It deliberately does NOT follow
-//              LFO motion: a level LFO stays audible as level.
+//              the ENERGY of the effective shape -- never from the output
+//              signal, so it cannot pump. v2 (what AUTO runs,
+//              auto_gain_material.hpp) weighs the shape by the long-term
+//              K-weighted spectrum of the material the mask is shaping; v1
+//              (AutoGainReference below, kept for comparison) weighs it by a
+//              fixed K-weighted pink reference. It compensates the drawn /
+//              morphed / macro shape scaled by Intensity and blended by Mix.
+//              It deliberately does NOT follow LFO motion: a level LFO stays
+//              audible as level.
 //   Range      (editor state, not a parameter) is the plot's vertical scale
 //              and the reach of a full-height edit: +-3 / 6 / 12 / 24 dB. It
 //              never changes the sound or the band parameter range.
@@ -59,12 +63,14 @@ inline constexpr float kIntensityDefaultPercent = 100.0f;
 /// control always open with it Off (see Spectr::deserialize_plugin_state), so
 /// flipping this constant changes new instances only.
 ///
-/// Off until Auto Gain v2. v1 compensates the drawn shape against a fixed
-/// K-weighted pink reference, and on real program material that misses the
-/// loudness actually lost or gained by up to 14 LU in the worst case, so it is
-/// something to turn on when wanted rather than a default. v2 will weight the
-/// input's own spectrum.
-inline constexpr bool kAutoGainDefaultForNewInstances = false;
+/// On. v1 compensated the drawn shape against a fixed K-weighted pink
+/// reference and missed the loudness actually lost or gained by up to ~20 LU
+/// on narrow material, which is why AUTO used to start off. v2
+/// (auto_gain_material.hpp) weighs the material's own spectrum and meets the
+/// default-on bar on the corpus sweep and the transient and moving-material
+/// gates (docs/level-controls.md). Sessions keep whatever they saved: AUTO
+/// off stays off, AUTO on saved before v2 keeps v1 until toggled.
+inline constexpr bool kAutoGainDefaultForNewInstances = true;
 
 /// Full-scale (0 -> 100 %) Intensity slew. Longer than the LFO level's 60 ms
 /// because Intensity moves EVERY band at once and each step is a mask
@@ -76,9 +82,12 @@ inline constexpr double kIntensitySlewSeconds = 0.2;
 
 /// Auto Gain's ramp to a new compensation target.
 inline constexpr float kAutoGainRampSeconds = 0.3f;
-/// How far Auto Gain may move the level. Cut reaches the bands' full +24 dB
+/// How far Auto Gain v1 may move the level. Cut reaches the bands' full +24 dB
 /// boost; make-up stops at +12 dB so a nearly muted shape is not dragged up
-/// to full level along with its noise floor.
+/// to full level along with its noise floor. (v2's range is
+/// auto_gain_v2_config(): +-24 dB, because once the weighting is the
+/// material's own, a cut that removes 20 dB of what is playing needs 20 dB
+/// back.)
 inline constexpr float kAutoGainMaxCutDb = 24.0f;
 inline constexpr float kAutoGainMaxBoostDb = 12.0f;
 
@@ -243,7 +252,26 @@ private:
 /// `SPECTR_LEVEL_PLANT=<name>` re-creates a defect so a test can prove it sees
 /// it: `intensity-step` (no Intensity slew), `intensity-ignored` (Intensity
 /// never reaches the mask), `autogain-follow-output` (Auto Gain chases the
-/// output level block by block -- the pumping design this one replaces).
+/// output level block by block -- the pumping design this one replaces),
+/// `autogain-v2-unweighted` (v2 ignores the material: every bin weighs the
+/// same), `autogain-v2-no-smoothing` (each frame replaces v2's estimate and
+/// the target is not slew-limited), `autogain-v2-drawn-response` (v2 weighs
+/// the drawn band steps instead of the renderer's realised response; used by
+/// the advisory sweep to show what the realised response buys),
+/// `autogain-v2-reset-on-seek` (v2 forgets the material at every locate),
+/// `autogain-v2-stale-on-change` (no change detector, no level-drop rule, no
+/// Freeze leg switch, a fixed 6 dB/s), `autogain-v2a` (both: the first v2's
+/// transient behaviour, for the sweep's comparison),
+/// `autogain-v2-short-persistence` (a 3-frame detector with no memory of the
+/// material before a change), `autogain-v2-restore-as-warm` (a restored
+/// session's estimate taken as the estimate rather than as a prior),
+/// `autogain-v2-reprepare-reset` (a host re-prepare forgets the estimate),
+/// `autogain-v2-legacy-composed-only` (the old-session AUTO toggle seen only
+/// on the composed path), `autogain-v2-no-drop-path` (the detector has one
+/// threshold whatever the level did: a quieter section after a loud one
+/// glides), `autogain-v2-detect-only-when-on` (no change detection while
+/// AUTO is off), `autogain-v2-restore-fixed-fade` (a restored estimate fades
+/// in 0.5 s even while the material agrees with it).
 /// Read once per process; unset in every shipping run. The Spectr constructor
 /// and prepare() make that first read (spectr.cpp,
 /// prime_negative_control_seams), so the audio thread only ever loads it.

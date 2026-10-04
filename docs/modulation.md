@@ -108,7 +108,7 @@ Measured (`test/test_level_controls.cpp`, 48 kHz, 512-sample blocks):
 | Case | Result |
 | --- | --- |
 | Output, Depth 100 % / 50 %, square at its top, Auto Gain on (+12.000 dB make-up) | +6.000 / +3.000 dB, Auto Gain unchanged |
-| Intensity on a +12 dB shape, Depth 100 % / 50 % | 0.000 / +6.000 dB; Auto Gain -10.084 dB with and without the route |
+| Intensity on a +12 dB shape, Depth 100 % / 50 % | 0.000 / +6.000 dB; Auto Gain -11.989 dB with and without the route (v2: the tone sits inside the boost) |
 | Mix on a -24 dB shape, Depth 100 % / 50 % | 0.000 dB (dry) / -5.49 dB |
 | Output LFO running (sine, 1 beat, Depth 100 %): largest 1 ms envelope step | 0.075 dB (gate 0.2; per-block plant 0.80) |
 | Output switched on at a crest | 0.100 dB / ms |
