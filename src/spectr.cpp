@@ -1695,10 +1695,14 @@ void Spectr::process(
     if (should_reset_stream_history) {
         if (processor_prepared_ && renderer)
             renderer->reset();
-        // A switch warming across a jump warms again from here.
+        // A reset is a stream boundary: there is nothing continuous to
+        // crossfade across, and warming again would hold the just-reset old
+        // renderer -- silent for its own latency -- in the output. The switch
+        // completes here, the new renderer starting fresh as a reset starts
+        // the old one.
         if (switch_in != nullptr) {
             switch_in->reset();
-            switch_xfade_.begin(switch_plan_);
+            switch_xfade_.begin(pulp_candidate::signal::ProcessingSwitchPlan{0, 1});
         }
         // A transport jump forgets the input analysed so far and nothing
         // else: a playing hold keeps playing across it.
