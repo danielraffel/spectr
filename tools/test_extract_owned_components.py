@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from extract_owned_components import component_slices, extract
+from extract_owned_components import component_slices, extract, verify
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ARTIFACT = ROOT / "native-ui/materialized/materialized-document.runtime.json"
@@ -33,6 +33,14 @@ class OwnedComponentSlicesTest(unittest.TestCase):
             for component in manifest["components"]:
                 path = pathlib.Path(td) / "components" / f"{component['name']}.tsx"
                 self.assertEqual(path.stat().st_size, component["bytes"])
+
+    def test_verify_rejects_tampered_module(self):
+        with tempfile.TemporaryDirectory() as td:
+            extract(ARTIFACT, pathlib.Path(td))
+            path = pathlib.Path(td) / "components" / "App.tsx"
+            path.write_bytes(path.read_bytes() + b"\n")
+            with self.assertRaisesRegex(ValueError, "module changed"):
+                verify(ARTIFACT, pathlib.Path(td))
 
     def test_unterminated_component_fails_closed(self):
         with self.assertRaises(ValueError):
