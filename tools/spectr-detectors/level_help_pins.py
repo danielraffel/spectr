@@ -18,6 +18,8 @@ PINS = [
     "**AUTO** keeps the level steady as you boost or cut.",
     "It listens to the sound going through Spectr",
     "While Freeze holds, it listens to the held sound.",
+    "it remembers the sound when you stop, locate or reopen the project",
+    "keeps that version's AUTO, so its level does not change, until you switch AUTO off and on again.",
     "A project saved before AUTO existed opens with it off",
     "**Range** in Settings, under Structure, sets how far a full-height drag reaches",
     "It does not change the sound.",
