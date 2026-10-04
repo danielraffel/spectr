@@ -1335,7 +1335,7 @@ bool Spectr::await_param_sync_(std::chrono::steady_clock::time_point deadline) n
 }
 
 void Spectr::await_offline_work_(MaskRenderer* renderer) noexcept {
-    PULP_TRACE_SCOPE_NAMED("audio", "offline: await design workers");
+    PULP_TRACE_SCOPE_NAMED("dsp", "offline: await design workers");
     // One budget for the whole block. Parameter sync first: it can publish a
     // new mask, which the renderer then has to have designed.
     const auto deadline = std::chrono::steady_clock::now() + kOfflineBlockWaitBudget;
