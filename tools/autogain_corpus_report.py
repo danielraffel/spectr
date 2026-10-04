@@ -184,7 +184,7 @@ def summarise(rows: list[dict], materials: list[dict]) -> dict:
 
 def report(out: str, materials: list[dict], rows: list[dict], summary: dict,
            tau_rows: dict, drawn_rows: list[dict], realised_quick: list[dict],
-           no_relative_gate: list[dict]) -> str:
+           transient_rows: list[dict]) -> str:
     L = []
     L.append("# Spectr Auto Gain v2 -- corpus sweep (advisory)\n")
     L.append("Loudness error = BS.1770 integrated loudness of the output with AUTO on minus "
@@ -254,14 +254,29 @@ def report(out: str, materials: list[dict], rows: list[dict], summary: dict,
         sp = [r["applied_spread_db"] for r in trs]
         L.append(f"| {tau} | {pct(e, 0.95):.2f} | {max(e):.2f} | {pct(w, 0.95):.2f} | "
                  f"{statistics.mean(sd):.4f} | {max(sp):.3f} |")
-    L.append("\n## Realised vs drawn response, relative gate on/off (quick subset, v2)\n")
+    L.append("\n## Realised vs drawn response (quick subset, v2)\n")
     L.append("| response | p95 abs LU | worst abs LU |")
     L.append("|---|---|---|")
-    for label, rs in (("realised (shipping)", realised_quick), ("drawn bands", drawn_rows),
-                      ("realised, no relative gate", no_relative_gate)):
+    for label, rs in (("realised (shipping)", realised_quick), ("drawn bands", drawn_rows)):
         e = [abs(r["error_lu"]) for r in rs]
         if e:
             L.append(f"| {label} | {pct(e, 0.95):.2f} | {max(e):.2f} |")
+    L.append("\n## Transients (measured from the event)\n")
+    L.append("T1dB: time for the applied gain to come within 1 dB of where it settles "
+             "(its mean over the last second of the window). Max momentary: largest error of "
+             "the output's momentary (400 ms) loudness against a flat AUTO-off render of the "
+             "same scenario (a perfect Auto Gain), and the time it spends above 6 LU. "
+             "`v2a-plant` re-creates the first v2's transient behaviour "
+             "(SPECTR_LEVEL_PLANT=autogain-v2a).\n")
+    L.append("| scenario | event | model | T1dB s | max momentary LU | s over 6 LU |")
+    L.append("|---|---|---|---|---|---|")
+    order = {"v1": 0, "v2a-plant": 1, "v2": 2}
+    for r in sorted(transient_rows, key=lambda r: (r["scenario"], r["event"], order.get(r["mode"], 9))):
+        L.append(f"| {r['scenario']} | {r['event']} | {r['mode']} | {r['t1db']:.2f} | "
+                 f"{r['max_momentary_error']:.2f} | {r['seconds_over_6lu']:.2f} |")
+    L.append("\nWhole-render momentary error (from 0.4 s, against a flat AUTO-off render), "
+             "corpus sweep, v2: worst "
+             + f"{max((r['max_momentary_error_whole'] or 0.0) for r in rows if r['mode'] == 'v2'):.2f} LU.")
     text = "\n".join(L) + "\n"
     with open(os.path.join(out, "report.md"), "w") as f:
         f.write(text)
@@ -298,14 +313,22 @@ def main() -> int:
     realised_quick = run_sweep(sweep, quick_tsv, "quick", "v2")
     drawn = run_sweep(sweep, quick_tsv, "quick", "v2",
                       {"SPECTR_LEVEL_PLANT": "autogain-v2-drawn-response"})
-    no_relative_gate = run_sweep(sweep, quick_tsv, "quick", "v2",
-                                 {"SPECTR_AUTOGAIN_REL_GATE_LU": "0"})
+    transient_rows = []
+    for label, extra in (("v1", {}), ("v2a-plant", {"SPECTR_LEVEL_PLANT": "autogain-v2a"}),
+                         ("v2", {})):
+        proc = subprocess.run([sweep, "--transients", "v1" if label == "v1" else label],
+                              check=True, capture_output=True, text=True, env=env(extra))
+        transient_rows += [json.loads(line) for line in proc.stdout.splitlines()
+                           if line.startswith("{")]
+    with open(os.path.join(args.out, "transients.jsonl"), "w") as f:
+        for r in transient_rows:
+            f.write(json.dumps(r) + "\n")
     with open(os.path.join(args.out, "aux.json"), "w") as f:
         json.dump({"tau": tau_rows, "drawn": drawn, "realised_quick": realised_quick,
-                   "no_relative_gate": no_relative_gate,
+                   "transients": transient_rows,
                    "summary": summary, "materials": materials}, f, indent=1)
     text = report(args.out, materials, rows, summary, tau_rows, drawn, realised_quick,
-                  no_relative_gate)
+                  transient_rows)
     print(text[:4000])
     return 0
 

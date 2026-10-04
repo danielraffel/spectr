@@ -66,8 +66,123 @@ struct Material {
 
 } // namespace
 
+// ── Transients (--transients) ──────────────────────────────────────────────
+// Every case is measured from the event: T1dB, max momentary error against a
+// flat AUTO-off render of the same scenario, and time above 6 LU.
+void transients(Mode mode, const char* label) {
+    const auto row = [&](const char* scenario, const char* event, const Transition& t) {
+        std::printf("{\"scenario\":\"%s\",\"event\":\"%s\",\"mode\":\"%s\","
+                    "\"t1db\":%.3f,\"max_momentary_error\":%.3f,\"seconds_over_6lu\":%.3f,"
+                    "\"settled_db\":%.3f}\n", scenario, event, label, t.t1db,
+                    t.max_momentary_error, t.seconds_over_6lu, t.settled_db);
+        std::fflush(stdout);
+    };
+    const Shape high = region("high broad +24", 24, 31, 24.0f);
+    const Shape low = region("low broad +24", 0, 9, 24.0f);
+    const Shape flat{"flat", {}};
+    {   // cold start
+        const auto n = seconds(10.0);
+        struct C { const char* name; Stereo in; Shape shape; };
+        const C cases[] = {{"cold start: bass line, high +24", bass_line(n), high},
+                           {"cold start: vocal, high +24", vocal(n), high},
+                           {"cold start: hats, high -24", hats(n), region("h", 24, 31, -24.0f)},
+                           {"cold start: sine 1k, mid narrow -24", sine(n),
+                            region("m", band_of(1000.0), band_of(1000.0), -24.0f)},
+                           {"cold start: drum loop, low +24", drum_loop(n), low},
+                           {"cold start: pink, low +12", pink(n, 5u), region("l", 0, 9, 12.0f)}};
+        for (const auto& c : cases) {
+            const auto r = render(c.in, c.shape, mode);
+            const auto ref = render(c.in, flat, Mode::off);
+            row(c.name, "start", transition(r, ref, 0.0, 6.0, 9.9));
+        }
+    }
+    {   // locate every 3 s
+        const auto n = seconds(15.0);
+        struct C { const char* name; Stereo in; Shape shape; };
+        const C cases[] = {{"locate every 3 s: bass line, high +24", bass_line(n), high},
+                           {"locate every 3 s: drum loop, low +24", drum_loop(n), low},
+                           {"locate every 3 s: vocal, mid narrow -12", vocal(n),
+                            region("m", band_of(1000.0), band_of(1000.0), -12.0f)}};
+        RenderOptions o;
+        for (double t = 3.0; t < 15.0; t += 3.0) o.resets.push_back(seconds(t));
+        for (const auto& c : cases) {
+            const auto r = render(c.in, c.shape, mode, o);
+            const auto ref = render(c.in, flat, Mode::off, o);
+            Transition worst;
+            for (double t = 3.0; t < 15.0; t += 3.0) {
+                const auto tr = transition(r, ref, t, t + 2.9, t + 2.9);
+                worst.t1db = std::max(worst.t1db, tr.t1db);
+                worst.max_momentary_error = std::max(worst.max_momentary_error,
+                                                     tr.max_momentary_error);
+                worst.seconds_over_6lu = std::max(worst.seconds_over_6lu, tr.seconds_over_6lu);
+                worst.settled_db = tr.settled_db;
+            }
+            row(c.name, "each locate (worst)", worst);
+        }
+    }
+    {   // host reset mid-hold
+        const Stereo in = concat(bass_line(seconds(5.0)), hats(seconds(10.0)));
+        RenderOptions o;
+        o.freeze_at = seconds(3.0);
+        o.resets = {seconds(7.0)};
+        const auto r = render(in, high, mode, o);
+        const auto ref = render(in, flat, Mode::off, o);
+        row("host reset mid-hold: bass held, hats live, high +24", "reset at 7 s",
+            transition(r, ref, 7.0, 14.0, 14.0));
+    }
+    {   // Freeze engage and release
+        const Stereo in = concat(bass_line(seconds(5.0)), hats(seconds(15.0)));
+        RenderOptions o;
+        o.freeze_at = seconds(4.5);
+        o.release_at = seconds(9.0);
+        const auto r = render(in, high, mode, o);
+        const auto ref = render(in, flat, Mode::off, o);
+        row("Freeze: bass held at 4.5 s, hats live from 5 s, high +24", "engage",
+            transition(r, ref, 4.5, 9.0, 8.9));
+        row("Freeze: bass held at 4.5 s, hats live from 5 s, high +24", "release at 9 s",
+            transition(r, ref, 9.0, 20.0, 19.9));
+    }
+    {   // material changes
+        const auto half = seconds(8.0);
+        const double q = std::pow(10.0, -15.0 / 20.0);
+        struct C { const char* name; Stereo in; };
+        const C cases[] = {
+            {"change at 8 s: bass -> hats, high +24", concat(bass_line(half), hats(half))},
+            {"change at 8 s: bass -> hats -15 dB (quieter after loud)",
+             concat(bass_line(half), scaled(hats(half), q))},
+            {"change at 8 s: hats -> bass -15 dB", concat(hats(half), scaled(bass_line(half), q))},
+            {"change at 8 s: hats -15 dB -> bass (loud after quiet)",
+             concat(scaled(hats(half), q), bass_line(half))},
+            {"change at 8 s: pink -> vocal -15 dB", concat(pink(half, 3u), scaled(vocal(half), q))},
+        };
+        for (const auto& c : cases) {
+            const auto r = render(c.in, high, mode);
+            const auto ref = render(c.in, flat, Mode::off);
+            row(c.name, "change", transition(r, ref, 8.0, 16.0, 15.9));
+        }
+    }
+    {   // switches every 4 s
+        const auto part = seconds(4.0);
+        Stereo in = bass_line(part);
+        in = concat(in, hats(part));
+        in = concat(in, vocal(part));
+        in = concat(in, drum_loop(part));
+        in = concat(in, bass_line(part));
+        const auto r = render(in, high, mode);
+        const auto ref = render(in, flat, Mode::off);
+        const char* names[] = {"bass -> hats", "hats -> vocal", "vocal -> drums", "drums -> bass"};
+        int k = 0;
+        for (double t = 4.0; t < 20.0; t += 4.0, ++k) {
+            char label[96];
+            std::snprintf(label, sizeof(label), "switch every 4 s, high +24: %s", names[k]);
+            row(label, "switch", transition(r, ref, t, t + 3.9, t + 3.9));
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     std::string write_dir, corpus, shapes_choice = "all", modes_choice = "v1,v2";
+    std::string transient_label;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         const auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -75,6 +190,11 @@ int main(int argc, char** argv) {
         else if (a == "--corpus") corpus = next();
         else if (a == "--shapes") shapes_choice = next();
         else if (a == "--modes") modes_choice = next();
+        else if (a == "--transients") transient_label = next();
+    }
+    if (!transient_label.empty()) {
+        transients(transient_label == "v1" ? Mode::v1 : Mode::v2, transient_label.c_str());
+        return 0;
     }
     if (!write_dir.empty()) {
         const auto n = seconds(12.0);
@@ -124,11 +244,14 @@ int main(int argc, char** argv) {
         const Stereo in = read_f32(m.path);
         RenderOptions options;
         if (m.freeze_at > 0.0) options.freeze_at = seconds(m.freeze_at);
-        // The measurement window: from 4 s (or 4.5 s past the freeze), to the
-        // end. "whole" is from 0.5 s, start-up included.
+        // The measurement windows: "steady" from 4 s (or 4.5 s past the
+        // freeze) to the end; "whole" from 0 s (from the freeze for a Freeze
+        // case), start-up included.
         const auto from = m.freeze_at > 0.0 ? seconds(m.freeze_at + 4.5) : seconds(4.0);
-        const auto whole_from = m.freeze_at > 0.0 ? seconds(m.freeze_at + 0.5) : seconds(0.5);
+        const auto whole_from = m.freeze_at > 0.0 ? seconds(m.freeze_at) : std::size_t{0};
         const double in_steady = integrated_lufs(in, from), in_whole = integrated_lufs(in, whole_from);
+        // Momentary / short-term references: a flat render with AUTO off.
+        const auto flat_ref = render(in, Shape{"flat", {}}, Mode::off, options);
         for (const auto& shape : shapes) {
             double ref_steady = in_steady, ref_whole = in_whole;
             if (m.freeze_at > 0.0) {
@@ -152,15 +275,21 @@ int main(int argc, char** argv) {
                 const auto [lo, hi] = std::minmax_element(settled.begin(), settled.end());
                 const double sd_on = stddev(loudness_series(r.out, from, true));
                 const double sd_off = stddev(loudness_series(off.out, from, true));
+                // Whole-render momentary error vs the flat reference, from 0.4 s
+                // (the first full momentary window).
+                const auto whole_tr = transition(r, flat_ref,
+                    static_cast<double>(whole_from) / kRate + 0.4, 1.0e9);
                 std::printf("{\"material\":\"%s\",\"shape\":\"%s\",\"mode\":\"%s\","
                             "\"error_lu\":%.4f,\"error_whole_lu\":%.4f,\"off_change_lu\":%.4f,"
                             "\"applied_db_end\":%.4f,\"applied_spread_db\":%.4f,"
                             "\"applied_sd_db\":%.5f,\"momentary_sd_on\":%.4f,"
-                            "\"momentary_sd_off\":%.4f}\n",
+                            "\"momentary_sd_off\":%.4f,\"max_momentary_error_whole\":%.3f,"
+                            "\"seconds_over_6lu_whole\":%.3f}\n",
                             json_escape(m.name).c_str(), json_escape(shape.name).c_str(),
                             mode_name(mode), steady, whole, off_steady,
                             static_cast<double>(r.applied_db.back()),
-                            static_cast<double>(*hi - *lo), stddev(settled), sd_on, sd_off);
+                            static_cast<double>(*hi - *lo), stddev(settled), sd_on, sd_off,
+                            whole_tr.max_momentary_error, whole_tr.seconds_over_6lu);
                 std::fflush(stdout);
             }
         }

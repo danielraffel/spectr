@@ -692,6 +692,12 @@ public:
     /// a parameter. Takes effect at the next block.
     void set_auto_gain_model(AutoGainModel model) noexcept {
         auto_gain_model_.store(static_cast<int>(model), std::memory_order_relaxed);
+        auto_gain_legacy_v1_.store(0, std::memory_order_relaxed);
+    }
+    /// True while a session saved with AUTO on before v2 still runs v1 (until
+    /// AUTO is switched off and on again).
+    [[nodiscard]] bool auto_gain_legacy_v1() const noexcept {
+        return auto_gain_legacy_v1_.load(std::memory_order_relaxed) != 0;
     }
     [[nodiscard]] AutoGainModel auto_gain_model() const noexcept {
         return static_cast<AutoGainModel>(auto_gain_model_.load(std::memory_order_relaxed));
@@ -1131,6 +1137,11 @@ private:
     AutoGainWetTap                         auto_gain_tap_{};
     std::atomic<int>                       auto_gain_model_{
         static_cast<int>(kAutoGainShippingModel)};
+    // 0: no; 1: a pre-v2 session runs v1 until AUTO is toggled; 2: the same,
+    // just loaded (the audio thread forgets AUTO's previous state).
+    std::atomic<int>                       auto_gain_legacy_v1_{0};
+    // AUTO as the audio thread last saw it: -1 not yet, 0 off, 1 on.
+    int                                    auto_gain_seen_ = -1;
     // The last slice's Auto Gain inputs, to tell a shape edit (retarget now)
     // from material movement (slew-limited, on the estimator's frame grid).
     pulp::signal::SpectralBandLayout       auto_gain_last_shape_{};

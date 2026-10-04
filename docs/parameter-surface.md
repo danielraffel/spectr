@@ -213,8 +213,11 @@ block's parameter cursor. See `include/spectr/level_controls.hpp`.
   [level-controls.md](level-controls.md). New instances default **Off**
   (`kAutoGainDefaultForNewInstances`); a session saved without the
   `level_controls` marker opens with it Off too; a session that saved it On
-  keeps it On -- and now runs v2, so its make-up follows the material rather
-  than the pink reference.
+  keeps it On. One saved On before v2 (no `auto_gain_model` member) keeps
+  running v1 so its level does not change, until the user switches AUTO off and
+  on; new instances and AUTO switched on fresh run v2. v2's estimate of the
+  material is saved with the session (`auto_gain_estimate`) and kept across a
+  locate, so playback starts at the level it had.
 - **Range** is not a parameter: it is editor state (`editor_range_db` in the
   supplemental blob, default 24) and never changes the sound.
 - **Show tooltips** (Settings > FEEDBACK) is not a parameter either: editor

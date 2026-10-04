@@ -19,6 +19,8 @@ PINS = [
     "It listens to the sound going through Spectr",
     "While Freeze holds, it listens to the held sound.",
     "A project that saved AUTO on keeps it on.",
+    "it remembers the sound when you stop, locate or reopen the project",
+    "keeps that version's AUTO, so its level does not change, until you switch AUTO off and on again.",
     "**Range** in Settings, under Structure, sets how far a full-height drag reaches",
     "It does not change the sound.",
     "**Display**, under Appearance",

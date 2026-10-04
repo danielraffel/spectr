@@ -306,6 +306,91 @@ TEST_CASE("MakeupTarget: an edit jumps, the material slews", "[loudness-compensa
     CHECK(t.value_db() == -10.0f);
 }
 
+TEST_CASE("MakeupTarget: proportional slew far from the target, slow near it",
+          "[loudness-compensation][state]") {
+    MakeupTarget t;
+    REQUIRE(t.retarget(0.0f));
+    // 20 dB away at 10/s, capped at 120 dB/s: 120 x 0.0427 = 5.1 dB this hop.
+    REQUIRE(t.follow(-20.0f, 2048.0 / kRate, 6.0, 10.0, 120.0));
+    CHECK(t.value_db() == Approx(-5.12f).margin(0.02f));
+    // 0.3 dB away: the 6 dB/s floor, all of it in one hop (0.256 dB max).
+    MakeupTarget n;
+    REQUIRE(n.retarget(0.0f));
+    REQUIRE(n.follow(-0.3f, 2048.0 / kRate, 6.0, 10.0, 120.0));
+    CHECK(n.value_db() == Approx(-0.256f).margin(0.002f));
+}
+
+TEST_CASE("MaterialChangeDetector: persistence and hold-off", "[loudness-compensation][state]") {
+    MaterialChangeDetector d;
+    d.threshold_db = 4.0;
+    d.frames = 3;
+    d.holdoff_frames = 6;
+    CHECK_FALSE(d.observe(0.0f, 5.0f));
+    CHECK_FALSE(d.observe(0.0f, 5.0f));
+    CHECK_FALSE(d.observe(0.0f, 3.0f));   // a gap resets the run
+    CHECK_FALSE(d.observe(0.0f, 5.0f));
+    CHECK_FALSE(d.observe(0.0f, 5.0f));
+    CHECK(d.observe(0.0f, 5.0f));
+    for (int i = 0; i < 6; ++i) CHECK_FALSE(d.observe(0.0f, 9.0f));  // hold-off
+    CHECK_FALSE(d.observe(0.0f, 9.0f));
+    CHECK_FALSE(d.observe(0.0f, 9.0f));
+    CHECK(d.observe(0.0f, 9.0f));
+}
+
+TEST_CASE("LongTermSpectrum: a locate keeps the estimate, a saved one restores warm",
+          "[loudness-compensation][state]") {
+    LoudnessCompensationConfig config;
+    config.track_dry_leg = true;
+    LongTermSpectrum s;
+    s.prepare(kRate, 1, config);
+    const auto x = tone(static_cast<std::size_t>(kRate * 4.0), 3000.0);
+    const float* c[] = {x.data()};
+    s.push(c, c, 1, static_cast<int>(x.size()), [](int) {});
+    const double before = s.weight(2900.0, 3100.0);
+    REQUIRE(before > 0.95);
+    s.restart_grid();
+    CHECK(s.weight(2900.0, 3100.0) == before);
+    CHECK(s.samples_to_next_frame() == s.hop());
+    // Band-compressed round trip, into another instance at another rate.
+    SpectrumBands bands;
+    s.export_bands(bands);
+    REQUIRE(bands.valid);
+    LongTermSpectrum t;
+    t.prepare(96000.0, 1, config);
+    CHECK(t.weight(2900.0, 3100.0) < 0.05);   // the flat prior
+    t.import_bands(bands);
+    std::printf("[loudness-compensation] restored at 96 kHz: %.3f of the energy within "
+                "100 Hz of 3 kHz (saved %.3f)\n", t.weight(2900.0, 3100.0), before);
+    CHECK(t.weight(2900.0, 3100.0) > 0.9);
+    CHECK(t.prior_weight() == 0.0);
+}
+
+TEST_CASE("LongTermSpectrum: quieter new material takes over within a second",
+          "[loudness-compensation][state]") {
+    // Loud noise, then a 3 kHz tone 30 dB quieter. Energy weighting alone
+    // would let the noise outweigh the tone for many seconds; the level-drop
+    // rule restarts the estimate from the new material.
+    LoudnessCompensationConfig config;
+    LongTermSpectrum s;
+    s.prepare(kRate, 1, config);
+    auto x = noise(static_cast<std::size_t>(kRate * 5.0), 8u, 0.3);
+    const auto quiet = tone(static_cast<std::size_t>(kRate * 1.2), 3000.0, 0.3 * 0.0316);
+    x.insert(x.end(), quiet.begin(), quiet.end());
+    const float* c[] = {x.data()};
+    s.push(c, 1, static_cast<int>(x.size()));
+    std::printf("[loudness-compensation] 1.2 s after a 30 dB drop to a tone: %.3f of the "
+                "energy within 100 Hz of it (%llu restarts)\n", s.weight(2900.0, 3100.0),
+                static_cast<unsigned long long>(s.restarts()));
+    CHECK(s.restarts() >= 1);
+    CHECK(s.weight(2900.0, 3100.0) > 0.9);
+    // Control: without the rule the noise still dominates.
+    config.level_drop_db = 0.0;
+    LongTermSpectrum r;
+    r.prepare(kRate, 1, config);
+    r.push(c, 1, static_cast<int>(x.size()));
+    CHECK(r.weight(2900.0, 3100.0) < 0.5);
+}
+
 TEST_CASE("The realtime calls do not allocate", "[loudness-compensation][rt-safety]") {
     LoudnessCompensationConfig config;
     config.track_dry_leg = true;
@@ -331,6 +416,16 @@ TEST_CASE("The realtime calls do not allocate", "[loudness-compensation][rt-safe
         });
     }
     (void)makeup_gain_db(response, s.spectrum(), {24.0f, 24.0f});
+    SpectrumBands saved;
+    s.export_bands(saved);
+    s.restart();
+    s.restart_grid();
+    s.import_bands(saved);
+    s.wet_becomes_dry();
+    s.legs_uncorrelated();
+    MaterialChangeDetector detector;
+    (void)detector.observe(1.0f, 9.0f);
+    (void)target.follow(-10.0f, 0.04, 6.0, 10.0, 120.0);
     REQUIRE(mp.compute(magnitude, 1e-6, phased));
     (void)blend_makeup_gain_db(phased, s.legs(), 0.5, {24.0f, 24.0f});
     s.reset();

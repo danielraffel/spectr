@@ -29,19 +29,28 @@
 ///
 /// No pumping: nothing reads the output; the spectrum is a several-second,
 /// energy-weighted average that skips frames below the loudness gate (so it
-/// holds through silence); material movement is slew-limited; a shape edit
-/// retargets at once. Determinism: the estimator's frame grid is counted in
-/// samples from prepare()/reset(), and a frame's new target is applied at the
-/// frame's own sample, so the gain does not depend on host block size or
-/// render speed.
+/// holds through silence); material movement is slewed (slow near the target,
+/// proportionally faster far from it); a shape edit retargets at once.
+/// Following the material: a level-independent change detector and a
+/// level-drop rule restart the estimate when the material really changes; a
+/// Freeze release switches the wet estimate to the live one at once; a locate
+/// keeps the estimate; the estimate is saved with the session. Determinism:
+/// the frame grid is counted in samples from prepare() and from each locate,
+/// and a frame's new target is applied at its own stream sample plus the
+/// renderer's latency, so the gain does not depend on host block size or
+/// render speed. Design record and measurements: docs/level-controls.md.
 
 #include "spectr/band_state.hpp"
+#include "spectr/freeze_source.hpp"
 #include "spectr/level_controls.hpp"
 #include "spectr/mask_renderer.hpp"
 #include "spectr/upstream/loudness_compensation.hpp"
 
+#include <pulp/runtime/triple_buffer.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
+
+#include <atomic>
 
 #include <algorithm>
 #include <array>
@@ -68,7 +77,14 @@ auto_gain_v2_config() noexcept {
     c.time_constant_seconds = 3.0;
     c.prior_seconds = 0.5;
     c.gate_lufs = -60.0;
-    c.relative_gate_lu = 10.0;
+    c.fast_time_constant_seconds = 0.4;
+    c.level_drop_db = 10.0;
+    c.level_drop_window_seconds = 0.6;
+    c.material_slew_rate_per_second = 10.0;
+    c.material_slew_max_db_per_second = 120.0;
+    c.material_slew_knee_db = 0.0;
+    c.change_threshold_db = 4.0;
+    c.change_frames = 3;
     // The dry leg is the live input; the wet leg is what the mask shapes
     // (the held sound while Freeze holds). Their cross-spectrum tells the
     // estimator, sample-deterministically, how they combine at Mix.
@@ -86,11 +102,24 @@ class AutoGainMaterial {
 public:
     /// One frame's outcome inside a render slice: from `offset` (samples into
     /// the slice) on, the make-up target is `target_db`.
+    /// A new make-up target from `at` (absolute stream sample, counted from
+    /// prepare()) on, reached over `ramp_seconds`. `at` is the frame's own
+    /// sample plus the renderer's latency, so the gain moves with the audio
+    /// the frame described rather than ahead of it.
     struct Event {
-        int offset = 0;
+        std::int64_t at = 0;
         float target_db = 0.0f;
+        float ramp_seconds = 0.0f;
     };
-    static constexpr std::size_t kMaxEvents = 64;
+    static constexpr std::size_t kMaxEvents = 128;
+    /// Ramp for a material event: one hop, so successive frames' targets join
+    /// into a continuous line. A Freeze release jumps over kJumpRampSeconds.
+    static constexpr float kJumpRampSeconds = 0.02f;
+    /// After a change of material, the new estimate is followed once it
+    /// spans this much audio.
+    static constexpr double kRestartSettleSeconds = 0.5;
+    /// A target step at most this big is wobble, smoothed over the 0.3 s ramp.
+    static constexpr float kSmallStepDb = 0.5f;
 
     // ── control thread ──────────────────────────────────────────────────
     /// Allocates. @p reference must be prepared for the same rate: v1's
@@ -108,14 +137,21 @@ public:
             if (const double v = std::atof(tau); v > 0.0) config.time_constant_seconds = v;
         if (const char* slew = std::getenv("SPECTR_AUTOGAIN_SLEW_DB_S"))
             if (const double v = std::atof(slew); v > 0.0) config.material_slew_db_per_second = v;
-        if (const char* gate = std::getenv("SPECTR_AUTOGAIN_REL_GATE_LU"))
-            config.relative_gate_lu = std::atof(gate);  // <= 0 turns it off
         // Negative-control seams (level_plant, SPECTR_LEVEL_PLANT).
         if (level_plant("autogain-v2-unweighted")) config.weight_by_material = false;
         if (level_plant("autogain-v2-no-smoothing")) {
             config.time_constant_seconds = 0.0;
             config.material_slew_db_per_second = 0.0;
         }
+        // The first v2's transient behaviour: no change detection, no
+        // level-drop rule, no switch of legs at a Freeze edge, a fixed 6 dB/s.
+        stale_plant_ = level_plant("autogain-v2-stale-on-change") || level_plant("autogain-v2a");
+        if (stale_plant_) {
+            config.level_drop_db = 0.0;
+            config.material_slew_rate_per_second = 0.0;
+        }
+        detector_.threshold_db = config.change_threshold_db;
+        detector_.frames = config.change_frames;
         using pulp_candidate::signal::LongTermSpectrum;
         const int bins = LongTermSpectrum::bins_for(sample_rate, config);
         const double bin_hz = sample_rate / static_cast<double>((bins - 1) * 2);
@@ -140,13 +176,89 @@ public:
     }
 
     // ── audio thread ────────────────────────────────────────────────────
-    /// Forget the material: back to the prior, frame grid restarted.
+    /// Cold start: forget the material, back to the prior, frame grid
+    /// restarted. prepare() only -- a transport jump keeps the material
+    /// (restart_grid()).
     void reset() noexcept {
         spectrum_.reset();
         target_.reset();
-        events_ = 0;
-        slice_pos_ = 0;
+        detector_.reset();
+        clear_events_();
+        stream_pos_ = 0;
         enabled_ = false;
+        export_countdown_ = 0;
+    }
+
+    /// A transport jump or host Reset: the frame grid restarts (chunking
+    /// determinism), the material and the target are kept, so playback from
+    /// a locate starts at the right level.
+    void restart_grid() noexcept {
+        spectrum_.restart_grid();
+        detector_.reset();
+        // Pending events describe audio before the jump.
+        clear_events_();
+    }
+
+    /// The tap's freeze source moved between live and held. Engaging: the
+    /// wet leg is now a held past, unrelated to the live input. Releasing:
+    /// the wet leg becomes the live input again, whose spectrum the dry leg
+    /// kept warm through the hold.
+    void freeze_engaged() noexcept {
+        if (stale_plant_) return;
+        spectrum_.legs_uncorrelated();
+    }
+    void freeze_released() noexcept {
+        if (stale_plant_) return;
+        spectrum_.wet_becomes_dry();
+        detector_.hold_off();
+        // The release is an edge this adapter knows the sample of: the gain
+        // jumps with it (over the freeze crossfade) instead of slewing after.
+        if (enabled_ && target_.primed() && target_.retarget(shape_target_db())) {
+            last_event_db_ = target_.value_db();
+            push_event_({stream_pos_ + latency_, target_.value_db(), kJumpRampSeconds});
+        }
+    }
+
+    /// Samples until the estimator's next frame completes (the tap splits
+    /// the freeze source's block there, so a Freeze edge reaches the
+    /// estimator at the same sample however the host cut the stream).
+    [[nodiscard]] int samples_to_next_frame() const noexcept {
+        return spectrum_.prepared() ? spectrum_.samples_to_next_frame() : 1 << 30;
+    }
+
+    // ── session state ───────────────────────────────────────────────────
+    /// Any thread: the last published band-compressed estimate (audio thread
+    /// writes it every few audible frames).
+    [[nodiscard]] pulp_candidate::signal::SpectrumBands saved_estimate() const noexcept {
+        return snapshot_.read();
+    }
+    /// Control thread: hand a saved estimate to the audio thread, which
+    /// adopts it at the start of its next block (adopt_pending()).
+    void offer_saved_estimate(const pulp_candidate::signal::SpectrumBands& bands) noexcept {
+        int expected = kSlotEmpty;
+        // Wait out an in-progress adoption (a few microseconds at most).
+        for (int spin = 0; spin < 1000000; ++spin) {
+            expected = slot_state_.load(std::memory_order_acquire);
+            if (expected == kSlotReading) continue;
+            if (slot_state_.compare_exchange_weak(expected, kSlotWriting,
+                                                  std::memory_order_acq_rel))
+                break;
+        }
+        if (slot_state_.load(std::memory_order_relaxed) != kSlotWriting) return;
+        pending_ = bands;
+        slot_state_.store(kSlotReady, std::memory_order_release);
+        snapshot_.write(bands);
+    }
+    /// Audio thread, block start: adopt a saved estimate if one was offered.
+    void adopt_pending() noexcept {
+        int expected = kSlotReady;
+        if (!slot_state_.compare_exchange_strong(expected, kSlotReading,
+                                                 std::memory_order_acq_rel))
+            return;
+        spectrum_.import_bands(pending_);
+        target_.reset();
+        detector_.reset();
+        slot_state_.store(kSlotEmpty, std::memory_order_release);
     }
 
     /// Start a render slice with the shape it renders, AUTO's state, and
@@ -162,35 +274,54 @@ public:
                      const MaskRenderer* renderer) noexcept {
         enabled_ = enabled;
         mix_ = std::clamp(static_cast<double>(mix), 0.0, 1.0);
-        events_ = 0;
-        slice_pos_ = 0;
+        slice_start_ = stream_pos_;
         if (target_.primed() && !shape_changed) return false;
         if (enabled) derive_response_(shape, mix, renderer);
-        return target_.retarget(enabled ? shape_target_db() : 0.0f);
+        // Switching AUTO on (or any edit) is also when a material change
+        // that happened while AUTO was off is noticed.
+        if (enabled && !stale_plant_ && spectrum_.shape_frames() >= 2
+            && std::abs(target_db_for_(spectrum_.fast_shape_legs())
+                        - target_db_for_(spectrum_.slow_shape_legs()))
+                   > detector_.threshold_db)
+            spectrum_.restart();
+        const bool moved = target_.retarget(enabled ? shape_target_db() : 0.0f);
+        last_event_db_ = target_.value_db();
+        // An edit supersedes targets computed for the shape before it.
+        if (moved) clear_events_();
+        return moved;
     }
 
     /// The wet source's block and the live input it was made from, from the
     /// tap, in stream order.
     void push(const float* const* wet, const float* const* live, int channels,
               int num_samples) noexcept {
+        const std::int64_t before = stream_pos_;
         spectrum_.push(wet, live, channels, num_samples, [&](int consumed) {
-            on_frame_(slice_pos_ + consumed);
+            on_frame_(before + consumed);
         });
-        slice_pos_ = std::min(slice_pos_ + std::max(0, num_samples), 1 << 30);
+        stream_pos_ += std::max(0, num_samples);
     }
 
-    [[nodiscard]] std::size_t event_count() const noexcept { return events_; }
-    [[nodiscard]] const Event& event(std::size_t i) const noexcept { return event_list_[i]; }
+    /// The renderer's latency, in samples (the processor sets it each slice).
+    void set_latency(int samples) noexcept { latency_ = std::max(0, samples); }
+    /// Where the current slice starts in the stream.
+    [[nodiscard]] std::int64_t slice_start() const noexcept { return slice_start_; }
+    /// The next event due at or before @p at (absolute), or nullptr. Taking
+    /// it removes it.
+    [[nodiscard]] const Event* take_due(std::int64_t at) noexcept {
+        if (events_ == 0 || event_list_[head_].at > at) return nullptr;
+        const Event* e = &event_list_[head_];
+        head_ = (head_ + 1) % kMaxEvents;
+        --events_;
+        return e;
+    }
     [[nodiscard]] float target_db() const noexcept { return target_.value_db(); }
     [[nodiscard]] std::uint64_t observed_frames() const noexcept { return spectrum_.observed_frames(); }
     [[nodiscard]] std::uint64_t gated_frames() const noexcept { return spectrum_.gated_frames(); }
 
     /// The make-up the current estimate gives the current slice's shape.
     [[nodiscard]] float shape_target_db() const noexcept {
-        if (!spectrum_.prepared() || !response_valid_) return 0.0f;
-        const auto& c = spectrum_.config();
-        return pulp_candidate::signal::blend_makeup_gain_db(
-            response_, spectrum_.legs(), mix_, {c.max_cut_db, c.max_boost_db});
+        return target_db_for_(spectrum_.legs());
     }
     /// Whether the last derived response was the renderer's realised one
     /// (false: the compiled table, the drawn steps).
@@ -236,22 +367,73 @@ private:
         response_valid_ = true;
     }
 
-    void on_frame_(int offset_in_slice) noexcept {
+    [[nodiscard]] float target_db_for_(const pulp_candidate::signal::LegSpectra& legs) const noexcept {
+        if (!spectrum_.prepared() || !response_valid_) return 0.0f;
+        const auto& c = spectrum_.config();
+        return pulp_candidate::signal::blend_makeup_gain_db(
+            response_, legs, mix_, {c.max_cut_db, c.max_boost_db});
+    }
+
+    void clear_events_() noexcept { head_ = 0; events_ = 0; }
+    void push_event_(const Event& e) noexcept {
+        if (events_ == kMaxEvents) {
+            // Overflow (a block far longer than any host's): fold into the
+            // newest, keeping its target.
+            event_list_[(head_ + events_ - 1) % kMaxEvents] = e;
+            return;
+        }
+        event_list_[(head_ + events_) % kMaxEvents] = e;
+        ++events_;
+    }
+
+    void on_frame_(std::int64_t frame_end) noexcept {
+        // Publish the session-state copy every few audible frames.
+        if (spectrum_.last_frame_audible() && --export_countdown_ <= 0) {
+            export_countdown_ = 4;
+            spectrum_.export_bands(export_scratch_);
+            if (export_scratch_.valid) snapshot_.write(export_scratch_);
+        }
         if (!enabled_ || !target_.primed()) return;
         const auto& c = spectrum_.config();
-        const double hop_seconds =
-            static_cast<double>(spectrum_.hop()) / spectrum_.sample_rate();
-        if (!target_.follow(shape_target_db(), hop_seconds, c.material_slew_db_per_second))
+        if (!stale_plant_ && spectrum_.last_frame_audible()
+            && spectrum_.shape_frames() >= 2
+            && detector_.observe(target_db_for_(spectrum_.fast_shape_legs()),
+                                 target_db_for_(spectrum_.slow_shape_legs())))
+            spectrum_.restart();
+        // Just restarted: hold the target until the new running mean spans
+        // kRestartSettleSeconds (a beat of a groove), or its first frames --
+        // one kick, one hat -- would swing the gain.
+        if (spectrum_.restarts() > 0 && spectrum_.observed_frames() > 0
+            && static_cast<double>(spectrum_.frames_since_restart()) * spectrum_.hop_seconds()
+                   < kRestartSettleSeconds
+            && spectrum_.frames_since_restart() < spectrum_.observed_frames())
             return;
-        const Event e{offset_in_slice, target_.value_db()};
-        // A slice longer than kMaxEvents hops (~2.7 s at 48 kHz): the last
-        // entry carries the latest target, its position the only approximation.
-        if (events_ < kMaxEvents) event_list_[events_++] = e;
-        else event_list_[kMaxEvents - 1] = e;
+        if (!target_.follow(shape_target_db(), spectrum_.hop_seconds(),
+                            c.material_slew_db_per_second, c.material_slew_rate_per_second,
+                            c.material_slew_max_db_per_second, c.material_slew_knee_db))
+            return;
+        // Small steps (a groove's wobble) ride the long 0.3 s ramp, which
+        // smooths them; a real move rides a one-hop ramp so successive
+        // frames' targets join into a line that keeps up with it.
+        const float step = std::abs(target_.value_db() - last_event_db_);
+        last_event_db_ = target_.value_db();
+        push_event_({frame_end + latency_, target_.value_db(),
+                     step <= kSmallStepDb ? kAutoGainRampSeconds
+                                          : static_cast<float>(spectrum_.hop_seconds())});
     }
+
+    static constexpr int kSlotEmpty = 0, kSlotWriting = 1, kSlotReady = 2, kSlotReading = 3;
 
     pulp_candidate::signal::LongTermSpectrum spectrum_;
     pulp_candidate::signal::MakeupTarget target_;
+    pulp_candidate::signal::MaterialChangeDetector detector_;
+    bool stale_plant_ = false;
+    int export_countdown_ = 0;
+    pulp_candidate::signal::SpectrumBands export_scratch_{};
+    mutable pulp::runtime::TripleBuffer<pulp_candidate::signal::SpectrumBands> snapshot_{
+        pulp_candidate::signal::SpectrumBands{}};
+    std::atomic<int> slot_state_{kSlotEmpty};
+    pulp_candidate::signal::SpectrumBands pending_{};
     // The wet leg's response on the estimator's grid, and the scratch it is
     // computed in (a table is far too large for an audio thread's stack).
     std::vector<std::complex<double>> response_;
@@ -265,8 +447,12 @@ private:
     bool response_realised_ = false;
     double sample_rate_ = 48000.0;
     bool enabled_ = false;
-    int slice_pos_ = 0;
+    std::int64_t stream_pos_ = 0;
+    std::int64_t slice_start_ = 0;
+    int latency_ = 0;
+    float last_event_db_ = 0.0f;
     std::array<Event, kMaxEvents> event_list_{};
+    std::size_t head_ = 0;
     std::size_t events_ = 0;
 };
 
@@ -275,26 +461,56 @@ private:
 /// Freeze holds, that is the held material, not the live input.
 class AutoGainWetTap final : public pulp::signal::SpectralWetSourceStageT<float> {
 public:
-    void bind(pulp::signal::SpectralWetSourceStageT<float>* source,
-              AutoGainMaterial* material) noexcept {
+    void bind(FreezeSource* source, AutoGainMaterial* material) noexcept {
         source_ = source;
         material_ = material;
+        holding_ = false;
     }
+    /// The block is split where the estimator completes a frame, so a Freeze
+    /// edge reaches it at the same sample whatever the host's block size (the
+    /// freeze source itself counts in samples, so splitting its block changes
+    /// nothing it does).
     void process_block(const float* const* input, float* const* wet,
                        int channels, int num_samples) noexcept override {
-        if (source_ != nullptr) {
-            source_->process_block(input, wet, channels, num_samples);
-        } else {
-            for (int ch = 0; ch < channels; ++ch)
-                if (wet[ch] != input[ch])
-                    std::copy(input[ch], input[ch] + num_samples, wet[ch]);
+        const int count = std::clamp(channels, 0, kMaxChannels);
+        int done = 0;
+        while (done < num_samples) {
+            int chunk = num_samples - done;
+            if (material_ != nullptr)
+                chunk = std::max(1, std::min(chunk, material_->samples_to_next_frame()));
+            for (int ch = 0; ch < count; ++ch) {
+                in_[static_cast<std::size_t>(ch)] = input[ch] + done;
+                out_[static_cast<std::size_t>(ch)] = wet[ch] + done;
+            }
+            if (source_ != nullptr) {
+                source_->process_block(in_.data(), out_.data(), count, chunk);
+                const bool holding = source_->hold_audible()
+                    && source_->phase() != FreezeSource::Phase::releasing;
+                if (material_ != nullptr && holding != holding_) {
+                    if (holding) material_->freeze_engaged();
+                    else material_->freeze_released();
+                }
+                holding_ = holding;
+            } else {
+                for (int ch = 0; ch < count; ++ch)
+                    if (out_[static_cast<std::size_t>(ch)] != in_[static_cast<std::size_t>(ch)])
+                        std::copy(in_[static_cast<std::size_t>(ch)],
+                                  in_[static_cast<std::size_t>(ch)] + chunk,
+                                  out_[static_cast<std::size_t>(ch)]);
+            }
+            if (material_ != nullptr)
+                material_->push(out_.data(), in_.data(), count, chunk);
+            done += chunk;
         }
-        if (material_ != nullptr) material_->push(wet, input, channels, num_samples);
     }
 
 private:
-    pulp::signal::SpectralWetSourceStageT<float>* source_ = nullptr;
+    static constexpr int kMaxChannels = 64;
+    FreezeSource* source_ = nullptr;
     AutoGainMaterial* material_ = nullptr;
+    bool holding_ = false;
+    std::array<const float*, kMaxChannels> in_{};
+    std::array<float*, kMaxChannels> out_{};
 };
 
 // SPECTR-RENDER-PATH END

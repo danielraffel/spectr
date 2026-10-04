@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <numeric>
 #include <random>
@@ -281,6 +283,14 @@ struct RenderOptions {
     spectr::MaskRenderMode render_mode = spectr::kDefaultRenderMode;
     std::vector<int> chunks{};         // empty: kBlock
     std::size_t freeze_at = 0;         // > 0: engage Freeze at this sample
+    std::size_t release_at = 0;        // > 0: release Freeze at this sample
+    // Host resets (ProcessContext::reset_requested: play from stop, a
+    // locate) at the first block boundary at or after each of these samples.
+    std::vector<std::size_t> resets{};
+    // Called after the parameters are set and before prepare (a restore).
+    std::function<void(pulp::format::HeadlessHost&, spectr::Spectr&)> setup{};
+    // Called after the last block (e.g. to save the session).
+    std::function<void(pulp::format::HeadlessHost&, spectr::Spectr&)> finish{};
     // Called before every host block with the sample position and the plugin.
     std::function<void(std::size_t, pulp::format::HeadlessHost&, spectr::Spectr&)> before{};
 };
@@ -307,15 +317,34 @@ inline Render render(const Stereo& in, const Shape& shape, Mode mode,
         host.state().set_value(spectr::band_gain_param_id(i), b.gain_db);
         host.state().set_value(spectr::band_mute_param_id(i), b.muted ? 1.0f : 0.0f);
     }
+    if (options.setup) options.setup(host, *plugin);
     host.prepare(kRate, 4096);
     Render r;
+    std::size_t next_reset = 0;
     r.out = Stereo::zeros(in.size());
     std::size_t pos = 0, chunk = 0;
     while (pos < in.size()) {
         if (options.freeze_at > 0 && pos >= options.freeze_at
+            && (options.release_at == 0 || pos < options.release_at)
             && host.state().get_value(spectr::kParamFreeze) < 0.5f)
             host.state().set_value(spectr::kParamFreeze, 1.0f);
+        if (options.release_at > 0 && pos >= options.release_at
+            && host.state().get_value(spectr::kParamFreeze) >= 0.5f)
+            host.state().set_value(spectr::kParamFreeze, 0.0f);
         if (options.before) options.before(pos, host, *plugin);
+        // Diagnostic: AG_TRACE=1 prints the applied gain, the target and the
+        // estimator's restart / level-drop counters every 0.5 s (AG_TRACE=f:
+        // every 0.1 s).
+        if (std::getenv("AG_TRACE") && (pos % seconds(std::getenv("AG_TRACE")[0] == 'f' ? 0.1 : 0.5)) < static_cast<std::size_t>(kBlock)) {
+            const auto& sp = plugin->auto_gain_material().spectrum();
+            std::printf("  t=%.2f applied %+.2f target %+.2f restarts %llu drops %llu frozen %d legacy %d\n",
+                        static_cast<double>(pos) / kRate, plugin->auto_gain_applied_db(),
+                        plugin->auto_gain_material().target_db(),
+                        static_cast<unsigned long long>(sp.restarts()),
+                        static_cast<unsigned long long>(sp.level_drops()),
+                        static_cast<int>(host.state().get_value(spectr::kParamFreeze) >= 0.5f),
+                        static_cast<int>(plugin->auto_gain_legacy_v1()));
+        }
         int n = options.chunks.empty()
             ? kBlock : options.chunks[chunk++ % options.chunks.size()];
         n = static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(n), in.size() - pos));
@@ -323,11 +352,23 @@ inline Render render(const Stereo& in, const Shape& shape, Mode mode,
         float* op[] = {r.out.l.data() + pos, r.out.r.data() + pos};
         pulp::audio::BufferView<const float> iv(ip, 2, static_cast<std::size_t>(n));
         pulp::audio::BufferView<float> ov(op, 2, static_cast<std::size_t>(n));
-        host.process(ov, iv);
+        if (!options.resets.empty()) {
+            pulp::format::ProcessContext ctx{};
+            ctx.is_playing = true;
+            ctx.sample_rate = kRate;
+            if (next_reset < options.resets.size() && pos >= options.resets[next_reset]) {
+                ctx.reset_requested = true;
+                ++next_reset;
+            }
+            host.process(ov, iv, ctx);
+        } else {
+            host.process(ov, iv);
+        }
         pos += static_cast<std::size_t>(n);
         r.applied_db.push_back(plugin->auto_gain_applied_db());
         r.block_end.push_back(pos);
     }
+    if (options.finish) options.finish(host, *plugin);
     return r;
 }
 
@@ -400,6 +441,78 @@ inline bool finite_and_sane(const Stereo& s, std::string* why = nullptr) {
         if (!finite.passed) { if (why) *why = finite.message; return false; }
     }
     return true;
+}
+
+// Momentary loudness (400 ms) at the end of every block from the start;
+// -inf until the window holds signal.
+inline std::vector<double> momentary_from_start(const Stereo& s) {
+    pulp::signal::MultiChannelMeter meter;
+    meter.prepare(kRate, 2);
+    std::vector<double> series;
+    for (std::size_t pos = 0; pos < s.size(); pos += kBlock) {
+        const auto n = static_cast<int>(std::min<std::size_t>(kBlock, s.size() - pos));
+        const float* p[] = {s.l.data() + pos, s.r.data() + pos};
+        meter.process(p, 2, n);
+        series.push_back(meter.snapshot().lufs_momentary);
+    }
+    return series;
+}
+
+// How a transition went: the applied gain's time to within 1 dB of where it
+// settles (its mean over the second before `settled_at`, or the end), and the
+// largest momentary-
+// loudness error against a reference render (AUTO off, flat shape: what a
+// perfect Auto Gain would sound like) over [from, to). Both renders must use
+// kBlock blocks.
+struct Transition {
+    double t1db = 0.0;
+    double max_momentary_error = 0.0;
+    double seconds_over_6lu = 0.0;   // time the momentary error exceeds 6 LU
+    double settled_db = 0.0;
+};
+
+inline Transition transition(const Render& r, const Render& reference, double from_s,
+                             double to_s, double settled_at_s = -1.0) {
+    Transition t;
+    std::size_t settled_block = r.applied_db.size() - 1;
+    if (settled_at_s > 0.0)
+        for (std::size_t b = 0; b < r.block_end.size(); ++b)
+            if (r.block_end[b] >= seconds(settled_at_s)) { settled_block = b; break; }
+    // Where it settles: the mean over the last second before `settled_at`
+    // (a groove's estimate wobbles a little; one block would be arbitrary).
+    {
+        double sum = 0.0;
+        int count = 0;
+        for (std::size_t b = 0; b <= settled_block; ++b)
+            if (r.block_end[b] + seconds(1.0) >= r.block_end[settled_block]) {
+                sum += r.applied_db[b];
+                ++count;
+            }
+        t.settled_db = count > 0 ? sum / count : r.applied_db[settled_block];
+    }
+    double last_outside = from_s;
+    for (std::size_t b = 0; b <= settled_block; ++b) {
+        const double at = static_cast<double>(r.block_end[b]) / kRate;
+        if (at < from_s) continue;
+        if (std::abs(r.applied_db[b] - t.settled_db) > 1.0) last_outside = at;
+    }
+    t.t1db = last_outside - from_s;
+    const auto a = momentary_from_start(r.out), b = momentary_from_start(reference.out);
+    for (std::size_t k = 0; k < std::min(a.size(), b.size()); ++k) {
+        const double at = static_cast<double>((k + 1) * kBlock) / kRate;
+        if (at < from_s || at >= to_s) continue;
+        if (!std::isfinite(a[k]) || !std::isfinite(b[k]) || b[k] < -70.0) continue;
+        const double e = std::abs(a[k] - b[k]);
+        t.max_momentary_error = std::max(t.max_momentary_error, e);
+        if (e > 6.0) t.seconds_over_6lu += static_cast<double>(kBlock) / kRate;
+    }
+    return t;
+}
+
+inline Stereo scaled(Stereo s, double gain) {
+    for (auto& v : s.l) v = static_cast<float>(v * gain);
+    for (auto& v : s.r) v = static_cast<float>(v * gain);
+    return s;
 }
 
 // Loudness error, LU: output with AUTO vs the input, both over [from, end).
