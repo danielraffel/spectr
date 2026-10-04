@@ -635,6 +635,12 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
+# The stream-start case with the priming removed: the measurement must reject
+# it, or it could not see the fade it exists to catch.
+add_test(NAME Spectr-stream-start-negative-control
+    COMMAND Spectr-test "The first samples of a stream reach the output at full level")
+set_tests_properties(Spectr-stream-start-negative-control PROPERTIES
+    ENVIRONMENT SPECTR_PLANT_NO_STREAM_PRIME=1 WILL_FAIL TRUE TIMEOUT 120)
 
 if(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
     add_executable(Spectr-shared-product-acceptance EXCLUDE_FROM_ALL
@@ -3940,6 +3946,15 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
             --length 8 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
             --forbid-render-notifications --quiet)
+    # The first samples of a fresh stream through the built AU, both modes.
+    add_test(NAME Spectr-au-stream-start-mixing
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --stream-start-check --mode mixing --block 512)
+    add_test(NAME Spectr-au-stream-start-tracking
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --stream-start-check --mode tracking --block 128)
+    set_tests_properties(Spectr-au-stream-start-mixing Spectr-au-stream-start-tracking
+        PROPERTIES TIMEOUT 120 LABELS "au-host")
     set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
         Spectr-au-freeze-host-loop Spectr-au-freeze-host-long-loop
         PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
