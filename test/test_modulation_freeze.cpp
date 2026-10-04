@@ -522,6 +522,7 @@ struct HoldLog {
     std::int64_t loop = 0;             // the loop it played
     bool loop_resized = false;         // the loop changed mid-hold
     int modulated_seen_differs = 0;    // blocks the Length target sat elsewhere
+    int source_length_drift = 0;       // blocks the source was asked another length
 };
 
 struct HoldRunLog {
@@ -620,6 +621,10 @@ HoldRunLog run_hold_log(const HoldSetup& setup) {
                 labels.push_back(label);
             if (plugin->freeze_modulated_length_index() != current.index)
                 ++current.modulated_seen_differs;
+            // Whenever the source latches for this hold -- a hop, or a whole
+            // release fade, after the trigger -- it takes the hold's length.
+            if (now && plugin->freeze_source().hold_seconds() != current.seconds)
+                ++current.source_length_drift;
             // The loop this hold's latch made, once it plays alone.
             if (current.source_latches > 0
                 && plugin->freeze_source().phase() == spectr::FreezeSource::Phase::held) {
@@ -655,6 +660,7 @@ void check_holds_each_their_own(const HoldRunLog& log, std::size_t at_least) {
         CHECK(h.source_latches == 1);
         CHECK(h.labels_seen == 1);
         CHECK_FALSE(h.loop_resized);
+        CHECK(h.source_length_drift == 0);
     }
 }
 
