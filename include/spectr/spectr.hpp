@@ -497,6 +497,15 @@ public:
         return render_switch_state_.load(std::memory_order_acquire) == kSwitchIdle;
     }
 
+    /// Diagnostics for tests: whether the freeze source's spectral capture is
+    /// suspended (a loop Length nothing can move), and whether a hold plays.
+    [[nodiscard]] bool freeze_source_suspended_for_test() const noexcept {
+        return freeze_source_.spectral_capture_suspended();
+    }
+    [[nodiscard]] bool freeze_engaged_for_test() const noexcept {
+        return freeze_source_.hold_audible();
+    }
+
     /// True while a mode switch is still crossfading on the audio thread.
     [[nodiscard]] bool render_switch_in_flight() const noexcept {
         const int s = render_switch_state_.load(std::memory_order_acquire);

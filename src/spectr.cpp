@@ -71,6 +71,8 @@ long callback_burst_plant() noexcept {
 
 void prime_negative_control_seams() noexcept {
     (void)callback_burst_plant();
+    (void)FreezeSource::prime_plants();
+    AutoGainMaterial::prime_plants();
     (void)modulation_plants_route_step();
     (void)modulation_plants_level_target_step();
     (void)level_plant("");
@@ -1844,6 +1846,21 @@ void Spectr::process(
         freeze_source_.set_hold_seconds(
             freeze_hold_remaining_ > 0 && freeze_hold_seconds_ > 0.0
                 ? freeze_hold_seconds_ : seconds);
+        {
+            // The spectral capture can be skipped at a loop Length only
+            // while no LFO can move the Length under a press.
+            bool length_driven = false;
+            if (param_store_) {
+                constexpr auto kLengthTarget = static_cast<std::size_t>(ModulationTarget::Length);
+                const pulp::state::ParamID on[2] = {kParamLfoEnabled, kParamLfo2Enabled};
+                for (std::size_t lfo = 0; lfo < 2; ++lfo)
+                    length_driven = length_driven
+                        || (param_store_->get_value(on[lfo]) >= 0.5f
+                            && param_store_->get_value(
+                                   lfo_route_enabled_param_id(lfo, kLengthTarget)) >= 0.5f);
+            }
+            freeze_source_.set_spectral_capture_required(length_driven);
+        }
         audio_freeze_length_seconds_ = seconds;
         // Longer than the rings reach: ask the worker for bigger ones. A
         // lock-free spawn, at most once per size; the source adopts them at

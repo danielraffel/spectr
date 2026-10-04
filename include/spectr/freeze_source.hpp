@@ -124,6 +124,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 
 namespace spectr {
@@ -798,8 +799,23 @@ private:
         if (spectral) add_hold_frame_(0);
         if (rendering && loop_mode_) copy_loop_tail_();
 
-        if (phase_ == Phase::live || phase_ == Phase::arming
-            || phase_ == Phase::releasing) {
+        // A loop-length hold freezes the audio itself and never reads the
+        // spectral capture, so while nothing can need it -- a loop Length,
+        // not modulated, nothing held or releasing -- the hop skips the
+        // analysis FFT and the capture (the per-hop burst at a small host
+        // buffer). Resuming starts a fresh capture window, so a spectral
+        // freeze pressed within one Length of the switch arms until the
+        // window fills; see set_spectral_capture_required().
+        const bool skip_capture = phase_ == Phase::live && !spectral_required_
+            && applied_hold_seconds_ >= kLoopMinSeconds && !capture_plant_();
+        if (skip_capture) {
+            capture_suspended_ = true;
+        } else if (capture_suspended_) {
+            hold_.clear_history();
+            capture_suspended_ = false;
+        }
+        if (!skip_capture && (phase_ == Phase::live || phase_ == Phase::arming
+            || phase_ == Phase::releasing)) {
             analyse_();
             const bool loop = applied_hold_seconds_ >= kLoopMinSeconds;
             if (phase_ == Phase::arming)
@@ -1062,6 +1078,23 @@ private:
             if (!(hop_energy_[index] >= signal_floor_power_)) return false;
         }
         return true;
+    }
+
+public:
+    /// Audio thread: whether the spectral capture must run on every hop even
+    /// at a loop Length -- true while the Length can change without notice
+    /// (an LFO drives it). Default true.
+    void set_spectral_capture_required(bool required) noexcept { spectral_required_ = required; }
+    /// Read the negative-control seams once, off the audio thread.
+    static void prime_plants() noexcept { (void)capture_plant_(); }
+    /// True while the spectral capture is suspended (diagnostic).
+    [[nodiscard]] bool spectral_capture_suspended() const noexcept { return capture_suspended_; }
+
+private:
+    // SPECTR_PLANT_ALWAYS_CAPTURE restores the capture on every hop.
+    static bool capture_plant_() noexcept {
+        static const bool planted = std::getenv("SPECTR_PLANT_ALWAYS_CAPTURE") != nullptr;
+        return planted;
     }
 
     // Windowed FFT of the most recent kFftSize input samples, oldest first.
@@ -1647,6 +1680,8 @@ private:
     std::vector<double> search_cross_, search_energy_; // per candidate start
     double end_energy_ = 0.0;
     bool loop_mode_ = false;
+    bool spectral_required_ = true;
+    bool capture_suspended_ = false;
     bool loop_seam_ = false;                      // a pass after the first
     bool loop_tail_ = false;                      // the audio after the end is copied
     float fade_rho_ = 0.0f;                       // the engage fade's two sides' correlation
