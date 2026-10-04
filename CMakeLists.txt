@@ -1507,6 +1507,10 @@ set_tests_properties(Spectr-band-menu-keyboard-and-dismissal-negative-control
 # Runs headless and asserts the run reported opening no audio device.
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(APPLE AND Python3_Interpreter_FOUND)
+add_test(NAME Spectr-owned-materialized-runtime-emitter
+    COMMAND ${Python3_EXECUTABLE} -m unittest -v
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_emit_materialized_runtime.py)
+set_tests_properties(Spectr-owned-materialized-runtime-emitter PROPERTIES TIMEOUT 30)
 add_test(NAME Spectr-materialized-native-services-sync
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/sync_materialized_native_services.py --check)
