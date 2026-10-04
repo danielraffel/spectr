@@ -4283,7 +4283,10 @@ endif()
 # in-process, never activated or focused, in a borderless window off every
 # screen; no audio device is opened. Needs a window server and SKIPs (exit 4)
 # without one. Warm opens only for the time gate: the first open of a freshly
-# built binary also pays one-time dyld and Metal shader-cache costs.
+# built binary also pays one-time dyld and Metal shader-cache costs. Since Pulp
+# 0.907 the editor opens content-first: the call includes the document mount
+# and the first frame (warm ~150 ms on an idle M5 Max, 225-320 ms under a
+# build load of 50-80), so the budget is the mount's, with headroom for load.
 if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     add_executable(Spectr-editor-open-probe tools/editor_open_probe.mm)
     target_link_libraries(Spectr-editor-open-probe PRIVATE
@@ -4295,7 +4298,7 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         COMMAND Spectr-editor-open-probe
             --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
             --opens 3 --settle-ms 600 --min-width ${SPECTR_HOST_PREFERRED_WIDTH}
-            --min-height ${SPECTR_HOST_PREFERRED_HEIGHT} --max-warm-factory-ms 250)
+            --min-height ${SPECTR_HOST_PREFERRED_HEIGHT} --max-warm-factory-ms 600)
     set_tests_properties(Spectr-au-editor-open PROPERTIES
         TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
         RESOURCE_LOCK spectr_native_materialized_editor)
@@ -4321,12 +4324,23 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
                 --capture-frames "${CMAKE_BINARY_DIR}/first-frames/${_spectr_first_frame_name}"
                 --settled-bg ${_spectr_first_frame_rgb}
                 --expect-first-rgb ${_spectr_first_frame_rgb}
+                --expect-first-ui
                 --max-offbrand-frames 0)
         set_tests_properties(Spectr-au-editor-first-frame-${_spectr_first_frame_name} PROPERTIES
             TIMEOUT 180 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
             RESOURCE_LOCK spectr_native_materialized_editor
             FIXTURES_REQUIRED spectr_first_frame_dirs)
     endforeach()
+    # The content-first contract has a control: the SDK's view-first order
+    # (the empty background before the document) must fail --expect-first-ui.
+    add_test(NAME Spectr-au-editor-first-frame-view-first-control
+        COMMAND Spectr-editor-open-probe
+            --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
+            --opens 1 --settle-ms 600 --pixels --expect-first-ui)
+    set_tests_properties(Spectr-au-editor-first-frame-view-first-control PROPERTIES
+        ENVIRONMENT PULP_EDITOR_OPEN=view-first WILL_FAIL TRUE
+        TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
+        RESOURCE_LOCK spectr_native_materialized_editor)
     # Out-of-process variant (AUHostingService + remote view controller). Not a
     # ctest: it needs the component installed where AUHostingService finds it.
     add_executable(Spectr-editor-open-oop-probe tools/editor_open_oop_probe.mm)
