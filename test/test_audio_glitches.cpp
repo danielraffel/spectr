@@ -33,6 +33,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <random>
 #include <ctime>
@@ -1374,6 +1375,46 @@ TEST_CASE("Glitch report: callback cost at tiny host buffers", "[.][glitch-repor
                                 stats(ev_at, ev_end + at(0.2, rate)).c_str());
                 }
             }
+        }
+    }
+}
+
+TEST_CASE("Null hash: a spectral Freeze hold through the product", "[.][null-hash]") {
+    // Prints an exact hash of a render with spectral holds (short Lengths
+    // hold the spectrum through FreezeHold) at 48 kHz/32 and 96 kHz/32, so
+    // two builds can be compared bit for bit: an optimisation that claims
+    // to change no sample must print the same hashes.
+    for (const double rate : {48000.0, 96000.0}) {
+        for (const int length_index : {0, 1, 2}) {
+            const auto material = chord(3.0, rate);
+            Run run;
+            run.rate = rate;
+            run.block = 32;
+            // Mixing: its output does not depend on when a worker finishes
+            // (Tracking's is reproducible only to a bound), and the hold is
+            // upstream of either renderer. Flat shape, AUTO off.
+            run.mode = MaskRenderMode::linear_phase;
+            run.shaped = false;
+            run.auto_gain = 0.0f;
+            const std::size_t engage = at(1.1, rate) + 5, release = at(2.3, rate);
+            run.before = [&](Spectr&, pulp::format::HeadlessHost& h, std::size_t pos, int n,
+                             pulp::state::ParameterEventQueue& ev) {
+                if (pos == 0) h.state().set_value(spectr::kParamFreezeLength, float(length_index));
+                if (engage >= pos && engage < pos + std::size_t(n))
+                    (void)ev.push({spectr::kParamFreeze, std::int32_t(engage - pos), 1.0f, 0});
+                if (release >= pos && release < pos + std::size_t(n))
+                    (void)ev.push({spectr::kParamFreeze, std::int32_t(release - pos), 0.0f, 0});
+            };
+            const auto out = render(material, run);
+            std::uint64_t h = 1469598103934665603ull;
+            for (std::size_t i = 0; i < out.size(); ++i)
+                for (const float v : {out.l[i], out.r[i]}) {
+                    std::uint32_t bits;
+                    std::memcpy(&bits, &v, 4);
+                    h = (h ^ bits) * 1099511628211ull;
+                }
+            std::printf("null-hash rate %.0f length %d: %016llx\n", rate, length_index,
+                        (unsigned long long)h);
         }
     }
 }
